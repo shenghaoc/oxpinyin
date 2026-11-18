@@ -18,9 +18,9 @@
 //! [`KmmGram`] its `KMixtureModelSingleGram`. The `KMMP` magic number is
 //! the pin's `K_MIXTURE_MODEL_MAGIC_NUMBER` (`k_mixture_model.h:115`).
 
-use oxpinyin_core::store::{BackendError, DefaultFlexibleBigram, SpecGram, StoreError};
+use oxpinyin::store::{BackendError, DefaultFlexibleBigram, SpecGram, StoreError};
 
-pub use oxpinyin_core::store::{ArrayItemWithToken, FixedRecord, FlexibleGramSpec};
+pub use oxpinyin::store::{ArrayItemWithToken, FixedRecord, FlexibleGramSpec};
 
 /// `KMixtureModelMagicHeader` (`k_mixture_model.h:117-124`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

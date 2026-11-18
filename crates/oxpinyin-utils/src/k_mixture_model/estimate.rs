@@ -19,7 +19,7 @@
 
 use std::ffi::CStr;
 
-use oxpinyin_core::input::tool::k_mixture_model as edge;
+use oxpinyin::input::tool::k_mixture_model as edge;
 
 use crate::k_mixture_model::database::{Database, Loaded, exit_on_short_single_gram};
 use crate::k_mixture_model::records::KmmGram;

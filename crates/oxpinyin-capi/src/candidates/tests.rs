@@ -40,11 +40,11 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candid
 
 use crate::test_support::promotion_system;
 
-use oxpinyin_core::{PhraseToken, model::Dictionary as _};
+use oxpinyin::{PhraseToken, model::Dictionary as _};
 
-use oxpinyin_core::facade::TextSpan;
+use oxpinyin::facade::TextSpan;
 
-use oxpinyin_core::user::SENTENCE_START;
+use oxpinyin::user::SENTENCE_START;
 
 use std::cell::Cell;
 
@@ -342,7 +342,7 @@ impl Open {
             .system()
             .libraries()
             .library(u32::from(library) << 24)
-            .map(oxpinyin_core::user::data::phrase_library::PhraseLibrary::total_freq)
+            .map(oxpinyin::user::data::phrase_library::PhraseLibrary::total_freq)
             .expect("the library is mapped")
     }
 
@@ -433,9 +433,9 @@ fn a_store_into_the_failed_user_bigram_aborts_training() {
     let stderr = crate::test_support::assert_aborts(
         "candidates::tests::a_store_into_the_failed_user_bigram_aborts_training",
         || {
-            super::train_answer(Err(
-                oxpinyin_core::engine::EngineError::FailedUserBigramStore { token: 0x0100_0001 },
-            ));
+            super::train_answer(Err(oxpinyin::engine::EngineError::FailedUserBigramStore {
+                token: 0x0100_0001,
+            }));
         },
     );
     // No Rust panic text or other line: the pin writes none here but
@@ -906,8 +906,8 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
             .get()
             .expect("promoted candidate carries a token");
         assert_eq!(
-            oxpinyin_core::user::phrase_index_library_index(token.value()),
-            oxpinyin_core::user::ADDON_DICTIONARY,
+            oxpinyin::user::phrase_index_library_index(token.value()),
+            oxpinyin::user::ADDON_DICTIONARY,
             "promoted token lives in default nibble 5"
         );
         token.value()
@@ -919,7 +919,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
     let store = inst.core.user;
     assert_eq!(
         store
-            .token_for_phrase_in(oxpinyin_core::user::ADDON_DICTIONARY, &text)
+            .token_for_phrase_in(oxpinyin::user::ADDON_DICTIONARY, &text)
             .expect("store read"),
         Some(promoted),
         "the promoted phrase resolves under nibble 5"
@@ -935,10 +935,10 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
         .expect("promoted phrase copied at least one reading");
 
     // It surfaces through the default-facade user lookup as a normal candidate.
-    let keys: Vec<oxpinyin_core::SyllableKey> = reading
+    let keys: Vec<oxpinyin::SyllableKey> = reading
         .keys()
         .iter()
-        .map(|k| oxpinyin_core::SyllableKey::from_index(usize::from(*k)).expect("stored key"))
+        .map(|k| oxpinyin::SyllableKey::from_index(usize::from(*k)).expect("stored key"))
         .collect();
     let lookup = store.lookup();
     assert!(
@@ -996,7 +996,7 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
             .iter()
             .position(|c| {
                 c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE
-                    && c.token.get().map(oxpinyin_core::PhraseToken::value) == Some(ADDON)
+                    && c.token.get().map(oxpinyin::PhraseToken::value) == Some(ADDON)
             })
             .expect("the 二簧 ADDON row")
     };
@@ -1018,7 +1018,7 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
     let promoted = unsafe { instance_ref(instance) }.state.candidates[index]
         .token
         .get()
-        .map(oxpinyin_core::PhraseToken::value);
+        .map(oxpinyin::PhraseToken::value);
     assert_eq!(promoted, Some(PROMOTED));
     assert_eq!(
         unsafe { pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
@@ -1110,7 +1110,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .dict
             .addon_phrase_item(token.value())
             .expect("addon item");
-        let view = oxpinyin_core::user::data::phrase_library::PhraseItemView::from_bytes(&item)
+        let view = oxpinyin::user::data::phrase_library::PhraseItemView::from_bytes(&item)
             .expect("addon item bytes");
         let keys: Vec<_> = view
             .pronunciation(0)
@@ -1120,8 +1120,8 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .0
             .iter()
             .map(|pair| {
-                let packed = oxpinyin_core::ChewingKey::from_packed(u16::from_le_bytes(*pair));
-                oxpinyin_core::SyllableKey::from_text(packed.pinyin_spelling()).expect("stored key")
+                let packed = oxpinyin::ChewingKey::from_packed(u16::from_le_bytes(*pair));
+                oxpinyin::SyllableKey::from_text(packed.pinyin_spelling()).expect("stored key")
             })
             .collect();
         (
@@ -1403,8 +1403,8 @@ fn a_promoted_addon_item_keeps_every_toned_reading() {
     let user = TempUserDir::new("addon-promote-toned");
     let (context, instance, promoted) = choose_addon_row(&system, &user.path, "erhuang");
     assert_eq!(
-        oxpinyin_core::user::phrase_index_library_index(promoted),
-        oxpinyin_core::user::ADDON_DICTIONARY
+        oxpinyin::user::phrase_index_library_index(promoted),
+        oxpinyin::user::ADDON_DICTIONARY
     );
     assert_eq!(looked_up_tokens(instance, "二簧"), [promoted]);
 

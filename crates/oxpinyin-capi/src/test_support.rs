@@ -24,7 +24,7 @@ use std::os::raw::c_uint;
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use std::path::PathBuf;
 
-#[path = "../../oxpinyin-core/tests/support/native_fixture.rs"]
+#[path = "../../oxpinyin/tests/support/native_fixture.rs"]
 mod native_fixture;
 pub(crate) use native_fixture::*;
 
@@ -564,7 +564,7 @@ pub(crate) fn ucs4(text: &str) -> Vec<u8> {
 }
 
 #[cfg(feature = "tkrzw")]
-#[path = "../../oxpinyin-core/tests/common/contract_data.rs"]
+#[path = "../../oxpinyin/tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
 
 use crate::iterators::{
@@ -572,7 +572,7 @@ use crate::iterators::{
     pinyin_end_get_phrases, pinyin_iterator_add_phrase,
 };
 use crate::types::lookup_candidate_type_t;
-use oxpinyin_core::user::UserStore;
+use oxpinyin::user::UserStore;
 use std::ptr;
 
 /// Read the live store for one assertion; no storage reference escapes.
@@ -735,7 +735,7 @@ unsafe extern "C" {
 
 /// The packed key of `spelling` at `tone`, as an addon item stores it.
 pub(crate) fn packed_key(spelling: &str, tone: u8) -> u16 {
-    oxpinyin_core::ChewingKey::from_pinyin(spelling)
+    oxpinyin::ChewingKey::from_pinyin(spelling)
         .expect("frozen syllable")
         .with_tone(tone)
         .to_packed()

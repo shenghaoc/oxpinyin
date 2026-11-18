@@ -893,11 +893,11 @@ fn auxiliary_text_cuts_before_a_tone() {
 fn full_auxiliary_text_uses_the_parse_options(#[values(false, true)] after_guess: bool) {
     let user = TempUserDir::new("aux-parse-options");
     let (context, instance) = open_at(&user.path);
-    let incomplete = oxpinyin_core::OptionBits::PINYIN_INCOMPLETE;
+    let incomplete = oxpinyin::OptionBits::PINYIN_INCOMPLETE;
     assert!(unsafe {
         pinyin_set_options(
             context,
-            (incomplete | oxpinyin_core::OptionBits::USE_TONE).bits(),
+            (incomplete | oxpinyin::OptionBits::USE_TONE).bits(),
         )
     });
     assert_eq!(parse(instance, "ni3hao3"), 7);

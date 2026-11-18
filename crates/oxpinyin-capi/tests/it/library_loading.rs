@@ -77,7 +77,7 @@ fn reload_aborts_on_a_log_header_token() {
 }
 
 /// Register row 96 at the reload of an unloaded library.
-// Unix only, for the reason `oxpinyin-core`'s `save_stops_at_the_directory_with_the_pins_files` gives.
+// Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_directory_library() {
@@ -95,7 +95,7 @@ fn reload_aborts_on_a_directory_library() {
 
 /// Register row 96 at the addon load, which maps `art.bin` through the same
 /// `MemoryChunk::mmap` (`pinyin.cpp:290`); row 76's `false` elsewhere.
-// Unix only, for the reason `oxpinyin-core`'s `save_stops_at_the_directory_with_the_pins_files` gives.
+// Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
 fn addon_load_aborts_on_a_directory_library() {

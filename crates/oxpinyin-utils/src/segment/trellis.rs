@@ -8,7 +8,7 @@
 
 use rustc_hash::FxHashMap;
 
-use oxpinyin_core::user::data::{BigramRow, BigramTable};
+use oxpinyin::user::data::{BigramRow, BigramTable};
 
 use crate::segment::phrase::PhraseSearch;
 use crate::segment::{NULL_TOKEN, SENTENCE_START};

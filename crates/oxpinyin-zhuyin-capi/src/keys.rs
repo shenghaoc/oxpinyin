@@ -47,7 +47,7 @@ pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_core::marshal::input::scalar_text(
+    let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -69,7 +69,7 @@ pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
         *onekey = ChewingKey::ZERO;
     }
     inst.core
-        .parse_one_full_pinyin(&text, oxpinyin_core::facade::PinyinCorrections::Masked)
+        .parse_one_full_pinyin(&text, oxpinyin::facade::PinyinCorrections::Masked)
         .is_some_and(|key| {
             // SAFETY: Null-checked above.
             unsafe { *onekey = ChewingKey::from_core(key) };
@@ -107,7 +107,7 @@ pub unsafe extern "C" fn zhuyin_parse_chewing(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let text = oxpinyin_core::marshal::input::scalar_text(
+    let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onechewing) },
@@ -146,7 +146,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
     // aligned and writable, and a non-NULL key is valid for reads. Access must not conflict
     // with live borrows.
-    unsafe { display_string_getter(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_text) }
+    unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::zhuyin_text) }
 }
 
 /// `zhuyin_get_pinyin_string` — render the key's pinyin spelling, dispatching
@@ -177,7 +177,7 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
     }
     // The scheme lives in the context's shared live options, read through the
     // instance; pass it into the closure so the shared getter can dispatch.
-    let render = |core: oxpinyin_core::ChewingKey| {
+    let render = |core: oxpinyin::ChewingKey| {
         // SAFETY: Handles guarantees the NULL-checked instance is live.
         // Serial calls excludes mutation; no other view is held while
         // this closure reads the scheme.
@@ -186,9 +186,9 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
             .live
             .full_scheme
             .get();
-        match oxpinyin_core::facade::full_scheme(scheme) {
-            Some(oxpinyin_core::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
-            Some(oxpinyin_core::FullPinyinScheme::SecondaryZhuyin) => core.secondary_zhuyin_text(),
+        match oxpinyin::facade::full_scheme(scheme) {
+            Some(oxpinyin::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
+            Some(oxpinyin::FullPinyinScheme::SecondaryZhuyin) => core.secondary_zhuyin_text(),
             _ => core.pinyin_text(),
         }
     };
@@ -198,6 +198,6 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
     unsafe { display_string_getter(key, utf8_str, render) }
 }
 
-oxpinyin_core::display_string_getter! {
+oxpinyin::display_string_getter! {
     key: ChewingKey, char: GChar
 }

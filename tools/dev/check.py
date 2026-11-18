@@ -165,7 +165,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         if result.returncode:
             print(f'{backend}: pkg-config could not report a version', file=err, flush=True)
             return result.returncode
-    args = ['--locked', *cell.feature_flags(backend), '-p', 'oxpinyin-core']
+    args = ['--locked', *cell.feature_flags(backend), '-p', 'oxpinyin']
     if platform.system() == 'Linux':
         result = tools.run([pkg_config, '--modversion', 'glib-2.0'])
         out.write(result.stdout)

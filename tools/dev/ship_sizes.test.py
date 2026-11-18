@@ -63,7 +63,7 @@ class KeyTests(unittest.TestCase):
         return ship_sizes.recipe_key(revision, facts or self.facts, self.repo.root)
 
     def test_key_follows_inputs_not_commits(self):
-        first = self.repo.commit({'crates/oxpinyin-core/lib': 'a\n'})
+        first = self.repo.commit({'crates/oxpinyin/lib': 'a\n'})
         key = self.key()
         self.repo.commit({'docs/note': 'x\n'})
         self.assertEqual(self.key(), key)
@@ -71,11 +71,11 @@ class KeyTests(unittest.TestCase):
         self.assertRegex(key, r'^ship-sizes-v1-[0-9a-f]{32}$')
 
     def test_input_or_environment_change_moves_the_key(self):
-        self.repo.commit({'crates/oxpinyin-core/lib': 'a\n', 'Cargo.lock': 'l\n'})
+        self.repo.commit({'crates/oxpinyin/lib': 'a\n', 'Cargo.lock': 'l\n'})
         key = self.key()
         self.assertNotEqual(self.key(facts={**self.facts, 'rustc': '1.98.0'}), key)
         # Any crate under crates/ moves the key, not only the C API closure.
-        for path in ('crates/oxpinyin-core/lib', 'crates/oxpinyin-corpus/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
+        for path in ('crates/oxpinyin/lib', 'crates/oxpinyin-corpus/lib', 'Cargo.lock', 'tools/dev/packaging.py'):
             with self.subTest(path=path):
                 before = self.repo.commit({path: 'new ' + path + '\n'})
                 self.assertNotEqual(self.key(), key)
@@ -83,7 +83,7 @@ class KeyTests(unittest.TestCase):
                 self.assertEqual(self.key(), key, before)
 
     def test_tkrzw_abi_record_changes_the_key_at_the_same_version(self):
-        revision = self.repo.commit({'crates/oxpinyin-core/lib': 'a\n'})
+        revision = self.repo.commit({'crates/oxpinyin/lib': 'a\n'})
         prefix = self.repo.root / 'installed tkrzw'
         record = prefix / 'share/tkrzw/vcpkg_abi_info.txt'
         record.parent.mkdir(parents=True)

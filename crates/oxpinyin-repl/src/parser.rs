@@ -2,8 +2,8 @@
 
 use std::ffi::{CString, OsString};
 
-use oxpinyin_core::input::tool::{self, OptionArg, OptionEntry, OptionValue};
-use oxpinyin_core::{
+use oxpinyin::input::tool::{self, OptionArg, OptionEntry, OptionValue};
+use oxpinyin::{
     DoublePinyinParser, OptionBits, ZhuyinParser, ZhuyinScheme,
     tool::{Key, Parse, parse_direct},
 };
@@ -18,7 +18,7 @@ enum Parser {
 impl Parser {
     fn parse(&self, input: &[u8], options: OptionBits) -> Parse {
         match *self {
-            Self::Full => oxpinyin_core::engine::tool::parse_full(input, options),
+            Self::Full => oxpinyin::engine::tool::parse_full(input, options),
             Self::Double => {
                 let parsed = DoublePinyinParser::new().parse_with_options(input, options);
                 Parse {

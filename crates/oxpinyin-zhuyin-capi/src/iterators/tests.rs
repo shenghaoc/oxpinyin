@@ -9,7 +9,7 @@ use crate::iterators::{
 
 use crate::test_support::{TempUserDir, close, cstr, open_with_user, with_store};
 
-use oxpinyin_core::user::USER_DICTIONARY;
+use oxpinyin::user::USER_DICTIONARY;
 
 /// D16: libzhuyin's import parses the reading with `ZhuyinDirectParser2` under
 /// `USE_TONE | FORCE_TONE` (`zhuyin.cpp:515-523` at 074a2219). The parser splits on `' '` and
@@ -40,8 +40,8 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
         );
         unsafe { zhuyin_end_add_phrases(iter) };
         let rows = with_store(instance, |store| store.export_phrases_in(USER_DICTIONARY));
-        let expected: Vec<oxpinyin_core::user::ExportedPhrase> = if added {
-            vec![oxpinyin_core::user::ExportedPhrase {
+        let expected: Vec<oxpinyin::user::ExportedPhrase> = if added {
+            vec![oxpinyin::user::ExportedPhrase {
                 text: phrase.chars().map(u32::from).collect(),
                 pinyin: "ni3'hao3".to_owned(),
                 count: 5,

@@ -14,7 +14,7 @@
 use std::ffi::CStr;
 use std::path::PathBuf;
 
-use oxpinyin_core::store::{AttachMode, StoreError};
+use oxpinyin::store::{AttachMode, StoreError};
 
 use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};
 
@@ -22,7 +22,7 @@ use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigr
 /// Windows takes its UTF-8 and refuses bytes that are not UTF-8.
 #[must_use]
 pub fn open_path(filename: &CStr) -> Option<PathBuf> {
-    oxpinyin_core::input::path::path_from_bytes_checked(filename.to_bytes())
+    oxpinyin::input::path::path_from_bytes_checked(filename.to_bytes())
 }
 
 /// A single gram that [`Database::load`] found.
@@ -40,7 +40,7 @@ pub enum Loaded {
 /// outside of (class (b), `upstream-divergences.md#flexiblebigram-malformed-record-lengths`): one
 /// stderr line, then status 1. The pin's work before that read is done.
 pub fn exit_on_short_single_gram() -> ! {
-    oxpinyin_core::input::tool::exit_on_store_error(&StoreError::ShortArrayHeader)
+    oxpinyin::input::tool::exit_on_store_error(&StoreError::ShortArrayHeader)
 }
 
 /// One `KMixtureModelBigram` after its `attach`.
@@ -253,7 +253,7 @@ impl Database {
 /// rejected path, with no pin counterpart: the utility reports it and exits
 /// before it creates or writes anything, never as a missing object.
 fn attached(result: Result<KmmBigram, StoreError>) -> KmmBigram {
-    result.unwrap_or_else(|error| oxpinyin_core::input::tool::exit_on_store_error(&error))
+    result.unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error))
 }
 
 /// The pin's abort at a `check_result` or `assert` site; the macro's text is

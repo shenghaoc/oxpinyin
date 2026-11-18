@@ -61,7 +61,7 @@ fn a_tone_outside_the_table_dimensions_aborts_the_renderer() {
     assert_aborts(
         "matrix_bounds::a_tone_outside_the_table_dimensions_aborts_the_renderer",
         || {
-            let ni = oxpinyin_core::ChewingKey::from_pinyin("ni").expect("ni is a key");
+            let ni = oxpinyin::ChewingKey::from_pinyin("ni").expect("ni is a key");
             let mut key = ChewingKey {
                 packed: ni.to_packed() | (6 << 12),
             };

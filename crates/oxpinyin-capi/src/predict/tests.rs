@@ -30,7 +30,7 @@ use crate::test_support::{
 
 use crate::types::{PinyinInstance, lookup_candidate_type_t};
 
-use oxpinyin_core::PhraseText;
+use oxpinyin::PhraseText;
 
 /// Predicted bigram rows on a zero facade total abort in the scorer
 /// (register row 61).
@@ -57,8 +57,8 @@ fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
     );
 }
 
-fn text(phrase: &str) -> oxpinyin_core::PhraseText {
-    oxpinyin_core::PhraseText::from(phrase)
+fn text(phrase: &str) -> oxpinyin::PhraseText {
+    oxpinyin::PhraseText::from(phrase)
 }
 
 /// `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN`.
@@ -194,7 +194,7 @@ fn prediction_replaces_every_row_with_a_spanless_one(
 fn predicted_sort_is_stable_and_uses_wrapping_frequency_after_length() {
     use super::{Predicted, sort_predicted};
     use crate::types::lookup_candidate_type_t;
-    use oxpinyin_core::PhraseText;
+    use oxpinyin::PhraseText;
     let mut items: Vec<_> = [(1, 2, 1), (2, 3, 0), (3, 2, u32::MAX), (4, 2, 1), (5, 2, 0)]
         .into_iter()
         .map(|(token, phrase_length, frequency)| Predicted {
@@ -368,13 +368,13 @@ fn set_user_bigram(
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { crate::state::context_mut(context) };
     let user = ctx.core.user_store_mut();
-    let prev_text = oxpinyin_core::marshal::input::scalar_text(
+    let prev_text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
         // Strings. The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prev) },
     )
     .unwrap_or_default();
-    let cur_text = oxpinyin_core::marshal::input::scalar_text(
+    let cur_text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
         // Strings. The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(cur) },
@@ -564,11 +564,10 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
     // key order, read as the library attaches the file.
     let mut extensions: Vec<Vec<u8>> = Vec::new();
     {
-        use oxpinyin_core::store::RawReadStore as _;
-        let table = oxpinyin_core::store::DefaultStore::open_read_only(
-            &system_dir().join("phrase_index.bin"),
-        )
-        .expect("open the phrase table");
+        use oxpinyin::store::RawReadStore as _;
+        let table =
+            oxpinyin::store::DefaultStore::open_read_only(&system_dir().join("phrase_index.bin"))
+                .expect("open the phrase table");
         table
             .range_raw(
                 std::ops::Bound::Unbounded,
@@ -592,7 +591,7 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
             .collect::<String>()
     };
     let (context, instance) = open_at(&user.path);
-    oxpinyin_core::store::read_faults::fail_point_read_of(&extensions[1], 0);
+    oxpinyin::store::read_faults::fail_point_read_of(&extensions[1], 0);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, cstr("你").as_ptr()) });
     let rows: Vec<String> = capture_rows(instance)
         .into_iter()
@@ -846,7 +845,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
                 text,
                 length,
                 amplified(baked, total),
-                oxpinyin_core::model::phrase_index_library(token.value()),
+                oxpinyin::model::phrase_index_library(token.value()),
                 key,
             )
         })
@@ -855,9 +854,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
     // The user rows survived the prefix slice and reached the list.
     let user_position = |text: &str| {
         rows.iter()
-            .position(|row| {
-                row.0 == text && row.3 == usize::from(oxpinyin_core::user::USER_DICTIONARY)
-            })
+            .position(|row| row.0 == text && row.3 == usize::from(oxpinyin::user::USER_DICTIONARY))
             .unwrap_or_else(|| panic!("user row {text:?} missing from {rows:?}"))
     };
     let hua = user_position("\u{534e}");

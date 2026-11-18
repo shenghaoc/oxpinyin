@@ -11,9 +11,9 @@
     )
 )]
 
-use oxpinyin_core::input::tool::{self, storage::TableFile};
-use oxpinyin_core::user::data::table_info::{FileType, TableConf};
-use oxpinyin_core::user::tool::Index;
+use oxpinyin::input::tool::{self, storage::TableFile};
+use oxpinyin::user::data::table_info::{FileType, TableConf};
+use oxpinyin::user::tool::Index;
 use std::path::{Path, PathBuf};
 
 mod lookup;
@@ -26,7 +26,7 @@ fn present<T>(value: Option<T>) -> T {
 }
 
 fn conf(data: &Path) -> TableConf {
-    let path = present(oxpinyin_core::input::c_path(&data.join("table.conf")));
+    let path = present(oxpinyin::input::c_path(&data.join("table.conf")));
     TableConf::load(&path).unwrap_or_else(|_| {
         eprintln!("cannot load {}", data.join("table.conf").display());
         std::process::exit(2);
@@ -44,7 +44,7 @@ fn main() {
         std::process::exit(2);
     };
     let data = PathBuf::from(data);
-    let c_data = present(oxpinyin_core::input::c_path(&data));
+    let c_data = present(oxpinyin::input::c_path(&data));
     match mode.to_str() {
         Some("pinyin") => sessions::pinyin(&c_data),
         Some("phrase") => sessions::phrase(&c_data),
@@ -80,11 +80,11 @@ pub(crate) fn load_text_tables(
         let name = row
             .table
             .as_ref()
-            .and_then(|value| oxpinyin_core::input::c_path(Path::new(value.as_ref())));
+            .and_then(|value| oxpinyin::input::c_path(Path::new(value.as_ref())));
         // g_build_filename keeps the data prefix for names with a leading
         // separator; Path::join would replace it.
         let path = present(tool::storage::build_filename(
-            oxpinyin_core::input::c_path(data).as_deref(),
+            oxpinyin::input::c_path(data).as_deref(),
             name.as_deref().unwrap_or(c""),
         ));
         let Some(mut file) = TableFile::open(&path) else {

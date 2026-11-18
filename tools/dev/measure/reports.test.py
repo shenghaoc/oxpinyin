@@ -160,7 +160,7 @@ class NativeReports(unittest.TestCase):
         uuid = '00112233445566778899aabbccddeeff'
         self.assertEqual(reports.capture_rows(xml, pid=17, uuid=uuid, allocations=True),
                          dict(usable_rows=2, product_frames=2))
-        mangled = '_RNvMs2_CsHASH_13oxpinyin_coreNtB5_11RuntimeDict11fill_lookup'
+        mangled = '_RNvMs2_CsHASH_8oxpinyinNtB5_11RuntimeDict11fill_lookup'
         split = xml.replace('pinyin_guess_candidates', mangled).replace(
             '<row><sample-time>2</sample-time>', '</node><node><row><sample-time>2</sample-time>')
         self.assertEqual(reports.capture_rows(split, pid=17, uuid=uuid, allocations=True),

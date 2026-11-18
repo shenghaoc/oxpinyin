@@ -16,10 +16,10 @@ use std::ffi::{CString, OsStr};
 
 use crate::k_mixture_model::phrase::PhraseIndex;
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
-use oxpinyin_core::input::tool::{self, k_mixture_model as edge};
-use oxpinyin_core::user::data::PhraseLibraries;
-use oxpinyin_core::user::data::phrase_library::LibraryError;
-use oxpinyin_core::user::data::table_info::{FileName, TableConf};
+use oxpinyin::input::tool::{self, k_mixture_model as edge};
+use oxpinyin::user::data::PhraseLibraries;
+use oxpinyin::user::data::phrase_library::LibraryError;
+use oxpinyin::user::data::table_info::{FileName, TableConf};
 
 /// One loaded phrase index.
 pub struct SystemPhraseIndex {
@@ -31,7 +31,7 @@ impl PhraseIndex for SystemPhraseIndex {
         tag_token_text(
             token,
             // 074a2219 tag_utility.cpp:391.
-            oxpinyin_core::model::phrase_index_library(token) == 0,
+            oxpinyin::model::phrase_index_library(token) == 0,
             |token| self.libraries.phrase_text(token),
             |text| Some(text.outward_words().collect::<Vec<_>>()),
             |token| edge::report_unknown_token(token as i32),
@@ -88,9 +88,9 @@ pub fn load_system_phrases() -> SystemPhraseIndex {
 /// A `table.conf` file name as a C string for the pin's `%s`.
 fn c_name(name: &FileName) -> CString {
     let os: &OsStr = name.as_ref();
-    CString::new(oxpinyin_core::input::path::path_to_bytes(
-        std::path::Path::new(os),
-    ))
+    CString::new(oxpinyin::input::path::path_to_bytes(std::path::Path::new(
+        os,
+    )))
     .unwrap_or_default()
 }
 

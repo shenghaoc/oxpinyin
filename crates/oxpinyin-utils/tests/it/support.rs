@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 #[path = "support/expected.rs"]
 pub mod expected;
-use oxpinyin_core::store::{DefaultStore, RawReadStore as _};
+use oxpinyin::store::{DefaultStore, RawReadStore as _};
 use regex::bytes::Regex;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,7 +12,7 @@ use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 pub type Failure = Box<dyn Error>;
-pub const CELL: &str = match oxpinyin_core::user::data::DEFAULT_STORE_EXT.as_bytes() {
+pub const CELL: &str = match oxpinyin::user::data::DEFAULT_STORE_EXT.as_bytes() {
     b"db" => "bdb",
     b"kct" => "kc",
     _ => "tkrzw",

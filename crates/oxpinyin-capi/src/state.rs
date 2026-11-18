@@ -6,7 +6,7 @@
 //!
 //! The orchestration half of both structs — the runtime assembly, the
 //! user store, the live option/scheme word, the parse-mode state machine,
-//! the re-anchored window — lives in [`oxpinyin_core::facade`]'s
+//! the re-anchored window — lives in [`oxpinyin::facade`]'s
 //! `ContextCore`/`InstanceCore`, shared with the zhuyin facade; this file
 //! keeps only the C-facing shell: the context back-pointer, the ABI key
 //! slots, the `CString` candidate snapshot, and this facade's §9
@@ -18,7 +18,7 @@ use std::{
     rc::Rc,
 };
 
-use oxpinyin_core::{OptionBits, PhraseToken};
+use oxpinyin::{OptionBits, PhraseToken};
 
 /// Upstream's phrase-index library count (`novel_types.h:43`, `1<<4`).
 ///
@@ -26,11 +26,11 @@ use oxpinyin_core::{OptionBits, PhraseToken};
 /// compatibility policy's availability class turns that abort into a
 /// `false`.
 pub(crate) const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
-pub use oxpinyin_core::facade::ExportedBigramRow;
-pub use oxpinyin_core::facade::InstanceCore;
-pub use oxpinyin_core::facade::runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
-use oxpinyin_core::facade::{CandidateSnapshot, SnapshotRow, TextSpan};
-use oxpinyin_core::facade::{ContextCore, OpenFailure};
+pub use oxpinyin::facade::ExportedBigramRow;
+pub use oxpinyin::facade::InstanceCore;
+pub use oxpinyin::facade::runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
+use oxpinyin::facade::{CandidateSnapshot, SnapshotRow, TextSpan};
+use oxpinyin::facade::{ContextCore, OpenFailure};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
@@ -64,8 +64,8 @@ impl CapiContext {
         let core = ContextCore::try_open(
             system_dir,
             user_dir,
-            oxpinyin_core::facade::PINYIN_DEFAULT_OPTION_WORD,
-            oxpinyin_core::user::UserConfLaw::Pinyin,
+            oxpinyin::facade::PINYIN_DEFAULT_OPTION_WORD,
+            oxpinyin::user::UserConfLaw::Pinyin,
         )?;
         // Use the `gfloat` scanned by `table_info.cpp:220` directly.
         let predicted_lambda = core.runtime.table_conf().lambda_f32();
@@ -107,31 +107,31 @@ impl CapiContext {
             Ok(loaded) => Ok(loaded),
             // Register row 79, `pinyin.cpp:491`: the pin asserts a loaded
             // addon row is a `DICTIONARY`, and the process aborts.
-            Err(oxpinyin_core::facade::LibraryRowAssert::NotDictionary) => std::process::abort(),
+            Err(oxpinyin::facade::LibraryRowAssert::NotDictionary) => std::process::abort(),
             // Register row 79, `memory_chunk.h:493`: a row naming no chunk
             // maps the system directory, and where that directory reads as
             // a chunk the pin asserts on its length word. Where it does not,
             // the facade has written the pin's `mmap %s failed!` line and
             // the pin dies of SIGSEGV on the empty chunk (class (b)), so
             // the call fails with one warning.
-            Err(oxpinyin_core::facade::LibraryRowAssert::NullChunkName)
+            Err(oxpinyin::facade::LibraryRowAssert::NullChunkName)
                 if self
                     .core
                     .runtime
                     .system_dir()
-                    .is_none_or(oxpinyin_core::facade::null_chunk_asserts) =>
+                    .is_none_or(oxpinyin::facade::null_chunk_asserts) =>
             {
                 std::process::abort()
             }
-            Err(oxpinyin_core::facade::LibraryRowAssert::NullChunkName) => {
-                Err(oxpinyin_core::user::data::table_info::TableConfSite::NullSystemFile.warning())
+            Err(oxpinyin::facade::LibraryRowAssert::NullChunkName) => {
+                Err(oxpinyin::user::data::table_info::TableConfSite::NullSystemFile.warning())
             }
             // Register row 96: `pinyin.cpp:290` maps the addon through the same
             // `MemoryChunk::mmap`, and a directory of header size or more fails
             // the read at `memory_chunk.h:493`.
-            Err(oxpinyin_core::facade::LibraryRowAssert::ChunkHeaderRead) => std::process::abort(),
+            Err(oxpinyin::facade::LibraryRowAssert::ChunkHeaderRead) => std::process::abort(),
             // The addon load answers no `NotLoadable`.
-            Err(oxpinyin_core::facade::LibraryRowAssert::NotLoadable) => Ok(false),
+            Err(oxpinyin::facade::LibraryRowAssert::NotLoadable) => Ok(false),
         }
     }
 
@@ -150,7 +150,7 @@ impl CapiContext {
 
     /// The pin's bigram export iterator over this context, shared:
     /// [`ContextCore::bigram_export_walk`].
-    pub(crate) fn bigram_export_walk(&self) -> Option<oxpinyin_core::facade::BigramExportWalk> {
+    pub(crate) fn bigram_export_walk(&self) -> Option<oxpinyin::facade::BigramExportWalk> {
         self.core.bigram_export_walk()
     }
 
@@ -307,19 +307,16 @@ impl<C, S: std::borrow::BorrowMut<CapiInstanceState>, O> std::ops::DerefMut
 }
 
 pub type CapiInstanceRead<'a> =
-    CapiInstance<oxpinyin_core::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
-pub type CapiInstanceMut<'a> = CapiInstance<
-    oxpinyin_core::facade::InstanceMut<'a>,
-    &'a mut CapiInstanceState,
-    &'a ContextOwner,
->;
+    CapiInstance<oxpinyin::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
+pub type CapiInstanceMut<'a> =
+    CapiInstance<oxpinyin::facade::InstanceMut<'a>, &'a mut CapiInstanceState, &'a ContextOwner>;
 
 impl<
-    S: std::borrow::Borrow<oxpinyin_core::facade::InstanceState>,
-    E: std::borrow::Borrow<oxpinyin_core::engine::SessionState>,
+    S: std::borrow::Borrow<oxpinyin::facade::InstanceState>,
+    E: std::borrow::Borrow<oxpinyin::engine::SessionState>,
     V: std::borrow::Borrow<CapiInstanceState>,
     O: std::borrow::Borrow<ContextOwner>,
-> CapiInstance<oxpinyin_core::facade::InstanceView<'_, S, E>, V, O>
+> CapiInstance<oxpinyin::facade::InstanceView<'_, S, E>, V, O>
 {
     pub(crate) fn read(&self) -> CapiInstanceRead<'_> {
         CapiInstance {
@@ -335,13 +332,13 @@ impl<
 /// Handles retain ownership; every access still borrows only for one C call.
 pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
-oxpinyin_core::state_handle_helpers! {
-    context: PinyinContext, instance: PinyinInstance, instance_binding: instance, error: oxpinyin_core::engine::EngineError, context_field: { context: instance.context, }
+oxpinyin::state_handle_helpers! {
+    context: PinyinContext, instance: PinyinInstance, instance_binding: instance, error: oxpinyin::engine::EngineError, context_field: { context: instance.context, }
 }
 
 mod handles {
     use super::*;
-    oxpinyin_core::opaque_handle_casts! {
+    oxpinyin::opaque_handle_casts! {
         vis: pub,
         context: PinyinContext => ContextOwner,
         instance: PinyinInstance => CapiInstance,

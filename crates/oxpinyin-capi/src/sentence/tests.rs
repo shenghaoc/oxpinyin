@@ -23,7 +23,7 @@ use crate::test_support::{TempUserDir, assert_aborts, cstr, open};
 
 use crate::types::{PinyinContext, PinyinInstance};
 
-use oxpinyin_core::{OptionBits, PhraseText, model::Dictionary};
+use oxpinyin::{OptionBits, PhraseText, model::Dictionary};
 
 /// The value a test seeds an out-parameter with, to see it left alone.
 const UNTOUCHED: u32 = 0x00AB_CDEF;
@@ -161,7 +161,7 @@ fn a_read_failure_after_the_size_check_aborts() {
     crate::test_support::assert_aborts(
         "sentence::tests::a_read_failure_after_the_size_check_aborts",
         || {
-            let error = oxpinyin_core::engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
+            let error = oxpinyin::engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
             crate::sentence::refuse_lookup_gram("pinyin_phrase_segment", &error);
         },
     );
@@ -205,7 +205,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         let store = ctx.core.user_store_mut();
         for (previous, next) in [
-            (oxpinyin_core::user::SENTENCE_START, hao),
+            (oxpinyin::user::SENTENCE_START, hao),
             (short, hao),
             (long, number),
         ] {

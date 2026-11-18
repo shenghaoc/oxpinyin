@@ -1,6 +1,6 @@
 #![no_main]
 //! Hostile bytes through `table.conf` as `pinyin_init` reads it: the pin's
-//! own scanner calls (`oxpinyin-core`) and `TableConf::load`'s decoding of
+//! own scanner calls (`oxpinyin`) and `TableConf::load`'s decoding of
 //! what they answered. The load must answer on every input, never panic,
 //! and be deterministic; a refusal is a legitimate answer, not a failure.
 
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::user::data::table_info::TableConf;
+use oxpinyin::user::data::table_info::TableConf;
 
 /// One scratch file per fuzzing process: the scanner reads a `FILE *`.
 fn scratch() -> &'static Path {

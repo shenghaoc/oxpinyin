@@ -36,7 +36,7 @@ pub struct LookupCandidate;
 /// vendored `chewing_key.h` allocates exactly these 2 bytes and may copy
 /// keys through the pointer, so this must write and read what upstream
 /// writes and reads — the D1' contract. The renderers decode the word
-/// through [`oxpinyin_core::ChewingKey`].
+/// through [`oxpinyin::ChewingKey`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChewingKey {
@@ -57,7 +57,7 @@ impl ChewingKey {
 
     /// Packs the core elements into the ABI word.
     #[must_use]
-    pub(crate) const fn from_core(key: oxpinyin_core::ChewingKey) -> Self {
+    pub(crate) const fn from_core(key: oxpinyin::ChewingKey) -> Self {
         Self {
             packed: key.to_packed(),
         }
@@ -65,8 +65,8 @@ impl ChewingKey {
 
     /// Decodes the word for the renderers.
     #[must_use]
-    pub(crate) const fn to_core(self) -> oxpinyin_core::ChewingKey {
-        oxpinyin_core::ChewingKey::from_packed(self.packed)
+    pub(crate) const fn to_core(self) -> oxpinyin::ChewingKey {
+        oxpinyin::ChewingKey::from_packed(self.packed)
     }
 }
 
@@ -166,11 +166,11 @@ pub type GChar = c_char;
 pub const null_token: u32 = 0;
 
 // Header phrase-index literals must stay byte-identical to the canonical
-// `oxpinyin-core` token layout. `PinyinKey` / `PinyinKeyPos` are C-only
+// `oxpinyin` token layout. `PinyinKey` / `PinyinKeyPos` are C-only
 // typedefs in the checked-in `pinyin.h`, so they do not collide
-// with `oxpinyin_core::user::PinyinKey` (`u16`).
+// with `oxpinyin::user::PinyinKey` (`u16`).
 const _: () = {
-    assert!(oxpinyin_core::user::USER_DICTIONARY == 7);
-    assert!(oxpinyin_core::user::PHRASE_MASK == 0x00FF_FFFF);
-    assert!(oxpinyin_core::user::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
+    assert!(oxpinyin::user::USER_DICTIONARY == 7);
+    assert!(oxpinyin::user::PHRASE_MASK == 0x00FF_FFFF);
+    assert!(oxpinyin::user::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
 };

@@ -3,7 +3,7 @@ use crate::k_mixture_model::database::Database;
 use crate::k_mixture_model::database::tests::{
     SHORT, TOKEN, assert_short_single_gram_exit, child_dir, plant,
 };
-use oxpinyin_core::input::tool::DirectHashTable;
+use oxpinyin::input::tool::DirectHashTable;
 
 /// A first word whose stored row is shorter than the array header: the
 /// pin's `load` succeeds (`:252`) and `train_single_gram` reads the

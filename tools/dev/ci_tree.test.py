@@ -575,7 +575,7 @@ class GateTests(unittest.TestCase):
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.name', 'Shenghao Chen')
         self.git('config', 'user.email', 'shenghaoc@outlook.com')
-        self.base = self.commit({'README.md': 'r\n', 'crates/oxpinyin-core/lib': 'a\n'})
+        self.base = self.commit({'README.md': 'r\n', 'crates/oxpinyin/lib': 'a\n'})
 
     def tearDown(self):
         self.directory.cleanup()
@@ -629,10 +629,10 @@ class GateTests(unittest.TestCase):
             'tools/bisection/bisect.c': {'lint', 'test', 'harness'},
             # A Rust-only change does not select the harness.
             'crates/oxpinyin-corpus/src/lib.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin-core/src/lib.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin-core/tests/suite.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin-core/src/table_data/mod.rs': {'lint', 'test', 'ship'},
-            'crates/oxpinyin-core/benches/new.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin/src/lib.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin/tests/suite.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin/src/table_data/mod.rs': {'lint', 'test', 'ship'},
+            'crates/oxpinyin/benches/new.rs': {'lint', 'test', 'ship'},
             # The files directly in a crate's directory are harness inputs: packaging.test.py copies them.
             'crates/oxpinyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
             'crates/oxpinyin-zhuyin-capi/build.rs': {'lint', 'test', 'harness', 'ship'},
@@ -664,12 +664,12 @@ class GateTests(unittest.TestCase):
         for path, jobs in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(self.selected(path), jobs)
-        with self.subTest(rename='crates/oxpinyin-core/lib -> docs/lib'):
+        with self.subTest(rename='crates/oxpinyin/lib -> docs/lib'):
             self.git('reset', '-q', '--hard', self.base)
-            self.git('rm', '-q', 'crates/oxpinyin-core/lib')
+            self.git('rm', '-q', 'crates/oxpinyin/lib')
             self.commit({'docs/lib': 'a\n'})
             self.assertEqual(self.git('diff', '--name-status', self.base, 'HEAD'),
-                             'R100\tcrates/oxpinyin-core/lib\tdocs/lib')
+                             'R100\tcrates/oxpinyin/lib\tdocs/lib')
             flags = ci_tree.gate(self.base, root=self.root)
             self.assertEqual({name for name, value in flags.items() if value}, {'lint', 'test', 'harness', 'ship'})
 

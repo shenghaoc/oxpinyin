@@ -28,7 +28,7 @@ mod support;
 // The harness's own checks sit beside it.
 #[path = "support/tests.rs"]
 mod support_tests;
-#[path = "../../../oxpinyin-core/src/user/test_child.rs"]
+#[path = "../../../oxpinyin/src/user/test_child.rs"]
 mod test_child;
 mod token_getters;
 mod training;

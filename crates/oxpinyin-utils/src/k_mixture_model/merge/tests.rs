@@ -52,7 +52,7 @@ fn a_short_target_row_aborts_at_the_targets_header() {
 #[test]
 fn a_short_source_row_the_target_lacks_is_copied_unchanged() {
     use crate::k_mixture_model::database::tests::{SHORT, TOKEN, plant};
-    use oxpinyin_core::store::{
+    use oxpinyin::store::{
         AttachMode, DefaultStore, HashAttach, MAGIC_KEY, RawReadStore as _, WriteStore as _,
     };
     let dir = tempfile::tempdir().expect("scratch directory");

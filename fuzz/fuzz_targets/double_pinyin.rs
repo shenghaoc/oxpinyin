@@ -5,7 +5,7 @@
 //! the effective scheme unchanged.
 
 use libfuzzer_sys::fuzz_target;
-use oxpinyin_core::{DoublePinyinParser, DoublePinyinScheme, OptionBits};
+use oxpinyin::{DoublePinyinParser, DoublePinyinScheme, OptionBits};
 
 fuzz_target!(|data: &[u8]| {
     let allow_incomplete = data.first().is_some_and(|byte| byte & 1 == 1);

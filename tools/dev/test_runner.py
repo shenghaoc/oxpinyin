@@ -400,10 +400,10 @@ def _cargo_test(backend, nightly, target, subcommand=('nextest', 'run')):
     """
     command = ['cargo', f'+{nightly}', *subcommand]
     if backend.locked:
-        command += ['--locked', '--target', target, '-p', 'oxpinyin-core',
+        command += ['--locked', '--target', target, '-p', 'oxpinyin',
                     '--no-default-features', '--features', backend.feature]
     else:
-        command += ['-p', 'oxpinyin-core', '--no-default-features',
+        command += ['-p', 'oxpinyin', '--no-default-features',
                     '--features', backend.feature, '--target', target]
     command.append('--lib')
     if subcommand == ('nextest', 'run'):
@@ -491,7 +491,7 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
             executable = record.get('executable')
             if executable is not None:
                 executables.append(executable)
-    package = ROOT / 'crates/oxpinyin-core'
+    package = ROOT / 'crates/oxpinyin'
     if check_object is None:
         def check_object(obj):
             return tools.tkrzw(obj, runner='run-sanitizers', side='subject',

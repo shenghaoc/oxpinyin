@@ -21,8 +21,8 @@
 //! renderers return `None`, and the entry points abort the process before
 //! rendering where the pin does (register row 63, `text.rs`).
 
-use oxpinyin_core::ChewingKey;
-use oxpinyin_core::facade::KeyAt;
+use oxpinyin::ChewingKey;
+use oxpinyin::facade::KeyAt;
 
 /// Which spelling the prefix and postfix keys take.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -91,7 +91,7 @@ impl SharedMatrix {
     }
 
     /// [`Self::of`] over the key list
-    /// [`oxpinyin_core::facade::InstanceView::mode_key_list`] gave for the
+    /// [`oxpinyin::facade::InstanceView::mode_key_list`] gave for the
     /// current parse. Double pinyin reads its parse's keys instead.
     pub(crate) fn of_keys(
         inst: &crate::state::CapiInstanceRead<'_>,

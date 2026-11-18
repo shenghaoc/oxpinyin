@@ -34,7 +34,7 @@ pub fn system_dir() -> PathBuf {
         .join("..")
         .join("fixtures")
         .join("w3")
-        .join(oxpinyin_core::user::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin::user::data::DEFAULT_STORE_EXT)
 }
 
 /// A scratch user directory removed on drop.
@@ -136,7 +136,7 @@ pub fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
 /// outlive the instance or its close.
 pub fn with_store<R>(
     instance: *mut ZhuyinInstance,
-    f: impl FnOnce(&oxpinyin_core::user::UserStore) -> R,
+    f: impl FnOnce(&oxpinyin::user::UserStore) -> R,
 ) -> R {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`; the store is a value field, and the shared
@@ -342,15 +342,15 @@ fn child_command(
 /// such as one too short for its `guint32` total (register row 85).
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
-    use oxpinyin_core::store::WriteStore as _;
-    let conf = oxpinyin_core::user::data::table_info::TableConf::load_from_dir(&system_dir())
+    use oxpinyin::store::WriteStore as _;
+    let conf = oxpinyin::user::data::table_info::TableConf::load_from_dir(&system_dir())
         .expect("fixture table.conf");
-    let versions = oxpinyin_core::user::data::user_files::SystemVersions::from_conf(&conf);
-    let mut marker = oxpinyin_core::user::data::user_files::UserTableInfo::conform_to(&versions);
+    let versions = oxpinyin::user::data::user_files::SystemVersions::from_conf(&conf);
+    let mut marker = oxpinyin::user::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
     std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
-    oxpinyin_core::store::DefaultStore::write_user_bigram(
-        &user_dir.join(oxpinyin_core::user::data::user_files::UserDbm::Bigram.file_name()),
+    oxpinyin::store::DefaultStore::write_user_bigram(
+        &user_dir.join(oxpinyin::user::data::user_files::UserDbm::Bigram.file_name()),
         &rows,
     )
     .expect("write the user bigram");
@@ -520,7 +520,7 @@ pub fn link_file(target: &std::path::Path, link: &std::path::Path) {
 
 /// Replaces the system library `file` with a non-empty directory whose entry
 /// name is 25 bytes long. Where a directory reads as a chunk
-/// ([`oxpinyin_core::user::data::phrase_library::directory_reads_as_a_chunk`]) the
+/// ([`oxpinyin::user::data::phrase_library::directory_reads_as_a_chunk`]) the
 /// pin's `MemoryChunk::mmap` asserts on its header read
 /// (`memory_chunk.h:493`, register row 96); elsewhere it is row 76's
 /// unmappable library. Answers which.
@@ -530,14 +530,14 @@ pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
     std::fs::remove_file(&path).expect("unlink the library");
     std::fs::create_dir(&path).expect("directory library");
     std::fs::write(path.join("e".repeat(25)), b"x").expect("fill the directory");
-    oxpinyin_core::user::data::phrase_library::directory_reads_as_a_chunk(&path)
+    oxpinyin::user::data::phrase_library::directory_reads_as_a_chunk(&path)
 }
 
 /// Hand-built `PhraseIndexLogger` records for the journal-replay tests
 mod tests;
 
 #[cfg(feature = "tkrzw")]
-#[path = "../../oxpinyin-core/tests/common/contract_data.rs"]
+#[path = "../../oxpinyin/tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
 
 /// The two short rows of the table-conf-919-short-row-merged witness.

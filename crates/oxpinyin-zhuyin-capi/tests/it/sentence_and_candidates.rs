@@ -97,13 +97,13 @@ fn a_kept_sentence_reads_its_tokens_through_the_live_phrase_index() {
 /// `zhuyin.cpp:983-999`).
 #[test]
 fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
-    use oxpinyin_core::user::data::chunk_write::{ChunkItem, build_chunk};
-    use oxpinyin_core::user::data::row_format::pinyin_index::{encode_complete_key, encode_item};
+    use oxpinyin::user::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin::user::data::row_format::pinyin_index::{encode_complete_key, encode_item};
 
     let scratch = tempfile::tempdir().expect("scratch");
     let system = private_system(scratch.path());
     let token = 0x0100_0001;
-    let keys = [oxpinyin_core::ChewingKey::from_packed(0x1081)];
+    let keys = [oxpinyin::ChewingKey::from_packed(0x1081)];
     let items = [(
         1,
         ChunkItem {
@@ -123,7 +123,7 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
 
     let context = init_on(&system, None);
     assert!(!context.is_null());
-    let instance = full_pinyin(context, oxpinyin_core::OptionBits::USE_TONE.bits(), "ba1");
+    let instance = full_pinyin(context, oxpinyin::OptionBits::USE_TONE.bits(), "ba1");
     assert!(unsafe { zhuyin_guess_sentence(instance) });
 
     let mut out = SEEDED as *mut c_char;
@@ -239,10 +239,7 @@ fn partial_candidate_gram_logs_once() {
     crate::support::plant_bigram(&user.path, vec![(token.to_le_bytes().to_vec(), gram)]);
     let (context, instance) = open_with_user(&user.path);
     assert!(unsafe {
-        crate::support::zhuyin_set_options(
-            context,
-            oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits(),
-        )
+        crate::support::zhuyin_set_options(context, oxpinyin::OptionBits::DYNAMIC_ADJUST.bits())
     });
     assert!(!unsafe {
         crate::support::zhuyin_guess_sentence_with_prefix(instance, c"你好".as_ptr())

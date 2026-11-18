@@ -55,7 +55,7 @@ use rstest::rstest;
 // parser2-full-incomplete: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44
 // at 074a2219.
 // --incomplete sets the pinyin and zhuyin incomplete bits for every parser;
-// oxpinyin-core tests each parser with these bits.
+// oxpinyin tests each parser with these bits.
 #[case::parser2_full_incomplete(
     &["-p", "fullpinyin", "-i"],
     b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",

@@ -5,13 +5,13 @@
 //! and the punctuation prefix of
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
-use oxpinyin_core::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text::phrase_text_bytes;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
 use std::os::raw::c_char;
 
-use oxpinyin_core::user::UserStore;
-use oxpinyin_core::{PhraseText, PhraseToken, single_gram};
+use oxpinyin::user::UserStore;
+use oxpinyin::{PhraseText, PhraseToken, single_gram};
 
 use crate::state::{CapiCandidate, SharedDict, SharedLm, instance_mut};
 use crate::types::{PinyinInstance, lookup_candidate_type_t};
@@ -92,8 +92,7 @@ fn guess_predicted_result(
     // `_compute_prefixes`' validating `reduce_tokens` (`pinyin.cpp:2424`,
     // `:1415`; `phrase_large_table3.h:95`) asserts on a tail substring with
     // more than four tokens, before the empty check.
-    let Ok(prefixes) =
-        oxpinyin_core::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix)
+    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix)
     else {
         std::process::abort();
     };
@@ -144,11 +143,11 @@ fn guess_predicted_result(
         // Only one pre-dedup row: neither strcmp runs. Its opaque score and
         // length are unobservable; preserve the NULL getter and choose token.
         inst.state.candidates.push(CapiCandidate {
-            text: oxpinyin_core::facade::TextSpan::NULL,
+            text: oxpinyin::facade::TextSpan::NULL,
             text_ptr: std::ptr::null(),
             type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
             nbest_index: 0,
-            token: Cell::new(Some(oxpinyin_core::PhraseToken::new(token))),
+            token: Cell::new(Some(oxpinyin::PhraseToken::new(token))),
             begin: 0,
             end: 0,
         });
@@ -184,7 +183,7 @@ fn guess_predicted_result(
             text_ptr: std::ptr::null(),
             type_tag: Cell::new(item.candidate_type.tag()),
             nbest_index: 0,
-            token: Cell::new(Some(oxpinyin_core::PhraseToken::new(item.token))),
+            token: Cell::new(Some(oxpinyin::PhraseToken::new(item.token))),
             begin: 0,
             end: 0,
         });
@@ -195,7 +194,7 @@ fn guess_predicted_result(
 /// Stably rank predicted rows by phrase length and guarded wrapping frequency
 /// (`pinyin.cpp:2440-2445`). Prediction has no pinyin-span key.
 fn sort_predicted(items: &mut [Predicted]) {
-    oxpinyin_core::engine::rank_by_frequency(items, |row| (row.phrase_length, 0, row.frequency));
+    oxpinyin::engine::rank_by_frequency(items, |row| (row.phrase_length, 0, row.frequency));
 }
 
 /// Whether `prefix` is one of the instance's own candidate strings; if so,
@@ -257,7 +256,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates(
     if clear_borrowed_prefix(&mut inst, prefix) {
         return false;
     }
-    let prefix = oxpinyin_core::marshal::ucs4::prefix_text(
+    let prefix = oxpinyin::marshal::ucs4::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -490,7 +489,7 @@ fn append_predicted_prefix(
     // The facade merge reproduces reduce_tokens: library groups first,
     // then each DBM's UCS-4 byte cursor order. The stable length/score sort
     // preserves this collection order on ties, including user/system ties.
-    let suggestions = oxpinyin_core::facade::merged_suggestions(dict, user, prefix);
+    let suggestions = oxpinyin::facade::merged_suggestions(dict, user, prefix);
     let total = predicted_total(lm);
     let (kept, sole_missing) =
         select_prefix_rows(suggestions, limit, into.len() + earlier_rows_without_item);
@@ -545,7 +544,7 @@ fn predicted_frequency(
     // The pin's candidate `m_freq` for predicted rows is the same
     // expression as the lookup candidates' (`pinyin.cpp:1811-1824`, the
     // `PREDICTED_PREFIX` branch), so the engine's function computes it.
-    oxpinyin_core::engine::amplified_frequency(unigram, total, lambda)
+    oxpinyin::engine::amplified_frequency(unigram, total, lambda)
 }
 
 fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {

@@ -3,7 +3,7 @@
 //! The cursor → lookup-offset normalization (D1) and the word-level
 //! left/right moves (D2) port the pin's matrix laws
 //! (`pinyin.cpp:3008-3095` at the pin) over the engine's positional
-//! data — `oxpinyin_core::engine::lookup_offset_over_spans` and the
+//! data — `oxpinyin::engine::lookup_offset_over_spans` and the
 //! `*_word_offset_over_spans` pair. Where the pin's `_check_offset` aborts
 //! (`pinyin.cpp:2175`), the left and right moves abort too (register row 14);
 //! `pinyin_get_pinyin_offset` aborts only over an empty matrix with a parsed
@@ -263,7 +263,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_string(
     // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
     // parameters: a non-NULL output is aligned and writable without conflicting with live
     // borrows.
-    unsafe { render_key(key, utf8_str, oxpinyin_core::ChewingKey::pinyin_text) }
+    unsafe { render_key(key, utf8_str, oxpinyin::ChewingKey::pinyin_text) }
 }
 
 /// Render a pinyin key as its Zhuyin spelling.
@@ -292,7 +292,7 @@ pub unsafe extern "C" fn pinyin_get_zhuyin_string(
     // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
     // parameters: a non-NULL output is aligned and writable without conflicting with live
     // borrows.
-    unsafe { render_key(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_text) }
+    unsafe { render_key(key, utf8_str, oxpinyin::ChewingKey::zhuyin_text) }
 }
 
 /// Render a pinyin key as its shengmu / yunmu pair.
@@ -349,7 +349,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_strings(
 /// renderers assert the tone (`:40`, `:75`, `:92`, `:105`): a key packed from
 /// caller memory with a field outside them aborts the process, as the pin
 /// does (register row 4).
-fn abort_on_elements_outside_dims(key: oxpinyin_core::ChewingKey) {
+fn abort_on_elements_outside_dims(key: oxpinyin::ChewingKey) {
     if !key.elements_in_dims() {
         std::process::abort();
     }
@@ -357,7 +357,7 @@ fn abort_on_elements_outside_dims(key: oxpinyin_core::ChewingKey) {
 
 /// The tone half of [`abort_on_elements_outside_dims`], asserted after the
 /// `get_table_index` guard by every renderer that prints a tone.
-fn abort_on_tone_outside_dims(key: oxpinyin_core::ChewingKey) {
+fn abort_on_tone_outside_dims(key: oxpinyin::ChewingKey) {
     if !key.tone_in_dims() {
         std::process::abort();
     }
@@ -374,7 +374,7 @@ fn abort_on_tone_outside_dims(key: oxpinyin_core::ChewingKey) {
 unsafe fn render_key(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl Fn(oxpinyin_core::ChewingKey) -> oxpinyin_core::KeyText,
+    render: impl Fn(oxpinyin::ChewingKey) -> oxpinyin::KeyText,
 ) -> bool {
     // The pin never reads `instance` (`pinyin.cpp:2707-2727`).
     if key.is_null() {
@@ -506,16 +506,16 @@ pub unsafe extern "C" fn pinyin_get_left_pinyin_offset(
     let result = match inst.core.left_offset(offset) {
         Ok(result) => result,
         Err(error) => {
-            match oxpinyin_core::facade::CursorFault::of(
+            match oxpinyin::facade::CursorFault::of(
                 &error,
-                oxpinyin_core::facade::CursorLaw::CheckOffset,
+                oxpinyin::facade::CursorLaw::CheckOffset,
             ) {
                 // Register row 14: `assert(_check_offset(...))`,
                 // `pinyin.cpp:3035`, `:3057`; an offset past the matrix asserts in
                 // its `get_column_size` (`phonetic_key_matrix.h:103`).
-                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
                 // A graph failure the pin has no counterpart for.
-                oxpinyin_core::facade::CursorFault::Unreadable => {
+                oxpinyin::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("pinyin_get_left_pinyin_offset: the lookup failed");
                     return false;
                 }
@@ -575,16 +575,16 @@ pub unsafe extern "C" fn pinyin_get_right_pinyin_offset(
         // column, so `abort_past_matrix` above has already aborted.
         Ok(None) => return false,
         Err(error) => {
-            match oxpinyin_core::facade::CursorFault::of(
+            match oxpinyin::facade::CursorFault::of(
                 &error,
-                oxpinyin_core::facade::CursorLaw::CheckOffset,
+                oxpinyin::facade::CursorLaw::CheckOffset,
             ) {
                 // Register row 14: `assert(_check_offset(...))`,
                 // `pinyin.cpp:3067`, `:3092`, and the matrix's own index assert
                 // past its end.
-                oxpinyin_core::facade::CursorFault::PinAssert => std::process::abort(),
+                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
                 // A graph failure the pin has no counterpart for.
-                oxpinyin_core::facade::CursorFault::Unreadable => {
+                oxpinyin::facade::CursorFault::Unreadable => {
                     crate::ffi::log_warning("pinyin_get_right_pinyin_offset: the lookup failed");
                     return false;
                 }

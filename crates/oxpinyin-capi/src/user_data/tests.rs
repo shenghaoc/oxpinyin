@@ -20,7 +20,7 @@ use crate::types::PinyinInstance;
 
 use crate::user_data::pinyin_remember_user_input;
 
-use oxpinyin_core::user::{FIRST_USER_TOKEN, UserStore};
+use oxpinyin::user::{FIRST_USER_TOKEN, UserStore};
 
 /// Imports `phrase` into library 7 once per reading and returns its token.
 fn import_readings(
@@ -59,7 +59,7 @@ fn remember_user_input_keeps_the_double_pinyin_tone() {
     use crate::config::pinyin_set_double_pinyin_scheme;
     use crate::parse::pinyin_parse_more_double_pinyins;
 
-    let ni3 = oxpinyin_core::ChewingKey::from_pinyin("ni")
+    let ni3 = oxpinyin::ChewingKey::from_pinyin("ni")
         .expect("ni is a key")
         .with_tone(3)
         .to_packed();
@@ -152,7 +152,7 @@ fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
         2
     );
 
-    for length in [0, oxpinyin_core::user::MAX_PHRASE_LENGTH, 65_536] {
+    for length in [0, oxpinyin::user::MAX_PHRASE_LENGTH, 65_536] {
         assert!(!unsafe {
             pinyin_remember_user_input(instance, cstr("你".repeat(length)).as_ptr(), 1)
         });

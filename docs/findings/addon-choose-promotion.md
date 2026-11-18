@@ -67,12 +67,12 @@ Facts fixed by this path:
 ## 2. oxpinyin mapping
 
 The writable, persisted phrase index of the default facade is the user
-store (`oxpinyin-core`). Nibbles 6 and 7 live there, and `addon.bin`
+store (`oxpinyin`). Nibbles 6 and 7 live there, and `addon.bin`
 (nibble 5) is a `USER_FILE` of the same facade, so promotion writes there
 too:
 
 - `UserStore::promote_addon_phrase(token, item)`
-  (`crates/oxpinyin-core/src/user/store.rs`) takes the addon item's wire bytes
+  (`crates/oxpinyin/src/user/store.rs`) takes the addon item's wire bytes
   and copies them: the item is written to the token's sub-index as stored,
   the phrase table takes its stored words, and the pinyin index takes one
   record per stored reading with the packed keys as stored, tones included.
@@ -84,14 +84,14 @@ too:
   `check_add` keeps its refusals (an empty key, a malformed stored record,
   register row 101).
 - `SharedDict::addon_phrase_item(token)`
-  (`crates/oxpinyin-core/src/facade/runtime/mod.rs`) reads the item's stored bytes from
+  (`crates/oxpinyin/src/facade/runtime/mod.rs`) reads the item's stored bytes from
   the addon library (`PhraseItemView::as_bytes`). No spelling is rendered
   and parsed back, so no tone, reading or non-scalar word is lost.
 - `pinyin_choose_candidate` (`crates/oxpinyin-capi/src/candidates.rs`) runs
   the promotion for an `ADDON` candidate before selecting, rewrites the
   snapshot candidate to `NORMAL_CANDIDATE` at the promoted token, and selects
   the row with that token through `Session::select_target`
-  (`crates/oxpinyin-core/src/engine/session/selection.rs`); a later choose of the
+  (`crates/oxpinyin/src/engine/session/selection.rs`); a later choose of the
   same handle forces it again.
 
 After promotion the phrase surfaces through `UserLookup` as a
@@ -127,7 +127,7 @@ list and replaces it (§5).
   `candidates::tests::a_promoted_addon_item_keeps_every_toned_reading`
   chooses a crafted toned item. It checks the candidate type, finds the
   token with `pinyin_lookup_tokens` and compares the packed readings.
-  `oxpinyin-core`'s `promote_addon_phrase_copies_the_item_bytes_and_indexes_each_reading`,
+  `oxpinyin`'s `promote_addon_phrase_copies_the_item_bytes_and_indexes_each_reading`,
   `promote_addon_phrase_copies_an_item_with_no_reading`,
   `promote_addon_phrase_copies_a_word_that_is_not_a_scalar` and
   `promote_addon_phrase_takes_length_16_and_refuses_17` compare the copied
@@ -139,7 +139,7 @@ list and replaces it (§5).
   nibble-5 token, that the phrase persists under that token in the user
   store, and that a freshly built `UserLookup` finds the promoted phrase as a
   default-facade candidate.
-- `oxpinyin-core`'s `promote_addon_phrase_allocates_nibble_5_and_copies_frequency`
+- `oxpinyin`'s `promote_addon_phrase_allocates_nibble_5_and_copies_frequency`
   promotes into a transient store, and a second promotion of the same
   phrase takes the next range end (§3).
 
@@ -166,7 +166,7 @@ is first in the list and the addon row still wins. With
 `SORT_BY_FREQUENCY` set, the sort puts the addon row first.
 
 The engine implements the rule in `dedup_ranked_by_text`
-(`crates/oxpinyin-core/src/engine/session/mod.rs`). It runs on the sorted phrase
+(`crates/oxpinyin/src/engine/session/mod.rs`). It runs on the sorted phrase
 rows, where the true `m_freq` of each row is known. It includes the LONGER
 row before this dedup. The sentence prepend then keeps an n-best row over
 any phrase row with its text (`src/pinyin.cpp:2116-2125`).
@@ -192,7 +192,7 @@ item gets its own pinyin index entry (`src/pinyin.cpp:584-605`).
 Tests: the pin cases `addon-promoted-listing-unsorted`,
 `addon-promoted-listing-by-frequency`, `before-cursor-frequency-dedup`,
 `longer-normal-frequency-dedup` and `longer-normal-disabled`, with their
-`frequency-tie` variants; `oxpinyin-core`'s
+`frequency-tie` variants; `oxpinyin`'s
 `session::tests::the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie`
 and `session::tests::a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set`.
 The final dedup also runs when sentence rows are suppressed.

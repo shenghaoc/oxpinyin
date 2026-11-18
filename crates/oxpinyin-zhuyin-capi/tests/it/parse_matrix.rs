@@ -27,9 +27,7 @@ fn scheme_separator(scheme: i32, text: &str) -> Fixture {
         unsafe { zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()) },
         0
     );
-    assert!(unsafe {
-        zhuyin_set_options(fixture.context, oxpinyin_core::OptionBits::USE_TONE.bits())
-    });
+    assert!(unsafe { zhuyin_set_options(fixture.context, oxpinyin::OptionBits::USE_TONE.bits()) });
     assert_eq!(
         unsafe { zhuyin_parse_more_full_pinyins(fixture.instance, input.as_ptr()) },
         6

@@ -24,7 +24,7 @@ use std::path::Path;
 
 use std::ptr;
 
-use oxpinyin_core::user::SENTENCE_START;
+use oxpinyin::user::SENTENCE_START;
 
 /// The total of library 1 in the mini fixture's gb_char.bin.
 fn library_one_total() -> u32 {
@@ -237,7 +237,7 @@ fn partial_candidate_gram_logs_once(
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     if operation == "lookup" {
         assert!(unsafe {
-            pinyin_set_options(context, oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits())
+            pinyin_set_options(context, oxpinyin::OptionBits::DYNAMIC_ADJUST.bits())
         });
         assert!(!unsafe {
             crate::support::pinyin_guess_sentence_with_prefix(instance, c"你好".as_ptr())
@@ -499,9 +499,7 @@ fn repeated_candidate_guess_refuses_the_same_partial_predecessor() {
         )],
     );
     let context = init_fixture_at(user);
-    assert!(unsafe {
-        pinyin_set_options(context, oxpinyin_core::OptionBits::DYNAMIC_ADJUST.bits())
-    });
+    assert!(unsafe { pinyin_set_options(context, oxpinyin::OptionBits::DYNAMIC_ADJUST.bits()) });
     let instance = unsafe { pinyin_alloc_instance(context) };
     assert_eq!(
         unsafe { pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()) },

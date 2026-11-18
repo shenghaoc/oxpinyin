@@ -40,7 +40,7 @@ use crate::support::zhuyin_parse_more_chewings;
 #[cfg(unix)]
 use crate::support::zhuyin_train;
 
-use oxpinyin_core::user::USER_DICTIONARY;
+use oxpinyin::user::USER_DICTIONARY;
 
 use std::path::Path;
 
@@ -272,7 +272,7 @@ fn zhuyin_launches_never_move_the_open_counter() {
     unsafe { zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY)) };
     assert!(unsafe { zhuyin_save(context) });
     let saved = std::fs::read(&marker).expect("zhuyin_save writes user.conf");
-    let newline = oxpinyin_core::input::TEXT_NEWLINE;
+    let newline = oxpinyin::input::TEXT_NEWLINE;
     assert!(
         String::from_utf8_lossy(&saved).ends_with(&format!("open counter:0{newline}")),
         "zhuyin_save's marker carries a fresh counter"
@@ -311,7 +311,7 @@ fn reload_aborts_on_a_log_header_token() {
 }
 
 /// Register row 96 at the reload of an unloaded library.
-// Unix only, for the reason `oxpinyin-core`'s `save_stops_at_the_directory_with_the_pins_files` gives.
+// Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
 fn reload_aborts_on_a_directory_library() {

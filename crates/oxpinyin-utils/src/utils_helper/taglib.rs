@@ -18,7 +18,7 @@
 use rustc_hash::FxHashMap;
 use std::ffi::{CStr, CString, c_int};
 
-use oxpinyin_core::input::tool;
+use oxpinyin::input::tool;
 
 /// One `tag_entry` (`:13-21`).
 #[derive(Clone, Debug)]

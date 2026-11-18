@@ -14,10 +14,10 @@
 use std::ffi::CString;
 use std::path::Path;
 
-use oxpinyin_core::input::tool;
-use oxpinyin_core::user::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin_core::user::data::table_info::{TableConf, TableConfError};
-use oxpinyin_core::user::data::{BigramTable, PhraseIndexTable, PhraseLibraries};
+use oxpinyin::input::tool;
+use oxpinyin::user::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin::user::data::table_info::{TableConf, TableConfError};
+use oxpinyin::user::data::{BigramTable, PhraseIndexTable, PhraseLibraries};
 
 /// The loaded system data.
 pub(crate) struct Tables {
@@ -58,7 +58,7 @@ pub(crate) fn load(with_bigram: bool) -> Result<Tables, TablesError> {
         let Some(name) = row.system.as_ref() else {
             return Err(TablesError::Chunk(None));
         };
-        let c_name = oxpinyin_core::input::c_path(Path::new(name.as_ref()));
+        let c_name = oxpinyin::input::c_path(Path::new(name.as_ref()));
         match libraries.load_heap(index, Path::new(name.as_ref())) {
             // A second row for one nibble is the pin's
             // `ERROR_ALREADY_EXISTS`, whose answer the loop ignores.

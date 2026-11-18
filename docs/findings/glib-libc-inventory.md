@@ -99,7 +99,7 @@ prediction-only surfaces; `all` means bdb, kc and tkrzw. `Disposition`:
 | G8 | diagnostics: `g_return_val_if_fail`, 6 sites (`pinyin.cpp:1454`, `zhuyin.cpp:973`, `phrase_index.cpp:354-356,361`); `abort` 45, nearly all after a failed internal check; `g_warning` only in the tool-only tag utility | both; all | `capi/src/ffi.rs` `log_warning`; zhuyin twin; `capi/src/phrase.rs` calls `glib_sys::g_utf8_strlen` | valid: the pin's asserts abort in the C adapters (`std::process::abort()`). malformed: the `g_utf8_strlen` critical is GLib's own; the other five sites are early returns of the pin's value with no critical ([Phrase segmentation writes no invalid-UTF-8 critical](upstream-divergences.md#phrase-segmentation-writes-no-invalid-utf-8-critical), [Phrase-library layout faults write no critical](upstream-divergences.md#phrase-library-layout-faults-write-no-critical)). | abort where the pin aborts; D1 for the six macro sites |
 | G9 | allocation/free and real GArray ABI: `g_free` 152, `g_strdup` 44, `g_strdup_printf` 14; C `malloc`/`free`/`realloc` 5; `g_array_set_size`/`g_array_append_vals` into caller arrays in `pinyin.cpp:2805,2817` and `zhuyin.cpp:1797,1809` | both; all | `capi/src/ffi.rs` (both facades): returned strings and the keyboard vector from the pin's GLib calls; `malloc_cstr_with`, the fallible libc-`malloc` encoder for the `g_ucs4_to_utf8` sites (NULL, no warning); `capi/src/dict.rs` and zhuyin twin on `glib_sys`; `libpinyin.alloc` / `libzhuyin.alloc` | valid: caller may `g_free` / `g_strfreev`; the real `GArray` keeps GLib's private metadata. malformed: NULL or OOM paths. | contract; MUST RETAIN |
 | G10 | rename and sync: `g_rename` 10 (`pinyin.cpp:1059,1078,1094,1108,1121`; `zhuyin.cpp:609,635,655,672,687`); `g_fsync` 1 (`memory_chunk.h:555`) | both; all | `user/src/persistence.rs` `save_reporting`, `pin_rename_order`; `core/src/input/path.rs` `rename`; `input/src/chunk.rs` `save` | valid: same file order and bytes. failure: per-file write/rename failures and the save's return. | contract |
-| G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | the pin's own calls in `oxpinyin_core::input` `config.rs` / `native.rs` through the `libc` crate, decoded by `data/src/table_info.rs` `TableConf::load` and `data/src/user_files.rs` `UserTableInfo::load`/`save` | valid: same table values, versions, λ bits and library mapping. malformed/host: the host libc's `%d`/`%f`/`%255s` scanner, the pin's own call; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: the pin's call except the class (b) refusals; host scanner host-dependent (policy row 78); `LC_NUMERIC` row 39 |
+| G11 | numeric parsing and locale: `fscanf` 10 (`table_info.cpp:208,214,220,228,232,255,338,344,352,357`); `atoi` 1 (`:160`); `setlocale` 6 (`:197,291,328,372,378,394`) | both; all | the pin's own calls in `oxpinyin::input` `config.rs` / `native.rs` through the `libc` crate, decoded by `data/src/table_info.rs` `TableConf::load` and `data/src/user_files.rs` `UserTableInfo::load`/`save` | valid: same table values, versions, λ bits and library mapping. malformed/host: the host libc's `%d`/`%f`/`%255s` scanner, the pin's own call; class (b): missing source buffer and merged-row SIGSEGV. | valid: contract. malformed: the pin's call except the class (b) refusals; host scanner host-dependent (policy row 78); `LC_NUMERIC` row 39 |
 | G12 | file I/O and `MemoryChunk`: `mmap` 1, `munmap` 2, `lseek` 4, `read` 5, `write` 3, `open` 3, `close` 12, `unlink` 20, `fopen` 3, `fclose` 8, `feof` 1, `fprintf` 27 | both; all | `input/src/chunk.rs` `load` / `save` (the pin's `open`/`read`/`mmap`/`write`/`fsync`/`close`); `data/src/phrase_library.rs` `map_chunk`; `user/src/persistence.rs`; `data/src/c_stderr.rs` raw bytes | valid: same mapped extent, header check and file bytes. malformed: short/truncated/directory chunk; write failures. | contract on valid files. malformed: class (b) row 76, abort row 96, row 109 |
 | G13 | C primitives: `memset` 86, `memcpy` 11, `strlen` 16, `strcmp` 18, `memcmp` 3, `memmove` 7, `strchr` 1 | both; all | Rust slices/`str`; `data/src/row_format.rs`, `core/src/single_gram.rs`, `capi/src/ffi.rs` | valid: same bytes. malformed: NULL/unreadable phrase strings and out-of-range walks are class (b) rows. | contract; class (b) at rows 80, 106 |
 | G14 | libm: `log` 7 (`phonetic_lookup.h:39,250,663,693`; `phrase_lookup.cpp:40,321,342`) | both; all | `engine/src/nbest.rs` and `engine/src/phrase.rs` (`f64::ln`) | valid: class (a) last-bit differences are accepted. | class (a), row 11 |
@@ -360,7 +360,7 @@ Only `pinyin_get_chewing_auxiliary_text` reaches `split_zhuyin`, through
 #### G3 path joining
 
 `g_build_filename` is the only path constructor. oxpinyin calls it through
-`glib-sys` in `oxpinyin_core::input` `path.rs` (`build_filename`, `build_path`,
+`glib-sys` in `oxpinyin::input` `path.rs` (`build_filename`, `build_path`,
 `build_bytes`). GLib `glib/gfileutils.c:1925-2025` (`g_build_path_va` with
 `"/"` on Unix). The pin joins exactly two elements, `dir` and `name`: an
 empty `name` gives `dir`, an empty `dir` gives `name`; otherwise `dir` keeps
@@ -645,7 +645,7 @@ The C-facing path is `pinyin_save` / `zhuyin_save` →
 | Loaded default libraries, ascending index 1..15, skipping absent, NOT_USED and NULL user names | `pinyin.cpp:922-994,1025-1086`; `zhuyin.cpp:559-644` | Exact library order. SYSTEM_FILE/DICTIONARY writes a diff against the mapped system chunk; USER_FILE writes a chunk. |
 | Pinyin `.tmp` staging and rename pass | `pinyin.cpp:971,988,996-1022,1059,1078,1094,1108,1121` | **All** selected libraries, the user pinyin index, user phrase index and user bigram are staged, then renamed in that order. A failure never reorders later files. |
 | Zhuyin staging and immediate renames | `zhuyin.cpp:607-609,633-635,646-690` | Each library, then the pinyin index, phrase index and bigram, is written then renamed individually (`Staged::immediate`). |
-| Chunk open, header, payload, sync and close | `include/memory_chunk.h:536-557`; callers `pinyin.cpp:971,988`, `zhuyin.cpp:607,633` | `oxpinyin_core::input` `chunk::save`: open; one `write` per header word; one payload `write`; `fsync` and `close`, both results ignored. A failed header write is the pin's `assert`, reproduced as an abort (row 77, `ChunkHeaderWrite`). A short or failed payload write is the pin's soft `false` with no sync (`PersistenceError::Io`), tolerated as the pin's callers ignore it. No retry. |
+| Chunk open, header, payload, sync and close | `include/memory_chunk.h:536-557`; callers `pinyin.cpp:971,988`, `zhuyin.cpp:607,633` | `oxpinyin::input` `chunk::save`: open; one `write` per header word; one payload `write`; `fsync` and `close`, both results ignored. A failed header write is the pin's `assert`, reproduced as an abort (row 77, `ChunkHeaderWrite`). A short or failed payload write is the pin's soft `false` with no sync (`PersistenceError::Io`), tolerated as the pin's callers ignore it. No retry. |
 | Staged DBM indexes | `facade_chewing_table2.h:93-96`, `facade_phrase_table3.h:92-95`; `chewing_large_table2_bdb.cpp:135-161`, `phrase_large_table3_bdb.cpp:150-176`; KC `chewing_large_table2_kyotodb.cpp:124-145`, `phrase_large_table3_kyotodb.cpp:139-160`; tkrzw `chewing_large_table2_tkrzwdb.cpp:111-129`, `phrase_large_table3_tkrzwdb.cpp:102-120` | Stale staging is unlinked, backend-native output is created, records are copied, and the backend save finishes before rename. KC dumps snapshots (its synchronize/close branch is `#if 0`); tkrzw synchronizes with `false` then closes; BDB calls the temporary DB's sync with `m_db`, then closes the temporary DB. |
 | Staged bigram | `ngram_bdb.cpp:81-110`; `ngram_kyotodb.cpp:82-113`; `ngram_tkrzwdb.cpp:65-83`; facade `pinyin.cpp:1014-1022`, `zhuyin.cpp:680-690` | Last DBM, before the marker. Backend failures do not prevent the attempted rename. |
 | Failed rename, including a directory at the final name | `pinyin.cpp:1059-1129`; `zhuyin.cpp:609-638,655-690` | The failed staging and destination stay; later files are still attempted; `rename %s to %s failed.` is printed without errno text; then marker and dirty reset. `save_reporting` collects failures; `ContextCore::save_user` prints them after persistence returns. |
@@ -655,12 +655,12 @@ The C-facing path is `pinyin_save` / `zhuyin_save` →
 | Same-backend content | `pinyin.cpp:963-1018`; `zhuyin.cpp:596-685` | Encoded chunk/diff content, indexed records, bigram values and reload results. Logical records, not physical bytes (below). |
 
 Held by the `save_semantics_929` and `save_boundaries_929` modules of
-`crates/oxpinyin-core/src/user/persistence/tests.rs` (both facade laws:
+`crates/oxpinyin/src/user/persistence/tests.rs` (both facade laws:
 `failed_renames_report_exact_order_and_preserve_destinations`,
 `interrupted_save_preserves_the_facade_specific_committed_prefix`,
 `sync_rejecting_chunk_target_does_not_stop_later_files`,
 `save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them`),
-`reporting_save_stops_at_a_chunk_header_write`, the `oxpinyin_core::input`
+`reporting_save_stops_at_a_chunk_header_write`, the `oxpinyin::input`
 `chunk.rs` tests (`a_chunk_is_the_written_bytes`,
 `an_unopenable_path_is_the_soft_failure`,
 `a_header_write_failure_is_the_abort_site`) and the `save-929-*` contract
@@ -706,7 +706,7 @@ oxpinyin→pin workers open the donor's exact directory, recover the saved
 tokens, re-add one existing reading with count zero (which keeps it,
 `pinyin.cpp:561-582`, `zhuyin.cpp:449-469`), save and must give the same
 logical rows; each receiver is checked against its donor and the other
-receiver. `oxpinyin-core`
+receiver. `oxpinyin`
 `persistence::tests::pinned_profiles::the_pins_saved_profile_opens_with_its_records` and
 `persistence::tests::pinned_profiles::a_pin_written_profile_opens_and_saves_with_its_logical_records`
 hold this on the frozen pin profiles.
@@ -729,7 +729,7 @@ Open:
 `setlocale(LC_NUMERIC, "C")` is the new name, and every early return skips
 the restore.
 
-oxpinyin makes the pin's own calls. `oxpinyin_core::input` `config.rs` runs
+oxpinyin makes the pin's own calls. `oxpinyin::input` `config.rs` runs
 `setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf` and `fclose`
 through the `libc` crate, with the pin's format strings and call order.
 `data/src/table_info.rs` (`TableConf`) and `data/src/user_files.rs`
@@ -797,8 +797,8 @@ values, so every case is backend-independent):
 
 | Partition | Verdict | Held by |
 | --- | --- | --- |
-| Version `%d`: LP64 `strtol` saturation, then the low 32 bits of the `int` store: `2147483648` is `-2147483648`, `4294967303` is `7`, `9223372036854775808` is `-1`, `-9223372036854775808` is `0` | contract | `oxpinyin-core` `persistence::tests::pinned_profiles::user_conf_versions_past_int_take_the_scanners_int` |
-| Open counter `%d`: the same conversion; a missing directive reads 0; a counter above `OPEN_COUNTER_LIMIT` is non-conforming and `get_open_counter` turns it into 0; the load raises `get_open_counter(existing) + 1` and fini lowers it | contract | `oxpinyin-core` `user_files::tests::marker_fields_follow_the_scanner` |
+| Version `%d`: LP64 `strtol` saturation, then the low 32 bits of the `int` store: `2147483648` is `-2147483648`, `4294967303` is `7`, `9223372036854775808` is `-1`, `-9223372036854775808` is `0` | contract | `oxpinyin` `persistence::tests::pinned_profiles::user_conf_versions_past_int_take_the_scanners_int` |
+| Open counter `%d`: the same conversion; a missing directive reads 0; a counter above `OPEN_COUNTER_LIMIT` is non-conforming and `get_open_counter` turns it into 0; the load raises `get_open_counter(existing) + 1` and fini lowers it | contract | `oxpinyin` `user_files::tests::marker_fields_follow_the_scanner` |
 | `database format:%255s`: a known C string selects the backend; an unknown token aborts (row 44); EOF before the conversion leaves `UNKNOWN_FORMAT`; a missing literal or matching failure reads an unwritten `str` (class (b)); a NUL ends the C string, as the pin's `strcmp` does (`:122-131,350-354`) | contract; abort; class (b) | `marker_fields_follow_the_scanner`; `oxpinyin-capi` `init_and_save::init_aborts_on_an_unknown_user_conf_database_format` |
 | Missing or malformed version directive: `load` returns `false` with the reset defaults (`0/0/UNKNOWN/0`); `check_format` sees a non-conforming marker and wipes the profile | contract | `user_conf_versions_past_int_take_the_scanners_int` |
 | Conformance: a conforming marker (including a wrapped version `7 + 2^32`, or a counter wrapping to 0) keeps every user file and learned count; a non-conforming marker follows `_clean_user_files`, and `write_marker` writes the system versions with the raised or lowered counter | contract | `user_conf_versions_past_int_take_the_scanners_int` (trained and imported unigrams after reopen) |
@@ -811,7 +811,7 @@ mechanism is the pin's: `SystemTableInfo2::load`, `UserTableInfo::load` and
 which is the new name `"C"` (`table_info.cpp:197,291`; `:328,372`;
 `:378,394`). The closing call re-installs `"C"`, and every early return
 skips it. oxpinyin makes the same calls at the same points in
-`oxpinyin_core::input` `config.rs`. The `setlocale` call comes before any parse
+`oxpinyin::input` `config.rs`. The `setlocale` call comes before any parse
 or return, so no legal return or error path leaves a different locale:
 
 | Exported call | Pin site | Locale after | oxpinyin site (`context.rs`) |
@@ -824,7 +824,7 @@ or return, so no legal return or error path leaves a different locale:
 | `zhuyin_fini` | `zhuyin.cpp:741-757` releases state and writes no marker | unchanged | none |
 
 Guards: `oxpinyin-capi` `tests/it/locale.rs`
-(`lc_numeric_follows_the_pins_table_info_sites`) and `oxpinyin_core::input`
+(`lc_numeric_follows_the_pins_table_info_sites`) and `oxpinyin::input`
 `src/config/tests.rs` (`a_failed_init_leaves_lc_numeric_at_c`).
 
 The "Locale after" results assume that no other thread changes the locale
@@ -837,7 +837,7 @@ it on every path. oxpinyin changes only if libpinyin does.
 
 `MemoryChunk` maps the file, checks the 8-byte header, the length word
 and the checksum, and reads the payload (`include/memory_chunk.h:72-78,424-520,555`).
-oxpinyin's mapping is `oxpinyin_core::input` `chunk::load` and the mapping source
+oxpinyin's mapping is `oxpinyin::input` `chunk::load` and the mapping source
 (the pin's `open`, header reads and `mmap`), with the same header checks;
 `unlink` belongs to `_clean_user_files` and the user-file rewrite;
 `fprintf` is the raw stderr channel of the same paths. The writes are G10.
@@ -924,7 +924,7 @@ authorises no deletion.
 
 The tools are drop-in ports of the pin's utilities
 ([external I/O, stage 5](external-io-boundary.md#proposed-crate-and-staged-implementation)).
-They make the pin's calls through `oxpinyin_core::input` `tool.rs`: `taglib` is
+They make the pin's calls through `oxpinyin::input` `tool.rs`: `taglib` is
 `oxpinyin-utils/src/utils_helper/taglib.rs`, and `atoi`, `atol`,
 `g_strsplit_set`, `g_unichar_isspace` and `g_unichar_isgraph` are the
 host's. So the separator, escape, category and numeric results are the
@@ -951,7 +951,7 @@ The [frozen tool cases](../runbooks/tool-diff.md) hold these.
 ## Exported C string inputs
 
 The 25 exported functions with string inputs (29 parameters) convert through
-`oxpinyin-core` and the `oxpinyin_core::input` filename helper (classification row 9), with the pin's
+`oxpinyin` and the `oxpinyin::input` filename helper (classification row 9), with the pin's
 invalid, non-scalar and NULL outcomes per parameter.
 
 ## Executable copies of external-library algorithms (2026-10-29 UTC)
@@ -966,10 +966,10 @@ does not port them.
 
 **Compliant, not ports:**
 
-- `oxpinyin-core/src/user/data/table_entries.rs` calls `Vec::binary_search` on a
+- `oxpinyin/src/user/data/table_entries.rs` calls `Vec::binary_search` on a
   token list that its own `insert` keeps sorted. That is the standard
   API with its documented semantics.
-- The `oxpinyin-core` UTF-8 codecs are ABI-prescribed boundary
+- The `oxpinyin` UTF-8 codecs are ABI-prescribed boundary
   code, not external-algorithm ports: `input.rs` `utf8_to_ucs4`,
   `ucs4.rs` `decode`, and `phrase_text.rs` `encode_words`/`encode_word`.
   They give the C strings the bytes GLib's `g_utf8_to_ucs4` and
@@ -985,10 +985,10 @@ invalid lengths and other unsafe conditions still apply in full.
 
 | Item | Former copy and callers | Replacement | Parity | Inputs that differ; cases that become `POLICY-ACCEPTED` | Tests |
 | --- | --- | --- | --- | --- | --- |
-| A | `oxpinyin-core/src/engine/nbest.rs` `glib_merge_sort`, a GLib merge transcription, called by the candidate and prediction sorts (`pinyin.cpp:1678-1709,2286,2440-2445`; `zhuyin.cpp:1129-1144,1529,1610`). | `candidate::rank_by_frequency`: stable std sorting with the enabled length/span fields and native `rhs.wrapping_sub(lhs) as i32` frequency comparison. Each leading-key tie group is guarded; only cyclic groups use stable numeric descending fallback. | Exactly where every leading-key tie group's frequencies fit in a circular interval narrower than 2³¹, including wraparound across zero. Antipodal pairs are inconsistent and rejected by the guard. λ alone does not determine consistency. | Only cyclic groups may differ ([item A finding](upstream-divergences.md#candidate-sorting-guards-the-wrapping-frequency-order)); the four `row58-signed-{score,duplicate}-{off,on}` cases must MATCH, never POLICY-ACCEPTED. | `candidate.rs` guard tests (order laws at boundary triples, empty lists, ties, antipodal pairs, cycles, leading-field isolation); stable ties, disabled keys, dedup alignment and `session::tests::the_pinyin_length_key_wraps_at_eight_bits`. |
+| A | `oxpinyin/src/engine/nbest.rs` `glib_merge_sort`, a GLib merge transcription, called by the candidate and prediction sorts (`pinyin.cpp:1678-1709,2286,2440-2445`; `zhuyin.cpp:1129-1144,1529,1610`). | `candidate::rank_by_frequency`: stable std sorting with the enabled length/span fields and native `rhs.wrapping_sub(lhs) as i32` frequency comparison. Each leading-key tie group is guarded; only cyclic groups use stable numeric descending fallback. | Exactly where every leading-key tie group's frequencies fit in a circular interval narrower than 2³¹, including wraparound across zero. Antipodal pairs are inconsistent and rejected by the guard. λ alone does not determine consistency. | Only cyclic groups may differ ([item A finding](upstream-divergences.md#candidate-sorting-guards-the-wrapping-frequency-order)); the four `row58-signed-{score,duplicate}-{off,on}` cases must MATCH, never POLICY-ACCEPTED. | `candidate.rs` guard tests (order laws at boundary triples, empty lists, ties, antipodal pairs, cycles, leading-field isolation); stable ties, disabled keys, dedup alignment and `session::tests::the_pinyin_length_key_wraps_at_eight_bits`. |
 | B | `nbest.rs` `heap_push`, `heap_adjust`, `heap_pop`, `heap_make`, `heap_top`, a transcription of libstdc++ `stl_heap.h`. Callers: the two-slot node insert (`lookup/phonetic_lookup_heap.h:56-81`), beam selection (`lookup/phonetic_lookup.h:770-771`) and final-tail selection (`:331-337`). | `select_top`: `select_nth_unstable_by` at `k − 1`, then a sort of the `k`-prefix, on a complete key (`selection_compare`). `Node::keep`: direct two-slot transitions. | **Pinyin: everywhere.** The S1/S2 key (adjusted S, then batch position) is total, and the node transitions are derived from the pin. **Zhuyin:** wherever the comparator is a strict weak order and no two values tie on both length and score. | **Zhuyin only.** (1) λ outside `[0, 1]`, where NaN and finite scores of one length meet in one selection and libstdc++'s sequence decides. (2) Exact ties of length and score, where the heap's positional order differs from batch order. The accepted cases are in [Zhuyin selection uses length, raw score and input order](upstream-divergences.md#zhuyin-selection-uses-length-raw-score-and-input-order). | `nbest.rs` tests, including `selection_keeps_the_complete_key_at_each_limit` and `backtracking_uses_the_physical_slot_after_batch_selection`; `binary_heap_top` is a test-only comparison. |
-| C | `oxpinyin-core/src/single_gram.rs` `lower_bound_records`, formerly a transcription of libstdc++ `__lower_bound`, behind `lower_bound` and `find`. It serves `get_freq`, `set_freq`, `insert_freq` and the search walk (`storage/ngram.cpp:161,185,239,259`; `include/stl_lite.h:29`). | `records.partition_point(\|r\| record_token(r) < token)` on the existing `[[u8; ITEM_LEN]]` view; unpartitioned data as above. | Wherever `item < probe` is partitioned over the stored items. That includes every gram the pin's writers produce, since `insert_freq` inserts at the lower bound (`ngram.cpp:185-200`). | Stored grams where an item below the probe follows one at or above it: foreign or hand-edited DBM values, or a user gram stored out of order and interleaved by `merge_single_gram` (`ngram.cpp:308-349`). The record names the toolchain. Accepted cases: [Stored gram partitions: phrase segmentation](upstream-divergences.md#stored-gram-partitions-phrase-segmentation) and [Stored gram partitions: training](upstream-divergences.md#stored-gram-partitions-training). | `single_gram.rs` tests, including `checked_search_asserts_short_and_faults_past_a_partial_tail`. |
-| D | `oxpinyin-core/src/user/user_index.rs` `Entry::equal_range`, formerly a transcription of libstdc++ `equal_range`. Callers: `Entry::add_index` and `Entry::remove_index` (`storage/chewing_large_table2.h:208-255`, `phrase_exact_less_than2`). | `search_records::<N>`: two `partition_point`s over `as_chunks::<N>()` (design note 4); unpartitioned data as above. | Wherever the entry's items are ordered by `phrase_exact_less_than2`, as the pin's `add_index` keeps them (`:216-229`). | KC and tkrzw entry chunks whose order a mask walk broke by leaving a previous record's tail (module docs); the mask cases on the kc and tkrzw cells. | `user_index.rs` `entry_ops_keep_the_pins_order_and_report_presence` covers sorted entries. |
+| C | `oxpinyin/src/single_gram.rs` `lower_bound_records`, formerly a transcription of libstdc++ `__lower_bound`, behind `lower_bound` and `find`. It serves `get_freq`, `set_freq`, `insert_freq` and the search walk (`storage/ngram.cpp:161,185,239,259`; `include/stl_lite.h:29`). | `records.partition_point(\|r\| record_token(r) < token)` on the existing `[[u8; ITEM_LEN]]` view; unpartitioned data as above. | Wherever `item < probe` is partitioned over the stored items. That includes every gram the pin's writers produce, since `insert_freq` inserts at the lower bound (`ngram.cpp:185-200`). | Stored grams where an item below the probe follows one at or above it: foreign or hand-edited DBM values, or a user gram stored out of order and interleaved by `merge_single_gram` (`ngram.cpp:308-349`). The record names the toolchain. Accepted cases: [Stored gram partitions: phrase segmentation](upstream-divergences.md#stored-gram-partitions-phrase-segmentation) and [Stored gram partitions: training](upstream-divergences.md#stored-gram-partitions-training). | `single_gram.rs` tests, including `checked_search_asserts_short_and_faults_past_a_partial_tail`. |
+| D | `oxpinyin/src/user/user_index.rs` `Entry::equal_range`, formerly a transcription of libstdc++ `equal_range`. Callers: `Entry::add_index` and `Entry::remove_index` (`storage/chewing_large_table2.h:208-255`, `phrase_exact_less_than2`). | `search_records::<N>`: two `partition_point`s over `as_chunks::<N>()` (design note 4); unpartitioned data as above. | Wherever the entry's items are ordered by `phrase_exact_less_than2`, as the pin's `add_index` keeps them (`:216-229`). | KC and tkrzw entry chunks whose order a mask walk broke by leaving a previous record's tail (module docs); the mask cases on the kc and tkrzw cells. | `user_index.rs` `entry_ops_keep_the_pins_order_and_report_presence` covers sorted entries. |
 | E | A Python transcription of libstdc++ `__lower_bound` in the contract-case tooling chose the user gram for `user-gram-unsorted-phrase-segment`. | Removed with that tooling. The case's pin observations stay in [Stored gram partitions: phrase segmentation](upstream-divergences.md#stored-gram-partitions-phrase-segmentation). | The case's captured pin observations stay. | `user-gram-unsorted-phrase-segment` is POLICY-ACCEPTED. | — |
 
 **Item A.** Candidate lists use stable `slice::sort_by` over cached enabled
@@ -1098,31 +1098,31 @@ Buckets:
 | 4 | `phrase.rs` (both facades), NULL `sentence`: GLib's `g_utf8_strlen` critical | `pinyin.cpp:1450`; `zhuyin.cpp:969`; GLib 2.84.4 `gutf8.c:240` | Imitation → Boundary | The pin's call, `glib_sys::g_utf8_strlen(sentence, -1)`, so GLib logs its own critical (domain `GLib`, `p != NULL \|\| max == 0`) and applies the caller's fatal mask. A hand-spelled copy of GLib's internal `g_return_val_if_fail` is rejected. |
 | 5 | `phrase.rs` (both facades), invalid UTF-8: the pin's `g_return_if_fail_warning(NULL, "bool pinyin_phrase_segment(pinyin_instance_t*, const char*)", "num_of_chars == ucs4_len")` and the zhuyin twin | `pinyin.cpp:1454`; `zhuyin.cpp:973` | Imitation removed | Decision D1: the call answers `false` and keeps the earlier result, with no log call. [Phrase segmentation writes no invalid-UTF-8 critical](upstream-divergences.md#phrase-segmentation-writes-no-invalid-utf-8-critical). |
 | 6 | `SubPhraseIndex::load`'s four `g_return_val_if_fail` checks | `phrase_index.cpp:354-356,361` | Imitation removed | Decision D1. `LayoutFault` keeps only `total_freq`, which the load, reload and save use for the pin's empty sub-index and totals. [Phrase-library layout faults write no critical](upstream-divergences.md#phrase-library-layout-faults-write-no-critical). |
-| 7 | `oxpinyin_core::input` `config.rs`, `native.rs` (`setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf`, `fclose` through `libc`); the facades' locale calls | `table_info.cpp:197,208-291,328,338-359,372-394` | Boundary | External-I/O stage 1; `LC_NUMERIC` row 39 stands. |
-| 8 | `oxpinyin-capi/src/types.rs` `GArray`, `GUint`, `GChar`; `oxpinyin-core` packed `ChewingKey`; the casts at exported parameters (`cursor.rs`, `iterators.rs`, `user_data.rs`) | `pinyin.h`, `zhuyin.h`; `chewing_key.h:111-113` | Boundary | The exported signatures prescribe the widths. |
-| 9 | `oxpinyin-core` `input.rs` `utf8_to_ucs4`, `scalar_text`, `parser_prefix`, `direct_zhuyin_reading`; `oxpinyin-core/src/input/path.rs` `filename`; `ucs4.rs` `decode`, `prefix_text`; `phrase_text.rs` `phrase_text_bytes`, `encode_words`, `encode_word`, `stored_words_match` | `g_utf8_to_ucs4` / `g_ucs4_to_utf8` at the C string entries (`pinyin.cpp:568-571,1450-1454`) | Boundary | ABI-prescribed encodings. |
-| 10 | `oxpinyin-core` `PhraseText`; `oxpinyin-core` `phrase_library` `phrase_text`, `phrase_codes`, `phrase_chars`; `row_format` `punct_text` | `lookup.cpp:39-60`; `pinyin.cpp:1627-1645` | Behaviour | Stored code points; the outward cut is row 9. |
-| 11 | `oxpinyin-core` `nbest.rs` `select_top`, `tail_merge`, `Node::keep` | `phonetic_lookup_heap.h:56-81,108-122`; `phonetic_lookup.h:141-172,331-337,770-771` | Behaviour | The selection rule and slot semantics, as std selection and sort (item B; S3). `binary_heap_top` is a test-only comparison. |
-| 12 | `oxpinyin-core` `candidate.rs` guarded frequency order; `session/mod.rs` `RankKey`, `compare_descending`, `for_sort_word`, `rank_candidates`; `oxpinyin-capi` `predict.rs` row sort | `pinyin.cpp:1678-1709,2286,2440-2445`; `zhuyin.cpp:1129-1144` | Behaviour | Stable std sort over the enabled keys; the `rhs.wrapping_sub(lhs) as i32` frequency order and the eight-bit span are retained (item A). |
+| 7 | `oxpinyin::input` `config.rs`, `native.rs` (`setlocale`, `fopen`, `fscanf`, `feof`, `atoi`, `fprintf`, `fclose` through `libc`); the facades' locale calls | `table_info.cpp:197,208-291,328,338-359,372-394` | Boundary | External-I/O stage 1; `LC_NUMERIC` row 39 stands. |
+| 8 | `oxpinyin-capi/src/types.rs` `GArray`, `GUint`, `GChar`; `oxpinyin` packed `ChewingKey`; the casts at exported parameters (`cursor.rs`, `iterators.rs`, `user_data.rs`) | `pinyin.h`, `zhuyin.h`; `chewing_key.h:111-113` | Boundary | The exported signatures prescribe the widths. |
+| 9 | `oxpinyin` `input.rs` `utf8_to_ucs4`, `scalar_text`, `parser_prefix`, `direct_zhuyin_reading`; `oxpinyin/src/input/path.rs` `filename`; `ucs4.rs` `decode`, `prefix_text`; `phrase_text.rs` `phrase_text_bytes`, `encode_words`, `encode_word`, `stored_words_match` | `g_utf8_to_ucs4` / `g_ucs4_to_utf8` at the C string entries (`pinyin.cpp:568-571,1450-1454`) | Boundary | ABI-prescribed encodings. |
+| 10 | `oxpinyin` `PhraseText`; `oxpinyin` `phrase_library` `phrase_text`, `phrase_codes`, `phrase_chars`; `row_format` `punct_text` | `lookup.cpp:39-60`; `pinyin.cpp:1627-1645` | Behaviour | Stored code points; the outward cut is row 9. |
+| 11 | `oxpinyin` `nbest.rs` `select_top`, `tail_merge`, `Node::keep` | `phonetic_lookup_heap.h:56-81,108-122`; `phonetic_lookup.h:141-172,331-337,770-771` | Behaviour | The selection rule and slot semantics, as std selection and sort (item B; S3). `binary_heap_top` is a test-only comparison. |
+| 12 | `oxpinyin` `candidate.rs` guarded frequency order; `session/mod.rs` `RankKey`, `compare_descending`, `for_sort_word`, `rank_candidates`; `oxpinyin-capi` `predict.rs` row sort | `pinyin.cpp:1678-1709,2286,2440-2445`; `zhuyin.cpp:1129-1144` | Behaviour | Stable std sort over the enabled keys; the `rhs.wrapping_sub(lhs) as i32` frequency order and the eight-bit span are retained (item A). |
 | 13 | `session/mod.rs` `amplified_frequency`, `amplified_frequency_with_bigram` | `pinyin.cpp:1811-1824,1862-1866`; `zhuyin.cpp:1264-1268` | Behaviour | The ruled scaled `guint32` ranking key. |
 | 14 | `session/mod.rs` `dedup_ranked_by_text`, `dedup_by_text_keep_first` | `pinyin.cpp:2128-2138`; `zhuyin.cpp:1406-1416` | Behaviour | One row per text. |
 | 15 | `oxpinyin-capi` `predict.rs` `prepend_punctuations` | `pinyin.cpp:2468-2494` | Behaviour | Distinct punctuation strings before the predictions. |
-| 16 | `oxpinyin-core` `single_gram.rs` `lower_bound`, `find` | `ngram.cpp:161,185,215,239,259` | Behaviour | `partition_point` (item C). |
-| 17 | `oxpinyin-core` `user_index.rs` `Entry::equal_range` | `chewing_large_table2.h:208-255` | Behaviour | Two `partition_point`s (item D). |
-| 18 | `oxpinyin_core::input` `path.rs` `build_filename`, `build_path`, `build_bytes` | `g_build_filename` at `pinyin.cpp:150-165,250-259,331-338,395-400,952-1121`; `zhuyin.cpp:104-119,196-203,276-282,337-342,585-687` | Boundary | The pin's call through `glib-sys` ([external-I/O stage 3](external-io-boundary.md#proposed-crate-and-staged-implementation)); decision D2. |
-| 19 | `oxpinyin-core` `c_stderr.rs` `path_bytes`, `table_conf_load_failed`, `mmap_failed`, `rename_failed` through `oxpinyin_core::input::diagnostic` (`libc::fprintf` on the C library's `stderr`) | `table_info.cpp:201,332`; `pinyin.cpp:256,290,338,956,1059-1121,1265`; `zhuyin.cpp:200,282,589,609-687,800` | Boundary | External-I/O stage 4. |
-| 20 | `oxpinyin-core` `persistence.rs` `save_reporting`, the rename order, `tolerate`, `write_marker`, `clean_user_files`, `.tmp` staging | `pinyin.cpp:149-170,922-1130`; `zhuyin.cpp:547-700`; `memory_chunk.h:536-549` | Boundary | Files on disk, their order and the save's answers (G10). The rename and unlink calls are the pin's, through `oxpinyin_core::input` `path.rs` (external-I/O stage 3). |
-| 21 | `oxpinyin_core::input` `chunk.rs` `save`, called by `persistence.rs` `write_chunk_file` | `memory_chunk.h:536-557` | Boundary | The pin's `open`, two header `write`s, one payload `write`, `fsync` and `close` (external-I/O stages 2 and 3). |
-| 22 | `oxpinyin_core::input` `chunk.rs` `load`; `oxpinyin-core` `phrase_library.rs` `map_chunk`, `directory_end` | `memory_chunk.h:420-427,470-520` | Boundary | The chunk format and the pin's mapping call (external-I/O stage 2, row 109). |
-| 23 | `oxpinyin-core` `row_format.rs` `decode_puncts` | `punct_table.cpp:56-94` | Behaviour | Whole-word reading, the language-artefact record [Punctuation values contain whole words](upstream-divergences.md#punctuation-values-contain-whole-words). |
-| 24 | `oxpinyin-core` `table_info.rs` `TableConf::parse`; `user_files.rs` `UserTableInfo::parse`, `to_text` | `table_info.cpp:122-131,194-294,338-394` | Boundary | The `table.conf` / `user.conf` reads and write are the pin's `fscanf` / `fprintf` calls through `oxpinyin_core::input`; the domain checks stay here. |
+| 16 | `oxpinyin` `single_gram.rs` `lower_bound`, `find` | `ngram.cpp:161,185,215,239,259` | Behaviour | `partition_point` (item C). |
+| 17 | `oxpinyin` `user_index.rs` `Entry::equal_range` | `chewing_large_table2.h:208-255` | Behaviour | Two `partition_point`s (item D). |
+| 18 | `oxpinyin::input` `path.rs` `build_filename`, `build_path`, `build_bytes` | `g_build_filename` at `pinyin.cpp:150-165,250-259,331-338,395-400,952-1121`; `zhuyin.cpp:104-119,196-203,276-282,337-342,585-687` | Boundary | The pin's call through `glib-sys` ([external-I/O stage 3](external-io-boundary.md#proposed-crate-and-staged-implementation)); decision D2. |
+| 19 | `oxpinyin` `c_stderr.rs` `path_bytes`, `table_conf_load_failed`, `mmap_failed`, `rename_failed` through `oxpinyin::input::diagnostic` (`libc::fprintf` on the C library's `stderr`) | `table_info.cpp:201,332`; `pinyin.cpp:256,290,338,956,1059-1121,1265`; `zhuyin.cpp:200,282,589,609-687,800` | Boundary | External-I/O stage 4. |
+| 20 | `oxpinyin` `persistence.rs` `save_reporting`, the rename order, `tolerate`, `write_marker`, `clean_user_files`, `.tmp` staging | `pinyin.cpp:149-170,922-1130`; `zhuyin.cpp:547-700`; `memory_chunk.h:536-549` | Boundary | Files on disk, their order and the save's answers (G10). The rename and unlink calls are the pin's, through `oxpinyin::input` `path.rs` (external-I/O stage 3). |
+| 21 | `oxpinyin::input` `chunk.rs` `save`, called by `persistence.rs` `write_chunk_file` | `memory_chunk.h:536-557` | Boundary | The pin's `open`, two header `write`s, one payload `write`, `fsync` and `close` (external-I/O stages 2 and 3). |
+| 22 | `oxpinyin::input` `chunk.rs` `load`; `oxpinyin` `phrase_library.rs` `map_chunk`, `directory_end` | `memory_chunk.h:420-427,470-520` | Boundary | The chunk format and the pin's mapping call (external-I/O stage 2, row 109). |
+| 23 | `oxpinyin` `row_format.rs` `decode_puncts` | `punct_table.cpp:56-94` | Behaviour | Whole-word reading, the language-artefact record [Punctuation values contain whole words](upstream-divergences.md#punctuation-values-contain-whole-words). |
+| 24 | `oxpinyin` `table_info.rs` `TableConf::parse`; `user_files.rs` `UserTableInfo::parse`, `to_text` | `table_info.cpp:122-131,194-294,338-394` | Boundary | The `table.conf` / `user.conf` reads and write are the pin's `fscanf` / `fprintf` calls through `oxpinyin::input`; the domain checks stay here. |
 | 25 | `oxpinyin-capi` `aux_matrix.rs` `full`, `double`, `chewing`, `split_zhuyin` | `pinyin.cpp:3295-3576` | Behaviour | The byte delta used as a character offset is libpinyin's defect, reproduced (limb 4). |
-| 26 | The tools' numeric fields, `printf("%f")` output and Unicode categories: `oxpinyin_core::input` `tool.rs` `atoi`, `atol`, `unichar_isgraph`, `fprintf` | `tag_utility.cpp:127-264`; `utils_helper.h:23-69`; `printf("%f")` at `estimate_interpolation.cpp:116-139`, `eval_correction_rate.cpp:201-203` | Boundary | The pin's calls through `libc` and `glib-sys` (external-I/O stage 5). |
-| 27 | `oxpinyin-utils/src/utils_helper/taglib.rs`; `oxpinyin_core::input` `tool.rs`, `native.rs` | `tag_utility.cpp:70-299`; the tools' GLib and libc calls | Boundary | libpinyin's own taglib in Rust; its GLib and libc calls are real (`glib-sys`, `libc`). `Required` is a `HashMap`; no hash order reaches output. |
-| 29 | Wrapping in-memory totals: `oxpinyin-core` unigram total; `oxpinyin-core` `phrase_libraries.rs`, `lm/mod.rs`; `oxpinyin-core` `store.rs`, `registry.rs`, `seed.rs`; the `guint8` pronunciation count in `store_libpinyin.rs` | `phrase_index.h:615,633`; `phrase_index.cpp:28` | Boundary | On-disk `guint32` / `guint8` widths; defined unsigned wrap. |
-| 30 | `oxpinyin-core` `nbest.rs` node index (`HashMap` beside the node `Vec`) | `phonetic_lookup.h:314-315` | Behaviour | Creation order lives in the `Vec`; the map is a lookup only. |
+| 26 | The tools' numeric fields, `printf("%f")` output and Unicode categories: `oxpinyin::input` `tool.rs` `atoi`, `atol`, `unichar_isgraph`, `fprintf` | `tag_utility.cpp:127-264`; `utils_helper.h:23-69`; `printf("%f")` at `estimate_interpolation.cpp:116-139`, `eval_correction_rate.cpp:201-203` | Boundary | The pin's calls through `libc` and `glib-sys` (external-I/O stage 5). |
+| 27 | `oxpinyin-utils/src/utils_helper/taglib.rs`; `oxpinyin::input` `tool.rs`, `native.rs` | `tag_utility.cpp:70-299`; the tools' GLib and libc calls | Boundary | libpinyin's own taglib in Rust; its GLib and libc calls are real (`glib-sys`, `libc`). `Required` is a `HashMap`; no hash order reaches output. |
+| 29 | Wrapping in-memory totals: `oxpinyin` unigram total; `oxpinyin` `phrase_libraries.rs`, `lm/mod.rs`; `oxpinyin` `store.rs`, `registry.rs`, `seed.rs`; the `guint8` pronunciation count in `store_libpinyin.rs` | `phrase_index.h:615,633`; `phrase_index.cpp:28` | Boundary | On-disk `guint32` / `guint8` widths; defined unsigned wrap. |
+| 30 | `oxpinyin` `nbest.rs` node index (`HashMap` beside the node `Vec`) | `phonetic_lookup.h:314-315` | Behaviour | Creation order lives in the `Vec`; the map is a lookup only. |
 
-Out of scope: `oxpinyin-core`'s DBM calls and test-only code.
+Out of scope: `oxpinyin`'s DBM calls and test-only code.
 The table has no row 28; the other rows keep their numbers.
 
 Result: Boundary rows 1, 2, 7–9, 18–22, 24, 26, 27 and 29. Behaviour rows

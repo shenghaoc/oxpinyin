@@ -33,7 +33,7 @@ mod error;
 mod model;
 
 #[cfg(test)]
-#[path = "../../../oxpinyin-core/tests/common/fixture_doubles.rs"]
+#[path = "../../../oxpinyin/tests/common/fixture_doubles.rs"]
 mod fixture_doubles;
 #[cfg(test)]
 mod tests;

@@ -75,7 +75,7 @@ unchanged.
 
 Bare `gn`, `mg` and `on` are not in `pinyin_index`; their rows are 80, 80
 and 17 stemmed aliases. `checked_canonical`
-(`crates/oxpinyin-core/src/syllables.rs`) rejects an empty stem, so those
+(`crates/oxpinyin/src/syllables.rs`) rejects an empty stem, so those
 bits do not invent `ng` or `ong`. `agn` stays gated by
 `PINYIN_CORRECT_GN_NG`.
 
@@ -173,7 +173,7 @@ are set; the divided and resplit steps are the
 
 `FULL_PINYIN_SYLLABLES` is 405 complete syllables and
 `INCOMPLETE_PINYIN_KEYS` is 23 initial-only keys, matching the pinned
-untuned inventory (`crates/oxpinyin-core/src/table_data/`). It excludes:
+untuned inventory (`crates/oxpinyin/src/table_data/`). It excludes:
 
 - all 232 correction aliases;
 - the two parser-table ambiguity aliases (`sua`, `zua`);

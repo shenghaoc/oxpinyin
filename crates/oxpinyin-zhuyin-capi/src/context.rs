@@ -25,7 +25,7 @@ use crate::types::ZhuyinContext;
 /// only `PINYIN_INCOMPLETE`. The zhuyin parser honours `FORCE_TONE` nested
 /// inside `USE_TONE` for the Simple and CP26 keyboards
 /// (`zhuyin_parser2.cpp:178,602`) and unconditionally for Discrete
-/// (`:373,:387`) — the same law the shared [`oxpinyin_core::ZhuyinParser`]
+/// (`:373,:387`) — the same law the shared [`oxpinyin::ZhuyinParser`]
 /// implements. If that law cannot be reproduced exactly for a keyboard, the
 /// gap is registered under the existing `FORCE_TONE on double-pinyin/zhuyin
 /// schemes` divergence class rather than silently absorbed.
@@ -42,7 +42,7 @@ pub unsafe extern "C" fn zhuyin_init(
     // bytes, so the names are paths, not text (#587). g_build_filename
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
     // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
-    let Some(system_path) = oxpinyin_core::input::path::filename(
+    let Some(system_path) = oxpinyin::input::path::filename(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(systemdir) },
@@ -50,14 +50,14 @@ pub unsafe extern "C" fn zhuyin_init(
         // `g_build_filename(NULL, "table.conf", NULL)` is `""`: the load's
         // `setlocale` and failed `fopen("")` with its `open  failed.` line,
         // then the init's `load  failed!` (`table_info.cpp:197-202`).
-        let _ = oxpinyin_core::user::data::table_info::TableConf::load(c"");
-        oxpinyin_core::user::data::c_stderr::table_conf_load_failed(None);
+        let _ = oxpinyin::user::data::table_info::TableConf::load(c"");
+        oxpinyin::user::data::c_stderr::table_conf_load_failed(None);
         return ptr::null_mut();
     };
     // The pin's guards test the user pointer (`zhuyin.cpp:548`, `:1697`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.
-    let user_path = oxpinyin_core::input::path::filename(
+    let user_path = oxpinyin::input::path::filename(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(userdir) },
@@ -78,11 +78,11 @@ pub unsafe extern "C" fn zhuyin_init(
 /// `zhuyin_init`'s answer for a failed open, before it returns NULL: the
 /// process aborts where the pin dies, and a refusal writes the pin's line or
 /// one warning.
-fn refuse_init(error: &oxpinyin_core::facade::OpenFailure, system_path: &std::path::Path) {
+fn refuse_init(error: &oxpinyin::facade::OpenFailure, system_path: &std::path::Path) {
     error.refuse_init(
         system_path,
         "zhuyin_init",
-        |path| oxpinyin_core::user::data::c_stderr::table_conf_load_failed(Some(path)),
+        |path| oxpinyin::user::data::c_stderr::table_conf_load_failed(Some(path)),
         crate::ffi::log_warning,
     );
 }
@@ -167,19 +167,19 @@ pub unsafe extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
         // that were written and not renamed, no user index or bigram file
         // and no `user.conf`. The abort skips every destructor, so nothing
         // else is written either.
-        oxpinyin_core::facade::SaveOutcome::ChunkWriteFailed(_) => std::process::abort(),
+        oxpinyin::facade::SaveOutcome::ChunkWriteFailed(_) => std::process::abort(),
         // Register row 96, `memory_chunk.h:493`: the save's library loop
         // maps a loaded system library again and it is a directory. The
         // save stopped there with the earlier libraries' `.tmp` files
         // written and renamed in place (`zhuyin.cpp:554-617`).
-        oxpinyin_core::facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
+        oxpinyin::facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
         // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
         // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
         // `:67`). The save stopped in that copy, before its rename and the
         // marker.
-        oxpinyin_core::facade::SaveOutcome::FatalCopy => std::process::abort(),
-        outcome @ (oxpinyin_core::facade::SaveOutcome::NotSaved
-        | oxpinyin_core::facade::SaveOutcome::Saved) => outcome.is_saved(),
+        oxpinyin::facade::SaveOutcome::FatalCopy => std::process::abort(),
+        outcome @ (oxpinyin::facade::SaveOutcome::NotSaved
+        | oxpinyin::facade::SaveOutcome::Saved) => outcome.is_saved(),
     }
 }
 

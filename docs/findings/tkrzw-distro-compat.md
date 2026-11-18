@@ -128,9 +128,9 @@ with Ubuntu's flags:
 - `Rebuild()` answers `CANCELED_ERROR`.
 
 Against Debian's flags every one of these behaves as documented.
-`oxpinyin-core` installs no comparator
+`oxpinyin` installs no comparator
 ([store key-ordering contract](store-key-ordering.md)), so defect 2 does
-not reach its files. `oxpinyin-core` *is* exposed to the processor,
+not reach its files. `oxpinyin` *is* exposed to the processor,
 `Remove()` and `Rebuild()` faults, and they are silent: a `Remove` that
 stores the sentinel as the value looks like a successful write.
 

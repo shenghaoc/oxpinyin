@@ -226,8 +226,8 @@ Cargo unchanged ([limit parallel builds](verification.md#8-builds) with
 command that the recipe replaces:
 
 ```bash
-just build --locked -p oxpinyin-core
-just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
+just build --locked -p oxpinyin
+just clippy --locked -p oxpinyin --all-targets -- -D warnings
 just fmt --all --check
 ```
 
@@ -269,7 +269,7 @@ unselected. A named file with no matches stays a failure, as does a pattern
 that matches no tests across all selected files.
 
 A full test run needs one `just fetch-contract-data` beforehand: the
-`candidate_surface` test of `oxpinyin-core` reads the pinned data that it
+`candidate_surface` test of `oxpinyin` reads the pinned data that it
 fetches ([test inputs](../testing/README.md#test-inputs)).
 
 cargo-nextest is the only supported test runner. It runs each test in its
@@ -328,7 +328,7 @@ installation, run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo nextest run --locked -p oxpinyin-core
+cargo nextest run --locked -p oxpinyin
 just check
 ```
 
@@ -403,7 +403,7 @@ and run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo nextest run --locked -p oxpinyin-core
+cargo nextest run --locked -p oxpinyin
 export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
@@ -489,9 +489,9 @@ Set-Location "$HOME/src"
 git -c core.autocrlf=false clone https://github.com/shenghaoc/oxpinyin.git
 Set-Location oxpinyin
 rustup show
-cargo nextest run --locked -p oxpinyin-core
+cargo nextest run --locked -p oxpinyin
 cargo fmt --all --check
-cargo clippy --locked -p oxpinyin-core --all-targets -- -D warnings
+cargo clippy --locked -p oxpinyin --all-targets -- -D warnings
 ```
 
 Repository Python tooling on Windows runs through the pwsh recipes.
@@ -698,7 +698,7 @@ Types and local variables need the `dev-full` profile:
 
 ```bash
 cargo build --locked --profile dev-full -p oxpinyin-capi
-cargo test --locked --profile dev-full -p oxpinyin-core --no-run
+cargo test --locked --profile dev-full -p oxpinyin --no-run
 ```
 
 The debugger reads the files in `target/dev-full/`.

@@ -3,10 +3,10 @@
 use std::cell::Cell;
 use std::os::raw::c_int;
 
-use oxpinyin_core::PhraseToken;
-use oxpinyin_core::engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
-use oxpinyin_core::marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
-use oxpinyin_core::user::{UnigramAdd, is_user_token};
+use oxpinyin::PhraseToken;
+use oxpinyin::engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
+use oxpinyin::marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
+use oxpinyin::user::{UnigramAdd, is_user_token};
 
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t};
@@ -319,7 +319,7 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
         // Class (b), register row 98: the call's `user_bigram->mask_out`
         // (`pinyin.cpp:3766`) would read past a partial item tail
         // (`ngram.cpp:76-86`). One warning, as before.
-        Err(oxpinyin_core::user::UserStoreError::PartialUserBigramTail) => {
+        Err(oxpinyin::user::UserStoreError::PartialUserBigramTail) => {
             crate::ffi::log_warning(
                 "pinyin_remove_user_candidate: malformed user bigram value \
                  (upstream asserts on a missing total or reads past a partial item; \
@@ -339,34 +339,34 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
         // (`memory_chunk.h:390`) or a gram the mask leaves with a residual
         // total (`ngram.cpp:70`), and the pin's assert dies.
         Err(
-            oxpinyin_core::user::UserStoreError::NonTokenUserBigramKey
-            | oxpinyin_core::user::UserStoreError::ShortUserBigramValue
-            | oxpinyin_core::user::UserStoreError::ResidualUserBigramGram
-            | oxpinyin_core::user::UserStoreError::UserReadingRemoval,
+            oxpinyin::user::UserStoreError::NonTokenUserBigramKey
+            | oxpinyin::user::UserStoreError::ShortUserBigramValue
+            | oxpinyin::user::UserStoreError::ResidualUserBigramGram
+            | oxpinyin::user::UserStoreError::UserReadingRemoval,
         ) => std::process::abort(),
         // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
         // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
         // `:67`). This call does not copy, so it never reaches here.
-        Err(oxpinyin_core::user::UserStoreError::FatalCopy) => std::process::abort(),
+        Err(oxpinyin::user::UserStoreError::FatalCopy) => std::process::abort(),
         // A store failure the pin has no counterpart for.
         Err(
-            oxpinyin_core::user::UserStoreError::Io(_)
-            | oxpinyin_core::user::UserStoreError::Store(_)
-            | oxpinyin_core::user::UserStoreError::Decode
-            | oxpinyin_core::user::UserStoreError::InvalidPhrase
-            | oxpinyin_core::user::UserStoreError::Persistence(_)
-            | oxpinyin_core::user::UserStoreError::UnknownDatabaseFormat
-            | oxpinyin_core::user::UserStoreError::ChunkHeaderWrite(_)
-            | oxpinyin_core::user::UserStoreError::LibraryChunkHeaderRead
-            | oxpinyin_core::user::UserStoreError::SaveRemapFailed
-            | oxpinyin_core::user::UserStoreError::SaveTooLarge
-            | oxpinyin_core::user::UserStoreError::UnigramTotalOverflow
-            | oxpinyin_core::user::UserStoreError::OverlongIndexKey
-            | oxpinyin_core::user::UserStoreError::Journal(_)
-            | oxpinyin_core::user::UserStoreError::LibraryLoop(_)
-            | oxpinyin_core::user::UserStoreError::TrainingSetFreqMiss
-            | oxpinyin_core::user::UserStoreError::SessionSeed(_)
-            | oxpinyin_core::user::UserStoreError::FailedUserBigramStore,
+            oxpinyin::user::UserStoreError::Io(_)
+            | oxpinyin::user::UserStoreError::Store(_)
+            | oxpinyin::user::UserStoreError::Decode
+            | oxpinyin::user::UserStoreError::InvalidPhrase
+            | oxpinyin::user::UserStoreError::Persistence(_)
+            | oxpinyin::user::UserStoreError::UnknownDatabaseFormat
+            | oxpinyin::user::UserStoreError::ChunkHeaderWrite(_)
+            | oxpinyin::user::UserStoreError::LibraryChunkHeaderRead
+            | oxpinyin::user::UserStoreError::SaveRemapFailed
+            | oxpinyin::user::UserStoreError::SaveTooLarge
+            | oxpinyin::user::UserStoreError::UnigramTotalOverflow
+            | oxpinyin::user::UserStoreError::OverlongIndexKey
+            | oxpinyin::user::UserStoreError::Journal(_)
+            | oxpinyin::user::UserStoreError::LibraryLoop(_)
+            | oxpinyin::user::UserStoreError::TrainingSetFreqMiss
+            | oxpinyin::user::UserStoreError::SessionSeed(_)
+            | oxpinyin::user::UserStoreError::FailedUserBigramStore,
         ) => {
             crate::ffi::log_warning("pinyin_remove_user_candidate: the user store failed");
             false
@@ -378,33 +378,29 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
 /// text: only when the lookup searched, every row is the engine's fallback
 /// row, and the facade total is not zero.
 fn sole_unreadable_row(
-    window: &oxpinyin_core::engine::CandidateList,
+    window: &oxpinyin::engine::CandidateList,
     frame: &crate::sentence::GuessFrame,
-) -> Option<oxpinyin_core::engine::Candidate> {
+) -> Option<oxpinyin::engine::Candidate> {
     window.sole_unreadable_candidate().filter(|_| {
         !frame.sentence_rows_only
             && window
                 .iter()
-                .all(|row| row.kind() == oxpinyin_core::engine::CandidateKind::Fallback)
+                .all(|row| row.kind() == oxpinyin::engine::CandidateKind::Fallback)
             && !frame.abort_on_unreadable
     })
 }
 
 /// The published type of a window row; `is_longer` names the LONGER row.
-fn row_type(cand: &oxpinyin_core::engine::Candidate, is_longer: bool) -> lookup_candidate_type_t {
+fn row_type(cand: &oxpinyin::engine::Candidate, is_longer: bool) -> lookup_candidate_type_t {
     match cand.kind() {
-        oxpinyin_core::engine::CandidateKind::Sentence => {
-            lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
-        }
-        oxpinyin_core::engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
-        oxpinyin_core::engine::CandidateKind::Phrase
-        | oxpinyin_core::engine::CandidateKind::Fallback
+        oxpinyin::engine::CandidateKind::Sentence => lookup_candidate_type_t::NBEST_MATCH_CANDIDATE,
+        oxpinyin::engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
+        oxpinyin::engine::CandidateKind::Phrase | oxpinyin::engine::CandidateKind::Fallback
             if is_longer =>
         {
             lookup_candidate_type_t::LONGER_CANDIDATE
         }
-        oxpinyin_core::engine::CandidateKind::Phrase
-        | oxpinyin_core::engine::CandidateKind::Fallback => {
+        oxpinyin::engine::CandidateKind::Phrase | oxpinyin::engine::CandidateKind::Fallback => {
             lookup_candidate_type_t::NORMAL_CANDIDATE
         }
     }
@@ -417,7 +413,7 @@ fn row_type(cand: &oxpinyin_core::engine::Candidate, is_longer: bool) -> lookup_
 /// caller returns the window to the session afterwards.
 pub(crate) fn snapshot_candidates(
     inst: &mut crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin_core::engine::CandidateList,
+    window: &oxpinyin::engine::CandidateList,
     frame: &crate::sentence::GuessFrame,
 ) {
     // One row vector and one text buffer, each sized once for the window
@@ -445,7 +441,7 @@ pub(crate) fn snapshot_candidates(
         // false (`pinyin.cpp:2193`), an empty result answers true
         // with no rows. The C ABI translates the engine shape, it
         // does not surface it.
-        if cand.kind() == oxpinyin_core::engine::CandidateKind::Fallback {
+        if cand.kind() == oxpinyin::engine::CandidateKind::Fallback {
             continue;
         }
         // §9: a LONGER row is the engine's token-carrying row with the
@@ -463,13 +459,13 @@ pub(crate) fn snapshot_candidates(
         // run (`pinyin.cpp:2292-2296`) — the list is the sentence rows with
         // the LONGER row beneath them (row 65). Keep exactly those kinds.
         if frame.sentence_rows_only
-            && cand.kind() != oxpinyin_core::engine::CandidateKind::Sentence
+            && cand.kind() != oxpinyin::engine::CandidateKind::Sentence
             && !is_longer
         {
             continue;
         }
         let text = if missing {
-            oxpinyin_core::facade::TextSpan::NULL
+            oxpinyin::facade::TextSpan::NULL
         } else {
             let bytes = phrase_text_bytes(cand.text());
             let Some(text) = inst.state.candidates.intern(&bytes) else {
@@ -482,14 +478,14 @@ pub(crate) fn snapshot_candidates(
         // `m_end` the span end in the same coordinates, both `guint16`
         // (`:103-104`). A sentence or LONGER row keeps the default zero
         // span (`:114`; `_prepend_sentence_candidates`, `:1936-1950`).
-        let (begin, end) =
-            if is_longer || cand.kind() == oxpinyin_core::engine::CandidateKind::Sentence {
-                (0, 0)
-            } else {
-                let selection =
-                    oxpinyin_core::facade::SelectionSpan::of_candidate(cand, frame.session_offset);
-                (frame.offset as u16, published_bound(selection.end()) as u16)
-            };
+        let (begin, end) = if is_longer || cand.kind() == oxpinyin::engine::CandidateKind::Sentence
+        {
+            (0, 0)
+        } else {
+            let selection =
+                oxpinyin::facade::SelectionSpan::of_candidate(cand, frame.session_offset);
+            (frame.offset as u16, published_bound(selection.end()) as u16)
+        };
         if cand.text().outward_bytes().is_none() {
             inst.state.candidates.keep_stored_text(cand.text().clone());
         }
@@ -513,7 +509,7 @@ fn choose_phrase_row(
     offset: usize,
     row: &RowArgs,
     token: Option<PhraseToken>,
-    text: oxpinyin_core::engine::RowText,
+    text: oxpinyin::engine::RowText,
 ) -> c_int {
     // A row with no token reaching the normal branch is a predicted
     // punctuation row, at `m_begin = m_end = 0` (`pinyin.cpp:114`). The pin
@@ -530,7 +526,7 @@ fn choose_phrase_row(
             Err(_) => -1,
         };
     };
-    let published = oxpinyin_core::facade::PublishedRow {
+    let published = oxpinyin::facade::PublishedRow {
         begin: row.begin,
         end: row.end,
         token,
@@ -538,18 +534,17 @@ fn choose_phrase_row(
     };
     match inst.core.select_published(&published, true) {
         // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
-        Ok(oxpinyin_core::engine::Selection::Refused) => choose_answer(offset, 0),
+        Ok(oxpinyin::engine::Selection::Refused) => choose_answer(offset, 0),
         // The pin answers the caller's choose offset plus the length
         // `add_constraint` wrote, `m_end - m_begin` of the row's own span
         // (`pinyin.cpp:2582-2590`, `phonetic_lookup.cpp:61-86`), whatever
         // offset the caller passes.
-        Ok(
-            oxpinyin_core::engine::Selection::Continued
-            | oxpinyin_core::engine::Selection::Completed,
-        ) => choose_answer(
-            offset,
-            usize::from(row.end).wrapping_sub(usize::from(row.begin)),
-        ),
+        Ok(oxpinyin::engine::Selection::Continued | oxpinyin::engine::Selection::Completed) => {
+            choose_answer(
+                offset,
+                usize::from(row.end).wrapping_sub(usize::from(row.begin)),
+            )
+        }
         Err(_) => -1,
     }
 }
@@ -663,13 +658,13 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
     }
     let mut token = row.token;
-    let mut text = oxpinyin_core::engine::RowText::Resolve;
+    let mut text = oxpinyin::engine::RowText::Resolve;
     if row.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE {
         // SAFETY: no instance or candidate view is live; the handle meets
         // the export's precondition.
         match unsafe { try_promote_addon(instance, candidate) } {
             Some(promoted) => token = Some(promoted),
-            None => text = oxpinyin_core::engine::RowText::Empty,
+            None => text = oxpinyin::engine::RowText::Empty,
         }
     }
     // SAFETY: promotion has released its context borrow; the live instance
@@ -863,7 +858,7 @@ unsafe fn try_promote_addon(
 /// The pin's return table (`pinyin.cpp:2591-2640`): a punctuation row has no
 /// frequency and answers `true` without training anything (`:2604-2605`); a
 /// unigram add that overflows its library's total answers `false` before the
-/// bigram (`:2609-2612`, [`oxpinyin_core::user::UserStoreError::UnigramTotalOverflow`]); otherwise
+/// bigram (`:2609-2612`, [`oxpinyin::user::UserStoreError::UnigramTotalOverflow`]); otherwise
 /// `true`.
 ///
 /// The pin reads the candidate's type and token and trains the receiving
@@ -950,15 +945,15 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
             // after the in-memory unigram add (`:2609-2612`) the pin loads
             // the predecessor's gram, one too short for its total, and
             // `get_total_freq`'s assert dies.
-            Err(oxpinyin_core::user::UserStoreError::ShortUserBigramValue) => std::process::abort(),
+            Err(oxpinyin::user::UserStoreError::ShortUserBigramValue) => std::process::abort(),
             // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
             // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
             // `:67`). This call does not copy, so it never reaches here.
-            Err(oxpinyin_core::user::UserStoreError::FatalCopy) => std::process::abort(),
+            Err(oxpinyin::user::UserStoreError::FatalCopy) => std::process::abort(),
             // Class (b), register row 100: a partial item tail is read past
             // by `get_freq`/`insert_freq` (`ngram.cpp:241`, `:190`). Nothing
             // changed; one warning, as before.
-            Err(oxpinyin_core::user::UserStoreError::PartialUserBigramTail) => {
+            Err(oxpinyin::user::UserStoreError::PartialUserBigramTail) => {
                 crate::ffi::log_warning(
                     "pinyin_choose_predicted_candidate: a user bigram value has a partial \
                      item tail (upstream reads past it, ngram.cpp:190)",
@@ -966,26 +961,26 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
                 false
             }
             Err(
-                oxpinyin_core::user::UserStoreError::Io(_)
-                | oxpinyin_core::user::UserStoreError::Store(_)
-                | oxpinyin_core::user::UserStoreError::Decode
-                | oxpinyin_core::user::UserStoreError::InvalidPhrase
-                | oxpinyin_core::user::UserStoreError::Persistence(_)
-                | oxpinyin_core::user::UserStoreError::UnknownDatabaseFormat
-                | oxpinyin_core::user::UserStoreError::ChunkHeaderWrite(_)
-                | oxpinyin_core::user::UserStoreError::LibraryChunkHeaderRead
-                | oxpinyin_core::user::UserStoreError::SaveRemapFailed
-                | oxpinyin_core::user::UserStoreError::SaveTooLarge
-                | oxpinyin_core::user::UserStoreError::UnigramTotalOverflow
-                | oxpinyin_core::user::UserStoreError::OverlongIndexKey
-                | oxpinyin_core::user::UserStoreError::NonTokenUserBigramKey
-                | oxpinyin_core::user::UserStoreError::ResidualUserBigramGram
-                | oxpinyin_core::user::UserStoreError::Journal(_)
-                | oxpinyin_core::user::UserStoreError::LibraryLoop(_)
-                | oxpinyin_core::user::UserStoreError::TrainingSetFreqMiss
-                | oxpinyin_core::user::UserStoreError::UserReadingRemoval
-                | oxpinyin_core::user::UserStoreError::SessionSeed(_)
-                | oxpinyin_core::user::UserStoreError::FailedUserBigramStore,
+                oxpinyin::user::UserStoreError::Io(_)
+                | oxpinyin::user::UserStoreError::Store(_)
+                | oxpinyin::user::UserStoreError::Decode
+                | oxpinyin::user::UserStoreError::InvalidPhrase
+                | oxpinyin::user::UserStoreError::Persistence(_)
+                | oxpinyin::user::UserStoreError::UnknownDatabaseFormat
+                | oxpinyin::user::UserStoreError::ChunkHeaderWrite(_)
+                | oxpinyin::user::UserStoreError::LibraryChunkHeaderRead
+                | oxpinyin::user::UserStoreError::SaveRemapFailed
+                | oxpinyin::user::UserStoreError::SaveTooLarge
+                | oxpinyin::user::UserStoreError::UnigramTotalOverflow
+                | oxpinyin::user::UserStoreError::OverlongIndexKey
+                | oxpinyin::user::UserStoreError::NonTokenUserBigramKey
+                | oxpinyin::user::UserStoreError::ResidualUserBigramGram
+                | oxpinyin::user::UserStoreError::Journal(_)
+                | oxpinyin::user::UserStoreError::LibraryLoop(_)
+                | oxpinyin::user::UserStoreError::TrainingSetFreqMiss
+                | oxpinyin::user::UserStoreError::UserReadingRemoval
+                | oxpinyin::user::UserStoreError::SessionSeed(_)
+                | oxpinyin::user::UserStoreError::FailedUserBigramStore,
             ) => false,
         }
     }
@@ -1025,16 +1020,16 @@ pub unsafe extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) 
 
 /// `pinyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a class (b) refusal is `false` with one warning.
-fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> bool {
-    use oxpinyin_core::facade::TrainingRefusal;
+fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
+    use oxpinyin::facade::TrainingRefusal;
     // The Pinyin caller supplies the n-best index (074a2219 pinyin.cpp:2684).
     if matches!(
         result,
-        Err(oxpinyin_core::engine::EngineError::CandidateIndexOutOfRange { .. })
+        Err(oxpinyin::engine::EngineError::CandidateIndexOutOfRange { .. })
     ) {
         std::process::abort();
     }
-    match oxpinyin_core::facade::training_answer(result) {
+    match oxpinyin::facade::training_answer(result) {
         Ok(trained) => trained,
         Err(TrainingRefusal::Abort) => std::process::abort(),
         Err(TrainingRefusal::PartialBigram) => {
@@ -1049,7 +1044,7 @@ fn train_answer(result: Result<bool, oxpinyin_core::engine::EngineError>) -> boo
 
 /// Whether [`pinyin_train`] of row `index` reaches one of the pin's own
 /// training asserts (register rows 6, 38 and 82): the facade's
-/// [`oxpinyin_core::facade::InstanceView::train_aborts`], the same row lookup and
+/// [`oxpinyin::facade::InstanceView::train_aborts`], the same row lookup and
 /// span walk `pinyin_train` runs. Reads only. For the in-tree fuzz harness,
 /// which skips such a call: not in `pinyin.h`, a Rust function compiled
 /// only with `fuzz-api` and never into the shipped artifact.
