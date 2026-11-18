@@ -329,7 +329,7 @@ It proves that the set of exported `pinyin_*` / `zhuyin_*` symbols is exactly th
 The version scripts are `capi/libpinyin.ver` (79) and `zhuyin-capi/libzhuyin.ver` (52), both checked in verbatim from the pin.
 It also proves that no other symbol leaks.
 
-The PR test job checks the development build when its path gate selects it.
+The PR `rust` job checks the development build when its path gate selects it.
 The nightly macOS job also checks the installed release artifacts.
 
 No symbol in a version script is feature-gated.

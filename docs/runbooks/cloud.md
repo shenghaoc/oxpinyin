@@ -187,10 +187,11 @@ The file exports:
   These two are computed again each time the file is sourced.
 
 A cell that the setup did not
-provision stops the `source` with an error. The file sources alike in sh,
-dash, bash and zsh: every value is single-quoted, and a `case` on the quoted
-`PINYIN_ORACLE_DBM` selects the cell. A file written by the retired shell
-setup is regenerated from the cells of the run, not read.
+provision stops the `source` with an error. The file is sourced from sh:
+every value is single-quoted, and a `case` on the quoted
+`PINYIN_ORACLE_DBM` selects the cell. A file without the current first line,
+such as one written by the retired shell setup, is regenerated from the cells
+of the run, not read.
 
 ### Data verification
 
@@ -495,8 +496,6 @@ just test-tools tools/dev/provision.test.py
 
 The fixtures run the documented `uv run ... -m tools.dev.provision` command with
 fake host tools, pins, data, proxy CA and generated environment paths, and source
-the environment file in sh, dash and zsh. The zsh case is skipped where zsh is not
-installed, except in CI's harness job, which installs zsh and sets
-`OXPINYIN_REQUIRE_ZSH=1`. Missing option values return status 1
+the environment file in sh. Missing option values return status 1
 with an `--option: requires an argument` diagnostic. Interpreter overrides are
 refused before the native prerequisite checks.

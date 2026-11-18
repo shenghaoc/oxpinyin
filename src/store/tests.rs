@@ -1061,9 +1061,9 @@ mod backend_files {
     //!
     //! Exactly one backend is compiled per build (the crate's
     //! `compile_error!` guards), so `DefaultStore` resolves this file's
-    //! backend the same way every consumer's does, and the
-    //! `store-backends.yml` matrix runs this file once per peer by running
-    //! the whole workspace sweep under each backend feature.
+    //! backend the same way every consumer's does, and CI runs this file
+    //! once per peer (`rust` for tkrzw, the `store` job for the others) by
+    //! running the whole workspace sweep under each backend feature.
     //!
     //! No backend leaves a file beside the store: tkrzw locks the data file
     //! itself with `fcntl` (`tkrzw_file_mmap.cc:124-133` at 1.0.34), Berkeley

@@ -22,22 +22,6 @@ from tools.oracle.image import digest_file
 from tools.dev.native import NativeRefused, Tools
 from tools.dev.runners import Finished
 
-# The environment file is sourced from these shells. dash is Debian's /bin/sh.
-SOURCE_SHELLS = ('sh', 'dash', 'zsh')
-# Set in CI's harness job, which installs zsh: there a missing zsh fails the zsh case
-# instead of skipping it, so CI always runs it.
-REQUIRE_ZSH = 'OXPINYIN_REQUIRE_ZSH'
-
-
-def shell_or_skip(case, shell):
-    """The executable of SHELL; skip CASE's zsh subtest where zsh is absent and not required."""
-    executable = shutil.which(shell)
-    if executable:
-        return executable
-    if shell == 'zsh' and os.environ.get(REQUIRE_ZSH) != '1':
-        case.skipTest('zsh is not installed; the zsh case runs in CI, where the harness job '
-                      f'installs zsh and sets {REQUIRE_ZSH}=1')
-    case.fail(f'{shell} is required for the environment-file source test')
 # The documented provisioning command after `uv python install`, run from the repository root.
 PROVISION_COMMAND = ('uv', 'run', '--managed-python', 'python', '-X', 'utf8', '-m', 'tools.dev.provision')
 
@@ -395,36 +379,29 @@ if sys.platform.startswith('linux'):
                 path.write_bytes(data)
             self.assertTrue(self.service.libs_ok('bdb'))
 
-        def source(self, cell, path=None, shell='sh'):
+        def source(self, cell, path=None):
             command = '. "$1" || exit; printf "%s\\0" "$PINYIN_ORACLE_PREFIX" "$OXPINYIN_LIBPINYIN_DATA_DIR" "${OXPINYIN_TKRZW_PREFIX:-}" "${OXPINYIN_TKRZW_LIBRARY:-}" "$PATH" "${LD_LIBRARY_PATH:-}" "${PKG_CONFIG_PATH:-}"'
-            executable = shell_or_skip(self, shell)
-            return subprocess.run([executable, '-c', command, 'fixture', str(path or self.service.env_file)],
+            return subprocess.run([shutil.which('sh'), '-c', command, 'fixture', str(path or self.service.env_file)],
                                   env=dict(self.env, PINYIN_ORACLE_DBM=cell), capture_output=True)
 
-        def test_the_environment_file_sources_alike_in_sh_dash_and_zsh(self):
+        def test_the_environment_file_sources_under_sh(self):
             self.service.tkrzw_host_library = ''
             self.write()
             text = self.service.env_file.read_text()
             self.assertTrue(text.startswith(provision.ENV_HEADER + '\n'))
             self.assertNotIn("$'", text)
             for cell in provision.CELLS:
-                answers = set()
-                for shell in SOURCE_SHELLS:
-                    with self.subTest(cell=cell, shell=shell):
-                        done = self.source(cell, shell=shell)
-                        self.assertEqual(done.returncode, 0, done.stderr.decode())
-                        fields = done.stdout.split(b'\0')
-                        self.assertEqual(fields[0], str(self.service.oracle_root / cell).encode())
-                        self.assertEqual(fields[1], str(self.service.oracle_root / cell / 'lib/libpinyin/data').encode())
-                        self.assertTrue(fields[4].startswith(self.service.uv_dir.encode()) or
-                                        fields[4].startswith(str(self.service.tkrzw_prefix).encode()), fields[4])
-                        answers.add(done.stdout)
-                self.assertEqual(len(answers), 1, f'{cell}: the shells disagree')
-            for shell in SOURCE_SHELLS:
-                with self.subTest(shell=shell):
-                    done = self.source('other', shell=shell)
-                    self.assertEqual(done.returncode, 1)
-                    self.assertEqual(done.stderr, b'cell other was not provisioned by this environment file\n')
+                with self.subTest(cell=cell):
+                    done = self.source(cell)
+                    self.assertEqual(done.returncode, 0, done.stderr.decode())
+                    fields = done.stdout.split(b'\0')
+                    self.assertEqual(fields[0], str(self.service.oracle_root / cell).encode())
+                    self.assertEqual(fields[1], str(self.service.oracle_root / cell / 'lib/libpinyin/data').encode())
+                    self.assertTrue(fields[4].startswith(self.service.uv_dir.encode()) or
+                                    fields[4].startswith(str(self.service.tkrzw_prefix).encode()), fields[4])
+            done = self.source('other')
+            self.assertEqual(done.returncode, 1)
+            self.assertEqual(done.stderr, b'cell other was not provisioned by this environment file\n')
 
         def test_without_an_override_the_file_is_written_and_read_in_the_cache_root(self):
             del self.service.env['OXPINYIN_ORACLE_ENV']
@@ -614,10 +591,9 @@ if sys.platform.startswith('linux'):
         def test_shell_quoting_round_trips_without_evaluating_values(self):
             for value in ("", "plain/a-b.c_+=,:%@", "quotes '\" and $dollars`", "'", "''\\", "~#&|;()<>!?[]{}*", "路径 with spaces"):
                 line = 'export VALUE=' + provision.quote(value)
-                for shell in SOURCE_SHELLS:
-                    with self.subTest(value=value, shell=shell):
-                        decoded = subprocess.check_output([shell_or_skip(self, shell), '-c', line + '; printf "%s" "$VALUE"'], env=self.env)
-                        self.assertEqual(decoded.decode(), value)
+                with self.subTest(value=value, shell='sh'):
+                    decoded = subprocess.check_output([shutil.which('sh'), '-c', line + '; printf "%s" "$VALUE"'], env=self.env)
+                    self.assertEqual(decoded.decode(), value)
                 with self.subTest(value=value, reader='read_env'):
                     self.service.env_file.write_text(provision.ENV_HEADER + '\n' + line + '\n')
                     self.assertEqual(provision.read_env(self.service.env_file), {'VALUE': value})

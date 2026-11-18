@@ -178,7 +178,7 @@ clippy *args:
 clippy *args:
     @{{windows_args}} cargo clippy @forwarded; exit $LASTEXITCODE
 
-# Run the cargo-deny checks of CI's deny job; deny.toml holds the policy. The
+# Run the cargo-deny checks of CI's rust job; deny.toml holds the policy. The
 # default-feature graph, then the feature-gated graphs, then the fuzz
 # workspace's own graph. --locked holds each to its committed lockfile, so a
 # root change that the fuzz lockfile does not follow fails here.

@@ -35,8 +35,8 @@ backend, as with the other peers.
   the `pin_data` tests in `src/store/bdb/tests.rs` (files the pin's
   libdb wrote, from `fixtures/w3/db/`; their `table.conf` differs from the
   other backends' sets only in `database format:BerkeleyDB`).
-  `just sanitize bdb` runs the Rust suite under ASan. The `bdb-sanitizers` job in
-  `.github/workflows/store-backends.yml` runs the same gate.
+  `just sanitize bdb` runs the Rust suite under ASan. The `store` job in
+  `.github/workflows/ci.yml` runs the same gate after the peer workspace tests.
   libdb's own internals are not instrumented.
 - Files this backend wrote: `an_attached_bigram_saves_as_a_replaced_mode_0600_hash_copy`
   checks that a saved `user_bigram.db` is a `DB_HASH` file with mode 0600 and that
