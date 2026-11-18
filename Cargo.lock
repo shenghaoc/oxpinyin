@@ -635,7 +635,6 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "assert_cmd",
  "assert_fs",
- "libc",
  "oxpinyin",
  "oxpinyin-capi",
  "oxpinyin-utils",
