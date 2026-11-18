@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::data::c_stderr;
 use crate::engine::SessionSettings;
-use crate::facade::runtime::{
+use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
     directory_reads_as_a_chunk,
 };
@@ -550,11 +550,11 @@ impl ContextCore {
             |nibble: u8, originals: &crate::user::SystemOriginals| -> crate::user::SaveBaseline {
                 match Runtime::read_save_baseline(originals, unloaded, nibble) {
                     Ok(baseline) => baseline,
-                    Err(crate::facade::runtime::SaveRemapFault::Unmappable(path)) => {
+                    Err(crate::runtime::SaveRemapFault::Unmappable(path)) => {
                         c_stderr::mmap_failed(&path);
                         crate::user::SaveBaseline::Unmappable
                     }
-                    Err(crate::facade::runtime::SaveRemapFault::ChunkHeaderRead) => {
+                    Err(crate::runtime::SaveRemapFault::ChunkHeaderRead) => {
                         crate::user::SaveBaseline::ChunkHeaderRead
                     }
                 }
@@ -842,7 +842,7 @@ impl ContextCore {
         let runtime = &mut self.runtime;
         match runtime.load_system_addon_reporting(index) {
             Ok(loaded) => Ok(loaded),
-            Err(crate::facade::runtime::LibraryError::Row(fault)) => Err(match fault {
+            Err(crate::runtime::LibraryError::Row(fault)) => Err(match fault {
                 RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
                 RowFault::NullChunkName => {
                     if let Some(dir) = runtime.system_dir() {
@@ -853,10 +853,10 @@ impl ContextCore {
                 RowFault::ChunkHeaderRead => LibraryRowAssert::ChunkHeaderRead,
             }),
             Err(
-                error @ (crate::facade::runtime::LibraryError::Io(_)
-                | crate::facade::runtime::LibraryError::Format(_)
-                | crate::facade::runtime::LibraryError::Layout(_)
-                | crate::facade::runtime::LibraryError::Unmappable { .. }),
+                error @ (crate::runtime::LibraryError::Io(_)
+                | crate::runtime::LibraryError::Format(_)
+                | crate::runtime::LibraryError::Layout(_)
+                | crate::runtime::LibraryError::Unmappable { .. }),
             ) => {
                 if let Some(path) = error.unmappable_path() {
                     c_stderr::mmap_failed(path);

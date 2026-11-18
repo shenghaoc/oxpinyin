@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use crate::facade::runtime::{Runtime, RuntimeDict, RuntimeLm};
+use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
 use oxpinyin::engine::{Candidate, CandidateKind, Session, SessionSettings};
 
 use super::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};

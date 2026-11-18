@@ -84,7 +84,7 @@ too:
   `check_add` keeps its refusals (an empty key, a malformed stored record,
   register row 101).
 - `SharedDict::addon_phrase_item(token)`
-  (`src/facade/runtime/mod.rs`) reads the item's stored bytes from
+  (`src/runtime/mod.rs`) reads the item's stored bytes from
   the addon library (`PhraseItemView::as_bytes`). No spelling is rendered
   and parsed back, so no tone, reading or non-scalar word is lost.
 - `pinyin_choose_candidate` (`capi/src/candidates.rs`) runs

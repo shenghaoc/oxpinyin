@@ -43,7 +43,6 @@ mod instance;
 mod offsets;
 mod parse;
 mod predict;
-pub mod runtime;
 mod snapshot;
 #[cfg(test)]
 use crate::user::test_child;

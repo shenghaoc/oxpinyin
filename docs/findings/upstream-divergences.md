@@ -424,7 +424,7 @@ An entry holds nothing else.
 - **Pin:** `SingleGram` searches stored records with the standard lower bound before its walks (`src/storage/ngram.cpp:153-271`), and `merge_single_gram` interleaves without sorting (`:308-349`), so a foreign value can violate the partition precondition for the searched token. Segmentation reads that gram (`src/lookup/phrase_lookup.cpp:268-290`).
 - **oxpinyin:** `single_gram::lower_bound_records` uses `slice::partition_point` on the stored order.
 - **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals). `std::lower_bound` requires the records to be partitioned for the searched token. A call outside that precondition has undefined behaviour. Segmentation reads the separate facade total for the unigram term and does not change it (`phrase_lookup.cpp:307-345`). [C++ partition precondition](https://timsong-cpp.github.io/cppwp/n4950/lower.bound), [effect of a violated precondition](https://timsong-cpp.github.io/cppwp/n4950/structure.specifications).
-- **Tests:** `oxpinyin::facade::runtime::tests::the_segmenter_reads_an_unsorted_user_gram_as_stored`, `oxpinyin::facade::export_rows::tests::native::user_gram_unsorted_export_follows_the_stored_order`, `oxpinyin::facade::export_rows::tests::native::user_gram_duplicate_export_lists_every_stored_item`.
+- **Tests:** `oxpinyin::runtime::tests::the_segmenter_reads_an_unsorted_user_gram_as_stored`, `oxpinyin::facade::export_rows::tests::native::user_gram_unsorted_export_follows_the_stored_order`, `oxpinyin::facade::export_rows::tests::native::user_gram_duplicate_export_lists_every_stored_item`.
 
 ### Stored gram partitions: training
 

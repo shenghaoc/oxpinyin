@@ -51,6 +51,8 @@ mod parser;
 #[forbid(unsafe_code)]
 mod parser_rows;
 #[forbid(unsafe_code)]
+pub mod runtime;
+#[forbid(unsafe_code)]
 mod scheme;
 #[forbid(unsafe_code)]
 pub mod scoring;

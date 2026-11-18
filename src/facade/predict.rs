@@ -3,7 +3,7 @@
 //! `_compute_predicted_prefix_candidates` ranks.
 
 use crate::PhraseText;
-use crate::facade::runtime::RuntimeDict;
+use crate::runtime::RuntimeDict;
 use crate::user::UserStore;
 
 /// Resolves a prefix to the phrase tokens its tail substrings name, in the
@@ -91,7 +91,7 @@ pub fn merged_suggestions(
     // Search visits raw keys; the candidate's text comes from its live item
     // (074a2219 pinyin.cpp:2391-2395, 2018-2022), including keys containing
     // UCS-4 values that cannot be represented by a Rust String.
-    crate::facade::runtime::merge_suggestion_rows(&system, &user_rows)
+    crate::runtime::merge_suggestion_rows(&system, &user_rows)
         .into_iter()
         .map(|token| {
             // A failed item read leaves no text; it must still reach the

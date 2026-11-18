@@ -8,8 +8,8 @@ fn check(value: bool) {
     }
 }
 use oxpinyin::engine::tool::{parse_full, physical_matrix, prepare_lookup};
-use oxpinyin::facade::runtime::tool::Lookup;
 use oxpinyin::input::tool::lookup_tests as output;
+use oxpinyin::runtime::tool::Lookup;
 use oxpinyin::tool::Key;
 use oxpinyin::{ChewingKey, OptionBits};
 

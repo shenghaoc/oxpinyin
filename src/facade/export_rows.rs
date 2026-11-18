@@ -4,8 +4,8 @@
 //! Pure Rust over the context's user store and optional runtime — no C
 //! types cross this boundary.
 
-use crate::facade::runtime::{PhraseItemView, RuntimeDict};
 use crate::marshal::phrase_text::phrase_text_bytes;
+use crate::runtime::{PhraseItemView, RuntimeDict};
 use crate::user::{MAX_KEY_TONE, SENTENCE_START, SystemItem, UserPronunciation, UserStore};
 use crate::{ChewingKey, PhraseText};
 
@@ -494,7 +494,7 @@ type RenderedItem = (PhraseText, Vec<String>);
 #[derive(Clone)]
 struct ExportSource<'a> {
     user: &'a crate::user::UserStore,
-    dict: crate::facade::runtime::RuntimeDict<'a>,
+    dict: crate::runtime::RuntimeDict<'a>,
 }
 
 impl ExportSource<'_> {

@@ -217,7 +217,7 @@ it (§7).
 
 ## 7. The C ABI n-best wiring
 
-`SharedLm` (a re-export of `oxpinyin::facade::runtime::RuntimeLm`) overrides
+`SharedLm` (a re-export of `oxpinyin::runtime::RuntimeLm`) overrides
 `nbest_step_costs` and forwards to the model behind it, the same model
 that the rest of the C ABI decode scores against. The trellis, the
 comparator and the candidate code did not change for this. The trait
@@ -335,7 +335,7 @@ phrase slice that shifts because a different number of NBEST rows survive
 is an intact phrase order seen through a shifted 6-row window.
 
 The fixture holds the pin's answer. The gate is the test module
-`sentence_surface_parity` (`src/facade/runtime/tests.rs`), which calls
+`sentence_surface_parity` (`src/runtime/tests.rs`), which calls
 `sentence_tail::measure` over the pinned libpinyin-data package and asserts
 the current numbers. A move is a deliberate change of this section, not a
 silent drift.
