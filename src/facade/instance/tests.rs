@@ -117,11 +117,11 @@ fn the_parse_reset_keeps_the_session_and_the_full_reset_clears_it() {
 }
 
 mod native {
+    use crate::OptionBits;
     use crate::engine::{CandidateKind, Selection};
     use crate::facade::test_fixture::{native_fixture::*, *};
     use crate::facade::{ContextCore, InstanceCore, ToneForwarding};
     use crate::user::UserConfLaw;
-    use crate::{OptionBits, PhraseToken};
 
     #[rstest::rstest]
     #[case::pinyin_luoma(UserConfLaw::Pinyin, 2)]
@@ -168,10 +168,7 @@ mod native {
                 .read(&context.runtime)
                 .session
                 .selected_tokens()
-                .iter()
-                .copied()
-                .map(PhraseToken::value)
-                .collect::<Vec<_>>()
+                .to_vec()
         };
         assert_eq!(selected(&twice_context, &twice), [0x0100_1225]);
         assert_eq!(
@@ -465,7 +462,7 @@ mod native {
                 .to_owned();
             let row = published(context, instance, 0, &text);
             assert_ne!(choose(context, instance, &row), Selection::Refused);
-            row.token.value()
+            row.token
         };
         let t1 = select(&context, &mut instance, 0);
         assert!(!context.train(&instance, 0).unwrap());

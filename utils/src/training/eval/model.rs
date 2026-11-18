@@ -56,7 +56,6 @@ impl EvalLanguageModel {
         let mut unigrams = BTreeMap::new();
         let mut unigram_total: u64 = 0;
         for token in lexicon {
-            let token = token.value();
             let freq = counts
                 .unigrams
                 .get(&token)

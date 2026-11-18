@@ -377,34 +377,14 @@ pub const fn phrase_index_make_token(phrase_index: u8, token: u32) -> u32 {
     (((phrase_index as u32) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
 }
 
-/// Opaque identifier of a phrase in a dictionary and language model.
+/// `phrase_token_t` (`typedef guint32 phrase_token_t`, `novel_types.h:33`
+/// at the pin `074a2219`): the identifier of a phrase in a dictionary and
+/// language model.
 ///
-/// The engine never interprets the number; it only compares tokens and hands
-/// them to a [`crate::model::LanguageModel`]. That keeps the token layout entirely a
-/// backend concern, so a fixture adapter and a table-backed loader can use
-/// different numbering without the decoder noticing.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct PhraseToken(u32);
-
-impl PhraseToken {
-    /// Builds a token from its backend-defined numeric value.
-    #[must_use]
-    pub const fn new(value: u32) -> Self {
-        Self(value)
-    }
-
-    /// The backend-defined numeric value.
-    #[must_use]
-    pub const fn value(self) -> u32 {
-        self.0
-    }
-}
-
-impl fmt::Display for PhraseToken {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.0)
-    }
-}
+/// It is the pin's alias, not a newtype: bits 24 to 27 hold the library
+/// index and the low 24 bits the slot in that library
+/// ([`phrase_index_library_index`], [`phrase_index_make_token`]).
+pub type PhraseToken = u32;
 
 /// One dictionary hit: a phrase and the token that scores it.
 ///

@@ -189,10 +189,7 @@ fn a_null_step_still_rebuilds_a_record_that_lost_its_runs() {
     session
         .choose_null_step()
         .expect("the null step is written");
-    assert_eq!(
-        session.selected_tokens(),
-        [PhraseToken::new(1), PhraseToken::new(2)]
-    );
+    assert_eq!(session.selected_tokens(), [1, 2]);
     assert_eq!(session.selected_text(), "你好");
     assert_eq!(session.composition_offset(), 5);
 }
@@ -234,8 +231,7 @@ fn candidates_come_from_keys_past_the_pins_gint16_bound() {
             .expect("a syllable start is in range");
         assert!(
             window.iter().any(|candidate| {
-                candidate.kind() != CandidateKind::Fallback
-                    && candidate.token() == Some(PhraseToken::new(1))
+                candidate.kind() != CandidateKind::Fallback && candidate.token() == Some(1)
             }),
             "offset {offset}: the ni row"
         );
@@ -465,8 +461,8 @@ fn an_unreadable_prefix_is_not_the_predecessor() {
             },
             FixtureLanguageModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
         );
-        session.set_candidate_prefixes(prefixes.iter().copied().map(PhraseToken::new));
-        session.prefix_predecessor().value()
+        session.set_candidate_prefixes(prefixes.iter().copied());
+        session.prefix_predecessor()
     };
     // Token 2 is 方面 (two characters), token 1 is 方.
     assert_eq!(predecessor(0, &[1, 2]), 2, "the longest readable prefix");
@@ -616,7 +612,7 @@ fn type_and_select(
     let index = session
         .candidates()
         .iter()
-        .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+        .position(|candidate| candidate.token() == Some(token))
         .expect("the fixture candidate is offered");
     select_row(session, index).expect("selection cannot fail");
 }
@@ -626,10 +622,7 @@ fn train_observes_each_recorded_token_after_its_prefix() {
     let mut session = train_session();
     type_and_select(&mut session, "ni", 1);
     type_and_select(&mut session, "hao", 2);
-    assert_eq!(
-        session.selected_tokens(),
-        [PhraseToken::new(1), PhraseToken::new(2)]
-    );
+    assert_eq!(session.selected_tokens(), [1, 2]);
 
     // A fallback-model row without spans trains the recorded selection
     // history (the gate's empty-result rule does not apply to it).
@@ -646,13 +639,7 @@ fn train_observes_each_recorded_token_after_its_prefix() {
     assert!(train_prepared(&session, 0, &mut recorder).expect("training cannot fail"));
     // First token observes against an empty history (the store maps that
     // to sentence_start); the second observes after the first.
-    assert_eq!(
-        recorder.observed,
-        vec![
-            (Vec::new(), PhraseToken::new(1)),
-            (vec![PhraseToken::new(1)], PhraseToken::new(2)),
-        ]
-    );
+    assert_eq!(recorder.observed, vec![(Vec::new(), 1), (vec![1], 2),]);
 
     // Re-training re-observes the same sentence: upstream has no guard
     // (a second pinyin_train doubles the counts), and neither does this.
@@ -772,7 +759,7 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
         let window = session.candidates_at(offset).expect("offset in range");
         let index = window
             .iter()
-            .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+            .position(|candidate| candidate.token() == Some(token))
             .expect("the fixture candidate is offered");
         session
             .select_target(&SelectionTarget::of_candidate(
@@ -797,10 +784,7 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
         "the stale row trains"
     );
     assert!(
-        recorder
-            .observed
-            .iter()
-            .all(|(_, token)| *token != PhraseToken::new(3)),
+        recorder.observed.iter().all(|(_, token)| *token != 3),
         "the span of 吗 lies past the store"
     );
 }
@@ -841,28 +825,24 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
     let mut session = trellis_session();
     session.replace_raw("ni").expect("parse");
     session.constraints.resize(6);
-    session
-        .constraints
-        .add(0, 2, PhraseToken::new(1), "你".into());
+    session.constraints.add(0, 2, 1, "你".into());
     // The later forcing's token differs from the decoded span's token.
-    session
-        .constraints
-        .add(4, 6, PhraseToken::new(9), "X".into());
+    session.constraints.add(4, 6, 9, "X".into());
     let spans = vec![
         PhraseSpan {
             start: 0,
-            token: PhraseToken::new(1),
+            token: 1,
             text: "你".into(),
         },
         PhraseSpan {
             start: 4,
-            token: PhraseToken::new(1),
+            token: 1,
             text: "X".into(),
         },
     ];
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你X".into()),
-        tokens: vec![PhraseToken::new(1), PhraseToken::new(1)],
+        tokens: vec![1, 1],
         spans,
         keys: 2,
         span: 2,
@@ -890,13 +870,9 @@ fn training_refuses_a_stale_forced_token_at_a_later_span() {
     session.replace_raw("nihao").expect("parse");
     assert!(session.guess_sentence().expect("guess"));
     session.constraints.resize(6);
-    session
-        .constraints
-        .add(0, 2, PhraseToken::new(1), "你".into());
+    session.constraints.add(0, 2, 1, "你".into());
     // The later forcing's token differs from the decoded span's token.
-    session
-        .constraints
-        .add(2, 4, PhraseToken::new(9), "X".into());
+    session.constraints.add(2, 4, 9, "X".into());
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
@@ -913,9 +889,7 @@ fn training_refuses_a_stale_forced_token() {
     session.replace_raw("nihao").expect("parse");
     assert!(session.guess_sentence().expect("guess"));
     session.constraints.resize(6);
-    session
-        .constraints
-        .add(0, 2, PhraseToken::new(9), "X".into());
+    session.constraints.add(0, 2, 9, "X".into());
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
@@ -965,17 +939,15 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     // (phonetic_key_matrix.cpp:603-668). Duplicate the first placed edge.
     duplicate_the_first_key(&mut session);
     session.constraints.resize(6);
-    session
-        .constraints
-        .add(0, 5, PhraseToken::new(1), text.clone());
+    session.constraints.add(0, 5, 1, text.clone());
     let spans = vec![PhraseSpan {
         start: 0,
-        token: PhraseToken::new(1),
+        token: 1,
         text,
     }];
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
-        tokens: vec![PhraseToken::new(1)],
+        tokens: vec![1],
         spans,
         keys: 1,
         span: 2,
@@ -1021,7 +993,7 @@ fn a_chosen_phrase_keeps_its_text_through_the_record() {
                 crate::engine::CandidateKind::Phrase,
                 1,
                 2,
-                Some(PhraseToken::new(1)),
+                Some(1),
                 None,
             ),
         ]);
@@ -1098,7 +1070,7 @@ fn a_row_records_its_whole_token_path() {
     // One authored row.
     session.sentence.rows = vec![NbestRow {
         text: Some("\u{884}".into()),
-        tokens: vec![PhraseToken::new(9)],
+        tokens: vec![9],
         spans: Vec::new(),
         keys: 1,
         span: 2,
@@ -1114,7 +1086,7 @@ fn a_row_records_its_whole_token_path() {
         select_row(&mut session, 0).expect("the row is live"),
         Selection::Continued
     );
-    assert_eq!(session.selected_tokens(), [PhraseToken::new(9)]);
+    assert_eq!(session.selected_tokens(), [9]);
 }
 
 #[test]
@@ -1131,21 +1103,21 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     session.sentence.rows = vec![
         NbestRow {
             text: Some("\u{597d}".into()),
-            tokens: vec![PhraseToken::new(0x100)],
+            tokens: vec![0x100],
             spans: Vec::new(),
             keys: 1,
             span: 3,
         },
         NbestRow {
             text: Some("\u{597d}".into()),
-            tokens: vec![PhraseToken::new(0x101)],
+            tokens: vec![0x101],
             spans: Vec::new(),
             keys: 1,
             span: 3,
         },
         NbestRow {
             text: Some("\u{6d69}".into()),
-            tokens: vec![PhraseToken::new(0x102)],
+            tokens: vec![0x102],
             spans: Vec::new(),
             keys: 1,
             span: 3,
@@ -1166,7 +1138,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     select_row(&mut session, hao).expect("the row is live");
     assert_eq!(
         session.selected_tokens(),
-        [PhraseToken::new(0x102)],
+        [0x102],
         "the chosen row records its own token path, not the deduped row 1's"
     );
 }
@@ -1184,7 +1156,7 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     // would duplicate the raw prefix).
     session.sentence.rows = vec![NbestRow {
         text: Some("你好".into()),
-        tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
+        tokens: vec![0x100, 0x101],
         spans: Vec::new(),
         keys: 2,
         span: 5,
@@ -1421,7 +1393,7 @@ impl LanguageModel for CountingBigrams {
         prev: &PhraseToken,
     ) -> Result<Option<crate::model::MergedGram>, EngineError> {
         self.merges.set(self.merges.get() + 1);
-        self.asked_about.set(prev.value());
+        self.asked_about.set(*prev);
         Ok(self.row.clone())
     }
 }
@@ -1457,7 +1429,7 @@ fn dynamic_adjust_run(
     let phrases = (0..entries)
         .map(|index| {
             PhraseEntry::new(
-                PhraseToken::new(DYNAMIC_ADJUST_FIRST + u32::try_from(index).expect("small index")),
+                DYNAMIC_ADJUST_FIRST + u32::try_from(index).expect("small index"),
                 DYNAMIC_ADJUST_TEXTS[index].to_owned(),
             )
         })
@@ -1682,7 +1654,7 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
             CandidateKind::Phrase,
             2,
             4,
-            Some(PhraseToken::new(0x0300_16df)),
+            Some(0x0300_16df),
             None,
         ),
         Candidate::new(
@@ -1690,7 +1662,7 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
             CandidateKind::Phrase,
             2,
             4,
-            Some(PhraseToken::new(0x0100_4c41)),
+            Some(0x0100_4c41),
             None,
         ),
         Candidate::new(
@@ -1698,16 +1670,13 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
             CandidateKind::Phrase,
             1,
             4,
-            Some(PhraseToken::new(0x0100_4c41)),
+            Some(0x0100_4c41),
             None,
         ),
     ];
     let mut into = Vec::new();
     flush_window_batch(&mut batch, &mut into);
-    let tokens: Vec<u32> = into
-        .iter()
-        .filter_map(|c| c.token().map(crate::PhraseToken::value))
-        .collect();
+    let tokens: Vec<u32> = into.iter().filter_map(|c| c.token()).collect();
     assert_eq!(tokens, [0x0100_4c41, 0x0300_16df]);
     assert_eq!(
         into[0].consumed_keys(),
@@ -1717,14 +1686,7 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
 }
 
 fn window_row(text: &str, token: Option<u32>) -> crate::engine::candidate::Candidate {
-    crate::engine::candidate::Candidate::new(
-        text,
-        super::CandidateKind::Phrase,
-        1,
-        2,
-        token.map(PhraseToken::new),
-        None,
-    )
+    crate::engine::candidate::Candidate::new(text, super::CandidateKind::Phrase, 1, 2, token, None)
 }
 
 #[test]
@@ -1858,7 +1820,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
             CandidateKind::Phrase,
             1,
             3,
-            Some(PhraseToken::new(1)),
+            Some(1),
             None,
         ),
         Candidate::new(
@@ -1866,7 +1828,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
             CandidateKind::Addon,
             1,
             3,
-            Some(PhraseToken::new(2)),
+            Some(2),
             None,
         ),
     ];
@@ -1918,8 +1880,8 @@ fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
         let mut session = Session::new(
             SessionSettings::default(),
             TwoFacadeDict {
-                system: PhraseEntry::new(PhraseToken::new(DYNAMIC_ADJUST_FIRST), "系"),
-                addon: PhraseEntry::new(PhraseToken::new(0x0500_0002), "附"),
+                system: PhraseEntry::new(DYNAMIC_ADJUST_FIRST, "系"),
+                addon: PhraseEntry::new(0x0500_0002, "附"),
             },
             CountingBigrams {
                 unigrams: FixedUnigrams {
@@ -1978,8 +1940,8 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
     let mut session = Session::new(
         SessionSettings::default(),
         TwoFacadeDict {
-            system: PhraseEntry::new(PhraseToken::new(0x0100_0001), "系".to_owned()),
-            addon: PhraseEntry::new(PhraseToken::new(0x0500_0002), "附".to_owned()),
+            system: PhraseEntry::new(0x0100_0001, "系".to_owned()),
+            addon: PhraseEntry::new(0x0500_0002, "附".to_owned()),
         },
         FixedUnigrams {
             system: 14,
@@ -2013,11 +1975,7 @@ impl LanguageModel for TrainedUnigrams {
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
         let (first, second) = self.counts.get();
-        Ok(Some(if token.value() == 0x0100_0001 {
-            first
-        } else {
-            second
-        }))
+        Ok(Some(if *token == 0x0100_0001 { first } else { second }))
     }
 
     fn unigram_total(&self) -> Result<Option<u64>, EngineError> {
@@ -2083,7 +2041,7 @@ fn a_window_whose_lookup_met_an_unreadable_item_says_so() {
         type Syllable = SyllableKey;
 
         fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
-            Ok(vec![PhraseEntry::new(PhraseToken::new(0x0100_0001), "你")])
+            Ok(vec![PhraseEntry::new(0x0100_0001, "你")])
         }
 
         fn lookup_into_flagged(
@@ -2274,7 +2232,7 @@ where
     let index = session
         .candidates()
         .iter()
-        .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+        .position(|candidate| candidate.token() == Some(token))
         .expect("the fixture candidate is offered");
     select_row(session, index).expect("selection cannot fail");
 }
@@ -2338,7 +2296,7 @@ fn the_forcing_survives_typing_and_releases_only_on_reset() {
     assert!(session.sentence_text(0).is_none());
     assert_eq!(
         session.selected_tokens(),
-        [PhraseToken::new(1)],
+        [1],
         "the forcing survived the keystroke"
     );
 
@@ -2362,10 +2320,7 @@ fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
     let mut session = train_session();
     type_and_select(&mut session, "nihao", 1);
     type_and_select(&mut session, "hao", 2);
-    assert_eq!(
-        session.selected_tokens(),
-        [PhraseToken::new(1), PhraseToken::new(2)]
-    );
+    assert_eq!(session.selected_tokens(), [1, 2]);
 
     // Out of range answers false, never panic.
     assert!(!session.clear_constraint(999));
@@ -2374,7 +2329,7 @@ fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
     // included — un-forces the whole run; the record follows the
     // survivor.
     assert!(session.clear_constraint(1));
-    assert_eq!(session.selected_tokens(), [PhraseToken::new(2)]);
+    assert_eq!(session.selected_tokens(), [2]);
     assert!(!session.clear_constraint(0), "the head run is already free");
 
     assert!(session.clear_constraint(2));
@@ -2396,7 +2351,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
         let index = session
             .candidates()
             .iter()
-            .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+            .position(|candidate| candidate.token() == Some(token))
             .expect("the fixture candidate is offered");
         select_row(session, index).expect("selection cannot fail");
     };
@@ -2414,7 +2369,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     // Un-force the tail run; the record rebuilds over the survivor
     // and the composition is open again.
     assert!(session.clear_constraint(2));
-    assert_eq!(session.selected_tokens(), [PhraseToken::new(1)]);
+    assert_eq!(session.selected_tokens(), [1]);
 
     // Further typing keeps the surviving 你 forcing alive.
     session
@@ -2430,7 +2385,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     assert!(session.sentence_text(0).is_none());
     assert_eq!(
         session.selected_tokens(),
-        [PhraseToken::new(1)],
+        [1],
         "the surviving head forcing outlived the clearing and the typing"
     );
 }
@@ -2504,7 +2459,7 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
         let index = session
             .candidates()
             .iter()
-            .position(|candidate| candidate.token() == Some(PhraseToken::new(token)))
+            .position(|candidate| candidate.token() == Some(token))
             .expect("the fixture candidate is offered");
         select_row(&mut session, index).expect("selection cannot fail");
     }
@@ -2542,7 +2497,7 @@ fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
             let index = session
                 .candidates()
                 .iter()
-                .position(|candidate| candidate.token() == Some(PhraseToken::new(1)))
+                .position(|candidate| candidate.token() == Some(1))
                 .expect("the fixture offers 你");
             select_row(&mut session, index).expect("choose 你");
             session.replace_raw(intermediate).expect("temporary parse");
@@ -2579,7 +2534,7 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
     let index = session
         .candidates()
         .iter()
-        .position(|candidate| candidate.token() == Some(PhraseToken::new(1)))
+        .position(|candidate| candidate.token() == Some(1))
         .expect("the fixture candidate is offered");
     select_row(&mut session, index).expect("selection cannot fail");
 
@@ -2616,7 +2571,7 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
     assert!(session.sentence_text(0).is_none());
     assert_eq!(
         session.selected_tokens(),
-        [PhraseToken::new(1)],
+        [1],
         "the forcing survived the shrink and the retype"
     );
 }
@@ -2634,10 +2589,10 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     session.sentence.rows = vec![
         crate::engine::nbest::NbestRow {
             text: Some("\u{597d}".into()),
-            tokens: vec![PhraseToken::new(0x100)],
+            tokens: vec![0x100],
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
-                token: PhraseToken::new(0x100),
+                token: 0x100,
                 text: "\u{597d}".into(),
             }],
             keys: 1,
@@ -2645,10 +2600,10 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
         },
         crate::engine::nbest::NbestRow {
             text: Some("\u{6d69}".into()),
-            tokens: vec![PhraseToken::new(0x102)],
+            tokens: vec![0x102],
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
-                token: PhraseToken::new(0x102),
+                token: 0x102,
                 text: "\u{6d69}".into(),
             }],
             keys: 1,
@@ -2690,12 +2645,8 @@ fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
     // A gapped store straight from diff_result's shape: 你 over
     // [0,2), a free gap "ha" over [2,5), a forcing over [5,10).
     session.constraints.resize(12);
-    session
-        .constraints
-        .add(0, 2, PhraseToken::new(1), "\u{4f60}".into());
-    session
-        .constraints
-        .add(5, 10, PhraseToken::new(2), "\u{4e16}\u{754c}".into());
+    session.constraints.add(0, 2, 1, "\u{4f60}".into());
+    session.constraints.add(5, 10, 2, "\u{4e16}\u{754c}".into());
     session.rebuild_selection_from_constraints();
     assert!(
         session
@@ -2727,11 +2678,7 @@ fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
         "a row-0 choose recorded no forcing"
     );
     let row_tokens: Vec<PhraseToken> = session.selected_tokens().to_vec();
-    assert_eq!(
-        row_tokens,
-        vec![PhraseToken::new(1), PhraseToken::new(2)],
-        "the row's whole path is the record"
-    );
+    assert_eq!(row_tokens, vec![1, 2], "the row's whole path is the record");
 
     let mut recorder = Recorder {
         observed: Vec::new(),
@@ -2760,10 +2707,7 @@ fn a_decoded_continuation_trains_through_the_constraint_walk() {
     assert!(train_prepared(&session, 0, &mut recorder).expect("train cannot fail"));
     assert_eq!(
         recorder.observed,
-        vec![
-            (Vec::new(), PhraseToken::new(1)),
-            (vec![PhraseToken::new(1)], PhraseToken::new(2)),
-        ],
+        vec![(Vec::new(), 1), (vec![1], 2),],
         "你 (forced) then 好 (first decoded after the run) train, 你→好 included"
     );
 }
@@ -2879,11 +2823,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         .expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
         text: Some("你好世界".into()),
-        tokens: vec![
-            PhraseToken::new(0x100),
-            PhraseToken::new(0x101),
-            PhraseToken::new(0x102),
-        ],
+        tokens: vec![0x100, 0x101, 0x102],
         spans: Vec::new(),
         keys: 3,
         span: 11,
@@ -2914,7 +2854,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
 
     let row = |text: &str| NbestRow {
         text: Some(text.into()),
-        tokens: vec![PhraseToken::new(0x100)],
+        tokens: vec![0x100],
         spans: Vec::new(),
         keys: 2,
         span: 5,
@@ -3054,7 +2994,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     // A guessed sentence rides the prepend at any offset.
     session.sentence.rows = vec![NbestRow {
         text: Some("你好".into()),
-        tokens: vec![PhraseToken::new(0x100)],
+        tokens: vec![0x100],
         spans: Vec::new(),
         keys: 2,
         span: 5,
@@ -3335,10 +3275,7 @@ impl PhraseList for StoredTone3 {
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
         let texts: Vec<&str> = syllables.iter().map(|key| key.text()).collect();
         Ok(if texts == ["ni", "hao"] {
-            vec![PhraseEntry::new(
-                PhraseToken::new(0x0f00_0001),
-                "你鎄".to_owned(),
-            )]
+            vec![PhraseEntry::new(0x0f00_0001, "你鎄".to_owned())]
         } else {
             Vec::new()
         })
@@ -3942,7 +3879,7 @@ impl PhraseList for ItemDictionary {
         }
         Ok(self
             .items
-            .get(&token.value())
+            .get(&token)
             .cloned()
             .map_or(crate::model::PhraseItemRead::NoItem, |rows| {
                 crate::model::PhraseItemRead::Item(rows)
@@ -3998,12 +3935,7 @@ fn wide_abbreviation_session(
         .expect("incomplete on");
     session.replace_raw("zhhrm").expect("parse");
     session.constraints.resize(6);
-    assert_eq!(
-        session
-            .constraints
-            .add(0, 5, PhraseToken::new(7), "中华人民".into()),
-        5
-    );
+    assert_eq!(session.constraints.add(0, 5, 7, "中华人民".into()), 5);
     session.rebuild_selection_from_constraints();
     session
 }
@@ -4018,7 +3950,7 @@ fn a_forcing_over_a_wide_abbreviation_survives_the_next_guess() {
     let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
     session.guess_sentence().expect("guess cannot fail");
     assert!(session.constraints.is_one_step_at(0));
-    assert_eq!(session.selected_tokens(), [PhraseToken::new(7)]);
+    assert_eq!(session.selected_tokens(), [7]);
 }
 
 /// The same forcing met by the replacement reconcile, which validates a
@@ -4027,7 +3959,7 @@ fn a_forcing_over_a_wide_abbreviation_survives_the_next_guess() {
 fn a_forcing_over_a_wide_abbreviation_survives_the_replacement_reconcile() {
     let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
     session.reconcile_replaced_selection().expect("reconcile");
-    assert_eq!(session.selected_tokens(), [PhraseToken::new(7)]);
+    assert_eq!(session.selected_tokens(), [7]);
     assert!(session.constraints.is_one_step_at(0));
 }
 
@@ -4098,7 +4030,7 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
     // does: one row whose text is the phrase's.
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
-        tokens: vec![PhraseToken::new(1)],
+        tokens: vec![1],
         spans: Vec::new(),
         keys: 1,
         span: 2,
@@ -4335,7 +4267,7 @@ fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
         let spelling = crate::engine::nbest::ConstraintSpelling::new(&matrix);
         let mut constraints = crate::engine::constraint::ConstraintStore::default();
         constraints.resize(3);
-        constraints.add(0, 2, PhraseToken::new(1), "你".into());
+        constraints.add(0, 2, 1, "你".into());
         constraints
             .validate(3, |start, end, token| {
                 spelling.spells(&dictionary, start, end, token)

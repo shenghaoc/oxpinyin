@@ -157,7 +157,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
     let (short, long, hao, number) = {
         // SAFETY: the newly allocated instance is live; no mutation overlaps.
         let inst = unsafe { crate::state::instance_ref(instance) };
-        let token = |text| inst.core.dict.tokens_for_text(text)[0].value();
+        let token = |text| inst.core.dict.tokens_for_text(text)[0];
         (token("好"), token("你好"), token("好"), token("号"))
     };
     {

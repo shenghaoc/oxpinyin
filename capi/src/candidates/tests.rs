@@ -46,7 +46,7 @@ use crate::test_support::promotion_system;
 
 use oxpinyin::facade::TextSpan;
 
-use oxpinyin::{PhraseToken, SENTENCE_START};
+use oxpinyin::SENTENCE_START;
 
 use std::cell::Cell;
 
@@ -127,9 +127,7 @@ unsafe fn selected_tokens(instance: *mut PinyinInstance) -> Vec<u32> {
         .core
         .session
         .selected_tokens()
-        .iter()
-        .map(|token| token.value())
-        .collect()
+        .to_vec()
 }
 
 // Removing a real imported candidate must mutate the retained store even
@@ -368,7 +366,7 @@ impl Open {
                 .iter()
                 .enumerate()
                 .find_map(|(index, row)| {
-                    let token = row.token.get().map(PhraseToken::value)?;
+                    let token = row.token.get()?;
                     wanted(row.candidate_type(), token).then_some((index, token))
                 })
                 .expect("the fixture holds a row of this kind")
@@ -517,7 +515,7 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
     let ni = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
-        inst.core.dict.tokens_for_text("你")[0].value()
+        inst.core.dict.tokens_for_text("你")[0]
     };
 
     // A prefix choice raises only its unigram. Seed an existing bigram
@@ -609,7 +607,7 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
         text_ptr: ptr::null(),
         type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
         nbest_index: 0,
-        token: Cell::new(Some(PhraseToken::new(token))),
+        token: Cell::new(Some(token)),
         begin: 0,
         end: 0,
     });
@@ -722,7 +720,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
     // SAFETY: `instance` was opened above and is not yet freed; `hao` is a row of a live instance's
     // current list, and no call since has rebuilt that list; only this thread calls into them.
     let expected_token = unsafe { token_of(instance, hao) };
-    let expected_tokens = [PhraseToken::new(expected_token)];
+    let expected_tokens = [expected_token];
     if let Some(input) = reparse {
         // At 074a2219 pinyin.cpp:1497-1525 leaves the candidate intact;
         // :2580-2587 chooses its saved token and span, not a new row index.
@@ -993,11 +991,11 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
             .get()
             .expect("promoted candidate carries a token");
         assert_eq!(
-            oxpinyin::phrase_index_library_index(token.value()),
+            oxpinyin::phrase_index_library_index(token),
             oxpinyin::ADDON_DICTIONARY,
             "promoted token lives in default nibble 5"
         );
-        token.value()
+        token
     };
 
     // The user store now carries the phrase under nibble 5, with a reading.
@@ -1032,8 +1030,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
         lookup
             .lookup(&keys)
             .iter()
-            .any(|entry| entry.token().value() == promoted
-                && entry.text().as_str() == Some(text.as_str())),
+            .any(|entry| entry.token() == promoted && entry.text().as_str() == Some(text.as_str())),
         "promoted phrase is found through the default-facade lookup"
     );
 
@@ -1083,7 +1080,7 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
             .iter()
             .position(|c| {
                 c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE
-                    && c.token.get().map(oxpinyin::PhraseToken::value) == Some(ADDON)
+                    && c.token.get() == Some(ADDON)
             })
             .expect("the 二簧 ADDON row")
     };
@@ -1104,8 +1101,7 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
     // SAFETY: as above.
     let promoted = unsafe { instance_ref(instance) }.state.candidates[index]
         .token
-        .get()
-        .map(oxpinyin::PhraseToken::value);
+        .get();
     assert_eq!(promoted, Some(PROMOTED));
     assert_eq!(
         unsafe { pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
@@ -1117,9 +1113,7 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
         .core
         .session
         .selected_tokens()
-        .iter()
-        .map(|token| token.value())
-        .collect();
+        .to_vec();
     assert_eq!(tokens, [PROMOTED]);
     assert!(unsafe { crate::sentence::pinyin_guess_sentence(instance) });
     let mut sentence: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -1192,11 +1186,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .find(|(_, c)| c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE)
             .expect("art addon offers an ADDON candidate for erhuang");
         let token = cand.token.get().expect("addon token");
-        let item = inst
-            .core
-            .dict
-            .addon_phrase_item(token.value())
-            .expect("addon item");
+        let item = inst.core.dict.addon_phrase_item(token).expect("addon item");
         let view = oxpinyin::data::phrase_library::PhraseItemView::from_bytes(&item)
             .expect("addon item bytes");
         let keys: Vec<_> = view
@@ -1361,7 +1351,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
 
     let shipped =
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.system_unigram(token.value())) }.expect("item");
+        unsafe { with_store(instance, |store| store.system_unigram(token)) }.expect("item");
 
     // Choose: cursor 1, exactly the pin's LONGER branch.
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, longer) }, 1);
@@ -1372,7 +1362,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         assert_eq!(
             // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
             // it.
-            unsafe { with_store(instance, |store| store.system_unigram(token.value())) },
+            unsafe { with_store(instance, |store| store.system_unigram(token)) },
             Some(shipped + 483)
         );
     }
@@ -1392,7 +1382,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         assert_eq!(
             // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
             // it.
-            unsafe { with_store(instance, |store| store.system_unigram(token.value())) },
+            unsafe { with_store(instance, |store| store.system_unigram(token)) },
             Some(shipped + 483)
         );
     }
@@ -1480,7 +1470,6 @@ fn choose_addon_row(
             .token
             .get()
             .expect("the rewritten candidate has a token")
-            .value()
     };
     (context, instance, promoted)
 }

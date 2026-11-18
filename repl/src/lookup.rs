@@ -166,12 +166,12 @@ pub fn phrase_main(data: &Path) {
         let words = words.unwrap_or_default();
         let tokens = data.phrase(&words).unwrap_or_else(|_| tool::abort());
         let mut entries = Vec::new();
-        for token in tokens.into_iter().filter(|token| token.value() != 0) {
-            let phrase = present(data.text(token.value()));
+        for token in tokens.into_iter().filter(|token| *token != 0) {
+            let phrase = present(data.text(token));
             let text = present(tool::ucs4_to_utf8(
                 &phrase.outward_words().collect::<Vec<_>>(),
             ));
-            let mut entry = format!("{} ", token.value()).into_bytes();
+            let mut entry = format!("{} ", token).into_bytes();
             entry.extend(text);
             entries.push(entry);
         }

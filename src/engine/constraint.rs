@@ -162,7 +162,7 @@ impl ConstraintStore {
     pub(crate) fn add_null_step(&mut self) {
         if let Some(cell) = self.cells.first_mut() {
             *cell = Cell::OneStep {
-                token: PhraseToken::new(0),
+                token: 0,
                 end: 0,
                 text: PhraseText::from(""),
             };

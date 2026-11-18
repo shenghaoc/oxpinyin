@@ -384,7 +384,7 @@ fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
 /// `chewing_large_table2.h:107`, `novel_types.h:44` at the pin
 /// `074a2219`). The token's high four bits are masked.
 fn window_library(token: crate::PhraseToken) -> usize {
-    usize::from(phrase_index_library_index(token.value()))
+    usize::from(phrase_index_library_index(token))
 }
 
 fn window_ascends_by_library_then_token(window: &[Candidate]) -> bool {
@@ -410,7 +410,7 @@ fn sort_dedup_window_tail(into: &mut Vec<Candidate>, start: usize) {
         FxHashSet::with_capacity_and_hasher(into.len() - start, Default::default());
     let mut write = start;
     for read in start..into.len() {
-        if let Some(token) = into[read].token().map(crate::PhraseToken::value)
+        if let Some(token) = into[read].token()
             && !seen.insert(token)
         {
             continue;

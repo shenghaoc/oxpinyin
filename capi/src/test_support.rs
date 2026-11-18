@@ -81,7 +81,6 @@ pub unsafe fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate
         .find(|c| std::ptr::eq(*c, cand.cast::<crate::state::CapiCandidate>()))
         .and_then(|c| c.token.get())
         .expect("a phrase candidate carries its token")
-        .value()
 }
 
 /// Adds the negation of the loaded facade total to token 0x01000001, so

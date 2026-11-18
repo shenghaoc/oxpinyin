@@ -74,7 +74,7 @@ fn a_panic_at_the_c_boundary_is_not_the_pins_abort() {
     assert!(message.contains("an unrelated panic"), "{message}");
 }
 
-fn next_user_token(store: &UserStore) -> Token {
+fn next_user_token(store: &UserStore) -> PhraseToken {
     let end = store
         .inner
         .libpinyin
@@ -206,7 +206,7 @@ mod session {
 
     /// A user item with a zero unigram and one reading of count zero:
     /// the token the pinned seed arithmetic is read on, bare.
-    fn bare_token(store: &mut UserStore, text: &str, keys: &[PinyinKey]) -> Token {
+    fn bare_token(store: &mut UserStore, text: &str, keys: &[PinyinKey]) -> PhraseToken {
         store.add_phrase(&text.into(), keys, Some(0)).unwrap()
     }
 
@@ -651,8 +651,8 @@ mod session {
         );
     }
 
-    const SYSTEM_A: Token = 0x0100_0001;
-    const SYSTEM_B: Token = 0x0200_0001;
+    const SYSTEM_A: PhraseToken = 0x0100_0001;
+    const SYSTEM_B: PhraseToken = 0x0200_0001;
 
     /// Libraries 1 and 2, each with the one item the mixed store trains.
     fn two_system_libraries() -> SystemOriginals {
@@ -677,7 +677,7 @@ mod session {
 
     /// Two user phrases and four selections over them and two system
     /// items, in a session over a user directory.
-    fn mixed_store() -> (tempfile::TempDir, UserStore, Token) {
+    fn mixed_store() -> (tempfile::TempDir, UserStore, PhraseToken) {
         let (dir, mut store) = in_dir(two_system_libraries());
         let user_a = store
             .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
@@ -823,7 +823,7 @@ mod session {
                     .unwrap();
                 let prev = SYSTEM_A;
                 let kept = [0x0100_0002, 0x0100_0003];
-                let gram = |total: u32, items: &[(Token, u32)]| {
+                let gram = |total: u32, items: &[(PhraseToken, u32)]| {
                     let mut bytes = total.to_le_bytes().to_vec();
                     for (cur, count) in items {
                         bytes.extend_from_slice(&cur.to_le_bytes());
@@ -1035,7 +1035,7 @@ mod session {
     }
 
     /// The item bytes the store holds under `token`.
-    fn stored_item(store: &UserStore, token: Token) -> Vec<u8> {
+    fn stored_item(store: &UserStore, token: PhraseToken) -> Vec<u8> {
         store
             .with_user_item(token, |item| item.as_bytes().to_vec())
             .expect("promoted item")
@@ -1065,7 +1065,7 @@ mod session {
                 lookup
                     .lookup(&syllables)
                     .iter()
-                    .any(|row| row.token().value() == token),
+                    .any(|row| row.token() == token),
                 "each stored reading is indexed"
             );
         }
@@ -1323,11 +1323,11 @@ mod backend_files {
 
     use crate::data::user_files::{SystemVersions, UserFileLayout};
 
-    use crate::SENTENCE_START;
     use crate::user::{
-        FIRST_USER_TOKEN, SystemOriginals, Token, UserConfLaw, UserPhrase, UserStore,
-        UserStoreError, toned_key,
+        FIRST_USER_TOKEN, SystemOriginals, UserConfLaw, UserPhrase, UserStore, UserStoreError,
+        toned_key,
     };
+    use crate::{PhraseToken, SENTENCE_START};
 
     fn versions() -> SystemVersions {
         SystemVersions::for_this_build(7, 14)
@@ -1366,7 +1366,7 @@ mod backend_files {
 
     /// A user item with a zero unigram and one reading of count zero: a token
     /// the seed arithmetic is read on, bare.
-    fn bare_token(store: &mut UserStore, text: &str, reading: &str) -> Token {
+    fn bare_token(store: &mut UserStore, text: &str, reading: &str) -> PhraseToken {
         store
             .add_phrase(&crate::PhraseText::from(text), &keys(reading), Some(0))
             .unwrap()
@@ -1484,13 +1484,13 @@ mod backend_files {
         // a system token's row that listed the user token, then masked library 7
         // (`0x0f00_0000`, `0x0700_0000`): both rows go.
         let user = FIRST_USER_TOKEN;
-        let system: Token = 0x0100_0001;
+        let system: PhraseToken = 0x0100_0001;
         let seed = |store: &mut UserStore| {
             store.set_bigram_count(user, system, 100).unwrap();
             store.set_bigram_count(system, user, 100).unwrap();
         };
         let rows = |store: &UserStore| {
-            let mut rows: Vec<(Token, Token, u64)> = Vec::new();
+            let mut rows: Vec<(PhraseToken, PhraseToken, u64)> = Vec::new();
             for prev in store.bigram_predecessors().unwrap() {
                 for (cur, count) in store.bigram_successors(prev).unwrap() {
                     rows.push((prev, cur, count));

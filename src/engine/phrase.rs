@@ -67,13 +67,13 @@ struct Step {
 
 impl Step {
     fn relax(&mut self, node: Node) {
-        if let Some(&position) = self.index.get(&node.token.value()) {
+        if let Some(&position) = self.index.get(&node.token) {
             let existing = &mut self.content[position];
             if existing.poss < node.poss {
                 *existing = node;
             }
         } else {
-            self.index.insert(node.token.value(), self.content.len());
+            self.index.insert(node.token, self.content.len());
             self.content.push(node);
         }
     }
@@ -113,15 +113,15 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let lm = |error: L::Error| EngineError::row_read(model, prev.value(), &error);
+    let lm = |error: L::Error| EngineError::row_read(model, prev, &error);
     let item = match model.nbest_successors_in_row(&prev, row).map_err(lm)? {
         None | Some(NbestSuccessors::Miss) => None,
         Some(NbestSuccessors::Row(gram)) => {
-            let refuse = |fault| EngineError::lookup_gram(prev.value(), fault);
+            let refuse = |fault| EngineError::lookup_gram(prev, fault);
             if let Some(fault) = gram.fault() {
                 return Err(refuse(fault));
             }
-            match gram.get_freq(token.value()).map_err(refuse)? {
+            match gram.get_freq(token).map_err(refuse)? {
                 Some(freq) => Some((freq, gram.total().map_err(refuse)?)),
                 None => None,
             }
@@ -198,12 +198,12 @@ where
     L::Error: core::fmt::Display,
     F: FnMut(usize, usize) -> (Vec<PhraseToken>, bool),
 {
-    let null = PhraseToken::new(0);
+    let null = 0;
     let result = vec![null; n];
 
     let mut steps: Vec<Step> = vec![Step::default(); n + 1];
     steps[0].relax(Node {
-        token: PhraseToken::new(SENTENCE_START),
+        token: SENTENCE_START,
         prev: null,
         last_step: START_SENTINEL,
         poss: 0.0,
@@ -316,7 +316,7 @@ fn backtrack(steps: &[Step], n: usize, mut result: Vec<PhraseToken>) -> (bool, V
         result[cursor.last_step] = cursor.token;
         let Some(node) = steps[cursor.last_step]
             .index
-            .get(&cursor.prev.value())
+            .get(&cursor.prev)
             .map(|&position| steps[cursor.last_step].content[position].clone())
         else {
             // A broken chain — upstream returns `false` mid-backtrack

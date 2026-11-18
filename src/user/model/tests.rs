@@ -3,7 +3,7 @@ use crate::PhraseToken;
 use super::*;
 
 fn token(value: u32) -> PhraseToken {
-    PhraseToken::new(value)
+    value
 }
 
 /// The pin's NULL-user-directory session over the stock layout.

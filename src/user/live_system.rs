@@ -18,7 +18,8 @@ use crate::PhraseText;
 use crate::data::phrase_libraries::PhraseLibraries;
 use crate::data::phrase_library::PhraseItemView;
 
-use crate::user::store::{Token, UserStore};
+use crate::PhraseToken;
+use crate::user::store::UserStore;
 
 /// Where a [`SystemItem`] lives.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -250,7 +251,7 @@ impl<'a> LiveSystemItems<'a> {
     /// item out. Consumers: `RuntimeDict::library_visible_token`, the export
     /// probe's removed check.
     #[must_use]
-    pub(crate) fn is_visible(&self, token: Token) -> bool {
+    pub(crate) fn is_visible(&self, token: PhraseToken) -> bool {
         self.library_loaded(u32::from(crate::phrase_index_library_index(token)))
             && !self.user.system_item_removed(token)
     }
@@ -266,7 +267,7 @@ impl<'a> LiveSystemItems<'a> {
     /// chunk directly runs after those borrows have ended. Consumers: pricing
     /// (`effective_possibility`), `token_text`, the export probe and row
     /// reads.
-    pub fn read<R>(&self, token: Token, read: impl FnOnce(SystemItem<'_>) -> R) -> Lookup<R> {
+    pub fn read<R>(&self, token: PhraseToken, read: impl FnOnce(SystemItem<'_>) -> R) -> Lookup<R> {
         if let Some(gate) = self.gate(token) {
             return gate;
         }
@@ -311,7 +312,7 @@ impl<'a> LiveSystemItems<'a> {
     /// `token_phrase`, `token_nth_pronunciation`.
     pub(crate) fn read_fields<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         read: impl FnOnce(SystemItem<'_>) -> R,
     ) -> Lookup<R> {
         if let Some(gate) = self.gate(token) {
@@ -337,7 +338,7 @@ impl<'a> LiveSystemItems<'a> {
     }
 
     /// The answer for a token outside a loaded system library, or `None`.
-    fn gate<R>(&self, token: Token) -> Option<Lookup<R>> {
+    fn gate<R>(&self, token: PhraseToken) -> Option<Lookup<R>> {
         let library = crate::phrase_index_library_index(token);
         if !self.is_system_library(library) {
             return Some(Lookup::Absent);
@@ -353,7 +354,7 @@ impl<'a> LiveSystemItems<'a> {
     /// this answers where [`Self::read`] cannot build a view over a short
     /// payload. Consumers: `token_pronunciation_count`, `token_exists`.
     #[must_use]
-    pub(crate) fn pronunciation_count(&self, token: Token) -> Lookup<u32> {
+    pub(crate) fn pronunciation_count(&self, token: PhraseToken) -> Lookup<u32> {
         if !self.is_system_library(crate::phrase_index_library_index(token)) {
             return Lookup::Absent;
         }
@@ -379,14 +380,14 @@ impl<'a> LiveSystemItems<'a> {
     /// The live unigram of `token`'s effective system item. Returns `None`
     /// when the token is hidden or holds no item.
     #[must_use]
-    pub fn effective_unigram(&self, token: Token) -> Option<u64> {
+    pub fn effective_unigram(&self, token: PhraseToken) -> Option<u64> {
         self.read_fields(token, |item| u64::from(item.unigram()))
             .found()
     }
 
     /// The current sub-index's range end (phrase_index.cpp:610–646).
     #[must_use]
-    pub(crate) fn system_range_end(&self, library: u8) -> Option<Token> {
+    pub(crate) fn system_range_end(&self, library: u8) -> Option<PhraseToken> {
         self.user.system_range_end(library)
     }
 }

@@ -669,7 +669,7 @@ where
         text: RowText,
     ) -> Result<Selection, EngineError> {
         let text = match text {
-            RowText::Resolve => match self.dictionary.phrase_text_for_token(token.value()) {
+            RowText::Resolve => match self.dictionary.phrase_text_for_token(token) {
                 Some(text) => text,
                 None => {
                     let len = self.choose_unreadable_step(start, end, token)?;

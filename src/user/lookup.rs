@@ -5,7 +5,7 @@
 
 use std::cell::RefCell;
 
-use crate::{PhraseEntry, PhraseText, PhraseToken, SyllableKey};
+use crate::{PhraseEntry, PhraseText, SyllableKey};
 
 use crate::user::user_index::UserIndex;
 use crate::user::user_library::SessionPhrases;
@@ -77,7 +77,7 @@ impl<'a> UserLookup<'a> {
         phrases.index.visit_matches(keys, |token| {
             if let Some(text) = session_text(&phrases, self.items, token).or_else(|| missing(token))
             {
-                out.push(PhraseEntry::new(PhraseToken::new(token), text));
+                out.push(PhraseEntry::new(token, text));
             }
         });
     }

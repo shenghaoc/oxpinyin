@@ -2,9 +2,9 @@
 
 use crate::data::chunk_write::ChunkItem;
 
+use crate::PhraseToken;
 use crate::user::persistence::SystemLibraryRef;
 use crate::user::replay::{ReplayedLibrary, UnigramAdd};
-use crate::user::store::Token;
 
 /// The live buffer of `token`'s system library, made from `original` the
 /// first time with the total a reload left. The library is the pin's
@@ -12,7 +12,7 @@ use crate::user::store::Token;
 fn library_of<'a>(
     replayed: &'a mut crate::user::LibraryTable<ReplayedLibrary>,
     totals: &mut crate::user::LibraryTable<u32>,
-    token: Token,
+    token: PhraseToken,
     original: SystemLibraryRef<'_>,
 ) -> Option<&'a mut ReplayedLibrary> {
     let nibble = crate::phrase_index_library_index(token);
@@ -195,7 +195,7 @@ impl SystemItems {
     /// readable item is there.
     pub(crate) fn unigram(
         &self,
-        token: Token,
+        token: PhraseToken,
         original: Option<SystemLibraryRef<'_>>,
     ) -> Option<u32> {
         let slot = token & 0x00ff_ffff;
@@ -217,7 +217,7 @@ impl SystemItems {
     pub(crate) fn add_item(
         &mut self,
         original: SystemLibraryRef<'_>,
-        token: Token,
+        token: PhraseToken,
         payload: &[u8],
     ) -> bool {
         library_of(&mut self.replayed, &mut self.totals, token, original)
@@ -228,7 +228,7 @@ impl SystemItems {
     pub(crate) fn remove_item(
         &mut self,
         original: SystemLibraryRef<'_>,
-        token: Token,
+        token: PhraseToken,
     ) -> Option<Vec<u8>> {
         library_of(&mut self.replayed, &mut self.totals, token, original)?
             .remove_item(token & 0x00ff_ffff)
@@ -244,7 +244,7 @@ impl SystemItems {
         self.replayed.values().any(ReplayedLibrary::has_removed)
     }
 
-    pub(crate) fn is_removed(&self, token: Token) -> bool {
+    pub(crate) fn is_removed(&self, token: PhraseToken) -> bool {
         let slot = token & 0x00ff_ffff;
         self.replayed
             .get(&crate::phrase_index_library_index(token))
@@ -258,7 +258,7 @@ impl SystemItems {
     pub(crate) fn add_unigram(
         &mut self,
         original: Option<SystemLibraryRef<'_>>,
-        token: Token,
+        token: PhraseToken,
         delta: u32,
     ) -> Option<UnigramAdd> {
         let original = original?;
@@ -269,7 +269,7 @@ impl SystemItems {
 
     /// The item held under `token`, decoded for this call only. Nothing is
     /// kept.
-    pub(crate) fn get(&self, token: &Token) -> Option<ChunkItem> {
+    pub(crate) fn get(&self, token: &PhraseToken) -> Option<ChunkItem> {
         self.replayed
             .get(&crate::phrase_index_library_index(*token))?
             .item(*token & 0x00ff_ffff)
@@ -277,7 +277,11 @@ impl SystemItems {
 
     /// Reads the item the live buffer of `token`'s library holds under its
     /// slot.
-    pub(crate) fn with_live<R>(&self, token: Token, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    pub(crate) fn with_live<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
         let library = self
             .replayed
             .get(&crate::phrase_index_library_index(token))?;
@@ -290,7 +294,7 @@ impl SystemItems {
     /// one that the buffer holds no item the getters can read.
     pub(crate) fn with_live_fields<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         read: impl FnOnce(&[u8]) -> R,
     ) -> Option<Option<R>> {
         let library = self
@@ -303,13 +307,13 @@ impl SystemItems {
         )
     }
 
-    pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
+    pub(crate) fn live_pronunciation_count(&self, token: PhraseToken) -> Option<u32> {
         self.replayed
             .get(&crate::phrase_index_library_index(token))?
             .pronunciation_count(token & 0x00ff_ffff)
     }
 
-    pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
+    pub(crate) fn live_item_past_buffer(&self, token: PhraseToken) -> bool {
         self.replayed
             .get(&crate::phrase_index_library_index(token))
             .is_some_and(|library| library.item_past_buffer(token & 0x00ff_ffff))
@@ -321,7 +325,7 @@ impl SystemItems {
     pub(crate) fn train_live(
         &mut self,
         original: Option<SystemLibraryRef<'_>>,
-        token: Token,
+        token: PhraseToken,
         readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
         delta: u32,
     ) -> bool {
@@ -346,7 +350,7 @@ impl SystemItems {
     /// Whether `token`'s library has a live buffer whose item under the
     /// token's slot, if any, is one its loaded chunk lacked: an import's or a
     /// replayed ADD's.
-    pub(crate) fn is_added(&self, token: Token) -> bool {
+    pub(crate) fn is_added(&self, token: PhraseToken) -> bool {
         self.replayed
             .get(&crate::phrase_index_library_index(token))
             .is_some_and(|library| library.is_added_slot(token & 0x00ff_ffff))
@@ -354,7 +358,11 @@ impl SystemItems {
 
     /// Reads the item under `token` where it is one its library's loaded
     /// chunk lacked ([`Self::is_added`]).
-    pub(crate) fn with_added<R>(&self, token: Token, read: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    pub(crate) fn with_added<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
         let library = self
             .replayed
             .get(&crate::phrase_index_library_index(token))?;
@@ -373,7 +381,7 @@ impl SystemItems {
     pub(crate) fn changed_items(
         &self,
         originals: &impl crate::user::persistence::OriginalLibraries,
-    ) -> std::collections::BTreeMap<Token, Option<ChunkItem>> {
+    ) -> std::collections::BTreeMap<PhraseToken, Option<ChunkItem>> {
         let mut changes = std::collections::BTreeMap::new();
         for (&nibble, buffer) in &self.replayed {
             let original = originals.get(&nibble);

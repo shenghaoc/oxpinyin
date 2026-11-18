@@ -254,9 +254,7 @@ pub unsafe extern "C" fn pinyin_is_user_candidate(
     ) {
         return false;
     }
-    cand.token
-        .get()
-        .is_some_and(|token| is_user_token(token.value()))
+    cand.token.get().is_some_and(is_user_token)
 }
 
 /// Remove a user candidate from the dictionary.
@@ -307,14 +305,14 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
     let Some(token) = token else {
         return false;
     };
-    if !is_user_token(token.value()) {
+    if !is_user_token(token) {
         std::process::abort();
     }
     // SAFETY: the candidate reads are complete and the retained owner is now
     // borrowed exclusively for the store mutation.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
     let user = ctx.core.user_store_mut();
-    match user.remove_user_phrase(token.value()) {
+    match user.remove_user_phrase(token) {
         Ok(true) => true,
         // Class (b), register row 98: the call's `user_bigram->mask_out`
         // (`pinyin.cpp:3766`) would read past a partial item tail
@@ -655,7 +653,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         // SAFETY: no instance view is live; this serialized C operation
         // exclusively borrows the retained owner for the unigram write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token.value(), 483));
+        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token, 483));
     }
     let mut token = row.token;
     let mut text = oxpinyin::engine::RowText::Resolve;
@@ -682,7 +680,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         // The row's `m_token`, the null token for a predicted punctuation
         // row: library 0 is reserved and never loaded, so the add meets no
         // sub-index and the pin answers `true` (`phrase_index.h:628-635`).
-        let token = token.map_or(0, PhraseToken::value);
+        let token = token.unwrap_or(0);
         // SAFETY: the instance view is no longer used; this serialized C
         // operation exclusively borrows its retained owner for the unigram
         // write.
@@ -813,7 +811,7 @@ unsafe fn try_promote_addon(
         let addon_token = unsafe { candidate_ref(candidate) }.token.get()?;
         // SAFETY: the caller supplies a live instance with no other view.
         let inst = unsafe { instance_ref(instance) };
-        inst.core.dict.addon_phrase_item(addon_token.value())?
+        inst.core.dict.addon_phrase_item(addon_token)?
     };
     let promoted = {
         // SAFETY: the read views above have ended; the caller serializes
@@ -827,7 +825,6 @@ unsafe fn try_promote_addon(
         store.promote_addon_phrase(range_end, &item).ok()?;
         range_end
     };
-    let promoted = PhraseToken::new(promoted);
     // SAFETY: the context write has ended. The row is reached only through
     // this shared view, and its tag and token are cells, so the rewrite
     // is sound even when the row belongs to another instance or to this
@@ -917,29 +914,29 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
     // without a bigram (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`;
     // #1231 ruling). The receiver decides, not the row's display string.
     if candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
-        && !inst.core.dict.token_exists(token.value())
+        && !inst.core.dict.token_exists(token)
     {
         // An unloaded library has no sub-index: the pin returns
         // ERROR_NO_SUB_PHRASE_INDEX before touching the facade total,
         // and the prefix branch still answers true.
-        if inst.core.dict.phrase_table_token_enabled(token.value()) {
+        if inst.core.dict.phrase_table_token_enabled(token) {
             // SAFETY: the read view is no longer used; the retained owner is
             // exclusively borrowed for this serialized unigram mutation.
             let ctx = unsafe { crate::state::instance_context_mut(instance) };
-            let _ = ctx.core.runtime.add_unigram_delta(token.value(), 483);
+            let _ = ctx.core.runtime.add_unigram_delta(token, 483);
         }
         return true;
     }
-    let last = inst.core.session.prefix_predecessor().value();
+    let last = inst.core.session.prefix_predecessor();
     let prefix = candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
     // SAFETY: all candidate and prefix reads are complete; the retained owner
     // is exclusively borrowed for the prediction training write.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
     let user = ctx.core.user_store_mut();
     if prefix {
-        user.observe_predicted_prefix(token.value()).is_ok()
+        user.observe_predicted_prefix(token).is_ok()
     } else {
-        match user.observe_predicted(last, token.value()) {
+        match user.observe_predicted(last, token) {
             Ok(_) => true,
             // Register row 85, `pinyin.cpp:2630` through `memory_chunk.h:390`:
             // after the in-memory unigram add (`:2609-2612`) the pin loads

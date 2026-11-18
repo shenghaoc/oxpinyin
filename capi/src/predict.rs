@@ -54,7 +54,7 @@ fn predicted_bigram_items(
 ) -> Result<Vec<(u32, u32)>, &'static str> {
     let mut merged = single_gram::new_gram();
     for prev in prefixes.iter().rev() {
-        if let Ok(Some(row)) = user.bigram_row(prev.value()) {
+        if let Ok(Some(row)) = user.bigram_row(*prev) {
             single_gram::merge_single_gram(&mut merged, None, Some(&row));
         }
         if single_gram::get_length(&merged) != 0 {
@@ -98,9 +98,7 @@ fn guess_predicted_result(
     };
     // `m_prefixes` is emptied and refilled before the empty check
     // (`pinyin.cpp:2423-2426`).
-    inst.core
-        .session
-        .set_candidate_prefixes(prefixes.into_iter().map(PhraseToken::new));
+    inst.core.session.set_candidate_prefixes(prefixes);
     let prefixes = inst.core.session.candidate_prefixes();
     let Some(prefix) = prefix.filter(|_| !prefixes.is_empty()) else {
         return Ok(false);
@@ -147,7 +145,7 @@ fn guess_predicted_result(
             text_ptr: std::ptr::null(),
             type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
             nbest_index: 0,
-            token: Cell::new(Some(oxpinyin::PhraseToken::new(token))),
+            token: Cell::new(Some(token)),
             begin: 0,
             end: 0,
         });
@@ -183,7 +181,7 @@ fn guess_predicted_result(
             text_ptr: std::ptr::null(),
             type_tag: Cell::new(item.candidate_type.tag()),
             nbest_index: 0,
-            token: Cell::new(Some(oxpinyin::PhraseToken::new(item.token))),
+            token: Cell::new(Some(item.token)),
             begin: 0,
             end: 0,
         });
@@ -300,7 +298,7 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
     let mut puncts: Vec<Vec<u8>> = Vec::new();
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     for token in inst.core.session.candidate_prefixes() {
-        for punct in inst.core.dict.punctuations(token.value()) {
+        for punct in inst.core.dict.punctuations(*token) {
             let bytes = phrase_text_bytes(&punct).into_owned();
             if seen.insert(bytes.clone()) {
                 puncts.push(bytes);

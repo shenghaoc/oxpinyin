@@ -27,8 +27,8 @@ fn existing_phrase_token(
     table: &crate::user::user_phrase_table::UserPhraseTable,
     library: u8,
     words: &[u32],
-    selected: Option<Option<Token>>,
-) -> Result<Option<Token>, UserStoreError> {
+    selected: Option<Option<PhraseToken>>,
+) -> Result<Option<PhraseToken>, UserStoreError> {
     table
         .check_add(words)
         .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
@@ -61,7 +61,7 @@ fn existing_phrase_token(
 fn merged_live_item(
     items: &crate::user::system_items::SystemItems,
     original: crate::user::persistence::SystemLibraryRef<'_>,
-    token: Token,
+    token: PhraseToken,
     words: &[u32],
     packed: &[u16],
     delta: u32,
@@ -223,7 +223,7 @@ impl UserStore {
     /// overwrites (`phrase_index.cpp:208-217`; register row 119).
     pub(super) fn arena_promote(
         &mut self,
-        token: Token,
+        token: PhraseToken,
         view: &PhraseItemView<'_>,
     ) -> Result<(), UserStoreError> {
         let target = &self.inner.libpinyin;
@@ -299,7 +299,7 @@ impl UserStore {
 
     pub(super) fn arena_train(
         &mut self,
-        token: Token,
+        token: PhraseToken,
         readings: impl Iterator<Item = Vec<ChewingKey>>,
         delta: u32,
     ) {
@@ -344,7 +344,7 @@ impl UserStore {
     /// cannot retain the view past the borrow or a later writer.
     pub(crate) fn with_user_item<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         read: impl FnOnce(PhraseItemView<'_>) -> R,
     ) -> Option<R> {
         let phrases = self.inner.libpinyin.phrases();
@@ -359,7 +359,7 @@ impl UserStore {
     /// only copy; no arena holds it.
     pub(crate) fn with_appended_item<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         read: impl FnOnce(PhraseItemView<'_>) -> R,
     ) -> Option<R> {
         let original = self.originals.get(&phrase_index_library_index(token))?;
@@ -389,9 +389,9 @@ impl UserStore {
         words: &[u32],
         keys: &[PinyinKey],
         delta: u32,
-        selected: Option<Option<Token>>,
+        selected: Option<Option<PhraseToken>>,
         range_end: u32,
-    ) -> Result<Token, UserStoreError> {
+    ) -> Result<PhraseToken, UserStoreError> {
         if self.originals.contains_key(&library) {
             return self.buffer_add_phrase(library, words, keys, delta, selected);
         }
@@ -477,8 +477,8 @@ impl UserStore {
         words: &[u32],
         keys: &[PinyinKey],
         delta: u32,
-        selected: Option<Option<Token>>,
-    ) -> Result<Token, UserStoreError> {
+        selected: Option<Option<PhraseToken>>,
+    ) -> Result<PhraseToken, UserStoreError> {
         let target = &self.inner.libpinyin;
         let original = self
             .originals
@@ -541,7 +541,7 @@ impl UserStore {
         Ok(token)
     }
 
-    pub(super) fn arena_add_unigram(&self, token: Token, delta: u32) -> bool {
+    pub(super) fn arena_add_unigram(&self, token: PhraseToken, delta: u32) -> bool {
         // Only the sub-index's overflow is the pin's `ERROR_INTEGER_OVERFLOW`;
         // a missing item answers another error that callers do not act on.
         self.arena_add_unigram_outcome(token, delta).0 != UnigramAdd::Refused
@@ -554,7 +554,11 @@ impl UserStore {
     /// is its live scalar, a user library's the sum of its items. A
     /// sub-index that does not take it leaves the delta in the facade's extra.
     /// The second result reports whether the facade total received the delta.
-    pub(super) fn arena_add_unigram_outcome(&self, token: Token, delta: u32) -> (UnigramAdd, bool) {
+    pub(super) fn arena_add_unigram_outcome(
+        &self,
+        token: PhraseToken,
+        delta: u32,
+    ) -> (UnigramAdd, bool) {
         let library = phrase_index_library_index(token);
         let mut phrases = self.inner.libpinyin.phrases_mut();
         // phrase_index.h:631-632 returns before the facade total changes.
@@ -603,7 +607,7 @@ impl UserStore {
         }
     }
 
-    pub(super) fn arena_remove(&mut self, token: Token) -> Result<bool, UserStoreError> {
+    pub(super) fn arena_remove(&mut self, token: PhraseToken) -> Result<bool, UserStoreError> {
         let mask = PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK;
         let container_keys = self.container_keys();
         let bigram_fault = self.bigram_mask_fault_over(&container_keys, mask, token);
@@ -665,7 +669,7 @@ impl UserStore {
         Ok(true)
     }
 
-    pub(super) fn mask_arena(&self, mask: Token, value: Token) {
+    pub(super) fn mask_arena(&self, mask: PhraseToken, value: PhraseToken) {
         let mut phrases = self.inner.libpinyin.phrases_mut();
         for (&nibble, library) in &mut phrases.libraries {
             // `FacadePhraseIndex::mask_out` tests the library through the
@@ -673,9 +677,9 @@ impl UserStore {
             // tests each token under their low 24 bits; bits 28 to 31 take
             // no part (`novel_types.h:41-44`, `phrase_index.cpp:677-715` at
             // 074a2219).
-            let library_mask = Token::from(phrase_index_library_index(mask));
-            let library_value = Token::from(phrase_index_library_index(value));
-            let in_library = Token::from(nibble) & library_mask == library_value;
+            let library_mask = u32::from(phrase_index_library_index(mask));
+            let library_value = u32::from(phrase_index_library_index(value));
+            let in_library = u32::from(nibble) & library_mask == library_value;
             let selected =
                 |slot: u32| in_library && slot & mask & PHRASE_MASK == value & PHRASE_MASK;
             // `FacadePhraseIndex::mask_out` takes the old sub-index total out

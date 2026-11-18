@@ -61,7 +61,7 @@ impl RuntimeDict<'_> {
         }
         // The last user entry is path-specific. Never replace it with facts
         // captured while another path priced this token as an ordinary item.
-        if path.user.iter().any(|entry| entry.token().value() == token) {
+        if path.user.iter().any(|entry| entry.token() == token) {
             facts.tokens.insert(token, None);
             return self.priced_on_path(path, token, want_text);
         }
@@ -107,7 +107,7 @@ impl RuntimeLm<'_> {
         if !facts.validate(user.generation()) {
             return None;
         }
-        let saved = facts.tokens.get(&token.value()).copied().flatten()?;
+        let saved = facts.tokens.get(token).copied().flatten()?;
         let total = *facts
             .total
             .get_or_insert_with(|| user.unigram_total_over(|nibble| self.inner.is_visible(nibble)));

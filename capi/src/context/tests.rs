@@ -202,7 +202,7 @@ unsafe fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String)> {
         .iter()
         .filter_map(|candidate| {
             Some((
-                candidate.token()?.value(),
+                candidate.token()?,
                 candidate.text().as_str().unwrap_or_default().to_owned(),
             ))
         })

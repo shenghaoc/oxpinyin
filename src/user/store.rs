@@ -30,15 +30,12 @@ use crate::user::replay::UnigramAdd;
 use crate::user::seed;
 use crate::user::store_libpinyin::FiniGuard;
 use crate::{
-    ADDON_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, USER_DICTIONARY,
+    ADDON_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseToken, USER_DICTIONARY,
     phrase_index_library_index,
 };
 
 #[path = "store_arena.rs"]
 mod arena;
-
-/// Token type — libpinyin's 32-bit `phrase_token_t`.
-pub type Token = u32;
 
 /// One §9 export row for a user phrase: the phrase text, one pronunciation's
 /// `'`-joined pinyin spelling, and that pronunciation's stored count.
@@ -406,27 +403,27 @@ pub(crate) struct ContainerGrams<'a>(pub(crate) &'a crate::store::DefaultUserBig
 impl ContainerGrams<'_> {
     /// `Bigram::get_all_items`: every key in the container's walk order;
     /// `None` for a key that is not a four-byte `phrase_token_t`.
-    fn keys(&self) -> Result<Vec<Option<Token>>, StoreError> {
+    fn keys(&self) -> Result<Vec<Option<PhraseToken>>, StoreError> {
         Ok(self
             .0
             .keys()?
             .into_iter()
-            .map(|key| key.map(Token::from_le_bytes))
+            .map(|key| key.map(PhraseToken::from_le_bytes))
             .collect())
     }
 
     /// `Bigram::load`: the raw gram under `prev`.
-    fn get(&self, prev: Token) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, prev: PhraseToken) -> Result<Option<Vec<u8>>, StoreError> {
         container_gram(self.0, prev)
     }
 
     /// `Bigram::store`.
-    fn store(&self, prev: Token, gram: &[u8]) -> Result<(), StoreError> {
+    fn store(&self, prev: PhraseToken, gram: &[u8]) -> Result<(), StoreError> {
         self.0.store(&prev.to_le_bytes(), gram)
     }
 
     /// `Bigram::remove`.
-    fn remove(&self, prev: Token) -> Result<(), StoreError> {
+    fn remove(&self, prev: PhraseToken) -> Result<(), StoreError> {
         self.0.remove(&prev.to_le_bytes())
     }
 }
@@ -434,7 +431,7 @@ impl ContainerGrams<'_> {
 /// `Bigram::load` on the pin's container: the gram under `prev`, owned.
 fn container_gram(
     container: &crate::store::DefaultUserBigramDb,
-    prev: Token,
+    prev: PhraseToken,
 ) -> Result<Option<Vec<u8>>, StoreError> {
     let mut gram = Vec::new();
     Ok(container
@@ -453,9 +450,9 @@ fn container_gram(
 /// caller's to refuse first ([`gram_mask_fault_over`]).
 fn mask_grams_over(
     grams: &ContainerGrams<'_>,
-    keys: Vec<Option<Token>>,
-    mask: Token,
-    value: Token,
+    keys: Vec<Option<PhraseToken>>,
+    mask: PhraseToken,
+    value: PhraseToken,
 ) -> Result<bool, StoreError> {
     let mut remaining = false;
     for key in keys {
@@ -497,9 +494,9 @@ fn mask_grams_over(
 /// is found by running the mask on a copy.
 fn gram_mask_fault_over(
     grams: &ContainerGrams<'_>,
-    keys: &[Option<Token>],
-    mask: Token,
-    value: Token,
+    keys: &[Option<PhraseToken>],
+    mask: PhraseToken,
+    value: PhraseToken,
 ) -> Result<Option<UserStoreError>, StoreError> {
     if keys.iter().any(Option::is_none) {
         return Ok(Some(UserStoreError::NonTokenUserBigramKey));
@@ -535,7 +532,7 @@ fn gram_mask_fault_over(
 /// store — `None` when the overflow guard skips the store.
 fn trained_gram(
     row: Option<Vec<u8>>,
-    cur: Token,
+    cur: PhraseToken,
 ) -> Result<(u64, Option<Vec<u8>>), UserStoreError> {
     let mut gram = row.unwrap_or_else(single_gram::new_gram);
     let total = single_gram::get_total_freq(&gram).ok_or(UserStoreError::ShortUserBigramValue)?;
@@ -568,7 +565,7 @@ fn trained_gram(
 /// pin `074a2219`): `load`, or a fresh gram; `get_total_freq`; `get_freq`;
 /// `insert_freq(token, 69)` on a miss or `set_freq(freq + 69)` on a hit;
 /// `set_total_freq(total + 69)`. No overflow guard: both fields wrap.
-fn predicted_gram(row: Option<Vec<u8>>, cur: Token) -> Result<Vec<u8>, UserStoreError> {
+fn predicted_gram(row: Option<Vec<u8>>, cur: PhraseToken) -> Result<Vec<u8>, UserStoreError> {
     let seed = seed::predicted_seed() as u32;
     let mut gram = row.unwrap_or_else(single_gram::new_gram);
     let total = single_gram::get_total_freq(&gram).ok_or(UserStoreError::ShortUserBigramValue)?;
@@ -664,21 +661,21 @@ pub struct UserStore {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrainingFault {
     /// The gram is too short for its total (`memory_chunk.h:390`).
-    ShortValue(Token),
+    ShortValue(PhraseToken),
     /// The gram has a partial item tail (register row 100).
-    PartialTail(Token),
+    PartialTail(PhraseToken),
     /// `set_freq` misses the item `insert_freq` added (`phonetic_lookup.h:903`).
-    SetFreqMiss(Token),
+    SetFreqMiss(PhraseToken),
     /// The step's `store` meets the failed user bigram container
     /// (`phonetic_lookup.h:904`).
-    FailedUserBigramStore(Token),
+    FailedUserBigramStore(PhraseToken),
 }
 
 /// One training call's replay: the grams its checked steps left, and the
 /// fault a failing check met.
 #[derive(Debug, Default)]
 pub struct TrainingCheck {
-    grams: FxHashMap<Token, Option<Vec<u8>>>,
+    grams: FxHashMap<PhraseToken, Option<Vec<u8>>>,
     fault: Option<TrainingFault>,
 }
 
@@ -693,7 +690,7 @@ impl TrainingCheck {
 /// What `UserStore::check_mask_out` found fit to mask: the user bigram's
 /// keys from the one `get_all_items` walk, for `UserStore::apply_mask_out`.
 pub struct MaskCheck {
-    container_keys: Result<Vec<Option<Token>>, StoreError>,
+    container_keys: Result<Vec<Option<PhraseToken>>, StoreError>,
 }
 
 impl UserStore {
@@ -739,8 +736,8 @@ impl UserStore {
         &self,
         logs: &mut crate::user::persistence::MaskLogs,
         nibble: u8,
-        mask: Token,
-        value: Token,
+        mask: PhraseToken,
+        value: PhraseToken,
     ) -> Option<crate::user::JournalFault> {
         let dir = self.inner.libpinyin.dir.as_deref()?;
         crate::user::persistence::read_mask_log(
@@ -809,7 +806,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the read fails.
-    pub fn bigram_row(&self, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
+    pub fn bigram_row(&self, prev: PhraseToken) -> Result<Option<Vec<u8>>, UserStoreError> {
         // Every gram write sets the flag and a mask recomputes it from the
         // grams it leaves, so a store without user data holds no gram.
         if !self.has_user_data() {
@@ -819,20 +816,20 @@ impl UserStore {
     }
 
     /// [`Self::bigram_row`] without the user-data gate.
-    fn gram_in(&self, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
+    fn gram_in(&self, prev: PhraseToken) -> Result<Option<Vec<u8>>, UserStoreError> {
         Ok(container_gram(self.container(), prev)?)
     }
 
     /// `Bigram::get_all_items`: every key in the container's walk order,
     /// with `None` for a key that is not a four-byte `phrase_token_t`.
-    fn gram_keys(&self) -> Result<Vec<Option<Token>>, UserStoreError> {
+    fn gram_keys(&self) -> Result<Vec<Option<PhraseToken>>, UserStoreError> {
         Ok(ContainerGrams(self.container()).keys()?)
     }
 
     /// Store `value` raw under `token` in the session's container, as a
     /// value the writer never produces, for the tests.
     #[cfg(test)]
-    pub(crate) fn plant_raw_bigram(&self, token: Token, value: &[u8]) {
+    pub(crate) fn plant_raw_bigram(&self, token: PhraseToken, value: &[u8]) {
         self.container()
             .store(&token.to_le_bytes(), value)
             .expect("plant raw value");
@@ -847,7 +844,7 @@ impl UserStore {
     /// predecessor (`pinyin.cpp:889`); callers scope this live check to the
     /// grams their pinned operation reaches.
     #[must_use]
-    pub(crate) fn has_short_bigram_value_for(&self, token: Token) -> bool {
+    pub(crate) fn has_short_bigram_value_for(&self, token: PhraseToken) -> bool {
         self.bigram_row(token)
             .ok()
             .flatten()
@@ -871,7 +868,7 @@ impl UserStore {
     /// `cur != end` and read past that tail. Read from the live value, so
     /// an in-session store or removal counts at once.
     #[must_use]
-    pub(crate) fn has_oob_bigram_value_for(&self, token: Token) -> bool {
+    pub(crate) fn has_oob_bigram_value_for(&self, token: PhraseToken) -> bool {
         self.bigram_row(token)
             .ok()
             .flatten()
@@ -883,7 +880,7 @@ impl UserStore {
     /// twins at 074a2219). A mask takes it once and hands it to both its
     /// fault check and its walk. The mask takes `&mut self`, so no other
     /// handle's `set_bigram_count` adds a gram the walk missed.
-    fn container_keys(&self) -> Result<Vec<Option<Token>>, StoreError> {
+    fn container_keys(&self) -> Result<Vec<Option<PhraseToken>>, StoreError> {
         ContainerGrams(self.container()).keys()
     }
 
@@ -891,9 +888,9 @@ impl UserStore {
     /// [`Self::container_keys`] collected.
     fn bigram_mask_fault_over(
         &self,
-        keys: &Result<Vec<Option<Token>>, StoreError>,
-        mask: Token,
-        value: Token,
+        keys: &Result<Vec<Option<PhraseToken>>, StoreError>,
+        mask: PhraseToken,
+        value: PhraseToken,
     ) -> Option<UserStoreError> {
         let Ok(keys) = keys else {
             return None;
@@ -910,8 +907,8 @@ impl UserStore {
     pub(crate) fn check_training_step_with(
         &self,
         check: &mut TrainingCheck,
-        prev: Token,
-        cur: Token,
+        prev: PhraseToken,
+        cur: PhraseToken,
     ) -> Result<(), UserStoreError> {
         // The failed container's `load` misses, so the step trains a fresh
         // gram with no overflow, and its `store` answers false: the pin's
@@ -1073,7 +1070,7 @@ impl UserStore {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn bigram_count(&self, prev: Token, cur: Token) -> Result<u64, UserStoreError> {
+    pub fn bigram_count(&self, prev: PhraseToken, cur: PhraseToken) -> Result<u64, UserStoreError> {
         Ok(self
             .bigram_row(prev)?
             .and_then(|gram| single_gram::get_freq(&gram, cur))
@@ -1086,7 +1083,7 @@ impl UserStore {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn bigram_total(&self, prev: Token) -> Result<u64, UserStoreError> {
+    pub fn bigram_total(&self, prev: PhraseToken) -> Result<u64, UserStoreError> {
         Ok(self
             .bigram_row(prev)?
             .and_then(|gram| single_gram::get_total_freq(&gram))
@@ -1106,8 +1103,8 @@ impl UserStore {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_bigram_count(
         &mut self,
-        prev: Token,
-        cur: Token,
+        prev: PhraseToken,
+        cur: PhraseToken,
         count: u64,
     ) -> Result<(), UserStoreError> {
         let mut gram = self
@@ -1135,7 +1132,7 @@ impl UserStore {
     }
 
     /// `Bigram::store(prev, gram)` on the pin's container.
-    fn store_gram(&self, prev: Token, gram: &[u8]) -> Result<(), UserStoreError> {
+    fn store_gram(&self, prev: PhraseToken, gram: &[u8]) -> Result<(), UserStoreError> {
         self.container().store(&prev.to_le_bytes(), gram)?;
         Ok(())
     }
@@ -1145,7 +1142,7 @@ impl UserStore {
     /// its live field ([`Self::system_unigram`]), which the model prices;
     /// the session keeps no shipped count to take a difference from.
     #[must_use]
-    pub fn unigram_delta(&self, token: Token) -> u64 {
+    pub fn unigram_delta(&self, token: PhraseToken) -> u64 {
         self.with_user_item(token, |item| u64::from(item.unigram()))
             .unwrap_or(0)
     }
@@ -1156,7 +1153,7 @@ impl UserStore {
     /// (074a2219 `pinyin.cpp:2821-2833`, `zhuyin.cpp:1813-1825`). The caller
     /// applies library visibility.
     #[must_use]
-    pub(crate) fn user_unigram_frequency(&self, token: Token) -> Option<u64> {
+    pub(crate) fn user_unigram_frequency(&self, token: PhraseToken) -> Option<u64> {
         self.with_user_item(token, |item| u64::from(item.unigram()))
     }
 
@@ -1166,7 +1163,7 @@ impl UserStore {
     /// buffer's, or the original's before any write. `None` for a removed item,
     /// a library with no original or an item nothing holds.
     #[must_use]
-    pub fn system_unigram(&self, token: Token) -> Option<u32> {
+    pub fn system_unigram(&self, token: PhraseToken) -> Option<u32> {
         let original = self.originals.get(&phrase_index_library_index(token))?;
         if self.system_item_removed(token) {
             return None;
@@ -1184,7 +1181,7 @@ impl UserStore {
     /// `token`: the live system item's, or a `USER_FILE` library's own user
     /// item (`Some(0)` for a readable zero), and `None` when the read fails
     /// (`ERROR_NO_ITEM`).
-    fn item_unigram(&self, token: Token) -> Option<u32> {
+    fn item_unigram(&self, token: PhraseToken) -> Option<u32> {
         self.system_unigram(token).or_else(|| {
             (!self.is_system_library(phrase_index_library_index(token)))
                 .then(|| self.with_user_item(token, |item| item.unigram()))
@@ -1212,7 +1209,7 @@ impl UserStore {
     /// can. The caller checks library visibility. This does not mark the
     /// context dirty (`pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
     #[cfg(test)]
-    pub fn add_system_unigram_frequency(&mut self, token: Token, delta: u32) -> bool {
+    pub fn add_system_unigram_frequency(&mut self, token: PhraseToken, delta: u32) -> bool {
         self.add_unigram_outcome(token, delta).is_accepted()
     }
 
@@ -1222,7 +1219,7 @@ impl UserStore {
     /// `phrase_index.h:628-635`). Only [`UnigramAdd::Refused`] is
     /// `ERROR_INTEGER_OVERFLOW` (`pinyin.cpp:2528`).
     #[must_use]
-    pub fn add_unigram_outcome(&mut self, token: Token, delta: u32) -> UnigramAdd {
+    pub fn add_unigram_outcome(&mut self, token: PhraseToken, delta: u32) -> UnigramAdd {
         let library = phrase_index_library_index(token);
         if self.originals.get(&library).is_none() && !self.has_user_library(library) {
             return UnigramAdd::Missing;
@@ -1332,8 +1329,8 @@ impl UserStore {
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub(crate) fn count_delta(
         &self,
-        prev: Option<Token>,
-        token: Token,
+        prev: Option<PhraseToken>,
+        token: PhraseToken,
     ) -> Result<UserCountDelta, UserStoreError> {
         // Load the user gram for this step (pinyin_lookup2.cpp:369).
         // The pin merges the user gram whenever one is stored, item-less
@@ -1369,7 +1366,11 @@ impl UserStore {
     /// value is too short for its total (register row 85, the pin's abort),
     /// or [`UserStoreError::PartialUserBigramTail`] when it has a partial
     /// item tail (register row 100); nothing changes then.
-    pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
+    pub fn observe_selection(
+        &mut self,
+        last: PhraseToken,
+        cur: PhraseToken,
+    ) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
         self.inner.dirty.set(true);
         Ok(seed)
@@ -1378,7 +1379,7 @@ impl UserStore {
     /// Pronunciation half of train_result3 (074a2219 phonetic_lookup.h:925-927).
     pub(crate) fn train_pronunciations(
         &mut self,
-        token: Token,
+        token: PhraseToken,
         readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
         seed: u64,
     ) -> Result<(), UserStoreError> {
@@ -1393,7 +1394,11 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the observation cannot be committed.
-    pub fn observe_predicted(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
+    pub fn observe_predicted(
+        &mut self,
+        last: PhraseToken,
+        cur: PhraseToken,
+    ) -> Result<u64, UserStoreError> {
         self.update(last, cur, SeedPolicy::Predicted)
     }
 
@@ -1409,7 +1414,7 @@ impl UserStore {
     /// Returns [`UserStoreError::UnigramTotalOverflow`] if the library total
     /// cannot accept 483. The facade-total increment is retained even on
     /// refusal, as at the pin. Other store failures return [`UserStoreError`].
-    pub fn observe_predicted_prefix(&mut self, cur: Token) -> Result<u64, UserStoreError> {
+    pub fn observe_predicted_prefix(&mut self, cur: PhraseToken) -> Result<u64, UserStoreError> {
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
         let accepted = self.arena_add_unigram(cur, delta);
@@ -1425,8 +1430,8 @@ impl UserStore {
     /// ([`trained_gram`], [`predicted_gram`]), the unigram by `seed * 7`.
     fn update(
         &mut self,
-        last: Token,
-        cur: Token,
+        last: PhraseToken,
+        cur: PhraseToken,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
         // #lizard forgives(cyclomatic_complexity): the training and
@@ -1518,7 +1523,7 @@ impl UserStore {
         phrase: &crate::PhraseText,
         keys: &[PinyinKey],
         count: Option<u64>,
-    ) -> Result<Token, UserStoreError> {
+    ) -> Result<PhraseToken, UserStoreError> {
         self.add_phrase_in(USER_DICTIONARY, phrase, keys, count)
     }
 
@@ -1547,7 +1552,7 @@ impl UserStore {
         phrase: &crate::PhraseText,
         keys: &[PinyinKey],
         count: Option<u64>,
-    ) -> Result<Token, UserStoreError> {
+    ) -> Result<PhraseToken, UserStoreError> {
         let words = phrase_words(phrase);
         if !self.has_user_library(library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);
@@ -1567,7 +1572,7 @@ impl UserStore {
     /// no row, so the pin has no sub-index there and writes nothing to the
     /// range. An empty sub-index answers slot 1 (`phrase_index.cpp:628-633`).
     #[must_use]
-    pub fn addon_promotion_range_end(&self) -> Option<Token> {
+    pub fn addon_promotion_range_end(&self) -> Option<PhraseToken> {
         if let Some(original) = self.originals.get(&ADDON_DICTIONARY) {
             let items = self.inner.system_items.borrow();
             return Some(crate::phrase_index_make_token(
@@ -1607,7 +1612,7 @@ impl UserStore {
     /// [`UserStoreError`] when the promotion cannot be written.
     pub fn promote_addon_phrase(
         &mut self,
-        token: Token,
+        token: PhraseToken,
         item: &[u8],
     ) -> Result<(), UserStoreError> {
         let view = crate::data::phrase_library::PhraseItemView::from_bytes(item)
@@ -1620,7 +1625,7 @@ impl UserStore {
 
     /// Read the stored count without decoding text or keys.
     #[must_use]
-    pub(crate) fn user_pronunciation_count(&self, token: Token) -> Option<u32> {
+    pub(crate) fn user_pronunciation_count(&self, token: PhraseToken) -> Option<u32> {
         self.inner
             .libpinyin
             .phrases()
@@ -1632,13 +1637,13 @@ impl UserStore {
 
     /// Whether this store owns the phrase, without materializing its fields.
     #[must_use]
-    pub(crate) fn phrase_exists(&self, token: Token) -> bool {
+    pub(crate) fn phrase_exists(&self, token: PhraseToken) -> bool {
         self.with_user_item(token, |_| ()).is_some()
     }
 
     /// The stored word count without copying or decoding the phrase text.
     #[must_use]
-    pub fn phrase_length(&self, token: Token) -> Option<usize> {
+    pub fn phrase_length(&self, token: PhraseToken) -> Option<usize> {
         self.with_user_item(token, |item| item.phrase_length())
     }
 
@@ -1653,7 +1658,7 @@ impl UserStore {
     /// does (074a2219 `phrase_index.cpp:33-50`).
     pub(crate) fn with_nth_pronunciation_words<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         nth: usize,
         read: impl FnOnce(usize, Option<&[u8]>) -> R,
     ) -> Option<R> {
@@ -1667,7 +1672,7 @@ impl UserStore {
 
     /// Phrase text and pronunciations for `token`, if this store owns it.
     #[must_use]
-    pub fn phrase(&self, token: Token) -> Option<UserPhrase> {
+    pub fn phrase(&self, token: PhraseToken) -> Option<UserPhrase> {
         let phrases = self.inner.libpinyin.phrases();
         match phrases.item(token) {
             Some(item) => Some(phrases.phrase(token, item)),
@@ -1681,7 +1686,7 @@ impl UserStore {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<Token>, UserStoreError> {
+    pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<PhraseToken>, UserStoreError> {
         self.token_for_phrase_in(USER_DICTIONARY, phrase)
     }
 
@@ -1695,7 +1700,7 @@ impl UserStore {
         &self,
         library: u8,
         phrase: &str,
-    ) -> Result<Option<Token>, UserStoreError> {
+    ) -> Result<Option<PhraseToken>, UserStoreError> {
         Ok(self
             .phrase_table_tokens_for_text(phrase)?
             .into_iter()
@@ -1707,7 +1712,10 @@ impl UserStore {
     /// # Errors
     /// Returns an error when the record cannot be read.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn phrase_table_tokens_for_text(&self, text: &str) -> Result<Vec<Token>, UserStoreError> {
+    pub fn phrase_table_tokens_for_text(
+        &self,
+        text: &str,
+    ) -> Result<Vec<PhraseToken>, UserStoreError> {
         self.inner
             .libpinyin
             .phrases()
@@ -1725,7 +1733,7 @@ impl UserStore {
     pub(crate) fn phrase_table_tokens_for_ucs4(
         &self,
         words: &[u32],
-    ) -> Result<Vec<Token>, UserStoreError> {
+    ) -> Result<Vec<PhraseToken>, UserStoreError> {
         self.inner
             .libpinyin
             .phrases()
@@ -1831,7 +1839,10 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    pub fn bigram_successors(&self, prev: Token) -> Result<Vec<(Token, u64)>, UserStoreError> {
+    pub fn bigram_successors(
+        &self,
+        prev: PhraseToken,
+    ) -> Result<Vec<(PhraseToken, u64)>, UserStoreError> {
         Ok(self.bigram_row(prev)?.map_or_else(Vec::new, |gram| {
             single_gram::retrieve_all(&gram)
                 .map(|(token, count)| (token, u64::from(count)))
@@ -1944,7 +1955,7 @@ impl UserStore {
     ///
     /// Returns [`UserStoreError`] when the store or the container cannot
     /// be read.
-    pub(crate) fn bigram_predecessors(&self) -> Result<Vec<Token>, UserStoreError> {
+    pub(crate) fn bigram_predecessors(&self) -> Result<Vec<PhraseToken>, UserStoreError> {
         Ok(self.gram_keys()?.into_iter().flatten().collect())
     }
 
@@ -1953,9 +1964,9 @@ impl UserStore {
     /// ([`mask_grams_over`]). Answers whether a gram remains.
     fn mask_container_over(
         &self,
-        keys: Result<Vec<Option<Token>>, StoreError>,
-        mask: Token,
-        value: Token,
+        keys: Result<Vec<Option<PhraseToken>>, StoreError>,
+        mask: PhraseToken,
+        value: PhraseToken,
     ) -> Result<bool, UserStoreError> {
         Ok(mask_grams_over(
             &ContainerGrams(self.container()),
@@ -1979,8 +1990,8 @@ impl UserStore {
     pub(crate) fn reload_system_libraries(
         &mut self,
         mut originals: crate::user::persistence::SystemOriginals,
-        mask: Token,
-        value: Token,
+        mask: PhraseToken,
+        value: PhraseToken,
     ) -> Result<(), crate::user::JournalFault> {
         self.reload_system_libraries_retaining(&mut originals, mask, value)
     }
@@ -1993,8 +2004,8 @@ impl UserStore {
     pub fn reload_system_libraries_retaining(
         &mut self,
         originals: &mut crate::user::persistence::SystemOriginals,
-        mask: Token,
-        value: Token,
+        mask: PhraseToken,
+        value: PhraseToken,
     ) -> Result<(), crate::user::JournalFault> {
         self.reload_system_libraries_prefetched(
             originals,
@@ -2013,8 +2024,8 @@ impl UserStore {
     pub(crate) fn reload_system_libraries_prefetched(
         &mut self,
         originals: &mut crate::user::persistence::SystemOriginals,
-        mask: Token,
-        value: Token,
+        mask: PhraseToken,
+        value: PhraseToken,
         mut logs: crate::user::persistence::MaskLogs,
     ) -> Result<(), crate::user::JournalFault> {
         let target = &self.inner.libpinyin;
@@ -2254,8 +2265,8 @@ impl UserStore {
     /// The [`UserStoreError`] [`Self::mask_out`] would return.
     pub(crate) fn check_mask_out(
         &self,
-        mask: Token,
-        value: Token,
+        mask: PhraseToken,
+        value: PhraseToken,
     ) -> Result<MaskCheck, UserStoreError> {
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
@@ -2283,7 +2294,11 @@ impl UserStore {
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+    pub fn mask_out(
+        &mut self,
+        mask: PhraseToken,
+        value: PhraseToken,
+    ) -> Result<(), UserStoreError> {
         let checked = self.check_mask_out(mask, value)?;
         self.apply_mask_out(checked, mask, value)
     }
@@ -2300,8 +2315,8 @@ impl UserStore {
     pub(crate) fn apply_mask_out(
         &mut self,
         checked: MaskCheck,
-        mask: Token,
-        value: Token,
+        mask: PhraseToken,
+        value: PhraseToken,
     ) -> Result<(), UserStoreError> {
         let MaskCheck { container_keys } = checked;
         let target = Rc::clone(&self.inner.libpinyin);
@@ -2331,7 +2346,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the phrase cannot be removed.
-    pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
+    pub fn remove_user_phrase(&mut self, token: PhraseToken) -> Result<bool, UserStoreError> {
         self.arena_remove(token)
     }
 }
@@ -2342,7 +2357,7 @@ impl UserStore {
     pub(crate) fn live_system_changes(
         &self,
         originals: &impl crate::user::persistence::OriginalLibraries,
-    ) -> std::collections::BTreeMap<Token, Option<crate::data::chunk_write::ChunkItem>> {
+    ) -> std::collections::BTreeMap<PhraseToken, Option<crate::data::chunk_write::ChunkItem>> {
         self.inner.system_items.borrow().changed_items(originals)
     }
 
@@ -2366,7 +2381,7 @@ impl UserStore {
     /// table still hold it. The library's live buffer answers no item where
     /// the chunk holds one.
     #[must_use]
-    pub(crate) fn system_item_removed(&self, token: Token) -> bool {
+    pub(crate) fn system_item_removed(&self, token: PhraseToken) -> bool {
         self.inner.system_items.borrow().is_removed(token)
     }
 
@@ -2377,7 +2392,7 @@ impl UserStore {
     /// Returns an error if the scratch payload or count cannot be read.
     pub(crate) fn system_item_override(
         &self,
-        token: Token,
+        token: PhraseToken,
     ) -> Result<Option<crate::data::chunk_write::ChunkItem>, UserStoreError> {
         if !(1..=4).contains(&(token >> 24)) {
             return Ok(None);
@@ -2401,7 +2416,7 @@ impl UserStore {
     /// Returns [`UserStoreError`] when a user phrase cannot be read.
     pub fn item_pronunciations(
         &self,
-        token: Token,
+        token: PhraseToken,
     ) -> Result<Option<crate::model::PronunciationRows>, UserStoreError> {
         use crate::user::store_libpinyin::pinyin_keys_to_packed;
         if let Some(readings) = self.with_user_item(token, |item| {
@@ -2454,7 +2469,7 @@ impl UserStore {
 
     /// The live sub-index's range end for the export probe. A promotion can
     /// create a sub-index with no original (074a2219 phrase_index.h:663-670).
-    pub(crate) fn system_range_end(&self, library: u8) -> Option<Token> {
+    pub(crate) fn system_range_end(&self, library: u8) -> Option<PhraseToken> {
         let end = if let Some(original) = self.originals.get(&library) {
             self.inner
                 .system_items
@@ -2483,7 +2498,7 @@ impl UserStore {
     /// `Self::system_item_override` supplies the live unigram.
     pub(crate) fn with_effective_system_item<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         read: impl FnOnce(&crate::data::chunk_write::ChunkItem) -> R,
     ) -> Option<R> {
         if !self.is_system_library(phrase_index_library_index(token)) {
@@ -2508,7 +2523,7 @@ impl UserStore {
     /// Nothing is decoded or kept.
     pub(crate) fn with_live_item<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         read: impl FnOnce(&[u8]) -> R,
     ) -> Option<R> {
         if !self.has_system_items() {
@@ -2519,7 +2534,7 @@ impl UserStore {
 
     pub(crate) fn with_live_item_fields<R>(
         &self,
-        token: Token,
+        token: PhraseToken,
         read: impl FnOnce(&[u8]) -> R,
     ) -> Option<Option<R>> {
         if !self.has_system_items() {
@@ -2531,14 +2546,14 @@ impl UserStore {
             .with_live_fields(token, read)
     }
 
-    pub(crate) fn live_pronunciation_count(&self, token: Token) -> Option<u32> {
+    pub(crate) fn live_pronunciation_count(&self, token: PhraseToken) -> Option<u32> {
         self.inner
             .system_items
             .borrow()
             .live_pronunciation_count(token)
     }
 
-    pub(crate) fn live_item_past_buffer(&self, token: Token) -> bool {
+    pub(crate) fn live_item_past_buffer(&self, token: PhraseToken) -> bool {
         self.inner
             .system_items
             .borrow()
@@ -2559,7 +2574,7 @@ impl UserStore {
     /// Returns [`UserStoreError`] when the cursor cannot be read, or
     /// `InvalidPhrase` for a system library.
     #[cfg(test)]
-    pub fn user_library_token_end(&self, library: u8) -> Result<Token, UserStoreError> {
+    pub fn user_library_token_end(&self, library: u8) -> Result<PhraseToken, UserStoreError> {
         if self.is_system_library(library) {
             return Err(UserStoreError::InvalidPhrase);
         }
@@ -2584,11 +2599,11 @@ impl UserStore {
     pub(crate) fn add_system_phrase_in(
         &mut self,
         library: u8,
-        original_token: Option<Token>,
+        original_token: Option<PhraseToken>,
         text: &crate::PhraseText,
         keys: &[PinyinKey],
         count: Option<u64>,
-    ) -> Result<Token, UserStoreError> {
+    ) -> Result<PhraseToken, UserStoreError> {
         let words = phrase_words(text);
         if !self.is_system_library(library) || !phrase_fits_keys(&words, keys) {
             return Err(UserStoreError::InvalidPhrase);

@@ -65,23 +65,23 @@ impl FixtureSource {
     }
 
     fn lexicon_tokens(&self) -> impl Iterator<Item = PhraseToken> + '_ {
-        self.text.keys().copied().map(PhraseToken::new)
+        self.text.keys().copied()
     }
 }
 
 impl PhraseSource for FixtureSource {
     fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>> {
-        self.best.get(&token.value()).cloned()
+        self.best.get(&token).cloned()
     }
     fn text(&self, token: PhraseToken) -> Option<String> {
-        self.text.get(&token.value()).cloned()
+        self.text.get(&token).cloned()
     }
 }
 
 fn sentences() -> Vec<Vec<PhraseToken>> {
     vec![
-        vec![PhraseToken::new(10), PhraseToken::new(30)], // 中国
-        vec![PhraseToken::new(20)],                       // 钟
+        vec![10, 30], // 中国
+        vec![20],     // 钟
     ]
 }
 

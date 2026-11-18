@@ -141,7 +141,7 @@ fn parse_vocab(text: &str) -> Result<Vec<VocabRecord>, FixtureError> {
             .collect::<Result<Vec<_>, _>>()?;
 
         records.push(VocabRecord {
-            token: PhraseToken::new(token),
+            token,
             keys,
             text: field(&fields, "text", line)?.to_owned(),
             unigram: number(&fields, "unigram", line)?,
@@ -321,7 +321,6 @@ impl PhraseList for FixtureDictionary {
     }
 
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
-        let token = PhraseToken::new(token);
         self.entries
             .values()
             .flatten()
@@ -463,7 +462,7 @@ fn token_field(
         field: name,
         value: raw.to_string(),
     })?;
-    let token = PhraseToken::new(value);
+    let token = value;
     if known.contains_key(&token) {
         Ok(token)
     } else {

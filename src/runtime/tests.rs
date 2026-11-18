@@ -165,7 +165,7 @@ fn unigram_freq_uses_the_live_count_while_the_library_is_visible() {
         // the live field.
         assert_eq!(runtime.user_store().unigram_delta(token), 0);
         assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            runtime.lm().unigram_freq(&token).unwrap(),
             Some(u64::from(initial) + delta),
             "visible live count wins, including when the original is detached"
         );
@@ -180,7 +180,7 @@ fn unigram_freq_uses_the_live_count_while_the_library_is_visible() {
             Some(initial + delta as u32)
         );
         assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            runtime.lm().unigram_freq(&token).unwrap(),
             Some(0),
             "the masked token cannot use the live system count"
         );
@@ -208,7 +208,7 @@ fn a_step_prices_system_tokens_the_user_table_indexes() {
         .unwrap();
     let listed = runtime.dict().lookup(&[ni]).unwrap();
     for token in [shipped, appended] {
-        assert!(listed.iter().any(|entry| entry.token().value() == token));
+        assert!(listed.iter().any(|entry| entry.token() == token));
         let item = runtime
             .dict()
             .trellis_item(&[ni], &[], token)
@@ -222,8 +222,7 @@ fn a_step_prices_system_tokens_the_user_table_indexes() {
             .trellis_records(&[ni], &[3])
             .unwrap()
             .iter()
-            .any(|entry| entry.token().value() == shipped
-                && entry.pronunciation_possibility().is_some())
+            .any(|entry| entry.token() == shipped && entry.pronunciation_possibility().is_some())
     );
 }
 
@@ -239,13 +238,10 @@ fn unigram_freq_reads_increments_from_the_user_item() {
             .unwrap();
         assert_eq!(token >> 24, 5);
         assert_eq!(runtime.user_store().system_unigram(token), None);
-        assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-            Some(expected)
-        );
+        assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(expected));
         assert!(runtime.add_unigram_delta(token, 7));
         assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+            runtime.lm().unigram_freq(&token).unwrap(),
             Some(expected + 7)
         );
     }
@@ -266,17 +262,14 @@ fn unigram_freq_reads_a_user_items_count_live() {
     let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     runtime.user = store;
     for _ in 0..2 {
-        assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-            Some(15)
-        );
+        assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(15));
     }
     runtime
         .user_store_mut()
         .observe_selection(1, token)
         .unwrap();
     assert_eq!(
-        runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
+        runtime.lm().unigram_freq(&token).unwrap(),
         Some(15 + 483),
         "a committed write invalidates the cached count"
     );
@@ -292,10 +285,7 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
         .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
         .unwrap();
     assert_eq!(runtime.user_store().system_unigram(token), Some(0));
-    assert_eq!(
-        runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-        Some(0)
-    );
+    assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(0));
     let dir = tempfile::tempdir().unwrap();
     let token = runtime.dict().system().tokens_for_text("你").unwrap()[0];
     assert_eq!(token >> 24, 1);
@@ -341,18 +331,9 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
         .dict()
         .lookup(&[SyllableKey::from_text("ni").unwrap()])
         .unwrap();
-    assert!(entries.iter().all(|entry| entry.token().value() != token));
-    assert_eq!(
-        runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-        Some(0)
-    );
-    assert_eq!(
-        runtime
-            .lm()
-            .unigram_freq(&PhraseToken::new(u32::MAX))
-            .unwrap(),
-        Some(0)
-    );
+    assert!(entries.iter().all(|entry| entry.token() != token));
+    assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(0));
+    assert_eq!(runtime.lm().unigram_freq(&u32::MAX).unwrap(), Some(0));
 }
 
 #[test]
@@ -391,12 +372,7 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
             .add_phrase_in(5, &"你鎄".into(), &keys, Some(5))
             .unwrap();
         assert_eq!(token >> 24, 5);
-        assert!(
-            zhuyin
-                .dict()
-                .tokens_for_text("你鎄")
-                .contains(&PhraseToken::new(token))
-        );
+        assert!(zhuyin.dict().tokens_for_text("你鎄").contains(&token));
     }
 
     // A table.conf whose addon 4 names a non-stock chunk: the stock
@@ -457,10 +433,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
         .user_store_mut()
         .add_phrase(&crate::PhraseText::from(phrase), &keys, None)
         .unwrap();
-    assert_eq!(
-        runtime.dict().tokens_for_text(phrase),
-        [PhraseToken::new(token)]
-    );
+    assert_eq!(runtime.dict().tokens_for_text(phrase), [token]);
     let syllables = [
         SyllableKey::from_text("ni").unwrap(),
         SyllableKey::from_text("hao").unwrap(),
@@ -471,7 +444,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
             .user_lookup()
             .lookup(&syllables)
             .iter()
-            .any(|entry| entry.token().value() == token && entry.text() == phrase)
+            .any(|entry| entry.token() == token && entry.text() == phrase)
     );
     assert_eq!(
         runtime.dict().user_lookup().phrase_text(token).unwrap(),
@@ -484,10 +457,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
             .unwrap(),
         token
     );
-    assert_eq!(
-        runtime.dict().tokens_for_text(phrase),
-        [PhraseToken::new(token)]
-    );
+    assert_eq!(runtime.dict().tokens_for_text(phrase), [token]);
     assert!(runtime.user_store_mut().remove_user_phrase(token).unwrap());
     assert!(runtime.dict().tokens_for_text(phrase).is_empty());
 
@@ -497,10 +467,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
         .user_store_mut()
         .add_phrase_in(7, &crate::PhraseText::from(phrase), &keys, Some(5))
         .unwrap();
-    assert_eq!(
-        runtime.dict().tokens_for_text(phrase),
-        [PhraseToken::new(imported)]
-    );
+    assert_eq!(runtime.dict().tokens_for_text(phrase), [imported]);
     runtime
         .user_store_mut()
         .mask_out(u32::MAX, imported)
@@ -521,7 +488,7 @@ fn tokens_for_text_reads_the_row_after_a_system_reading_merge() {
     let mut runtime = Runtime::open(&system_dir(), Some(dir.path())).unwrap();
 
     let tokens = runtime.dict().tokens_for_text("你好");
-    let token = tokens[0].value();
+    let token = tokens[0];
     let library = u8::try_from(token >> 24).unwrap();
     let keys: Vec<_> = ["ni", "hao"]
         .into_iter()
@@ -537,10 +504,7 @@ fn tokens_for_text_reads_the_row_after_a_system_reading_merge() {
         .user_store_mut()
         .add_system_phrase_in(library, None, &"你鎄".into(), &keys, Some(5))
         .unwrap();
-    assert_eq!(
-        runtime.dict().tokens_for_text("你鎄"),
-        [PhraseToken::new(added)]
-    );
+    assert_eq!(runtime.dict().tokens_for_text("你鎄"), [added]);
 }
 
 #[test]
@@ -681,7 +645,7 @@ mod backend_files {
     use crate::runtime::{OpenError, Runtime, TableConfError};
     use crate::user::{FIRST_USER_TOKEN, PinyinKey};
     use crate::{
-        PhraseToken, SyllableKey,
+        SyllableKey,
         model::{Dictionary, LanguageModel},
     };
     use std::path::Path;
@@ -889,7 +853,7 @@ mod backend_files {
         assert_eq!(
             records
                 .iter()
-                .filter(|entry| entry.token().value() == token)
+                .filter(|entry| entry.token() == token)
                 .count(),
             1
         );
@@ -899,7 +863,7 @@ mod backend_files {
                 .trellis_records(&syllables, &[1, 3])
                 .unwrap()
                 .iter()
-                .all(|entry| entry.token().value() != token)
+                .all(|entry| entry.token() != token)
         );
         assert_eq!(
             runtime
@@ -907,7 +871,7 @@ mod backend_files {
                 .lookup(&syllables)
                 .unwrap()
                 .iter()
-                .filter(|entry| entry.token().value() == token)
+                .filter(|entry| entry.token() == token)
                 .count(),
             1
         );
@@ -1090,8 +1054,7 @@ mod backend_files {
             "observing must grow the store's unigram total: {store_before} -> {store_after}"
         );
 
-        let freq = LanguageModel::unigram_freq(&runtime.lm(), &PhraseToken::new(token))
-            .expect("overlay query");
+        let freq = LanguageModel::unigram_freq(&runtime.lm(), &token).expect("overlay query");
         assert!(freq.is_some(), "overlay must answer with real unigrams");
         let lm_before = lm_before.expect("real unigrams before observation");
         let lm_after = LanguageModel::unigram_total(&runtime.lm())
@@ -1203,14 +1166,7 @@ mod backend_files {
         let token = 0x0400_0000 | addon.items().next().unwrap().0;
         let mut runtime = Runtime::open(system.path(), None).unwrap();
         assert!(matches!(runtime.load_system_addon_reporting(4), Ok(true)));
-        assert!(
-            runtime
-                .lm()
-                .addon_unigram_freq(&PhraseToken::new(token))
-                .unwrap()
-                .unwrap()
-                > 0
-        );
+        assert!(runtime.lm().addon_unigram_freq(&token).unwrap().unwrap() > 0);
         assert!(!runtime.dict().token_exists(token));
         let before = runtime.lm().amplified_total();
         assert!(!runtime.add_unigram_delta(token, 9));
@@ -1278,12 +1234,10 @@ mod backend_files {
             .into_iter()
             .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
             .collect();
-        let token = PhraseToken::new(
-            runtime
-                .user_store_mut()
-                .add_phrase(&"你鎄".into(), &keys, Some(5))
-                .unwrap(),
-        );
+        let token = runtime
+            .user_store_mut()
+            .add_phrase(&"你鎄".into(), &keys, Some(5))
+            .unwrap();
         // A second successor keeps count/total from remaining exactly 1 when
         // the tested count changes, so a stale row cannot pass by normalization.
         let other = runtime
@@ -1294,7 +1248,7 @@ mod backend_files {
             .user_store_mut()
             .set_bigram_count(SENTENCE_START, other, 1000)
             .unwrap();
-        let prev = PhraseToken::new(SENTENCE_START);
+        let prev = SENTENCE_START;
         let fresh = |runtime: &Runtime| {
             let actual = runtime
                 .lm()
@@ -1309,20 +1263,17 @@ mod backend_files {
         let before = fresh(&runtime);
         runtime
             .user_store_mut()
-            .observe_selection(SENTENCE_START, token.value())
+            .observe_selection(SENTENCE_START, token)
             .unwrap();
         let trained = fresh(&runtime);
         assert_ne!(trained, before);
         runtime
             .user_store_mut()
-            .set_bigram_count(SENTENCE_START, token.value(), 1000)
+            .set_bigram_count(SENTENCE_START, token, 1000)
             .unwrap();
         let written = fresh(&runtime);
         assert_ne!(written, trained);
-        runtime
-            .user_store_mut()
-            .mask_out(u32::MAX, token.value())
-            .unwrap();
+        runtime.user_store_mut().mask_out(u32::MAX, token).unwrap();
         let masked = fresh(&runtime);
         assert_ne!(masked, written);
         drop(runtime);
@@ -1349,7 +1300,7 @@ mod backend_files {
         let stored = user.bigram_row(prev).unwrap().expect("the user gram");
         let merged = runtime
             .lm()
-            .merged_successors(&PhraseToken::new(prev))
+            .merged_successors(&prev)
             .unwrap()
             .expect("the user gram stands alone");
         assert_eq!(merged.to_bytes(), stored);
@@ -1368,12 +1319,10 @@ mod backend_files {
             .into_iter()
             .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
             .collect();
-        let token = PhraseToken::new(
-            runtime
-                .user_store_mut()
-                .add_phrase(&"你鎄".into(), &keys, Some(5))
-                .unwrap(),
-        );
+        let token = runtime
+            .user_store_mut()
+            .add_phrase(&"你鎄".into(), &keys, Some(5))
+            .unwrap();
         let other = runtime
             .user_store_mut()
             .add_phrase(&"你鎬".into(), &keys, Some(5))
@@ -1382,7 +1331,7 @@ mod backend_files {
             .user_store_mut()
             .set_bigram_count(SENTENCE_START, other, 1000)
             .unwrap();
-        let prev = PhraseToken::new(SENTENCE_START);
+        let prev = SENTENCE_START;
         let mut row = NbestStepRow::default();
         // One span load's merged row: whether it carries `successor`, and the
         // item costs of `token` read from it.
@@ -1407,7 +1356,7 @@ mod backend_files {
                 .unwrap()
             {
                 NbestSuccessors::Row(gram) => gram
-                    .get_freq(token.value())
+                    .get_freq(token)
                     .unwrap()
                     .map(|freq| (freq, gram.total().unwrap())),
                 NbestSuccessors::Miss => None,
@@ -1428,12 +1377,12 @@ mod backend_files {
         // owner changes.
         runtime
             .user_store_mut()
-            .observe_selection(SENTENCE_START, token.value())
+            .observe_selection(SENTENCE_START, token)
             .unwrap();
         let trained = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
         assert_ne!(trained, before);
         let mut row = NbestStepRow::default();
-        assert!(carries(&runtime, &mut row, token.value()));
+        assert!(carries(&runtime, &mut row, token));
         assert_eq!(costs(&runtime, &mut row), trained);
         runtime.user_store_mut().mask_out(u32::MAX, other).unwrap();
         let forgotten = runtime.lm().nbest_step_costs(&prev, &token).unwrap();
@@ -1849,7 +1798,7 @@ mod pin_data {
     use super::contract_data;
 
     use crate::{
-        PhraseToken, SyllableKey,
+        SyllableKey,
         model::{Dictionary, LanguageModel},
     };
 
@@ -1912,7 +1861,7 @@ mod pin_data {
             .find(|entry| entry.text() == "你好")
             .expect("你好");
         let item = dict
-            .trellis_item(&syllables("ni'hao"), &[], entry.token().value())
+            .trellis_item(&syllables("ni'hao"), &[], entry.token())
             .expect("trellis item")
             .expect("你好 is ranged on ni'hao");
         assert!(
@@ -1933,7 +1882,7 @@ mod pin_data {
         assert!(!tokens.is_empty());
         for token in &tokens {
             assert_eq!(
-                dict.phrase_text_for_token(token.value())
+                dict.phrase_text_for_token(*token)
                     .as_ref()
                     .and_then(|text| text.as_str()),
                 Some("中国")
@@ -1963,10 +1912,7 @@ mod pin_data {
 
         // Punctuation through punct.bin.
         let de = dict.tokens_for_text("的");
-        assert!(
-            de.iter()
-                .any(|token| !dict.punctuations(token.value()).is_empty())
-        );
+        assert!(de.iter().any(|token| !dict.punctuations(*token).is_empty()));
 
         // The addon facade: addon_pinyin_index.bin + art.bin on demand.
         assert!(
@@ -1997,7 +1943,7 @@ mod pin_data {
         assert_eq!(first, "你好");
         session.guess_sentence().expect("sentence");
         assert_eq!(session.sentence_text(0).expect("row 0"), "你好");
-        let _ = PhraseToken::new(0);
+        let _ = 0;
     }
 }
 
@@ -2294,7 +2240,6 @@ fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
             .dict()
             .tokens_for_text(text)
             .into_iter()
-            .map(PhraseToken::value)
             .find(|token| crate::phrase_index_library_index(*token) == library);
         let keys = native_keys(reading);
         let store = runtime.user_store_mut();
@@ -2379,13 +2324,7 @@ fn repeated_prefix_tokens_keep_duplicate_sentence_rows() {
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("ba1").unwrap();
     let prefixes = runtime.dict().tokens_for_text("丙");
-    assert_eq!(
-        prefixes
-            .iter()
-            .map(|token| token.value())
-            .collect::<Vec<_>>(),
-        [0x0100_0003, 0x0100_0003]
-    );
+    assert_eq!(prefixes.to_vec(), [0x0100_0003, 0x0100_0003]);
     assert!(
         runtime
             .session(&mut state)
@@ -2533,14 +2472,7 @@ fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] in
     let user = TempUserDir::new("segment-ieee");
     let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    let tokens = |text| {
-        runtime
-            .dict()
-            .tokens_for_text(text)
-            .iter()
-            .map(|token| token.value())
-            .collect::<Vec<_>>()
-    };
+    let tokens = |text| runtime.dict().tokens_for_text(text).to_vec();
     assert_eq!(tokens("你"), [NI]);
     assert!(tokens("你你").is_empty());
 
@@ -2560,10 +2492,7 @@ fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] in
         .phrase_segment(sentence)
         .unwrap();
     assert!(matched);
-    assert_eq!(
-        tokens.iter().map(|token| token.value()).collect::<Vec<_>>(),
-        expected
-    );
+    assert_eq!(tokens.to_vec(), expected);
 }
 
 /// The segmenter reads an unsorted sentence-start user gram as stored
@@ -2589,7 +2518,7 @@ fn the_segmenter_reads_an_unsorted_user_gram_as_stored() {
         .phrase_segment("今天天气很好")
         .unwrap();
     assert!(matched);
-    let tokens: Vec<_> = path.iter().map(|token| token.value()).collect();
+    let tokens: Vec<_> = path.to_vec();
     assert_eq!(
         tokens,
         [16_800_245, 0, 16_810_538, 0, 16_779_492, 16_779_429]
@@ -2816,7 +2745,6 @@ fn gbk_tokens(runtime: &Runtime, state: &mut crate::engine::SessionState) -> Vec
         .unwrap()
         .iter()
         .filter_map(|row| row.token())
-        .map(PhraseToken::value)
         .filter(|token| token >> 24 == 2)
         .collect()
 }
@@ -2945,7 +2873,7 @@ fn unigram_get_and_add_ignore_the_token_tag() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     let tokens = [
-        runtime.dict().tokens_for_text("你")[0].value(),
+        runtime.dict().tokens_for_text("你")[0],
         runtime
             .user_store()
             .token_for_phrase("龘龘")
@@ -2953,24 +2881,11 @@ fn unigram_get_and_add_ignore_the_token_tag() {
             .unwrap(),
     ];
     for token in tokens {
-        let base = runtime
-            .lm()
-            .unigram_freq(&PhraseToken::new(token))
-            .unwrap()
-            .unwrap();
+        let base = runtime.lm().unigram_freq(&token).unwrap().unwrap();
         let tagged = token | 0xf000_0000;
-        assert_eq!(
-            runtime
-                .lm()
-                .unigram_freq(&PhraseToken::new(tagged))
-                .unwrap(),
-            Some(base)
-        );
+        assert_eq!(runtime.lm().unigram_freq(&tagged).unwrap(), Some(base));
         assert!(runtime.add_unigram_delta(tagged, 1));
-        assert_eq!(
-            runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-            Some(base + 1)
-        );
+        assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(base + 1));
     }
 }
 /// Every pin scoring step reads the token's phrase item first and skips the
@@ -2996,9 +2911,9 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
         .dict()
         .tokens_for_text("龘")
         .iter()
-        .find(|token| token.value() >> 24 == 7)
-        .unwrap()
-        .value();
+        .find(|token| **token >> 24 == 7)
+        .copied()
+        .unwrap();
     runtime.user_store_mut().save_reporting().unwrap();
     drop(runtime);
     let file = user.path.join("user.bin");
@@ -3012,30 +2927,16 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
             vec![(1_u32.to_le_bytes().to_vec(), gram.clone())],
         );
         let runtime = Runtime::open_with_law(&system_dir(), Some(&user.path), law).unwrap();
-        assert_eq!(
-            runtime
-                .dict()
-                .tokens_for_text("龘")
-                .iter()
-                .map(|token| token.value())
-                .collect::<Vec<_>>(),
-            [token]
-        );
+        assert_eq!(runtime.dict().tokens_for_text("龘").to_vec(), [token]);
         let mut state = native_session(&runtime, OptionBits::USE_TONE);
         let (matched, tokens) = runtime.session(&mut state).phrase_segment("龘").unwrap();
         assert_eq!(
-            (
-                matched,
-                tokens.iter().map(|token| token.value()).collect::<Vec<_>>()
-            ),
+            (matched, tokens.to_vec()),
             (present, vec![if present { token } else { 0 }])
         );
         if law == UserConfLaw::Pinyin {
             if present {
-                assert_eq!(
-                    runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-                    Some(0)
-                );
+                assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(0));
             }
             runtime.session(&mut state).replace_raw("ni").unwrap();
             assert!(runtime.session(&mut state).guess_sentence().unwrap());
@@ -3057,14 +2958,11 @@ fn the_phrase_and_reading_getters_ignore_the_high_bits_of_a_token() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     runtime.user_store_mut().save_reporting().unwrap();
-    let dada = runtime.dict().tokens_for_text("龘龘")[0].value();
+    let dada = runtime.dict().tokens_for_text("龘龘")[0];
     drop(runtime);
     let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     let dict = runtime.dict();
-    for (token, text) in [
-        (dict.tokens_for_text("你")[0].value(), "你"),
-        (dada, "龘龘"),
-    ] {
+    for (token, text) in [(dict.tokens_for_text("你")[0], "你"), (dada, "龘龘")] {
         assert_eq!(dict.token_phrase(token).unwrap().text.unwrap(), text);
         assert_eq!(
             dict.token_phrase(token | 0x8000_0000)
@@ -3109,7 +3007,7 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     runtime.user_store_mut().save_reporting().unwrap();
-    let token = runtime.dict().tokens_for_text("龘龘")[0].value();
+    let token = runtime.dict().tokens_for_text("龘龘")[0];
     drop(runtime);
     let path = user.path.join("user_pinyin_index.bin");
     let mut rows = native_fixture::store_rows(&path, false);
@@ -3126,11 +3024,7 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
     native_fixture::craft_user_index(&path, &rows);
 
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-    let base = runtime
-        .lm()
-        .unigram_freq(&PhraseToken::new(token))
-        .unwrap()
-        .unwrap();
+    let base = runtime.lm().unigram_freq(&token).unwrap().unwrap();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("dada").unwrap();
     let candidate = runtime
@@ -3139,8 +3033,7 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
         .unwrap()
         .iter()
         .find(|row| {
-            row.kind() == crate::engine::CandidateKind::Phrase
-                && row.token() == Some(PhraseToken::new(token | TAG))
+            row.kind() == crate::engine::CandidateKind::Phrase && row.token() == Some(token | TAG)
         })
         .unwrap()
         .clone();
@@ -3152,10 +3045,7 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
         .unwrap();
     assert!(runtime.session(&mut state).guess_sentence().unwrap());
     assert!(runtime.train_session(&state, 0).unwrap());
-    assert_eq!(
-        runtime.lm().unigram_freq(&PhraseToken::new(token)).unwrap(),
-        Some(base + 483)
-    );
+    assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(base + 483));
     assert_eq!(
         runtime.user_store().bigram_successors(1).unwrap(),
         [(token | TAG, 69)]
@@ -3488,7 +3378,7 @@ fn a_sole_unreadable_row_survives_the_user_table_fallback() {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows.sole_unreadable_candidate().unwrap().token(),
-        Some(PhraseToken::new(0x0100_0010))
+        Some(0x0100_0010)
     );
     assert!(runtime.dict().token_phrase(0x0100_0010).is_none());
 }
@@ -3521,13 +3411,7 @@ fn a_library_mask_does_not_read_extension_rows() {
             assert!(
                 runtime
                     .dict()
-                    .token_phrase(
-                        rows.sole_unreadable_candidate()
-                            .unwrap()
-                            .token()
-                            .unwrap()
-                            .value()
-                    )
+                    .token_phrase(rows.sole_unreadable_candidate().unwrap().token().unwrap())
                     .is_none()
             );
         }
@@ -3547,7 +3431,7 @@ fn a_raw_user_key_predicts_its_live_item() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     runtime.user_store_mut().save_reporting().unwrap();
-    let token = runtime.dict().tokens_for_text("龘龘")[0].value();
+    let token = runtime.dict().tokens_for_text("龘龘")[0];
     drop(runtime);
     native_fixture::craft_user_index(
         &user.path.join("user_phrase_index.bin"),

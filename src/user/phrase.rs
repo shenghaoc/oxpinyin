@@ -11,7 +11,7 @@ use crate::{
     PHRASE_MASK, SyllableKey, USER_DICTIONARY, phrase_index_library_index, phrase_index_make_token,
 };
 
-use crate::user::store::Token;
+use crate::PhraseToken;
 
 /// `count` used when the caller passes "default" (`pinyin.cpp:521`; §3.2).
 pub const DEFAULT_PHRASE_COUNT: u64 = 5;
@@ -121,7 +121,7 @@ pub fn key_pinyin_string(key: PinyinKey) -> Option<String> {
 /// Whether `token` lives in [`USER_DICTIONARY`] — the same nibble test as
 /// `pinyin_is_user_candidate` (`pinyin.cpp:3716-3719`, §3.2).
 #[must_use]
-pub const fn is_user_token(token: Token) -> bool {
+pub const fn is_user_token(token: PhraseToken) -> bool {
     phrase_index_library_index(token) == USER_DICTIONARY
 }
 
@@ -133,7 +133,7 @@ pub const fn is_user_token(token: Token) -> bool {
 /// because the low 24 bits are already non-zero. Starting `range_end` at 0
 /// would hit the bump and land on the same token.
 #[cfg(any(test, feature = "test-hooks"))]
-pub const FIRST_USER_TOKEN: Token = phrase_index_make_token(USER_DICTIONARY, 1);
+pub const FIRST_USER_TOKEN: PhraseToken = phrase_index_make_token(USER_DICTIONARY, 1);
 
 /// The token `_add_phrase` allocates from a sub-index whose `get_range` end
 /// is `end` (`pinyin.cpp:589-594` at 074a2219). `FacadePhraseIndex::get_range`
@@ -144,7 +144,7 @@ pub const FIRST_USER_TOKEN: Token = phrase_index_make_token(USER_DICTIONARY, 1);
 /// 119). The addon promotion takes the masked end without the bump
 /// (`pinyin.cpp:2541-2545`), so it wraps to slot 0.
 #[must_use]
-pub(crate) fn add_phrase_token(library: u8, end: u32) -> Token {
+pub(crate) fn add_phrase_token(library: u8, end: u32) -> PhraseToken {
     let token = phrase_index_make_token(library, end);
     if token & PHRASE_MASK == 0 {
         token + 1
@@ -216,7 +216,7 @@ impl UserPronunciation {
 /// wire it into Session or the C ABI.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserPhrase {
-    token: Token,
+    token: PhraseToken,
     text: Vec<u32>,
     pronunciations: Vec<UserPronunciation>,
 }
@@ -225,7 +225,7 @@ impl UserPhrase {
     /// Allocated user token (library nibble [`USER_DICTIONARY`]).
     #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
-    pub const fn token(&self) -> Token {
+    pub const fn token(&self) -> PhraseToken {
         self.token
     }
 
@@ -250,7 +250,7 @@ impl UserPhrase {
     }
 
     pub(crate) const fn new(
-        token: Token,
+        token: PhraseToken,
         text: Vec<u32>,
         pronunciations: Vec<UserPronunciation>,
     ) -> Self {
