@@ -7,7 +7,7 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-pub use zhuyin_capi::*;
+pub use oxzhuyin_capi::*;
 
 #[path = "../../src/test_support/abi.rs"]
 mod abi;

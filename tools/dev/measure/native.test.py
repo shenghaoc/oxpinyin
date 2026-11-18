@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev.measure import bench, identity, neutrality, prepare, recipes, reports
 from tools.dev.runners import Finished
-from tools.dev.test_support import native_row as sample
+from tools.dev.test_support import capi_metadata, native_row as sample
 
 
 class NativeCampaignTests(unittest.TestCase):
@@ -318,10 +318,11 @@ class AllocationDetails(unittest.TestCase):
 
 class NativePreparation(unittest.TestCase):
     def test_packaged_default_release_and_matching_dsym(self):
-        metadata = {'packages': [{'name': 'oxpinyin-capi', 'features': {'default': ['declared']}}]}
+        def metadata(root, env=None):
+            return capi_metadata(root, features={'default': ['declared']})
         with tempfile.TemporaryDirectory() as directory, \
              mock.patch.object(bench, 'run'), \
-             mock.patch.object(bench, 'capture', return_value=types.SimpleNamespace(status=0, stdout=json.dumps(metadata).encode())), \
+             mock.patch('tools.dev.packaging.cargo_metadata', side_effect=metadata), \
              mock.patch('tools.dev.packaging.install_library') as install, \
              mock.patch.object(identity, 'macho_uuid', return_value='a'*32):
             destination = Path(directory)/'build'

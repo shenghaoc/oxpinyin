@@ -50,9 +50,9 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(list(Path(scratch).iterdir()), [path])
 
     def test_identity_record_names_the_cdylibs_of_this_host(self):
-        expected = {'win32': ('pinyin_capi.dll', 'zhuyin_capi.dll'),
-                    'darwin': ('libpinyin_capi.dylib', 'libzhuyin_capi.dylib')}.get(
-                        sys.platform, ('libpinyin_capi.so', 'libzhuyin_capi.so'))
+        expected = {'win32': ('oxpinyin_capi.dll', 'oxzhuyin_capi.dll'),
+                    'darwin': ('liboxpinyin_capi.dylib', 'liboxzhuyin_capi.dylib')}.get(
+                        sys.platform, ('liboxpinyin_capi.so', 'liboxzhuyin_capi.so'))
         with tempfile.TemporaryDirectory() as scratch:
             settings = Settings.read({**os.environ, 'CARGO_TARGET_DIR': scratch})
             settings.claim()
@@ -129,12 +129,12 @@ class BuildLaunchTests(unittest.TestCase):
             self.assertIsNone(call['jobs'])
 
         def test_artifact_build_runs_cargo_through_run_command(self):
-            library = self.target / 'debug/libpinyin_capi.so'
+            library = self.target / 'debug/liboxpinyin_capi.so'
             library.parent.mkdir(parents=True)
             library.write_bytes(b'')
             settings = Settings.read(self.env)
             with self.recording():
-                self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'libpinyin_capi.so', 'oxpinyin-capi'), library)
+                self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'liboxpinyin_capi.so', 'oxpinyin-capi'), library)
             [call] = self.calls
             self.assertEqual(call['argv'], ['cargo', 'build', '--locked', '--manifest-path', str(ROOT / 'Cargo.toml'),
                                             '-p', 'oxpinyin-capi', '--no-default-features', '--features', 'tkrzw'])
@@ -142,12 +142,12 @@ class BuildLaunchTests(unittest.TestCase):
             self.assert_supervised(call)
 
     def test_windows_builds_take_the_job_object_path(self):
-        library = self.target / 'debug/libpinyin_capi.so'
+        library = self.target / 'debug/liboxpinyin_capi.so'
         library.parent.mkdir(parents=True)
         library.write_bytes(b'')
         settings = Settings.read(self.env)
         with test_support.windows_launch() as (launch, jobs, ntdll), mock.patch.object(Settings, 'record'):
-            self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'libpinyin_capi.so', 'oxpinyin-capi'), library)
+            self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'liboxpinyin_capi.so', 'oxpinyin-capi'), library)
             self.assertEqual(settings.build(['pinyin-capi']), 0)
         test_support.assert_windows_launches(self, launch, jobs, ntdll, cwd=ROOT)
         self.assertEqual([call.args[0][:2] for call in launch.call_args_list],

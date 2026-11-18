@@ -1,7 +1,7 @@
 //! Pinyin C-ABI helpers that the crate's module tests and its verification
 //! tests share. `test_support.rs` declares this module, and
 //! `tests/it/support.rs` includes it by `#[path]`. The exported functions
-//! and types are named through `pinyin_capi`, which the crate root also
+//! and types are named through `oxpinyin_capi`, which the crate root also
 //! binds in a test build.
 
 #![allow(dead_code)]
@@ -18,7 +18,7 @@ use super::*;
     unused_imports,
     reason = "used by the module tests, redundant in the verification tests"
 )]
-use pinyin_capi::*;
+use oxpinyin_capi::*;
 
 use std::ffi::{CString, c_uint};
 

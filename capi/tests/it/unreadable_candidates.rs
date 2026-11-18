@@ -6,7 +6,7 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use pinyin_capi::{
+use oxpinyin_capi::{
     pinyin_alloc_instance, pinyin_choose_candidate, pinyin_fini, pinyin_free_instance,
     pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
     pinyin_guess_candidates, pinyin_init, pinyin_parse_more_full_pinyins,
@@ -178,7 +178,7 @@ fn check_row(case: fixture::Case, sort: u32) {
         assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut row) });
         let mut row_type = std::mem::MaybeUninit::uninit();
         assert!(unsafe {
-            pinyin_capi::pinyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
+            oxpinyin_capi::pinyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
         });
         // SAFETY: a successful getter writes the type of the live row.
         let row_type = unsafe { row_type.assume_init() };

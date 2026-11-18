@@ -120,7 +120,7 @@ In short:
   cargo-c's own `.pc` is incomplete (a closed seven-key field set); `just packaging install` overwrites it with the file that it computes from the crate's `.pc.in` template.
 - `[package.metadata.capi.library] name = "pinyin"`, `version = "15.0.0"`, `versioning = true`.
   The INSTALLED artifact is the drop-in `libpinyin.so.15`.
-  The Rust `[lib] name` stays `pinyin_capi`, so in-tree gates keep finding `target/debug/libpinyin_capi.so`.
+  The library target has Cargo's default name, `oxpinyin_capi`, so the in-tree gates find `target/debug/liboxpinyin_capi.so`.
 
 No `"."` first-member entry is necessary: that cargo-c requirement applies only when the exported crate is the workspace **root**.
 Here the crate is a normal member (`capi`), selected by the `capi` feature and `-p oxpinyin-capi`.
@@ -134,7 +134,7 @@ The `.pc` name is `libpinyin`, not `oxpinyin`, and the version it reports is lib
 PKG_CHECK_MODULES(LIBPINYIN, [libpinyin >= 2.11.92])
 ```
 
-Nothing in the installed tree carries the `oxpinyin` or `pinyin_capi` name.
+Nothing in the installed tree carries the `oxpinyin` or `oxpinyin_capi` name.
 Those names exist only in the source tree and in the Rust artifact names under `target/`.
 
 ## User data across the takeover

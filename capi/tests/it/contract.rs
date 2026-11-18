@@ -16,7 +16,7 @@
 
 use crate::support::{TempUserDir, assert_aborts, cstr, open};
 
-use pinyin_capi::{
+use oxpinyin_capi::{
     GChar, pinyin_parse_more_double_pinyins, pinyin_set_double_pinyin_scheme,
     pinyin_set_full_pinyin_scheme, pinyin_set_zhuyin_scheme,
 };
@@ -97,8 +97,8 @@ fn double_out_of_enum_reproduces_the_half_mutation() {
         "ZRM fallback must be restored after a valid set"
     );
 
-    unsafe { pinyin_capi::pinyin_free_instance(instance) };
-    unsafe { pinyin_capi::pinyin_fini(context) };
+    unsafe { oxpinyin_capi::pinyin_free_instance(instance) };
+    unsafe { oxpinyin_capi::pinyin_fini(context) };
 }
 
 /// `ZHUYIN_STANDARD_DVORAK`: upstream routes 7 into
@@ -157,5 +157,5 @@ fn implemented_scheme_values_stick() {
     }
 
     let _: *const GChar = std::ptr::null();
-    unsafe { pinyin_capi::pinyin_fini(context) };
+    unsafe { oxpinyin_capi::pinyin_fini(context) };
 }

@@ -9,7 +9,7 @@
 
 use std::ffi::CStr;
 
-pub use pinyin_capi::*;
+pub use oxpinyin_capi::*;
 
 #[path = "../../src/test_support/abi.rs"]
 mod abi;
@@ -394,7 +394,7 @@ pub(crate) fn remap_a_directory_library(site: &str) -> bool {
 ///
 /// `rendered` is NULL or a NUL-terminated string that the library returned to the caller, who owns
 /// it. The call frees it with `g_free`, so the caller does not use it again.
-pub(crate) unsafe fn take(rendered: *mut pinyin_capi::GChar) -> Option<String> {
+pub(crate) unsafe fn take(rendered: *mut oxpinyin_capi::GChar) -> Option<String> {
     if rendered.is_null() {
         return None;
     }

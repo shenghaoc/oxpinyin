@@ -1,7 +1,7 @@
 //! Zhuyin C-ABI helpers that the crate's module tests and its verification
 //! tests share. `test_support.rs` declares this module, and
 //! `tests/it/support.rs` includes it by `#[path]`. The exported functions
-//! and types are named through `zhuyin_capi`, which the crate root also
+//! and types are named through `oxzhuyin_capi`, which the crate root also
 //! binds in a test build.
 
 #![allow(dead_code)]
@@ -18,7 +18,7 @@ use super::*;
     unused_imports,
     reason = "used by the module tests, redundant in the verification tests"
 )]
-use zhuyin_capi::*;
+use oxzhuyin_capi::*;
 
 use std::ffi::{c_char, c_uint};
 

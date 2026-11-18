@@ -99,7 +99,7 @@ if sys.platform == 'win32':
                     def build(sha, destination, env, **options):
                         destinations.append(destination)
                         destination.mkdir(parents=True)
-                        dll=destination/'pinyin_capi.dll';dll.write_bytes(b'product')
+                        dll=destination/'oxpinyin_capi.dll';dll.write_bytes(b'product')
                         return dict(revision=sha,dylib=dll,uuid='hash',windows=True)
                     def driver(arm, output, env):
                         output.write_bytes(b'identical driver')

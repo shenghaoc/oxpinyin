@@ -19,12 +19,7 @@ include = [
 description = "The libpinyin C ABI implementation, with libpinyin.so.15 release packages on Linux. The Rust interface is unstable."
 
 # Supported C ABI (Linux); soname/versioning freezes with the first public release.
-#
-# Cargo package name is project identity; the built artifact name is part of
-# the compatibility bootstrap and intentionally stays `pinyin_capi` (and the
-# checked-in header stays `pinyin.h` with exported `pinyin_*` symbols).
 [lib]
-name = "pinyin_capi"
 # cdylib is the ABI; rlib lets the fuzz targets and Rust tests call the same symbols
 # in-process; staticlib is required by cargo-c and shipped alongside the .so.
 crate-type = ["cdylib", "staticlib", "rlib"]
@@ -118,9 +113,9 @@ generate = false
 
 [package.metadata.capi.library]
 # The INSTALLED artifact is the drop-in replacement: `libpinyin.so.15`, which
-# unmodified consumers already record in DT_NEEDED. The Rust `[lib] name` stays
-# `pinyin_capi` so the in-tree gates keep finding target/debug/libpinyin_capi.so;
-# this field names the installed file, not the build artifact.
+# unmodified consumers already record in DT_NEEDED. This field names the
+# installed file, not the build artifact: the in-tree gates find
+# target/debug/liboxpinyin_capi.so, from Cargo's default library target name.
 name = "pinyin"
 # ABI version, independent of the crate version, and matched to upstream:
 # libpinyin's configure.ac carries libpinyin_abi_current=15 / abi_revision=0,

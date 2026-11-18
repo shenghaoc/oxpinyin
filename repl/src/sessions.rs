@@ -2,7 +2,7 @@
 //! The caller supplies the isolated data path; product call order is retained.
 
 use oxpinyin::input::tool::{LineReader, pin_tests as output};
-use pinyin_capi::tool::Driver;
+use oxpinyin_capi::tool::Driver;
 
 /// tests/test_pinyin.cpp:34-101.
 pub fn pinyin(data: &std::ffi::CStr) {
@@ -87,7 +87,7 @@ pub fn chewing(data: &std::ffi::CStr) {
 
 /// tests/test_zhuyin.cpp:34-66, from the pin's --enable-libzhuyin build.
 pub fn zhuyin(data: &std::ffi::CStr) {
-    let mut driver = zhuyin_capi::tool::Driver::new(data, data);
+    let mut driver = oxzhuyin_capi::tool::Driver::new(data, data);
     let mut input = LineReader::stdin();
     while input.getline() {
         if input.line() == b"quit" {

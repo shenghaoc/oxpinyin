@@ -194,7 +194,6 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
     Linux packages the shipping library as macOS does. SYMBOLS adds the
     profiled arm's debug information; a Linux comparison builds without it.
     """
-    import json
     import time
     from . import identity
     from .. import packaging
@@ -235,10 +234,15 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
             build_env.update(OXPINYIN_DSYM='1')
     started = time.monotonic()
     try:
+        # The product revision's own metadata names its C crate and that crate's library target.
+        package = packaging.capi_package(source, 'pinyin', build_env)
+        library = next(item['name'] for item in package['targets']
+                       if 'cdylib' in item['crate_types']).replace('-', '_')
+        import_library = target / f'release/{library}.dll.lib'
         if windows:
-            bench.run(['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-capi'],
+            bench.run(['cargo', 'build', '--locked', '--release', '-p', package['name']],
                       cwd=source, env=build_env)
-            dylib = target / 'release/pinyin_capi.dll'
+            dylib = target / f'release/{library}.dll'
             uuid = identity.sha256(dylib)
         else:
             # Use this tooling revision with each product source revision. No backend override.
@@ -257,14 +261,9 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
                 uuid = identity.macho_uuid(dylib)
                 if symbols and identity.macho_uuid(str(dylib) + '.dSYM') != uuid:
                     fail('packaged dylib and dSYM UUID differ')
-        metadata = bench.capture(['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1'],
-                                 cwd=source, env=build_env)
-        if metadata.status:
-            fail('cargo metadata failed')
-        package = next(item for item in json.loads(metadata.stdout)['packages'] if item['name'] == 'oxpinyin-capi')
         return dict(revision=revision, prefix=prefix, dylib=dylib, uuid=uuid,
                     **(dict(linux=True, backend=backend) if linux else {}),
-                    windows=windows, import_library=target / 'release/pinyin_capi.dll.lib',
+                    windows=windows, import_library=import_library,
                     default_features=package['features']['default'],
                     cold_build_seconds=time.monotonic() - started,
                     build_options={'profile': 'release', 'features': [],

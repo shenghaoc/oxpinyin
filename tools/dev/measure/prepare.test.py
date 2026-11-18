@@ -2,14 +2,12 @@
 every recorded input still matches, and are rebuilt otherwise."""
 import contextlib
 import io
-import json
 import shutil
 from pathlib import Path
 import platform
 import re
 import sys
 import tempfile
-import types
 import unittest
 from unittest import mock
 
@@ -19,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 from tools.dev import runners
 from tools.dev.measure import bench, identity, prepare
+from tools.dev.test_support import capi_metadata
 from tools.oracle import image, versions
 
 
@@ -252,23 +251,41 @@ class PreparationTests(unittest.TestCase):
 
 if sys.platform == 'win32':
     class WindowsBuildTests(unittest.TestCase):
+        def build(self,directory,target):
+            """native_build of a revision whose C crate names its library target TARGET."""
+            def metadata(root,env=None):
+                return capi_metadata(root,features={'default':['tkrzw']},targets={'pinyin':target})
+            root=Path(directory);pc=root/'installed/x64-windows/lib/pkgconfig'
+            pc.mkdir(parents=True);(pc/'tkrzw.pc').touch()
+            with mock.patch('tools.dev.check.msvc_environment',side_effect=lambda env:env), \
+                 mock.patch.object(bench,'run') as run, \
+                 mock.patch('tools.dev.packaging.cargo_metadata',side_effect=metadata) as read, \
+                 mock.patch.object(identity,'sha256',return_value='digest'):
+                arm=prepare.native_build('a'*40,root/'build',dict(VCPKG_ROOT=directory,
+                    RUSTFLAGS='bad',CARGO_ENCODED_RUSTFLAGS='bad',CARGO_PROFILE_RELEASE_DEBUG='2'),windows=True)
+            return arm,run,read,pc
+
         def test_release_build_has_no_overrides(self):
-            metadata={'packages':[{'name':'oxpinyin-capi','features':{'default':['tkrzw']}}]}
             with tempfile.TemporaryDirectory() as directory:
-                root=Path(directory);pc=root/'installed/x64-windows/lib/pkgconfig'
-                pc.mkdir(parents=True);(pc/'tkrzw.pc').touch()
-                with mock.patch('tools.dev.check.msvc_environment',side_effect=lambda env:env), \
-                     mock.patch.object(bench,'run') as run, \
-                     mock.patch.object(bench,'capture',return_value=types.SimpleNamespace(status=0,stdout=json.dumps(metadata).encode())), \
-                     mock.patch.object(identity,'sha256',return_value='digest'):
-                    arm=prepare.native_build('a'*40,root/'build',dict(VCPKG_ROOT=directory,
-                        RUSTFLAGS='bad',CARGO_ENCODED_RUSTFLAGS='bad',CARGO_PROFILE_RELEASE_DEBUG='2'),windows=True)
+                arm,run,read,pc=self.build(directory,'oxpinyin_capi')
                 command=next(call for call in run.call_args_list if call.args[0][0]=='cargo')
                 self.assertEqual(command.args[0],['cargo','build','--locked','--release','-p','oxpinyin-capi'])
                 self.assertFalse(any(key in command.kwargs['env'] for key in
                                     ('RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','CARGO_PROFILE_RELEASE_DEBUG')))
-                self.assertEqual(arm['dylib'].name,'pinyin_capi.dll')
+                self.assertEqual(arm['dylib'].name,'oxpinyin_capi.dll')
+                self.assertEqual(arm['default_features'],['tkrzw'])
                 self.assertEqual(command.kwargs['env']['PKG_CONFIG_PATH'],str(pc.resolve()))
+
+        def test_the_library_files_take_the_name_of_the_revisions_own_target(self):
+            # A revision names its library target itself: pinyin_capi before the default name, oxpinyin_capi after.
+            for target in ('pinyin_capi','oxpinyin_capi'):
+                with self.subTest(target=target),tempfile.TemporaryDirectory() as directory:
+                    arm,run,read,_=self.build(directory,target)
+                    release=Path(directory)/'build/target/release'
+                    self.assertEqual(arm['dylib'],release/(target+'.dll'))
+                    self.assertEqual(arm['import_library'],release/(target+'.dll.lib'))
+                    # The metadata is read once, in the product source, before the build.
+                    self.assertEqual([call.args[0] for call in read.call_args_list],[Path(directory)/'build/source'])
 
 
 if __name__ == '__main__':

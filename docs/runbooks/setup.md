@@ -736,7 +736,7 @@ Verification cells continue to use `dev` at optimization level 1.
 Their identity record still names that profile and level.
 A `dev-full` build does not go in a claimed cell target directory.
 A diagnostic runner that accepts `OXPINYIN_CAPI_SO` gets a separate build
-and the path to `target/dev-full/libpinyin_capi.so`.
+and the path to `target/dev-full/liboxpinyin_capi.so`.
 
 Sanitizer gates use their existing compiler flags for symbolisation.
 Coverage uses LLVM coverage maps, which do not need type or variable information.

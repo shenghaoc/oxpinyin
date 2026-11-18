@@ -299,7 +299,7 @@ class Settings:
         source = dict(head=output('git', 'rev-parse', 'HEAD').strip(),
                       tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
         artifacts = {}
-        for name, filename in (('pinyin-capi', cdylib('pinyin_capi')), ('zhuyin-capi', cdylib('zhuyin_capi'))):
+        for name, filename in (('pinyin-capi', cdylib('oxpinyin_capi')), ('zhuyin-capi', cdylib('oxzhuyin_capi'))):
             file = self.target / 'debug' / filename
             if file.exists():
                 stat = file.stat()

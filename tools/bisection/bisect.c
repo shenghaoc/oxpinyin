@@ -1,7 +1,7 @@
 /*
  * bisect.c — three-subject ABI bisection fixture.
  *
- * Loads a pinyin shared object (libpinyin.so or libpinyin_capi.so) via
+ * Loads a pinyin shared object (libpinyin.so or liboxpinyin_capi.so) via
  * dlopen and runs its measurement modes: --perf, --perf-sentence,
  * --perf-typing-sequence and --teardown.
  *

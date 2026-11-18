@@ -1,7 +1,7 @@
 """Local-only cross-open checks for the user profile formats.
 
     reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX --data DIR \
-        target/debug/libpinyin_capi.so target/debug/libzhuyin_capi.so
+        target/debug/liboxpinyin_capi.so target/debug/liboxzhuyin_capi.so
 
 The four handoff cases run oxpinyin first, then the pin, in fresh workers. The
 pin reads the profile oxpinyin wrote and re-saves it; the case asserts the rows
