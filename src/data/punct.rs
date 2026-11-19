@@ -78,12 +78,13 @@ impl<D: ChewingDbm> PunctTable<D> {
             .is_none_or(ChewingDbm::attachment_finished)
     }
 
-    /// Punctuations stored for `token`, in table order, as stored words
-    /// (`decode_puncts`).
+    // PunctTable::load_entry, punct_table_tkrzwdb.cpp:58–73.
+    /// Returns punctuation phrases for `token` in stored order. An empty table, a missing
+    /// token or an empty value yields an empty vector.
     ///
     /// # Errors
     ///
-    /// Returns [`DictError`] when the read fails.
+    /// Returns [`DictError`] if the read fails.
     pub fn punctuations(&self, token: u32) -> Result<Vec<PhraseText>, DictError> {
         let Some(dbm) = self.dbm.as_ref() else {
             return Ok(Vec::new());

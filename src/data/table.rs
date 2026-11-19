@@ -1,17 +1,4 @@
-//! Loader for ordered-store-backed lookup tables.
-//!
-//! Each table is a store database with a single `data` table mapping raw
-//! `&[u8]` keys to raw `&[u8]` values.  These are committed under
-//! `fixtures/w3/` (frozen; no longer regenerated in-tree).
-//!
-//! # Backend selection
-//!
-//! One peer backend per binary, resolved by `oxpinyin`'s
-//! compile-time selection (tkrzw is the default since 2026-10-30;
-//! Kyoto Cabinet and Berkeley DB are the other peers, each selected with
-//! `--no-default-features --features <peer>`).  The committed fixtures
-//! carry one file per peer's extension so tests can exercise each
-//! independently.
+//! Errors from opening or querying a lookup table through the selected storage backend.
 
 use crate::store::StoreError;
 
