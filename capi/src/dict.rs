@@ -30,6 +30,7 @@ use glib_sys::{g_array_append_vals, g_array_set_size};
 use crate::state::instance_ref;
 use crate::types::{GArray, GChar, GUint, PhraseTokenT, PinyinInstance};
 
+// phrase_large_table3.h:77-96.
 /// Look up the phrase tokens stored for an exact phrase string.
 ///
 /// # C signature
@@ -38,12 +39,14 @@ use crate::types::{GArray, GChar, GUint, PhraseTokenT, PinyinInstance};
 ///                           const char * phrase, GArray * tokenarray);
 /// ```
 ///
-/// Upstream reduces the per-library search hits into the caller's
-/// array in library-index order (`reduce_tokens`,
-/// `phrase_large_table3.h:77-96`) and answers `SEARCH_OK & retval` —
-/// `true` exactly when the span matched at least one stored phrase,
-/// `false` for a no-hit span (the array still cleared). Unloaded
-/// libraries contribute nothing.
+/// Look up an exact phrase in the loaded libraries. The caller’s array is cleared, then filled
+/// in library order. Returns true when there was a match. A miss leaves the array empty. A null
+/// instance returns false before clearing it.
+///
+/// # Aborts
+///
+/// More than four matching tokens abort after the hits have been appended
+/// (`phrase_large_table3.h:79-95`).
 ///
 /// # Safety
 ///
@@ -199,8 +202,8 @@ pub unsafe extern "C" fn pinyin_token_get_phrase(
 ///                                       phrase_token_t token, guint * num);
 /// ```
 ///
-/// `false` for an unknown token or an unloaded library; `*num` is
-/// zeroed before the dispatch, so a `false` still delivers 0.
+/// Write the pronunciation count and return true for a known token. On a live instance a token
+/// miss writes zero and returns false. A null instance returns false without writing.
 ///
 /// # Safety
 ///
@@ -241,6 +244,7 @@ oxpinyin::append_stored_words! {
     array: GArray, append: g_array_append_vals
 }
 
+// pinyin.cpp:2805, pinyin.cpp:2808-2817.
 /// Get the nth pronunciation of a token as a vector of chewing keys.
 ///
 /// # C signature
@@ -250,15 +254,10 @@ oxpinyin::append_stored_words! {
 ///                                         ChewingKeyVector keys);
 /// ```
 ///
-/// Appends the pronunciation's keys to the caller's array — packed
-/// two-byte chewing-key words, the same layout
-/// `pinyin_get_pinyin_key` hands out. The array is emptied first
-/// (`pinyin.cpp:2805`), so `false` for an unknown token leaves it empty.
-/// An `nth` past the last reading answers `true` and appends
-/// `phrase_length` keys, where upstream appends whatever its
-/// uninitialised stack buffer held (`pinyin.cpp:2808-2817`, the return
-/// value of `get_nth_pronunciation` ignored): zeroed keys, class (b) for
-/// the content (register row 51).
+/// For an existing token, `nth` must be less than its pronunciation count. The function clears
+/// the caller’s array, appends the selected reading’s packed two-byte keys and returns true. A
+/// token miss returns false with an empty array. A null instance returns false without clearing
+/// it.
 ///
 /// # Safety
 ///
@@ -345,6 +344,7 @@ pub unsafe extern "C" fn pinyin_token_get_nth_pronunciation(
     true
 }
 
+// pinyin.cpp:2821-2831.
 /// Get the unigram frequency of a token.
 ///
 /// # C signature
@@ -354,8 +354,8 @@ pub unsafe extern "C" fn pinyin_token_get_nth_pronunciation(
 ///                                          guint * freq);
 /// ```
 ///
-/// `*freq` is zeroed before the dispatch, so a `false` still delivers
-/// 0 (`pinyin.cpp:2821-2831`). The count comes from the live phrase item.
+/// Write the live unigram frequency and return true for a known token. On a live instance a
+/// token miss writes zero and returns false. A null instance returns false without writing.
 ///
 /// # Safety
 ///
@@ -393,6 +393,7 @@ pub unsafe extern "C" fn pinyin_token_get_unigram_frequency(
     true
 }
 
+// pinyin.cpp:1817.
 /// Add a unigram-frequency delta to a token.
 ///
 /// # C signature
@@ -402,10 +403,9 @@ pub unsafe extern "C" fn pinyin_token_get_unigram_frequency(
 ///                                          guint delta);
 /// ```
 ///
-/// Updates the live item without arming `pinyin_save`. A later armed save
-/// serializes that item. A loaded sub-index takes the facade-total bump
-/// before dispatching to its item, so a missing item can still shift the
-/// denominator (`phrase_index.h:628-635`, `pinyin.cpp:1817`).
+/// Add the delta to the live item. Returns false on a failed update. If the sub-index is loaded,
+/// the aggregate can change even when the item update fails (`phrase_index.h:628-635`). A later
+/// armed save persists live item changes; this call alone does not arm it.
 ///
 /// # Safety
 ///

@@ -6,6 +6,7 @@ use std::os::raw::c_char;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PhraseTokenT, ZhuyinInstance};
 
+// zhuyin.cpp:973.
 /// Segment an arbitrary sentence string into phrase tokens.
 ///
 /// # C signature
@@ -14,8 +15,10 @@ use crate::types::{GUint, PhraseTokenT, ZhuyinInstance};
 ///                            const char * sentence);
 /// ```
 ///
-/// Upstream gates on GLib UCS4 conversion length
-/// (`g_return_val_if_fail`, `zhuyin.cpp:973`) and stores the best phrase path into the instance's result array.
+/// Segmentation that completes replaces the instance’s phrase result, even when no path
+/// matches. A failed input conversion returns `false` and keeps the previous result. An
+/// unmatched sentence can leave a result sized for the sentence, with every token null. A null
+/// sentence follows the empty-input path.
 ///
 /// # Safety
 ///
@@ -88,6 +91,9 @@ pub unsafe extern "C" fn zhuyin_phrase_segment(
 /// bool zhuyin_get_n_phrase(zhuyin_instance_t * instance, guint * num);
 /// ```
 ///
+/// Returns true for a live instance and writes the result count if requested. The count starts
+/// at zero. A null instance returns false without writing.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
@@ -121,6 +127,9 @@ pub unsafe extern "C" fn zhuyin_get_n_phrase(
 /// bool zhuyin_get_phrase_token(zhuyin_instance_t * instance,
 ///                              guint index, phrase_token_t * token);
 /// ```
+///
+/// Returns true for an existing result index. On a live instance an absent index writes the null
+/// token and returns false. A null instance returns false without writing.
 ///
 /// # Safety
 ///
