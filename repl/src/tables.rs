@@ -95,6 +95,8 @@ impl Tables {
         (continued, ranges)
     }
 
+    /// # Aborts
+    /// Aborts before rendering a stored key outside the table dimensions.
     fn dump_ranges(&self, ranges: &Ranges) {
         for (library, ranges) in ranges.iter().enumerate() {
             if !ranges.is_empty() {
@@ -113,6 +115,11 @@ impl Tables {
                     for (keys, frequency) in item.prons {
                         for key in keys {
                             let key = ChewingKey::from_packed(key);
+                            // The pin prints the phrase first, then checks each key
+                            // (`tests_helper.h:115-130`, `chewing_key.cpp:29-32,47-49`).
+                            if !key.tone_in_dims() || !key.elements_in_dims() {
+                                tool::abort();
+                            }
                             output::pronunciation(&present(CString::new(key.pinyin_string()).ok()));
                         }
                         output::frequency(frequency);
