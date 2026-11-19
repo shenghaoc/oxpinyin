@@ -530,7 +530,7 @@ fn choose_phrase_row(
     // terminator slot and changes nothing observable (GLib 2.84.4
     // `garray.c:349-354`, `:1051-1079`).
     let Some(token) = token else {
-        return match inst.core.session.choose_null_step() {
+        return match inst.core.choose_null_step() {
             Ok(()) => choose_answer(offset, 0),
             Err(_) => -1,
         };
@@ -776,6 +776,12 @@ fn unigram_leg_answer(outcome: UnigramAdd) -> c_int {
 ///
 /// Remove the whole constraint containing the supplied offset. Returns true if removed and false
 /// for a null instance, an unconstrained position or an out-of-range position.
+///
+/// # Aborts
+///
+/// Choosing a row without a token writes an empty constraint at offset 0 over the constraint that
+/// started there, and the rest of that span still points at 0. If a later constraint at 0 is then
+/// cleared, a clear at a position left in that span aborts.
 ///
 /// # Safety
 ///

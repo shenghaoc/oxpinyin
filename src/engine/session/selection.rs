@@ -823,6 +823,28 @@ where
         Ok(self.selection_outcome())
     }
 
+    /// Moves the forcings into new store coordinates before a validation
+    /// (`ConstraintStore::remap`), then rebuilds
+    /// the selection record from the forcings that remain.
+    pub(crate) fn remap_constraints(
+        &mut self,
+        forcing: impl Fn(usize, usize) -> Option<(usize, usize)>,
+        orphans: impl Fn(usize, usize, usize) -> Option<(usize, usize, usize)>,
+    ) {
+        if !self.constraints.is_active() {
+            return;
+        }
+        self.constraints.remap(forcing, orphans);
+        self.rebuild_selection_from_constraints();
+    }
+
+    /// Whether a clear at `offset` reaches the pin's `clear_constraint`
+    /// assert (`ConstraintStore::clear_asserts`).
+    #[must_use]
+    pub(crate) fn clear_constraint_asserts(&self, offset: usize) -> bool {
+        self.constraints.clear_asserts(offset)
+    }
+
     /// Clears the constraint run at `offset` — `pinyin_clear_constraint`
     /// (`pinyin.cpp:2641-2647`). The offset indexes the store's
     /// coordinate space (raw-buffer byte positions, #141's law); a hit

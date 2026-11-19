@@ -259,7 +259,7 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
         lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => begin,
         lookup_candidate_type_t::BEST_MATCH_CANDIDATE
         | lookup_candidate_type_t::ZOMBIE_CANDIDATE => {
-            return match inst.core.session.refuse_selection() {
+            return match inst.core.refuse_selection() {
                 Ok(_) => offset as u32 as c_int,
                 Err(_) => -1,
             };
@@ -275,7 +275,7 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
             },
             false,
         ),
-        None => inst.core.session.refuse_selection(),
+        None => inst.core.refuse_selection(),
     };
     match outcome {
         Ok(_) => c_int::from(answer),

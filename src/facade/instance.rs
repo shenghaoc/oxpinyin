@@ -118,6 +118,26 @@ pub struct InstanceState {
     /// passes). Empty for plain full pinyin, whose scan matrix the session
     /// keeps, and while no key was placed.
     pub parse_matrix: Vec<crate::engine::MatrixKey>,
+    /// The layout of the pin's constraint array as the last validation
+    /// sized it. Allocation and the full reset store the empty layout.
+    validated: ValidatedLayout,
+}
+
+/// The pin's `m_constraints` layout: `validate_constraint` sizes it to the
+/// matrix columns (`phonetic_lookup.cpp:120-138`) in a guess and a
+/// validating choose, and a parse leaves it as it was. A caller's offset
+/// indexes it in those columns (`phonetic_lookup.cpp:88-90`), so a clear
+/// maps the offset through the keys of the parse that was validated, not
+/// the current one.
+#[derive(Default)]
+struct ValidatedLayout {
+    /// The array length, the matrix columns at the last validation.
+    columns: usize,
+    /// That parse's key images, or `None` when session coordinates were
+    /// the original ones.
+    images: Option<Vec<KeyImage>>,
+    /// Whether the images came from a double-pinyin parse.
+    double_pinyin: bool,
 }
 
 impl std::ops::Deref for InstanceCore {
@@ -207,6 +227,7 @@ impl InstanceCore {
                 full_parse: None,
                 full_input: String::new(),
                 parse_matrix: Vec::new(),
+                validated: ValidatedLayout::default(),
             },
         }
     }
@@ -490,6 +511,7 @@ impl<
         row: &PublishedRow,
         map_double_pinyin: bool,
     ) -> Result<Selection, EngineError> {
+        self.note_validation();
         let (begin, end) = (usize::from(row.begin), usize::from(row.end));
         let size = if self.session.selection_capacity() == 0 {
             0
@@ -592,14 +614,106 @@ impl<
         self.session.select_nbest_row(rank)
     }
 
-    /// Clears the constraint at `offset`, mapping the caller's original-input
-    /// offset to the active parse mode's session coordinates first. The
-    /// caller selects the transformed seams its facade can populate.
+    /// Clears the constraint at `offset`, a column of the pin's constraint
+    /// array as the last validation laid it out. An offset at or past that
+    /// array's length refuses (`phonetic_lookup.cpp:88-90`). Any other
+    /// offset maps through that validation's keys to session coordinates.
+    /// The caller selects the transformed seams its facade can populate.
+    ///
+    /// # Aborts
+    ///
+    /// Aborts where the pin asserts: the offset reaches a `NoSearch` cell
+    /// whose run start holds no forcing (`phonetic_lookup.cpp:98-104`).
     pub fn clear_abi_constraint(&mut self, offset: usize, map_double_pinyin: bool) -> bool {
-        let session_offset = self
-            .abi_key_images(map_double_pinyin)
-            .map_or(offset, |images| session_bound(&images, offset, false));
+        let layout = &self.validated;
+        if offset >= layout.columns {
+            return false;
+        }
+        let session_offset = layout
+            .images
+            .as_deref()
+            .filter(|_| map_double_pinyin || !layout.double_pinyin)
+            .map_or(offset, |images| session_bound(images, offset, false));
+        // A `NOSEARCH` cell whose run start holds no forcing:
+        // `assert(constraint->m_type == CONSTRAINT_ONESTEP)`
+        // (`phonetic_lookup.cpp:98-104`).
+        if self.session.clear_constraint_asserts(session_offset) {
+            std::process::abort();
+        }
         self.session.clear_constraint(session_offset)
+    }
+
+    /// Runs before each pin entry that calls `validate_constraint`: the
+    /// guesses and the validating chooses. The pin keeps each forcing at
+    /// its matrix columns across a reparse, while the session string spells
+    /// each key canonically, so a reparse that respells an earlier key moves
+    /// the session positions of the keys after it. Each forcing therefore
+    /// maps back to its columns through the recorded layout and forward
+    /// through the current parse. A span that overruns the new matrix is
+    /// dropped (`phonetic_lookup.cpp:153-156`). A bound inside a key maps
+    /// inside the key's text, where no column is filled, so validation drops
+    /// it as the pin does (`phonetic_key_matrix.cpp:592-595`). `NoSearch`
+    /// cells that a zero-length step left outside any forcing move with
+    /// their columns too, cut off at the new array's end. Then the layout
+    /// this validation sizes the array to is recorded.
+    fn note_validation(&mut self) {
+        let images = self.abi_key_images(true);
+        let columns = self.pin_matrix_columns();
+        if self.validated.images != images {
+            let old = self.validated.images.take();
+            let new = images.as_deref();
+            let original = |offset| {
+                old.as_deref()
+                    .map_or(offset, |old| published_bound(old, offset))
+            };
+            let start_at = |column| new.map_or(column, |new| session_bound(new, column, false));
+            // The end slot after the last key is the session's own last
+            // column.
+            let end_at = |column| match new {
+                Some(new) if column >= columns => new.last().map_or(0, |key| key.text_end + 1),
+                Some(new) => session_end(new, column),
+                None => column,
+            };
+            self.session.remap_constraints(
+                |start, end| {
+                    let (start, end) = (original(start), original(end));
+                    (end < columns).then(|| (start_at(start), end_at(end)))
+                },
+                // Cells past the new array are cut off
+                // (`phonetic_lookup.cpp:135-138`).
+                |start, from, to| {
+                    let (from, to) = (original(from), original(to).min(columns));
+                    (from < to).then(|| (start_at(original(start)), start_at(from), end_at(to)))
+                },
+            );
+        }
+        self.validated = ValidatedLayout {
+            columns,
+            double_pinyin: images.is_some() && self.zhuyin_parse.is_none(),
+            images,
+        };
+    }
+
+    /// A choose that validates and writes no forcing: the pin's two
+    /// `validate_constraint` calls around a refused or absent write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from constraint validation.
+    pub fn refuse_selection(&mut self) -> Result<Selection, EngineError> {
+        self.note_validation();
+        self.session.refuse_selection()
+    }
+
+    /// A choose of a row with no token: the null-step write between the
+    /// pin's two validations (`pinyin.cpp:2577-2590`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] from constraint validation.
+    pub fn choose_null_step(&mut self) -> Result<(), EngineError> {
+        self.note_validation();
+        self.session.choose_null_step()
     }
 
     /// Runs the n-best sentence lookup after the caller's matrix check. A
@@ -613,6 +727,7 @@ impl<
         &mut self,
         matrix_has_keys: bool,
     ) -> Result<bool, EngineError> {
+        self.note_validation();
         if !matrix_has_keys {
             self.session.set_candidate_prefixes(core::iter::empty());
             self.session.discard_composition();
@@ -632,6 +747,7 @@ impl<
         prefixes: &[u32],
         matrix_has_keys: bool,
     ) -> Result<bool, EngineError> {
+        self.note_validation();
         if !matrix_has_keys {
             self.session
                 .set_candidate_prefixes(prefixes.iter().copied());
@@ -648,6 +764,7 @@ impl<
     pub fn full_reset(&mut self) {
         self.reset_parse_state();
         self.phrase_result.clear();
+        self.validated = ValidatedLayout::default();
         self.session.reset();
     }
 
@@ -754,6 +871,7 @@ pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str
 /// One base key of a transformed parse: its original span, the session
 /// column its forcing starts at (0, or the `'` byte in front of it) and
 /// its canonical text's session span.
+#[derive(PartialEq, Eq)]
 struct KeyImage {
     begin_end: (usize, usize),
     column: usize,
@@ -821,6 +939,20 @@ fn session_bound(images: &[KeyImage], offset: usize, is_end: bool) -> usize {
             || images.last().map_or(0, |image| image.text_end),
             |image| image.column,
         )
+}
+
+/// The session position of an original span end. A key's end maps to its
+/// text end. An end at the start of a key that follows a `'` maps to that
+/// key's column, the `'` in front of it, so the span covers the same keys.
+/// Otherwise it maps as [`session_bound`] maps an end.
+fn session_end(images: &[KeyImage], offset: usize) -> usize {
+    if let Some(image) = images.iter().find(|image| image.begin_end.1 == offset) {
+        return image.text_end;
+    }
+    images
+        .iter()
+        .find(|image| image.begin_end.0 == offset)
+        .map_or_else(|| session_bound(images, offset, true), |image| image.column)
 }
 
 /// Map one session bound through the publication pass's base key images.

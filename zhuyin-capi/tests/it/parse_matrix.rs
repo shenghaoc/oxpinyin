@@ -8,7 +8,8 @@ use crate::support::{
     lookup_candidate_type_t, open_with_user, zhuyin_choose_candidate, zhuyin_clear_constraint,
     zhuyin_fini, zhuyin_free_instance, zhuyin_get_candidate, zhuyin_get_candidate_string,
     zhuyin_get_candidate_type, zhuyin_get_n_candidate, zhuyin_guess_candidates_after_cursor,
-    zhuyin_parse_more_full_pinyins, zhuyin_set_options,
+    zhuyin_guess_sentence, zhuyin_parse_more_chewings, zhuyin_parse_more_full_pinyins,
+    zhuyin_set_options,
 };
 
 /// `text` parsed as full pinyin under `scheme` (1 Hanyu, 2 Luoma, 3
@@ -92,10 +93,22 @@ fn a_full_pinyin_separator_forcing_clears_at_either_column(
 ) {
     let fixture = scheme_separator(scheme.0, scheme.1);
     let instance = fixture.instance;
-    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 2) });
+    let row = after_cursor_row(instance, 2, "好");
+    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 2, row) }, 6);
+    assert!(unsafe { zhuyin_clear_constraint(instance, probe) });
+    assert!(!unsafe { zhuyin_clear_constraint(instance, probe) });
+}
+
+/// The after-cursor row at `cursor` whose string is `text`.
+fn after_cursor_row(
+    instance: *mut ZhuyinInstance,
+    cursor: usize,
+    wanted: &str,
+) -> *mut crate::support::LookupCandidate {
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, cursor) });
     let mut count = 0;
     assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
-    let row = (0..count)
+    (0..count)
         .find_map(|index| {
             let mut row = std::ptr::null_mut();
             assert!(unsafe { zhuyin_get_candidate(instance, index, &raw mut row) });
@@ -107,11 +120,71 @@ fn a_full_pinyin_separator_forcing_clears_at_either_column(
             // SAFETY: the getter returns this live row's NUL-terminated string.
             let text = unsafe { std::ffi::CStr::from_ptr(text) };
             (kind == lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
-                && text.to_bytes() == "好".as_bytes())
+                && text.to_bytes() == wanted.as_bytes())
             .then_some(row)
         })
-        .expect("after-cursor 好");
-    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 2, row) }, 6);
-    assert!(unsafe { zhuyin_clear_constraint(instance, probe) });
-    assert!(!unsafe { zhuyin_clear_constraint(instance, probe) });
+        .expect("the after-cursor row")
+}
+
+/// A reparse leaves the constraint array as the last validation sized it,
+/// indexed by that parse's matrix columns (074a2219 `zhuyin.cpp:1058-1081`
+/// never touches `m_constraints`). The clear indexes that array with the
+/// caller's offset (`zhuyin.cpp:1669-1676`, `phonetic_lookup.cpp:88-118`):
+/// after 你好 is forced over [0, 6) of `su3cl3` (7 columns) and the input is
+/// reparsed as `su3`, an offset past the array refuses, column 6 is free,
+/// and column 4 still reaches the run's `NOSEARCH` cell.
+#[rstest::rstest]
+#[case::past_the_array(usize::MAX, false)]
+#[case::past_the_run(6, false)]
+#[case::inside_the_run(4, true)]
+fn a_clear_after_a_reparse_reads_the_last_validated_columns(
+    #[case] offset: usize,
+    #[case] cleared: bool,
+) {
+    let fixture = Fixture::new("chewing-reparse");
+    let instance = fixture.instance;
+    let parse = |text: &str| {
+        let input = cstr(text);
+        assert_eq!(
+            unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
+            text.len()
+        );
+    };
+    parse("su3cl3");
+    let row = after_cursor_row(instance, 0, "你好");
+    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 0, row) }, 6);
+    parse("su3");
+    assert_eq!(
+        unsafe { zhuyin_clear_constraint(instance, offset) },
+        cleared
+    );
+}
+
+/// A forcing that survives validation keeps its raw columns
+/// (074a2219 `phonetic_lookup.cpp:120-163`): 郝 forced over [3, 6) of
+/// `su3cl3` (ㄋㄧˇㄏㄠˇ) still spells ㄏㄠˇ over [3, 6) of `5;3cl3`
+/// (ㄓㄤˇㄏㄠˇ), so the guess keeps it, the sentence holds it
+/// (`zhuyin.cpp:895-910`) and a clear at 3 reaches its `ONESTEP` cell
+/// (`zhuyin.cpp:1669-1676`, `phonetic_lookup.cpp:88-118`).
+#[test]
+fn a_forcing_keeps_its_columns_when_an_earlier_key_respells() {
+    let fixture = Fixture::new("chewing-respell");
+    let instance = fixture.instance;
+    let parse = |text: &str| {
+        let input = cstr(text);
+        assert_eq!(
+            unsafe { zhuyin_parse_more_chewings(instance, input.as_ptr()) },
+            text.len()
+        );
+    };
+    parse("su3cl3");
+    let row = after_cursor_row(instance, 3, "郝");
+    assert_eq!(unsafe { zhuyin_choose_candidate(instance, 3, row) }, 6);
+    parse("5;3cl3");
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    let (found, text) = unsafe { crate::support::sentence(instance) };
+    assert!(found);
+    let text = text.expect("a sentence");
+    assert!(text.ends_with('郝'), "{text}");
+    assert!(unsafe { zhuyin_clear_constraint(instance, 3) });
 }
