@@ -434,6 +434,14 @@ fn ieee_order_and_stable_raw_tails() {
 }
 
 #[test]
+fn raw_tails_order_subunit_score_differences() {
+    let mut tails = [scored(-1.0, 1), scored(-0.25, 1)];
+    tails[1].token = 2;
+    super::tail_merge(&mut tails);
+    assert_eq!(tails.map(|tail| tail.token), [2, 1]);
+}
+
+#[test]
 fn adjusted_score_rounds_product_then_difference_and_ties() {
     let p = 1.2_f32.ln();
     for advantage in [p.next_down(), p, p.next_up()] {
@@ -669,6 +677,49 @@ impl LanguageModel for Fixed {
 
             unigram_lambda: 1.0,
         })
+    }
+}
+
+#[test]
+fn unigram_step_accumulates_log_possibility() {
+    // phonetic_lookup.h:45,650-665 stores predecessor + log(p) in a gfloat.
+    // At 13/32, rounding log(p) before addition gives 0xc039_a67c.
+    for (probability, expected) in [(0.5, 0xc02c_5c86), (13.0 / 32.0, 0xc039_a67d)] {
+        let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
+        let mut paths = super::SpanPaths::default();
+        let entry = super::SpanEntry {
+            token: 2,
+            path: paths.push(&[SyllableKey::from_text("ni").expect("ni is a key")], &[0]),
+            keys: 1,
+            chars: 1,
+            pronunciation: 1.0,
+        };
+        super::expand_one(
+            &entry,
+            super::StepCtx {
+                facts: &RefCell::default(),
+                paths: &paths,
+                span: 0..1,
+                model: &Fixed {
+                    blended: None,
+                    unigram: Some(probability),
+                },
+            },
+            &super::BeamEntry {
+                value: scored(-2.0, 1),
+                slot: 0,
+                batch_position: 0,
+            },
+            &mut Default::default(),
+            &mut trellis,
+            super::Branch::Unigram,
+        )
+        .expect("unigram expansion");
+        assert_eq!(
+            trellis.tails()[0].poss.to_bits(),
+            expected,
+            "p = {probability}"
+        );
     }
 }
 
