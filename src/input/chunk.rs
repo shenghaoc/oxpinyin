@@ -1,13 +1,13 @@
-//! MemoryChunk::mmap and ::save: owned private mappings and the pin's
-//! open, two header writes, payload write,
-//! g_fsync and close (074a2219 include/memory_chunk.h:536-557).
+//! Maps chunk files and writes complete framed chunks. Pass the header and payload
+//! produced by [`crate::data::chunk_format::build_memory_chunk`] to [`save`]. Saving
+//! truncates the destination before writing it. Failure can leave a partial file.
 //!
-//! The calls are the pin's: open(filename, O_CREAT|O_WRONLY|O_TRUNC|O_BINARY,
-//! 0644), one write per header word, one write for the payload,
-//! g_fsync(fd), then close(fd). A short header write is the pin's live
-//! assert (the pin asserts; the C adapters abort on the returned fault); a short or
-//! failed payload write is the pin's soft false, with no sync and no close
-//! result check.
+//! [`ChunkSaveError`] distinguishes a header-write fault from an ordinary I/O failure.
+
+// MemoryChunk::mmap and MemoryChunk::save, include/memory_chunk.h:536–557. The native
+// path opens with O_TRUNC, writes the header words and payload, then calls g_fsync and
+// close. The pin asserts on short header writes and returns false on a short payload
+// write.
 
 use std::io;
 use std::path::Path;

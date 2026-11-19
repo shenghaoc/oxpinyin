@@ -1,16 +1,7 @@
-//! The pin's library `fprintf(stderr, …)` lines, made with the pin's own call
-//! through the `oxpinyin` boundary (`docs/findings/external-io-boundary.md`,
-//! stages 1 and 4).
-//!
-//! `table_info.cpp`'s `open %s failed.` and `write %s failed.` lines are the
-//! boundary's `config` readers' and writer's own (ruling D2). The library's other
-//! lines are written here: `load %s failed!`, `mmap %s failed!` and `rename %s
-//! to %s failed.`. Every line therefore goes to the host C library's `stderr`
-//! stream in the order the callers make them. The maintainer ruling of
-//! 2026-10-03 (#545) has oxpinyin write them byte for byte; every path is
-//! passed as its bytes, which is what `%s` reads: `Path::display()` would turn
-//! invalid UTF-8 into U+FFFD. The callers decide when a line is due, from the
-//! error they hold, never from a message.
+//! Emits library diagnostics on the C standard error stream. [`path_bytes`] supplies the
+//! path bytes used by the filename diagnostic.
+
+// The diagnostics use the pin’s fprintf(stderr, …) call through crate::input.
 
 use std::ffi::CString;
 use std::path::Path;
