@@ -1847,6 +1847,33 @@ fn mask_out_aborts_on_an_empty_index_key() {
     ));
 }
 
+/// A one-byte user index key holds no whole `ChewingKey`: the pin's word
+/// count is `key.size() / sizeof(ChewingKey)` = 0, which its `switch` sends
+/// to `default: abort()` like the empty key
+/// (`chewing_large_table2_tkrzwdb.cpp:430`, `:448-466`; bdb `:529`, kc
+/// `:499`). The C shared mask-abort path converts this owner error to abort.
+#[test]
+fn mask_out_aborts_on_a_one_byte_index_key() {
+    let user = tempfile::tempdir().unwrap();
+    crate::user::native_fixture::write_user_conf(
+        user.path(),
+        &crate::user::native_fixture::system_dir(),
+    );
+    crate::user::native_fixture::craft_user_index(
+        &user.path().join("user_pinyin_index.bin"),
+        &[(vec![7], Vec::new()), (vec![0, 1], Vec::new())],
+    );
+    let mut store = crate::user::test_session::open_w3(user.path());
+    assert!(matches!(
+        store.check_mask_out(0xffff_ffff, 0),
+        Err(UserStoreError::OverlongIndexKey)
+    ));
+    assert!(matches!(
+        store.mask_out(0xffff_ffff, 0),
+        Err(UserStoreError::OverlongIndexKey)
+    ));
+}
+
 /// Removing the item subtracts its whole live unigram (phrase_index.cpp:233,713-715).
 #[test]
 fn removing_a_user_item_takes_its_unigram_increment_out_of_the_total() {
