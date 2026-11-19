@@ -5,9 +5,9 @@ use crate::{CHEWING_ZERO_TONE, ChewingKey, OptionBits, SyllableKey};
 /// Whether a key is a complete syllable or an incomplete initial.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Completeness {
-    /// A member of the frozen complete-syllable table.
+    /// A complete syllable or a complete matrix alternative.
     Complete,
-    /// An initial-only key admitted under `PINYIN_INCOMPLETE`.
+    /// An initial without a final. Parsers can exclude it from a result.
     Partial,
 }
 
@@ -16,26 +16,19 @@ pub enum Completeness {
 pub struct FullPinyinParser;
 
 impl FullPinyinParser {
-    /// Parses one full-pinyin key from the whole of `input`, mirroring
-    /// `FullPinyinParser2::parse_one_key`
-    /// (`src/storage/pinyin_parser2.cpp:164-214`).
+    // FullPinyinParser2::parse_one_key, pinyin_parser2.cpp:164–214. The pin asserts
+    // an apostrophe-free input at line 170 and reads before the buffer for empty
+    // input under USE_TONE at line 178 (class (b)). The Rust parser guards both.
+    /// Parses one whole full-pinyin spelling into a [`ChewingKey`].
     ///
-    /// `options` is the caller's option word. Apostrophes are refused
-    /// (upstream asserts them away); under `USE_TONE` a trailing
-    /// `1..=5` is the tone — stripped before the spelling probe and
-    /// written onto the key on a match — and `FORCE_TONE`, nested
-    /// inside `USE_TONE` exactly like the pin, rejects a toneless
-    /// input. The spelling probe covers the whole stripped input, so a
-    /// multi-syllable string such as `nihao` is refused, not matched at
-    /// its first syllable; alias resolution through
-    /// [`SyllableKey::from_option_text`] is the option gate the batch
-    /// path's edges use.
+    /// Pass a nonempty spelling without apostrophes. Under [`OptionBits::USE_TONE`],
+    /// a final ASCII digit from 1 to 5 supplies the tone. With that option set,
+    /// [`OptionBits::FORCE_TONE`] requires the digit. Otherwise a spelling
+    /// without a tone produces a key with tone zero.
     ///
-    /// [`None`] is the upstream `false`, and also the apostrophe input, whose
-    /// assert the C adapters turn into an abort. Empty input under
-    /// `USE_TONE` is not an assert: the pin reads one byte before the
-    /// buffer (class (b)) and answers `false`, as this does, and the C
-    /// adapters return `false` for it too.
+    /// The spelling must match in full. [`SyllableKey::from_option_text`] admits
+    /// option-enabled aliases. Initials alone require [`OptionBits::PINYIN_INCOMPLETE`].
+    /// An unmatched spelling returns [`None`].
     #[must_use]
     pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         if input.contains(&b'\'') {
