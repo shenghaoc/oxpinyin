@@ -13,6 +13,7 @@ include = [
     "/codegen/**",
 ]
 description = "Pinyin and Zhuyin parsing, decoding, and model storage. The Rust interface is unstable."
+keywords = ["pinyin", "zhuyin", "bopomofo", "chinese", "input-method"]
 
 [lib]
 doctest = false

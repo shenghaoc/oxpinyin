@@ -18,6 +18,7 @@ include = [
     "/zhuyin_custom2.h",
 ]
 description = "The libzhuyin C ABI implementation, with libzhuyin.so.15 release packages on Linux. The Rust interface is unstable."
+keywords = ["libzhuyin", "zhuyin", "bopomofo", "input-method", "ffi"]
 
 # The ABI namespace mirrors upstream: libzhuyin is a SEPARATE shared object
 # from libpinyin (upstream builds it from `$(pinyin_SOURCES) zhuyin.cpp`
