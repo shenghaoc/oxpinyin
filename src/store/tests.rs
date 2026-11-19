@@ -1001,7 +1001,8 @@ mod user_bigram_db_tests {
                 .write(|txn| txn.put_raw(&token.to_ne_bytes(), row))
                 .unwrap();
         }
-        let keys = bigram.native_keys().unwrap();
+        let mut keys = Vec::new();
+        bigram.native_keys(&mut keys).unwrap();
         let order: [u32; 2] = if cfg!(feature = "bdb") {
             [2, 1]
         } else {

@@ -51,7 +51,9 @@ impl Tree {
 
     /// The pin's complete native key walk (`PunctTable::get_all_items`).
     pub(crate) fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        self.store.native_keys()
+        let mut keys = Vec::new();
+        self.store.native_keys(&mut keys)?;
+        Ok(keys)
     }
 
     /// `attach(filename, ATTACH_READONLY)`.
@@ -178,10 +180,12 @@ impl Hash {
     /// its answer is the pin's: Kyoto Cabinet's true, tkrzw's and Berkeley
     /// DB's false (`UnopenedSystemDbm::walk`).
     pub(crate) fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let mut keys = Vec::new();
         match &self.backend {
-            HashBackend::Open(store) => store.native_keys(),
-            HashBackend::Unopened(db) => db.walk().map(|()| Vec::new()),
+            HashBackend::Open(store) => store.native_keys(&mut keys)?,
+            HashBackend::Unopened(db) => db.walk()?,
         }
+        Ok(keys)
     }
 }
 

@@ -567,12 +567,16 @@ fn the_record_count_is_every_record_the_iterate_walk_visits() {
             })
             .expect("write");
         assert_eq!(store.count_raw().expect("count"), 3, "{name}");
-        assert_eq!(store.native_keys().expect("walk").len(), 3, "{name}");
+        let mut keys = Vec::new();
+        store.native_keys(&mut keys).expect("walk");
+        assert_eq!(keys.len(), 3, "{name}");
         store
             .write(|txn| txn.remove_raw(&1_u32.to_le_bytes()))
             .expect("remove");
         assert_eq!(store.count_raw().expect("count"), 2, "{name}");
-        assert_eq!(store.native_keys().expect("walk").len(), 2, "{name}");
+        keys.clear();
+        store.native_keys(&mut keys).expect("walk");
+        assert_eq!(keys.len(), 2, "{name}");
     }
 }
 

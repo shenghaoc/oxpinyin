@@ -123,7 +123,9 @@ pub fn rows(path: &Path) -> Result<Rows, Failure> {
         })?;
     } else {
         let store = DefaultStore::open_hash_read_only(path)?;
-        for key in store.native_keys()? {
+        let mut keys = Vec::new();
+        store.native_keys(&mut keys)?;
+        for key in keys {
             let mut value = Vec::new();
             if !store.get_raw(&key, &mut value)? {
                 return Err("a listed hash key has no value".into());

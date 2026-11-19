@@ -663,22 +663,17 @@ where
     #[must_use]
     pub fn get_all_items(&self) -> Option<Vec<u32>> {
         let db = self.db.as_ref()?;
-        if !self.opened {
-            // Kyoto Cabinet's kept object answers `INVALID`; the pin ignores
-            // `iterate`'s answer and returns the cleared array
-            // (`flexible_ngram_kyotodb.h:262-272`).
-            let _ = db.native_keys();
-            return Some(Vec::new());
+        let mut keys = Vec::new();
+        let status = db.native_keys(&mut keys);
+        if cfg!(feature = "bdb") && self.opened && status.is_err() {
+            training_db_error();
         }
-        match db.native_keys() {
-            Ok(keys) => Some(
-                keys.into_iter()
-                    .filter_map(|key| <[u8; 4]>::try_from(key.as_slice()).ok())
-                    .map(u32::from_ne_bytes)
-                    .collect(),
-            ),
-            Err(_) => training_db_error(),
-        }
+        Some(
+            keys.into_iter()
+                .filter_map(|key| <[u8; 4]>::try_from(key.as_slice()).ok())
+                .map(u32::from_ne_bytes)
+                .collect(),
+        )
     }
 
     /// The magic record's value starts with this container's magic number.

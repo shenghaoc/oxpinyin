@@ -87,7 +87,7 @@ impl KcUnopenedHandle {
     /// the unopened object refuses it, the pin ignores the answer and
     /// returns true, and no key is collected.
     pub(crate) fn walk(&self) -> Result<(), StoreError> {
-        let _ = self.db.raw_keys();
+        let _ = self.db.raw_keys(&mut Vec::new());
         Ok(())
     }
 }
@@ -300,8 +300,8 @@ impl crate::store::RawReadStore for KcStore {
     /// `Bigram::get_all_items`' `iterate` walk (`ngram_kyotodb.cpp:186-196`),
     /// its one native call: Kyoto Cabinet's own order, which for `HashDB`
     /// is bucket order.
-    fn native_keys(&self) -> Result<Vec<Vec<u8>>, crate::store::StoreError> {
-        self.db.raw_keys()
+    fn native_keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), crate::store::StoreError> {
+        self.db.raw_keys(keys)
     }
 
     fn open_hash_read_only(path: &Path) -> Result<Self, crate::store::StoreError> {

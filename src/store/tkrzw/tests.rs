@@ -107,7 +107,7 @@ fn a_failed_open_retains_the_concrete_object_whose_calls_answer_as_the_pins() {
             "{class:?}"
         );
         drop(cursor);
-        let keys = db.keys().unwrap_err();
+        let keys = db.keys(&mut Vec::new()).unwrap_err();
         assert_eq!(
             backend_code(&keys),
             Some(STATUS_PRECONDITION_ERROR),

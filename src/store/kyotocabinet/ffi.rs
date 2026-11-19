@@ -581,10 +581,8 @@ impl Db {
 
     /// [`Self::keys`] with each key's own bytes, whatever its length: the
     /// walk of an attached bigram, whose caller judges the key length.
-    pub(crate) fn raw_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        let mut keys = Vec::new();
-        self.iterate(Sink::RawKeys(&mut keys))?;
-        Ok(keys)
+    pub(crate) fn raw_keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError> {
+        self.iterate(Sink::RawKeys(keys))
     }
 
     /// One read-only `iterate` that copies every record it visits into

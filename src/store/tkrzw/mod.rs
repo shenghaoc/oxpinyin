@@ -494,10 +494,11 @@ impl Db {
     /// order, not the iterator's — the pin's `get_all_items` walk
     /// (`ngram_tkrzwdb.cpp:161-172`) with its key-length rule left to the
     /// caller.
-    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        let mut keys = CxxVector::<CxxString>::new();
-        check(&ffi::collect_keys(&self.dbm, keys.pin_mut()))?;
-        Ok(keys.iter().map(|key| key.as_bytes().to_vec()).collect())
+    fn keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError> {
+        let mut native = CxxVector::<CxxString>::new();
+        let status = ffi::collect_keys(&self.dbm, native.pin_mut());
+        keys.extend(native.iter().map(|key| key.as_bytes().to_vec()));
+        check(&status)
     }
 }
 
@@ -697,7 +698,7 @@ impl TkrzwUnopenedHandle {
     /// (`ngram_tkrzwdb.cpp:160-172`), which the unopened object refuses
     /// with no key collected; the pin returns that status.
     pub(crate) fn walk(&self) -> Result<(), StoreError> {
-        self.db.keys().map(drop)
+        self.db.keys(&mut Vec::new())
     }
 }
 
@@ -854,8 +855,8 @@ impl crate::store::RawReadStore for TkrzwStore {
     /// `Bigram::get_all_items`' `ProcessEach` (`ngram_tkrzwdb.cpp:161-172`):
     /// the hash container's bucket order, which is **not** the iterator
     /// order [`crate::store::RawReadStore::range_raw`] gives.
-    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        self.db.keys()
+    fn native_keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError> {
+        self.db.keys(keys)
     }
 
     /// The library's own record count — over the whole file, which on
@@ -1195,8 +1196,9 @@ impl crate::store::UserBigramDb for TkrzwUserBigramDb {
         let Some(db) = self.db.get() else {
             return Ok(Vec::new());
         };
-        Ok(db
-            .keys()?
+        let mut keys = Vec::new();
+        db.keys(&mut keys)?;
+        Ok(keys
             .into_iter()
             .map(|key| <[u8; 4]>::try_from(key).ok())
             .collect())
