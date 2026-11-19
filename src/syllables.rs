@@ -35,11 +35,8 @@ pub fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
         })
 }
 
-/// The canonical spelling for an option-gated spelling alias, if enabled.
-///
-/// This is the parser-table half of the option bits: correction aliases and
-/// the two parser-table ambiguity aliases (`sua`→`shua`, `zua`→`zhua`).
-/// Matrix-level fuzzy substitutions live on [`crate::SyllableKey`] instead.
+/// Returns the canonical spelling of an enabled correction or parser ambiguity alias.
+/// [`crate::fuzzy_chewing_alternatives`] supplies matrix-level substitutions.
 #[must_use]
 pub fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
     // Most parser option words enable neither spelling corrections nor

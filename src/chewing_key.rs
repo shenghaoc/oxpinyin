@@ -1,42 +1,40 @@
-//! The upstream `ChewingKey` value and its display surface.
-//!
-//! `_ChewingKey` (`src/storage/chewing_key.h:41-48`) packs four bitfields
-//! into one `guint16` — initial 5 bits, middle 2, final 5, tone 3, one
-//! zero padding bit. This module carries the same four elements unpacked,
-//! renders them through the ported `content_table` / `chewing_key_table`
-//! ([`crate::chewing_key_data`]), and provides the packed two-byte form
-//! the C ABI hands across the boundary ([`ChewingKey::to_packed`]).
-//!
-//! The renderers mirror `_ChewingKey::get_*_string`
-//! (`src/storage/chewing_key.cpp:34-134`): `content_table` lookup by
-//! table index, tone appended per renderer (digits for pinyin / luoma /
-//! secondary zhuyin, tone marks for zhuyin, bare for shengmu / yunmu).
-//! Upstream asserts the initial, middle and final against the table
-//! dimensions (`get_table_index`, `chewing_key.cpp:28-32`) and the tone
-//! `< CHEWING_NUMBER_OF_TONES` in the renderers. Hand-crafted bit patterns
-//! that violate those preconditions render gracefully here — zero table
-//! index — instead of aborting; the C adapters abort on such keys before
-//! they render (register row 120).
+//! Phonetic key elements, packed keys and their display spellings.
+
+// _ChewingKey packs the fields in chewing_key.h:41–48. Its renderers use content_table
+// and chewing_key_table (chewing_key.cpp:27–134). The pin asserts the table dimensions
+// and tone bounds. The C adapters check them before rendering (compatibility-policy row
+// 120).
 
 use crate::chewing_key_data::{
     CHEWING_KEY_TABLE, CONTENT_KEYS, NUM_FINALS, NUM_INITIALS, NUM_MIDDLES, content_strings,
     spelling_key,
 };
 
-/// One pinyin key: the upstream `_ChewingKey` elements unpacked.
+// ChewingInitial, ChewingMiddle, ChewingFinal and ChewingTone are defined in
+// chewing_enum.h:16–99.
+/// A phonetic key with an initial, middle, final and tone.
 ///
-/// The element values are the upstream `ChewingInitial` / `ChewingMiddle`
-/// / `ChewingFinal` / `ChewingTone` enum values (`chewing_enum.h`).
-/// [`ChewingKey::from_pinyin`] builds a key from a full-pinyin spelling.
+/// For table lookup and display, the initial must be in `0..24`, the middle in `0..4`,
+/// the final in `0..18`, and the tone in `0..6`. Some combinations inside those
+/// dimensions have no spelling row. [`Self::from_pinyin`] looks up a spelling and
+/// [`Self::to_packed`] encodes the key for the C interface.
+///
+/// A missing spelling row has an empty base. Pinyin, Luoma and secondary Zhuyin
+/// append a digit for tones one through five. Zhuyin leaves tones zero and one
+/// bare and appends a tone mark for tones two through five.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ChewingKey {
-    /// `m_initial` — a `ChewingInitial` value.
+    // ChewingInitial, m_initial.
+    /// Initial consonant index.
     pub initial: u8,
-    /// `m_middle` — a `ChewingMiddle` value.
+    // ChewingMiddle, m_middle.
+    /// Medial index.
     pub middle: u8,
-    /// `m_final` — a `ChewingFinal` value. (`final` is reserved.)
+    // ChewingFinal, m_final.
+    /// Final index.
     pub final_: u8,
-    /// `m_tone` — a `ChewingTone` value.
+    // ChewingTone, m_tone.
+    /// Tone number, with zero for an unspecified tone.
     pub tone: u8,
 }
 
@@ -61,22 +59,12 @@ impl ChewingKey {
         }
     }
 
-    /// Whether `pinyin_compare_with_tones` answers 0 for this query key
-    /// against one `stored` key (`src/storage/pinyin_phrase3.h:108-144` at
-    /// 074a2219): the per-syllable test of the phrase-table searches and the
-    /// pronunciation match.
+    // pinyin_compare_with_tones compares initials, middle/final pairs and tones in three
+    // passes (pinyin_phrase3.h:68–144).
+    /// Matches this query against a stored key for phrase or pronunciation lookup.
     ///
-    /// The pin makes three passes over the phrase (initials, then middle and
-    /// final pairs, then tones) and returns at the first non-zero
-    /// difference. It answers 0 only when every position passes all three
-    /// tests, so a multi-key comparison is this test at each position:
-    ///
-    /// * `pinyin_compare_initial3` (`:68-71`): equal initials;
-    /// * `pinyin_compare_middle_and_final3` (`:73-94`): equal middle and
-    ///   final, or a zero middle and final on either side, so an incomplete
-    ///   key matches any final;
-    /// * `pinyin_compare_tone3` (`:96-105`): equal tones, or a zero tone on
-    ///   either side.
+    /// Initials must match. Middle and final must match unless either key has both set to
+    /// zero. Tones must match unless either tone is zero.
     #[must_use]
     pub const fn matches_with_tones(self, stored: Self) -> bool {
         self.initial == stored.initial
@@ -93,10 +81,8 @@ impl ChewingKey {
         self
     }
 
-    /// Whether the initial, middle and final lie inside the table
-    /// dimensions that `_ChewingKey::get_table_index` asserts
-    /// (`chewing_key.cpp:28-32`). A key packed from caller memory can carry
-    /// more (initial 24..=31, final 18..=31).
+    // _ChewingKey::get_table_index, chewing_key.cpp:28–32.
+    /// Reports whether the initial, middle and final are within the lookup table dimensions.
     #[must_use]
     pub const fn elements_in_dims(self) -> bool {
         (self.initial as usize) < NUM_INITIALS
@@ -104,9 +90,8 @@ impl ChewingKey {
             && (self.final_ as usize) < NUM_FINALS
     }
 
-    /// Whether the tone is below `CHEWING_NUMBER_OF_TONES` (6), which the
-    /// pin's string renderers assert (`chewing_key.cpp:40`, `:75`, `:92`,
-    /// `:105`). The packed tone field holds 0..=7.
+    // CHEWING_NUMBER_OF_TONES; chewing_key.cpp:40,75,92,105.
+    /// Reports whether the tone lies in the display range `0..6`.
     #[must_use]
     pub const fn tone_in_dims(self) -> bool {
         self.tone < 6
@@ -154,12 +139,10 @@ impl ChewingKey {
         })
     }
 
-    /// The packed two-byte form the C ABI carries: the `guint16` bitfield
-    /// (initial `0..5`, middle `5..7`, final `7..12`, tone `12..15`,
-    /// zero padding `15`), matching `_ChewingKey`'s declaration order
-    /// under the little-endian bitfield allocation both engines build
-    /// with. Byte identity against the pinned oracle is held by the frozen key
-    /// cases in `tests/it/keys.rs` of `oxpinyin-capi`.
+    // _ChewingKey, chewing_key.h:41–48; little-endian bitfield allocation.
+    /// Packs the key into its two-byte C representation. In increasing bit order the initial
+    /// occupies five bits, the middle two, the final five and the tone three. The high
+    /// padding bit is zero.
     #[must_use]
     pub const fn to_packed(self) -> u16 {
         ((self.initial as u16) & 0x1f)
@@ -260,17 +243,20 @@ impl ChewingKey {
     }
 }
 
-/// A key rendering as `_ChewingKey::get_*_string` builds it
-/// (`chewing_key.cpp:47-121`): which GLib call the pin makes and with what
-/// arguments. The C adapters make that call; [`std::fmt::Display`] writes
-/// the same bytes for Rust callers.
+// _ChewingKey::get_*_string, chewing_key.cpp:47–121. The C adapters use g_strdup or
+// g_strdup_printf with the corresponding fields.
+/// A key spelling with an optional tone digit or mark. [`std::fmt::Display`] writes the
+/// complete spelling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KeyText {
-    /// `g_strdup(spelling)`.
+    // g_strdup(spelling).
+    /// A plain spelling.
     Plain(&'static str),
-    /// `g_strdup_printf("%s%d", spelling, tone)`.
+    // g_strdup_printf("%s%d", spelling, tone).
+    /// A spelling followed by a decimal tone number.
     Digit(&'static str, u8),
-    /// `g_strdup_printf("%s%s", spelling, chewing_tone_table[tone])`.
+    // g_strdup_printf("%s%s", spelling, chewing_tone_table[tone]).
+    /// A spelling followed by a Zhuyin tone mark.
     Mark(&'static str, &'static str),
 }
 

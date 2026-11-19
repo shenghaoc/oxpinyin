@@ -1,11 +1,5 @@
-//! Decoder vocabulary: the concrete types the engine seam names.
-//!
-//! `docs/findings/core-trait-seam.md` leaves `Dictionary` and `LanguageModel`
-//! generic over associated types so the model contracts name no storage
-//! module. The
-//! session API in `docs/findings/session-api.md` has to pin those
-//! associated types to something concrete, or every later task would widen its
-//! own bounds. These are those types.
+//! Syllable keys, phrase tokens and dictionary entries shared by the engine and its
+//! models.
 
 use core::fmt;
 
@@ -22,17 +16,7 @@ use crate::{
     option_alias_canonical,
 };
 
-/// Number of table keys addressable by a [`SyllableKey`].
-/// Packed matrix alternates outside the table are not included.
-///
-/// **Not constant across stages.** This is 440 for Stage 1 — the 405 complete
-/// syllables, the 23 initial-only keys, the two option-only correction
-/// targets (`eng`, `nun`), and the ten zhuyin-only syllables reachable
-/// through the zhuyin index alone. Stage 3 additions take ids *after* the
-/// current end rather than renumbering, so the existing ids stay stable
-/// while this count grows. Anything that persists a key id must record the
-/// inventory it was written against; anything that sizes an array by this
-/// value must recompute it rather than hard-code 440.
+/// Number of dense table keys. Packed matrix alternatives are outside this inventory.
 pub(crate) const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
     + INCOMPLETE_PINYIN_KEY_COUNT
     + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT
@@ -42,25 +26,19 @@ include!(concat!(env!("OUT_DIR"), "/chewing_keys.rs"));
 
 const _: () = assert!(CHEWING_KEYS.len() == SYLLABLE_KEY_COUNT);
 
-/// One decoder-visible key: a table syllable, an initial-only key, or a
-/// packed matrix alternate without a syllable-table row.
+/// A decoder key drawn from the syllable inventory or from a matrix substitution.
 ///
-/// Ids are dense and frozen: `0..405` are `crate::full_pinyin_syllables` in their
-/// pinned upstream numeric-ID order, `405..428` are
-/// [`INCOMPLETE_PINYIN_KEYS`] in ascending byte order, `428..430` are
-/// [`OPTION_ONLY_COMPLETE_SYLLABLES`], and `430..440` are
-/// [`ZHUYIN_ONLY_COMPLETE_SYLLABLES`]. The ordering is part of the decoder's
-/// determinism, so it is never derived from a hash map.
+/// The 440 dense IDs address complete full-pinyin spellings, initial-only keys,
+/// option-only targets and Zhuyin-only syllables in that order. These IDs round-trip
+/// through [`Self::from_index`]. A matrix alternative without a table row holds packed
+/// elements, has empty text and counts as [`Completeness::Complete`].
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SyllableKey(u16);
 
 impl SyllableKey {
-    /// Returns the key spelled exactly `text`, or `None` if there is no such
-    /// key.
-    ///
-    /// Lookup is exact: no case folding, tone stripping or fuzzy matching.
-    /// Membership goes through the generated phf maps (build.rs, from the
-    /// frozen inventories) instead of a linear scan.
+    /// Looks up an exact complete pinyin spelling or an initial-only key. No option is
+    /// required for an exact initial. Parsers decide whether to admit it. Case, tone digits
+    /// and fuzzy spellings are not normalized.
     #[must_use]
     pub fn from_text(text: &str) -> Option<Self> {
         FULL_PINYIN_SYLLABLE_MAP.get(text).map_or_else(
@@ -73,14 +51,11 @@ impl SyllableKey {
         )
     }
 
-    /// Returns the key for a canonical spelling, including option-only
-    /// correction targets and zhuyin-only syllables that [`Self::from_text`]
-    /// deliberately omits.
-    ///
-    /// This mirrors `content_table` membership; [`Self::from_text`] mirrors
-    /// `pinyin_index` membership. Correction aliases
-    /// ([`Self::from_option_text`]) resolve only within the pinyin-reachable
-    /// tiers, so tier 4 never becomes a full-pinyin parse target.
+    // content_table provides canonical spellings; pinyin_index supplies spelling aliases,
+    // pinyin_parser2.cpp:38–57,114–147.
+    /// Looks up a canonical spelling, including the option-only correction targets and
+    /// Zhuyin-only syllables. [`Self::from_option_text`] also accepts enabled pinyin spelling
+    /// aliases.
     #[must_use]
     pub fn from_canonical_text(text: &str) -> Option<Self> {
         if let Some(&index) = FULL_PINYIN_SYLLABLE_MAP.get(text) {
@@ -117,9 +92,10 @@ impl SyllableKey {
         Self::from_canonical_text(key.pinyin_spelling())
     }
 
-    /// Keeps a matrix key even when the pin's final swap produces no
-    /// syllable-table row (phonetic_key_matrix.cpp:287-306). The high bit
-    /// tags a tone-zero packed key; canonical keys keep their dense ids.
+    // The final swap appends without a table check, phonetic_key_matrix.cpp:287–306.
+    /// Keeps the phonetic fields of a matrix substitution even if they have no canonical
+    /// spelling. Table keys use dense IDs and other alternatives use a tagged, tone-zero
+    /// packed key.
     #[must_use]
     pub fn from_matrix_key(key: ChewingKey) -> Self {
         Self::from_chewing_key(key).unwrap_or_else(|| Self(0x8000 | key.with_tone(0).to_packed()))
@@ -134,16 +110,11 @@ impl SyllableKey {
         Self::from_option_text_with_distance(text, options).map(|(key, _)| key)
     }
 
-    /// [`Self::from_option_text`] plus the matched row's correction
-    /// distance, `pinyin_index_item_t::m_distance` (`pinyin_parser2.h:45`,
-    /// read at `pinyin_parser2.cpp:147` at 074a2219).
-    ///
-    /// In the pin's `pinyin_index` (`pinyin_parser_table.h:9-673`) every
-    /// `PINYIN_CORRECT_*` row and the two `PINYIN_AMB_S_SH` /
-    /// `PINYIN_AMB_Z_ZH` rows (`sua`, `zua`) carry distance 1 and every
-    /// other row 0. Those gated rows are exactly the aliases
-    /// [`option_alias_canonical`] admits, so an exact spelling is 0 and an
-    /// alias is 1.
+    // pinyin_index_item_t::m_distance, pinyin_parser2.h:45 and pinyin_parser2.cpp:147. The
+    // correction rows and the sua and zua ambiguity aliases in pinyin_parser_table.h:9–673
+    // carry distance one.
+    /// Looks up an option-enabled spelling and its correction distance. An exact spelling has
+    /// distance zero. An enabled spelling alias has distance one.
     #[must_use]
     pub fn from_option_text_with_distance(text: &str, options: OptionBits) -> Option<(Self, u8)> {
         if let Some(key) = Self::from_text(text) {
@@ -182,7 +153,8 @@ impl SyllableKey {
         self.0 as usize
     }
 
-    /// The key's lowercase ASCII spelling.
+    /// Returns the lowercase ASCII spelling, or an empty string for a matrix key without a
+    /// spelling row.
     #[must_use]
     pub fn text(self) -> &'static str {
         if self.0 & 0x8000 != 0 {
@@ -207,8 +179,7 @@ impl SyllableKey {
             .unwrap_or_default()
     }
 
-    /// The key's `ChewingKey`, tone zero: the fields of its `content_table`
-    /// row, by index, equal to `ChewingKey::from_pinyin(self.text())`.
+    /// Returns the phonetic elements stored for this syllable or packed matrix alternative.
     #[must_use]
     pub fn chewing_key(self) -> ChewingKey {
         if self.0 & 0x8000 != 0 {
@@ -234,8 +205,10 @@ impl SyllableKey {
     }
 }
 
-/// The pin's initial and final swaps on the stored key, including invalid
-/// final combinations, which the pin appends without a table check.
+// fuzzy_syllable_step, phonetic_key_matrix.cpp:238–306.
+/// Returns the enabled initial and final substitutions in matrix order, preserving tone.
+/// The original key is omitted. Final substitutions apply to the original and to each
+/// admitted initial alternative, even when the resulting final has no spelling row.
 #[must_use]
 pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let initials = fuzzy_chewing_initials(key, options);
@@ -312,78 +285,71 @@ impl fmt::Display for SyllableKey {
     }
 }
 
-/// `PHRASE_MASK` (`novel_types.h:41` at the pin `074a2219`): the low 24
-/// bits of a `phrase_token_t`, the phrase slot inside one library.
+// PHRASE_MASK, novel_types.h:41.
+/// Mask for the low 24 bits that select a phrase slot in its library.
 pub const PHRASE_MASK: u32 = 0x00FF_FFFF;
 
-/// `PHRASE_INDEX_LIBRARY_MASK` (`novel_types.h:42`): bits 24 to 27 of a
-/// `phrase_token_t`, the library index.
+// PHRASE_INDEX_LIBRARY_MASK, novel_types.h:42.
+/// Mask for bits 24 through 27 that select a phrase library.
 pub const PHRASE_INDEX_LIBRARY_MASK: u32 = 0x0F00_0000;
 
-/// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h:43`, `1<<4`): the number
-/// of phrase-index libraries.
+// PHRASE_INDEX_LIBRARY_COUNT, novel_types.h:43.
+/// Number of addressable phrase libraries.
 pub const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 
-/// `MAX_PHRASE_LENGTH` (`novel_types.h:119`): the pin's phrase-length cap.
-///
-/// It is an exclusive upper bound on a user phrase's length in Unicode
-/// scalar values: libpinyin rejects `len == 0` and `len >=` this
-/// (`pinyin.cpp:3678`, `pinyin.cpp:643`). The window scan searches no key
-/// sequence longer than it.
+// MAX_PHRASE_LENGTH, novel_types.h:119; pinyin.cpp:639–644,3678.
+/// Maximum number of keys in a phrase lookup. Import accepts fewer than this many UCS-4
+/// words, with at least one word and one key per word.
 pub const MAX_PHRASE_LENGTH: usize = 16;
 
-/// `null_token` (`novel_types.h:121`): the token of no phrase.
+// null_token, novel_types.h:121.
+/// Token denoting the absence of a phrase.
 pub const NULL_TOKEN: u32 = 0;
 
-/// `sentence_start` (`novel_types.h:122`): the predecessor of the first
-/// phrase in a sentence.
+// sentence_start, novel_types.h:122.
+/// Predecessor token of the first phrase in a sentence.
 pub const SENTENCE_START: u32 = 1;
 
-/// `TSI_DICTIONARY` (`novel_types.h:155`): the zhuyin default library.
+// TSI_DICTIONARY, novel_types.h:155.
+/// Default Zhuyin phrase library.
 pub const TSI_DICTIONARY: u8 = 1;
 
-/// `GBK_DICTIONARY` (`novel_types.h:156`).
+// GBK_DICTIONARY, novel_types.h:156.
+/// Library for the GBK dictionary.
 pub const GBK_DICTIONARY: u8 = 2;
 
-/// `ADDON_DICTIONARY` (`novel_types.h:159`): the library a chosen addon
-/// phrase is promoted into.
-///
-/// A `USER_FILE` library of the default facade (`addon.bin`,
-/// `docs/findings/phrase-union.md` §3.2). Choosing an `ADDON_CANDIDATE`
-/// copies the phrase here from the separate addon facade
-/// (`docs/findings/addon-choose-promotion.md`).
+// ADDON_DICTIONARY, novel_types.h:159; addon.bin is a USER_FILE entry. See
+// docs/findings/phrase-union.md and docs/findings/addon-choose-promotion.md.
+/// Destination library for a chosen addon phrase promoted into the default dictionary.
 pub const ADDON_DICTIONARY: u8 = 5;
 
-/// `NETWORK_DICTIONARY` (`novel_types.h:160`): the library network
-/// phrases live in.
+// NETWORK_DICTIONARY, novel_types.h:160.
+/// Library for network phrases.
 pub const NETWORK_DICTIONARY: u8 = 6;
 
-/// `USER_DICTIONARY` (`novel_types.h:161`): the library user phrases live
-/// in (`docs/findings/user-store.md` §3).
+// USER_DICTIONARY, novel_types.h:161; docs/findings/user-store.md §3.
+/// Library for user phrases.
 pub const USER_DICTIONARY: u8 = 7;
 
-/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`): the library
-/// index of a token.
+// PHRASE_INDEX_LIBRARY_INDEX, novel_types.h:44.
+/// Extracts the library index from bits 24 through 27 of a [`PhraseToken`].
 #[must_use]
 pub const fn phrase_index_library_index(token: u32) -> u8 {
     ((token & PHRASE_INDEX_LIBRARY_MASK) >> 24) as u8
 }
 
-/// `PHRASE_INDEX_MAKE_TOKEN(phrase_index, token)` (`novel_types.h:45-46`):
-/// the token of slot `token` in library `phrase_index`. Both parts are
-/// masked, as in the pin's macro.
+// PHRASE_INDEX_MAKE_TOKEN, novel_types.h:45–46.
+/// Builds a [`PhraseToken`] from the low four bits of the library index and the low 24
+/// bits of the slot.
 #[must_use]
 pub const fn phrase_index_make_token(phrase_index: u8, token: u32) -> u32 {
     (((phrase_index as u32) << 24) & PHRASE_INDEX_LIBRARY_MASK) | (token & PHRASE_MASK)
 }
 
-/// `phrase_token_t` (`typedef guint32 phrase_token_t`, `novel_types.h:33`
-/// at the pin `074a2219`): the identifier of a phrase in a dictionary and
-/// language model.
-///
-/// It is the pin's alias, not a newtype: bits 24 to 27 hold the library
-/// index and the low 24 bits the slot in that library
-/// ([`phrase_index_library_index`], [`phrase_index_make_token`]).
+// phrase_token_t is guint32, novel_types.h:33,41–46.
+/// Identifies a dictionary phrase in the dictionary and language model. Use
+/// [`phrase_index_library_index`] to extract the library and [`phrase_index_make_token`]
+/// to combine it with a slot.
 pub type PhraseToken = u32;
 
 /// One dictionary hit: a phrase and the token that scores it.
@@ -395,7 +361,7 @@ pub struct PhraseEntry {
     token: PhraseToken,
     text: PhraseText,
     /// Pronunciation possibility `(matched, total)` over the phrase item's
-    /// stored pronunciations (W14's polyphone discount): the fraction of
+    /// stored pronunciations: the fraction of
     /// the item's pronunciation frequency that spells the looked-up key
     /// sequence. `None` when the backend carries no per-pronunciation
     /// counts (the candidate scan never reads it; only the sentence
@@ -456,8 +422,8 @@ impl PhraseEntry {
         self.pronunciation
     }
 
-    /// Sets the pronunciation possibility (builder; [`PhraseEntry::new`]
-    /// leaves it unset so every existing construction keeps its meaning).
+    /// Sets the matched and total pronunciation counts. [`Self::new`] leaves these counts
+    /// unset.
     #[must_use]
     pub const fn with_pronunciation_possibility(mut self, matched: u64, total: u64) -> Self {
         self.pronunciation = Some((matched, total));
