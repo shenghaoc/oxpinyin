@@ -175,7 +175,7 @@ if os.name == 'posix':
                     with self.subTest(mode=mode, setting=setting), \
                             tempfile.TemporaryDirectory(dir=self.root) as root:
                         parent = Path(root) if setting == 'custom' else Path('/tmp')
-                        env = dict(os.environ, REPORT_USER_ROOT=str(parent), FAIL_INIT='1')
+                        env = dict(os.environ, PERF_MODE='speed', REPORT_USER_ROOT=str(parent), FAIL_INIT='1')
                         env.pop('TMPDIR', None)
                         if setting != 'unset':
                             env['TMPDIR'] = root if setting == 'custom' else ''
@@ -194,6 +194,19 @@ if os.name == 'posix':
                         self.assertIn('DIR:' + str(user), done.stderr.decode().splitlines())
                         self.assertFalse(user.exists())
                         self.assertEqual(list(Path(root).iterdir()), [])
+
+        def test_perf_rejects_unknown_mode_before_loading(self):
+            with tempfile.TemporaryDirectory(dir=self.root) as root:
+                env = dict(os.environ, PERF_MODE='unknown', PERF_USER_DIR='', TMPDIR=root,
+                           REPORT_USER_ROOT=root, FAIL_INIT='1')
+                done = subprocess.run([self.harness, '--perf', self.library, self.root],
+                                      capture_output=True, env=env)
+                self.assertEqual(done.returncode, 1)
+                self.assertEqual(done.stdout, b'')
+                self.assertTrue(done.stderr.startswith(f'Usage: {self.harness} --perf '.encode()), done.stderr)
+                self.assertNotIn(b'DIR:', done.stderr)
+                self.assertNotIn(b'USER:', done.stderr)
+                self.assertEqual(list(Path(root).iterdir()), [])
 
         def test_sentence_calls_parse_then_sentence_without_candidates(self):
             done = self.launch('sentence', iterations='2')
