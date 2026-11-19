@@ -88,7 +88,7 @@ fn the_character_offset_after_a_separator_aborts() {
             // uses it.
             let walk = unsafe { crate::state::instance_ref(fixture.instance()) }
                 .core
-                .character_offset(&"你好".into(), 3);
+                .character_offset(&"你好".into(), 3, false);
             // Not `eprintln!`: libtest captures it and the abort drops it.
             writeln!(std::io::stderr(), "walk: {walk:?}").expect("write to stderr");
             let mut length = 0;

@@ -489,6 +489,55 @@ fn character_offset_searches_the_phrase_and_walks_the_keys() {
     unsafe { zhuyin_fini(context) };
 }
 
+fn parse_for_character_offset(input: &str) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
+    let (context, instance) = open();
+    assert!(unsafe { zhuyin_set_options(context, oxpinyin::OptionBits::USE_TONE.bits()) });
+    assert_eq!(
+        unsafe { zhuyin_parse_more_full_pinyins(instance, cstr(input).as_ptr()) },
+        input.len()
+    );
+    (context, instance)
+}
+
+/// The separator and the terminal key both test the next character's
+/// pronunciation before comparing the raw end to the offset (zhuyin.cpp:2115-2135).
+#[rstest::rstest]
+#[case::before_separator("ni'hao", "你好", 0, (true, 0))]
+#[case::at_separator("ni'hao", "你好", 2, (false, 0))]
+#[case::past_separator("ni'hao", "你好", 4, (false, 0))]
+#[case::at_end("ni'hao", "你好", 6, (false, 0))]
+#[case::separator_matches("ni'hao", "你啊好", 4, (true, 2))]
+#[case::terminal_matches("ni", "你啊", 2, (true, 1))]
+fn character_offset_full_pinyin(
+    #[case] input: &str,
+    #[case] phrase: &str,
+    #[case] offset: usize,
+    #[case] expected: (bool, usize),
+) {
+    let (context, instance) = parse_for_character_offset(input);
+    let mut length = SEEDED;
+    let found = unsafe {
+        zhuyin_get_character_offset(instance, cstr(phrase).as_ptr(), offset, &raw mut length)
+    };
+    assert_eq!((found, length), expected);
+    unsafe { close(context, instance) };
+}
+
+/// The preceding column holds a lone zero key (zhuyin.cpp:1447-1454, 2159).
+#[test]
+fn character_offset_full_pinyin_immediately_after_separator_aborts() {
+    assert_aborts_after_setup(
+        "sentence_and_candidates::character_offset_full_pinyin_immediately_after_separator_aborts",
+        || parse_for_character_offset("ni'hao"),
+        |(_context, instance)| {
+            let mut length = SEEDED;
+            unsafe {
+                zhuyin_get_character_offset(instance, c"你好".as_ptr(), 3, &raw mut length)
+            };
+        },
+    );
+}
+
 /// Issue #602: a choose at the cursor after an earlier choose writes its
 /// forcing on the matrix column the whole-buffer re-guess walks, so the
 /// forcing survives `zhuyin_guess_sentence` and the sentence keeps the

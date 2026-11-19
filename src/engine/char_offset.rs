@@ -1,8 +1,8 @@
 //! Lookup byte offset → character offset within a committed phrase — the
 //! port of `pinyin_get_character_offset` (`pinyin.cpp:3193-3241` at the
 //! pin) and its `_pre_compute_tokens` / `_get_char_offset_recur` helpers
-//! (`pinyin.cpp:3098-3191`). `zhuyin_get_character_offset`
-//! (`zhuyin.cpp:2148-2196`) is the same body over the zhuyin instance.
+//! (`pinyin.cpp:3098-3191`). The Zhuyin walk tests zero keys for a
+//! matching pronunciation (`zhuyin.cpp:2095-2145`, `:2148-2194`).
 //!
 //! The pin's law, in order:
 //!
@@ -19,24 +19,18 @@
 //!    cached; a character with no token — an emoji, a Latin letter, the
 //!    pinyin string itself — answers `false`. This is the row issue #356
 //!    pinned: the port used to skip the search and answer `true`.
-//! 5. `_get_char_offset_recur`: walk the matrix from column 0. A lone
-//!    zero-key column (a consumed `'`, or the zero tail from the parsed
-//!    length to the reserved slot) is stepped over without consuming a
-//!    character; a real key at the column consumes the next cached token
-//!    when the token's item pronounces that key (a below-ε possibility
-//!    skips it); the walk answers `true` with the characters consumed so
-//!    far as soon as the next key's raw end lies past `offset`, and
-//!    backtracks over the column's other keys when a branch fails.
+//! 5. `_get_char_offset_recur` walks the matrix from column 0. Pinyin skips
+//!    a lone zero key without consuming a token (`pinyin.cpp:3158-3164`).
+//!    For all other keys, including Zhuyin separator and terminal zero keys,
+//!    the next cached token must pronounce the key. If that key ends past
+//!    `offset`, the walk returns the count so far. Otherwise it consumes the
+//!    token and recurses. A failed branch backtracks to the next key.
 //!
-//! Two upstream shapes are reported as errors here (register row 19): an
-//! empty column at a reached
-//! position (`assert(size > 0)`) or a zero key sharing a column with real
-//! keys (`assert(1 == size)`) answer [`EngineError::MatrixColumnAssert`],
-//! which the C adapters abort on; a walk that runs past the cached tokens
-//! (the pin reads `g_array_index` past the array — a phrase shorter than
-//! the key path it is measured against) treats the missing token as
-//! pronouncing nothing, so that branch fails like a mismatched key — the
-//! memory-safety class.
+//! Both walks assert on a reached empty column (`assert(size > 0)`).
+//! Pinyin also asserts when a zero key shares a column with real keys
+//! (`assert(1 == size)`). The C adapters abort on the corresponding
+//! [`EngineError::MatrixColumnAssert`] (register row 19). A missing
+//! cached token fails the pronunciation test.
 //!
 //! [`remember_walk`] is `_remember_phrase_recur` (`pinyin.cpp:3578-3666`)
 //! over the same columns, for `pinyin_remember_user_input`: it differs in
@@ -254,7 +248,7 @@ fn remember_recur<E>(
     Ok(result)
 }
 
-/// `_get_char_offset_recur` (`pinyin.cpp:3138-3191`): `Ok(Some(length))`
+/// `_get_char_offset_recur` (`pinyin.cpp:3138-3191`, `zhuyin.cpp:2095-2145`): `Ok(Some(length))`
 /// is the pin's `true` with `*plength`, `Ok(None)` its `false`.
 fn walk<D>(
     dictionary: &D,
@@ -263,6 +257,7 @@ fn walk<D>(
     start: usize,
     offset: usize,
     length: usize,
+    zhuyin: bool,
 ) -> Result<Option<usize>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
@@ -280,40 +275,69 @@ where
     if column.real.is_empty() && column.zero_end.is_none() {
         return Err(EngineError::MatrixColumnAssert { offset: start });
     }
-    if let Some(zero_end) = column.zero_end {
+    if !zhuyin && let Some(zero_end) = column.zero_end {
         // "assume only one key here for "'" or the last key."
         if !column.real.is_empty() {
             return Err(EngineError::MatrixColumnAssert { offset: start });
         }
-        return walk(dictionary, columns, tokens, zero_end, offset, length);
+        return walk(
+            dictionary, columns, tokens, zero_end, offset, length, zhuyin,
+        );
     }
-    for key in &column.real {
-        let newstart = key.end();
-        // Past the cached tokens the pin reads off its array; the branch
-        // is treated as a pronunciation miss instead.
-        let Some(&token) = tokens.get(length) else {
-            continue;
-        };
-        if !pronounces(dictionary, *key, token)? {
-            continue;
-        }
-        if newstart > offset {
-            return Ok(Some(length));
-        }
-        if let Some(found) = walk(dictionary, columns, tokens, newstart, offset, length + 1)? {
+    let zero_key = column
+        .zero_end
+        .map(|end| MatrixKey::from_chewing(crate::ChewingKey::default(), start, end));
+    for key in column.real.iter().copied().chain(zero_key) {
+        if let Some(found) =
+            walk_pronounced_key(dictionary, columns, tokens, key, offset, length, zhuyin)?
+        {
             return Ok(Some(found));
         }
     }
     Ok(None)
 }
 
-/// The `pinyin_get_character_offset` law over one raw buffer, its parse,
-/// and its keys.
+fn walk_pronounced_key<D>(
+    dictionary: &D,
+    columns: &[Column],
+    tokens: &[PhraseToken],
+    key: MatrixKey,
+    offset: usize,
+    length: usize,
+    zhuyin: bool,
+) -> Result<Option<usize>, EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    D::Error: core::fmt::Display,
+{
+    // A missing cached token fails the pronunciation test.
+    let Some(&token) = tokens.get(length) else {
+        return Ok(None);
+    };
+    if !pronounces(dictionary, key, token)? {
+        return Ok(None);
+    }
+    if key.end() > offset {
+        return Ok(Some(length));
+    }
+    walk(
+        dictionary,
+        columns,
+        tokens,
+        key.end(),
+        offset,
+        length + 1,
+        zhuyin,
+    )
+}
+
+/// The character-offset walk over one raw buffer, its parse, and its keys.
 ///
 /// `input` is the active mode's own buffer, `parsed_len` the parse's
 /// consumed byte count, `keys` the matrix keys in column order (each at
 /// its syllable start), and `separators` whether `'` is a zero-key
-/// separator in that mode. The first value is the character count on
+/// separator in that mode. `zhuyin` selects the walk that tests zero keys.
+/// The first value is the character count on
 /// success, or `None` on graceful refusal (empty matrix, empty or invalid
 /// phrase, a character with no dictionary token, or no satisfying path).
 /// The second value reports whether the walk ran so the facade can leave
@@ -327,13 +351,13 @@ where
 /// recursion asserts; the dictionary's backend failure as
 /// [`EngineError::Scoring`].
 pub fn character_offset_with_walk_over_keys<D>(
-    input: &[u8],
+    (input, separators): (&[u8], bool),
     parsed_len: usize,
     keys: impl IntoIterator<Item = MatrixKey>,
-    separators: bool,
     dictionary: &D,
     phrase: &crate::PhraseText,
     offset: usize,
+    zhuyin: bool,
 ) -> Result<(Option<usize>, bool), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
@@ -376,7 +400,7 @@ where
         tokens.push(token);
     }
 
-    walk(dictionary, &columns, &tokens, 0, offset, 0).map(|count| (count, true))
+    walk(dictionary, &columns, &tokens, 0, offset, 0, zhuyin).map(|count| (count, true))
 }
 
 #[cfg(test)]

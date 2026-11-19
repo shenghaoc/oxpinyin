@@ -493,7 +493,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// [`Self::mode_input`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
     /// over the stored original input. The first result is the character
-    /// count on success, or `None` on refusal. The second says whether
+    /// count on success, or `None` on refusal. `zhuyin` selects the
+    /// calling facade's zero-key rule. The second result says whether
     /// the walk ran and the C facade must write its output parameter.
     ///
     /// # Errors
@@ -504,19 +505,21 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         &self,
         phrase: &crate::PhraseText,
         offset: usize,
+        zhuyin: bool,
     ) -> Result<(Option<usize>, bool), EngineError> {
         let Some(source) = self.span_source() else {
-            return self.session.character_offset_with_walk(phrase, offset);
+            return self
+                .session
+                .character_offset_with_walk(phrase, offset, zhuyin);
         };
-        let (input, separators) = self.mode_input();
         crate::engine::character_offset_with_walk_over_keys(
-            input,
+            (source.input, source.separators),
             source.parsed,
             self.parse_matrix.iter().copied(),
-            separators,
             self.session.dictionary(),
             phrase,
             offset,
+            zhuyin,
         )
     }
 

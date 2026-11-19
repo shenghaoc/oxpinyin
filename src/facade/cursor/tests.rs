@@ -230,7 +230,7 @@ mod native {
         assert_eq!(
             instance
                 .read(&context.runtime)
-                .character_offset(&"弄".into(), offset)
+                .character_offset(&"弄".into(), offset, law == UserConfLaw::Zhuyin)
                 .unwrap(),
             (Some(expected), true)
         );

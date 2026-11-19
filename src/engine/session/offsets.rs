@@ -144,7 +144,7 @@ where
     }
 
     /// Lookup byte offset → character count within `phrase` over the
-    /// session's own scan matrix — the `pinyin_get_character_offset` law
+    /// session's own scan matrix under the calling facade's zero-key rule
     /// ([`crate::engine::character_offset_with_walk_over_keys`]): `Ok(Some(n))` when a key
     /// path pronouncing `phrase`'s first `n` characters reaches `offset`,
     /// `Ok(None)` for the pin's graceful `false` (empty matrix, empty
@@ -162,19 +162,20 @@ where
         &self,
         phrase: &crate::PhraseText,
         offset: usize,
+        zhuyin: bool,
     ) -> Result<(Option<usize>, bool), EngineError> {
         // The retained working matrix, not the parsed-only one `matrix_keys`
         // builds for scheme modes: pre-parsed scheme segments keep their
         // boundaries and gain no divided/resplit alternates, as every other
         // law over the session's matrix has it.
         crate::engine::character_offset_with_walk_over_keys(
-            self.input.as_bytes(),
+            (self.input.as_bytes(), true),
             self.retained_parse().matrix.bound,
             self.matrix_keys().iter(),
-            true,
             &self.dictionary,
             phrase,
             offset,
+            zhuyin,
         )
     }
 
