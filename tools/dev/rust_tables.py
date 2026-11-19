@@ -208,8 +208,8 @@ def array(name, type_, values, *, visibility='pub ', kind='static'):
     return f'#[rustfmt::skip]\n{visibility}{kind} {name}: {type_} = [\n' + ''.join(f'    {v},\n' for v in values) + '];\n'
 
 
-def count(name, number):
-    return f'/// Number of entries in the pinned inventory.\npub const {name}: usize = {number};\n'
+def count(name, number, description='Number of entries in the pinned inventory.'):
+    return f'/// {description}\npub const {name}: usize = {number};\n'
 
 
 def literal_declarations(text):
@@ -300,12 +300,14 @@ def render(source=SOURCE):
         zhuyin_only = sorted(set(content_by_spelling) - targets - {''})
         inventory = syllables + incomplete + option_only + zhuyin_only
         output[CORE + 'table_data/full_pinyin_syllables.rs'] = count('FULL_PINYIN_SYLLABLE_COUNT', len(syllables)) + array('FULL_PINYIN_SYLLABLES', '[&str; FULL_PINYIN_SYLLABLE_COUNT]', map(string, syllables))
-        text = count('FULL_PINYIN_SYLLABLE_COUNT', len(syllables))
+        text = count('FULL_PINYIN_SYLLABLE_COUNT', len(syllables), 'Number of complete full-pinyin spellings.')
         text += '/// Longest complete full-pinyin spelling in bytes.\n' + f'pub const MAX_SYLLABLE_LEN: usize = {max(map(len, syllables))};\n'
-        for name, values, size in [('INCOMPLETE_PINYIN_KEYS', incomplete, 'INCOMPLETE_PINYIN_KEY_COUNT'),
-                                  ('OPTION_ONLY_COMPLETE_SYLLABLES', option_only, 'OPTION_ONLY_COMPLETE_SYLLABLE_COUNT'),
-                                  ('ZHUYIN_ONLY_COMPLETE_SYLLABLES', zhuyin_only, 'ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT')]:
-            text += count(size, len(values)) + f'/// Pinned {name.lower().replace("_", " ")}, in byte order.\n'
+        for name, values, size, description in [
+            ('INCOMPLETE_PINYIN_KEYS', incomplete, 'INCOMPLETE_PINYIN_KEY_COUNT', 'Number of initial-only pinyin keys.'),
+            ('OPTION_ONLY_COMPLETE_SYLLABLES', option_only, 'OPTION_ONLY_COMPLETE_SYLLABLE_COUNT', 'Number of complete syllables available only as correction targets.'),
+            ('ZHUYIN_ONLY_COMPLETE_SYLLABLES', zhuyin_only, 'ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT', 'Number of complete syllables available only through the Zhuyin index.'),
+        ]:
+            text += count(size, len(values), description) + f'/// Pinned {name.lower().replace("_", " ")}, in byte order.\n'
             text += array(name, f'[&str; {size}]', map(string, values))
         output[CORE + 'table_data/syllable_inventory.rs'] = text
 
