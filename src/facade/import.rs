@@ -10,14 +10,17 @@ use crate::facade::ContextCore;
 
 /// What an import add does with one phrase/reading pair before it writes.
 pub enum ImportPlan {
-    /// The pin's ordinary `false`.
+    /// The supplied phrase or reading was refused before adding it.
     Refuse,
-    /// A phrase-table lookup failed outright: no pin counterpart, one
-    /// warning and `false`.
+    // The Rust boundary emits one warning and returns false for this failure. There is no
+    // corresponding pin lookup failure.
+    /// The phrase-table probe failed before an add could be planned.
     LookupFailed,
-    /// One of the pin's asserts: `reduce_tokens`' count
-    /// (`phrase_large_table3.h:95`), two tokens in the target library, or
-    /// the target library's item with another length or text.
+    // reduce_tokens checks its count in phrase_large_table3.h:95. _add_phrase asserts on
+    // duplicate tokens in the target library or conflicting item length or text
+    // (pinyin.cpp:569–604).
+    /// The caller must handle an import assertion. Planning returns this decision before
+    /// writing.
     Abort,
     /// The add goes ahead, with the same-library token the phrase table
     /// already holds for the phrase, if any.
@@ -32,12 +35,11 @@ pub enum ImportPlan {
 }
 
 impl ContextCore {
-    /// Plans one import-iterator add, after the facade has parsed the
-    /// reading: the iterator's length gate, then [`Self::plan_add`].
-    ///
-    /// The iterator checks the lengths before `_add_phrase`: the phrase's
-    /// character count must equal the key count, `0 < len < 16` (074a2219
-    /// `pinyin.cpp:639-646`, `zhuyin.cpp:525-532`).
+    // The iterator checks length before _add_phrase, pinyin.cpp:639–646 and
+    // zhuyin.cpp:525–532.
+    /// Plans an import for a phrase and its parsed reading. The declared phrase length must
+    /// be between one and fifteen UCS-4 words and equal the number of keys. Admitted pairs
+    /// proceed to [`Self::plan_add`].
     #[must_use]
     pub fn plan_import(&self, index: u8, phrase: PhraseText, keys: Vec<PinyinKey>) -> ImportPlan {
         let length = phrase.phrase_length();
@@ -47,8 +49,9 @@ impl ContextCore {
         self.plan_add(index, phrase, keys)
     }
 
-    /// Plans one add against this context's loaded phrase tables: the
-    /// shared half of `_add_phrase` up to its add calls. Reads only.
+    // _add_phrase probes the existing tokens first, pinyin.cpp:569–604.
+    /// Probes the current phrase tables for an add without writing. [`Self::commit_import`]
+    /// applies the resulting add plan.
     #[must_use]
     pub fn plan_add(&self, index: u8, phrase: PhraseText, keys: Vec<PinyinKey>) -> ImportPlan {
         plan_add(index, &self.runtime.dict(), self.user_store(), phrase, keys)

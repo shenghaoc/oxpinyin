@@ -281,7 +281,11 @@ impl PhraseExportCursor {
         }
     }
 
-    /// Read the next row by borrowing this call's current context.
+    // pinyin_iterator_get_next_phrase, pinyin.cpp:698–768.
+    /// Reads the currently probed item and pronunciation with the supplied context. The
+    /// cursor calls `read` only after checking the item and keys, then advances to the next
+    /// reading or token. A failed check returns an [`ExportStep`] with the cursor still at
+    /// that row.
     pub fn get_next_with<R>(
         &mut self,
         context: &ContextCore,
@@ -648,9 +652,9 @@ pub enum BigramStep {
     /// it loaded and could not read. The
     /// pin has written the row's out-params by then (`:904-906`).
     Row(ExportedBigramRow, Result<bool, GramLoadFault>),
-    /// No current predecessor, or `sentence_start` — the pin's
-    /// `assert(iter->m_index_token != null_token && iter->m_index_token
-    /// != sentence_start)` (`pinyin.cpp:902`), which aborts.
+    // pinyin_bigram_iterator_get_next_phrase asserts the predecessor at pinyin.cpp:902.
+    /// The caller requested a row without a current predecessor or with the sentence-start
+    /// predecessor. The iterator returns this decision to the facade.
     Aborts,
     /// No pinyin at the current position: the pin reads past `m_pinyins`
     /// (`pinyin.cpp:905`), undefined behaviour.
@@ -658,13 +662,14 @@ pub enum BigramStep {
 }
 
 impl BigramExportWalk {
-    /// `pinyin_bigram_iterator_has_next_phrase` (`pinyin.cpp:790-893`).
+    // pinyin_bigram_iterator_has_next_phrase, pinyin.cpp:790–893; ngram.cpp:133–143.
+    /// Probes for another export row. The probe can load a predecessor’s gram and render a
+    /// new pair before answering.
     ///
     /// # Errors
     ///
-    /// The [`GramLoadFault`] of the predecessor it loaded and could not read
-    /// (`pinyin.cpp:888-889`, `ngram.cpp:133-143`), after the rows before it
-    /// were handed out; the walk ends there.
+    /// Returns [`GramLoadFault`] if a predecessor cannot be loaded for the next pair. Earlier
+    /// rows have already been handed out.
     pub fn has_next(&mut self, context: &ContextCore) -> Result<bool, GramLoadFault> {
         let source = ExportSource {
             user: context.user_store(),
@@ -727,8 +732,12 @@ impl BigramExportWalk {
         Ok(retval)
     }
 
-    /// `pinyin_bigram_iterator_get_next_phrase` (`pinyin.cpp:896-911`):
-    /// the current row — count × 2 in `guint32` — then `has_next`.
+    // pinyin_bigram_iterator_get_next_phrase writes the out parameters before calling
+    // has_next (pinyin.cpp:896–911). The count expression at 901,906 multiplies by a guint32
+    // factor before assigning to gint.
+    /// Returns the current row and advances the iterator. A [`BigramStep::Row`] can contain
+    /// the current row together with an error from probing the following row. Call
+    /// [`Self::has_next`] before requesting a row.
     pub fn get_next(&mut self, context: &ContextCore) -> BigramStep {
         self.next_row(|walk| walk.has_next(context))
     }
