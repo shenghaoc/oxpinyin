@@ -75,11 +75,11 @@
 //! `std::process::abort()` on it. [`FlexibleBigram::load`] returns the same
 //! error for such a value. The pin loads that value and later reads outside
 //! it, and the tools report it as a store error (class (b),
-//! `upstream-divergences.md#flexiblebigram-malformed-record-lengths`). A failing cursor walk in
-//! `get_all_items` prints the pin's
-//! `training db error, exit!` (no newline) to stderr and exits with the
-//! `EIO` status (`flexible_ngram_bdb.h:279-286`) — the error cannot be
-//! recovered in the pin either.
+//! `upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
+//! On a failed key walk, Berkeley DB prints `training db error, exit!`
+//! without a newline to stderr and exits with status `EIO`
+//! (`flexible_ngram_bdb.h:279-286`). Kyoto Cabinet and tkrzw return the
+//! token keys collected before the failure.
 
 use std::marker::PhantomData;
 use std::path::Path;
@@ -191,10 +191,8 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
         }
     }
 
-    /// A gram from an encoded header and items already in token order.
-    ///
-    /// The caller is responsible for the pin's ascending order; this does
-    /// not sort or reject a file the pin would read.
+    /// Builds a gram from a header and a sequence of items. Supply items in ascending token
+    /// order for later token searches.
     #[must_use]
     pub fn from_parts(header: H, items: Vec<ArrayItemWithToken<I>>) -> Self {
         Self { header, items }
@@ -211,7 +209,8 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
         self.header = header;
     }
 
-    /// The items in their stored, token-ascending order.
+    /// Returns items in stored order. [`Self::from_parts`] preserves the order supplied by
+    /// its caller.
     #[must_use]
     pub fn items(&self) -> &[ArrayItemWithToken<I>] {
         &self.items
@@ -462,15 +461,18 @@ where
         Ok(found)
     }
 
-    /// Get the magic header; `None` when the record is absent or its value
-    /// is not the four-byte magic number plus a whole header
-    /// (`flexible_ngram_bdb.h:302-328`, `flexible_ngram_kyotodb.h:282-309`,
-    /// `flexible_ngram_tkrzwdb.h:292-323`).
+    // Berkeley DB uses DB_DBT_PARTIAL (flexible_ngram_bdb.h:302–328). Kyoto Cabinet asserts
+    // on a failed bounded read, unexpected length or invalid magic
+    // (flexible_ngram_kyotodb.h:282–309). tkrzw checks size and magic after Get
+    // (flexible_ngram_tkrzwdb.h:292–323).
+    /// Reads the model’s magic header. Berkeley DB reads the header at byte offset four, so a
+    /// longer record can contain a usable header. A closed handle, a missing tkrzw record or
+    /// a record containing just the magic number has no header. Kyoto Cabinet and tkrzw check
+    /// the magic number before decoding a full header.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the read fails or the header bytes do
-    /// not decode.
+    /// Propagates a returned backend error or a [`FixedRecord::decode`] error.
     pub fn get_magic_header(&self) -> Result<Option<S::MagicHeader>, StoreError> {
         self.read_magic_header(<S::MagicHeader as FixedRecord>::LEN)
     }
@@ -613,18 +615,20 @@ where
         }
     }
 
-    /// Set one single gram's array header without disturbing its items.
-    ///
-    /// The pin's Berkeley DB implementation writes the header in place with
-    /// a `DB_DBT_PARTIAL` put (`flexible_ngram_bdb.h:402-420`); KC and tkrzw
-    /// load the whole value, overwrite the header and store it back
-    /// (`flexible_ngram_kyotodb.h:385-408`,
-    /// `flexible_ngram_tkrzwdb.h:402-430`). Both leave every item byte as it
-    /// was; a missing record is created with the header alone in all three.
+    // The pin uses a partial put on BDB (flexible_ngram_bdb.h:402–420) and
+    // read/overwrite/store on KC and tkrzw (flexible_ngram_kyotodb.h:385–408,
+    // flexible_ngram_tkrzwdb.h:402–430).
+    /// Writes a single gram’s array header while retaining its item bytes. A newly created
+    /// record contains the header alone.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the read or write fails.
+    /// Returns [`StoreError`] on a failed read or write.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the array-header encoder produces a different number of bytes from its
+    /// declared [`FixedRecord::LEN`].
     pub fn set_array_header(
         &self,
         token: u32,
@@ -644,22 +648,18 @@ where
         self.write_value(&key, &value)
     }
 
-    /// Every token key in the container's **native** walk order, skipping
-    /// the magic record (`flexible_ngram_bdb.h:245-291` and its peers).
+    // Kyoto Cabinet ignores the iterate status (flexible_ngram_kyotodb.h:262–272).
+    // The pin's training utilities ignore the tkrzw ProcessEach status returned by
+    // flexible_ngram_tkrzwdb.h:274–282 (for example, export_k_mixture_model.cpp:53,74).
+    /// Collects token keys in the container’s native walk order. The magic key and other keys
+    /// outside the token width are skipped. A closed handle gives [`None`]. A retained
+    /// unopened Kyoto Cabinet handle yields an empty list. On a walk failure, Kyoto Cabinet
+    /// and tkrzw return the token keys collected before the failure, which may be empty.
     ///
-    /// The order is the backend's, not sorted: [`RawReadStore::native_keys`]
-    /// is the shared seam, and its hash-container arms are the pin's own
-    /// walks — a Berkeley DB `DB_NEXT` cursor, a Kyoto Cabinet `iterate`
-    /// and a tkrzw `ProcessEach`, each in its library's order. The
-    /// eight-byte magic key and every other non-token key are skipped by
-    /// length, as the pin's visitors skip them. `None` when the handle is
-    /// closed (the pin returns false after clearing the array).
+    /// # Aborts
     ///
-    /// # Panics
-    ///
-    /// Exits the process after printing `training db error, exit!` to
-    /// stderr when the backend walk fails, as the pin does
-    /// (`flexible_ngram_bdb.h:279-286`).
+    /// On Berkeley DB, a failed walk on an opened handle prints `training db error, exit!`
+    /// to standard error and terminates the process with status 5.
     #[must_use]
     pub fn get_all_items(&self) -> Option<Vec<u32>> {
         let db = self.db.as_ref()?;
