@@ -372,7 +372,7 @@ An entry holds nothing else.
 - **Pin:** `trellis_value_compare` returns the negated `gfloat` difference as `gint` (`src/lookup/phonetic_lookup.h:174-178`) and is passed to `g_ptr_array_sort` (`:337`); its equality is not transitive, against the consistent total order a qsort-style comparator needs.
 - **oxpinyin:** `tail_merge` (`src/engine/nbest.rs`) sorts the tails stably by raw possibility descending, NaN last, with no integer truncation.
 - **Decision:** accepted under the [S3 ruling](compatibility-policy.md#s3-stable-descending-possibility) (policy row 147).
-- **Tests:** `nbest::tests::ieee_order_and_stable_raw_tails`.
+- **Tests:** `nbest::tests::ieee_order_and_stable_raw_tails` checks ties and special values. `nbest::tests::raw_tails_order_subunit_score_differences` checks two finite scores 0.75 apart.
 
 ### Phrase segmentation writes no invalid-UTF-8 critical
 
