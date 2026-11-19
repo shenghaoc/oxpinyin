@@ -170,6 +170,18 @@ impl ConstraintStore {
         }
     }
 
+    /// Whether `clear_constraint` at `index` reaches the pin's assert
+    /// (`phonetic_lookup.cpp:98-104`): a `NoSearch` cell whose run start
+    /// holds no forcing. A zero-length step over a run leaves such cells
+    /// ([`Self::add_null_step`]) once a later forcing at the start is
+    /// cleared.
+    pub(crate) fn clear_asserts(&self, index: usize) -> bool {
+        matches!(
+            self.cells.get(index),
+            Some(Cell::NoSearch { start }) if !self.is_one_step_at(*start)
+        )
+    }
+
     /// `clear_constraint` (`phonetic_lookup.cpp:88-105`): a free cell
     /// answers `false`; a `NoSearch` cell jumps back to its run's start;
     /// the whole run `[start, end)` returns to free. Out of range answers
@@ -188,6 +200,88 @@ impl ConstraintStore {
             *cell = Cell::None;
         }
         true
+    }
+
+    /// Moves the store into new coordinates, the pin's cells keeping their
+    /// matrix columns (`phonetic_lookup.cpp:120-163`). A caller whose store
+    /// coordinates moved under a reparse runs this before validation.
+    ///
+    /// `forcing` maps each forcing's `[start, end)`; the forcing keeps its
+    /// token and text, and `None` or an end before the start drops it.
+    /// `orphans` maps each group of `NoSearch` cells `[from, to)` that no
+    /// forcing covers, which a zero-length write over a run leaves
+    /// ([`Self::add_null_step`]), with the `start` they point at. It
+    /// answers the new `(start, from, to)`, or `None` to drop the group.
+    /// The orphans are written first, so a forcing that lands on them wins.
+    pub(crate) fn remap(
+        &mut self,
+        forcing: impl Fn(usize, usize) -> Option<(usize, usize)>,
+        orphans: impl Fn(usize, usize, usize) -> Option<(usize, usize, usize)>,
+    ) {
+        let forcings: Vec<(usize, usize, PhraseToken, PhraseText)> = self
+            .cells
+            .iter()
+            .enumerate()
+            .filter_map(|(start, cell)| match cell {
+                Cell::OneStep { token, end, text } => Some((start, *end, *token, text.clone())),
+                Cell::None | Cell::NoSearch { .. } => None,
+            })
+            .collect();
+        let groups = self.orphan_groups();
+        self.cells.fill(Cell::None);
+        for (start, from, to) in groups {
+            let Some((start, from, to)) = orphans(start, from, to) else {
+                continue;
+            };
+            self.fill_no_search(start, from, to);
+        }
+        for (start, end, token, text) in forcings {
+            let Some((start, end)) = forcing(start, end).filter(|(start, end)| start <= end) else {
+                continue;
+            };
+            if self.cells.len() <= end {
+                self.cells.resize(end + 1, Cell::None);
+            }
+            self.cells[start] = Cell::OneStep { token, end, text };
+            self.fill_no_search(start, start + 1, end);
+        }
+    }
+
+    /// The `NoSearch` cells outside the span of the forcing they point at,
+    /// as `(start, from, to)` groups of adjacent cells with one `start`.
+    fn orphan_groups(&self) -> Vec<(usize, usize, usize)> {
+        let mut groups: Vec<(usize, usize, usize)> = Vec::new();
+        for (index, cell) in self.cells.iter().enumerate() {
+            let Cell::NoSearch { start } = *cell else {
+                continue;
+            };
+            let covered = matches!(
+                self.cells.get(start),
+                Some(Cell::OneStep { end, .. }) if start < index && index < *end
+            );
+            if covered {
+                continue;
+            }
+            match groups.last_mut() {
+                Some((last, _, to)) if *last == start && *to == index => *to = index + 1,
+                _ => groups.push((start, index, index + 1)),
+            }
+        }
+        groups
+    }
+
+    /// Points the cells `[from, to)` at `start`, growing the store to hold
+    /// them.
+    fn fill_no_search(&mut self, start: usize, from: usize, to: usize) {
+        if from >= to {
+            return;
+        }
+        if self.cells.len() < to {
+            self.cells.resize(to, Cell::None);
+        }
+        for cell in &mut self.cells[from..to] {
+            *cell = Cell::NoSearch { start };
+        }
     }
 
     /// `validate_constraint`'s per-cell pass (`phonetic_lookup.cpp:142-168`):
