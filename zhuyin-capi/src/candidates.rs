@@ -291,6 +291,9 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
 ///                              size_t offset);
 /// ```
 ///
+/// Remove the whole constraint containing the supplied offset. Returns true if removed and false
+/// for a null instance, an unconstrained position or an out-of-range position.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
@@ -316,6 +319,18 @@ pub unsafe extern "C" fn zhuyin_clear_constraint(
 /// ```c
 /// bool zhuyin_train(zhuyin_instance_t * instance);
 /// ```
+///
+/// Train decoded row zero using the current constraints. With no user directory or no decoded
+/// rows, training returns false. Observations start only at a forced `OneStep` constraint. After a
+/// forced span, the pin's `train_next` rule also trains the next decoded span. A successful call
+/// can update no frequencies, for example when no phrase is forced, and it still marks the profile
+/// modified, so a later save writes it. Observations already applied can survive a failed training
+/// call.
+///
+/// # Aborts
+///
+/// Training with a forced phrase or span inconsistent with the current decode or matrix can
+/// abort.
 ///
 /// # Safety
 ///
