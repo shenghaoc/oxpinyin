@@ -635,14 +635,18 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
  * 20-input cycle above. PERF_REPEATS scales the amount of work inside the
  * timed region without touching the corpus, so input structure — every
  * string, every prefix length, every reset — is identical at every size.
- * At the default of 1 this returns run_perf_cycle's own checksum
- * unchanged, so the default workload is the pre-knob workload exactly. */
+ * One pass keeps its checksum. Before mixing each later pass, multiply
+ * the accumulator by x modulo the primitive polynomial x^64+x^4+x^3+x+1.
+ * Thus r equal checksums have weight 1+x+...+x^(r-1), which is nonzero
+ * for every allowed r (x has order 2^64-1). */
 static uint64_t run_perf_unit(const struct symbols *s, pinyin_instance_t *inst,
                               int repeats) {
-    uint64_t checksum = 0;
+    uint64_t checksum = run_perf_cycle(s, inst);
 
-    for (int r = 0; r < repeats; r++)
+    for (int r = 1; r < repeats; r++) {
+        checksum = (checksum << 1) ^ ((checksum >> 63) ? 0x1b : 0);
         checksum ^= run_perf_cycle(s, inst);
+    }
     return checksum;
 }
 

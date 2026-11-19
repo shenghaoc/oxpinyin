@@ -92,6 +92,22 @@ bool pinyin_get_candidate_nbest_index(void *p, void *c, uint8_t *n) {
 
 
 if os.name == 'posix':
+    PERF_STUB = '''#include <stdbool.h>
+#include <stddef.h>
+#include <string.h>
+static bool failed;
+static volatile unsigned long spin;
+void *pinyin_init(const char *data, const char *user) { (void)user; failed = !strcmp(data, "fail"); return failed ? NULL : (void *)1; }
+void pinyin_fini(void *p) { (void)p; }
+void *pinyin_alloc_instance(void *p) { return p; }
+void pinyin_free_instance(void *p) { (void)p; }
+bool pinyin_set_options(void *p, unsigned flags) { (void)p; (void)flags; return true; }
+size_t pinyin_parse_more_full_pinyins(void *p, const char *s) { (void)p; for (int i = 0; i < 4000; i++) spin += i; return strlen(s); }
+bool pinyin_guess_candidates(void *p, size_t n, unsigned f) { (void)p; (void)n; (void)f; return true; }
+bool pinyin_get_n_candidate(void *p, unsigned *n) { (void)p; *n = CANDIDATE_COUNT; return true; }
+bool pinyin_reset(void *p) { (void)p; return true; }
+'''
+
     class NativeTests(unittest.TestCase):
         @classmethod
         def setUpClass(cls):
@@ -208,6 +224,23 @@ if os.name == 'posix':
                 self.assertNotIn(b'USER:', done.stderr)
                 self.assertEqual(list(Path(root).iterdir()), [])
 
+        def test_two_perf_repeats_distinguish_candidate_counts(self):
+            source = self.root / 'perf-stub.c'
+            source.write_text(PERF_STUB)
+            env = dict(os.environ, PERF_MODE='speed', PERF_FACADE='pinyin', PERF_CYCLES='1',
+                       PERF_REPEATS='2', PERF_WORKLOAD_CHECKSUM='1')
+            fingerprints = []
+            for count in (1, 2):
+                library = self.root / f'perf-stub-{count}.so'
+                subprocess.run(['cc', '-shared', '-fPIC', f'-DCANDIDATE_COUNT={count}', source, '-o', library],
+                               check=True, capture_output=True)
+                row = subprocess.check_output([self.harness, '--perf', library, self.root], env=env)
+                fingerprints.append(json.loads(row)['workload_checksum'])
+
+            self.assertNotEqual(fingerprints[0], fingerprints[1])
+            # One outer cycle with a cancelled repeat checksum printed this value for both stubs.
+            self.assertNotIn('44bd2bd473ccf799', fingerprints)
+
         def test_sentence_calls_parse_then_sentence_without_candidates(self):
             done = self.launch('sentence', iterations='2')
             self.assertEqual(done.returncode, 0, done.stderr)
@@ -256,22 +289,6 @@ if os.name == 'posix':
 
 
 if sys.platform == 'linux':
-    LINUX_STUB = '''#include <stdbool.h>
-#include <stddef.h>
-#include <string.h>
-static bool failed;
-static volatile unsigned long spin;
-void *pinyin_init(const char *data, const char *user) { (void)user; failed = !strcmp(data, "fail"); return failed ? NULL : (void *)1; }
-void pinyin_fini(void *p) { (void)p; }
-void *pinyin_alloc_instance(void *p) { return p; }
-void pinyin_free_instance(void *p) { (void)p; }
-bool pinyin_set_options(void *p, unsigned flags) { (void)p; (void)flags; return true; }
-size_t pinyin_parse_more_full_pinyins(void *p, const char *s) { (void)p; for (int i = 0; i < 4000; i++) spin += i; return strlen(s); }
-bool pinyin_guess_candidates(void *p, size_t n, unsigned f) { (void)p; (void)n; (void)f; return true; }
-bool pinyin_get_n_candidate(void *p, unsigned *n) { (void)p; *n = 1; return true; }
-bool pinyin_reset(void *p) { (void)p; return true; }
-'''
-
     class LinuxDriver(unittest.TestCase):
         """The real driver, taskset and Valgrind against a stub library: no tkrzw, no product code."""
 
@@ -279,13 +296,13 @@ bool pinyin_reset(void *p) { (void)p; return true; }
         def setUpClass(cls):
             cls.scratch = tempfile.TemporaryDirectory()
             cls.root = Path(cls.scratch.name).resolve()
-            (cls.root / 'stub.c').write_text(LINUX_STUB)
+            (cls.root / 'stub.c').write_text(PERF_STUB)
             cls.arms = {}
             driver = cls.root / 'bisect'
             digest = prepare.native_driver(dict(linux=True), driver, dict(os.environ))
             built = cls.root / 'build/libpinyin.so.15.0.0'
             built.parent.mkdir()
-            subprocess.run(['cc', '-shared', '-fPIC', '-O1', '-g', cls.root / 'stub.c', '-o', built],
+            subprocess.run(['cc', '-shared', '-fPIC', '-O1', '-g', '-DCANDIDATE_COUNT=1', cls.root / 'stub.c', '-o', built],
                            check=True, capture_output=True)
             for label, name in recipes.PREFIXES.items():
                 arm = recipes.stage_arm(cls.root / name, dict(dylib=built, linux=True, backend='tkrzw'), driver, digest)
