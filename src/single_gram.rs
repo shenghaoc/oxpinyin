@@ -1,20 +1,11 @@
-//! libpinyin's `SingleGram` operations over one raw gram value
-//! (`src/storage/ngram.cpp` at the pin `074a2219`).
-//!
-//! A gram is the value a bigram container stores under a predecessor: a
-//! little-endian `guint32` `total_freq`, then packed eight-byte
-//! `SingleGramItem { m_token, m_freq }` records. The pin never checks that
-//! the records are sorted or unique. [`slice::partition_point`] finds
-//! the first-not-less item on partitioned records. On
-//! unpartitioned records std's answer is unspecified; stored order is
-//! preserved rather than sorted or cleaned (2026-10-29 ruling, inventory C).
-//!
-//! The item count is `(len − 4) / 8`, the pin's `end − begin` over whole
-//! items; every walk here stops at the last whole item. A value shorter
-//! than the total, or with a partial item after it, is the caller's to
-//! refuse first: the pin asserts on the first (`memory_chunk.h:390`) and
-//! reads past the second (register rows 85, 98 and 100). Nothing here
-//! panics on either.
+//! Raw bigram operations on a predecessor’s row. A row is a four-byte little-endian
+//! total, then eight-byte records. Each record is a four-byte little-endian token
+//! followed by a four-byte little-endian frequency. Searches that start at
+//! [`lower_bound`] need whole records sorted by token. Updates keep the stored order.
+
+// SingleGram, src/storage/ngram.cpp. The pin asserts on a short total at
+// memory_chunk.h:390 and can read past a partial record (compatibility rows 85, 98 and
+// 100).
 
 /// Bytes of the `guint32` `total_freq` header.
 pub const TOTAL_LEN: usize = 4;
@@ -176,16 +167,16 @@ pub fn checked_get_freq(gram: &[u8], token: u32) -> Result<Option<u32>, GramFaul
     Ok(None)
 }
 
-/// `SingleGram::search` into `out`, checked where the pin's walk can
-/// leave the value (`ngram.cpp:153-176`): `lower_bound(begin)` (`:163`, which reads
-/// nothing on a value shorter than its total), then `get_total_freq`
-/// (`:165`), then every item until the first at or past `end`
-/// (`:167-173`), duplicates included.
+// SingleGram::search, ngram.cpp:153–176. lower_bound precedes get_total_freq and the
+// range walk.
+/// Appends records with tokens in `begin..end` to `out`, including duplicate tokens.
+/// Supply a total header followed by whole records sorted by token. Existing entries in
+/// `out` are retained.
 ///
 /// # Errors
-/// [`GramFault::Short`] where the total read asserts;
-/// [`GramFault::OverRead`] where the walk runs past the last whole item
-/// of a value with a partial tail.
+///
+/// A header read or a record read can fail with [`GramFault`]. Entries already appended
+/// remain in `out` on error.
 pub fn checked_search(
     gram: &[u8],
     begin: u32,
@@ -211,8 +202,9 @@ pub fn checked_search(
     Ok(())
 }
 
-/// `SingleGram::set_freq` (`ngram.cpp:252-271`): sets the first match
-/// walking from [`lower_bound`]; `false` on a miss.
+// SingleGram::set_freq, ngram.cpp:252–271.
+/// Replaces the first matching token’s frequency and leaves the row total unchanged.
+/// Returns `false` when the sorted row has no such token.
 pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
     let Some(offset) = find(gram, token)
         .and_then(item_offset)
@@ -224,9 +216,9 @@ pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
     true
 }
 
-/// `SingleGram::insert_freq` (`ngram.cpp:178-205`): from [`lower_bound`],
-/// inserts before the first item above `token`, refuses when an equal one
-/// comes first, and otherwise appends at the chunk's end.
+// SingleGram::insert_freq, ngram.cpp:178–205.
+/// Inserts a token and frequency into a sorted row and leaves the row total unchanged. An
+/// existing token is refused.
 pub fn insert_freq(gram: &mut Vec<u8>, token: u32, freq: u32) -> bool {
     let mut record = [0_u8; ITEM_LEN];
     record[..4].copy_from_slice(&token.to_le_bytes());
@@ -251,10 +243,9 @@ pub fn insert_freq(gram: &mut Vec<u8>, token: u32, freq: u32) -> bool {
     true
 }
 
-/// `SingleGram::mask_out` (`ngram.cpp:76-103`): removes every item with
-/// `(token & mask) == value`, subtracting each one's frequency from the
-/// stored total with `guint32` wrap, and answers how many it removed. A
-/// value shorter than the total removes nothing.
+// SingleGram::mask_out, ngram.cpp:76–103.
+/// Removes records for which `(token & mask) == value` and returns the number removed.
+/// Each removed frequency is subtracted from the stored total using 32-bit wrapping arithmetic.
 pub fn mask_out(gram: &mut Vec<u8>, mask: u32, value: u32) -> u32 {
     let Some(mut total) = get_total_freq(gram) else {
         return 0;
