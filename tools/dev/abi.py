@@ -19,7 +19,7 @@ import tempfile
 from .cell import CellError, Settings
 from .drivers import DriverServices
 from . import pool, slot
-from .packaging import crate_dir
+from .packaging import crate_dir, linux_exports, version_exports
 
 
 def driver_services(settings: Settings) -> DriverServices:
@@ -36,32 +36,12 @@ class HostFacts:
         return cls(platform.system())
 
 
-def version_globals(text: str) -> set[str]:
-    active = False
-    result = set()
-    for line in text.splitlines():
-        if 'global:' in line:
-            active = True
-            continue
-        if 'local:' in line:
-            active = False
-        if active and ';' in line:
-            result.add(re.sub(r'[\s;]', '', line))
-    return result
-
-
-def exported_symbols(text: str, facts: HostFacts) -> set[str]:
-    """Parse supplied nm output; the parser runs on every native platform."""
+def darwin_exported_symbols(text: str) -> set[str]:
+    """Darwin nm -gU already selects every external defined symbol."""
     result = set()
     for line in text.splitlines():
         fields = line.split()
-        if len(fields) < 3:
-            continue
-        if facts.system == 'Linux' and fields[1] in 'TtWw':
-            result.add(fields[2])
-        # Darwin's nm -gU already selects external defined symbols. Data,
-        # absolute and weak exports are just as much part of the ABI as text.
-        elif facts.system == 'Darwin':
+        if len(fields) >= 3:
             result.add(fields[2].removeprefix('_'))
     return result
 
@@ -86,12 +66,11 @@ def check_exports(settings: Settings, facts: HostFacts) -> int:
         return 2
     extension = 'so' if facts.system == 'Linux' else 'dylib'
     libraries = [('libpinyin', settings.artifact('OXPINYIN_CAPI_SO', f'liboxpinyin_capi.{extension}', 'oxpinyin-capi'),
-                  settings.root / 'capi/libpinyin.ver', 'pinyin',
-                  set()),
+                  settings.root / 'capi/libpinyin.ver'),
                  ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'liboxzhuyin_capi.{extension}', 'oxzhuyin-capi'),
-                  settings.root / 'zhuyin-capi/libzhuyin.ver', 'zhuyin', set())]
+                  settings.root / 'zhuyin-capi/libzhuyin.ver')]
     status = 0
-    for name, library, version, prefix, hooks in libraries:
+    for name, library, version in libraries:
         print(f'--- {name}: {library} against {version.relative_to(settings.root)} ---')
         flags = ['-D', '--defined-only'] if facts.system == 'Linux' else ['-gU']
         result = subprocess.run(['nm', *flags, str(library)], env=settings.environment,
@@ -99,8 +78,12 @@ def check_exports(settings: Settings, facts: HostFacts) -> int:
         if result.returncode:
             sys.stderr.write(result.stderr)
             return result.returncode
-        symbols = exported_symbols(result.stdout, facts)
-        if facts.system == 'Darwin':
+        node, names = version_exports(version)
+        expected = set(names)
+        if facts.system == 'Linux':
+            symbols = set(linux_exports(result.stdout, node))
+        else:
+            symbols = darwin_exported_symbols(result.stdout)
             result = subprocess.run(['dyld_info', '-exports', str(library)], env=settings.environment,
                                     capture_output=True, text=True)
             if result.returncode:
@@ -115,26 +98,17 @@ def check_exports(settings: Settings, facts: HostFacts) -> int:
                 print(f'FAIL: nm and export trie differ: {sorted(trie ^ symbols)}', file=sys.stderr)
                 status = 1
             symbols |= trie
-        expected = version_globals(version.read_text())
-        actual = {symbol for symbol in symbols if symbol.startswith(prefix + '_')}
-        missing, extra = expected - actual, actual - expected
-        print(f'{prefix}_* exported: {len(actual)}, in .ver: {len(expected)}')
-        for label, names in [('MISSING (in .ver, not exported):', missing),
-                             ('EXTRA (exported, not in .ver):', extra)]:
-            if names:
-                print(label)
-                for symbol in sorted(names):
-                    print('  ' + symbol)
-                status = 1
-        leaked = False
-        for symbol in sorted(symbols - actual):
-            if symbol in hooks:
-                print('allowed non-ABI export: ' + symbol)
-            else:
-                print('LEAKED non-ABI export: ' + symbol)
-                leaked = True
-                status = 1
-        if not missing and not extra and not leaked:
+        missing, extra = expected - symbols, symbols - expected
+        print(f'exported: {len(symbols)}, in .ver: {len(expected)}')
+        if missing:
+            print('MISSING (in .ver, not exported):')
+            for symbol in sorted(missing):
+                print('  ' + symbol)
+        for symbol in sorted(extra):
+            print('LEAKED non-ABI export: ' + symbol)
+        if missing or extra:
+            status = 1
+        else:
             print('OK: exactly the .ver set')
     print("FAIL: the exported symbol set is not the pin's version script" if status else
           "PASS: both libraries export exactly their version script's set")
@@ -264,7 +238,7 @@ def check_static(settings: Settings, abi: str, header: str) -> int:
     text = (root / (abi + '.alloc')).read_text()
     slots = header_slots(header_file.read_text())
     rows = sorted(tuple(fields[:4]) for _, fields in register_rows(text) if len(fields) >= 4)
-    exports = version_globals((root / (abi + '.ver')).read_text())
+    _, exports = version_exports(root / (abi + '.ver'))
     print(f'--- {abi}: register against {header} ---')
     print(f'  header slots: {len(slots)}, register entries: {len(rows)}')
     status = 0

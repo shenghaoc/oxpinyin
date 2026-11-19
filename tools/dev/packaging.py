@@ -504,11 +504,12 @@ def deployment_target(tools):
 
 def relink_darwin(layout, destination, tools, backend):
     """Link once under our allowlist, outside rustc's additive export lists."""
-    from .abi import HostFacts, darwin_export_trie, exported_symbols, version_globals
+    from .abi import darwin_export_trie, darwin_exported_symbols
 
     archive = layout.qualified / (layout.library + '.a')
     ver = crate_dir(tools.root, LIBRARIES[layout.library]) / (layout.library + '.ver')
-    expected = version_globals(ver.read_text())
+    _, names = version_exports(ver)
+    expected = set(names)
     if not expected or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name) for name in expected):
         fail(f'error: {ver}: expected explicit global symbol names')
     if not archive.is_file():
@@ -535,7 +536,7 @@ def relink_darwin(layout, destination, tools, backend):
                      '-Xlinker', '-exported_symbols_list', '-Xlinker', exports,
                      '-Xlinker', '-force_load', '-Xlinker', archive, '-Wl,-dead_strip',
                      *flags, *lto, '-liconv', '-lresolv'])
-        actual = exported_symbols(tools.text(['nm', '-gU', temporary]), HostFacts('Darwin'))
+        actual = darwin_exported_symbols(tools.text(['nm', '-gU', temporary]))
         try:
             trie = darwin_export_trie(tools.text(['dyld_info', '-exports', temporary]))
         except ValueError as error:
@@ -640,7 +641,7 @@ def version_exports(ver):
     text = Path(ver).read_text()
     nodes = re.findall(r'^([A-Za-z_][A-Za-z0-9_]*) \{.*', text, re.M)
     if not nodes:
-        fail(f'error: no version node found in {ver}')
+        raise ValueError(f'no version node found in {ver}')
     selected, lines = False, []
     for line in text.splitlines():
         if 'global:' in line:
@@ -653,14 +654,26 @@ def version_exports(ver):
     return nodes[0], sorted(symbol for symbol in symbols if symbol)
 
 
+def linux_symbol_names(text: str, node: str):
+    """Yield names from nm -D --defined-only, omitting the linker's absolute version node."""
+    for row in text.splitlines():
+        if row.strip():
+            _, kind, name = row.split(maxsplit=2)
+            if (kind, name) != ('A', node):
+                yield name
+
+
+def linux_exports(text: str, node: str) -> list[str]:
+    return [name.partition('@')[0] for name in linux_symbol_names(text, node)]
+
+
 def link_and_verify(cc, temporary, ver, soname, archive, flags, tools):
     tools.heavy([cc, '-shared', '-o', temporary, '-Wl,-z,defs', f'-Wl,-soname,{soname}',
                  f'-Wl,--version-script={ver}', '-Wl,--gc-sections', '-Wl,--whole-archive', archive,
                  '-Wl,--no-whole-archive', *flags, '-lpthread', '-ldl', '-lm'])
     node, expected = version_exports(ver)
     raw = tools.text(['nm', '-D', '--defined-only', temporary])
-    symbols = [line.split()[-1] for line in raw.splitlines() if line.split()]
-    actual = sorted(name.split('@')[0] for name in symbols if name.split('@')[0] != node)
+    actual = sorted(linux_exports(raw, node))
     if not actual:
         raise Finished(1)
     if expected != actual:
@@ -673,8 +686,8 @@ def link_and_verify(cc, temporary, ver, soname, archive, flags, tools):
             write(b'\n'.join(done.stdout.splitlines()[2:40]) + b'\n', error=True)
         raise Finished(1)
     # Preserve the second nm validation: a failing inspection is a failed run.
-    unversioned = [line.split()[-1] for line in tools.text(['nm', '-D', '--defined-only', temporary]).splitlines()
-                   if line.split() and '@' not in line.split()[-1] and line.split()[-1] != node]
+    raw = tools.text(['nm', '-D', '--defined-only', temporary])
+    unversioned = [name for name in linux_symbol_names(raw, node) if '@' not in name]
     if unversioned:
         fail('error: exported symbols without a version tag:\n' + '\n'.join('  ' + name for name in unversioned))
     names = re.findall(r'\(SONAME\).*\[([^]]*)\]', tools.text(['readelf', '-d', temporary]))
