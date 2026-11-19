@@ -17,6 +17,15 @@ use crate::types::{GArray, GChar, GUint, PhraseTokenT, ZhuyinInstance};
 ///                           const char * phrase, GArray * tokenarray);
 /// ```
 ///
+/// Look up an exact phrase in the loaded libraries. The caller’s array is cleared, then filled
+/// in library order. Returns true when there was a match. A miss leaves the array empty. A null
+/// instance returns false before clearing it.
+///
+/// # Aborts
+///
+/// More than four matching tokens abort after the hits have been appended
+/// (`phrase_large_table3.h:79-95`).
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `phrase` is a
@@ -99,6 +108,10 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
 ///                              gchar ** utf8_str);
 /// ```
 ///
+/// A missing token or null instance returns false without touching either optional output. On
+/// success the length counts characters. Conversion failure can give null text with a true
+/// return. Free a returned string with `g_free`.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `len` and `utf8_str`
@@ -158,6 +171,9 @@ pub unsafe extern "C" fn zhuyin_token_get_phrase(
 ///                                       phrase_token_t token, guint * num);
 /// ```
 ///
+/// Write the pronunciation count and return true for a known token. On a live instance a token
+/// miss writes zero and returns false. A null instance returns false without writing.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
@@ -205,6 +221,11 @@ oxpinyin::append_stored_words! {
 ///                                         phrase_token_t token, guint nth,
 ///                                         ChewingKeyVector keys);
 /// ```
+///
+/// For an existing token, `nth` must be less than its pronunciation count. The function clears
+/// the caller’s array, appends the selected reading’s packed two-byte keys and returns true. A
+/// token miss returns false with an empty array. A null instance returns false without clearing
+/// it.
 ///
 /// # Safety
 ///
@@ -291,6 +312,7 @@ pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
     true
 }
 
+// zhuyin.cpp:1813-1826.
 /// Get the unigram frequency of a token.
 ///
 /// # C signature
@@ -299,12 +321,8 @@ pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
 ///                                         phrase_token_t token, guint * freq);
 /// ```
 ///
-/// The pin answers the default facade's item field verbatim
-/// (`zhuyin.cpp:1813-1826`: `get_phrase_item` on `m_phrase_index`, then
-/// `PhraseItem::get_unigram_frequency` — the stored `guint32`,
-/// `gen_unigram`'s `+1` already included for system items), system and
-/// `USER_FILE` tokens alike. `*freq` is zeroed before the dispatch, so a
-/// `false` still delivers 0.
+/// Write the live unigram frequency and return true for a known token. On a live instance a
+/// token miss writes zero and returns false. A null instance returns false without writing.
 ///
 /// # Safety
 ///
@@ -352,6 +370,10 @@ pub unsafe extern "C" fn zhuyin_token_get_unigram_frequency(
 /// bool zhuyin_token_add_unigram_frequency(zhuyin_instance_t * instance,
 ///                                         phrase_token_t token, guint delta);
 /// ```
+///
+/// Add the delta to the live item. Returns false on a failed update. If the sub-index is loaded,
+/// the aggregate can change even when the item update fails (`phrase_index.h:628-635`). A later
+/// armed save persists live item changes; this call alone does not arm it.
 ///
 /// # Safety
 ///

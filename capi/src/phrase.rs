@@ -16,6 +16,7 @@ use std::os::raw::c_char;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PhraseTokenT, PinyinInstance};
 
+// pinyin.cpp:1454.
 /// Segment an arbitrary sentence string into phrase tokens.
 ///
 /// # C signature
@@ -24,10 +25,10 @@ use crate::types::{GUint, PhraseTokenT, PinyinInstance};
 ///                            const char * sentence);
 /// ```
 ///
-/// Upstream gates on GLib UCS4 conversion length
-/// (`g_return_val_if_fail(num_of_chars == ucs4_len, FALSE)`, `pinyin.cpp:1454`) and stores the best phrase
-/// path into the instance's result array — including on a failed match,
-/// where the array stays fully sized and all-null.
+/// Segmentation that completes replaces the instance’s phrase result, even when no path
+/// matches. A failed input conversion returns `false` and keeps the previous result. An
+/// unmatched sentence can leave a result sized for the sentence, with every token null. A null
+/// sentence follows the empty-input path.
 ///
 /// # Safety
 ///
@@ -130,6 +131,7 @@ pub unsafe extern "C" fn pinyin_get_n_phrase(
     true
 }
 
+// pinyin.cpp:3276-3287.
 /// Get the phrase token at an index of the phrase result.
 ///
 /// # C signature
@@ -139,8 +141,8 @@ pub unsafe extern "C" fn pinyin_get_n_phrase(
 ///                              phrase_token_t * token);
 /// ```
 ///
-/// The out-param is zeroed before the bounds check — a `false` still
-/// delivers `null_token` (`pinyin.cpp:3276-3287`).
+/// Returns true for an existing result index. On a live instance an absent index writes the null
+/// token and returns false. A null instance returns false without writing.
 ///
 /// # Safety
 ///
