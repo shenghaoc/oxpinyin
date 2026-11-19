@@ -147,7 +147,7 @@ fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
             "network.bin",
         ];
         for name in &created {
-            let stem = name.trim_suffix(".tmp");
+            let stem = name.strip_suffix(".tmp").unwrap_or(name);
             assert!(
                 earlier.contains(&stem),
                 "{law:?}: later file {name} was touched"

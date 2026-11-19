@@ -22,7 +22,7 @@ Native Windows recipes use pwsh with `-CommandWithArgs`; doctor checks its
 declared minimum.
 
 The Rust **toolchain** is the compiler and its tools. rustup installs
-and selects it. `rust-toolchain.toml` selects the version and components. The workspace `rust-version` in `Cargo.toml` declares the minimum supported Rust version.
+and selects it. `rust-toolchain.toml` selects the version and components. The workspace `rust-version` in `Cargo.toml` declares the minimum supported Rust version. It is older than the stable pin, because the nightly in `fuzz/rust-toolchain.toml` also builds the workspace; that file states why the nightly is older. Toolchain bumps are manual: a pull request changes the toolchain files, and CI checks it.
 The **linker** joins compiled code into executables and native libraries.
 
 ## Linux

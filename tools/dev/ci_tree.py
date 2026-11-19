@@ -90,7 +90,8 @@ def workspace_members(root: Path = Path(__file__).resolve().parents[2]) -> tuple
 
 CRATE_DIRS = workspace_members()
 CRATE_INPUTS = (*CRATE_DIRS, "src", "tests", "codegen", "build.rs", "benches", "examples")
-RUST = (*SHARED, *CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "fixtures", "tools")
+# clippy.toml configures every clippy run, so it selects the Rust lanes.
+RUST = (*SHARED, *CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "clippy.toml", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
 PYTHON_ONLY = ("tools/*.test.py", "tools/bisection/*.py",
@@ -183,7 +184,8 @@ def gate(base: str, inputs: dict[str, Inputs] = CI_INPUTS, root: Path | None = N
 # per-cell tests and their data under utils, the backend provisioning under
 # tools/tkrzw and .github/actions/tkrzw, the sanitizer service
 # (tools/dev/test_runner.py), the toolchain pins (the sanitizer nightly is in
-# fuzz/rust-toolchain.toml), nextest's configuration and this gate's own code.
+# fuzz/rust-toolchain.toml), clippy.toml (the store job runs clippy for the
+# peer backends), nextest's configuration and this gate's own code.
 # Every Python step enters the uv project in pyproject.toml. --run-without-base
 # makes an empty base, one that is not a commit here or one with no merge base
 # select the store job, the over-trigger direction.
@@ -193,7 +195,7 @@ STORE_GATE_ARGUMENTS = ("--run-flag", "--run-without-base", *(argument for path 
     "tools/dev/ci_tree.py", "tools/dev/ci_tree.test.py", "tools/bisection/cells-for-diff.py",
     "tools/tkrzw", ".github/actions/tkrzw", "vcpkg-overlays", "triplets", "tools/dev/check.py",
     "tools/dev/vcpkg.py", "tools/dev/test_runner.py", "rust-toolchain.toml", "fuzz/rust-toolchain.toml",
-    ".config/nextest.toml", "pyproject.toml") for argument in ("--also", path)))
+    "clippy.toml", ".config/nextest.toml", "pyproject.toml") for argument in ("--also", path)))
 
 
 def store_gate(base: str, root: Path | None = None) -> bool:
