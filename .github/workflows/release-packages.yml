@@ -45,7 +45,7 @@
 #             runner's gh CLI; release events only
 #
 # A pull request that changes a packaging path runs the same jobs up to
-# publish, as a dry run with the version 0.0.0. publish does not run, so a
+# publish, as a dry run with the tag 0.0.0-dry-run.1+ci. publish does not run, so a
 # pull request never gets a write token.
 
 name: Release packages
@@ -192,25 +192,23 @@ jobs:
             arch)   echo "LIBDIR=/usr/lib" ;;
           esac >> "$GITHUB_ENV"
 
-      # Package version = the release tag (v stripped). The .pc keeps its
-      # own version, the pin's libpinyin version (just packaging pc-version)
-      # — docs/packaging.md "The four version streams".
-      # Stable three-component versions only: a prerelease suffix (-rc1)
-      # is not a legal pkgver for makepkg and sorts wrongly under dpkg/rpm,
-      # so anything but vX.Y.Z / X.Y.Z fails here rather than in a maker.
-      # A pull request dry run has no tag and builds 0.0.0.
       - name: Derive the package version from the release tag
         env:
-          TAG: ${{ github.event.release.tag_name || 'v0.0.0' }}
+          TAG: ${{ github.event_name == 'pull_request' && '0.0.0-dry-run.1+ci' || github.event.release.tag_name }}
+          DISTRO: ${{ matrix.distro }}
+        run: uv run --managed-python python -X utf8 -m tools.dev.packaging release-version "$DISTRO" "$TAG" >> "$GITHUB_ENV"
+
+      - name: Check that the pre-release sorts before the stable version
+        if: env.VERSION != env.BASE
+        env:
+          DISTRO: ${{ matrix.distro }}
         run: |
           set -euo pipefail
-          if [[ "$TAG" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            VER="${BASH_REMATCH[1]}"
-          else
-            echo "::error::release tag '$TAG' is not a stable vX.Y.Z / X.Y.Z version" >&2
-            exit 1
-          fi
-          echo "VERSION=$VER" >> "$GITHUB_ENV"
+          case "$DISTRO" in
+            debian) dpkg --compare-versions "$VERSION-1" lt "$BASE-1" ;;
+            fedora) test "$(rpm --eval '%{lua:print(rpm.vercmp(os.getenv("VERSION"), os.getenv("BASE")))}')" -lt 0 ;;
+            arch)   test "$(vercmp "$VERSION" "$BASE")" -lt 0 ;;
+          esac
 
       # release-stage certifies the libtkrzw that its smoke binaries load
       # against OXPINYIN_TKRZW_LIBRARY (tools/tkrzw/runtime.py), and refuses

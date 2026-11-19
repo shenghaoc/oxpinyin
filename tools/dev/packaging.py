@@ -55,7 +55,7 @@ ENTRY_POINTS = {'libpinyin': 'pinyin_init', 'libzhuyin': 'zhuyin_init'}
 # the .pc files' libpinyin_binary_version and libzhuyin_binary_version.
 BINARY_VERSION = '15.0'
 NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'distro-tkrzw-library', 'check-library-mode', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
+         'distro-tkrzw-library', 'check-library-mode', 'release-version', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
          'trainer-layout')
 
 # libpinyin 074a2219 utils/{storage,segment,training}/Makefile.am.
@@ -801,6 +801,27 @@ def check_library_mode(argv, tools):
     return 0
 
 
+def release_version(argv, tools):
+    import semver
+
+    if len(argv) != 2 or argv[0] not in ('debian', 'fedora', 'arch'):
+        fail('usage: release-version {debian,fedora,arch} TAG', 2)
+    distro, tag = argv
+    try:
+        parsed = semver.Version.parse(tag.removeprefix('v'))
+    except ValueError:
+        fail(f'error: invalid release tag {tag!r}', 2)
+    base = f'{parsed.major}.{parsed.minor}.{parsed.patch}'
+    release = base
+    if parsed.prerelease:
+        suffix = parsed.prerelease if distro == 'debian' else parsed.prerelease.replace('-', '_')
+        # vercmp sorts a letter immediately after the patch number before the bare version.
+        release += ('pre.' if distro == 'arch' else '~') + suffix
+    emit(f'VERSION={release}')
+    emit(f'BASE={base}')
+    return 0
+
+
 def release_deb(argv, tools):
     from . import packaging_templates as templates
     backend, release, stage, libdir, outdir = positional(argv,
@@ -1179,7 +1200,7 @@ def main(argv=None, *, tools=None):
                  'check-pc-metadata': metadata,
                  'distro-tkrzw-library': distro_tkrzw_library,
                  'check-library-mode': check_library_mode,
-                 'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,
+                 'release-version': release_version, 'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,
                  'release-arch': release_arch, 'sizes': sizes}
     def call():
         if name == 'pc-version':

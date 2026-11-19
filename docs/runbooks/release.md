@@ -1,7 +1,7 @@
 # Release — cutting one and what the pipeline gates
 
 This is the procedure to cut a release.
-Publishing a GitHub release (a stable tag) runs `.github/workflows/release-packages.yml`.
+Publishing a GitHub release runs `.github/workflows/release-packages.yml`.
 [Release artifacts](../packaging.md#release-artifacts-release-packagesyml) states
 what each distribution lane builds and gates; [`docs/packaging.md`](../packaging.md)
 is the design record. The Debian lane checks the runtime and development packages with lintian’s md5sums tags before installing them. Packaging pull requests run the build, install and gates with the dry-run version and stop before upload.
@@ -34,8 +34,9 @@ The crates.io alpha is a separate step from the distro release:
 2. From the merged commit, run `cargo publish --dry-run -p oxpinyin -p oxpinyin-capi -p oxzhuyin-capi`.
 3. When the dry run passes, run `cargo publish -p oxpinyin -p oxpinyin-capi -p oxzhuyin-capi` from the same commit.
 
-The alpha needs no tag.
-`release-packages.yml` builds distro packages only for stable `X.Y.Z` tags, so a Cargo alpha builds none.
+Tag the commit from which you published the crates and publish a GitHub release for that tag.
+Mark the release as a pre-release if the tag has a pre-release suffix.
+`release-packages.yml` builds and attaches the distro packages for every release.
 
 ## Locally
 

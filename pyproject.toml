@@ -2,6 +2,9 @@
 name = "oxpinyin-tools"
 version = "0"
 requires-python = ">=3.14"
+dependencies = [
+    "semver>=3,<4",
+]
 
 [dependency-groups]
 complexity = ["lizard>=1.26.0"]
