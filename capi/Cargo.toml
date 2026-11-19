@@ -17,6 +17,7 @@ include = [
     "/pinyin_custom2.h",
 ]
 description = "The libpinyin C ABI implementation, with libpinyin.so.15 release packages on Linux. The Rust interface is unstable."
+keywords = ["libpinyin", "pinyin", "chinese", "input-method", "ffi"]
 
 # Supported C ABI (Linux); soname/versioning freezes with the first public release.
 [lib]
