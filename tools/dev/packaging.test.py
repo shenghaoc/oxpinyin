@@ -27,11 +27,10 @@ from tools.dev import abi, packaging, test_support
 DRIVER = '''import os, sys
 from pathlib import Path
 from tools.dev import packaging
+packaging.LOAD_CHILD = os.environ.get('FIXTURE_LOAD_CHILD', 'pass')
 class FixtureTools(packaging.Tools):
     def heavy(self, argv, **options):
         self.run(argv, **options)
-    def load(self, path, symbol):
-        return os.environ.get('FIXTURE_LOAD', '')
 sys.exit(packaging.main(sys.argv[2:], tools=FixtureTools(root=Path(sys.argv[1]))))
 '''
 # A fake cargo's answer to `cargo metadata --no-deps`: the flat layout of the checkout fixture.
@@ -779,21 +778,27 @@ Path(args[args.index('-o')+1]).mkdir()
                     self.assertEqual((stage/'usr/lib/libpinyin.15.0.0.dylib').read_bytes(), b'installed dylib')
                     self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
 
-        def test_macos_install_fails_when_the_dylib_does_not_load(self):
+        def test_macos_install_reports_a_failed_load_child(self):
             self.darwin_fakes()
-            result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
-                                 env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
-                                      'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD': 'fixture load failure'})
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(b'does not load', result.stderr)
-            self.assertIn(b'fixture load failure', result.stderr)
+            for diagnostic in ('', 'fixture load failure'):
+                with self.subTest(diagnostic=diagnostic):
+                    child = f'import os; os.write(2, {diagnostic.encode()!r}); os._exit(17)'
+                    result, stage = self.install(env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
+                        'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD_CHILD': child})
+                    self.assertNotEqual(result.returncode, 0)
+                    dylib = os.fsencode(stage / 'usr/lib/libpinyin.15.0.0.dylib')
+                    self.assertIn(dylib + b' does not load', result.stderr)
+                    self.assertIn(b'status 17', result.stderr)
+                    if diagnostic:
+                        self.assertIn(diagnostic.encode(), result.stderr)
+                    self.assertNotIn(b'loaded ' + dylib, result.stdout)
 
         def test_macos_install_skips_the_load_check_for_a_non_native_target(self):
             self.darwin_fakes()
             stage = self.work / 'stage'
             result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(stage)],
                                  env={'CARGO_BUILD_TARGET': 'x86_64-apple-darwin',
-                                      'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD': 'fixture load failure'})
+                                      'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD_CHILD': 'raise SystemExit(17)'})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(b'load check skipped: target x86_64-apple-darwin is not the running architecture '
                           b'(aarch64-apple-darwin)', result.stdout + result.stderr)
