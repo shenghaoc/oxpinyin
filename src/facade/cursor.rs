@@ -149,7 +149,11 @@ impl ModeKeys<'_> {
         self.len() == 0
     }
 
-    /// Key `index` (`index < len()`) as the getters render it.
+    /// Returns the key at `index` in the active parse mode.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `index` is at least [`Self::len`].
     #[must_use]
     pub fn get(&self, index: usize) -> KeyAt {
         match self {
