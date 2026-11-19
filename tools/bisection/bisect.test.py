@@ -33,6 +33,12 @@ SENTENCE_STUB = r'''
 #include <sys/stat.h>
 static char parsed[256];
 static int state;
+static const char *perf_case;
+static bool fails(const char *operation) {
+    if (!perf_case || strcmp(perf_case, operation)) return false;
+    perf_case = "ok";
+    return true;
+}
 __attribute__((constructor)) static void report_user_dirs(void) {
     const char *root = getenv("REPORT_USER_ROOT");
     if (!root) return;
@@ -45,6 +51,7 @@ __attribute__((constructor)) static void report_user_dirs(void) {
     closedir(dir);
 }
 void *pinyin_init(const char *data, const char *user) {
+    perf_case = getenv("STUB_PERF_CASE");
     (void)data;
     struct stat st;
     if (stat(user, &st) || !S_ISDIR(st.st_mode)) abort();
@@ -54,10 +61,10 @@ void *pinyin_init(const char *data, const char *user) {
 void pinyin_fini(void *p) { (void)p; fputs("FINI\n", stderr); }
 void *pinyin_alloc_instance(void *p) { fputs("ALLOC\n", stderr); return p; }
 void pinyin_free_instance(void *p) { (void)p; fputs("FREE\n", stderr); }
-bool pinyin_set_options(void *p, uint32_t flags) { return p && flags == 0x18a; }
-bool pinyin_reset(void *p) { state=0; fputs("RESET\n", stderr); return p; }
+bool pinyin_set_options(void *p, uint32_t flags) { return p && flags == 0x18a && !fails("options"); }
+bool pinyin_reset(void *p) { state=0; fputs("RESET\n", stderr); return p && !fails("reset"); }
 size_t pinyin_parse_more_full_pinyins(void *p, const char *s) {
-    (void)p; strcpy(parsed, s); state=1; fprintf(stderr, "PARSE:%s\n", s); return strlen(s);
+    (void)p; strcpy(parsed, s); state=1; fprintf(stderr, "PARSE:%s\n", s); return fails("parse") ? 0 : strlen(s);
 }
 bool pinyin_guess_sentence(void *p) {
     (void)p; if (state != 1) abort(); state=2; fputs("SENTENCE\n", stderr);
@@ -67,10 +74,10 @@ bool pinyin_get_sentence(void *p, uint8_t n, char **s) {
     (void)p; if (state < 2 || n) abort(); *s=strdup(parsed); return true;
 }
 bool pinyin_guess_candidates(void *p, size_t offset, uint32_t sort) {
-    (void)p; if (state != 2 || offset || sort != 0x1e) abort();
-    state=3; fputs("CANDIDATES\n", stderr); return true;
+    (void)p; if (state != (perf_case ? 1 : 2) || offset || sort != 0x1e) abort();
+    state=3; fputs("CANDIDATES\n", stderr); return !fails("guess");
 }
-bool pinyin_get_n_candidate(void *p, unsigned *n) { (void)p; *n=12; return state==3; }
+bool pinyin_get_n_candidate(void *p, unsigned *n) { (void)p; *n=12; return state==3 && !fails("count"); }
 bool pinyin_get_candidate(void *p, unsigned n, void **c) {
     (void)p; *c=(void *)(uintptr_t)(n+1); return n < 12;
 }
@@ -122,6 +129,45 @@ if os.name == 'posix':
                     self.assertEqual(done.returncode, 1)
                     self.assertEqual(done.stdout, b'')
                     self.assertEqual(done.stderr, b'fatal: TMPDIR path is too long\n')
+
+        def perf(self, *args, case='ok', harness=None, checksum='1'):
+            return subprocess.run([harness or self.harness, '--perf', self.library, *args],
+                                  capture_output=True, env=dict(os.environ, STUB_PERF_CASE=case,
+                                                                PERF_MODE='speed', PERF_FACADE='pinyin',
+                                                                PERF_CYCLES='2', PERF_REPEATS='2',
+                                                                PERF_WORKLOAD_CHECKSUM=checksum))
+
+        def test_perf_requires_system_directory(self):
+            done = self.perf()
+            self.assertEqual(done.returncode, 1)
+            self.assertIn(b'--perf <path-to-so> <systemdir>', done.stderr)
+            self.assertEqual(done.stdout, b'')
+
+        def test_perf_checks_each_library_result(self):
+            complete = self.perf(self.root)
+            self.assertEqual(complete.returncode, 0, complete.stderr)
+            self.assertEqual(len(json.loads(complete.stdout)['cycles_ns']), 2)
+            for operation in ('options', 'reset', 'parse', 'guess', 'count'):
+                with self.subTest(operation=operation):
+                    done = self.perf(self.root, case=operation)
+                    self.assertEqual(done.returncode, 1, done.stderr)
+                    self.assertEqual(done.stdout, b'')
+
+        def test_perf_rejects_incomplete_corpus_pass(self):
+            # The first input succeeds. The second cannot fit in the prefix buffer.
+            source = bench.HARNESS_SOURCE.read_text()
+            original = '    "wo",'
+            self.assertEqual(source.count(original), 1)
+            with tempfile.TemporaryDirectory(dir=self.root) as directory:
+                copy = Path(directory) / 'bisect.c'
+                copy.write_text(source.replace(original, '    "' + 'w' * 256 + '",'))
+                harness = copy.with_suffix('')
+                subprocess.run([*bench.harness_build(harness, source=copy),
+                                '-I', bench.HARNESS_SOURCE.parent], check=True, capture_output=True)
+                done = self.perf(self.root, harness=harness, checksum='')
+            self.assertEqual(done.returncode, 1, done.stderr)
+            self.assertIn(b'PARSE:ni\n', done.stderr)
+            self.assertEqual(done.stdout, b'')
 
         def test_bisect_perf_places_and_cleans_user_directories_on_init_failure(self):
             for mode, prefix in ((['--perf'], 'bisect-perf-'),):

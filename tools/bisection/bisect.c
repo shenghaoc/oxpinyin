@@ -595,13 +595,15 @@ static int dump_malloc_info(const char *dir, const char *tag) {
 /* One 20-input cycle. For every input the instance is reset, then each
  * accumulated ASCII prefix is parsed and decoded the way the C++ frontend
  * drives the keystroke path: parse, guess candidates, read the count. */
-#if defined(MEASURE_LINKED)
 static bool measure_failed;
 static uint64_t measure_operations;
-#endif
 
 static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst) {
     uint64_t checksum = 1469598103934665603ULL;
+
+#if !defined(MEASURE_LINKED)
+    uint64_t completed = 0;
+#endif
 
     for (size_t i = 0; i < N_PERF_CYCLE_INPUTS; i++) {
         const char *input = PERF_CYCLE_INPUTS[i];
@@ -609,12 +611,10 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
         char prefix[256];
 
         if (length + 1 > sizeof prefix)
-            return checksum;
+            break;
         if (!s->reset(inst)) {
-#if defined(MEASURE_LINKED)
             measure_failed = true;
-#endif
-            return checksum;
+            break;
         }
 
         for (size_t j = 0; j < length; j++) {
@@ -628,6 +628,8 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
 #if defined(MEASURE_LINKED)
             measure_operations++;
             if (!consumed || !guessed || !counted) measure_failed = true;
+#else
+            completed += (consumed != 0) & guessed & counted;
 #endif
 
             checksum ^= (uint64_t)consumed;
@@ -636,6 +638,9 @@ static uint64_t run_perf_cycle(const struct symbols *s, pinyin_instance_t *inst)
             checksum = (checksum << 7) | (checksum >> 57);
         }
     }
+#if !defined(MEASURE_LINKED)
+    measure_operations += completed;
+#endif
     return checksum;
 }
 
@@ -816,7 +821,7 @@ static bool user_dir_template(char *path, size_t capacity, const char *prefix) {
 }
 
 static int run_perf_mode(int argc, char **argv) {
-    if (argc < 3) {
+    if (argc < 4) {
         fprintf(stderr,
                 "Usage: %s --perf <path-to-so> <systemdir>\n"
                 "  Environment: PERF_BACKEND (label), PERF_FACADE\n"
@@ -912,16 +917,17 @@ static int run_perf_mode(int argc, char **argv) {
         return 1;
     }
 
-    (void)sym.set_options(ctx, DEFAULT_FLAGS);
+    int status = 1;
+    if (!sym.set_options(ctx, DEFAULT_FLAGS)) {
+        fputs("fatal: set_options failed\n", stderr);
+        goto cleanup_context;
+    }
     uint64_t alloc_start = now_ns();
     pinyin_instance_t *inst = sym.alloc_instance(ctx);
     uint64_t alloc_end = now_ns();
     if (!inst) {
         fprintf(stderr, "fatal: alloc_instance returned NULL\n");
-        sym.fini(ctx);
-        dlclose(handle);
-        perf_remove_user_dir(user_dir);
-        return 1;
+        goto cleanup_context;
     }
 
     struct perf_memory after_init;
@@ -943,52 +949,38 @@ static int run_perf_mode(int argc, char **argv) {
         }
     }
 
-    printf("{\"pid\":%ld,\"backend\":", (long)getpid());
-    perf_json_string(backend);
-    printf(",\"so\":");
-    perf_json_string(so_path);
-    printf(",\"systemdir\":");
-    perf_json_string(system_dir);
-    printf(",\"mode\":");
-    perf_json_string(mode);
-    printf(",\"repeats\":%d", repeats);
-    printf(",\"init_ns\":%llu,\"alloc_ns\":%llu,",
-           (unsigned long long)(init_end - init_start),
-           (unsigned long long)(alloc_end - alloc_start));
-    perf_print_memory("after_init", &after_init);
-    if (rss_diag) {
-        putchar(',');
-        print_smaps_rollup("rollup_init", &rollup_init);
-        putchar(',');
-        print_arena_state("arena_init", &arena_init);
+    /* The old first printf allocated stdout's buffer here, after the init
+     * samples and before the cycle samples. Reserve it before validating
+     * the workload so an invalid run writes no part of a JSON row. */
+    if (setvbuf(stdout, NULL, _IOFBF, 0) != 0) {
+        fputs("fatal: could not buffer stdout\n", stderr);
+        goto cleanup_instance;
     }
 
-    if (strcmp(mode, "ram-init") != 0) {
-        uint64_t *cycle_ns = calloc((size_t)cycles, sizeof *cycle_ns);
-        uint64_t *cycle_cpu_ns = calloc((size_t)cycles, sizeof *cycle_cpu_ns);
-        struct perf_memory after_first;
-        struct perf_memory after_last;
+    bool run_cycles = strcmp(mode, "ram-init") != 0;
+    uint64_t *cycle_ns = NULL, *cycle_cpu_ns = NULL;
+    struct perf_memory after_first, after_last;
+    int hw_wanted = getenv("PERF_HW") != NULL;
+    int hw_fd = -1, hw_errno = 0, hw_cycles = 0;
+    uint64_t hw_instructions = 0;
+    uint64_t workload_checksum = 1469598103934665603ULL;
+
+    if (run_cycles) {
+        cycle_ns = calloc((size_t)cycles, sizeof *cycle_ns);
+        cycle_cpu_ns = calloc((size_t)cycles, sizeof *cycle_cpu_ns);
         if (!cycle_ns || !cycle_cpu_ns) {
-            free(cycle_ns);
-            free(cycle_cpu_ns);
             fprintf(stderr, "fatal: calloc cycle_ns failed\n");
-            sym.free_instance(inst);
-            sym.fini(ctx);
-            dlclose(handle);
-            perf_remove_user_dir(user_dir);
-            return 1;
+            goto cleanup_cycles;
         }
+
+        uint64_t expected = 0;
+        for (size_t i = 0; i < N_PERF_CYCLE_INPUTS; i++)
+            expected += strlen(PERF_CYCLE_INPUTS[i]);
+        expected *= (uint64_t)repeats;
 
         /* Callgrind boundary for the hardware instruction counter: cycles
          * 1..n-1, enabled and disabled around the steady anchor call, so
          * the counted region is the one the callgrind toggle collects. */
-        int hw_wanted = getenv("PERF_HW") != NULL;
-        int hw_fd = -1;
-        int hw_errno = 0;
-        uint64_t hw_instructions = 0;
-        int hw_cycles = 0;
-        uint64_t workload_checksum = 1469598103934665603ULL;
-
         if (hw_wanted) {
             hw_fd = (int)perf_open_instruction_counter();
             if (hw_fd < 0) {
@@ -1034,12 +1026,39 @@ static int run_perf_mode(int argc, char **argv) {
                  * would double-count earlier cycles. */
                 (void)ioctl(hw_fd, PERF_EVENT_IOC_RESET, 0);
             }
+            if (measure_failed || measure_operations != expected * (uint64_t)(i + 1)) {
+                fputs("fatal: incomplete perf workload\n", stderr);
+                goto cleanup_cycles;
+            }
             cycle_ns[i] = end - start;
             cycle_cpu_ns[i] = cpu_end - cpu_start;
             if (i == 0)
                 read_perf_memory(&after_first);
         }
         read_perf_memory(&after_last);
+    }
+
+    printf("{\"pid\":%ld,\"backend\":", (long)getpid());
+    perf_json_string(backend);
+    printf(",\"so\":");
+    perf_json_string(so_path);
+    printf(",\"systemdir\":");
+    perf_json_string(system_dir);
+    printf(",\"mode\":");
+    perf_json_string(mode);
+    printf(",\"repeats\":%d", repeats);
+    printf(",\"init_ns\":%llu,\"alloc_ns\":%llu,",
+           (unsigned long long)(init_end - init_start),
+           (unsigned long long)(alloc_end - alloc_start));
+    perf_print_memory("after_init", &after_init);
+    if (rss_diag) {
+        putchar(',');
+        print_smaps_rollup("rollup_init", &rollup_init);
+        putchar(',');
+        print_arena_state("arena_init", &arena_init);
+    }
+
+    if (run_cycles) {
         if (checksum_env && *checksum_env)
             printf(",\"workload_checksum\":\"%016llx\"",
                    (unsigned long long)workload_checksum);
@@ -1118,21 +1137,26 @@ static int run_perf_mode(int argc, char **argv) {
             printf(",\"steady_hw_cycles\":%d"
                    ",\"steady_hw_instructions\":%llu",
                    hw_cycles, (unsigned long long)hw_instructions);
-            close(hw_fd);
         } else if (hw_wanted) {
             printf(",\"hw_errno\":%d", hw_errno);
         }
-        free(cycle_ns);
-        free(cycle_cpu_ns);
     }
 
     printf("}\n");
 
+    status = 0;
+
+cleanup_cycles:
+    if (hw_fd >= 0) close(hw_fd);
+    free(cycle_cpu_ns);
+    free(cycle_ns);
+cleanup_instance:
     sym.free_instance(inst);
+cleanup_context:
     sym.fini(ctx);
     dlclose(handle);
     perf_remove_user_dir(user_dir);
-    return 0;
+    return status;
 }
 
 #endif
