@@ -208,10 +208,13 @@ oxpinyin::write_owned_sentence!(crate::ffi::sentence_text);
 ///                                  size_t offset, size_t * length);
 /// ```
 ///
-/// Write the number of characters consumed along a key path through the supplied phrase. Early
-/// failure, including an empty matrix or a phrase character without a token, leaves the output
-/// untouched. A walk that runs but finds no matching path writes zero and returns false. A
-/// failed walk at the terminal offset also writes zero.
+/// Each key must match a reading of the next phrase character. A separator or terminal zero
+/// key matches a zero-initial reading. When a matching key ends past `offset`, return true
+/// and write the number of characters consumed before that key. Otherwise, consume the
+/// character and continue along the path.
+///
+/// Early failure, including an empty matrix or a phrase character without a token, leaves
+/// `length` untouched. A walk that finds no matching path writes zero and returns false.
 ///
 /// # Aborts
 ///
@@ -248,22 +251,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
         unsafe { crate::ffi::borrow_c_string(phrase) },
     )
     .unwrap_or_default();
-    let char_count = match inst.core.character_offset(&text, offset) {
-        // Pin behaviour: the zhuyin `_get_char_offset_recur` has no zero-key
-        // branch, so at `offset == parsed_len` the walk reaches the last
-        // column's zero key (`zhuyin.cpp:2108-2117`), reads `cached_tokens`
-        // at index `phrase_length` (the array's zero terminator, token 0,
-        // `:2122-2123`), and the empty item fails the pronunciation test
-        // (`:2124-2128`): the call answers `false` with `*plength = 0`.
-        Ok((Some(_), true)) if offset == inst.core.parsed_len => {
-            if !length.is_null() {
-                // SAFETY: Null-checked above; caller supplied the output.
-                unsafe {
-                    *length = 0;
-                }
-            }
-            return false;
-        }
+    let char_count = match inst.core.character_offset(&text, offset, true) {
         Ok((Some(char_count), _)) => char_count,
         Ok((None, walked)) => {
             // The walk's own `false` still stores the length it reached

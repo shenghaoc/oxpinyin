@@ -298,7 +298,7 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
         unsafe { crate::ffi::borrow_c_string(phrase) },
     )
     .unwrap_or_default();
-    let char_count = match inst.core.character_offset(&text, offset) {
+    let char_count = match inst.core.character_offset(&text, offset, false) {
         Ok((Some(char_count), _)) => char_count,
         Ok((None, walked)) => {
             // The walk's own `false` still stores the length it reached
