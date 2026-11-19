@@ -114,6 +114,8 @@ struct ImportHandle {
 /// frees it with `pinyin_end_add_phrases`. Adds target the loaded system
 /// libraries 1–4 and USER_FILE libraries 5–7.
 ///
+/// Choose an index below 16 before using this iterator to add phrases.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
@@ -143,6 +145,7 @@ pub unsafe extern "C" fn pinyin_begin_add_phrases(
     Box::into_raw(Box::new(handle)).cast()
 }
 
+// pinyin.cpp:614-652, phrase_index.h:630.
 /// Add a phrase/pinyin pair to the import iterator.
 ///
 /// # C signature
@@ -153,18 +156,16 @@ pub unsafe extern "C" fn pinyin_begin_add_phrases(
 ///                                 gint count);
 /// ```
 ///
-/// `pinyin.cpp:614-652` then `_add_phrase` (`:514-611`): the reading is
-/// parsed with `FullPinyinParser2` under `PINYIN_CORRECT_ALL | USE_TONE`
-/// (`:630`) — tone digits are kept on the keys, corrections apply
-/// (`jv` → `ju`), trailing unparsed bytes are ignored — and the phrase's
-/// character count must equal the key count, `0 < len < 16`. `count` of
-/// -1 is the default 5; any other value reaches the item as its `guint32`
-/// bit pattern (`-2` stores 4294967294 and exports as -2).
+/// Add a phrase and reading to its loaded library. Use full pinyin with tone and corrections.
+/// The parser keeps the longest prefix of the reading that it can parse and ignores the rest,
+/// so trailing text that does not parse does not by itself cause a refusal. The add is accepted
+/// only when the number of parsed keys equals the phrase's character count, from 1 to 15. A
+/// count of -1 selects 5; other counts are interpreted as unsigned. A successful add changes
+/// the live library. A null argument, a length mismatch or an absent sub-index returns false.
 ///
-/// Loaded system and `USER_FILE` sub-indexes take the phrase; a nibble
-/// without a sub-index answers `false` (`ERROR_NO_SUB_PHRASE_INDEX`), and
-/// 16..=255 — an out-of-bounds read of the pin's 16-slot array
-/// (`phrase_index.h:630`) — answer `false` without reproducing it.
+/// # Aborts
+///
+/// More than four matching phrase tokens abort during lookup (`phrase_large_table3.h:95`).
 ///
 /// # Safety
 ///
@@ -321,20 +322,17 @@ fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
         .collect()
 }
 
-/// End the import iterator, arm `m_modified`, and free it.
+// pinyin.cpp:657-658.
+/// Finish the import and release the iterator.
 ///
 /// # C signature
 /// ```c
 /// void pinyin_end_add_phrases(import_iterator_t * iter);
 /// ```
 ///
-/// Upstream compacts the phrase index here and sets `m_modified = true`
-/// (`pinyin.cpp:657-658`) whether or not any add succeeded. oxpinyin has no
-/// in-memory phrase chunk to compact; the adds are already durable. What the
-/// compact changes is each library's total, rebuilt from its items, which
-/// the store's `compact_libraries` applies. The dirty-flag arm is the rest
-/// of the persistence-side effect, so the next `pinyin_save` compacts and
-/// clears (`docs/findings/user-store.md` §4).
+/// Release the iterator. With a context, this compacts its phrase libraries and arms the next
+/// save, including when no add succeeded. Call `pinyin_save` to write the changes. An iterator
+/// opened with a null context is simply freed.
 ///
 /// # Safety
 ///
@@ -362,6 +360,7 @@ pub unsafe extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
 
 // ── Export iterator (unigram phrases) ────────────────────────────────
 
+// pinyin.cpp:126, pinyin.cpp:662-768.
 /// Begin exporting phrases from an index.
 ///
 /// # C signature
@@ -370,15 +369,9 @@ pub unsafe extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
 ///                                              guint index);
 /// ```
 ///
-/// Note: the index parameter is `guint` (not `guint8`), narrowed to the
-/// pin's `guint8` iterator field (`pinyin.cpp:126`).
-///
-/// Every sub-index the pin's default facade holds exports its items — one
-/// row per pronunciation, `(phrase, `'`-joined pinyin, pronunciation
-/// count)`, token order (`pinyin.cpp:662-768`): configured system libraries
-/// use their live chunks, and `USER_FILE` libraries use the user store.
-/// A nibble without a sub-index exports nothing
-/// ([`oxpinyin::facade::ContextCore::phrase_export_cursor`]).
+/// Start exporting one row per pronunciation in token order. The library index is narrowed to
+/// eight bits. An absent sub-index gives an empty iterator. A null context returns null. Free
+/// the iterator with `pinyin_end_get_phrases`.
 ///
 /// # Safety
 ///
@@ -436,17 +429,15 @@ pub unsafe extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterat
 ///                                     gint * count);
 /// ```
 ///
-/// The pin's `:698-768`: the probed item is read, its current pronunciation
-/// rendered, and the next token probed through a fresh `get_range` before
-/// the call returns, so an import that reached the next item in between is
-/// exported. Out-params `phrase` and `pinyin` are caller-owned (`g_free`
-/// each): `phrase` from the fallible encoder that stands for the pin's
-/// `g_ucs4_to_utf8` (`:715-716`), NULL where its allocation fails or where
-/// the pin's conversion hands one out (a stored code point that is no
-/// scalar value), and `pinyin` from `g_strjoinv` (`:733`), whose failed
-/// allocation aborts as the pin's does. At one of the pin's assert sites,
-/// an exhausted iterator included (`:709`), the process aborts (register
-/// row 62). The read itself cannot fail, as the pin's in-memory one cannot.
+/// First check `pinyin_iterator_has_next_phrase`. A delivered row returns true, including the
+/// last row. Free the returned phrase and reading separately with `g_free`. A failed phrase
+/// conversion can yield null text. A zero frequency exports as -1. A null iterator returns false
+/// without writing.
+///
+/// # Aborts
+///
+/// Reading after exhaustion or after the probed item disappears aborts. On the missing-item
+/// assertion, supplied outputs have been set to null, null and -1 (`pinyin.cpp:703-709`).
 ///
 /// # Safety
 ///
@@ -579,12 +570,10 @@ pub unsafe extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
 ///     pinyin_context_t * context);
 /// ```
 ///
-/// Note: no index parameter (unlike unigram export).
-///
-/// Rows follow upstream's rendering (`pinyin.cpp`): `sentence_start`
-/// predecessors are skipped; the phrase is the predecessor's text followed
-/// by the successor's text; the pinyin joins the pair's pronunciations with
-/// `'`; the count is the stored bigram count × 2.
+/// Start exporting user bigrams, skipping sentence-start predecessors. Each row combines
+/// predecessor and successor text and joins their readings with an apostrophe. Its count is
+/// twice the stored bigram count. A null context returns null. Release the iterator with
+/// `pinyin_end_get_bigram_phrases`.
 ///
 /// # Safety
 ///
@@ -628,6 +617,9 @@ pub unsafe extern "C" fn pinyin_begin_get_bigram_phrases(
 /// bool pinyin_bigram_iterator_has_next_phrase(
 ///     bigram_export_iterator_t * iter);
 /// ```
+///
+/// Prepare the next readable row. Returns false for a null iterator, exhaustion, or a refused
+/// predecessor read.
 ///
 /// # Safety
 ///
@@ -674,6 +666,7 @@ fn walk_answer(more: Result<bool, oxpinyin::facade::GramLoadFault>, name: &str) 
     }
 }
 
+// pinyin.cpp:896-911.
 /// Get the next phrase from the bigram export iterator.
 ///
 /// # C signature
@@ -683,11 +676,13 @@ fn walk_answer(more: Result<bool, oxpinyin::facade::GramLoadFault>, name: &str) 
 ///     gchar ** phrase, gchar ** pinyin, gint * count);
 /// ```
 ///
-/// Out-params `phrase` and `pinyin` are caller-owned (`g_free` each).
-/// Returns what `pinyin_bigram_iterator_has_next_phrase` answers after
-/// the row is taken — `false` on the last row — as the pin's
-/// `return pinyin_bigram_iterator_has_next_phrase(iter);` does
-/// (`pinyin.cpp:896-911`, register row 36); `false` once exhausted.
+/// Call only after `pinyin_bigram_iterator_has_next_phrase` returns true. Writes the current
+/// row, then checks for another. False on the last row still delivers both strings; free each
+/// with `g_free`. A null iterator returns false without writing.
+///
+/// # Aborts
+///
+/// Reading without a prepared predecessor can abort (`pinyin.cpp:902`).
 ///
 /// # Safety
 ///
