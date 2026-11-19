@@ -1,30 +1,12 @@
-//! The library's external-I/O boundary (`docs/findings/external-io-boundary.md`):
-//! the library and tool calls that cross the program's edge, made with the
-//! pin's own calls (maintainer ruling 2026-10-28 UTC), through the `libc`
-//! crate and no C shim (ruling 2026-10-31 UTC).
+//! Native I/O for the library and its command-line tools. This module owns configuration
+//! reads and writes, diagnostics, [`chunk`] mappings and writes, and [`path`] operations.
+//! The `tools` feature adds native utility input and output. The calling modules
+//! interpret the records and apply their failure policies.
 //!
-//! The module owns these calls:
-//!
-//! - `config`: the `table.conf` and `user.conf` readers and writer, and
-//!   their `LC_NUMERIC` calls.
-//! - `diagnostic`: the library's other `stderr` lines, so every library
-//!   line goes to the C library's stream.
-//! - [`chunk`]: the chunk open, seek, header read, write, sync and close
-//!   calls, and the whole-file private mapping that owns a chunk's bytes.
-//! - [`path`]: the pin's `g_build_filename`, `g_rename` and plain `unlink`.
-//! - `tool` (the `tools` feature): the pin utilities' locale, GLib option,
-//!   input-stream and text calls, through the `libc` crate, `glib-sys` and
-//!   `std::io`. The shipping libraries never enable it.
-//!
-//! `crate::data`, `crate::user`, `crate::runtime` and `crate::facade` call
-//! this module. What the values mean — the `strcmp` mappings, the slots,
-//! the chunk interpretation and checksums, the refusals where the pin
-//! aborts — belongs to the modules that own those records. This module
-//! answers only what each C call answered, and depends on no other module
-//! of the library.
-//!
-//! Production unsafe code is confined to the native module and `tool`; every block
-//! carries a `// SAFETY:` comment and no raw pointer leaves them.
+//! [`c_path`] converts a whole path for a C call. [`path::c_string`] converts the prefix
+//! ending at its first NUL.
+
+// The external I/O boundary is described in docs/findings/external-io-boundary.md.
 
 pub mod chunk;
 pub(crate) mod config;

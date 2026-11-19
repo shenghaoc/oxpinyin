@@ -1,17 +1,10 @@
-//! The pin's path construction, rename and unlink calls (external-I/O
-//! stage 3).
-//!
-//! Every path the pin builds with `g_build_filename` is built here, through
-//! GLib itself (074a2219 `pinyin.cpp:150-165,250-259,331-338,395-400,952-1121`;
-//! `zhuyin.cpp:104-119,196-203,276-282,337-342,585-687`). The builder takes
-//! the pin's C strings: a `None` directory is its `NULL` first element,
-//! which makes GLib return `""`, and a `None` name is its `NULL`
-//! terminator, which makes the directory itself the result. No Rust
-//! `Path::join` stands in for it.
-//!
-//! `g_rename` is a macro to `rename` on Unix and a function around
-//! `MoveFileExW` on Windows; `unlink` is the plain C call. The safe
-//! functions below make those calls through `crate::input::native`.
+//! Builds filenames, converts path encodings, and renames or unlinks files.
+//! [`path_from_bytes`] preserves Unix path bytes and replaces malformed UTF-8 on Windows.
+//! [`path_from_bytes_checked`] requires representable bytes. [`crate::input::c_path`]
+//! rejects an interior NUL. [`c_string`] stops at it.
+
+// The native calls are g_build_filename, g_rename and unlink. On Unix g_rename maps to
+// rename; the Windows implementation calls MoveFileExW.
 
 use std::ffi::{CStr, CString, OsStr};
 use std::path::{Path, PathBuf};
@@ -164,9 +157,8 @@ pub fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-/// The Windows platform adaptation of the save rename (compatibility-policy.md,
-/// maintainer ruling of 2026-11-03 UTC): the Linux pin's `rename(2)` refuses a
-/// directory over an existing file (`ENOTDIR`) and a file over a directory
+/// The Windows adaptation of save rename preserves the Linux pin's `rename(2)`
+/// refusal for a directory over an existing file (`ENOTDIR`) and a file over a directory
 /// (`EISDIR`), while `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`, which
 /// GLib's `g_rename` calls, moves a `.tmp` directory onto the final file. Both
 /// paths are examined with the native facility (`symlink_metadata`, which does
