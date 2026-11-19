@@ -30,6 +30,8 @@ struct ImportHandle {
 /// none, as at the pin); caller must call
 /// `zhuyin_end_add_phrases` to free it.
 ///
+/// Choose an index below 16 before using this iterator to add phrases.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
@@ -59,6 +61,7 @@ pub unsafe extern "C" fn zhuyin_begin_add_phrases(
     Box::into_raw(Box::new(handle)).cast()
 }
 
+// zhuyin.cpp:500-534, zhuyin.cpp:440.
 /// Add a phrase/pinyin pair to the import iterator.
 ///
 /// # C signature
@@ -69,21 +72,17 @@ pub unsafe extern "C" fn zhuyin_begin_add_phrases(
 ///                                 gint count);
 /// ```
 ///
-/// `zhuyin.cpp:500-534` then `_add_phrase` (`:400-498`): the reading is
-/// bopomofo, parsed by `ZhuyinDirectParser2` under `USE_TONE |
-/// FORCE_TONE` (`:515-523`) — keys separated by spaces or apostrophes,
-/// each carrying its tone (tone 1 when unmarked) — so a romanized reading
-/// parses no key and is refused. The phrase's character count must equal
-/// the key count, `0 < len < 16`. Count, storage and library routing are
-/// the pinyin facade's (`pinyin_iterator_add_phrase`): -1 is the default
-/// 5, any other count its `guint32` bit pattern; the `USER_FILE`
-/// libraries and loaded system libraries take the phrase; every other nibble answers
-/// `false` — 16..=255 without reproducing the pin's out-of-bounds read of
-/// its 16-slot array (library 16 SIGSEGVs the pin). Where the pin asserts —
-/// more than four phrase-table tokens (`phrase_large_table3.h:95`), two of
-/// them in the target library (`zhuyin.cpp:440`), or the target library's
-/// item with another length (`:454`) or other text (`:457`) — the process
-/// aborts (register rows 74, 89, 104 and 90).
+/// Add a phrase and reading to its loaded library. Use Zhuyin symbols separated by spaces or
+/// apostrophes; an unmarked syllable has first tone. The parser stops at the first segment that
+/// is not a Zhuyin syllable and keeps the syllables before it, so trailing text that does not
+/// parse does not by itself cause a refusal. The add is accepted only when the number of parsed
+/// keys equals the phrase's character count, from 1 to 15. A count of -1 selects 5; other counts
+/// are interpreted as unsigned. A successful add changes the live library. A null argument, a
+/// length mismatch or an absent sub-index returns false.
+///
+/// # Aborts
+///
+/// More than four matching phrase tokens abort during lookup (`phrase_large_table3.h:95`).
 ///
 /// # Safety
 ///
@@ -183,12 +182,16 @@ unsafe fn plan_import(
     core.plan_import(index, phrase, keys)
 }
 
-/// End the import iterator, arm `m_modified`, and free it.
+/// Finish the import and release the iterator.
 ///
 /// # C signature
 /// ```c
 /// void zhuyin_end_add_phrases(import_iterator_t * iter);
 /// ```
+///
+/// Release the iterator. With a context, this compacts its phrase libraries and arms the next
+/// save, including when no add succeeded. Call `zhuyin_save` to write the changes. An iterator
+/// opened with a null context is simply freed.
 ///
 /// # Safety
 ///
