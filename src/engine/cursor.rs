@@ -75,7 +75,12 @@ pub trait KeySpans {
     /// The number of keys.
     fn span_count(&self) -> usize;
 
-    /// Key `index`'s `(syllable start, raw end)`; `index < span_count()`.
+    /// Returns the syllable start and raw end byte offsets for a key.
+    ///
+    /// # Panics
+    ///
+    /// The supplied slice and matrix implementations panic when `index` is at least
+    /// [`Self::span_count`].
     fn span(&self, index: usize) -> (usize, usize);
 
     /// The first index whose start is not below `position` — the
@@ -491,7 +496,11 @@ impl<'a> MatrixKeys<'a> {
         self.keys.is_empty()
     }
 
-    /// Key `index` (`index < len()`).
+    /// Returns the key at `index` in column order.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `index` is at least [`Self::len`].
     #[must_use]
     pub fn get(self, index: usize) -> MatrixKey {
         let key = self.keys[index];

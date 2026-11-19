@@ -1,31 +1,16 @@
-//! The n-best sentence trellis — the W14 port of upstream's
-//! `PhoneticLookup<nstore, nbest>` beam search (`lookup/phonetic_lookup.h`).
-//! libpinyin instantiates `<2, 3>` (`pinyin.cpp:55`) and libzhuyin `<1, 1>`
-//! (`zhuyin.cpp:50`); the pair is a per-session [`NbestShape`], set by each
-//! facade, never a global constant.
+//! Beam search for n-best sentence rows. Each call builds a trellis over byte positions.
+//! Nodes retain phrase hypotheses using the session’s [`NbestShape`]. The search widens a
+//! span while the phrase table reports a continuation.
 //!
-//! One trellis per `guess_sentence` call. Steps are byte positions of the
-//! remaining input (upstream uses key-matrix columns; the two coincide
-//! wherever no apostrophe rides between keys). Nodes at a step are keyed by
-//! the phrase token ending there and keep the best [`NSTORE`] values; each
-//! step's beam keeps the best [`NBEAM`] values across nodes, ordered by the
-//! adjusted float score and preselection batch position for pinyin, under
-//! S1/S2 of the compatibility policy's "witnessed algorithm-precondition
-//! violations (2026-10-28 UTC)" amendment. Zhuyin selection uses length,
-//! raw possibility and batch position under the 2026-10-29 ruling;
-//! single-slot node admission keeps the pin's raw comparison.
-//! Spans widen exactly while the phrase
-//! table reports a longer phrase could still start (`SEARCH_CONTINUED`),
-//! the same prefix-driven widening the window scan uses.
-//!
-//! Scoring is the upstream per-step form
-//! `log((λ·bigram + (1−λ)·unigram) · pinyin_poss)` accumulated in f32,
-//! with pre-log pieces from
-//! [`crate::model::LanguageModel::nbest_step_costs`]. The bigram branch
-//! expands every beam value; the unigram branch expands only the beam's
-//! head, as upstream's `search_bigram2` / `search_unigram2` do.
-//! Pronunciation sums every matrix path of the span before the epsilon
-//! check (`phonetic_key_matrix.cpp:534-600`, `phonetic_lookup.h:643-697`).
+//! Each step accumulates the log of interpolated bigram and unigram probability times
+//! pronunciation probability. The bigram branch expands each beam value. The unigram
+//! branch expands its head.
+
+// PhoneticLookup<nstore, nbest>, lookup/phonetic_lookup.h; pinyin.cpp:55 and
+// zhuyin.cpp:50. search_bigram2 and search_unigram2 use the two expansion rules.
+// Pronunciation is summed before the epsilon check (phonetic_key_matrix.cpp:534–600,
+// phonetic_lookup.h:643–697). The compatibility-policy selection rules apply to pinyin
+// adjusted scores and Zhuyin length, raw possibility and batch position.
 
 use crate::sentence_facts::{SentenceFacts, TokenMap};
 use std::cell::{OnceCell, RefCell};
@@ -56,14 +41,11 @@ const NSTORE: usize = 2;
 /// Sentence rows extracted from the tails (`nbest`) on the pinyin surface.
 pub const NBEST_ROWS: usize = 3;
 
-/// The two template constants of upstream's `PhoneticLookup<nstore,
-/// nbest>`: values kept per `(position, token)` trellis node, and sentence
-/// tails extracted.
-///
-/// libpinyin is `<2, 3>` (`pinyin.cpp:55`), libzhuyin is
-/// `<1, 1>` (`zhuyin.cpp:50`); upstream asserts `nstore <= nbest`
-/// (`phonetic_lookup.h:715`), which the two named shapes satisfy and no
-/// other constructor exists to violate.
+// PhoneticLookup<nstore, nbest> asserts nstore <= nbest, phonetic_lookup.h:715. The
+// instantiations are pinyin.cpp:55 and zhuyin.cpp:50.
+/// Sets the number of values retained at each trellis node and the number of sentence
+/// tails extracted. [`Self::PINYIN`] and [`Self::ZHUYIN`] provide the two engine
+/// configurations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NbestShape {
     nstore: usize,
@@ -71,13 +53,12 @@ pub struct NbestShape {
 }
 
 impl NbestShape {
-    /// libpinyin's `PhoneticLookup<2, 3>` — the default.
+    /// Pinyin configuration with two values per trellis node and three sentence tails.
     pub const PINYIN: Self = Self {
         nstore: NSTORE,
         nbest: NBEST_ROWS,
     };
-    /// libzhuyin's `PhoneticLookup<1, 1>`: one value per trellis node and
-    /// one sentence tail.
+    /// Zhuyin configuration with one value per trellis node and one sentence tail.
     pub const ZHUYIN: Self = Self {
         nstore: 1,
         nbest: 1,

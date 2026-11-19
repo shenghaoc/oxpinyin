@@ -1,10 +1,4 @@
 //! Selection and constraints: choosing a candidate from the cached list or a re-anchored window, the §3 constraint writes, the selection record and training.
-//!
-//! One of the `impl Session` slices `session/mod.rs` declares; every
-//! method here was moved verbatim from the single 5,800-line
-//! `session.rs` (2026-09-08) and keeps its doc comment and upstream
-//! citations. Shared state, constants and free functions stay in the
-//! parent module.
 
 use super::*;
 use crate::engine::constraint::PhraseSpan;
@@ -423,19 +417,22 @@ where
     L: LanguageModel,
     L::Error: Display,
 {
-    /// Chooses the row `target` describes: the span, token and n-best rank
-    /// a published row carries, as the pin's choose reads them off the
-    /// `lookup_candidate_t` alone (`m_begin`, `m_end`, `m_token`,
-    /// `m_nbest_index`; 074a2219 `pinyin.cpp:2515-2520`, `:2577-2590`,
-    /// `zhuyin.cpp:1646-1666`); [`SelectionTarget::of_candidate`] reads
-    /// one off a candidate list's row.
+    // pinyin_choose_candidate dispatches on m_begin, m_end, m_token and m_nbest_index
+    // (pinyin.cpp:2515–2520,2577–2590; zhuyin.cpp:1646–1666). diff_result requires each
+    // differing constraint write to succeed (lookup/phonetic_lookup.cpp:189–203).
+    /// Selects the token span or n-best sentence rank in a published [`SelectionTarget`]. An
+    /// ordinary token span past the current matrix returns [`Selection::Refused`].
     ///
     /// # Errors
     ///
-    /// [`EngineError`] from the constraint validation and the refresh that
-    /// follow the selection; a choose behind the composition with no token
-    /// is [`EngineError::SelectionAnchorBeforeComposition`]. A normal span
-    /// beyond the current matrix returns [`Selection::Refused`].
+    /// Propagates constraint validation and refresh errors. A tokenless choice behind the
+    /// composition yields [`EngineError::SelectionAnchorBeforeComposition`].
+    ///
+    /// # Aborts
+    ///
+    /// Selecting an n-best row aborts if a differing phrase in that row cannot be written
+    /// into the current constraint store. This can occur when the selected row predates a
+    /// change of composition.
     pub fn select_target(
         &mut self,
         target: &SelectionTarget<'_>,
@@ -475,10 +472,8 @@ where
         // A span that starts before the composition offset — a choose from
         // a window the caller looked up behind an earlier selection (ibus's
         // `moveCursorLeft`, `PYPPhoneticEditor.cc:595-604`, sets the lookup
-        // cursor to 0). This was refused as a backward selection no
-        // frontend drives; amended 2026-09-27 (maintainer ruling, register row
-        // 37): the pin keeps no composition offset — its window is built
-        // from `start = offset` (`pinyin.cpp:2229`, `m_begin = start` at
+        // cursor to 0). The pin's window is built from `start = offset`
+        // (`pinyin.cpp:2229`, `m_begin = start` at
         // `:2246`) and the choose writes `add_constraint(m_begin, m_end,
         // token)` over whatever forcings the span overlaps (`:2578-2590`,
         // `phonetic_lookup.cpp:61-86`) — so the choose forces the span and
@@ -782,8 +777,8 @@ where
         }
     }
 
-    /// A choose whose span starts before the composition offset (register
-    /// row 37, amended 2026-09-27): the pin's `add_constraint(m_begin, m_end,
+    /// A choose whose span starts before the composition offset (register row 37):
+    /// the pin's `add_constraint(m_begin, m_end,
     /// token)` (`pinyin.cpp:2582-2584`, `phonetic_lookup.cpp:61-86`) —
     /// every forcing the span overlaps is cleared, the span is forced, and
     /// forcings outside it survive — after which the selection record is

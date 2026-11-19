@@ -32,8 +32,8 @@ pub enum Selection {
     Completed,
 }
 
-/// What a session is opened with. Other option bits arrive later through
-/// [`Session::set_options`] from the C ABI's raw option word.
+/// Sets the incomplete-pinyin option for a new [`Session`]. Construction enables the
+/// divided and resplit tables. [`Session::set_options`] replaces the option word.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionSettings {
     /// Whether initial-only keys are admitted (`PINYIN_INCOMPLETE`).
@@ -344,16 +344,12 @@ fn append_scan_entries(
 /// window down library by library, each library's ranges in that
 /// encounter order (`pinyin.cpp:1769-1791`), and the stable
 /// `g_array_sort_with_data` keeps exactly that order for candidates whose
-/// three keys tie — the amplified-frequency collapses of
-/// `docs/findings/candidate-construction.md` §8.4 Class A. A chunk is ordered by the
-/// stored key (`phrase_exact_less_than2`: initials, then middles and
+/// three keys tie. A chunk is ordered by the stored key (`phrase_exact_less_than2`:
+/// initials, then middles and
 /// finals, then tones) and only then by token (`add_index`,
 /// `chewing_large_table2.h:208-230`), so a lookup that matches several
 /// stored keys — an incomplete syllable, or a tone-less query over a
-/// toned index — is **not** token-ascending across the block. This flush
-/// used to sort the batch by token, which reordered every such tie
-/// (issue #536: `n` under ibus listed 竜/黏 the other way round from the
-/// pin). The scan appends each path's records in chunk order already, so
+/// toned index — can cross token order. The scan appends each path's records in chunk order, so
 /// the pin's order is a stable sort by masked library index over the batch,
 /// keeping the first occurrence of a token reached through several
 /// key-paths — the duplicate the pin's string dedup drops later.

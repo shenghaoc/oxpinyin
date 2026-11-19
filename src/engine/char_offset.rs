@@ -17,8 +17,7 @@
 //! 4. `_pre_compute_tokens`: every character of the phrase is searched in
 //!    the phrase table as a one-character phrase and its FIRST token is
 //!    cached; a character with no token — an emoji, a Latin letter, the
-//!    pinyin string itself — answers `false`. This is the row issue #356
-//!    pinned: the port used to skip the search and answer `true`.
+//!    pinyin string itself — answers `false`.
 //! 5. `_get_char_offset_recur` walks the matrix from column 0. Pinyin skips
 //!    a lone zero key without consuming a token (`pinyin.cpp:3158-3164`).
 //!    For all other keys, including Zhuyin separator and terminal zero keys,
@@ -173,21 +172,18 @@ pub fn matrix_columns(
     })
 }
 
-/// `_remember_phrase_recur` (`pinyin.cpp:3578-3666`) over `columns`, from
-/// column 0 with no key chosen.
-///
-/// A real key is kept only when `pronounces(key, index)` accepts it, where
-/// `index` is the number of keys chosen before it, the cached token the key
-/// would consume. A column holding a zero key steps on only when that is its
-/// sole entry; an empty column refuses. At the parsed length the walk calls
-/// `add` once for every complete path of exactly `phrase_length` keys, in the
-/// pin's depth-first order and before it explores the next branch, and ORs
-/// the answers. `pronounces` is read at the moment of each test, so a write
-/// `add` made earlier is seen by the later tests, as in the pin.
+// _remember_phrase_recur, pinyin.cpp:3578–3666.
+/// Calls `add` in depth-first order for each complete, nonempty path of `phrase_length`
+/// accepted keys. `pronounces` receives the next key and its position in the phrase. Each
+/// later probe sees effects of earlier `add` calls. The result is normally `true` if any
+/// call to `add` returned `true`. A column that holds both a real key and a separator zero
+/// key returns `false`, even if an earlier branch succeeded. The effects of the earlier
+/// callbacks remain.
 ///
 /// # Errors
 ///
-/// Whatever `pronounces` or `add` return.
+/// Propagates the first error from either callback. Earlier callback effects are
+/// retained.
 pub fn remember_walk<E>(
     columns: &MatrixColumns,
     phrase_length: usize,

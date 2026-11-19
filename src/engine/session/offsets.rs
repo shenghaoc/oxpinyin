@@ -1,10 +1,4 @@
 //! Cursor and offset laws: lookup-offset normalisation, the word-boundary helpers, character offsets, and the parse-continuation rules a re-parse applies.
-//!
-//! One of the `impl Session` slices `session/mod.rs` declares; every
-//! method here was moved verbatim from the single 5,800-line
-//! `session.rs` (2026-09-08) and keeps its doc comment and upstream
-//! citations. Shared state, constants and free functions stay in the
-//! parent module.
 
 use super::*;
 
@@ -127,17 +121,10 @@ where
         )
     }
 
-    /// The composition's scan-matrix keys with their raw byte spans.
-    ///
-    /// The cursor laws above walk these same keys through the
-    /// `*_over_spans` laws, so a key answered here and an offset answered
-    /// by `Session::right_word_offset` agree by construction. The C ABI's
-    /// `pinyin_get_pinyin_key` family reads this.
-    ///
-    /// The keys are in the pin's column order ([`crate::engine::cursor::KeySpans`]),
-    /// borrowed from the matrix the last parse filled, as every pin getter
-    /// reads `m_matrix` in place (`pinyin.cpp:2924`, `:3013-3066`;
-    /// `zhuyin.cpp:1886-1927` at 074a2219).
+    // pinyin_get_pinyin_key and the corresponding getters read m_matrix in place
+    // (pinyin.cpp:2924,3013–3066; zhuyin.cpp:1886–1927).
+    /// Borrows the last parse’s matrix keys and their raw byte spans in column order. Cursor
+    /// operations read these same spans through [`crate::engine::KeySpans`].
     #[must_use]
     pub fn matrix_keys(&self) -> crate::engine::cursor::MatrixKeys<'_> {
         crate::engine::cursor::MatrixKeys::new(self.retained_parse().scan.keys())
