@@ -1,13 +1,16 @@
-#![no_main]
 //! Every compiled double-pinyin scheme over arbitrary byte input: parse
 //! must be total and deterministic. Also pins the setter contract shared
 //! with the C ABI (contract_tests.rs): `Customized` is rejected and leaves
 //! the effective scheme unchanged.
 
-use libfuzzer_sys::fuzz_target;
 use oxpinyin::{DoublePinyinParser, DoublePinyinScheme, OptionBits};
 
-fuzz_target!(|data: &[u8]| {
+fn main() {
+    oxpinyin_fuzz::run_once(run);
+}
+
+/// Runs one input.
+fn run(data: &[u8]) {
     let allow_incomplete = data.first().is_some_and(|byte| byte & 1 == 1);
     let mut options = OptionBits::empty();
     options.set(OptionBits::PINYIN_INCOMPLETE, allow_incomplete);
@@ -37,4 +40,4 @@ fuzz_target!(|data: &[u8]| {
     let before = parser.scheme();
     assert!(!parser.set_scheme(DoublePinyinScheme::Customized));
     assert_eq!(parser.scheme(), before);
-});
+}

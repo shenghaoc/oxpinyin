@@ -1,4 +1,3 @@
-#![no_main]
 //! Hostile bytes through the eight parseable Zhuyin keyboards
 //! (`docs/testing/upstream-test-coverage.md`, "Fuzz harnesses"):
 //! the `parser` target exercises `FullPinyinParser` only, so the chewing
@@ -13,7 +12,6 @@
 //! reaching at least past the last span. A finding is any abort, panic,
 //! or sanitizer report, or a violated invariant here.
 
-use libfuzzer_sys::fuzz_target;
 use oxpinyin::{OptionBits, ZhuyinParser, ZhuyinScheme};
 
 /// Every zhuyin keyboard except the `StandardDvorak` abort slot (upstream's
@@ -30,7 +28,12 @@ const SCHEMES: &[ZhuyinScheme] = &[
     ZhuyinScheme::DachenCp26,
 ];
 
-fuzz_target!(|data: &[u8]| {
+fn main() {
+    oxpinyin_fuzz::run_once(run);
+}
+
+/// Runs one input.
+fn run(data: &[u8]) {
     for scheme in SCHEMES {
         for use_tone in [false, true] {
             for allow_incomplete in [false, true] {
@@ -79,4 +82,4 @@ fuzz_target!(|data: &[u8]| {
             }
         }
     }
-});
+}

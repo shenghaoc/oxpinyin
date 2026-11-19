@@ -2,8 +2,7 @@
 debug
 /target
 /fuzz/target/
-/fuzz/artifacts/
-/fuzz/coverage/
+/fuzz/out/
 # Generated corpus noise.
 /fuzz/corpus/*
 

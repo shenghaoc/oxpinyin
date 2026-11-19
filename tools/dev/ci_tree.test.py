@@ -626,6 +626,7 @@ class GateTests(unittest.TestCase):
             'fuzz/Cargo.lock': {'rust'},
             'fuzz/fuzz_targets/x.rs': {'rust'},
             'fuzz/rust-toolchain.toml': {'rust', 'harness'},
+            'fuzz/tool-versions.env': {'rust', 'harness'},
             'deny.toml': {'rust'},
             'clippy.toml': {'rust'},
             '.config/nextest.toml': {'rust'},

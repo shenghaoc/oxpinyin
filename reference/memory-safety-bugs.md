@@ -257,7 +257,7 @@ path and leaves the deliberate one open. Policy closes the rest.
 - **Panic on user input** (6.1): `assert!` and `unwrap` abort in the same way
   as `__assert_perror_fail`. Constitution rule 4 prevents it (every
   public API returns `Result`; a panic is a defect of the same severity
-  as data loss). Proptest totality, cargo-fuzz from W1 and
+  as data loss). Proptest totality, fuzzing from W1 and
   Kani bounded proofs enforce the rule. This tier is written down because libchewing,
   a competent Rust rewrite by the original author, still shipped
   "panic when selecting phrases backwards at the end of buffer" in

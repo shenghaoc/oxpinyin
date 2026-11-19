@@ -215,25 +215,30 @@ mutants *args:
 mutants *args:
     @{{windows_args}} cargo mutants @forwarded; exit $LASTEXITCODE
 
-# Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
-# cargo fuzz runs in fuzz/, where rustup selects the nightly that
-# fuzz/rust-toolchain.toml names. No recipe names the nightly.
-[linux, working-directory: 'fuzz']
-fuzz *args:
-    @setarch "$(uname -m)" -R cargo fuzz run "$@"
+# fuzz/tool-versions.env pins cargo-afl, and the LLVM plugins build against the
+# LLVM of the fuzz nightly. tools/dev/fuzz.py states the rules; on any host
+# other than Linux it refuses with one message.
+# Install cargo-afl and the AFL++ release that it bundles, with the LLVM plugins (Linux only).
+[unix]
+fuzz-setup:
+    @uv run --managed-python python -X utf8 -m tools.dev.fuzz setup
 
-# cargo-fuzz supports Darwin. tkrzw is the vcpkg overlay port's install in
-# the repository triplet (docs/runbooks/setup.md).
-[macos, working-directory: 'fuzz']
-fuzz *args:
-    @env \
-        PKG_CONFIG_PATH="{{macos_tkrzw}}/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" \
-        cargo fuzz run "$@"
+[windows]
+fuzz-setup:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz setup; exit $LASTEXITCODE
 
-# Windows fuzz execution is unverified; setarch is Linux-only.
-[windows, working-directory: 'fuzz']
-fuzz *args:
-    @{{windows_args}} cargo fuzz run @forwarded; exit $LASTEXITCODE
+# Each run writes a new directory under fuzz/out/<target>/. Arguments after the
+# target go to afl-fuzz, for example `-V 60`. FUZZ_CMPLOG=1 adds CmpLog;
+# FUZZ_GUARD_SECONDS limits the wall time. tools/dev/fuzz.py states the rules;
+# on any host other than Linux it refuses with one message.
+# Fuzz one target with AFL++ and ASan, and fail on any finding (Linux only).
+[unix]
+fuzz target *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.fuzz run "$@"
+
+[windows]
+fuzz target *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz run @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
 # cargo llvm-cov runs the tests under nextest, the only supported test runner.

@@ -36,9 +36,9 @@
 //! # Seeds
 //!
 //! `fuzz/seeds/capi-commands/` holds one command stream per operation that
-//! a mutation of an empty corpus does not reach soon. The nightly copies
-//! them into the corpus; locally, name the directory after the corpus:
-//! `just fuzz capi-commands corpus/capi-commands seeds/capi-commands`.
+//! a mutation of an empty corpus does not reach soon. `just fuzz
+//! capi-commands`, which the nightly also runs, copies them into
+//! `corpus/capi-commands`.
 //! Write the files again when the format above changes. Bytes are in
 //! hexadecimal, strings in quotes; the first byte is the user directory:
 //!
@@ -69,8 +69,8 @@
 //! Per the postconditions defined in the document above: no per-call
 //! assertions on return values — valid-sequence contracts are pinned by
 //! `capi/tests/it/contract.rs`; here a finding is any abort, panic, or
-//! sanitizer report (cargo-fuzz's default `-s address` instrumentation
-//! includes LeakSanitizer on Linux). Mispaired iterator lifecycles are UB
+//! sanitizer report (`just fuzz` builds with AddressSanitizer and runs
+//! it with LeakSanitizer). Mispaired iterator lifecycles are UB
 //! by contract, so every begin reaches its end within the same command:
 //! the bug classes hunted are caller-visible mispairings, not contract
 //! violations.
@@ -124,10 +124,9 @@
 //! An input copies the template, as a later session of that profile finds
 //! it. Directory byte 255 starts from an empty directory: the pin's first
 //! run, which writes one `open %s failed.` line (`table_info.cpp:332`).
-//! The template directory stays in the temporary directory at exit, one
-//! per process.
+//! The template directory is inside the scratch directory of
+//! `oxpinyin_fuzz::run_once`, which removes it when the input ends.
 
-#![no_main]
 #![expect(
     clippy::undocumented_unsafe_blocks,
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
@@ -142,7 +141,6 @@ use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
 
-use libfuzzer_sys::fuzz_target;
 use oxpinyin_capi::fuzz_api::{
     ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
     oxpinyin_choose_aborts, oxpinyin_import_aborts, oxpinyin_train_aborts, pinyin_alloc_instance,
@@ -292,8 +290,8 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         // SAFETY: both handles are live and this is their one release; no
-        // iterator outlives its command, and libFuzzer runs one input at a
-        // time on one thread.
+        // iterator outlives its command, and each process runs one input on
+        // one thread.
         unsafe {
             pinyin_free_instance(self.instance);
             pinyin_fini(self.context);
@@ -401,7 +399,12 @@ fn walk_and_choose(instance: *mut PinyinInstance, pick: u8) {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+fn main() {
+    oxpinyin_fuzz::run_once(run);
+}
+
+/// Runs one input.
+fn run(data: &[u8]) {
     let mut input = Input { rest: data };
     let session = Session::open(input.number() == FIRST_RUN);
     let (context, instance) = (session.context, session.instance);
@@ -518,4 +521,4 @@ fuzz_target!(|data: &[u8]| {
             }
         }
     }
-});
+}

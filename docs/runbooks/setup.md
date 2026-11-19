@@ -374,6 +374,50 @@ just check
 Cargo reuses downloaded dependencies and the `target/` outputs of that checkout.
 Outputs stay separate across worktrees (separate checkouts of branches).
 
+### Fuzzing
+
+AFL++ fuzzing ([fuzz harnesses](../testing/upstream-test-coverage.md#fuzz-harnesses))
+is supported on Linux only, as in libchewing, and the fuzz soak runs in the
+Linux nightly. On macOS, each input's new process costs about 200 ms in
+`fork()`, and the default System V shared-memory limit (4 MiB per segment,
+`kern.sysv.shmmax`) blocks CmpLog's 144 MiB map, so a native macOS run would
+only be a smoke test. AFL++ does not support Windows. `just fuzz-setup` and
+`just fuzz` exist on every platform, and on any host other than Linux they
+refuse with one message that names this section.
+
+`just fuzz-setup` installs cargo-afl at the version of `fuzz/tool-versions.env`
+and the AFL++ release that it bundles, with its LLVM plugins. The plugins build
+against an LLVM of the fuzz nightly's major version, LLVM 22: the
+`llvm-config-22` of `llvm-22-dev`, which Ubuntu 26.04's archive carries and
+which needs no clang, or the `llvm-config` that `LLVM_CONFIG` names.
+afl-fuzz refuses a `core_pattern` that pipes crashes to a handler, so set it to
+`core` first, as the nightly does:
+
+```bash
+sudo apt-get install llvm-22-dev
+echo core | sudo tee /proc/sys/kernel/core_pattern
+(cd fuzz && rustup toolchain install)
+just fuzz-setup
+just fuzz chewing-parser -V 60
+FUZZ_CMPLOG=1 just fuzz capi-commands -V 60
+```
+
+#### From macOS or Windows
+
+Fuzz in a native Linux container of the host's own architecture, with no
+emulation:
+
+- On an Apple silicon Mac, a native arm64 Linux container: Apple `container`,
+  Podman or Docker with `linux/arm64`. Use no amd64 image and no Rosetta. In
+  the VM of Apple `container`, `core_pattern` is already `core`.
+- On an amd64 Windows host, a native amd64 Linux container: WSL or `wslc`.
+  Use no arm64 image.
+
+In the container, install the [Linux](#linux) build dependencies, rustup, uv
+and just, then run the commands above from the checkout. Give the container
+its own cargo target directory (`CARGO_TARGET_DIR`), so its Linux build
+scripts do not mix with the host's in `fuzz/target`.
+
 ## macOS
 
 macOS setup uses Terminal, Git, Apple's
@@ -444,8 +488,7 @@ backend. To use it:
 
 The target and user-data directories of each backend stay separate.
 
-Fuzzing and the backend sanitizer gates run natively on macOS. The recipes
-select Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and the vcpkg install of
+The backend sanitizer gates run natively on macOS. The recipes select Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and the vcpkg install of
 tkrzw under `VCPKG_ROOT`. They use the one
 nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`, and no Linux
 `setarch`. In `fuzz/`, rustup installs the toolchain that the file names:
@@ -453,7 +496,6 @@ nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`, and no Linux
 ```bash
 brew install berkeley-db@5 kyoto-cabinet
 (cd fuzz && rustup toolchain install)
-just fuzz chewing-parser -- -runs=100
 just sanitize bdb address
 just sanitize bdb thread
 just sanitize kc address
@@ -462,8 +504,10 @@ just sanitize tkrzw address
 just sanitize tkrzw thread
 ```
 
-`capi-commands` also runs natively. pkg-config finds the GLib and
-tkrzw of the facade. AddressSanitizer runs with leak detection off on
+AFL++ fuzzing does not run natively on macOS; see [fuzzing](#fuzzing) for
+the reason and for fuzzing in a native Linux container.
+
+In the sanitizer gates, AddressSanitizer runs with leak detection off on
 Darwin. Standalone LeakSanitizer is refused on macOS arm64, and
 MemorySanitizer has no Darwin target. Both refusals name the host. Linux
 keeps its existing sanitizer commands and paths.
@@ -515,7 +559,9 @@ cargo clippy --locked -p oxpinyin --all-targets -- -D warnings
 
 Repository Python tooling on Windows runs through the pwsh recipes.
 The Python-backed `_test-argv` recipe verifies argument and exit-status transport.
-Job Object lifetime, fuzz, coverage and full tooling acceptance stay unverified.
+Job Object lifetime, coverage and full tooling acceptance stay unverified.
+AFL++ does not support Windows: `just fuzz-setup` and `just fuzz` exist on
+Windows and refuse with the Linux-only message ([fuzzing](#fuzzing)).
 Install uv with its native Windows installer, then just (`cargo install just
 --locked`). The interpreter rule of the Linux section applies unchanged.
 

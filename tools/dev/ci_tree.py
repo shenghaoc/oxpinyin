@@ -145,7 +145,8 @@ CI_INPUTS = {
     # of the `changes` job, not an input here.
     "harness": Inputs((*SHARED, "uv.lock",
                        "tools", "Cargo.toml", "Cargo.lock",
-                       *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml"),
+                       *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
+                       "fuzz/tool-versions.env"),
                       tuple(f"{prefix}{section}/*.rs"
                             for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
                             for section in ("src", "tests", "examples", "benches")),

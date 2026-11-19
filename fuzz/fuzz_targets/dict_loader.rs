@@ -1,4 +1,3 @@
-#![no_main]
 //! Hostile bytes through the system chunk loader: `PhraseLibrary::open` is the
 //! entry `pinyin_init` uses for the per-library `.bin` files of a system
 //! directory, so the input is written to a file as it stands, header and
@@ -11,7 +10,6 @@
 
 use std::io::Write;
 
-use libfuzzer_sys::fuzz_target;
 use oxpinyin::data::phrase_library::PhraseLibrary;
 
 fn scratch_path() -> std::path::PathBuf {
@@ -27,7 +25,12 @@ fn walk(library: &PhraseLibrary) -> Vec<(u32, usize, usize)> {
         .collect()
 }
 
-fuzz_target!(|data: &[u8]| {
+fn main() {
+    oxpinyin_fuzz::run_once(run);
+}
+
+/// Runs one input.
+fn run(data: &[u8]) {
     let path = scratch_path();
     let mut file = std::fs::File::create(&path).expect("scratch file");
     file.write_all(data).expect("scratch write");
@@ -39,4 +42,4 @@ fuzz_target!(|data: &[u8]| {
         (Err(_), Err(_)) => {}
         _ => panic!("open must be deterministic"),
     }
-});
+}
