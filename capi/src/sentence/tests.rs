@@ -330,10 +330,12 @@ fn a_short_system_gram_merged_with_a_user_gram_aborts_the_segment() {
     );
 }
 
-/// With no user gram, the n-best ranged step's `search` reads nothing in
-/// `lower_bound` and then asserts in `get_total_freq` on a system value
-/// shorter than its total (`ngram.cpp:163-165`, `:48-50`), from
-/// `search_bigram2` (`phonetic_lookup.h:594-598`, `:626`).
+/// With no user gram and a system value shorter than its total, the n-best
+/// ranged step's `search` calls `lower_bound` on a range whose end comes
+/// before its start (`ngram.cpp:155-161`), before `get_total_freq`
+/// (`:163-165`): the call breaks `lower_bound`'s precondition, so the pin's
+/// result is undefined. From `search_bigram2` (`phonetic_lookup.h:594-598`,
+/// `:626`).
 #[test]
 fn a_short_system_gram_aborts_the_ranged_step() {
     assert_aborts(
