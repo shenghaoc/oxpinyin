@@ -867,7 +867,7 @@ fn repeated_candidate_guess_refuses_the_same_partial_predecessor() {
             [(
                 "libpinyin".to_owned(),
                 glib_sys::G_LOG_LEVEL_WARNING,
-                "pinyin_guess_candidates: a user bigram value would be read past its end (upstream reads past it)".to_owned(),
+                "pinyin_guess_candidates: a bigram value would be read past its end (upstream reads past it)".to_owned(),
             )]
         );
     }

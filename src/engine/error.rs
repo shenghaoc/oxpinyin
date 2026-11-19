@@ -151,13 +151,13 @@ pub enum EngineError {
         token: u32,
     },
     /// A lookup merged or read a predecessor's bigram where the pin
-    /// asserts: a stored user-bigram value shorter than its `guint32`
-    /// total, whose total `merge_single_gram` (`ngram.cpp:304`),
+    /// asserts: a stored system or user bigram value shorter than its
+    /// `guint32` total, whose total `merge_single_gram` (`ngram.cpp:303-304`),
     /// `SingleGram::search` (`:165`) or the `DYNAMIC_ADJUST` term
     /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
     /// `memory_chunk.h:390` (register row 85). The engine answers an error
     /// instead of the abort.
-    #[error("the predecessor {token:#010x} has a user-bigram value shorter than its total")]
+    #[error("the predecessor {token:#010x} has a bigram value shorter than its total")]
     ShortLookupPredecessor {
         /// The predecessor token whose gram is too short for a total.
         token: u32,

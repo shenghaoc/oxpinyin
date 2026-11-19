@@ -545,16 +545,16 @@ use super::{UserStoreError, user_gram_or_none};
 #[test]
 fn a_failed_user_read_is_no_gram() {
     let io = UserStoreError::Io(std::io::Error::other("injected"));
-    assert_eq!(user_gram_or_none(Err(io)).unwrap(), None);
+    assert_eq!(user_gram_or_none(Err(io)), None);
+    assert_eq!(user_gram_or_none(Err(UserStoreError::Decode)), None);
     assert_eq!(
-        user_gram_or_none(Err(UserStoreError::Decode)).unwrap(),
+        user_gram_or_none(Err(UserStoreError::Store(
+            crate::store::StoreError::ReadAfterCheck
+        ))),
         None
     );
-    assert_eq!(
-        user_gram_or_none(Ok(Some(vec![1, 2]))).unwrap(),
-        Some(vec![1, 2])
-    );
-    assert_eq!(user_gram_or_none(Ok(None)).unwrap(), None);
+    assert_eq!(user_gram_or_none(Ok(Some(vec![1, 2]))), Some(vec![1, 2]));
+    assert_eq!(user_gram_or_none(Ok(None)), None);
 }
 
 #[path = "../../tests/common/candidate_fixture.rs"]

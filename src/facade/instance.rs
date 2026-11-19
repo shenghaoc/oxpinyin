@@ -832,7 +832,7 @@ pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, Traini
     }
 }
 
-/// The lookup faults of a predecessor's user bigram. A value too short for
+/// The lookup faults of a predecessor's bigram, system or user. A value too short for
 /// its total is the pin's assert in `get_total_freq`; a Kyoto Cabinet read
 /// that fails after its size check also aborts. A read past the value logs
 /// the one warning and answers `true`; every other fault answers `false`.
@@ -843,7 +843,7 @@ pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str
             std::process::abort();
         }
         EngineError::UnsafeLookupPredecessor { .. } => {
-            "a user bigram value would be read past its end (upstream reads past it)"
+            "a bigram value would be read past its end (upstream reads past it)"
         }
         EngineError::CandidateIndexOutOfRange { .. }
         | EngineError::LookupOffsetPastSeparator { .. }
