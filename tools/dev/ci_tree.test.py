@@ -627,6 +627,7 @@ class GateTests(unittest.TestCase):
             'fuzz/fuzz_targets/x.rs': {'rust'},
             'fuzz/rust-toolchain.toml': {'rust', 'harness'},
             'deny.toml': {'rust'},
+            'clippy.toml': {'rust'},
             '.config/nextest.toml': {'rust'},
             'Cargo.lock': {'rust', 'harness', 'ship'},
             'rust-toolchain.toml': {'rust', 'harness', 'ship'},
@@ -700,7 +701,7 @@ class GateTests(unittest.TestCase):
     def test_the_store_gate_runs_the_backend_rule_with_its_infrastructure(self):
         self.assertTrue(ci_tree.STORE_GATE_SCRIPT.is_file())
         for path in ('src/store/mod.rs', 'Cargo.lock', 'utils/tests/cell.rs', 'tools/dev/test_runner.py',
-                     '.github/workflows/ci.yml', 'fuzz/rust-toolchain.toml'):
+                     '.github/workflows/ci.yml', 'fuzz/rust-toolchain.toml', 'clippy.toml'):
             with self.subTest(path=path):
                 self.git('reset', '-q', '--hard', self.base)
                 self.commit({path: 'changed\n'})

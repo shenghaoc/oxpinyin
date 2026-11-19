@@ -1,0 +1,3 @@
+# The pinned nightly (fuzz/rust-toolchain.toml) also runs the tests, so the
+# incompatible_msrv lint checks test code against rust-version as well.
+check-incompatible-msrv-in-tests = true

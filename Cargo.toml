@@ -122,8 +122,10 @@ version = "0.1.0-alpha.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/shenghaoc/oxpinyin"
-# Exact on purpose (#1074): the MSRV is the pinned stable toolchain in rust-toolchain.toml.
-rust-version = "1.100.0"
+# Exact on purpose (#1074). The nightly in fuzz/rust-toolchain.toml also builds
+# the workspace; it is a 1.99.0-nightly, so the MSRV is 1.98.0, the newest
+# release whose every API that nightly has. The stable pin is newer.
+rust-version = "1.98.0"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
