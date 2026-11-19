@@ -92,18 +92,16 @@ pub unsafe extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
     };
 }
 
-/// Reset the pinyin instance (clear parsing and sentence state).
+/// Clear the instance's parsing state, sentence state, and candidate list.
 ///
 /// # C signature
 /// ```c
 /// bool pinyin_reset(pinyin_instance_t * instance);
 /// ```
 ///
-/// The full reset: upstream's `pinyin_reset` also clears the instance's
-/// constraint store (`pinyin.cpp:2697`) — the parse path's
-/// [`oxpinyin::facade::InstanceView::reset_parse_state`] split deliberately
-/// leaves it alive across keystrokes — and the phrase result
-/// (`pinyin.cpp:2699`), which this clears with it.
+/// The reset also clears constraints and phrase results (`pinyin.cpp:2693-2704`).
+/// The function returns `false` for a null `instance` and `true` after the
+/// reset.
 ///
 /// # Safety
 ///

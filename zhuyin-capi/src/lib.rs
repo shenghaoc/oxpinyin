@@ -1,77 +1,48 @@
-//! C ABI of libpinyin's zhuyin facade — the 52-symbol `libzhuyin.so.15`
-//! surface, the `--enable-libzhuyin` counterpart to `libpinyin.so.15`.
+//! Implements the libzhuyin C API and ABI.
 //!
-//! Upstream builds this as a SEPARATE shared object from `$(pinyin_SOURCES)
-//! zhuyin.cpp` with its own version script (`src/Makefile.am:108-125`,
-//! `configure.ac:138-144` at 0c5e80e1 — 2.11.91 — unchanged at the 074a2219 pin): `libzhuyin.so.15`, not
-//! additional symbols in `libpinyin.so.15`. This crate mirrors that cut for
-//! the Rust world: a new workspace member producing `libzhuyin.so.15`, with
-//! no change to `oxpinyin-capi` (which keeps building `libpinyin.so.15`).
+//! Linux packages provide `libzhuyin.so.15`.
+//! Native Rust interfaces are unsupported internal details.
+//! Each build selects exactly one database backend. The default is `tkrzw`.
 //!
-//! ## Export boundary
+//! ## Further reading
 //!
-//! The authoritative export list is the checked-in `libzhuyin.ver` (copied
-//! verbatim from upstream): 52 `zhuyin_*` symbols. `zhuyin_get_raw_user_input`
-//! appears in `zhuyin.h` inside `#if 0` and is NOT in the `.ver` — it is not
-//! exported.
-//!
-//! A Rust `cdylib` cannot apply a named version script at link time (rustc
-//! merges its own anonymous script, and GNU ld rejects the pair — the same
-//! reason `oxpinyin-capi`'s `build.rs` enforces scope in source, not by a
-//! linker script). So the boundary is enforced by source construction: every
-//! symbol in the `.ver` is `#[unsafe(no_mangle)] pub extern "C"`, and nothing
-//! else is. The built `libzhuyin.so.15` is verified to export exactly the 52.
-//! The `.ver` ships verbatim as the record and for the packaging step.
-//!
-//! ## Panic discipline
-//!
-//! Panics follow constitution §4's pin-matched failure policy; class (b)
-//! rulings remain authoritative, and where the pin asserts or aborts this
-//! crate calls `std::process::abort()` (class (c) retired 2026-10-31 UTC). The library crates on this
-//! facade's path (`oxpinyin`, `-data`, `-store`, `-engine`, `-facade`,
-//! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
-//! `expect_used`/`panic`/`panic_in_result_fn`/`unreachable` outside tests —
-//! the macro-only `oxpinyin` carries the same lints. Permitted
-//! sites require narrowly scoped, justified
-//! `#[expect]` attributes under `rust-conventions.md`; these prove Clippy
-//! saw a construct, not that its failure condition matches the pin.
-//! Other panic sources also need to respect §4. A panic that reaches an
-//! `extern "C"` boundary aborts
-//! the process. There is deliberately no panic-catching wrapper.
-//! Abort at the ABI boundary applies under either panic strategy (the
-//! release profile is `unwind`; `panic = "abort"` was tried and reverted
-//! for its keystroke-cycle cost).
+//! - [C header](https://github.com/shenghaoc/oxpinyin/blob/main/zhuyin-capi/zhuyin.h)
+//! - [Exported symbols](https://github.com/shenghaoc/oxpinyin/blob/main/zhuyin-capi/libzhuyin.ver)
+//! - [C library packaging](https://github.com/shenghaoc/oxpinyin/blob/main/docs/packaging.md)
+//! - [Backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/runbooks/backends.md#selecting-a-backend)
+//! - [Supported external interfaces](https://github.com/shenghaoc/oxpinyin/blob/main/docs/constitution.md#external-interfaces)
+//! - [Upstream pin](https://github.com/shenghaoc/oxpinyin/blob/main/tools/oracle/oracle-pin.txt)
+//! - [Failure behaviour](https://github.com/shenghaoc/oxpinyin/blob/main/docs/findings/compatibility-policy.md#failure-behaviour)
 //!
 //! ## Safety
 //!
-//! Every entry point is an `unsafe extern "C" fn`: its caller upholds the
-//! `zhuyin.h` contract. Each function's `# Safety` section names the rules
-//! below that bind its arguments, and adds its own requirements.
+//! The caller must uphold the C header contract. Each function's `# Safety`
+//! section identifies the rules below that apply and gives any additional
+//! requirements.
 //!
-//! - **Handles.** A context pointer is NULL or a pointer that `zhuyin_init`
-//!   returned and `zhuyin_fini` has not taken. `zhuyin_fini` and
-//!   `zhuyin_alloc_instance` also accept a pointer that `zhuyin_fini` took:
-//!   they look it up in the registry of live contexts and refuse it. An
-//!   instance pointer is NULL or a pointer that `zhuyin_alloc_instance`
-//!   returned and `zhuyin_free_instance` has not freed. An iterator pointer
-//!   is NULL or a pointer that `zhuyin_begin_add_phrases` returned and
-//!   `zhuyin_end_add_phrases` has not freed.
-//! - **Strings.** A `const char *` argument is NULL or points to a
+//! - **Handles.** A context pointer must be null or point to a live context
+//!   returned by [`zhuyin_init`]. [`zhuyin_fini`] ends that context's lifetime.
+//!   The caller must not use the handle again, even if a later context gets
+//!   the same address. An instance pointer is null or a live pointer returned
+//!   by [`zhuyin_alloc_instance`]. An iterator pointer is
+//!   null or a pointer that [`zhuyin_begin_add_phrases`] returned and
+//!   [`zhuyin_end_add_phrases`] has yet to free.
+//! - **Strings.** A `const char *` argument is null or points to a
 //!   NUL-terminated string that stays valid and unchanged for the call.
-//! - **Out-parameters.** A pointer the function writes through is NULL or is
+//! - **Out-parameters.** A pointer the function writes through is null or is
 //!   valid and aligned for a write of its pointee type.
-//! - **Borrowed objects.** A candidate pointer is NULL or a row that
-//!   `zhuyin_get_candidate` answered, from a candidate list that is still
-//!   the current list of a live instance: the next call that rebuilds or
-//!   clears that instance's list, and its free, end the row. A key or
-//!   key-rest pointer is NULL or points to a `ChewingKey` or
-//!   `ChewingKeyRest` that is valid for reads.
-//! - **Serial calls.** Calls that use one context, its instances or its
-//!   iterators do not overlap: the caller serializes them.
+//! - **Serial calls.** Serialize calls that use the same context or its
+//!   instances or iterators.
 //!
-//! Opaque handles cross as `*mut T` via `Box::into_raw` / `Box::from_raw`;
-//! every incoming pointer is null-checked. `// SAFETY:` documents each
-//! `unsafe` block.
+//! ### Borrowed objects
+//!
+//! A candidate pointer is null or a pointer borrowed from a live instance by
+//! [`zhuyin_get_candidate`]. The pointer becomes invalid when the instance's
+//! candidate list is rebuilt or cleared, including by [`zhuyin_reset`], or
+//! when [`zhuyin_free_instance`] frees the instance.
+//!
+//! A key pointer is null or points to a [`ChewingKey`] valid for reads. A
+//! key-rest pointer is null or points to a [`ChewingKeyRest`] valid for reads.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]

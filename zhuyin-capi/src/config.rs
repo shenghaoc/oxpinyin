@@ -83,7 +83,7 @@ pub unsafe extern "C" fn zhuyin_set_full_pinyin_scheme(
     true
 }
 
-/// `zhuyin_set_options` — copies the caller's option word.
+/// Set the option word on the Zhuyin context.
 ///
 /// # C signature
 /// ```c
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn zhuyin_set_options(
     true
 }
 
-/// `zhuyin_mask_out`.
+/// Remove entries that match a phrase-token mask.
 ///
 /// # C signature
 /// ```c
@@ -121,6 +121,10 @@ pub unsafe extern "C" fn zhuyin_set_options(
 ///                      phrase_token_t mask,
 ///                      phrase_token_t value);
 /// ```
+///
+/// If a loaded system library cannot be remapped, the function writes a
+/// diagnostic to `stderr` and returns `true` without applying the mask.
+/// No matching entries are removed. Unsaved changes remain in memory.
 ///
 /// The user table's `mask_out` walks every `user_pinyin_index.bin` record
 /// and dies of SIGABRT at the `switch` whose `default` is `abort()` when a

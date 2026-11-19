@@ -108,16 +108,13 @@ pub unsafe extern "C" fn pinyin_init(
 /// calls this leaves the raised counter behind, and the init that reads
 /// it past the limit wipes the profile, exactly as upstream's does.
 ///
-/// A second call on a context that is already finalised (or was never
-/// handed out by `pinyin_init`) returns at once: the pin reads and deletes
-/// the freed context again (`pinyin.cpp:1194-1222`), a double free that
-/// kills it with SIGSEGV (register row 105, class (b)).
+/// A null `context` returns immediately.
 ///
 /// # Safety
 ///
-/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
-/// applies. After the call `context` is dangling: only the two functions that the handle rule
-/// names may receive it again.
+/// The [crate-level rules](crate#safety) for handles and serial calls apply.
+/// A non-null `context` must be a live handle returned by [`pinyin_init`].
+/// This call takes ownership of the context and ends its lifetime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     // One step: the registry held the address and this call removed it, so

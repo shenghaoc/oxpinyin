@@ -22,6 +22,10 @@ use crate::types::{GChar, GUint, LookupCandidate, ZhuyinInstance, lookup_candida
 /// bool zhuyin_get_n_candidate(zhuyin_instance_t * instance, guint * num);
 /// ```
 ///
+/// A null `instance` returns `false` without writing. Otherwise, the
+/// function returns `true`. A null `num` skips the write. A non-null `num`
+/// receives the candidate count.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
@@ -55,11 +59,17 @@ pub unsafe extern "C" fn zhuyin_get_n_candidate(
 ///                           guint index, lookup_candidate_t ** candidate);
 /// ```
 ///
+/// A null `instance` returns `false` without writing. Otherwise, the
+/// function returns `true` if the row exists and `false` if it is absent.
+/// If `candidate` is non-null, the function writes a borrowed pointer to
+/// the row, or null if the row is absent (`zhuyin.cpp:1843-1855`).
+/// The caller does not free the pointer. See the
+/// [crate-level rule for borrowed objects](crate#borrowed-objects).
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is an
-/// out-parameter. The serial-calls rule applies. The row written to `*candidate` is a borrowed
-/// object.
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zhuyin_get_candidate(
     instance: *mut ZhuyinInstance,

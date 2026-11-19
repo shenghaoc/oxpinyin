@@ -131,7 +131,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     }
 }
 
-/// Get a sentence string from the instance.
+/// Get the decoded text of the top-ranked sentence.
 ///
 /// # C signature
 /// ```c
@@ -139,10 +139,14 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
 ///                          char ** sentence);
 /// ```
 ///
-/// Out-param `sentence` is caller-owned (`g_free`). Decoded-or-nothing, as
-/// the pin: the 1-best row's text while a sentence lookup is active, `false`
-/// with `*sentence` untouched otherwise. If no phrase in the row converts,
-/// the getter writes NULL and answers `true` (`lookup/lookup.cpp:27-70`).
+/// A null `instance` or a missing top-ranked row returns `false` without
+/// writing. The pin checks for empty results and reads row zero
+/// (`zhuyin.cpp:988-992`).
+///
+/// If the row exists, the function returns `true`. A null `sentence`
+/// skips the write. Otherwise, the function writes the decoded string to
+/// `*sentence`, or null if no phrase converts. The caller frees a non-null
+/// string with `g_free` (`zhuyin.cpp:982-999`, `lookup/lookup.cpp:27-70`).
 ///
 /// # Safety
 ///
