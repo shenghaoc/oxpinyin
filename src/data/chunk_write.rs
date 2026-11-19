@@ -22,7 +22,7 @@
 
 // SubPhraseIndex::add_phrase_item masks tokens with PHRASE_MASK,
 // phrase_index.cpp:208–216; memory_chunk.h:536–557 specifies the frame. The builder
-// requires the item offsets and accumulated total to fit its output fields.
+// requires the item offsets to fit their output fields.
 
 use crate::PHRASE_MASK;
 use crate::data::chunk_format::{
@@ -63,19 +63,21 @@ pub struct ChunkItem {
 /// — the order `FacadePhraseIndex::compact()` produces — and slots must
 /// not repeat.
 ///
+/// The library's unigram total is the sum of item frequencies modulo 2^32.
+///
 /// # Errors
 ///
 /// Fails on a repeated or out-of-order slot, an empty phrase, a
 /// pronunciation whose key run length differs from the phrase length, an
 /// item longer than the format allows (phrase length or pronunciation
-/// count above `u8::MAX`), or a total frequency above `u32::MAX`.
+/// count above `u8::MAX`).
 pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, ChunkWriteError> {
     // ---- validate and serialise the entry area -------------------------
     // Empty until the first item: `add_phrase_item`'s `if (0 == offset)
     // offset = 8` only fires when an item is written.
     let mut content: Vec<u8> = Vec::new();
     let mut offsets: Vec<u32> = Vec::new();
-    let mut total_freq: u64 = 0;
+    let mut total_freq = 0_u32;
     let mut last_slot: Option<u32> = None;
 
     for &(slot, ref item) in items {
@@ -133,11 +135,8 @@ pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Result<Vec<u8>, ChunkWriteErro
             }
             content.extend_from_slice(&freq.to_le_bytes());
         }
-        total_freq += u64::from(item.unigram);
+        total_freq = total_freq.wrapping_add(item.unigram);
     }
-
-    let total_freq = u32::try_from(total_freq)
-        .map_err(|_| ChunkWriteError("chunk total_freq overflows u32".to_owned()))?;
 
     // ---- assemble payload: header, offset array, entry area ------------
     let slot_count = offsets.len();
