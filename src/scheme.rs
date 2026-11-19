@@ -74,15 +74,9 @@ impl DoublePinyinParse {
     }
 }
 
-/// `FullPinyinScheme` from `src/storage/pinyin_custom2.h:98-104`.
-///
-/// HANYU (the frozen `crate::parser` surface) stays the default —
-/// `FULL_PINYIN_DEFAULT = FULL_PINYIN_HANYU` and the parser constructor
-/// calls `set_scheme(FULL_PINYIN_DEFAULT)` (`pinyin_parser2.cpp:158-165,
-/// 383-401`). LUOMA and `SECONDARY_ZHUYIN` switch the parser onto their
-/// pinned indexes in `crate::full_pinyin_index`; the out-of-enum
-/// `abort()` slot is deliberately not modelled here (contract-lock
-/// workstream).
+// FullPinyinScheme, pinyin_custom2.h:98–104. FullPinyinParser2 selects Hanyu at
+// construction and changes its index in set_scheme, pinyin_parser2.cpp:158–165,383–401.
+/// Selects the spelling system for full-pinyin input.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
 )]
@@ -98,8 +92,8 @@ pub enum FullPinyinScheme {
 }
 
 impl FullPinyinScheme {
-    /// The pinned spelling index this scheme parses through, or `None`
-    /// for HANYU (the frozen parser surface).
+    /// Returns the exact spelling index for Luoma or secondary Zhuyin. Hanyu uses
+    /// [`crate::FullPinyinParser`] and has no alternate index.
     #[must_use]
     pub const fn index(self) -> Option<crate::FullPinyinIndex> {
         match self {
@@ -110,7 +104,8 @@ impl FullPinyinScheme {
     }
 }
 
-/// `DoublePinyinScheme` from `src/storage/pinyin_custom2.h:108-117`.
+// DoublePinyinScheme, pinyin_custom2.h:108–117.
+/// Selects the two-key keyboard mapping for [`DoublePinyinParser`].
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
 )]
@@ -226,14 +221,10 @@ fn lookup_pinyin(spelling: &str) -> Option<SyllableKey> {
     None
 }
 
-/// Stateless parser for one double-pinyin scheme.
-///
-/// The optional `suppress_fallback` flag reproduces upstream's
-/// half-mutation state: `DoublePinyinParser2::set_scheme` clears
-/// `m_fallback_table` unconditionally (`pinyin_parser2.cpp:580`) before
-/// checking the discriminant, so an out-of-enum call leaves the shengmu
-/// and yunmu tables intact but the fallback pointer null. The builder
-/// `Self::with_fallback_suppressed` creates that state.
+// DoublePinyinParser2::set_scheme clears m_fallback_table before dispatch. An
+// out-of-enum call leaves the previous mapping with its fallback suppressed
+// (pinyin_parser2.cpp:575–615).
+/// Parses keystrokes with the selected double-pinyin keyboard and its fallback spellings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DoublePinyinParser {
     scheme: DoublePinyinScheme,
@@ -245,7 +236,8 @@ pub struct DoublePinyinParser {
 }
 
 impl DoublePinyinParser {
-    /// A parser for the scheme's default (`DOUBLE_PINYIN_MS`).
+    // DOUBLE_PINYIN_DEFAULT is DOUBLE_PINYIN_MS, pinyin_custom2.h:108–117.
+    /// Creates a parser for the Microsoft double-pinyin keyboard.
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -294,20 +286,12 @@ impl DoublePinyinParser {
         self.scheme
     }
 
-    /// Greedily parses `input`, mirroring `DoublePinyinParser2::parse`
-    /// (`src/storage/pinyin_parser2.cpp:531-574`), driven by the caller's
-    /// **full option word** (`pinyin_parse_more_double_pinyins`,
-    /// `src/pinyin.cpp:1543`):
-    /// the `USE_TONE`, `FORCE_TONE`, and `PINYIN_INCOMPLETE` bits are read
-    /// off the word exactly as upstream's `DoublePinyinParser2::parse`
-    /// reads its caller options. `FORCE_TONE` requires a three-byte key
-    /// (`pinyin_parser2.cpp:412`); a three-byte key carries its trailing
-    /// `1`..=`5` digit as the tone only under `USE_TONE` (`:439-451`), so
-    /// `FORCE_TONE` without `USE_TONE` consumes nothing at all. The
-    /// one-byte incomplete probe runs under `PINYIN_INCOMPLETE`
-    /// (`:418-421`). Correction and ambiguity bits never cross: the
-    /// two-key lookup is `lookup_pinyin`'s forced-`UE_VE`/`V_U` law
-    /// whatever the word carries (`:409, :434-436`).
+    // DoublePinyinParser2::parse, pinyin_parser2.cpp:531–574.
+    // pinyin_parse_more_double_pinyins forwards the option word at pinyin.cpp:1543.
+    /// Greedily parses the longest keyboard prefix, trying the longest key first at each
+    /// position. [`Self::parse_one_key`] describes the tone and incomplete-key options.
+    ///
+    /// The returned spans and consumed length count bytes of the original input.
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: OptionBits) -> DoublePinyinParse {
         let Some(mut tables) = self.scheme.tables() else {
@@ -364,20 +348,15 @@ impl DoublePinyinParser {
         }
     }
 
-    /// Parses one double-pinyin key from the whole of `input`, mirroring
-    /// `DoublePinyinParser2::parse_one_key`
-    /// (`src/storage/pinyin_parser2.cpp:405-530`).
+    // DoublePinyinParser2::parse_one_key, pinyin_parser2.cpp:405–530, especially 409–451
+    // (UE_VE and V_U).
+    /// Parses the entire input as one double-pinyin key.
     ///
-    /// `options` is the caller's option word, with the law the batch
-    /// [`Self::parse_with_options`] does not carry: correction and ambiguity bits are
-    /// masked first (`:409`); `FORCE_TONE` requires a three-byte input
-    /// (`:412`); the one-byte incomplete probe runs under
-    /// `PINYIN_INCOMPLETE` (`:418-421`); and the two/three-byte probe
-    /// masks the incomplete bits and forces the `UE_VE`/`V_U`
-    /// corrections (`:433-436` — already `lookup_pinyin`'s law), with
-    /// a three-byte input's trailing `1..=5` riding the key as the tone
-    /// under `USE_TONE` (`:439-451`). A two-byte match carries tone
-    /// zero. `None` is the upstream `false`.
+    /// One keyboard byte can spell an initial under [`OptionBits::PINYIN_INCOMPLETE`]. A
+    /// two-byte spelling has tone zero. A third byte must be an ASCII digit from 1 to 5 and
+    /// requires [`OptionBits::USE_TONE`]. [`OptionBits::FORCE_TONE`] requires all three
+    /// bytes. The two-letter lookup supplies its own spelling corrections and ignores the
+    /// caller’s pinyin correction and ambiguity bits.
     #[must_use]
     pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         let options = options - (OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL);
@@ -503,15 +482,9 @@ fn parse_fallback(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
         .and_then(lookup_pinyin)
 }
 
-/// `ZhuyinScheme` from `src/storage/pinyin_custom2.h:122-133`.
-///
-/// Eight of the nine keyboards parse ([`ZhuyinParser`]: Standard, Hsu,
-/// Ibm, Ginyieh, Eten, Eten26, `HsuDvorak`, `DachenCp26`); `StandardDvorak`
-/// is the one gap — upstream's setter aborts on it
-/// (`zhuyin_parser2.cpp:291-295`, recorded in
-/// `docs/findings/compatibility-policy.md`, row 5c). The C API setters abort
-/// there as the pin does; `ZhuyinParser::set_scheme` returns `false` and
-/// keeps the current scheme.
+// ZhuyinScheme, pinyin_custom2.h:122–133. StandardDvorak has no mapping in the pin
+// (zhuyin_parser2.cpp:291–295, compatibility-policy row 5c).
+/// Selects a Zhuyin keyboard for [`ZhuyinParser`]. The default is [`Self::Standard`].
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
 )]
@@ -573,11 +546,9 @@ impl ZhuyinKey {
         self.tone
     }
 
-    /// The key's canonical Zhuyin spelling plus the tone mark, matching
-    /// `_ChewingKey::get_zhuyin_string` (`src/storage/chewing_key.cpp:74-89`):
-    /// first and zero tones render the bare spelling; tones 2..5 append their
-    /// tone mark. A shuffled input renders canonically, because the matched
-    /// row's key is its `content_table` entry.
+    // _ChewingKey::get_zhuyin_string, chewing_key.cpp:74–89.
+    /// Renders the canonical Zhuyin spelling. Tones zero and one have no mark. See
+    /// [`ChewingKey::zhuyin_string`].
     #[must_use]
     pub fn display(&self) -> String {
         self.key
@@ -773,11 +744,13 @@ fn search_zhuyin_index(
     Some(key)
 }
 
-/// `ZhuyinDirectParser2::parse` (`zhuyin_parser2.cpp:914-958`): the input
-/// splits at every `' '` and `'\''`, each segment must be one whole key
-/// (`parse_zhuyin_direct_key`), and the parse stops at the first segment
-/// that is not — the keys before it are the result. Returns the keys as
-/// `(syllable, tone)`.
+// ZhuyinDirectParser2::parse_one_key and parse, zhuyin_parser2.cpp:859–911,914–959.
+/// Parses Zhuyin text into syllables and tones up to the first rejected segment.
+///
+/// Each segment must spell a whole key. After a match, any run of ASCII spaces and
+/// apostrophes separates it from the next segment. A leading separator yields no keys.
+/// Tone defaults to one. With [`OptionBits::USE_TONE`], a trailing tone symbol supplies
+/// the tone.
 #[must_use]
 pub fn parse_zhuyin_direct(input: &str, options: OptionBits) -> Vec<(SyllableKey, u8)> {
     let mut keys = Vec::new();
@@ -836,14 +809,14 @@ enum Keyboard {
     Cp26(Cp26Tables),
 }
 
-/// Stateless parser for one Zhuyin keyboard.
+// ZhuyinSimpleParser2, ZhuyinDiscreteParser2 and ZhuyinDaChenCP26Parser2,
+// zhuyin_parser2.cpp:216–268,408–460,573–606,718–762. is_valid_zhuyin is checked at
+// 256–257,448–450,756–758 (chewing_key.cpp:38–45).
+/// Parses keystrokes on a selected Zhuyin keyboard.
 ///
-/// The Simple keyboards (STANDARD, IBM, GINYIEH, ETEN) are implemented
-/// table-driven over the shared `crate::zhuyin_map` index; the
-/// Discrete keyboards (HSU, ETEN26, `HSU_DVORAK`) probe initial/middle/
-/// final/tone positions against their own tables and indexes; CP26 and
-/// the `STANDARD_DVORAK` abort slot parse nothing and their setters
-/// report `false`.
+/// Standard, IBM, Gin-Yieh and Eten map keystrokes to symbols. Hsu, Eten26 and Hsu Dvorak
+/// use position-specific mappings. Dachen CP26 uses repeated keystrokes. Standard Dvorak
+/// has no mapping. [`Self::parse_with_options`] parses a keyboard prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ZhuyinParser {
     scheme: ZhuyinScheme,
@@ -994,7 +967,8 @@ impl ZhuyinParser {
         self.scheme
     }
 
-    /// Whether `key` is part of the current keyboard.
+    /// Reports whether the current keyboard maps `key` to a symbol. Set `use_tone` to admit
+    /// bytes that map only to a tone.
     #[must_use]
     pub fn in_scheme(&self, key: u8, use_tone: bool) -> bool {
         !self.symbols_for(key, use_tone).is_empty()
@@ -1059,27 +1033,22 @@ impl ZhuyinParser {
         }
     }
 
-    /// Greedily parses `input`, mirroring `ZhuyinSimpleParser2::parse`
-    /// (`src/storage/zhuyin_parser2.cpp:216-268`) and
-    /// `ZhuyinDiscreteParser2::parse` (`:408-460`) — the same greedy
-    /// shell — including the post-match `is_valid_zhuyin` abort
-    /// (`:256-257`, `_ChewingKey::is_valid_zhuyin` at
-    /// `chewing_key.cpp:38-45`).
+    // ZhuyinSimpleParser2::parse, ZhuyinDiscreteParser2::parse and
+    // ZhuyinDaChenCP26Parser2::parse, zhuyin_parser2.cpp:216–268,408–460,718–762.
+    // is_valid_zhuyin returns a boolean, chewing_key.cpp:38–45. Simple and Discrete OR
+    // m_options into caller options (221,413); Rust reconstructs the probe mask. Only the
+    // keyboard’s own correction bit occurs in its index (pinyin_parser_table.h:1492–3975).
+    // CP26 emits initial/middle/final order (zhuyin_parser2.cpp:613–705); no SHUFFLE row in
+    // the global index has that order. zhuyin_parse_more_chewings forwards the word at
+    // zhuyin.cpp:1058–1082.
+    /// Greedily parses a prefix of keyboard input, trying the longest available key at each
+    /// position. If a selected key and tone fail the Zhuyin validity check, parsing stops at
+    /// that position without retrying a shorter key. The result contains the preceding keys
+    /// and the consumed byte count.
     ///
-    /// The caller's **full option word** (`zhuyin_parse_more_chewings`,
-    /// `zhuyin.cpp:1058-1082`) supplies the `USE_TONE`, `FORCE_TONE` and
-    /// `ZHUYIN_INCOMPLETE` bits, read exactly as upstream's
-    /// `ZhuyinSimpleParser2` / Discrete / CP26 batch parsers read their
-    /// caller options (`options |= m_options`, `zhuyin_parser2.cpp:221,413`).
-    /// The parser additionally owns its keyboard's correction bit, which
-    /// upstream's `set_scheme` forces (SHUFFLE for Simple, `:272`; HSU /
-    /// ETEN26 for Discrete, `:474-490`) and `parse` or's into the option
-    /// word (`:221`, `:413`); `FORCE_TONE` is honoured per keyboard family.
-    ///
-    /// Both C facades' `*_parse_more_chewings` seams drive this method with
-    /// their own forwarding law — the pinyin facade's word minus
-    /// `ZHUYIN_CORRECT_ALL`, the zhuyin facade's whole word (its pin
-    /// default carries `USE_TONE | FORCE_TONE`).
+    /// The active keyboard supplies its correction rules. [`OptionBits::ZHUYIN_INCOMPLETE`],
+    /// [`OptionBits::USE_TONE`] and [`OptionBits::FORCE_TONE`] control incomplete keys and
+    /// tone handling. [`Self::parse_one_key`] describes forced tone for each keyboard family.
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: OptionBits) -> ZhuyinParse {
         let use_tone = options.contains(OptionBits::USE_TONE);
@@ -1223,23 +1192,15 @@ impl ZhuyinParser {
         }
     }
 
-    /// Parses one chewing key from the whole of `input`, mirroring the
-    /// three upstream `parse_one_key` laws — `ZhuyinSimpleParser2`
-    /// (`src/storage/zhuyin_parser2.cpp:162-210`) for the Simple
-    /// keyboards, `ZhuyinDiscreteParser2` (`:335-405`) for the Discrete
-    /// keyboards, and `ZhuyinDaChenCP26Parser2` (`:573-716`) for CP26 —
-    /// through this scheme's `Keyboard` probe.
+    // ZhuyinSimpleParser2::parse_one_key, ZhuyinDiscreteParser2::parse_one_key and
+    // ZhuyinDaChenCP26Parser2::parse_one_key, zhuyin_parser2.cpp:162–210,335–405,573–716.
+    // The pinyin facade strips ZHUYIN_CORRECT_ALL at pinyin.cpp:1621.
+    /// Parses one complete keystroke sequence on the selected Zhuyin keyboard.
     ///
-    /// `options` is the caller's option word with the ABI layer's
-    /// `ZHUYIN_CORRECT_ALL` strip already applied (`pinyin.cpp:1621`).
-    /// Unlike the batch [`Self::parse_with_options`], no keyboard-owned correction
-    /// bit is forced here and the ambiguity bits are masked (the
-    /// `options &= ~PINYIN_AMB_ALL` at `:165`, `:340`, `:580`).
-    /// `FORCE_TONE` rejects a toneless match — nested under `USE_TONE`
-    /// for Simple and CP26 (`:178`, `:602`), unconditional for Discrete
-    /// (`:373`, `:387`). `None` is the upstream `false`, including the
-    /// out-of-keyboard and assert shapes; the C adapters abort on the
-    /// ones where the pin asserts.
+    /// The lookup uses the supplied Zhuyin correction bits and removes pinyin ambiguity bits.
+    /// On simple keyboards and Dachen CP26, [`OptionBits::FORCE_TONE`] requires a tone only
+    /// with [`OptionBits::USE_TONE`]. The discrete keyboards require a tone whenever forced
+    /// tone is set.
     #[must_use]
     pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         zhuyin_parse_one_key(self.scheme, options, input)
