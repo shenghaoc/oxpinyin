@@ -1,10 +1,4 @@
 //! Sentence decoding: the n-best lookup over the composition (`pinyin_guess_sentence`, the prefix-seeded variant, the phrase-segment DP).
-//!
-//! One of the `impl Session` slices `session/mod.rs` declares; every
-//! method here was moved verbatim from the single 5,800-line
-//! `session.rs` (2026-09-08) and keeps its doc comment and upstream
-//! citations. Shared state, constants and free functions stay in the
-//! parent module.
 
 use super::*;
 
@@ -54,27 +48,16 @@ where
     L: LanguageModel,
     L::Error: Display,
 {
-    /// Runs the n-best sentence lookup and stores its rows
-    /// (`pinyin_guess_sentence`, `pinyin.cpp:1373-1385`).
-    ///
-    /// This is the trellis port of upstream's `PhoneticLookup<2, 3>`
-    /// (`crate::engine::nbest`). Rows survive further typing and selections
-    /// until the next [`Session::guess_sentence`] or [`Session::reset`] —
-    /// upstream's `m_nbest_results` is cleared nowhere else — and
-    /// `Session::candidates` prepends them while they live.
-    ///
-    /// The walk always covers the whole matrix the last parse filled, with
-    /// the constraint store forcing the chosen spans, as the pin's
-    /// `get_nbest_match(m_prefixes, &m_matrix, m_constraints, …)` does
-    /// (`pinyin.cpp:1373-1385`). Selections never re-parse the input that
-    /// remains after them.
-    ///
-    /// Returns whether a lookup ran at all (upstream returns the lookup's
-    /// `false` only for an empty key matrix; zero rows is still `true`).
+    // pinyin_guess_sentence and PhoneticLookup::get_nbest_match, pinyin.cpp:1373–1386.
+    /// Replaces the previous n-best results with a sentence lookup over the current matrix
+    /// and constraints. The call resets the candidate prefixes before lookup. Empty input
+    /// clears the previous results and returns `false`. A completed lookup may return `true`
+    /// with no sentence rows. Rows survive further typing until the next guess or
+    /// [`Session::reset`].
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when a backend fails during the lookup.
+    /// Propagates validation, lookup and refresh errors after clearing the previous results.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
         self.set_candidate_prefixes(core::iter::empty());
         self.sentence.begin();
@@ -120,18 +103,16 @@ where
         Ok(true)
     }
 
-    /// Guesses a sentence seeded with prefix tokens — upstream
-    /// `pinyin_guess_sentence_with_prefix` (`pinyin.cpp:1426-1441`):
-    /// the prefix tokens join the virtual start as zero-cost initial
-    /// trellis nodes (`fill_prefixes`, `phonetic_lookup.h:244-276`),
-    /// the constraint store validates against the matrix, and the
-    /// ordinary full-matrix decode runs.
-    /// The caller supplies the tail-substring tokens (`_compute_prefixes`
-    /// over the prefix text).
+    // pinyin_guess_sentence_with_prefix, pinyin.cpp:1426–1441; fill_prefixes,
+    // phonetic_lookup.h:244–276.
+    /// Seeds sentence lookup with the supplied prefix tokens and the sentence-start token. It
+    /// replaces the candidate prefixes and clears previous rows before checking the input.
+    /// Empty input returns `false` after these changes.
     ///
     /// # Errors
     ///
-    /// Propagates engine failures from the decode.
+    /// Propagates validation, lookup and refresh errors. The previous prefixes and rows have
+    /// already been replaced.
     pub fn guess_sentence_with_prefix(
         &mut self,
         prefix_tokens: &[PhraseToken],

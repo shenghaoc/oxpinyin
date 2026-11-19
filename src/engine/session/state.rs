@@ -1,10 +1,4 @@
 //! Lifecycle and settings: opening a session, resetting it, replacing the raw buffer, the live option and shape switches, and the read-only accessors (raw input, candidates, composition offset).
-//!
-//! One of the `impl Session` slices `session/mod.rs` declares; every
-//! method here was moved verbatim from the single 5,800-line
-//! `session.rs` (2026-09-08) and keeps its doc comment and upstream
-//! citations. Shared state, constants and free functions stay in the
-//! parent module.
 
 use super::*;
 
@@ -212,12 +206,9 @@ where
         self.lookup.stale = true;
     }
 
-    /// Discards the composition.
-    ///
-    /// The full reset — upstream's `pinyin_reset`: the input, the
-    /// selection record, the n-best rows, and the constraint store all
-    /// go (`pinyin.cpp:2693-2704`; `:2700` clears `m_nbest_results`,
-    /// `:2699` `m_constraints`).
+    // pinyin_reset clears m_constraints and m_nbest_results, pinyin.cpp:2693–2704.
+    /// Clears the input, selection record, constraints, retained prefixes and n-best sentence
+    /// rows.
     pub fn reset(&mut self) {
         self.discard_composition();
         self.sentence.reset();
@@ -267,45 +258,27 @@ where
         self.lookup.reset();
     }
 
-    /// Replaces the raw input with `text` in one step — the capi parse
-    /// path's `parse_more` contract (the frontend re-sends the whole
-    /// buffer every keystroke). The selection record and the constraint
-    /// store survive every replacement; the cursor is clamped into
-    /// the new buffer and the candidates refresh, so the session is never
-    /// observable with a cursor past its input. A replacement that does
-    /// not extend the covered selection span — a clamp below it, or a
-    /// byte divergence inside it — reconciles the record from a temporary
-    /// constraint copy (`Session::reconcile_replaced_selection`), so
-    /// `Session::selected_text` retains only text valid for the current
-    /// input.
-    ///
-    /// Keeps every character: the pin's parser accepts any input string
-    /// and simply stops consuming at the first byte no key matches
-    /// (`pinyin_parser2.cpp:237-328` — there is no explicit stop, the
-    /// termination is the DP's reachability), so space, control, and
-    /// non-ASCII bytes must reach the decoder for it to stop there.
+    // pinyin_parse_more_full_pinyins, pinyin.cpp:1497–1524. Full-pinyin prefix consumption
+    // follows reachable parser positions (pinyin_parser2.cpp:237–328).
+    /// Replaces the whole input and reparses it. The cursor stays within the new input.
+    /// Constraints survive replacement. A byte change within the selected prefix reconciles
+    /// the visible selection. Unrecognized bytes remain in the input.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when the refresh under the new input hits
-    /// a backend failure.
+    /// A parse, reconciliation or refresh error can leave the new input visible.
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
         self.replace_raw_with_physical_separators(text, true)
     }
 
-    /// Replaces raw input while identifying whether its separators are physical.
-    ///
-    /// This exists for the facade's canonical re-parse path: pass `false`
-    /// when apostrophes were inserted to format canonical syllables. The
-    /// bit is read only by trellis generation; ordinary lookup, matrix
-    /// construction and the exact graph retain their existing behavior.
-    /// This method is expected to be removed when the full-pinyin parser
-    /// intake (#585/#626) lands.
+    /// Replaces the whole input and records whether its apostrophes were typed. Pass `false`
+    /// for separators inserted between canonical syllables. The trellis uses this
+    /// distinction.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when refreshing the replaced input hits a
-    /// backend failure.
+    /// Propagates parse, selection-reconciliation and refresh errors after the new input and
+    /// separator mode have been stored.
     pub fn replace_raw_with_physical_separators(
         &mut self,
         text: &str,
@@ -430,19 +403,15 @@ where
         state.record.clamp_consumed(state.input.as_str());
     }
 
-    /// Apply a live option-word change and refresh if composing.
-    ///
-    /// This is the engine half of `pinyin_set_options`, which only stores
-    /// the word (`pinyin.cpp:1299-1306` at 074a2219). Correction and
-    /// ambiguity bits reach the matrix at the next parse; the matrix the
-    /// last parse filled stays as it is, and every reader of it reads it as
-    /// parsed (`pinyin.cpp:1373-1386`, `:2184-2190`). The C ABI stores the
-    /// raw word and calls this before parse/guess.
+    // pinyin_set_options stores the word, pinyin.cpp:1299–1306. Existing matrix reads are at
+    // pinyin.cpp:1373–1386,2184–2190.
+    /// Replaces the option word and refreshes an active composition. The current matrix
+    /// retains the options used for its parse. New spelling and matrix options take effect at
+    /// the next parse.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when a composing session fails to refresh
-    /// under the new options.
+    /// A refresh error leaves the new option word in effect.
     pub fn set_options(&mut self, options: OptionBits) -> Result<(), EngineError> {
         if self.settings.options == options {
             return Ok(());

@@ -1,10 +1,4 @@
 //! Candidate lookup: the expanding-window scan at the composition offset or any lookup offset, the backward-anchored before-cursor window, the n-best prepend, and the DP that pools phrases into sentences.
-//!
-//! One of the `impl Session` slices `session/mod.rs` declares; every
-//! method here was moved verbatim from the single 5,800-line
-//! `session.rs` (2026-09-08) and keeps its doc comment and upstream
-//! citations. Shared state, constants and free functions stay in the
-//! parent module.
 
 use crate::{MAX_PHRASE_LENGTH, phrase_index_library_index};
 
@@ -438,10 +432,7 @@ where
     /// `gram` is the row merged once for this guess: `None`, or a row that
     /// misses the token, contributes a bigram possibility of exactly `0.0`
     /// and leaves the amplified value bit-identical to the unigram-only
-    /// law. Near-ties collapse
-    /// to equal keys under that truncation — the tie class
-    /// `docs/findings/candidate-construction.md` §8.4 calls Class A — and equal keys fall to
-    /// the collection order the stable sort keeps. `amplified_frequency`
+    /// law. Equal amplified frequencies retain collection order. `amplified_frequency`
     /// reproduces the arithmetic bit-for-bit over the model's own numbers:
     /// the item's stored unigram (`get_unigram_frequency`, `gen_unigram`'s
     /// +1 included — a phrase the corpus never saw is 1, never 0) over the
@@ -531,8 +522,7 @@ where
             if let Some(count) = count {
                 // Unigram term of candidate frequency: always on. Upstream
                 // reads FacadePhraseIndex unigrams (including trained user
-                // counts) with no DYNAMIC_ADJUST check. W6-T4's overlay is
-                // that unigram term and stays for both bit states.
+                // counts) with no DYNAMIC_ADJUST check. The overlay applies in both cases.
                 frequencies[index] = count;
             }
         }
@@ -982,7 +972,7 @@ where
             ));
         }
 
-        // W14: prepend the stored n-best rows, head first, then drop every
+        // Prepend the stored n-best rows, head first, then drop every
         // later candidate with the same text — upstream prepends after the
         // sort and its phrase-string dedup keeps the NBEST row (and the
         // lower n-best index) over any phrase candidate with the same
@@ -1029,12 +1019,19 @@ where
         self.candidates_at_for_abi(offset, false)
     }
 
-    /// Builds the explicit ABI window. If the pin ranks at this offset
-    /// and the facade total is zero, `abort_on_unreadable` is true.
+    // The ranking path handles unreadable rows at pinyin.cpp:1845–1859.
+    /// Builds the candidate window starting at a byte offset in the current input. The facade
+    /// supplies `abort_on_unreadable` when ranking requires a readable item at this offset.
     ///
     /// # Errors
     ///
-    /// As `Self::candidates_at`.
+    /// Returns [`EngineError`] if the offset exceeds the input length, lies inside a UTF-8
+    /// character, or a candidate or sentence lookup fails.
+    ///
+    /// # Aborts
+    ///
+    /// When `abort_on_unreadable` is `true`, an unreadable candidate row met during the scan
+    /// aborts the process. With `false`, that abort branch is off.
     pub fn candidates_at_for_abi(
         &mut self,
         offset: usize,
@@ -1127,12 +1124,19 @@ where
         self.candidates_ending_at_for_abi(offset, false)
     }
 
-    /// Builds the explicit ABI window. If the pin ranks at this offset
-    /// and the facade total is zero, `abort_on_unreadable` is true.
+    // The before-cursor ranking path handles unreadable rows at zhuyin.cpp:1247–1261.
+    /// Builds the candidate window ending at a byte offset in the current input. The facade
+    /// supplies `abort_on_unreadable` when ranking requires a readable item at this offset.
     ///
     /// # Errors
     ///
-    /// As `Self::candidates_ending_at`.
+    /// Returns [`EngineError`] if the offset exceeds the input length, lies inside a UTF-8
+    /// character, or a candidate or sentence lookup fails.
+    ///
+    /// # Aborts
+    ///
+    /// When `abort_on_unreadable` is `true`, an unreadable candidate row met during the scan
+    /// aborts the process. With `false`, that abort branch is off.
     pub fn candidates_ending_at_for_abi(
         &mut self,
         offset: usize,

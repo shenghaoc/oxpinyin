@@ -9,16 +9,13 @@ use core::slice;
 
 use crate::{PhraseText, PhraseToken};
 
-/// Stably rank rows by descending phrase length and pinyin span, then by
-/// libpinyin's wrapping frequency comparison (`pinyin.cpp:1678-1709` at
-/// 074a2219). `key` returns those three stored fields and must be pure.
-///
-/// Frequency is compared only inside equal length/span groups. Each group
-/// is guarded before sorting: a consistent group uses the pin's defined
-/// `rhs.wrapping_sub(lhs) as i32`; a cyclic group falls back to stable
-/// numeric descending frequency. No inconsistent comparator reaches std.
-/// The two stable sorts retain original order among equal complete keys.
-/// Worst-case time is O(n log n), auxiliary space O(n), and guarding O(n).
+// The comparator subtracts the stored frequency fields, pinyin.cpp:1678–1709. The
+// compatibility policy uses stable descending numeric frequency for a cyclic group.
+/// Stably ranks candidates by descending phrase length and pinyin span, then by frequency
+/// within each equal-length, equal-span group. `key` must be pure. Equal keys retain their
+/// original order. For the wrapping frequency comparison to define an order, each such
+/// group must have consistent pairwise comparisons. Sorting takes O(n log n) time and
+/// O(n) auxiliary space.
 pub fn rank_by_frequency<T>(items: &mut [T], key: impl Fn(&T) -> (usize, u8, u32)) {
     items.sort_by(|left, right| {
         let (left_length, left_span, _) = key(left);
@@ -99,8 +96,8 @@ pub struct Candidate {
     token: Option<PhraseToken>,
     consumed_keys: u32,
     consumed_bytes: u32,
-    /// Tail rank of the n-best sentence row this candidate is (W14);
-    /// `None` for every non-row candidate. The rank is the *original* tail
+    /// Tail rank of the n-best sentence row this candidate represents, or
+    /// `None` for a non-row candidate. The rank is the *original* tail
     /// order, so a row that survives the NBEST-wins dedup still knows
     /// which `NbestRow` is its own even when its list position shifted.
     /// [`NO_ROW`] stands for `None`.
