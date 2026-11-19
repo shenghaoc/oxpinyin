@@ -6,26 +6,17 @@ use crate::PhraseText;
 use crate::runtime::RuntimeDict;
 use crate::user::UserStore;
 
-/// Resolves a prefix to the phrase tokens its tail substrings name, in the
-/// order `guess_sentence_with_prefix` consumes them (upstream's
-/// `_compute_prefixes`, `pinyin.cpp:1389-1422`). The suffixes are the
-/// stored words, so a non-scalar word is searched as the tables store it;
-/// `None` adds no token.
-///
-/// System tokens ride the loaded-library mask: an unloaded library must
-/// not contribute prefix tokens (upstream's `_get_phrase_item_from_token`
-/// refuses them at the item lookup; filtering here is the closest we get
-/// to that gate on the prefix path). User tokens come from the user
-/// store's raw phrase table.
+// _compute_prefixes, pinyin.cpp:1389–1422. reduce_tokens checks each suffix separately,
+// phrase_large_table3.h:95.
+/// Resolves suffixes of the prefix’s outward UCS-4 words to enabled phrase tokens.
+/// Suffixes are visited shortest first up to [`crate::MAX_PHRASE_LENGTH`]. A failed
+/// system read contributes no system tokens for that suffix. The user table is still
+/// consulted.
 ///
 /// # Errors
 ///
-/// [`crate::engine::EngineError::ReduceTokensCount`] at the first suffix
-/// whose search holds more than four tokens: `_compute_prefixes` reduces
-/// each search with the validating `reduce_tokens` (`pinyin.cpp:1415`,
-/// `zhuyin.cpp:933`), whose `assert(0 <= num && num <= 4)`
-/// (`phrase_large_table3.h:95`) the pin dies on before its prefix guess or
-/// prediction uses any token. The C adapters abort on it.
+/// Returns [`crate::engine::EngineError::ReduceTokensCount`] when more than four enabled
+/// tokens match a single suffix.
 pub fn compute_prefixes(
     dict: &RuntimeDict,
     user: &UserStore,
@@ -55,21 +46,11 @@ pub fn compute_prefixes(
     Ok(tokens)
 }
 
-/// The system and user phrase-table suggestion tokens for `prefix`,
-/// merged in the order `_compute_predicted_prefix_candidates` receives
-/// them, each resolved to its live item's text or `None` when the item is
-/// absent.
-///
-/// System rows come from the loaded phrase table filtered by the
-/// loaded-library mask — the same gate [`compute_prefixes`] applies on
-/// the prefix path; user rows from its raw phrase table. An absent item
-/// is not dropped and no phrase-table key text stands in for it: the
-/// pin's caller needs the token to take the stale-length filter and the
-/// sole-missing/class-(b) split (`pinyin.cpp:2389-2405`, `:2443-2451`;
-/// #1231). The ordering law itself is
-/// `runtime::merge_suggestion_rows`, held with this crate's
-/// other shared orchestration so the C-ABI facades rank one suggestion
-/// order rather than each assembling an equivalent.
+// _compute_predicted_prefix_candidates needs the token for its stale-length and
+// sole-missing-item cases, pinyin.cpp:2389–2405,2443–2451; the latter is class (b).
+/// Merges enabled system and user suggestion tokens in lookup order and resolves their
+/// live text. A token remains in the result if its text is absent. A failed system
+/// suggestion read leaves the user contribution available.
 #[must_use]
 pub fn merged_suggestions(
     dict: &RuntimeDict,
