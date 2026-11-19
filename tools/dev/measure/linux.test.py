@@ -1,5 +1,6 @@
 """Linux compare and profile contracts; synthetic rows and a stub library, not product measurements."""
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -381,6 +382,45 @@ if sys.platform == 'linux':
                     self.assertEqual(self.native(argv, env), 0)
                 fetch.assert_not_called()
                 self.assertEqual(set(received), {prepared})
+
+        def test_the_session_ties_each_removed_prefix_to_its_hashes(self):
+            from tools.dev import cell, contract_data
+            for mode in ('compare', 'profile'):
+                with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                    def build(sha, destination, env, **options):
+                        library = destination / 'prefix/lib/libpinyin.so.15.0.0'
+                        library.parent.mkdir(parents=True)
+                        library.write_bytes(b'product')
+                        return dict(revision=sha, dylib=library, uuid='hash', linux=True, backend='kc')
+
+                    def driver(arm, output, env):
+                        output.write_bytes(b'driver')
+                        return identity.sha256(output)
+                    env = dict(OXPINYIN_CACHE=directory, PATH='/bin')
+                    prepared = prepare.pin_prefix(env, 'kc') / prepare.DATA_SUBDIRECTORY
+                    prepared.mkdir(parents=True)
+                    (prepared / 'table.conf').write_text('fixture\n')
+                    with mock.patch.object(bench, 'capture', return_value=types.SimpleNamespace(status=0, stdout=b'a' * 40 + b'\n')), \
+                         mock.patch.object(identity, 'first_output_line', return_value='tool 1.0'), \
+                         mock.patch.object(prepare, 'native_build', side_effect=build), \
+                         mock.patch.object(prepare, 'native_driver', side_effect=driver), \
+                         mock.patch.object(contract_data, 'data_identity', return_value='data'), \
+                         mock.patch.object(cell.platform, 'system', return_value='Linux'), \
+                         mock.patch.object(recipes, 'linux_compare', return_value=0), \
+                         mock.patch.object(recipes, 'linux_profile', return_value=0):
+                        argv = ([mode, '--base', 'HEAD', '--head', 'HEAD'] if mode == 'compare'
+                                else [mode, '--template', 'Massif'])
+                        self.assertEqual(self.native(argv, env), 0)
+                    session = json.loads(next((Path(directory) / 'measure/runs').iterdir()).joinpath('session.json').read_text())
+                    labels = {'A', 'B', recipes.CONTROL} if mode == 'compare' else {'A'}
+                    # Every arm and the control: the library and driver hashes that the run computed.
+                    self.assertEqual(session['artifacts'], {label: dict(name='libpinyin.so.15.0.0',
+                                     sha256=hashlib.sha256(b'product').hexdigest(),
+                                     driver_sha256=hashlib.sha256(b'driver').hexdigest()) for label in labels})
+                    # The recorded prefixes are gone, and the session says so.
+                    self.assertEqual(set(session['staged']), labels)
+                    self.assertTrue(all(not Path(path).exists() for path in session['staged'].values()))
+                    self.assertIs(session['staged_kept'], False)
 
 
 if __name__ == '__main__':
