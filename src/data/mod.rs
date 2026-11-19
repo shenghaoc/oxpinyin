@@ -1,23 +1,12 @@
-//! Reads libpinyin's system data directly: the pinyin and phrase DBMs
-//! (`ChewingLargeTable2`, `PhraseLargeTable3`), the mmap'd per-library
-//! phrase-index chunk files (`FacadePhraseIndex`), the bigram (`Bigram`)
-//! and the punctuation table (`PunctTable`) — the same files a libpinyin
-//! install ships on Kyoto Cabinet, tkrzw and Berkeley DB, and the same
-//! records in the backend's own container.
+//! Reads the system dictionary, phrase libraries, bigram model and punctuation tables.
+//! Configuration selects the system libraries. Opening them maps and checks their phrase
+//! chunks. Successor and index lookups read individual DBM rows. Extension searches can
+//! walk a key range.
 //!
-//! Every reader is lazy: opening a directory costs the DBM handles and
-//! the chunk-file mappings, and a lookup is a point read. The exception is
-//! `SystemDictionary::checked_extension_tokens`, which walks the key range
-//! after the query's key. Portable: no
-//! Linux-only dependency. The module reads the DBMs through `crate::store`
-//! and makes its C-library calls through `crate::input`; it depends on no
-//! module above it (`user`, `runtime`, `facade`). Internal module — the
-//! supported external interfaces are the libpinyin-compatible and
-//! libzhuyin-compatible C APIs and ABIs.
-//!
-//! The format notes live under `docs/findings/`:
-//! `data-formats.md` (the overview and, in §4-§7, the pinyin index, the
-//! phrase index, the bigram and the punctuation table).
+//! The readers use [`crate::store`] for DBM access and [`crate::input`] for native I/O.
+
+// ChewingLargeTable2, PhraseLargeTable3, FacadePhraseIndex, Bigram and PunctTable.
+// Initialization: pinyin.cpp:331–396. See docs/findings/data-formats.md §§4–7.
 pub mod bigram_table;
 pub mod c_stderr;
 pub(crate) mod chewing_table;

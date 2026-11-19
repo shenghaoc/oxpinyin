@@ -1,42 +1,16 @@
-//! Bigram language model over libpinyin's own `bigram.db` and the phrase
-//! libraries' unigram counts.
+//! Interpolates bigram probabilities and phrase-library unigram probabilities for
+//! [`crate::model::LanguageModel`]. Successor rows are read from the hash database by
+//! predecessor token. The unigram numerator is the phrase item’s frequency and the
+//! denominator is the facade total for the loaded libraries.
 //!
-//! Implements [`crate::model::LanguageModel`] with two lazy sources:
-//!
-//! * the bigram rows — `Bigram::load` per previous token through
-//!   [`BigramTable`] (a point read on the hash container: key
-//!   `phrase_token_t` LE, value `total: u32` + `{next: u32, count: u32}`
-//!   records, `SingleGram`'s layout);
-//! * the unigram counts — `PhraseItem::get_unigram_frequency` on the
-//!   shared [`PhraseLibraries`], the mmap'd chunk items, and
-//!   `FacadePhraseIndex::get_phrase_index_total_freq` for the total.
-//!
-//! Nothing is loaded at open beyond the DBM handle. The unigram the seam
-//! hands out is upstream's item field itself —
-//! `PhraseItem::get_unigram_frequency`, the `\1-gram` count plus the one
-//! `gen_unigram` adds to every item "to avoid zero value when computing
-//! unigram frequency in float format" (`utils/training/gen_unigram.cpp`)
-//! — and the total is `FacadePhraseIndex::get_phrase_index_total_freq`,
-//! `Σ item`. That is the arithmetic every upstream reader of the field
-//! performs (`PinyinLookup2`'s unigram term, `_compute_frequency_of_items`,
-//! `train_result3`): an item the corpus never saw has frequency 1, not 0,
-//! and stays reachable in the trellis. Verified on the pinned model:
-//! `Σ item == Σ \1-gram count + 138,096`.
-//!
-//! Scoring follows the interpolated form defined in
-//! `docs/findings/scoring-spec.md`:
-//!
-//! ```text
-//! P(w_n | w_n-1) = λ · P_bigram(w_n | w_n-1) + (1 − λ) · P_unigram(w_n)
-//! ```
-//!
-//! λ is read from the model's `table.conf` ([`crate::data::table_conf`]); it
-//! defaults to [`crate::data::table_conf::PINNED_LAMBDA`] (`0.312699`,
-//! `data-formats.md` §3) when no `table.conf` is available.
-//!
-//! An unloaded library (`pinyin_unload_phrase_library`) leaves the model
-//! through the shared library mask: its items answer no unigram and its
-//! total leaves the denominator, as freeing the sub-index does upstream.
+//! Standalone tables start with [`crate::data::table_conf::PINNED_LAMBDA`]. Runtime
+//! initialization reads its interpolation weight from the system configuration. Unloading
+//! a library removes its items and total from scoring.
+
+// Bigram::load, ngram_tkrzwdb.cpp:86–122;
+// FacadePhraseIndex::get_phrase_index_total_freq, phrase_index.cpp:237–247. The item
+// includes the increment from utils/training/gen_unigram.cpp. See
+// docs/findings/scoring-spec.md.
 
 use crate::phrase_index_library_index;
 use std::cell::Cell;
@@ -204,11 +178,14 @@ impl BigramTables {
         Ok(Self::with_table(BigramTable::open(bigram_path)?))
     }
 
-    /// Runtime system attachment, preserving the pin's failed BDB/KC
-    /// hash object instead of refusing initialization.
+    // Bigram::attach, ngram_bdb.cpp:110–124, ngram_kyotodb.cpp:110–120 and
+    // ngram_tkrzwdb.cpp:86–99.
+    /// Attaches the system bigram hash database. An unsuccessful native open leaves an
+    /// unopened attachment available to the runtime.
     ///
     /// # Errors
-    /// Returns failures before native attach; tkrzw remains strict.
+    ///
+    /// Returns [`LmError`] if creating the attachment fails before the native open.
     pub fn attach(bigram_path: &Path) -> Result<Self, LmError> {
         Ok(Self::with_table(BigramTable::attach(bigram_path)?))
     }

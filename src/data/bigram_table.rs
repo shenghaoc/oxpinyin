@@ -1,19 +1,9 @@
-//! Lazy reader for libpinyin's `bigram.db` — direct DBM consumption.
-//!
-//! libpinyin stores the bigram as a **`HashDB`** (KC) / **`HashDBM`** (Tkrzw),
-//! while the other DBM files use TreeDB/TreeDBM. The store's
-//! `RawReadStore::open_hash_read_only` selects the correct container class.
-//!
-//! - **Key:** previous `phrase_token_t` as 4 bytes LE
-//! - **Value:** `total:u32` + `{next_token:u32, count:u32}[]`
-//!
-//! The value schema is byte-identical to what `BigramLanguageModel::open`
-//! already parses. The difference is access pattern: `BigramLanguageModel`
-//! eagerly slurps every row at init, while this reader does lazy per-key
-//! `get_raw` lookups.
-//!
-//! See `docs/findings/data-formats.md` §6
-//! and `ngram_tkrzwdb.cpp`.
+//! Reads bigram successors on demand from the hash database. Each lookup uses the
+//! previous token’s four little-endian bytes as the key. Its value contains the stored
+//! total and successor-token/count pairs.
+
+// Bigram::load, ngram_tkrzwdb.cpp:86–122. See docs/findings/data-formats.md §6; Kyoto
+// Cabinet uses HashDB and tkrzw uses HashDBM.
 
 use std::path::Path;
 
