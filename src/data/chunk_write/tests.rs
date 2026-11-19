@@ -71,6 +71,19 @@ fn build_chunk_matches_hand_layout() {
     );
 }
 
+#[test]
+fn build_chunk_writes_wrapped_unigram_total() {
+    let item = ChunkItem {
+        phrase: vec![0x4f60], // 你
+        unigram: 3_000_000_000,
+        prons: vec![(vec![0x1234], 7)],
+    };
+    let file = build_chunk(&[(1, item.clone()), (2, item)]).expect("build");
+    let payload = &file[crate::data::chunk_format::CHUNK_HEADER_SIZE..];
+    let total = u32::from_le_bytes(payload[..4].try_into().unwrap());
+    assert_eq!(total, 1_705_032_704);
+}
+
 /// The reader half of this crate must accept what this writer emits.
 #[test]
 fn build_chunk_reads_back_through_phrase_library() {
