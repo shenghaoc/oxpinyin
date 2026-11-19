@@ -27,6 +27,50 @@ use crate::facade::PINYIN_DEFAULT_OPTION_WORD as WORD;
 use crate::runtime::OpenError;
 use crate::user::UserConfLaw;
 
+/// Each `table.conf` abort site refuses the init with the pin's abort: the
+/// `abort()`s of `table_info.cpp:119`, `:132`, `:142`, `:156` and `:175`,
+/// the addon index assert (`:276`), the default `DICTIONARY` row
+/// (`pinyin.cpp:388`, `zhuyin.cpp:330`) and a row with no user file
+/// (`memory_chunk.h:434`). The pin's ordinary `false` returns keep its
+/// `load %s failed!` line (`table_info.cpp:199-224`, `pinyin.cpp:337-340`),
+/// and the unwritten source-format buffer keeps its warning. Both C inits
+/// act on this answer through [`OpenFailure::refuse_init`], and one death
+/// test on each facade holds the abort itself.
+#[test]
+fn every_table_conf_abort_site_refuses_the_init_with_an_abort() {
+    use super::InitRefusal;
+    use crate::data::table_info::{TableConfError, TableConfSite};
+    let refusal =
+        |error| OpenFailure::Runtime(OpenError::TableConf(error)).init_refusal(Path::new("system"));
+    for site in [
+        TableConfSite::SourceFormat,
+        TableConfSite::DatabaseFormat,
+        TableConfSite::Target,
+        TableConfSite::DefaultIndex,
+        TableConfSite::FileType,
+        TableConfSite::AddonIndex,
+        TableConfSite::DefaultDictionary,
+        TableConfSite::NullUserFile,
+    ] {
+        assert_eq!(
+            refusal(TableConfError::Abort(site)),
+            InitRefusal::Abort,
+            "{site:?}"
+        );
+    }
+    for silent in [TableConfError::Unopenable, TableConfError::Header] {
+        assert_eq!(
+            refusal(silent),
+            InitRefusal::TableConfLoadFailed,
+            "{silent:?}"
+        );
+    }
+    assert!(matches!(
+        refusal(TableConfError::UninitialisedSourceFormat),
+        InitRefusal::TableConfWarning(_)
+    ));
+}
+
 #[test]
 fn missing_system_dir_carries_the_runtime_error() {
     // A child of a fresh dir this test owns: absent by construction, and
@@ -1426,6 +1470,62 @@ mod native {
         assert!(context.user_store().is_modified());
         assert!(!user.path.join("gb_char.dbin.tmp").exists());
         assert!(!user.path.join("gb_char.dbin").exists());
+    }
+
+    /// The oversized record of policy row 123 in library 2, behind a changed
+    /// library 1. The encoder refuses library 2's journal on both facades.
+    /// libpinyin renames after it has written every file
+    /// (`pinyin.cpp:1141`), so no log of this save is in place. libzhuyin
+    /// renames each log as it writes it (`zhuyin.cpp:596-609`), so library
+    /// 1's log is already in place; nothing later is written, the marker
+    /// included (`:695-698`). Both saves answer `false` and stay modified.
+    #[test]
+    fn an_oversized_journal_stops_a_zhuyin_save_after_the_earlier_renames() {
+        use crate::data::chunk_write::{ChunkItem, build_chunk};
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let system = TempSystemDir::new("oversized-journal-second-library");
+            let user = TempUserDir::new("oversized-journal-second-library");
+            let ni = crate::ChewingKey::from_pinyin("ni").unwrap().to_packed();
+            let chunk = build_chunk(&[(
+                1,
+                ChunkItem {
+                    phrase: vec![u32::from('你'); 128],
+                    unigram: 100,
+                    prons: vec![(vec![ni; 128], 1); 255],
+                },
+            )])
+            .unwrap();
+            std::fs::write(system.path.join("gbk_char.bin"), chunk).unwrap();
+            let mut context = native_context(&system.path, &user.path, law);
+            let first = tokens(&context, "你")
+                .into_iter()
+                .find(|token| token >> 24 == 1)
+                .expect("a library 1 token");
+            for token in [first, 0x0200_0001] {
+                assert!(
+                    context
+                        .user_store_mut()
+                        .add_system_unigram_frequency(token, 1),
+                    "{law:?}: {token:#x}"
+                );
+            }
+            context.end_import();
+            assert_eq!(context.save_user(), SaveOutcome::NotSaved, "{law:?}");
+            assert!(context.user_store().is_modified(), "{law:?}");
+            assert_eq!(
+                user.path.join("gb_char.dbin").exists(),
+                law == UserConfLaw::Zhuyin,
+                "{law:?}: the earlier library's log"
+            );
+            for later in [
+                "gbk_char.dbin",
+                "gbk_char.dbin.tmp",
+                "opengram.dbin",
+                "merged.dbin",
+            ] {
+                assert!(!user.path.join(later).exists(), "{law:?}: {later}");
+            }
+        }
     }
 }
 
