@@ -14,6 +14,12 @@
 //! - [Upstream pin](https://github.com/shenghaoc/oxpinyin/blob/main/tools/oracle/oracle-pin.txt)
 //! - [Failure behaviour](https://github.com/shenghaoc/oxpinyin/blob/main/docs/findings/compatibility-policy.md#failure-behaviour)
 //!
+//! ## Aborts
+//!
+//! As in libpinyin, malformed or corrupt profile, library or database data can abort the
+//! process. A failed database operation or an asserted read or write of stored data can
+//! also abort. Individual function descriptions omit these cases.
+//!
 //! ## Safety
 //!
 //! The caller must uphold the C header contract. Each function's `# Safety`

@@ -67,13 +67,21 @@ fn refuse_init(error: &oxpinyin::facade::OpenFailure, system_path: &std::path::P
 /// pinyin_context_t * pinyin_init(const char * systemdir, const char * userdir);
 /// ```
 ///
-/// Opens the system data directory from `systemdir` the way libpinyin
-/// does — the pinyin and phrase DBMs, the per-library chunk files,
-/// `bigram.db`, `punct.bin`, the addon DBM pair, λ from `table.conf`.
-/// An empty `systemdir` string opens data from the current working directory.
-/// A NULL `systemdir` returns NULL and writes the pin's raw stderr lines
-/// `open  failed.` and `load  failed!`, without a GLib warning. Required-file
-/// failures also return NULL; diagnostics follow the failing load path.
+/// Open the system tables in `systemdir`. An empty string selects the working directory. A null
+/// `systemdir` returns null and writes `open  failed.` and `load  failed!` to stderr. An
+/// ordinary required-file load failure also returns null. Release a successful result with
+/// `pinyin_fini`.
+///
+/// Use `userdir` for the user indexes, phrase-library changes, bigram data and `user.conf`. A
+/// null pointer selects a transient store. Lookup and import still work, while training and
+/// saving return false. An empty string selects the working directory, including for later file
+/// operations. Init reads available profile files individually. Success does not guarantee that
+/// the directory is writable.
+///
+/// A missing or incompatible marker can cause init to delete the configured user files before it
+/// finishes opening the system data. Init raises the profile open counter and attempts to write
+/// the marker before cleanup. The initial option word is `USE_TONE`
+/// (`pinyin.cpp:172-217,326-346`).
 ///
 /// # Safety
 ///
@@ -139,6 +147,7 @@ pub unsafe extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     };
 }
 
+// pinyin.cpp:1133.
 /// Save user data.
 ///
 /// # C signature
@@ -146,12 +155,13 @@ pub unsafe extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// bool pinyin_save(pinyin_context_t * context);
 /// ```
 ///
-/// The §4 semantics: `false` when there is no user directory (upstream
-/// `pinyin.cpp:1133`) or nothing changed since the last save (`:1136` — the
-/// unmodified deliberate no-op); `true` after a dirty save. The save
-/// compacts the store and clears `m_modified`. Durability is save-gated, as
-/// at the pin: training reaches the user files only here, and a crash before
-/// the save loses it (`docs/findings/user-store.md` §6).
+/// Returns false for a null context, a transient store, or a store with no pending save. A dirty
+/// save compacts the libraries and writes the profile. A dirty save can also stop and return
+/// false when a system library file cannot be mapped again, when the data is too large to write,
+/// or when malformed phrase data cannot be encoded for its file. Files written earlier in that
+/// save may already have changed: their temporary files stay in the user directory. The session
+/// stays dirty, so a later save tries again. A completed save clears the dirty flag and returns
+/// true even if a file write, a rename or the marker write failed (`pinyin.cpp:922-1146`).
 ///
 /// # Safety
 ///

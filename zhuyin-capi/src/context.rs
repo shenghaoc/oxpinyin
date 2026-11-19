@@ -6,6 +6,7 @@ use std::ptr;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::ZhuyinContext;
 
+// zhuyin.cpp:273, zhuyin_parser2.cpp:178,602.
 /// Create a new zhuyin context.
 ///
 /// # C signature
@@ -13,22 +14,21 @@ use crate::types::ZhuyinContext;
 /// zhuyin_context_t * zhuyin_init(const char * systemdir, const char * userdir);
 /// ```
 ///
-/// Opens the system dictionary and language model tables from `systemdir`.
-/// An empty `systemdir` string opens data from the current working directory.
-/// A NULL `systemdir` returns NULL and writes the pin's raw stderr lines
-/// `open  failed.` and `load  failed!`, without a GLib warning. Required-file
-/// failures also return NULL; diagnostics follow the failing load path.
+/// Open the system tables in `systemdir`. An empty string selects the working directory. A null
+/// `systemdir` returns null and writes `open  failed.` and `load  failed!` to stderr. An
+/// ordinary required-file load failure also returns null. Release a successful result with
+/// `zhuyin_fini`.
 ///
-/// **Divergence note (the pin seeds `USE_TONE | FORCE_TONE`).** The zhuyin
-/// facade's context defaults to `m_options = USE_TONE | FORCE_TONE`
-/// (`zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin), unlike `pinyin_init`, which seeds
-/// only `PINYIN_INCOMPLETE`. The zhuyin parser honours `FORCE_TONE` nested
-/// inside `USE_TONE` for the Simple and CP26 keyboards
-/// (`zhuyin_parser2.cpp:178,602`) and unconditionally for Discrete
-/// (`:373,:387`) — the same law the shared [`oxpinyin::ZhuyinParser`]
-/// implements. If that law cannot be reproduced exactly for a keyboard, the
-/// gap is registered under the existing `FORCE_TONE on double-pinyin/zhuyin
-/// schemes` divergence class rather than silently absorbed.
+/// Use `userdir` for the user indexes, phrase-library changes, bigram data and `user.conf`. A
+/// null pointer selects a transient store. Lookup and import still work, while training and
+/// saving return false. An empty string selects the working directory, including for later file
+/// operations. Init reads available profile files individually. Success does not guarantee that
+/// the directory is writable.
+///
+/// A missing or incompatible marker can cause init to delete the configured user files before it
+/// finishes opening the system data. Init checks the marker without raising its open counter or
+/// rewriting it. The initial option word is `USE_TONE | FORCE_TONE`
+/// (`zhuyin.cpp:126-161,270-290`).
 ///
 /// # Safety
 ///
@@ -134,8 +134,14 @@ pub unsafe extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
 /// bool zhuyin_save(zhuyin_context_t * context);
 /// ```
 ///
-/// The §4 semantics: `false` when there is no user directory or nothing
-/// changed since the last save; `true` after a dirty save.
+/// Returns false for a null context, a transient store, or a store with no pending save. A dirty
+/// save compacts the libraries and writes the profile. A dirty save can also stop and return
+/// false when a system library file cannot be mapped again, when the data is too large to write,
+/// or when malformed phrase data cannot be encoded for its file. Files written earlier in that
+/// save may already have changed: each library file is renamed into place as soon as it is
+/// written. The session stays dirty, so a later save tries again. A completed save clears the
+/// dirty flag and returns true even if a file write, a rename or the marker write failed
+/// (`zhuyin.cpp:547-698`).
 ///
 /// # Safety
 ///
