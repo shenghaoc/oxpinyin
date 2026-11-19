@@ -254,7 +254,13 @@ unsafe fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
 ///                                            gchar ** aux_text);
 /// ```
 ///
-/// Out-param `aux_text` is caller-owned (`g_free`).
+/// Success writes the rendered text. An empty key matrix returns false and writes an allocated
+/// empty string. Free either string with `g_free`. A null instance returns false without
+/// writing.
+///
+/// # Aborts
+///
+/// A cursor walk that requires a key in an empty column aborts.
 ///
 /// # Safety
 ///
@@ -319,8 +325,14 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
 ///                                              gchar ** aux_text);
 /// ```
 ///
-/// Out-param `aux_text` is caller-owned (`g_free`).
+/// Success writes the rendered text. An empty key matrix returns false and writes an allocated
+/// empty string. Free either string with `g_free`. A null instance returns false without
+/// writing.
 ///
+/// # Aborts
+///
+/// A cursor walk that requires a key in an empty column aborts. A split beyond the two bytes of
+/// a double-pinyin syllable also aborts.
 ///
 /// # Safety
 ///
@@ -365,8 +377,13 @@ pub unsafe extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
 ///                                        gchar ** aux_text);
 /// ```
 ///
-/// Out-param `aux_text` is caller-owned (`g_free`).
+/// Success writes the rendered text. An empty key matrix returns false and writes an allocated
+/// empty string. Free either string with `g_free`. A null instance returns false without
+/// writing.
 ///
+/// # Aborts
+///
+/// A cursor walk that requires a key in an empty column aborts.
 ///
 /// # Safety
 ///

@@ -60,11 +60,14 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
 ///                                 ChewingKeyRest ** key_rest);
 /// ```
 ///
-/// Out-param `key_rest` borrows the process-wide slot `KEY_REST_SLOT`,
-/// as the pin's function-local `static` does: every instance shares it,
-/// the next call from any instance overwrites it, and it outlives the
-/// instance. Answers at exactly the offsets [`pinyin_get_pinyin_key`]
-/// does.
+/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Its contents change on the next successful call, and its storage outlives the instance. The
+/// caller does not free it. An ordinary miss writes null. A null instance returns false without
+/// writing.
+///
+/// # Aborts
+///
+/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false.
 ///
 /// # Safety
 ///
@@ -243,9 +246,14 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest_length(
 ///                               gchar ** utf8_str);
 /// ```
 ///
-/// Out-param `utf8_str` is caller-owned (`g_free`). The pin answers
-/// `false` with a NULL out-param for a key whose table index is 0 — the
-/// unset key — which an unpopulated slot reproduces.
+/// Returns true for a key with a spelling. Free the returned string with `g_free`. An unset key
+/// writes null and returns false. A null key returns false without writing. A null output skips
+/// the write.
+///
+/// # Aborts
+///
+/// A packed key with an out-of-range component, or an invalid tone reached during rendering,
+/// aborts (`chewing_key.cpp:28-42,75-108`).
 ///
 /// # Safety
 ///
@@ -266,6 +274,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_string(
     unsafe { render_key(key, utf8_str, oxpinyin::ChewingKey::pinyin_text) }
 }
 
+// eim.cpp:512-515.
 /// Render a pinyin key as its Zhuyin spelling.
 ///
 /// # C signature
@@ -275,9 +284,14 @@ pub unsafe extern "C" fn pinyin_get_pinyin_string(
 ///                               gchar ** utf8_str);
 /// ```
 ///
-/// Out-param `utf8_str` is caller-owned (`g_free`). fcitx treats a NULL
-/// out-param as its "something like xi'" break condition
-/// (`eim.cpp:512-515`), which the `false` return preserves.
+/// Returns true for a key with a spelling. Free the returned string with `g_free`. An unset key
+/// writes null and returns false. A null key returns false without writing. A null output skips
+/// the write.
+///
+/// # Aborts
+///
+/// A packed key with an out-of-range component, or an invalid tone reached during rendering,
+/// aborts (`chewing_key.cpp:28-42,75-108`).
 ///
 /// # Safety
 ///
@@ -295,6 +309,7 @@ pub unsafe extern "C" fn pinyin_get_zhuyin_string(
     unsafe { render_key(key, utf8_str, oxpinyin::ChewingKey::zhuyin_text) }
 }
 
+// eim.cpp:478-479.
 /// Render a pinyin key as its shengmu / yunmu pair.
 ///
 /// # C signature
@@ -305,9 +320,13 @@ pub unsafe extern "C" fn pinyin_get_zhuyin_string(
 ///                                gchar ** yunmu);
 /// ```
 ///
-/// Either out-param may be NULL to skip; both are caller-owned
-/// (`g_free`). A syllable with no initial answers an empty shengmu, which
-/// is the case fcitx substitutes an apostrophe for (`eim.cpp:478-479`).
+/// Returns false without writing either output for a null or unset key. Either output may be
+/// omitted. Free each returned string with `g_free`. A syllable without an initial returns an
+/// empty initial.
+///
+/// # Aborts
+///
+/// An out-of-range initial, middle or final aborts (`chewing_key.cpp:28-32`).
 ///
 /// # Safety
 ///
@@ -404,6 +423,7 @@ unsafe fn render_key(
     true
 }
 
+// pinyin.cpp:3008-3027.
 /// Get the lookup offset from a user cursor position.
 ///
 /// # C signature
@@ -413,11 +433,14 @@ unsafe fn render_key(
 ///                               size_t * offset);
 /// ```
 ///
-/// The pin clamps the cursor to the parsed length, walks back to the
-/// nearest non-empty matrix column, extends back over the zero-key run
-/// before it, and validates (`pinyin.cpp:3008-3027`). A mid-syllable
-/// cursor normalizes to the syllable start; the engine's validation error is
-/// answered as `false`.
+/// Clamp the byte cursor to the parsed length. Search backward from that column, including it,
+/// for a nonempty matrix column, and stop at zero. Then move the result backward across zero-key
+/// separator columns. The result can equal the parsed length, so it is not always the start of a
+/// key. Success writes the lookup offset. Failure leaves the output untouched.
+///
+/// # Aborts
+///
+/// A positive clamped cursor on an empty key matrix aborts.
 ///
 /// # Safety
 ///
@@ -467,6 +490,7 @@ fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
     }
 }
 
+// pinyin.cpp:3029-3059, pinyin.cpp:3035, phonetic_key_matrix.h:103.
 /// Get the left offset from a lookup offset.
 ///
 /// # C signature
@@ -476,11 +500,14 @@ fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
 ///                                    size_t * left);
 /// ```
 ///
-/// Steps syllable-to-syllable: the start of the key ending at `offset`
-/// (0 when no key ends there), zero-run-normalized and validated
-/// (`pinyin.cpp:3029-3059`). Where the pin's validation asserts
-/// (`pinyin.cpp:3035`, `:3057`, or `phonetic_key_matrix.h:103` past the
-/// matrix) the process aborts (register row 14).
+/// Find the column of a key that ends at this offset, or use zero if no key ends there. Then
+/// move the result backward across zero-key separator columns. Write that lookup position. It is
+/// not always the raw start of the preceding key. Returns true on success. An ordinary failure
+/// leaves the output untouched.
+///
+/// # Aborts
+///
+/// An offset that reaches an invalid matrix column or fails the separator check aborts.
 ///
 /// # Safety
 ///
@@ -531,6 +558,7 @@ pub unsafe extern "C" fn pinyin_get_left_pinyin_offset(
     true
 }
 
+// pinyin.cpp:3061-3094, pinyin.cpp:3087-3088, pinyin.cpp:3067, phonetic_key_matrix.h:103.
 /// Get the right offset from a lookup offset.
 ///
 /// # C signature
@@ -540,13 +568,13 @@ pub unsafe extern "C" fn pinyin_get_left_pinyin_offset(
 ///                                     size_t * right);
 /// ```
 ///
-/// Steps syllable-to-syllable: the raw end of the first key starting at
-/// `offset`, skipping a leading lone-zero-key run first
-/// (`pinyin.cpp:3061-3094`). Answers `false` when no key starts there
-/// (the pin's own graceful false, `pinyin.cpp:3087-3088`). Where the pin
-/// asserts — its validation (`pinyin.cpp:3067`, `:3092`), a column past the
-/// matrix, or any offset on an empty matrix (`phonetic_key_matrix.h:103`)
-/// — the process aborts (register rows 14 and 66).
+/// Write the end of the next key, skipping leading separator columns. Returns false when no key
+/// starts there. Returns true on success. An ordinary failure leaves the output untouched.
+///
+/// # Aborts
+///
+/// An offset that reaches an invalid matrix column or fails the separator check aborts. On an
+/// empty matrix any offset aborts.
 ///
 /// # Safety
 ///
@@ -623,9 +651,14 @@ pub unsafe extern "C" fn pinyin_get_right_pinyin_offset(
 ///                            ChewingKey ** key);
 /// ```
 ///
-/// Out-param `key` borrows the process-wide slot `KEY_SLOT`, as the
-/// pin's function-local `static` does: every instance shares it, the next
-/// call from any instance overwrites it, and it outlives the instance.
+/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Its contents change on the next successful call, and its storage outlives the instance. The
+/// caller does not free it. An ordinary miss writes null. A null instance returns false without
+/// writing.
+///
+/// # Aborts
+///
+/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false.
 ///
 /// # Safety
 ///
