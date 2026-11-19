@@ -34,6 +34,19 @@ fn a_cursor_over_a_keyless_parse_aborts() {
     );
 }
 
+// pinyin.cpp:3074-3075 enters the loop at zero on an empty matrix.
+#[test]
+fn right_offset_zero_over_a_keyless_parse_aborts() {
+    assert_aborts(
+        "matrix_bounds::right_offset_zero_over_a_keyless_parse_aborts",
+        || {
+            let fixture = Fixture::parsed("keyless-right", "'''", 3);
+            let mut right = usize::MAX;
+            unsafe { pinyin_get_right_pinyin_offset(fixture.instance(), 0, &raw mut right) };
+        },
+    );
+}
+
 #[test]
 fn cursor_zero_over_a_keyless_parse_reads_no_column() {
     let fixture = Fixture::parsed("keyless-zero", "'''", 3);

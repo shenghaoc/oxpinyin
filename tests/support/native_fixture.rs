@@ -98,6 +98,12 @@ pub mod logs {
         record(1, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
     }
 
+    /// A REMOVE with a six-byte old item at slot 0x99.
+    #[must_use]
+    pub fn remove() -> Vec<u8> {
+        record(2, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
+    }
+
     /// A MODIFY of slot 1 whose old chunk no item matches: `merge` returns
     /// there (`phrase_index.cpp:483-484`).
     #[must_use]

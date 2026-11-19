@@ -207,6 +207,23 @@ fn mask_out_aborts_on_a_surviving_add() {
     });
 }
 
+/// A kept REMOVE passes a non-null new chunk to the logger (phrase_index_logger.h:257).
+#[test]
+fn mask_out_aborts_on_a_surviving_remove() {
+    crate::support::assert_aborts("user_store::mask_out_aborts_on_a_surviving_remove", || {
+        let user_dir = TempUserDir::new("mask-surviving-remove");
+        let context = init_fixture_at(&user_dir.path);
+        assert!(!context.is_null());
+        let payload = [
+            crate::support::logs::header(),
+            crate::support::logs::remove(),
+        ]
+        .concat();
+        crate::support::plant_log(&user_dir.path, "gb_char.dbin", &payload);
+        let _ = unsafe { pinyin_mask_out(context, 0xffff_ffff, 0x0100_0001) };
+    });
+}
+
 /// Register row 85: `pinyin_mask_out` loads token 1's gram, which the mask
 /// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
 /// (`ngram.cpp:80`, `memory_chunk.h:390`).
