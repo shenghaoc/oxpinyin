@@ -40,8 +40,11 @@ pub struct Parse {
     pub keys: Vec<Key>,
 }
 
-/// Direct-parser outputs from the existing single-key parsers and shared
-/// segment walk (`pinyin_parser2.cpp:623-715`, `zhuyin_parser2.cpp:858-960`).
+// PinyinDirectParser2::parse and ZhuyinDirectParser2::parse, pinyin_parser2.cpp:623–715
+// and zhuyin_parser2.cpp:858–960.
+/// Parses space- or apostrophe-separated full pinyin, or Zhuyin text when `zhuyin` is
+/// set. Each segment must spell one key. After a match, separator runs count toward the
+/// consumed byte prefix. A leading separator or a rejected segment stops the parse.
 #[must_use]
 pub fn parse_direct(input: &[u8], options: crate::OptionBits, zhuyin: bool) -> Parse {
     let mut keys = Vec::new();
