@@ -1,18 +1,9 @@
-//! The `SingleGram` blob — one `user_bigram.db` / `bigram.db` value.
-//!
-//! `ngram.cpp`'s `SingleGram` chunk: a native-endian `u32`
-//! `total_freq`, then `{ phrase_token_t m_token, guint32 m_freq }`
-//! records with no padding, kept sorted ascending by `m_token`
-//! (`insert_freq`'s `lower_bound`). Both bigrams — the system's and the
-//! user's — store this layout under the raw four bytes of the previous
-//! token as the key; the readers in `lm`/`bigram_table` decode the system
-//! half, and this module carries the one written copy both halves of the
-//! user bigram share (load and save).
-//!
-//! A fresh gram upstream is a 4-byte chunk with `total_freq == 0`, and
-//! `get_length` asserts a zero-item gram has a zero total; the encode
-//! side therefore never emits records without a total that covers them
-//! — callers keep `total == Σ freq` (training raises both by the seed).
+//! Encodes and decodes the raw bigram value for one previous token. A four-byte total
+//! precedes the successor token and count pairs. The codecs preserve the supplied total
+//! and record order. Callers that search by token must supply sorted records.
+
+// SingleGram, ngram.cpp:133–205. The native writer maintains token order with
+// lower_bound; a fresh gram has a zero total.
 
 /// A malformed `SingleGram` blob.
 #[derive(Debug)]

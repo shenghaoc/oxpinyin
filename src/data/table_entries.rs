@@ -1,24 +1,8 @@
-//! The two index DBMs' **entry-set** builders — the prefix-closure half
-//! of the `ChewingLargeTable2` / `PhraseLargeTable3` writer paths.
-//!
-//! The row layouts themselves (the `PinyinIndexItem2<L>` record, the
-//! key encodings, the stride) have one written copy in
-//! [`crate::data::row_format`], shared with the runtime's readers; this module
-//! owns what that module deliberately does not — assembling a whole
-//! DBM's `(key, value)` rows from semantic records: every row lands in
-//! both key spaces (incomplete and complete for the pinyin index), every
-//! proper prefix of every stored key exists as an empty-value
-//! continuation marker, and record order within a value follows
-//! `pinyin_exact_compare2` with token ascending for identical keys
-//! (`ChewingTableEntry::add_index`'s `equal_range` insert before the first
-//! greater token).
-//!
-//! Rows come out sorted by ascending key bytes; KC `TreeDB` and tkrzw
-//! `TreeDBM` both order byte-lexically, so the sorted writer order is also
-//! the container's physical order. `oxpinyin`'s persistence writes the user
-//! `user_pinyin_index.bin` / `user_phrase_index.bin` — a user table entry
-//! passes through the same `add_index` upstream, so the record shapes
-//! are identical.
+//! Ordering for index records. [`exact_compare2`] compares stored phonetic keys.
+//! [`crate::data::row_format`] defines the byte encodings.
+
+// Fixture entry-set builders below use ChewingLargeTable2 and PhraseLargeTable3 prefix
+// closure, and ChewingTableEntry::add_index orders identical keys by token.
 
 #[cfg(test)]
 use std::collections::BTreeMap;
@@ -36,11 +20,14 @@ use crate::data::row_format::pinyin_index::{
 #[cfg(test)]
 pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 
-/// `pinyin_exact_compare2` (`pinyin_phrase3.h:33`): all initials across
-/// syllables first, then middle/final per syllable, then tone per
-/// syllable. This is the comparator the value arrays are sorted by
-/// (`ChewingTableEntry::add_index`'s `phrase_exact_less_than2`
-/// `equal_range`).
+// pinyin_exact_compare2, pinyin_phrase3.h:33–66.
+/// Compares two equal-length key sequences by initial, then middle and final, then tone.
+/// Only positions in `lhs` participate.
+///
+/// # Panics
+///
+/// Panics if a comparison indexes beyond `rhs`. Pass a right slice at least as long as
+/// `lhs`.
 #[must_use]
 pub fn exact_compare2(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> std::cmp::Ordering {
     let len = lhs.len();

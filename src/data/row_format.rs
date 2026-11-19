@@ -182,26 +182,10 @@ pub mod pinyin_index {
             }))
     }
 
-    /// Serialises one `PinyinIndexItem2<L>` record: token, then the
-    /// stored keys (their original tones), then zero padding to
-    /// `item2_stride`.
-    ///
-    /// `keys.len()` **is** the record's `L`, and a DBM value is a packed
-    /// array of records that all share one `L` — the phrase length
-    /// [`decode_items`] is later handed, which upstream derives from the
-    /// key (`key.len() / 2` syllables). So a caller assembling a value
-    /// must pass the same non-empty `keys` length for every record in it;
-    /// `L = 0` and mixed lengths do not name any value this format can
-    /// express.
-    ///
-    /// Both are unreachable from the compiler that writes these files —
-    /// `parse_pinyin_keys` refuses an empty syllable, and rows are grouped
-    /// by their encoded key, so one value's records share a syllable count
-    /// by construction. Neither is guarded here, because the guard that
-    /// matters is on the read side: [`decode_items`] rejects `L = 0` and
-    /// any value whose length is not a whole multiple of its stride, so a
-    /// record stream written out of contract is refused rather than
-    /// misparsed.
+    // PinyinIndexItem2<L>, chewing_large_table2.h:91–133. The row key determines L.
+    /// Encodes one token and its packed keys, including the original tones and zero padding.
+    /// Supply at least one key. Use the same key count for every record in a DBM value and
+    /// pass that count to [`decode_items`].
     #[must_use]
     pub fn encode_item(token: u32, keys: &[ChewingKey]) -> Vec<u8> {
         let mut buf = vec![0_u8; item2_stride(keys.len())];
@@ -232,21 +216,15 @@ pub mod pinyin_index {
         buf
     }
 
-    /// Decodes a DBM value into `PinyinIndexItem2<L>` records.
-    ///
-    /// The value is a packed array of C++ structs with stride
-    /// `item2_stride``(phrase_length)`. Each record contains:
-    /// - `u32 token` (LE, offset 0)
-    /// - `ChewingKey keys[phrase_length]` (2 bytes each, offset 4)
-    /// - padding to the stride
-    ///
-    /// Returns an empty Vec for an empty value (a prefix marker).
+    // PinyinIndexItem2<L>, chewing_large_table2.h:91–133. item_views uses chunks_exact and
+    // drops a trailing partial record.
+    /// Decodes complete records from one pinyin-index value. Each record has a little-endian
+    /// token, `phrase_length` packed two-byte keys and padding to the record stride. An empty
+    /// value marks a prefix. Supply a whole number of records for the selected stride.
     ///
     /// # Errors
     ///
-    /// Returns `DictError::Parse` for a non-empty value with a zero
-    /// `phrase_length`. A trailing partial record is dropped, as
-    /// `item_views` describes.
+    /// Returns [`DictError::Parse`] for a nonempty value with zero phrase length.
     pub fn decode_items(
         value: &[u8],
         phrase_length: usize,
@@ -336,24 +314,18 @@ pub mod phrase_index {
 
 // ── bigram.db ────────────────────────────────────────────────────
 
-/// `bigram.db` — the `Bigram` hash container's `SingleGram` rows.
-///
-/// Key: the previous `phrase_token_t` ([`crate::data::row_format::encode_token_key`]).
-/// Value: `total: u32` then `{next_token: u32, count: u32}` records,
-/// token-ascending (`SingleGram::insert_freq`).
-///
-/// `docs/findings/data-formats.md` §6, `ngram_tkrzwdb.cpp`.
+// SingleGram::insert_freq maintains token order when inserting new records;
+// ngram.cpp:133–205, ngram_tkrzwdb.cpp and docs/findings/data-formats.md §6.
+/// Bigram rows keyed by the previous token. Each value stores a total followed by
+/// successor-token and count pairs. The codecs preserve the stored order and total.
 pub mod bigram {
     use crate::data::dict::DictError;
     use crate::data::single_gram::decode_single_gram;
 
-    /// One previous-token row of the system bigram.
-    ///
-    /// `total` is the stored row total and equals `Σ count` over
-    /// [`BigramRow::records`].
+    /// A previous token’s stored bigram total and successor records.
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct BigramRow {
-        /// Sum of the successor counts.
+        /// Total from the row header, independent of the supplied successor counts.
         pub total: u32,
         /// `(next_token, count)` records, stored order.
         pub records: Vec<(u32, u32)>,

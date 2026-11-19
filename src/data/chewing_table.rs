@@ -532,7 +532,9 @@ pub fn contains_incomplete(keys: &[ChewingKey]) -> bool {
     keys.iter().any(|key| key.middle == 0 && key.final_ == 0)
 }
 
-/// The DBM key `ChewingLargeTable2::search` computes for a query.
+// ChewingLargeTable2::search, chewing_large_table2.cpp:161–174.
+/// Encodes a query as a DBM key. If any input key is initial-only, every key in the
+/// sequence is reduced to its initial. Otherwise the complete-key encoding is used.
 #[must_use]
 pub fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
     if contains_incomplete(keys) {
@@ -580,14 +582,15 @@ pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
         .all(|(q, s)| q.matches_with_tones(*s))
 }
 
-/// Filter the exact row that ChewingLargeTable2::search found, retaining stored
-/// order and SEARCH_CONTINUED even for an empty prefix marker. The whole row
-/// is validated before any record is compared; the matching records' tokens
-/// are collected and their keys are compared in place. Shared by the
-/// production reader and the standalone in-memory test programs.
+// ChewingLargeTable2::search, chewing_large_table2.cpp:161–174; SEARCH_CONTINUED is
+// independent of the filtered tokens.
+/// Returns whether a row was present for a nonempty query and its matching tokens in
+/// stored order. A present empty prefix marker or a row with no matching readings still
+/// reports presence.
 ///
 /// # Errors
-/// Returns DictError for a malformed item array.
+///
+/// Propagates a row-decoding error.
 pub fn search_row(
     keys: &[ChewingKey],
     value: Option<&[u8]>,
