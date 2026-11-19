@@ -305,13 +305,12 @@ fn token_getters_answer_the_pins_ranges_and_outputs() {
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let first = unsafe { nth_pronunciation(instance, token, 0) };
     assert_eq!((first.0, first.1), (true, 2));
+    // Past the last reading the pin ignores the failed read and appends
+    // `phrase_length` keys all the same (`zhuyin.cpp:1806-1809`).
     for nth in [count, count + 1, u32::MAX] {
-        assert!(
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { nth_pronunciation(instance, token, nth) }.0,
-            "nth {nth}"
-        );
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let past = unsafe { nth_pronunciation(instance, token, nth) };
+        assert_eq!((past.0, past.1), (true, 2), "nth {nth}");
     }
     // SAFETY: a fresh GArray of two-byte elements, seeded with one key.
     let keys = unsafe { glib_sys::g_array_new(0, 0, 2) };

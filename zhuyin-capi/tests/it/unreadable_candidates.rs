@@ -76,6 +76,99 @@ mod chunk_fixture;
 #[path = "../../../tests/support/unreadable_fixture.rs"]
 mod fixture;
 
+/// A journal REMOVE of a system item leaves a sole row with a NULL string
+/// on both cursor paths. The REMOVE clears the item and leaves the pinyin
+/// index (`phrase_index.cpp:460-475`, `:219-236`), so the search still
+/// answers the token. The facade total stays positive, 1000 - 100, so the
+/// ranking does not assert (`zhuyin.cpp:1257-1261`). The string pass ignores
+/// the failed read (`:1096-1104`) and one row is compared with nothing, so
+/// the row is listed with the NULL string it starts with (`:1537`, `:1630`).
+/// Without the log the row reads 甲.
+#[test]
+fn a_journal_remove_leaves_a_sole_null_row_on_both_cursor_paths() {
+    use crate::support::{
+        init_on, libraries_system, modify_header, plant_log, system_dir, zhuyin_get_candidate_type,
+        zhuyin_parse_more_full_pinyins,
+    };
+    let scratch = tempfile::tempdir().unwrap();
+    let total = 1000_u32;
+    let system = libraries_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            (1, "gb_char.bin", &[(&[0x7532], &[0x1081], 100)], total),
+            (2, "gbk_char.bin", &[], 0),
+            (3, "opengram.bin", &[], 0),
+            (4, "merged.bin", &[], 0),
+        ],
+    );
+    // Token 0x01000001 as `libraries_system` stores it: the length and
+    // reading count, the unigram, the text, the key and the reading's count.
+    let item = [
+        &[1_u8, 1][..],
+        &100_u32.to_le_bytes(),
+        &0x7532_u32.to_le_bytes(),
+        &0x1081_u16.to_le_bytes(),
+        &10_u32.to_le_bytes(),
+    ]
+    .concat();
+    let remove = [
+        &2_u32.to_le_bytes()[..],
+        &0x0100_0001_u32.to_le_bytes(),
+        &u16::try_from(item.len()).unwrap().to_le_bytes(),
+        &item,
+    ]
+    .concat();
+    for removed in [false, true] {
+        for before_cursor in [false, true] {
+            let user = tempfile::tempdir().unwrap();
+            let log = if removed { &remove[..] } else { &[] };
+            plant_log(
+                user.path(),
+                "gb_char.dbin",
+                &[&modify_header(0, total, total)[..], log].concat(),
+            );
+            let context = init_on(&system, Some(user.path()));
+            assert!(!context.is_null());
+            let instance = unsafe { zhuyin_alloc_instance(context) };
+            assert_eq!(
+                unsafe { zhuyin_parse_more_full_pinyins(instance, c"ba1".as_ptr()) },
+                3
+            );
+            if before_cursor {
+                assert!(unsafe { zhuyin_guess_candidates_before_cursor(instance, 3) });
+            } else {
+                assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
+            }
+            let mut count = 0;
+            assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
+            assert_eq!(count, 1, "removed {removed}, before {before_cursor}");
+            let mut row = ptr::null_mut();
+            assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
+            let mut row_type = std::mem::MaybeUninit::uninit();
+            assert!(unsafe { zhuyin_get_candidate_type(instance, row, row_type.as_mut_ptr()) });
+            // SAFETY: a successful getter writes the type of the live row.
+            let row_type = unsafe { row_type.assume_init() };
+            assert_eq!(row_type as i32, if before_cursor { 3 } else { 2 });
+            let mut string = c"sentinel".as_ptr();
+            assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut string) });
+            // SAFETY: a non-NULL answer is the row's own NUL-terminated string.
+            let text = (!string.is_null()).then(|| {
+                unsafe { std::ffi::CStr::from_ptr(string) }
+                    .to_str()
+                    .unwrap()
+            });
+            assert_eq!(
+                text,
+                (!removed).then_some("甲"),
+                "removed {removed}, before {before_cursor}"
+            );
+            unsafe { zhuyin_free_instance(instance) };
+            unsafe { zhuyin_fini(context) };
+        }
+    }
+}
+
 #[test]
 fn a_sole_unreadable_after_cursor_row_has_a_null_string() {
     check_row(fixture::Case::Single, false);

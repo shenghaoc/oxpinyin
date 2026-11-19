@@ -6,7 +6,8 @@
 use crate::support::Fixture;
 
 use crate::support::{
-    ChewingKey, DEFAULT_SORT, assert_aborts, cstr, pinyin_get_character_offset,
+    ChewingKey, DEFAULT_SORT, IBUS_DEFAULT_SORT, assert_aborts, capture_rows, cstr,
+    lookup_candidate_type_t, n_candidate, pinyin_get_character_offset,
     pinyin_get_left_pinyin_offset, pinyin_get_pinyin_offset, pinyin_get_pinyin_string,
     pinyin_get_pinyin_strings, pinyin_get_right_pinyin_offset, pinyin_guess_candidates,
     pinyin_parse_full_pinyin,
@@ -69,13 +70,39 @@ fn guess_candidates_past_an_early_stopped_parse_aborts() {
     );
 }
 
+/// `ni` parses to a matrix of three columns: the key at 0, an empty column
+/// and the reserved slot (`phonetic_key_matrix.cpp:47-62`). At offsets 2 and
+/// 3 the span loop does not run (`end = start + 1` is not below the size,
+/// `pinyin.cpp:2229-2231`), and `_check_offset` reads column `offset - 1`
+/// only (`:2163-2181`), so both answer `true` with no searched row. The
+/// LONGER row does not depend on the offset: its search starts at column 0
+/// with the parsed key count (`:1874-1883`,
+/// `phonetic_key_matrix.cpp:504-529`), so every offset lists the row of
+/// offset 0, unless the sort option leaves it out (`pinyin.cpp:2292-2293`).
 #[test]
 fn guess_candidates_at_the_reserved_slot_and_one_past_it_answer() {
     let fixture = Fixture::parsed("guess-slot", "ni,'hao", 2);
     let instance = fixture.instance();
+    let longer = lookup_candidate_type_t::LONGER_CANDIDATE;
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, IBUS_DEFAULT_SORT) });
+    // SAFETY: the fixture's instance is live; only this thread calls into it.
+    let at_zero: Vec<_> = unsafe { capture_rows(instance) }
+        .into_iter()
+        .filter(|(kind, _, _)| *kind == longer)
+        .collect();
+    assert_eq!(at_zero.len(), 1, "{at_zero:?}");
     // Columns 0..=2 exist; offset 3 reads column 2.
     for offset in [2, 3] {
-        let _ = unsafe { pinyin_guess_candidates(instance, offset, DEFAULT_SORT) };
+        assert!(unsafe { pinyin_guess_candidates(instance, offset, IBUS_DEFAULT_SORT) });
+        // SAFETY: the fixture's instance is live; only this thread calls into it.
+        assert_eq!(
+            unsafe { capture_rows(instance) },
+            at_zero,
+            "offset {offset}"
+        );
+        assert!(unsafe { pinyin_guess_candidates(instance, offset, DEFAULT_SORT) });
+        // SAFETY: the fixture's instance is live; only this thread calls into it.
+        assert_eq!(unsafe { n_candidate(instance) }, 0, "offset {offset}");
     }
 }
 

@@ -78,6 +78,96 @@ fn training_the_last_two_nbest_results_succeeds() {
     }
 }
 
+/// Each valid index trains its own result row (`pinyin.cpp:2683-2688`).
+/// With 你 forced on the first key, every row starts with 你 and the rows
+/// differ in the token after it. `train_result3` trains the forced token
+/// and the token after it (`phonetic_lookup.h:866-872`): each gets
+/// `initial_seed * unigram_factor` = 69 * 7 (`:847-849`, `:926-929`). The
+/// trained token is one of the requested row, no token of another row gets
+/// anything, and the indexes do not all train the same token.
+#[test]
+fn each_nbest_index_trains_its_own_row() {
+    let mut trained = Vec::new();
+    for index in 0..3_u8 {
+        let user = TempUserDir::new("train-own-row");
+        let (context, instance) = open_pinned(&user);
+        assert_eq!(
+            unsafe { pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()) },
+            5
+        );
+        // SORT_WITHOUT_LONGER_CANDIDATE.
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, 0x2) });
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let forced = unsafe { crate::support::row_with(instance, crate::support::NORMAL, "你") };
+        // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+        assert_eq!(
+            unsafe { crate::support::pinyin_choose_candidate(instance, 0, forced) },
+            2
+        );
+        assert!(unsafe { pinyin_guess_sentence(instance) });
+        // The tokens of the phrase after 你 in each of the three rows.
+        let mut tails = Vec::new();
+        for row in 0..3_u8 {
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            let (found, text) = unsafe { crate::support::sentence_out(instance, row) };
+            assert!(found, "row {row}");
+            let text = text.expect("a sentence");
+            let tail = text
+                .strip_prefix("你")
+                .unwrap_or_else(|| panic!("{text} starts with 你"));
+            // SAFETY: as above.
+            let tokens = unsafe { crate::support::lookup(instance, tail) };
+            assert!(!tokens.is_empty(), "{tail}");
+            tails.push(tokens);
+        }
+        let own = tails[usize::from(index)].clone();
+        let all: std::collections::BTreeSet<u32> = tails.into_iter().flatten().collect();
+        let unigrams = |tokens: &std::collections::BTreeSet<u32>| -> Vec<u32> {
+            tokens
+                .iter()
+                .map(|&token| {
+                    // SAFETY: `instance` was opened above and is not yet freed; only this thread
+                    // calls into it.
+                    let (found, unigram) = unsafe { crate::support::unigram(instance, token) };
+                    assert!(found);
+                    unigram
+                })
+                .collect()
+        };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let forced_tokens: std::collections::BTreeSet<u32> =
+            unsafe { crate::support::lookup(instance, "你") }
+                .into_iter()
+                .collect();
+        let before = unigrams(&all);
+        let forced_before: u32 = unigrams(&forced_tokens).iter().sum();
+        assert!(unsafe { pinyin_train(instance, index) });
+        assert_eq!(
+            unigrams(&forced_tokens).iter().sum::<u32>(),
+            forced_before + 69 * 7,
+            "index {index}"
+        );
+        let gained: Vec<(u32, u32)> = all
+            .iter()
+            .zip(before.iter().copied().zip(unigrams(&all)))
+            .filter(|(_, (before, after))| before != after)
+            .map(|(&token, (before, after))| (token, after - before))
+            .collect();
+        assert_eq!(gained.len(), 1, "index {index}: {gained:?}");
+        assert_eq!(gained[0].1, 69 * 7, "index {index}");
+        assert!(own.contains(&gained[0].0), "index {index}: {gained:?}");
+        trained.push(gained[0].0);
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
+    }
+    trained.sort_unstable();
+    trained.dedup();
+    assert!(trained.len() > 1, "{trained:x?}");
+}
+
 #[test]
 fn training_one_past_the_nbest_results_aborts() {
     crate::support::assert_aborts(

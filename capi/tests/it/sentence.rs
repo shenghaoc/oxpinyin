@@ -90,9 +90,14 @@ fn a_leading_separator_guess_has_no_sentence() {
     unsafe { close(context, instance) };
 }
 
-/// A keyless parse (one separator) refuses both sentence guesses before
-/// they clear the old result: the old sentence stays, the candidate list
-/// is empty, and a fresh instance has no sentence (:183).
+/// A keyless parse refuses both sentence guesses before they clear the old
+/// result: the old sentence stays, the candidate list is empty, and a fresh
+/// instance has no sentence (:183). One separator is such a parse, and so is
+/// a parse that consumes nothing: `fill_matrix` leaves the matrix empty
+/// without a key (`phonetic_key_matrix.cpp:34-38`), and `get_nbest_match`
+/// answers `false` on it before `results->clear()`
+/// (`phonetic_lookup.h:743-748`; callers `pinyin.cpp:1379-1384`,
+/// `:1434-1439`).
 #[test]
 fn keyless_sentence_guesses_keep_the_old_sentence() {
     let user = TempUserDir::new("zero-key-guess");
@@ -103,7 +108,10 @@ fn keyless_sentence_guesses_keep_the_old_sentence() {
             crate::support::pinyin_guess_sentence_with_prefix(instance, c"你".as_ptr())
         },
     ];
-    for guess in guesses {
+    for (guess, (keyless, consumed)) in guesses
+        .into_iter()
+        .flat_map(|guess| [("'", 1), ("zzz", 0)].map(|parse| (guess, parse)))
+    {
         // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
         let instance = unsafe { alloc(context) };
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
@@ -113,7 +121,7 @@ fn keyless_sentence_guesses_keep_the_old_sentence() {
         let sentence = unsafe { sentence_out(instance, 0) };
         assert!(sentence.0);
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        assert_eq!(unsafe { parse(instance, "'") }, 1);
+        assert_eq!(unsafe { parse(instance, keyless) }, consumed);
         assert!(!guess(instance));
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
         assert_eq!(unsafe { sentence_out(instance, 0) }, sentence);
@@ -124,7 +132,7 @@ fn keyless_sentence_guesses_keep_the_old_sentence() {
         // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
         let fresh = unsafe { alloc(context) };
         // SAFETY: `fresh` was opened above and is not yet freed; only this thread calls into it.
-        assert_eq!(unsafe { parse(fresh, "'") }, 1);
+        assert_eq!(unsafe { parse(fresh, keyless) }, consumed);
         assert!(!guess(fresh));
         // SAFETY: `fresh` was opened above and is not yet freed; only this thread calls into it.
         assert_eq!(unsafe { sentence_out(fresh, 0) }, (false, None));
@@ -156,6 +164,33 @@ fn a_null_sentence_prefix_is_no_prefix() {
         unsafe { sentence_out(instance, 0) },
         (true, Some("丙".to_owned()))
     );
+    // A prefix that is not UTF-8 is no prefix either: `g_utf8_to_ucs4` answers
+    // NULL for the whole string, valid start included, and `_compute_prefixes`
+    // adds nothing to the sentence start (`pinyin.cpp:1397-1403`).
+    let valid_then_invalid = [&glib_utf8(&[0x7532, 0x4e01, 0x4e59])[..], b"\xff"].concat();
+    for bytes in [&b"\xff"[..], &valid_then_invalid] {
+        let invalid = std::ffi::CString::new(bytes).expect("no NUL");
+        assert!(unsafe {
+            crate::support::pinyin_guess_sentence_with_prefix(instance, valid.as_ptr())
+        });
+        assert_eq!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { sentence_out(instance, 0) },
+            (true, Some("戌".to_owned())),
+            "the valid prefix selects its bigram"
+        );
+        assert!(unsafe {
+            crate::support::pinyin_guess_sentence_with_prefix(instance, invalid.as_ptr())
+        });
+        assert_eq!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { sentence_out(instance, 0) },
+            (true, Some("丙".to_owned())),
+            "{bytes:?}"
+        );
+    }
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };
@@ -581,6 +616,31 @@ fn get_sentence_before_a_guess_leaves_the_out_pointer() {
     assert!(unsafe { pinyin_reset(instance) });
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     assert_eq!(unsafe { sentence_out(instance, 0) }, (false, None));
+    // The double-pinyin and chewing parsers fill the same matrix and no
+    // result row, so the answer is the same (`pinyin.cpp:1470-1471`).
+    let parsers: [(
+        unsafe extern "C" fn(*mut PinyinInstance, *const c_char) -> usize,
+        _,
+        _,
+    ); 2] = [
+        (crate::support::pinyin_parse_more_double_pinyins, c"nihk", 4),
+        (crate::support::pinyin_parse_more_chewings, c"su3cl3", 6),
+    ];
+    for (parser, text, parsed) in parsers {
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let fresh = unsafe { alloc(context) };
+        assert_eq!(unsafe { parser(fresh, text.as_ptr()) }, parsed, "{text:?}");
+        for index in [0, 255] {
+            assert_eq!(
+                // SAFETY: `fresh` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe { sentence_out(fresh, index) },
+                (false, None),
+                "{text:?} {index}"
+            );
+        }
+        unsafe { pinyin_free_instance(fresh) };
+    }
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };

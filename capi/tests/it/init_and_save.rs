@@ -32,17 +32,6 @@ use std::path::Path;
 
 use std::ptr;
 
-/// A private system whose table.conf has `from` replaced by `to`.
-fn conf_system(parent: &Path, from: &str, to: &str) -> std::path::PathBuf {
-    let system = private_system(parent);
-    let path = system.join("table.conf");
-    let text = std::fs::read_to_string(system_dir().join("table.conf")).expect("table.conf");
-    assert!(text.contains(from), "table.conf holds {from}");
-    std::fs::remove_file(&path).expect("unlink the linked table.conf");
-    std::fs::write(&path, text.replace(from, to)).expect("write table.conf");
-    system
-}
-
 /// A save cut by a four-byte file-size limit aborts after the chunk's
 /// length word: the staged log holds four bytes and the
 /// marker keeps the raised counter.
@@ -120,6 +109,315 @@ fn init_aborts_on_an_unknown_table_conf_database_format() {
         },
     );
     assert!(files_of(&run.user_dir).is_empty());
+}
+
+/// A default row of type `DICTIONARY` aborts the init in its library loop
+/// (`assert(DICTIONARY != table_info->m_file_type)`, `pinyin.cpp:388`). The
+/// loop runs after `check_format`, which has saved `user.conf`
+/// (`pinyin.cpp:343`, `:184-187`).
+#[test]
+fn init_aborts_on_a_default_dictionary_row_after_user_conf() {
+    let run = crate::support::assert_aborts_in_dir(
+        "init_and_save::init_aborts_on_a_default_dictionary_row_after_user_conf",
+        |user| {
+            let system = conf_system(
+                user.parent().expect("scratch"),
+                "merged.bin merged.dbin SYSTEM_FILE",
+                "merged.bin merged.dbin DICTIONARY",
+            );
+            init_at(&system, user);
+        },
+    );
+    assert!(files_of(&run.user_dir).contains_key("user.conf"));
+}
+
+/// The init's answers for the two layout faults of a mapped library (policy
+/// row 76). Both chunks pass `MemoryChunk::mmap`'s length and checksum
+/// tests (`memory_chunk.h:470-520`), so neither writes the `mmap %s failed!`
+/// line. A payload shorter than its 17-byte header loads as an empty
+/// sub-index and the init succeeds with no GLib log. A separator index
+/// outside the payload refuses the init with one warning: the pin reads
+/// past the chunk there (`phrase_index.cpp:354-356`).
+#[test]
+fn init_answers_for_the_two_library_layout_faults() {
+    let run = crate::support::run_in_child(
+        "init_and_save::init_answers_for_the_two_library_layout_faults",
+        |user| {
+            let scratch = user.parent().expect("scratch");
+            let chunk = |payload: &[u8]| {
+                oxpinyin::data::chunk_format::build_memory_chunk(payload).expect("frame")
+            };
+            let mut outside = [0_u8; 32];
+            for (at, value) in [(4, 17_u32), (8, 100), (12, 21)] {
+                outside[at..at + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            outside[16] = b'#';
+            for (name, payload, opens, logged) in [
+                ("short", &[][..], true, 0),
+                ("outside", &outside[..], false, 1),
+            ] {
+                let parent = scratch.join(name);
+                std::fs::create_dir(&parent).expect("a system parent");
+                let system = private_system(&parent);
+                std::fs::remove_file(system.join("merged.bin")).expect("unlink the library");
+                std::fs::write(system.join("merged.bin"), chunk(payload)).expect("the library");
+                let user = parent.join("user");
+                std::fs::create_dir(&user).expect("a user directory");
+                write_user_conf(&user, &system);
+                let logs = crate::support::LogCapture::new();
+                let context = init_at(&system, &user);
+                assert_eq!(!context.is_null(), opens, "{name}");
+                let warning = (Some("libpinyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING);
+                assert_eq!(logs.take(), vec![warning; logged], "{name}");
+            }
+        },
+    );
+    assert!(
+        run.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+/// A save that cannot map a loaded system library again writes the pin's
+/// line and answers `false` (`pinyin.cpp:955-957`); the context stays
+/// modified, so the next save, with the library back, writes the profile
+/// and answers `true` (`:1136`, `:1141-1146`).
+#[test]
+fn a_save_retries_after_a_failed_remap() {
+    let run = crate::support::run_in_child(
+        "init_and_save::a_save_retries_after_a_failed_remap",
+        |user| {
+            let system = private_system(user.parent().expect("scratch"));
+            write_user_conf(user, &system);
+            let context = init_at(&system, user);
+            assert!(!context.is_null());
+            assert_eq!(
+                // SAFETY: `context` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe { import_batch(context, 7, &[("你好", "ni3'hao3", 1)]) },
+                [true]
+            );
+            let library = system.join("gb_char.bin");
+            let away = system.join("gb_char.bin.away");
+            std::fs::rename(&library, &away).expect("move the library away");
+            assert!(!unsafe { pinyin_save(context) });
+            assert!(!user.join("user.bin").exists());
+            std::fs::rename(&away, &library).expect("move the library back");
+            assert!(unsafe { pinyin_save(context) });
+            assert!(user.join("user.bin").exists());
+            assert!(!unsafe { pinyin_save(context) }, "nothing left to save");
+        },
+    );
+    let system = run.user_dir.parent().expect("scratch").join("system");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        format!(
+            "mmap {} failed!{}",
+            system.join("gb_char.bin").display(),
+            crate::support::NL
+        )
+    );
+}
+
+/// The trained pairs of the user bigram, through the export iterator.
+///
+/// # Safety
+///
+/// `context` is a live context: `pinyin_init` returned it and `pinyin_fini` has not taken it.
+/// Only this thread calls into it.
+unsafe fn trained_pairs(context: *mut crate::support::PinyinContext) -> Vec<String> {
+    let iter = unsafe { crate::support::pinyin_begin_get_bigram_phrases(context) };
+    let mut pairs = Vec::new();
+    while unsafe { crate::support::pinyin_bigram_iterator_has_next_phrase(iter) } {
+        let mut phrase: *mut crate::support::GChar = ptr::null_mut();
+        let mut pinyin: *mut crate::support::GChar = ptr::null_mut();
+        let mut count: std::os::raw::c_int = 0;
+        unsafe {
+            crate::support::pinyin_bigram_iterator_get_next_phrase(
+                iter,
+                &raw mut phrase,
+                &raw mut pinyin,
+                &raw mut count,
+            )
+        };
+        // SAFETY: `phrase` and `pinyin` are this step's outputs, each NULL or a separate string
+        // the library returned to this code, which owns them and frees them only here.
+        pairs.push(unsafe { crate::support::take_exported_row(phrase, pinyin, count) }.0);
+    }
+    unsafe { crate::support::pinyin_end_get_bigram_phrases(iter) };
+    pairs
+}
+
+/// Whether the candidates of `spelling` hold a row that reads `text`.
+///
+/// # Safety
+///
+/// `context` is a live context: `pinyin_init` returned it and `pinyin_fini` has not taken it.
+/// Only this thread calls into it.
+unsafe fn lists(context: *mut crate::support::PinyinContext, spelling: &str, text: &str) -> bool {
+    // SAFETY: `context` meets this function's `# Safety` contract.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, spelling) }, spelling.len());
+    assert!(unsafe { crate::support::pinyin_guess_candidates(instance, 0, 0) });
+    // SAFETY: as above.
+    let listed = unsafe { capture_rows(instance) }
+        .iter()
+        .any(|(_, row, _)| row == text);
+    unsafe { crate::support::pinyin_free_instance(instance) };
+    listed
+}
+
+/// A blocked staging name does not stop the save. A directory with a file
+/// in it holds `user_pinyin_index.bin.tmp`: the `unlink` and the store into
+/// it fail and are ignored (`pinyin.cpp:996-1003`); the rename of a
+/// directory over the live file fails and writes one line (`:1091-1097`);
+/// the pass goes on to the phrase index and the bigram (`:1102-1126`); the
+/// save rewrites `user.conf`, clears the modified flag and answers `true`
+/// (`:1139-1146`).
+///
+/// The save has two pending changes. A trained choice is a new bigram, and
+/// the import of 龘鱻 is a new row of the user pinyin index. The next init
+/// reads the files back (`pinyin.cpp:352-371`, `:394-402`): the trained pair
+/// is exported, so the bigram was renamed; 龘鱻 has its phrase-table token,
+/// so the phrase index was renamed; and `daxian` does not list 龘鱻, so the
+/// pinyin index is the old one, which still lists 龘龘 for `dada`.
+#[test]
+fn a_blocked_staging_name_does_not_stop_the_save() {
+    let run = crate::support::run_in_child(
+        "init_and_save::a_blocked_staging_name_does_not_stop_the_save",
+        |user| {
+            write_user_conf(user, &system_dir());
+            let context = init_at(&system_dir(), user);
+            assert!(!context.is_null());
+            assert_eq!(
+                // SAFETY: `context` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe { import_batch(context, 7, &[("龘龘", "da2'da2", 5)]) },
+                [true]
+            );
+            assert!(unsafe { pinyin_save(context) });
+            // SAFETY: as above.
+            assert!(unsafe { trained_pairs(context) }.is_empty());
+
+            // The bigram's pending change: a chosen candidate, then a training.
+            // SAFETY: as above.
+            let instance = unsafe { alloc(context) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
+            // into it.
+            assert_eq!(unsafe { parse(instance, "nihao") }, 5);
+            // SORT_WITHOUT_LONGER_CANDIDATE.
+            assert!(unsafe { crate::support::pinyin_guess_candidates(instance, 0, 0x2) });
+            // SAFETY: as above.
+            let row = unsafe { crate::support::row_with(instance, NORMAL, "你") };
+            // SAFETY: the row belongs to this live instance and no call has invalidated it.
+            assert_eq!(
+                unsafe { crate::support::pinyin_choose_candidate(instance, 0, row) },
+                2
+            );
+            assert!(unsafe { crate::support::pinyin_guess_sentence(instance) });
+            assert!(unsafe { crate::support::pinyin_train(instance, 0) });
+            unsafe { crate::support::pinyin_free_instance(instance) };
+            // The pinyin index's pending change.
+            assert_eq!(
+                // SAFETY: as above.
+                unsafe { import_batch(context, 7, &[("龘鱻", "da2'xian1", 5)]) },
+                [true]
+            );
+            // SAFETY: as above.
+            assert!(unsafe { lists(context, "daxian", "龘鱻") });
+
+            let blocked = user.join("user_pinyin_index.bin.tmp");
+            std::fs::create_dir(&blocked).expect("the blocking directory");
+            std::fs::write(blocked.join("keep"), "x").expect("a file in it");
+            assert!(unsafe { pinyin_save(context) });
+            assert!(
+                !unsafe { pinyin_save(context) },
+                "the save cleared the modified flag"
+            );
+            assert!(blocked.join("keep").exists());
+            std::fs::remove_dir_all(&blocked).expect("remove the blocking directory");
+            unsafe { pinyin_fini(context) };
+
+            let context = init_at(&system_dir(), user);
+            assert!(!context.is_null());
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls
+            // into it.
+            let pairs = unsafe { trained_pairs(context) };
+            assert!(
+                pairs.iter().any(|pair| pair.starts_with('你')),
+                "the new bigram: {pairs:?}"
+            );
+            // SAFETY: as above.
+            let instance = unsafe { alloc(context) };
+            assert!(
+                // SAFETY: `instance` was opened above and is not yet freed; only this thread
+                // calls into it.
+                unsafe { lookup(instance, "龘鱻") }
+                    .iter()
+                    .any(|token| token >> 24 == 7),
+                "the new phrase index"
+            );
+            unsafe { crate::support::pinyin_free_instance(instance) };
+            // SAFETY: as above.
+            assert!(
+                !unsafe { lists(context, "daxian", "龘鱻") },
+                "the old pinyin index"
+            );
+            // SAFETY: as above.
+            assert!(unsafe { lists(context, "dada", "龘龘") });
+            unsafe { pinyin_fini(context) };
+        },
+    );
+    let sep = std::path::MAIN_SEPARATOR;
+    let user = run.user_dir.display();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        format!(
+            "rename {user}{sep}user_pinyin_index.bin.tmp to {user}{sep}user_pinyin_index.bin failed.{}",
+            crate::support::NL
+        )
+    );
+}
+
+/// The init joins the system name and `table.conf` with `g_build_filename`
+/// (`pinyin.cpp:335-336`), which drops an empty element: the empty name is
+/// `table.conf` in the working directory, and `.` is `./table.conf`. Without
+/// that file the load writes its line and the init writes its own and
+/// answers NULL (`table_info.cpp:199-203`, `pinyin.cpp:337-340`). With it,
+/// the libraries open from the same directory.
+#[test]
+fn an_empty_or_dot_system_name_reads_the_working_directory() {
+    let run = crate::support::run_in_child(
+        "init_and_save::an_empty_or_dot_system_name_reads_the_working_directory",
+        |user| {
+            write_user_conf(user, &system_dir());
+            let user_c = cstr(user.to_str().expect("UTF-8 path"));
+            let bare = user.parent().expect("scratch").join("bare");
+            std::fs::create_dir(&bare).expect("a directory with no table.conf");
+            std::env::set_current_dir(&bare).expect("enter it");
+            assert!(unsafe { pinyin_init(c"".as_ptr(), user_c.as_ptr()) }.is_null());
+            std::env::set_current_dir(system_dir()).expect("enter the fixture");
+            let context = unsafe { pinyin_init(c".".as_ptr(), user_c.as_ptr()) };
+            assert!(!context.is_null());
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls
+            // into it.
+            let instance = unsafe { alloc(context) };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
+            // into it.
+            assert_eq!(unsafe { parse(instance, "nihao") }, 5);
+            assert!(unsafe { crate::support::pinyin_guess_sentence(instance) });
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened
+            // above and is not yet freed; nothing uses either handle after this call; only this
+            // thread calls into them.
+            unsafe { close(context, instance) };
+        },
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr),
+        format!("open table.conf failed.{NL}load table.conf failed!{NL}")
+    );
 }
 
 /// An unknown database format in user.conf aborts the init and leaves
