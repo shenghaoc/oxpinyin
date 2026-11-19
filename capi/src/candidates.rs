@@ -269,6 +269,7 @@ pub unsafe extern "C" fn pinyin_is_user_candidate(
     cand.token.get().is_some_and(is_user_token)
 }
 
+// pinyin.cpp:3726-3768.
 /// Remove a user candidate from the dictionary.
 ///
 /// # C signature
@@ -277,17 +278,15 @@ pub unsafe extern "C" fn pinyin_is_user_candidate(
 ///                                   lookup_candidate_t * candidate);
 /// ```
 ///
-/// The §3.4 removal: the row must be a `NORMAL_CANDIDATE` whose token
-/// lives in the user dictionary (upstream asserts both, and so the process
-/// aborts here, register row 64), then the phrase, its pronunciations, its bigram rows and
-/// its unigram delta are deleted. Does **not** arm `m_modified`, matching
-/// upstream's set-sites.
+/// Remove the row’s item, pronunciations and associated frequency data from the receiving
+/// context. The change requires a separately armed save. A null instance or candidate returns
+/// false. A true result from `pinyin_is_user_candidate` can also describe a longer row.
 ///
-/// The pin reads the candidate's type and token and removes from the
-/// receiving `instance`'s context, whichever instance published the row
-/// (`pinyin.cpp:3726-3768`); so does this. The handle must be a row of a
-/// live instance's published candidate list, valid for the whole call and
-/// not used elsewhere during it, as for [`pinyin_choose_candidate`].
+/// # Aborts
+///
+/// Removal requires a normal user-dictionary row. A longer row, another row type, or a token
+/// outside the user dictionary aborts. Trying to remove the item after it was already removed
+/// can also abort.
 ///
 /// # Safety
 ///
@@ -559,6 +558,7 @@ fn choose_phrase_row(
     }
 }
 
+// pinyin.cpp:2501-2588, phonetic_key_matrix.cpp:34-38, pinyin.cpp:2523-2531.
 /// Choose a candidate at an offset, returning the new cursor position.
 ///
 /// # C signature
@@ -568,51 +568,21 @@ fn choose_phrase_row(
 ///                             lookup_candidate_t * candidate);
 /// ```
 ///
-/// The pin reads the candidate's type, token, n-best index and bounds and
-/// never checks which instance published it (`pinyin.cpp:2501-2588`). The
-/// context, matrix, constraints, n-best results and sort option are the
-/// receiving `instance`'s. So does this: the row's scalars are copied out
-/// of the handle, and everything else is read from and written to
-/// `instance` and its context.
+/// Apply the supplied row to the receiving instance. A null argument or engine failure returns
+/// -1. For a normal row, the result is the supplied offset plus the accepted constraint length,
+/// or the original offset on refusal. Pass the same offset used to guess the row. An addon row
+/// promotes its item and becomes a normal row. The receiving context must contain the addon item
+/// and its destination library. An n-best row applies the differences from row zero and returns
+/// the last matrix offset. A longer row, or a selection with sentence candidates disabled,
+/// trains only the unigram and returns 1 on success or 0 on frequency overflow. These frequency
+/// changes require a separately armed save. Normal selection defers bigram training to
+/// `pinyin_train`.
 ///
-/// Returns -1 for a NULL argument or an engine failure. The handle must be
-/// a row of a live instance's published candidate list, valid for the
-/// whole call and not used elsewhere during it. Any other pointer is a
-/// caller precondition violation, as for the candidate getters.
+/// # Aborts
 ///
-/// The dispatch, in the pin's order:
-/// - A predicted row is the pin's `assert` at `:2507`, and the process
-///   aborts (register row 64).
-/// - `NBEST_MATCH_CANDIDATE` (`:2513-2519`): `diff_result` against this
-///   instance's results 0 and `m_nbest_index`. If either is absent, the
-///   pin's `check_result` asserts and the process aborts. The answer is
-///   this instance's `matrix.size() - 1`, the reserved tail slot one past
-///   the last real matrix column, in the active parse mode's coordinates
-///   (row 9): `parsed_len` after a parse that placed a key, and -1 after
-///   one that placed none, which leaves the matrix empty
-///   (`phonetic_key_matrix.cpp:34-38`).
-/// - `LONGER_CANDIDATE` (`pinyin.cpp:2523-2531`): only the token's unigram trains,
-///   by `initial_seed * unigram_factor = 69 * 7 = 483`. The answer is 0
-///   when the library total would overflow and 1 otherwise.
-/// - `ADDON_CANDIDATE` (`:2534-2563`): promoted into this context's
-///   nibble-5 (`ADDON_DICTIONARY`, `addon.bin`) sub-index
-///   (`docs/findings/addon-choose-promotion.md`). The supplied row becomes
-///   a `NORMAL_CANDIDATE` at the new token, and its string is unchanged.
-///   If this context's addon dictionary has no item for the token, the pin
-///   reaches undefined behaviour (class (b); register entry "An addon row
-///   chosen on a context whose addon dictionary has no item for its
-///   token"):
-///   nothing is promoted or rewritten, and the choose continues with the
-///   addon token and no recorded text.
-/// - `SORT_WITHOUT_SENTENCE_CANDIDATE` set by the last
-///   `pinyin_guess_candidates` (`:2565-2576`): the pin asserts `0 ==
-///   offset` (register row 45). Then only the unigram trains, as LONGER.
-/// - Otherwise (`:2577-2590`): validate, `add_constraint(m_begin, m_end,
-///   token)` against this instance's parse, validate again, and answer
-///   `offset + len`. A refused span answers `offset + 0`.
-///
-/// Per §2.2, the bigram training of a normal selection is deferred to
-/// [`pinyin_train`].
+/// A predicted bigram or prefix row aborts. Choosing an n-best row aborts if its required result is absent or a
+/// differing constraint span cannot be applied. A nonzero offset aborts when the selection
+/// reaches the unigram-only path with sentence candidates disabled.
 ///
 /// # Safety
 ///
@@ -795,6 +765,7 @@ fn unigram_leg_answer(outcome: UnigramAdd) -> c_int {
     }
 }
 
+// pinyin.cpp:2641-2647, pinyin.h:585-593.
 /// Clear the constraint a prior choose pinned, by offset.
 ///
 /// # C signature
@@ -803,17 +774,8 @@ fn unigram_leg_answer(outcome: UnigramAdd) -> c_int {
 ///                              size_t offset);
 /// ```
 ///
-/// `pinyin_clear_constraint` (`pinyin.cpp:2641-2647`, decl
-/// `pinyin.h:585-593`): un-forces the chosen run `offset` lands in — a hit
-/// anywhere inside a run (its `NoSearch` interior included) clears the
-/// whole run — and the selection record follows the surviving forcings.
-/// The caller offset lives in the active parse mode's original input
-/// coordinates (the same space `pinyin_guess_candidates` takes); the
-/// store lives in the session's raw buffer, so the transformed seams map
-/// it across first. Plain full pinyin is the identity.
-///
-/// Returns `false` for a free cell or an out-of-range offset — upstream's
-/// own defined return, never an abort — and for a null instance.
+/// Remove the whole constraint containing the supplied offset. Returns true if removed and false
+/// for a null instance, an unconstrained position or an out-of-range position.
 ///
 /// # Safety
 ///
@@ -895,6 +857,7 @@ unsafe fn try_promote_addon(
     Some(promoted)
 }
 
+// pinyin.cpp:1711-1740, pinyin.cpp:2591-2640.
 /// Choose a predicted candidate.
 ///
 /// # C signature
@@ -903,29 +866,17 @@ unsafe fn try_promote_addon(
 ///                                        lookup_candidate_t * candidate);
 /// ```
 ///
-/// The §2.3 flat path: raises the candidate token's unigram by
-/// `69 * 7 = 483`. A prefix row returns after that add. A bigram row also
-/// raises `(last → token)` and `last`'s total by a flat `69`, never the
-/// reselection doubling of [`pinyin_train`]. `last`
-/// is the predecessor `_get_previous_token(instance, 0)` finds
-/// (`pinyin.cpp:1711-1740`): the longest token among the prefixes the last
-/// `pinyin_guess_predicted_candidates` or `pinyin_guess_sentence_with_prefix`
-/// computed, `sentence_start` when there are none.
+/// A punctuation row succeeds without training. A prefix row updates the receiving context’s
+/// unigram. A bigram row also updates the transition from the receiving instance’s prefix
+/// predecessor. The unigram increment is 483 and the transition increment is 69. A missing
+/// prefix item can still yield true, and a loaded sub-index can receive the aggregate increment.
+/// Null arguments, unigram overflow or a store failure can return false. These changes require a
+/// separately armed save.
 ///
-/// The pin's return table (`pinyin.cpp:2591-2640`): a punctuation row has no
-/// frequency and answers `true` without training anything (`:2604-2605`); a
-/// unigram add that overflows its library's total answers `false` before the
-/// bigram (`:2609-2612`, [`oxpinyin::user::UserStoreError::UnigramTotalOverflow`]); otherwise
-/// `true`.
+/// # Aborts
 ///
-/// The pin reads the candidate's type and token and trains the receiving
-/// `instance`'s context with the receiver's own prefixes, whichever
-/// instance published the row (`pinyin.cpp:2591-2640`); so does this. The
-/// handle must be a row of a live instance's published candidate list,
-/// valid for the whole call and not used elsewhere during it, as for
-/// [`pinyin_choose_candidate`].
-///
-/// Returns `false` for a candidate without a token or a store failure.
+/// Passing a row other than a predicted prefix, bigram or punctuation row aborts
+/// (`pinyin.cpp:2593`).
 ///
 /// # Safety
 ///
@@ -1043,6 +994,7 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
     }
 }
 
+// pinyin.cpp:2684, phonetic_lookup.h:868, storage/phonetic_key_matrix.cpp:661, phonetic_lookup.h:884.
 /// Train the current sentence with the given n-best index.
 ///
 /// # C signature
@@ -1050,15 +1002,17 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
 /// bool pinyin_train(pinyin_instance_t * instance, guint8 index);
 /// ```
 ///
-/// Train the requested decoded n-best row, with the pin's constraint gate.
-/// Empty results refuse quietly. An index beyond nonempty results
-/// (`pinyin.cpp:2684`), a forced phrase that no longer matches the decoded
-/// result (`phonetic_lookup.h:868`) and a span outside the current matrix
-/// (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`) are the pin's
-/// asserts, and so are a predecessor's gram too short for its total
-/// (`phonetic_lookup.h:884`) and a `set_freq` that misses the item its
-/// `insert_freq` added (`:903`): the process aborts there before anything is
-/// observed (register rows 6, 38, 82 and 85).
+/// Train decoded row `index` using the current constraints. With no user directory or no decoded
+/// rows, training returns false. Observations start only at a forced `OneStep` constraint. After a
+/// forced span, the pin's `train_next` rule also trains the next decoded span. A successful call
+/// can update no frequencies, for example when no phrase is forced, and it still marks the profile
+/// modified, so a later save writes it. Observations already applied can survive a failed training
+/// call.
+///
+/// # Aborts
+///
+/// Training with a forced phrase or span inconsistent with the current decode or matrix can
+/// abort. An index outside a nonempty result set aborts after the user-directory check.
 ///
 /// # Safety
 ///

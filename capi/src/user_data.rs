@@ -10,6 +10,7 @@ use crate::iterators::ImportPlan;
 use crate::state::instance_ref;
 use crate::types::PinyinInstance;
 
+// pinyin.cpp:3578-3666, phonetic_key_matrix.h:102, pinyin.cpp:554.
 /// Remember a user-provided phrase with its current pinyin context.
 ///
 /// # C signature
@@ -19,28 +20,18 @@ use crate::types::PinyinInstance;
 ///                                 gint count);
 /// ```
 ///
-/// `count` of -1 means use the default value; any other `gint` is used as
-/// the `guint32` it becomes, so a negative count is accepted (register row 57).
+/// Remember the phrase for each matching path through the current parse. A count of -1 selects
+/// the default of 5; other counts are interpreted as unsigned. Returns true if at least one path
+/// was added or merged, not all of them. Invalid phrase length, missing tokens, no matching path,
+/// or a store refusal returns false. A later failure can return false after earlier paths were
+/// already stored, so neither result promises an all-or-nothing update. The live change requires
+/// a separately armed save.
 ///
-/// `_remember_phrase_recur` (`pinyin.cpp:3578-3666`): after the
-/// character-count gate and `_pre_compute_tokens`, the walk runs from
-/// column 0 over the parse-time matrix of the active mode, with the pin's
-/// fuzzy alternatives, keeps a key only when
-/// the next character's item pronounces it, and calls `_add_phrase` for
-/// `USER_DICTIONARY` on every path of exactly the phrase's length, ORing
-/// the answers. Each path stores its keys with their parsed tones.
-/// Index-only: no bigram is trained (§2 — training comes only from the
-/// selection entry points). The §3.2 allocation runs once per path
-/// (unigram seeded `count × 3`); re-remembering the same phrase merges a
-/// reading onto the existing token.
+/// # Aborts
 ///
-/// Returns `false` for a null instance, an empty/oversized or invalid UTF-8
-/// phrase, a character with no dictionary token, a walk that completes no
-/// path of the phrase's length, or a store failure. Where the matrix is empty (`get_column_size(0)`,
-/// `phonetic_key_matrix.h:102`; register row 66) or the phrase table holds
-/// a state `_add_phrase` asserts on for a completed path (`pinyin.cpp:554`,
-/// `:568`, `:571`; register row 93), the process aborts, as the import
-/// iterator does.
+/// After all phrase characters resolve, an empty key matrix aborts. A character resolving to
+/// more than four tokens also aborts. After a complete matching path, a whole phrase resolving to
+/// more than four tokens aborts.
 ///
 /// # Safety
 ///
