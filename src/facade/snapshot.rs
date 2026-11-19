@@ -28,16 +28,13 @@ use std::ops::{Deref, DerefMut};
 
 use crate::PhraseText;
 
-/// One interned string's place in the snapshot's text buffer: the byte
-/// offset of its first byte and its length without the terminator.
+/// A byte offset and byte length identifying a string in its owning snapshot, excluding
+/// the terminator. Use the span with the snapshot that interned it.
+/// [`CandidateSnapshot::take`] transfers the buffer and its spans to the returned
+/// snapshot. [`CandidateSnapshot::clear`] invalidates them.
 ///
-/// `u32` offsets size the row to need: a snapshot holds at most a few
-/// hundred phrases of at most 16 characters.
-///
-/// A span is valid only for the build that interned it. Using one after
-/// [`CandidateSnapshot::clear`] or [`CandidateSnapshot::take`] is a caller
-/// error: the snapshot keeps any span inside its buffer and terminated, but
-/// does not detect a span from an earlier build.
+/// A span survives buffer growth. Growth repoints rows held in the snapshot. A separately
+/// copied raw string pointer may become invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextSpan {
     start: u32,
@@ -45,8 +42,8 @@ pub struct TextSpan {
 }
 
 impl TextSpan {
-    /// No string: the C getter must return NULL, not an empty allocation.
-    /// `intern` cannot produce this offset because its terminator must fit.
+    /// A missing string, exposed as a null C pointer. An interned empty byte string has a
+    /// terminator and a non-null pointer.
     pub const NULL: Self = Self {
         start: u32::MAX,
         len: 0,
@@ -164,7 +161,8 @@ impl<R> CandidateSnapshot<R> {
         span_ptr(&self.text, span)
     }
 
-    /// Takes the snapshot out, leaving an empty one behind.
+    /// Moves the rows, strings and their spans into the returned snapshot and leaves an empty
+    /// snapshot behind.
     #[must_use]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)
@@ -214,11 +212,9 @@ impl<R: SnapshotRow> CandidateSnapshot<R> {
         self.rows.push(row);
     }
 
-    /// Appends `other`'s rows after this snapshot's, re-interning each
-    /// row's text into this buffer. A row whose text cannot be interned
-    /// here is dropped, as a `CString::new` failure dropped it before.
-    ///
-    /// The side table follows its rows to the rows' new positions.
+    /// Appends rows from `other` in order, copying their text into this snapshot. A missing
+    /// string remains null. A row whose text cannot be interned is omitted together with its
+    /// associated stored text.
     pub fn append(&mut self, other: Self) {
         self.reserve(other.rows.len(), other.text.len());
         let Self {

@@ -63,25 +63,13 @@ pub fn double_offset_is_mid_key(parse: &DoublePinyinParse, offset: usize) -> boo
         .any(|item| item.start() < offset && offset < item.end())
 }
 
-/// Maps an original-input offset to the transformed session offset — the
-/// inverse of the original-offset map: the matrix column of the first
-/// key whose original span ends past `offset`.
-///
-/// That column is the key's graph edge `from`: 0 for the first key, and
-/// for every later key the byte of the apostrophe in front of it — the
-/// previous key's transformed end — because the exact-key graph starts
-/// each later edge at the previous segment's end
-/// (`crate::SegmentGraph::build_exact`) and the scan matrix keys
-/// its columns by that start. It is the session-coordinate image of the
-/// pin's column: `fill_matrix` appends each key at its key rest's
-/// `m_raw_begin` (`phonetic_key_matrix.cpp:52-56` at pin 074a2219), which
-/// for these separator-free inputs is the previous key's `m_raw_end`. A
-/// key-boundary offset therefore maps to the column a forced run at the
-/// next key sits at, and that run spells under the whole-buffer matrix.
-///
-/// Amended 2026-09-27 (issue #602): this answered the key's text start, one
-/// past the apostrophe — a column the matrix does not hold — so a forcing
-/// written there was dropped by the next `guess_sentence`'s validation.
+// fill_matrix uses each key rest’s m_raw_begin, phonetic_key_matrix.cpp:52–56. The exact
+// graph uses the preceding segment end for a later edge: SegmentGraph::build_exact
+// (src/graph.rs) sets an edge's from to 0 for the first segment and to the preceding
+// segment's end for each later one.
+/// Maps an original double-pinyin byte offset to a session matrix column. The first key
+/// starts at column zero. A later key starts at its preceding apostrophe. An offset past
+/// the keys maps to the last transformed end.
 #[must_use]
 pub fn double_session_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
     session_column(
@@ -111,9 +99,8 @@ fn session_column(keys: impl Iterator<Item = (usize, usize)>, offset: usize) -> 
     column
 }
 
-/// [`double_session_offset`]'s zhuyin sibling — the mapping the zhuyin
-/// facade's after-cursor lookup and `zhuyin_choose_candidate` forcing
-/// ride (issue #602).
+/// Maps an original Zhuyin keystroke offset to the corresponding transformed session
+/// column. See [`double_session_offset`] for the same mapping on double pinyin.
 #[must_use]
 pub fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     session_column(
@@ -125,21 +112,11 @@ pub fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     )
 }
 
-///
-///
-/// The terminal offset (`offset == consumed`) maps to the session
-///
-/// The mapping is direction-dependent because a key boundary between two
-/// syllables is two session positions at once: the end of the left key
-/// (`'a'`-joined bytes up to the apostrophe) and the start of the right
-/// key (past the apostrophe). The after-cursor family searches spans
-/// STARTING at the offset and takes the right key's matrix column
-/// ([`zhuyin_session_offset`]); the before-cursor family searches spans
-/// ENDING at it and takes the left-key end — upstream's `search_matrix`
-/// walk answers the left syllable's candidates there. Amended 2026-09-27 (issue
-/// #602): the right key's column is the apostrophe byte in front of it,
-/// not its text start, so at a key boundary the two directions now answer
-/// the same position; they still differ inside a key and past the last.
+/// Maps a byte offset in the original Zhuyin input to a before- or after-cursor lookup
+/// column. At or beyond the consumed prefix, either direction returns `session_len`.
+/// Within that prefix, a before-cursor lookup requires an exact key end and otherwise
+/// returns `session_len`. An after-cursor lookup uses the current key’s column through
+/// [`zhuyin_session_offset`].
 #[must_use]
 pub fn zhuyin_lookup_session_offset(
     parse: &ZhuyinParse,
