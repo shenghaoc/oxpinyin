@@ -17,6 +17,9 @@ use crate::types::ZhuyinInstance;
 /// bool zhuyin_guess_sentence(zhuyin_instance_t * instance);
 /// ```
 ///
+/// Decode the current key matrix. Returns whether the lookup found a sentence. A keyless guess
+/// returns false and can leave earlier sentence rows available.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
@@ -85,6 +88,14 @@ fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
 /// bool zhuyin_guess_sentence_with_prefix(zhuyin_instance_t * instance,
 ///                                        const char * prefix);
 /// ```
+///
+/// Decode the current key matrix using the matching suffixes of the supplied prefix as seeds.
+/// Returns whether the lookup found a sentence. A keyless guess returns false and can leave
+/// earlier sentence rows available.
+///
+/// # Aborts
+///
+/// A suffix of the prefix that resolves to more than four tokens aborts (`phrase_large_table3.h:95`).
 ///
 /// # Safety
 ///
@@ -187,6 +198,7 @@ pub unsafe extern "C" fn zhuyin_get_sentence(
 // makes the pin's `convert_to_utf8` calls — the per-facade allocator edge.
 oxpinyin::write_owned_sentence!(crate::ffi::sentence_text);
 
+// zhuyin.cpp:2148-2196, zhuyin.cpp:2110.
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///
 /// # C signature
@@ -196,17 +208,15 @@ oxpinyin::write_owned_sentence!(crate::ffi::sentence_text);
 ///                                  size_t offset, size_t * length);
 /// ```
 ///
-/// The pin (`zhuyin.cpp:2148-2196` at the pin) searches every character of `phrase`
-/// in the phrase table and walks the matrix from column 0, consuming one
-/// character per key the character's item pronounces, until the next
-/// key's raw end lies past `offset`; the out-param is the characters
-/// consumed. `false` — with the out-param untouched, as upstream leaves
-/// it — for an empty matrix, a NULL, empty or non-UTF-8 phrase, a
-/// character with no dictionary token (issue #356: the pinyin string
-/// passed as the phrase — both pinned oracles answer `false`), or a walk
-/// no key path satisfies. Where the pin asserts (`zhuyin.cpp:2110`,
-/// `:2158`, and `:1453` through `:2159`) the process aborts (register row
-/// 19).
+/// Write the number of characters consumed along a key path through the supplied phrase. Early
+/// failure, including an empty matrix or a phrase character without a token, leaves the output
+/// untouched. A walk that runs but finds no matching path writes zero and returns false. A
+/// failed walk at the terminal offset also writes zero.
+///
+/// # Aborts
+///
+/// An offset outside a nonempty matrix, a failed offset or recursion assertion, or a character
+/// resolving to more than four tokens aborts.
 ///
 /// # Safety
 ///
@@ -302,9 +312,13 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
 ///                                            size_t offset);
 /// ```
 ///
-/// The zhuyin equivalent of `pinyin_guess_candidates` at an offset, from the
-/// first key past the cursor onward. Uses the zhuyin enum's
-/// `NORMAL_CANDIDATE_AFTER_CURSOR` tag.
+/// Replace the instance’s candidate list, including on a keyless refusal. Returns false when
+/// lookup cannot proceed. True can mean an empty list. Inside a chewing key the lookup can
+/// publish only sentence rows.
+///
+/// # Aborts
+///
+/// An offset that fails the matrix offset assertion aborts (`zhuyin.cpp:1453`).
 ///
 /// # Safety
 ///
@@ -332,7 +346,13 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_after_cursor(
 ///                                             size_t offset);
 /// ```
 ///
-/// The span ending at the cursor, tagged `NORMAL_CANDIDATE_BEFORE_CURSOR`.
+/// Replace the instance’s candidate list, including on a keyless refusal. Returns false when
+/// lookup cannot proceed. True can mean an empty list. Only spans ending at the normalized
+/// cursor qualify.
+///
+/// # Aborts
+///
+/// An offset that fails the matrix offset assertion aborts (`zhuyin.cpp:1453`).
 ///
 /// # Safety
 ///

@@ -222,6 +222,7 @@ pub fn clear_borrowed_prefix(
     borrowed
 }
 
+// pinyin.cpp:2411-2452.
 /// Guess predicted candidates for a prefix (plain variant).
 ///
 /// # C signature
@@ -230,10 +231,15 @@ pub fn clear_borrowed_prefix(
 ///                                        const char * prefix);
 /// ```
 ///
-/// The same pipeline `_with_punctuations` wraps, without the punctuation
-/// prepend — and with the real retval: `false` when the prefix matches
-/// no phrase-table suffix (`pinyin.cpp:2411-2452`; the `_with_punctuations`
-/// entry discards this retval and always answers `true`).
+/// Replace the candidate list using phrase-table suffixes of the prefix. Returns false if no
+/// suffix matches. A null instance or refused user-bigram lookup returns false. Supply a prefix
+/// that remains valid when the old candidate list is cleared (`pinyin.cpp:2420-2426,2459`).
+///
+/// # Aborts
+///
+/// A suffix of the prefix that resolves to more than four tokens aborts (`phrase_large_table3.h:95`).
+/// Scoring a predicted bigram candidate aborts if the live phrase-index total frequency is zero
+/// (`pinyin.cpp:1855-1859`).
 ///
 /// # Safety
 ///

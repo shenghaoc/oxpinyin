@@ -5,6 +5,7 @@ use std::os::raw::c_char;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance};
 
+// pinyin.cpp:1372-1387, pinyin.cpp:2295-2296, pinyin.cpp:2700.
 /// Guess a sentence from saved pinyin keys.
 ///
 /// # C signature
@@ -12,11 +13,8 @@ use crate::types::{GUint, PinyinInstance};
 /// bool pinyin_guess_sentence(pinyin_instance_t * instance);
 /// ```
 ///
-/// Run the n-best sentence lookup (`pinyin.cpp:1372-1387`).
-/// [`pinyin_get_sentence`] reads the decoded text of its rows. A candidate
-/// guess can include the rows as `NBEST_MATCH_CANDIDATE` entries
-/// (`pinyin.cpp:2295-2296`). [`crate::pinyin_reset`] clears the rows
-/// (`pinyin.cpp:2700`).
+/// Decode the current key matrix. Returns whether the lookup found a sentence. A keyless guess
+/// returns false and can leave earlier sentence rows available.
 ///
 /// # Safety
 ///
@@ -67,6 +65,7 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.lm.amplified_total() == 0
 }
 
+// pinyin.cpp:1389-1424, pinyin.cpp:1426-1441.
 /// Guess a sentence seeded with prefix tokens.
 ///
 /// # C signature
@@ -75,12 +74,13 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
 ///                                        const char * prefix);
 /// ```
 ///
-/// Upstream resets `m_prefixes`, appends the virtual start, appends the
-/// tail-substring tokens `_compute_prefixes` finds for the prefix text
-/// (`pinyin.cpp:1389-1424`), validates the constraint store, and drives
-/// the ordinary full-matrix decode with those seeds
-/// (`pinyin.cpp:1426-1441`). Operates on the existing parse state; the
-/// retval is the decode's.
+/// Decode the current key matrix using the matching suffixes of the supplied prefix as seeds.
+/// Returns whether the lookup found a sentence. A keyless guess returns false and can leave
+/// earlier sentence rows available.
+///
+/// # Aborts
+///
+/// A suffix of the prefix that resolves to more than four tokens aborts (`phrase_large_table3.h:95`).
 ///
 /// # Safety
 ///
@@ -126,6 +126,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     }
 }
 
+// pinyin.cpp:2454-2498.
 /// Guess predicted candidates with punctuations after a prefix.
 ///
 /// # C signature
@@ -134,9 +135,16 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
 ///     pinyin_instance_t * instance, const char * prefix);
 /// ```
 ///
-/// Phrase prediction, then punctuation candidates prepended from
-/// the punct table (`pinyin.cpp:2454-2498`). Always returns `true`, matching
-/// upstream, even when the prefix matched no phrase-table suffix.
+/// Replace the candidate list using phrase-table suffixes of the prefix. Prepend matching
+/// punctuation. A prefix with no matching suffix still returns true. A null instance or refused
+/// user-bigram lookup returns false. Supply a prefix that remains valid when the old candidate
+/// list is cleared (`pinyin.cpp:2420-2426,2459`).
+///
+/// # Aborts
+///
+/// A suffix of the prefix that resolves to more than four tokens aborts (`phrase_large_table3.h:95`).
+/// Scoring a predicted bigram candidate aborts if the live phrase-index total frequency is zero
+/// (`pinyin.cpp:1855-1859,2456-2459`).
 ///
 /// # Safety
 ///
@@ -240,6 +248,7 @@ pub unsafe extern "C" fn pinyin_get_sentence(
 // makes the pin's `convert_to_utf8` calls — the per-facade allocator edge.
 oxpinyin::write_owned_sentence!(crate::ffi::sentence_text);
 
+// pinyin.cpp:3193-3241, pinyin.cpp:3147.
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///
 /// # C signature
@@ -250,16 +259,14 @@ oxpinyin::write_owned_sentence!(crate::ffi::sentence_text);
 ///                                  size_t * length);
 /// ```
 ///
-/// The pin (`pinyin.cpp:3193-3241` at the pin) searches every character of `phrase`
-/// in the phrase table and walks the matrix from column 0, consuming one
-/// character per key the character's item pronounces, until the next
-/// key's raw end lies past `offset`; the out-param is the characters
-/// consumed. `false` — with the out-param untouched, as upstream leaves
-/// it — for an empty matrix, a NULL, empty or non-UTF-8 phrase, a
-/// character with no dictionary token (issue #356: the pinyin string
-/// passed as the phrase — both pinned oracles answer `false`), or a walk
-/// no key path satisfies. Where the pin asserts (`pinyin.cpp:3147`,
-/// `:3161`, `:3203`, `:3204`) the process aborts (register row 19).
+/// Write the number of characters consumed along a key path through the supplied phrase. Early
+/// failure, including an empty matrix or a phrase character without a token, leaves the output
+/// untouched. A walk that runs but finds no matching path writes zero and returns false.
+///
+/// # Aborts
+///
+/// An offset outside a nonempty matrix, a failed offset or recursion assertion, or a character
+/// resolving to more than four tokens aborts.
 ///
 /// # Safety
 ///
