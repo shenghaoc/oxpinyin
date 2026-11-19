@@ -358,15 +358,13 @@ pub trait PhraseList {
             }))
     }
 
-    /// [`Self::lookup`] into a caller-owned buffer, also answering whether
-    /// the lookup met a token of a loaded library whose item could not be
-    /// read ([`Dictionary::candidate_search_into`]).
-    ///
-    /// The default copies [`Self::lookup`]'s vector and answers `false`.
+    /// Looks up a key sequence into `out` and reports whether a loaded item was unreadable.
+    /// The default replaces `out` after [`Self::lookup`] succeeds and reports no unreadable
+    /// item.
     ///
     /// # Errors
     ///
-    /// As [`Self::lookup`].
+    /// The default propagates a lookup error and preserves the previous contents of `out`.
     fn lookup_into_flagged(
         &self,
         syllables: &[Self::Syllable],
@@ -376,13 +374,14 @@ pub trait PhraseList {
         Ok(false)
     }
 
-    /// [`Dictionary::candidate_search_into`] for this dictionary.
-    ///
-    /// The default is the tone-less [`Self::lookup_into_flagged`] then
+    /// Searches one candidate path into `out` and reports unreadable rows and possible
+    /// continuations. The default calls [`Self::lookup_into_flagged`], then
     /// [`Self::phrase_prefix_exists`].
     ///
     /// # Errors
-    /// Returns a dictionary read or decoding error.
+    ///
+    /// Returns a lookup or prefix-probe error. A prefix-probe error leaves the entries from
+    /// the completed lookup in `out`.
     fn candidate_search_into(
         &self,
         syllables: &[Self::Syllable],
@@ -889,7 +888,11 @@ impl<E> PhraseIndexRanges<E> {
         self.libraries.iter().flatten()
     }
 
-    /// The entry `token` resolved to inside `range`.
+    // ChewingTableEntry::convert, chewing_large_table2.h:91–133.
+    /// Resolves `token` within the inclusive endpoints of `range`. Use a range obtained
+    /// from this collection since its last [`Self::clear`] or drain. Calling
+    /// [`Self::clear`], or draining the collection through `append_from`, invalidates
+    /// previously obtained ranges.
     #[must_use]
     pub fn entry(&self, range: &PhraseIndexRange, token: u32) -> Option<&E> {
         if token < range.first || token > range.last {
@@ -983,25 +986,14 @@ pub trait UserModel {
     }
 }
 
-/// One `prev → *` bigram row with the user overlay already merged: the
-/// pin's `m_merged_single_gram`, the chunk `merge_single_gram` builds
-/// (`ngram.cpp:277-352` at `074a2219`).
-///
-/// The row answers as the merged chunk does, read with the ported
-/// [`single_gram`] operations: `get_total_freq`, `get_freq` and `search`
-/// walk it from `lower_bound` exactly as the pin does, so an unsorted or
-/// duplicated input row answers as it does there. Nothing is sorted,
-/// deduplicated or filtered. A side that is absent leaves the other
-/// side's own buffer in place, which is the pin's byte copy without the
-/// copy.
-///
-/// Loaded once per predecessor and read per candidate, which is the pin's
-/// structure: `pinyin_guess_candidates` merges one gram outside its
-/// candidate loop and `_compute_frequency_of_items` calls
-/// `merged_gram->get_freq(token, ...)` inside it.
-///
-/// A merge whose input the pin cannot read keeps no chunk and answers
-/// every read with its [`GramFault`]; the caller refuses the call.
+// m_merged_single_gram is built by merge_single_gram, ngram.cpp:277–352.
+// pinyin_guess_candidates loads it before the candidate loop;
+// _compute_frequency_of_items reads get_freq inside the loop.
+/// A predecessor’s bigram row after applying the user overlay. Supply whole records
+/// ordered by token so that [`single_gram::lower_bound`] can locate the requested range.
+/// Merging keeps record order and does not deduplicate a single input. With one input,
+/// its bytes are retained for later reads. With two, the merge reads both headers and
+/// walks both record lists.
 #[derive(Clone, Debug, Default)]
 pub struct MergedGram {
     chunk: Vec<u8>,
@@ -1057,12 +1049,11 @@ impl MergedGram {
         Self::chunk(chunk)
     }
 
-    /// `merge_single_gram(merged, system, user)`: `None` when both grams
-    /// are absent (the pin answers `false`), the present side's own bytes
-    /// when the other is absent, and otherwise the two-pointer merge.
-    ///
-    /// Both present, a value the pin cannot read is a fault
-    /// ([`GramFault::Short`], [`GramFault::OverRead`]) and no chunk.
+    // merge_single_gram, ngram.cpp:277–352. Checked Rust accesses retain GramFault::Short
+    // and GramFault::OverRead where upstream cannot read both inputs.
+    /// Merges two optional bigram rows. Two absent rows produce [`None`]. A single row keeps
+    /// its original bytes. For a two-sided merge, supply a header followed by whole records
+    /// in ascending token order.
     #[must_use]
     pub fn merge(system: Option<Vec<u8>>, user: Option<Vec<u8>>) -> Option<Self> {
         match (system, user) {
