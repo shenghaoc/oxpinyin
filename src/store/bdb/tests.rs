@@ -390,7 +390,8 @@ fn a_hash_walk_is_cut_at_the_bounds_and_counts_every_record() {
     sorted.sort();
 
     assert_eq!(store.count_raw().expect("count"), 5);
-    let mut native = store.native_keys().expect("native walk");
+    let mut native = Vec::new();
+    store.native_keys(&mut native).expect("native walk");
     native.sort();
     assert_eq!(native, sorted, "the cursor walk visits each record once");
 

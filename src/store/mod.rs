@@ -778,7 +778,7 @@ pub trait RawReadStore {
         })
     }
 
-    /// Every raw key in the container's **own walk order** — the order
+    /// Appends raw keys in the container's **own walk order** — the order
     /// libpinyin's `Bigram::get_all_items` collects
     /// (`ngram_tkrzwdb.cpp:143-172`, `ngram_bdb.cpp`,
     /// `ngram_kyotodb.cpp`): Berkeley DB and Kyoto Cabinet advance a
@@ -793,14 +793,13 @@ pub trait RawReadStore {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the backend walk fails.
-    fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        let mut keys = Vec::new();
+    /// Returns [`StoreError`] when the backend walk fails. Keys visited before
+    /// the failure stay in `keys`.
+    fn native_keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError> {
         self.range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
             keys.push(key.to_vec());
             Ok(())
-        })?;
-        Ok(keys)
+        })
     }
 
     /// The number of raw (unframed) rows — the count half of the raw
