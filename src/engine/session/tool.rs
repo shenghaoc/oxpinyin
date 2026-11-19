@@ -33,8 +33,16 @@ fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
     }
 }
 
-/// The physical matrix printed by the pin, including separator and terminal
-/// zero keys. These programs set neither resplit nor divided-table option.
+// PhoneticKeyMatrix construction, phonetic_key_matrix.cpp:30–83. The utility does not
+// enable resplit or divided-table processing here.
+/// Builds physical matrix columns from the supplied key spans. Gaps and the terminal
+/// position have zero keys. For a nonempty parse, use ordered byte spans inside the
+/// consumed prefix and leave room for the terminal column.
+///
+/// # Panics
+///
+/// Panics when a key starts past `parsed.consumed`.
+/// A nonempty parse also requires a representable column count of `consumed + 1`.
 #[must_use]
 pub fn physical_matrix(parsed: &Parse, options: OptionBits) -> Vec<Vec<Key>> {
     use crate::{ChewingKey, SyllableKey};
@@ -91,7 +99,8 @@ pub struct LookupRow {
 
 /// The parsed scan matrix used by the nonshipping phonetic lookup mode.
 pub struct PreparedLookup {
-    /// Returned parser length and original keys.
+    /// Consumed input-prefix length and keys captured when the lookup was prepared. Editing
+    /// this field does not rebuild the stored lookup matrix.
     pub parsed: Parse,
     scan: super::matrix::ScanMatrix,
     matrix: super::matrix::ParsedMatrix,
@@ -126,10 +135,11 @@ impl PreparedLookup {
     }
 }
 
-/// Parse once and build one scan matrix from the same selected edges.
+/// Parses the input and prepares the lookup matrix from the selected edges in one pass.
 ///
 /// # Errors
-/// Returns the existing graph's input error.
+///
+/// Returns the graph input error when the byte positions cannot fit the graph.
 pub fn prepare_lookup(
     input: &[u8],
     options: OptionBits,

@@ -1,15 +1,9 @@
-//! The pin utilities' calls at their edge (`docs/findings/external-io-boundary.md`,
-//! stage 5), in one safe layer over the `libc` crate and `glib-sys`
-//! (maintainer ruling 2026-10-31 UTC: no hand-written C or C++ shims). Each
-//! function makes the pin's call and owns what makes it safe: NUL-terminated
-//! strings, the format fixed with arguments of its types, and a `FILE *`
-//! closed exactly once. C++ `std::getline` is [`LineReader`], under
-//! getline's contract. Only with the `tools` feature: the shipping libraries
-//! never link GLib's option parser through this crate.
-//!
-//! The C runtime's `stdout` and `stderr` are declared per platform once for
-//! the library and the tools, in the crate's native module. What a field or
-//! a line means stays with the utility that reads it.
+//! Native input, output and argument parsing for the command-line utilities. The helpers
+//! own C string and stream lifetimes, typed formatting arguments and the reusable
+//! [`LineReader`] buffer. They are available with the `tools` feature.
+
+// The native boundary is described in docs/findings/external-io-boundary.md. GLib
+// supplies the option parser; libc supplies the streams.
 
 use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::NonNull;
@@ -45,25 +39,36 @@ pub fn set_locale_from_environment() -> bool {
     !unsafe { libc::setlocale(libc::LC_ALL, c"".as_ptr()) }.is_null()
 }
 
-/// `exit(status)`: the C library's, so its `atexit` handlers and stream
-/// flushes run as the pin's do.
+// Uses libc::exit as in the pin utilities.
+/// Terminates the process with the supplied status through the C runtime.
+///
+/// # Aborts
+///
+/// Always exits. The C runtime runs its exit handlers and flushes streams.
 pub fn exit(status: c_int) -> ! {
     // SAFETY: `exit` never returns.
     unsafe { libc::exit(status) }
 }
 
-/// Aborts where the pin aborts, using `std::process::abort()` as required by
-/// "Failure behaviour" in `docs/findings/compatibility-policy.md`.
+// Failure behaviour in docs/findings/compatibility-policy.md specifies
+// std::process::abort.
+/// Terminates the process immediately.
+///
+/// # Aborts
+///
+/// Always aborts.
 pub fn abort() -> ! {
     std::process::abort()
 }
 
-/// A store error that has no pin counterpart: one line on stderr, then
-/// `exit(1)`. An attach error, such as an unsupported linked libdb, takes it
-/// before the caller creates or writes anything, so it is never read as a
-/// missing container. A K-mixture single gram shorter than its array header
-/// takes it where the pin reads outside the record, after the pin's
-/// earlier work (class (b), `upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
+// Attach failures and truncated k-mixture array headers have no corresponding defined
+// continuation. See class (b),
+// docs/findings/upstream-divergences.md#flexiblebigram-malformed-record-lengths.
+/// Reports a store failure to standard error and terminates the utility.
+///
+/// # Aborts
+///
+/// Prints one diagnostic line and exits with status 1.
 pub fn exit_on_store_error(error: &dyn std::fmt::Display) -> ! {
     print_text(c_stderr(), c"%s\n", &store_error_line(error));
     exit(1)
@@ -75,20 +80,25 @@ fn store_error_line(error: &dyn std::fmt::Display) -> CString {
     CString::new(text.trim_end()).unwrap_or_default()
 }
 
-/// `perror(s)` (`ngseg.cpp:124`).
+// perror, utils/segment/ngseg.cpp:124.
+/// Prints the supplied prefix and the current C runtime error on standard error.
 pub fn perror(s: &CStr) {
     // SAFETY: `s` is NUL-terminated and outlives the call.
     unsafe { libc::perror(s.as_ptr()) }
 }
 
-/// `atoi(str)` (`utils/utils_helper.h:27-58`).
+// atoi, utils/utils_helper.h:27–58.
+/// Reads a decimal C `int` from the initial numeric portion of `str`. Supply a value
+/// representable by `c_int`.
 #[must_use]
 pub fn atoi(str: &CStr) -> c_int {
     // SAFETY: `str` is NUL-terminated and outlives the call.
     unsafe { libc::atoi(str.as_ptr()) }
 }
 
-/// `atol(str)` (`utils/utils_helper.h:60-69`).
+// atol, utils/utils_helper.h:60–69.
+/// Reads a decimal C `long` from the initial numeric portion of `str`. Supply a value
+/// representable by `c_long`.
 #[must_use]
 pub fn atol(str: &CStr) -> c_long {
     // SAFETY: as `atoi`.
@@ -231,25 +241,21 @@ pub struct ParsedOptions {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OptionsFailed;
 
-/// The option sequence of every option-taking utility (074a2219
-/// `ngseg.cpp:113-120`, `gen_binary_files.cpp:114-121` and fifteen more):
-/// `g_option_context_new(parameter_string)`,
-/// `g_option_context_add_main_entries(context, entries, NULL)`,
-/// `g_option_context_parse(context, &argc, &argv, &error)` and, on failure,
-/// `g_print("option parsing failed:%s\n", error->message)`. The entries and
-/// their value slots live until the context is freed after the parse; the
-/// values and arguments are copied out first. A successful parse leaves its
-/// filename strings to the caller (GLib 2.84.4 `glib/goption.c:1585-1630`
-/// frees them only when reverting a failed parse), and they are copied and
-/// freed with `g_free`.
-///
-/// `args` is the process's `argv`, `argv[0]` first; an argument holding a
-/// NUL, which no C `argv` can, ends the list there. GLib handles `--help`
-/// itself and exits, as it does for the pin.
+// g_option_context_new, add_main_entries and parse, ngseg.cpp:113–120 and
+// gen_binary_files.cpp:114–121. GLib 2.84.4 goption.c:1585–1630 describes
+// filename-string ownership.
+/// Parses the utility’s command line with GLib and returns the option values and
+/// remaining arguments. Supply a C argument vector starting with the program name and
+/// with a count representable as `c_int`.
 ///
 /// # Errors
 ///
-/// [`OptionsFailed`] when GLib refused the arguments.
+/// Returns [`OptionsFailed`] on an option parse error. GLib parse errors are printed on
+/// standard output.
+///
+/// # Aborts
+///
+/// GLib handles a help request by printing the help text and exiting the process.
 pub fn parse_options(
     parameter_string: &'static CStr,
     entries: &[OptionEntry],
@@ -450,9 +456,10 @@ pub fn unichar_isgraph(c: u32) -> bool {
     unsafe { glib_sys::g_unichar_isgraph(c) != 0 }
 }
 
-/// `g_utf8_get_char(line + offset)` (`tag_utility.cpp:122`, `:133`,
-/// `:150`): `None` for an offset past the line's NUL, where the pin's read
-/// would leave the string.
+// g_utf8_get_char, tag_utility.cpp:122,133,150. The pin reads outside its buffer past
+// NUL.
+/// Reads the character beginning at a byte offset in a C string. Pass an offset at a
+/// character boundary within the terminated buffer.
 #[must_use]
 pub fn utf8_get_char_at(line: &CStr, offset: usize) -> Option<u32> {
     let bytes = line.to_bytes_with_nul();
@@ -539,8 +546,8 @@ fn print_texts(stream: *mut FILE, format: &'static CStr, first: &CStr, second: &
     unsafe { libc::fprintf(stream, format.as_ptr(), first.as_ptr(), second.as_ptr()) };
 }
 
-/// A utility's output `FILE *`: `stdout`, which is never closed here, or a
-/// stream `fopen(filename, "w")` opened, which is closed exactly once.
+/// A utility output stream backed by a file or standard output. Dropping it closes an
+/// owned file. [`Self::close_including_stdout`] also closes standard output.
 pub struct OutputStream {
     stream: NonNull<FILE>,
     owned: bool,
@@ -627,9 +634,9 @@ impl LineReader<std::io::StdinLock<'static>> {
 }
 
 impl LineReader<BufReader<std::fs::File>> {
-    /// `input_file.open(filename)` (`ngseg.cpp:131`): an `std::ifstream`
-    /// has no tie, and a failed open sets `failbit`, which `!input_file`
-    /// ([`Self::is_open`]) tests.
+    // std::ifstream::open, ngseg.cpp:131.
+    /// Opens an input file and returns a reader in its failed state if the open fails.
+    /// [`Self::is_open`] distinguishes that state.
     #[must_use]
     pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Self {
         let (file, open_errno) = match std::fs::File::open(filename.as_path()) {
@@ -675,12 +682,10 @@ impl<R: BufRead> LineReader<R> {
         !self.fail
     }
 
-    /// `static_cast<bool>(std::getline(stream, linebuf))` ([string.io]):
-    /// the sentry fails, sets `failbit` and leaves the line as it was on a
-    /// stream that is not `good()`; otherwise it erases the line and
-    /// extracts up to and including the next `'\n'`, which it does not
-    /// store. End of input sets `eofbit`, and `failbit` too when nothing was
-    /// extracted, so a last line without a newline is still read.
+    // std::getline and its sentry, [string.io]; ngseg.cpp:105–137,188.
+    /// Reads a line into the reusable buffer, removing its LF. A final line without LF is
+    /// still returned. A read started after EOF or failure returns `false` and leaves the
+    /// buffered line intact.
     pub fn getline(&mut self) -> bool {
         let Some(reader) = self.reader.as_mut().filter(|_| !self.eof && !self.fail) else {
             self.fail = true;
@@ -706,21 +711,23 @@ impl<R: BufRead> LineReader<R> {
         !self.fail
     }
 
-    /// The `std::string`'s bytes.
+    /// Borrows the complete line bytes, including any embedded NUL. [`Self::c_str`] exposes
+    /// only the prefix ending at the first NUL.
     #[must_use]
     pub fn line(&self) -> &[u8] {
         &self.line[..self.line.len() - 1]
     }
 
-    /// What `operator const gchar *` (`src/include/pinyin_utils.h:33-40`)
-    /// shows a C call: `c_str()`, read up to its first NUL.
+    // LineString::operator const gchar *, src/include/pinyin_utils.h:33–40.
+    /// Borrows the line as a C string ending at its first NUL.
     #[must_use]
     pub fn c_str(&self) -> &CStr {
         CStr::from_bytes_until_nul(&self.line).unwrap_or_default()
     }
 }
 
-/// The C-API test programs' output calls at 074a2219.
+// tests/test_pinyin.cpp, test_phrase.cpp, test_chewing.cpp and test_zhuyin.cpp.
+/// Standard-output prompts and result rows for the interactive C API utilities.
 pub mod pin_tests {
     use super::*;
 
@@ -728,7 +735,8 @@ pub mod pin_tests {
         text.map_or(std::ptr::null(), CStr::as_ptr)
     }
 
-    /// test_pinyin.cpp:49-50: prompt and flush before reading a prefix.
+    // test_pinyin.cpp:49–50.
+    /// Prints and flushes the prefix prompt on standard output.
     pub fn prefix_prompt() {
         // SAFETY: the host stdout object and literal format are valid.
         unsafe {
@@ -737,7 +745,8 @@ pub mod pin_tests {
         }
     }
 
-    /// test_pinyin.cpp:55-56: prompt and flush before reading pinyin.
+    // test_pinyin.cpp:55–56.
+    /// Prints and flushes the pinyin prompt on standard output.
     pub fn pinyin_prompt() {
         // SAFETY: the host stdout object and literal format are valid.
         unsafe {
@@ -746,34 +755,41 @@ pub mod pin_tests {
         }
     }
 
-    /// test_pinyin.cpp:73 and test_chewing.cpp:57, including a null result.
+    // test_pinyin.cpp:73 and test_chewing.cpp:57 use printf("auxiliary text:%s\\n", …),
+    // including a null result.
+    /// Prints the auxiliary text and a newline on standard output. Supply a valid C string
+    /// for the string conversion.
     pub fn auxiliary(text: Option<&CStr>) {
         // SAFETY: the literal consumes one C string. A null result follows
         // the same host printf call as the pin (the existing tools' rule).
         unsafe { libc::printf(c"auxiliary text:%s\n".as_ptr(), text_pointer(text)) };
     }
 
-    /// test_pinyin.cpp:86 and test_phrase.cpp:58.
+    // test_pinyin.cpp:86 and test_phrase.cpp:58.
+    /// Prints a word followed by a tab on standard output. Supply a valid C string for the
+    /// string conversion.
     pub fn word(text: Option<&CStr>) {
         // SAFETY: the literal consumes one live C string, or the pin's null.
         unsafe { libc::printf(c"%s\t".as_ptr(), text_pointer(text)) };
     }
 
-    /// test_chewing.cpp:51 and test_zhuyin.cpp:52, after their null checks.
+    // test_chewing.cpp:51 and test_zhuyin.cpp:52.
+    /// Prints a sentence followed by a newline on standard output.
     pub fn sentence(text: &CStr) {
         // SAFETY: the literal consumes one live NUL-terminated C string.
         unsafe { libc::printf(c"%s\n".as_ptr(), text.as_ptr()) };
     }
 
-    /// test_pinyin.cpp:88 and test_phrase.cpp:61.
+    // test_pinyin.cpp:88 and test_phrase.cpp:61.
+    /// Ends the current output row with a newline.
     pub fn newline() {
         // SAFETY: this literal format consumes no arguments.
         unsafe { libc::printf(c"\n".as_ptr()) };
     }
 }
 
-/// `gen_pinyin_table`'s calls (`utils/storage/gen_pinyin_table.cpp` at
-/// 074a2219).
+// utils/storage/gen_pinyin_table.cpp.
+/// File input, table output and diagnostics for the pinyin table generator.
 pub mod gen_pinyin_table {
     use super::{FILE, NonNull, OutputStream, c_int, c_long, c_stderr, c_void, print_text};
     use std::ffi::CStr;
@@ -815,8 +831,9 @@ pub mod gen_pinyin_table {
             unsafe { libc::feof(self.stream.as_ptr()) != 0 }
         }
 
-        /// `fscanf(infile, "%1023s %1023s %u", phrase, pinyin, &freq)`
-        /// (`:145-146`): the conversions assigned, or `EOF` (negative).
+        // fscanf(infile, "%1023s %1023s %u", …), utils/storage/gen_pinyin_table.cpp:145–146.
+        /// Reads a phrase, a pinyin spelling and an unsigned frequency from the input file.
+        /// Returns the number of assigned fields or the C end-of-file indicator.
         pub fn scan(&mut self) -> c_int {
             // SAFETY: the stream is open and owned; each buffer holds at
             // least the 1023 bytes and NUL a `%1023s` stores; `freq` is a
@@ -932,9 +949,9 @@ pub mod gen_pinyin_table {
         );
     }
 
-    /// `gen_pinyin_table: invalid UTF-8 phrase: %s\n` on `stderr`: not a pin
-    /// line. oxpinyin's report where the pin reads through the NULL
-    /// `g_utf8_to_ucs4` left for `phrase` (`:174`, `:280-281`; class (b)).
+    // The extra diagnostic precedes the pin’s dereference of a NULL conversion result,
+    // gen_pinyin_table.cpp:174,280–281 (class (b)).
+    /// Reports an unconvertible phrase on standard error.
     pub fn report_unconverted_phrase(phrase: &CStr) {
         print_text(
             c_stderr(),
@@ -943,9 +960,9 @@ pub mod gen_pinyin_table {
         );
     }
 
-    /// `store_one_item`'s `g_array_append_val(g_item_array[0], item)` for a
-    /// phrase of length zero (`:117`, `:240`): the array is NULL, so GLib's
-    /// own precondition logs its critical and appends nothing.
+    // store_one_item calls g_array_append_val(g_item_array[0], item),
+    // gen_pinyin_table.cpp:117,240.
+    /// Performs the generator’s empty-phrase append, invoking GLib’s null-array diagnostic.
     pub fn store_into_null_array() {
         let item: c_int = 0;
         // SAFETY: GLib refuses the NULL array before reading the item.
@@ -958,8 +975,10 @@ pub mod gen_pinyin_table {
         }
     }
 
-    /// `fprintf(outfile, "%s\t%s\t%d\t%d\n", pinyin_str, phrase_str, token,
-    /// freq)` (`:314-316`); a `None` phrase is the NULL the pin would pass.
+    // fprintf(outfile, "%s\\t%s\\t%d\\t%d\\n", …),
+    // utils/storage/gen_pinyin_table.cpp:314–316.
+    /// Writes a tab-separated pinyin spelling, phrase, token and frequency to the supplied
+    /// output stream. Supply valid C strings for the textual fields.
     pub fn print_row(
         output: &OutputStream,
         pinyin_str: &CStr,
@@ -983,8 +1002,8 @@ pub mod gen_pinyin_table {
     }
 }
 
-/// `gen_zhuyin_table`'s own calls (`utils/storage/gen_zhuyin_table.cpp`
-/// at 074a2219).
+// utils/storage/gen_zhuyin_table.cpp.
+/// File input, output and diagnostics for the Zhuyin table generator.
 pub mod gen_zhuyin_table {
     use super::{c_stderr, print_text, print_texts};
     use std::ffi::CStr;
@@ -1016,8 +1035,8 @@ pub mod gen_zhuyin_table {
     }
 }
 
-/// `k_mixture_model_to_interpolation`'s calls
-/// (`utils/training/k_mixture_model_to_interpolation.cpp` at 074a2219).
+// utils/training/k_mixture_model_to_interpolation.cpp.
+/// Input parsing and output for converting a k-mixture model to interpolation data.
 pub mod k_mixture_model_to_interpolation {
     use super::{OutputStream, c_int, c_long, c_stderr, print_literal, print_texts};
     use std::ffi::CStr;
@@ -1094,9 +1113,8 @@ pub mod k_mixture_model_to_interpolation {
         print_literal(c_stderr(), c"empty file input.\n");
     }
 
-    /// `k_mixture_model_to_interpolation: <reason>: <line>\n` on `stderr`:
-    /// not a pin line. oxpinyin's report where the pin's `taglib_read`
-    /// reads past the line or through a NULL token (class (b)).
+    // The extra diagnostic marks a taglib_read overread or NULL token (class (b)).
+    /// Prints the reason and the rejected input line on standard error.
     pub fn refuse(reason: &CStr, line: &CStr) {
         print_texts(
             c_stderr(),
@@ -1107,13 +1125,9 @@ pub mod k_mixture_model_to_interpolation {
     }
 }
 
-/// `ngseg`, `spseg` and `mergeseq`'s calls
-/// (`utils/segment/ngseg.cpp`, `spseg.cpp` and `mergeseq.cpp` at
-/// 074a2219).
-///
-/// `%s` receives a NULL where the pin passes one: the C library prints its
-/// own spelling for that argument (glibc's `(null)`), so the call, not a
-/// Rust substitution, decides it.
+// utils/segment/ngseg.cpp, spseg.cpp and mergeseq.cpp pass their arguments to the host C
+// library, including NULL for some %s conversions.
+/// Input and output for the segmentation and sequence-merging utilities.
 pub mod segmentation {
     use super::{OutputStream, c_char, c_int, c_stderr, print_literal, print_text};
     use std::ffi::CStr;
@@ -1816,21 +1830,21 @@ pub fn strerror(errnum: c_int) -> CString {
     unsafe { CStr::from_ptr(libc::strerror(errnum)) }.to_owned()
 }
 
-/// The k-mixture-model utilities' own `fprintf`, `printf` and `abort` calls
-/// (`utils/training/*_k_mixture_model.cpp` at 074a2219). A `%d` prints a
-/// `guint32` as the signed `int` the pin's format reads; `%f` is the
-/// `format_f64` spelling.
+// utils/training/*_k_mixture_model.cpp uses signed %d for guint32 fields and %f for
+// format_f64.
+/// Output and diagnostics for the k-mixture training utilities.
 pub mod k_mixture_model {
     use super::{OutputStream, c_int, c_stderr, print_literal, print_text};
     use std::ffi::CStr;
 
-    /// `no magic header in k mixture model.\\n` (`validate:31`,
-    /// `prune:133`, `export:39`).
+    // validate_k_mixture_model.cpp:31, prune:133, export:39.
+    /// Reports a missing model header on standard error.
     pub fn report_no_magic() {
         print_literal(c_stderr(), c"no magic header in k mixture model.\n");
     }
 
-    /// `word count in magic header is unexpected zero.\\n` (`validate:37`).
+    // validate_k_mixture_model.cpp:37.
+    /// Reports a zero word count in the model header on standard error.
     pub fn report_zero_word_count() {
         print_literal(
             c_stderr(),
@@ -1838,7 +1852,8 @@ pub mod k_mixture_model {
         );
     }
 
-    /// `total freq in magic header is unexpected zero.\\n` (`validate:42`).
+    // validate_k_mixture_model.cpp:42.
+    /// Reports a zero total frequency in the model header on standard error.
     pub fn report_zero_total_freq() {
         print_literal(
             c_stderr(),
@@ -1846,7 +1861,8 @@ pub mod k_mixture_model {
         );
     }
 
-    /// `the word count doesn't match the total freq.\\n` (`validate:47`).
+    // validate_k_mixture_model.cpp:47.
+    /// Reports inconsistent word and frequency totals on standard error.
     pub fn report_word_count_mismatch() {
         print_literal(
             c_stderr(),
@@ -2173,11 +2189,13 @@ pub mod k_mixture_model {
 #[cfg(test)]
 mod tests;
 
-/// `tests/storage/test_parser2.cpp:130-147` printf calls at 074a2219.
+// tests/storage/test_parser2.cpp:130–147.
+/// Standard-output rows for the parser utility.
 pub mod parser {
     use super::*;
 
-    /// `printf("parsed %d chars, %d keys.\n", len, keys->len)`.
+    // tests/storage/test_parser2.cpp:130–147 use the format parsed %d chars, %d keys.
+    /// Prints the consumed input length and key count on standard output.
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_possible_wrap,
@@ -2292,15 +2310,16 @@ pub mod table_tests {
     }
 }
 
-/// Output of the pin's matrix and direct lookup test programs.
+// The matrix and direct lookup test programs use the native printf formats below.
+/// Standard-output traces of matrix columns and lookup searches.
 pub mod lookup_tests {
     use super::*;
-    /// Physical column label.
+    /// Prints a physical column position on standard output.
     pub fn column(position: usize) {
         // SAFETY: %ld receives the source's native long value.
         unsafe { libc::printf(c"Column:%ld:\n".as_ptr(), position as libc::c_long) };
     }
-    /// Matrix key and signed-short raw offsets.
+    /// Prints the key spelling and its raw span on standard output.
     pub fn key(text: &CStr, begin: u16, end: u16) {
         // SAFETY: %s is live; promoted short arguments use native int.
         unsafe {
@@ -2312,7 +2331,7 @@ pub mod lookup_tests {
             )
         };
     }
-    /// Parser's returned count and key count.
+    /// Prints the consumed byte count and number of keys on standard output.
     pub fn parsed(bytes: usize, keys: usize) {
         // SAFETY: %d arguments are native ints.
         unsafe {
@@ -2323,7 +2342,7 @@ pub mod lookup_tests {
             )
         };
     }
-    /// Every search_matrix invocation, before its result is inspected.
+    /// Prints a matrix search’s start and end positions on standard output.
     pub fn search(start: usize, end: usize) {
         // SAFETY: %ld arguments are native longs.
         unsafe {

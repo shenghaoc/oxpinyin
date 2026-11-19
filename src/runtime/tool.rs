@@ -17,12 +17,14 @@ pub struct Lookup {
     model: Option<crate::data::lm::BigramTables>,
 }
 impl Lookup {
-    /// Attach the index, load each SYSTEM_FILE, then attach the system bigram.
-    /// The pin's NULL user-bigram attach fails before native I/O.
+    // Native index or model construction failures terminate at the utility boundary. The
+    // pin’s NULL user-bigram attach fails before native I/O.
+    /// Opens the selected phonetic or phrase index and loads the system libraries named in
+    /// the configuration. Set `bigram` to attach the system model for decoding.
     ///
     /// # Errors
-    /// Returns the first required chunk failure. Native construction failures
-    /// before a handle exists terminate through the shared boundary.
+    ///
+    /// Returns [`LoadError`] for the first required phrase chunk that could not be loaded.
     pub fn open(
         data: &Path,
         conf: &TableConf,
@@ -59,7 +61,8 @@ impl Lookup {
             model,
         })
     }
-    /// The matrix driver's SEARCH_CONTINUED table probe.
+    // The matrix driver reads SEARCH_CONTINUED and aborts on a failed table query.
+    /// Reports whether the index has a continuation row for `keys`.
     #[must_use]
     pub fn key_exists(&self, keys: &[crate::ChewingKey]) -> bool {
         self.tables
