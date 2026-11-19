@@ -42,18 +42,13 @@ pub enum GraphError {
         /// Largest length accepted.
         limit: usize,
     },
-    /// `SegmentGraph::build_exact` was given segments that do not
-    /// describe a walk over the input: out-of-order, overlapping,
-    /// out-of-bounds, or empty spans, or bytes between adjacent spans
-    /// that are not apostrophe separators.
+    /// The supplied byte spans were empty, unordered, overlapping or outside the input, or a
+    /// gap contained a byte other than an apostrophe.
     ExactSegmentsInvalid,
 }
 
-/// One pre-parsed syllable for `SegmentGraph::build_exact`: the byte
-/// span of the key's own text and the key itself, with its tone.
-///
-/// The span excludes separator bytes; a separator between two segments
-/// rides on the following edge exactly as in the parsed graph.
+/// A pre-parsed syllable, its tone and the byte span of its text. A separating apostrophe
+/// run belongs to the following graph edge and is excluded from this span.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExactSegment {
     start: usize,
@@ -63,8 +58,8 @@ pub struct ExactSegment {
 }
 
 impl ExactSegment {
-    /// A segment whose own text spans `start..end` in the exact-mode
-    /// input.
+    /// Stores the byte span `start..end`, key and tone without validation. Supply nonempty,
+    /// ordered, nonoverlapping spans inside the input, with only apostrophes in the gaps.
     #[must_use]
     pub const fn new(start: usize, end: usize, key: SyllableKey, tone: u8) -> Self {
         Self {
@@ -113,11 +108,8 @@ impl fmt::Display for GraphError {
 
 impl std::error::Error for GraphError {}
 
-/// What kind of match an edge represents.
-///
-/// `Fuzzy`, `Typo` and `Abbrev` are reserved for Stage 3 and deliberately not
-/// declared: an unimplemented variant is a promise the decoder would have to
-/// keep.
+/// Classifies a match as a complete syllable, a shorter segmentation alternative or an
+/// initial.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EdgeKind {
     /// The longest complete syllable that matches at this position.
@@ -129,12 +121,8 @@ pub enum EdgeKind {
     Incomplete,
 }
 
-/// One key match spanning a byte range.
-///
-/// `from` may be one byte before `syllable_start`: a consumed apostrophe
-/// separator rides on the edge that follows it, so the graph stays a plain
-/// walk over byte positions while the reported segment range still matches the
-/// capture notation (`chang'an` reports `an@6:8`).
+/// A key match spanning a byte range. [`Self::from`] precedes [`Self::syllable_start`] by
+/// the length of any apostrophe run consumed before the syllable.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Edge {
     from: u32,
@@ -216,19 +204,16 @@ pub struct SegmentGraph {
 }
 
 impl SegmentGraph {
-    /// Builds the graph for `input` under parser option bits.
+    /// Builds the segmentation graph for the supplied bytes and parser options.
     ///
-    /// With [`OptionBits::default`] the all-off path stays bit-identical to
-    /// the frozen parser. The option bits only admit correction/ambiguity
-    /// *spellings*; matrix-level fuzzy alternates are added later by the
-    /// engine scan matrix.
+    /// Options control spelling aliases and tone digits. The graph retains initial-only
+    /// edges. [`Self::fewest_keys`] filters them when selecting a path. Matrix-level fuzzy
+    /// alternatives are added by the engine.
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::InputTooLong`] for an input beyond
-    /// [`MAX_GRAPH_POSITION`]. Every other byte sequence — junk, malformed UTF-8,
-    /// stray apostrophes, the empty input — builds a graph, possibly one with
-    /// no edges at all.
+    /// Returns [`GraphError::InputTooLong`] if the input exceeds [`MAX_GRAPH_POSITION`].
+    /// Unrecognized bytes can leave the graph with no reachable keys.
     pub fn build_with_options(input: &[u8], options: OptionBits) -> Result<Self, GraphError> {
         if input.len() > MAX_GRAPH_POSITION {
             return Err(GraphError::InputTooLong {
@@ -407,26 +392,26 @@ impl SegmentGraph {
         &self.edges[*start..*end]
     }
 
-    /// The furthest node reachable from the start on the full graph.
+    /// Returns the furthest reachable byte position, before incomplete edges are filtered.
     ///
-    /// Incomplete edges always participate. Filtered parse length is the
-    /// last byte of [`SegmentGraph::fewest_keys`].
+    /// For a graph from [`Self::build_with_options`], this includes reachable trailing
+    /// apostrophes and can be nonzero for input that is only separators. For example,
+    /// `ni'` and `'''` each give 3.
+    ///
+    /// For a graph from exact segments, it stops at the end of the last reachable segment.
+    /// A separator after that segment is not counted. For example, `b"ni'"` with one
+    /// segment `0..2` gives 2.
     #[must_use]
     pub const fn consumed(&self) -> usize {
         self.consumed
     }
 
-    /// Fewest-keys path under the incomplete-edge filter.
-    ///
-    /// Longest prefix that a filtered path from byte zero actually covers,
-    /// then fewest keys, then least total correction distance, first-found
-    /// ties — `pinyin_parser2.cpp` `final_step` plus
-    /// `candidate-construction.md` §8.1. The distance is the sum of
-    /// [`Edge::distance`] along the path, as the pin sums each row's
-    /// `m_distance` into the step (`pinyin_parser2.cpp:291` at 074a2219)
-    /// and compares it last (`:305-309`). Incomplete edges are included
-    /// only when `allow_incomplete`. Empty when no such path exists,
-    /// including the empty input.
+    // FullPinyinParser2::final_step, pinyin_parser2.cpp:237–251,291,305–309,346–380;
+    // docs/findings/candidate-construction.md §8.1.
+    /// Selects a path covering the longest byte prefix. Among these paths it prefers fewer
+    /// keys, then smaller total [`Edge::distance`], then the first path found. Initial-only
+    /// edges participate when `allow_incomplete` is set. Separators contribute to the
+    /// consumed prefix without emitting a key.
     #[must_use]
     pub fn fewest_keys(&self, allow_incomplete: bool) -> Vec<Edge> {
         let bound = self.consumed();
