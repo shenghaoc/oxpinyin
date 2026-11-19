@@ -338,15 +338,15 @@ impl PhraseLibraries {
             .is_some_and(Option::is_some)
     }
 
-    /// Whether any library is loaded.
+    /// Returns whether all library slots are empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.by_nibble.iter().all(Option::is_none)
     }
 
-    /// The library `PHRASE_INDEX_LIBRARY_INDEX(token)` names, when loaded
-    /// (`phrase_index.h:647`, `novel_types.h:44` at 074a2219). The macro
-    /// masks the token's high four bits.
+    // PHRASE_INDEX_LIBRARY_INDEX, novel_types.h:44 and phrase_index.h:647.
+    /// Returns the loaded library selected by bits 24 through 27 of `token`. See
+    /// [`crate::phrase_index_library_index`].
     #[must_use]
     pub fn library(&self, token: u32) -> Option<&PhraseLibrary> {
         self.by_nibble

@@ -57,15 +57,11 @@ use crate::data::chunk_format::{
 
 use crate::{PHRASE_MASK, PhraseText};
 
-/// A `SubPhraseIndex::load` check the pin reaches through a read inside the
-/// chunk (`phrase_index.cpp:354-356`): the load answers `false`, which every
-/// caller ignores, and goes on with an empty sub-index. The pin's
-/// `g_return_val_if_fail` critical there is not reproduced (maintainer
-/// decision 2026-10-31 UTC,
-/// `docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical`). Only
-/// checks whose bytes are inside the chunk are represented here; a layout
-/// the pin reaches through an out-of-bounds read stays a
-/// [`LibraryError::Format`] refusal.
+// SubPhraseIndex::load returns false at phrase_index.cpp:354–356. Its callers retain the
+// empty sub-index. The g_return_val_if_fail critical is omitted
+// (docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical).
+/// A failed sub-index layout check whose input bytes lie inside the chunk. An access
+/// beyond the supplied chunk instead requires [`LibraryError::Format`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LayoutFault {
     /// `m_total_freq` as the pin read it before the failing check — 0 when
@@ -214,10 +210,9 @@ impl<'a> PhraseItemView<'a> {
         })
     }
 
-    /// The item that starts `bytes`, read field by field as the pin's token
-    /// getters read it: the view ends at the header-derived length or at the
-    /// end of `bytes`, whichever comes first, and each field read checks its
-    /// own bounds. `None` when the six header bytes are not all in `bytes`.
+    // PhraseItem field accessors, phrase_index.cpp:180–205.
+    /// Borrows an item beginning at `bytes`. The six-byte header must be present. A view can
+    /// end before the last declared field, so check each field before using it.
     #[must_use]
     pub fn fields(bytes: &'a [u8]) -> Option<Self> {
         let header = bytes.get(..ITEM_HEADER_SIZE)?;
@@ -256,11 +251,10 @@ impl PhraseItemView<'_> {
         u32_at(self.bytes, 2).unwrap_or(0)
     }
 
-    /// The phrase's outward text — `PhraseItem::get_phrase_string` then
-    /// GLib's `g_ucs4_to_utf8`: the stored words, cut at the first zero and
-    /// encoded with the historical form for a non-scalar word. `None` when
-    /// a stored word runs past the item or is at or above `0x8000_0000`
-    /// (where the pin's call answers NULL).
+    // PhraseItem::get_phrase_string and g_ucs4_to_utf8, lookup/lookup.cpp:39–68.
+    /// Reads the declared UCS-4 words for one phrase. Every word must be readable. Before the
+    /// first zero, values must be below `0x8000_0000`. The first zero ends the outward text,
+    /// and accepted non-scalar words retain their stored representation.
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
         PhraseText::from_stored_words(self.phrase_codes())
@@ -282,8 +276,9 @@ impl PhraseItemView<'_> {
         })
     }
 
-    /// `PhraseItem::get_nth_pronunciation` — pronunciation `index`'s
-    /// packed keys and frequency, bounds-checked.
+    // PhraseItem::get_nth_pronunciation, phrase_index.cpp:180–205.
+    /// Borrows one reading’s packed keys and frequency. Supply a stored reading index whose
+    /// keys and frequency are present.
     #[must_use]
     pub fn pronunciation(&self, index: usize) -> Option<PronunciationView<'_>> {
         if index >= self.n_pronunciations() {
@@ -303,7 +298,10 @@ impl PhraseItemView<'_> {
         Some(PronunciationView { keys, freq })
     }
 
-    /// Every pronunciation, in stored order.
+    /// Visits every declared pronunciation position, in stored order. An incomplete reading,
+    /// whose packed keys or frequency the item's bytes do not hold, still yields a placeholder
+    /// with empty keys and zero frequency. [`Self::pronunciation`] returns `None` for such a
+    /// reading, so it tells a missing reading apart from a stored one.
     pub fn pronunciations(&self) -> impl Iterator<Item = PronunciationView<'_>> + '_ {
         (0..self.n_pronunciations()).map(|index| {
             self.pronunciation(index)

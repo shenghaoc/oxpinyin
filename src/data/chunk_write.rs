@@ -1,14 +1,7 @@
-//! The per-library phrase-index chunk **writer** — the write half of the
-//! `MemoryChunk` + `SubPhraseIndex` format `chunk_format` and
-//! `phrase_library` read.
-//!
-//! This is the byte-level output of upstream's `SubPhraseIndex::store`
-//! (`src/storage/phrase_index.cpp`), reached after `compact()` rebuilds a
-//! sub-index in ascending token order. `oxpinyin-utils`' storage and
-//! training utilities write the system libraries' files with it; the user store writes `user.bin`,
-//! `addon.bin` and `network.bin` with it — the `USER_FILE` sub-indexes,
-//! whose whole-store files the pin's `_write_files` produces through the
-//! same `store` path.
+//! Builds phrase-library chunk files from stored items. Each input pair to
+//! [`build_chunk`] uses a 24-bit slot within one library. Supply distinct slots in
+//! ascending order. [`crate::data::chunk_format::build_memory_chunk`] frames a prepared
+//! payload.
 //!
 //! ```text
 //! file    = { length: u32, checksum: u32 } payload          (MemoryChunk)
@@ -17,26 +10,19 @@
 //!           '#' offset-array '#' entry-area '#'
 //! ```
 //!
-//! * `index_one == 17` (header 16 + separator) — the offset array holds
-//!   one `u32` per `token & PHRASE_MASK` slot up to the highest occupied
-//!   slot; `0` is the no-item sentinel (`add_phrase_item` never stores an
-//!   offset below 8).
-//! * The entry area's first 8 bytes stay zero (`add_phrase_item` bumps a
-//!   zero content size to 8 before the first write) — **once there is a
-//!   first write**: a library with no items has an empty entry area, so
-//!   its whole payload is the 16-byte header and three separators
-//!   (19 bytes; measured on the pin's own `gen_binary_files` output for
-//!   an empty `.table`). Item offsets in the offset array are relative to
-//!   the entry-area start.
-//! * Each item is `{ u8 phrase_length, u8 n_pronunciations, u32 unigram,
-//!   ucs4_t phrase[L], { ChewingKey u16[L], u32 freq } × n_pronunciations }`
-//!   (`phrase_item_header`, `phrase_index.h:56`; `sizeof(ChewingKey) == 2`).
-//! * Items appear in ascending slot order — the order `compact()`'s token
-//!   walk feeds `add_phrase_item`, which appends to the entry area.
+//! The offset array contains a little-endian `u32` for each slot up to the highest used.
+//! Zero marks an empty slot. Item offsets are relative to the entry area. The first
+//! item starts eight bytes into that area. Each item stores byte-sized phrase length
+//! and reading count, a unigram frequency, the UCS-4 words, and a packed key sequence
+//! and frequency for each reading. [`crate::data::chunk_format::chunk_checksum`] covers
+//! the payload.
 //!
-//! The checksum is `MemoryChunk::get_check_sum`: the XOR of the payload's
-//! little-endian `u32` words with tail bytes folded in shifted by
-//! position (`chunk_format` — the one written copy both halves take).
+//! The pinned `SubPhraseIndex::add_phrase_item` accumulates the library's
+//! unigram total modulo 2^32 (`phrase_index.cpp:215`, `phrase_index.h:259`).
+
+// SubPhraseIndex::add_phrase_item masks tokens with PHRASE_MASK,
+// phrase_index.cpp:208–216; memory_chunk.h:536–557 specifies the frame. The builder
+// requires the item offsets and accumulated total to fit its output fields.
 
 use crate::PHRASE_MASK;
 use crate::data::chunk_format::{
