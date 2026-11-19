@@ -14,6 +14,7 @@ use crate::ffi::key_text;
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 
+// zhuyin.cpp:1001-1014, pinyin_parser2.cpp:170.
 /// Parse one full pinyin into a key.
 ///
 /// # C signature
@@ -23,12 +24,13 @@ use crate::types::{ChewingKey, GChar, ZhuyinInstance};
 ///                               ChewingKey * onekey);
 /// ```
 ///
-/// Upstream zeroes `*onekey` before its probe (`zhuyin.cpp:1001-1014`), so a
-/// failed parse leaves the zero key; the probe is `FullPinyinParser2::
-/// parse_one_key` over the live option word, with `PINYIN_CORRECT_ALL`
-/// masked first (`zhuyin.cpp:1013`). A string holding `'` aborts the
-/// process, as that probe's assert does (`pinyin_parser2.cpp:170`, register
-/// row 21).
+/// Returns true and writes the key on success. A failed parse writes a zero key. A null argument
+/// returns false before writing. Full-pinyin correction options are masked (`zhuyin.cpp:1013`).
+///
+/// # Aborts
+///
+/// An apostrophe in the single-key input aborts before the output is written
+/// (`pinyin_parser2.cpp:168-175`).
 ///
 /// # Safety
 ///
@@ -86,9 +88,9 @@ pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
 ///                           ChewingKey * onekey);
 /// ```
 ///
-/// The context's live Zhuyin scheme parses the probe after the API's
-/// `ZHUYIN_CORRECT_ALL` strip (`zhuyin.cpp:1045-1056`). The key is written
-/// only on success.
+/// Uses the current keyboard. This implementation masks the chewing correction options for the
+/// single-key probe. The pin passes its option word to the keyboard parser
+/// (`zhuyin.cpp:1045-1056`). Only a successful parse writes the key.
 ///
 /// # Safety
 ///
@@ -120,6 +122,7 @@ pub unsafe extern "C" fn zhuyin_parse_chewing(
     })
 }
 
+// zhuyin.cpp:1732-1741.
 /// Render a chewing key in Zhuyin.
 ///
 /// # C signature
@@ -128,10 +131,14 @@ pub unsafe extern "C" fn zhuyin_parse_chewing(
 ///                               ChewingKey * key, gchar ** utf8_str);
 /// ```
 ///
-/// The pin's body never reads the instance (`zhuyin.cpp:1732-1741`): a NULL
-/// instance is a defined call there, so only the key and the out-param are
-/// touched and the instance parameter is unused (register row 41's class (b)
-/// guard does not apply to a parameter the pin never dereferences).
+/// Returns true for a key with a spelling. Free the returned string with `g_free`. An unset key
+/// writes null and returns false. A null key returns false without writing. A null output
+/// returns false.
+///
+/// # Aborts
+///
+/// A packed key with an out-of-range component, or an invalid tone reached during rendering,
+/// aborts (`chewing_key.cpp:28-42,75-108`).
 ///
 /// # Safety
 ///
@@ -149,6 +156,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
     unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::zhuyin_text) }
 }
 
+// zhuyin.cpp:1743-1766.
 /// Render a chewing key in the context's full Pinyin scheme.
 ///
 /// # C signature
@@ -157,8 +165,15 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
 ///                               ChewingKey * key, gchar ** utf8_str);
 /// ```
 ///
-/// The function reads the scheme through `instance` (`zhuyin.cpp:1743-1766`).
-/// A null `instance` returns `false` (register row 41, class (b)).
+/// Returns true for a key with a spelling. Free the returned string with `g_free`. An unset key
+/// writes null and returns false. A null key returns false without writing. A null output
+/// returns false. A null instance returns false without writing. The current full-pinyin scheme
+/// determines the spelling.
+///
+/// # Aborts
+///
+/// A packed key with an out-of-range component, or an invalid tone reached during rendering,
+/// aborts (`chewing_key.cpp:28-42,75-108`).
 ///
 /// # Safety
 ///

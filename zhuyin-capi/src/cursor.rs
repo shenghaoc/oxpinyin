@@ -85,6 +85,16 @@ fn key_lookup_failed(error: &oxpinyin::engine::EngineError, name: &str) -> bool 
 ///                                 size_t offset, ChewingKeyRest ** key_rest);
 /// ```
 ///
+/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Its contents change on the next successful call, and its storage outlives the instance. The
+/// caller does not free it. An ordinary miss writes null. A null instance returns false without
+/// writing.
+///
+/// # Aborts
+///
+/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false. A
+/// separator offset that fails the offset check also aborts (`zhuyin.cpp:1453`).
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `key_rest` is an
@@ -192,12 +202,9 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
 ///                                        guint16 * length);
 /// ```
 ///
-/// The pin's body never reads the instance (`zhuyin.cpp:1942-1946`): a NULL
-/// instance is a defined call there, so it is unused here. The key-rest
-/// pointer is read and `length` is written unconditionally by the pin, so a
-/// NULL `length` is register row 41's class (b) site; the optional write is
-/// skipped and the call still answers `true`, as the pinyin twin does
-/// (`capi/src/cursor.rs:201-218`).
+/// Returns false without writing for a null key rest. Otherwise, writes the unsigned
+/// 16-bit difference between end and begin if requested and returns true. The instance
+/// is unused (`zhuyin.cpp:1942-1946`).
 ///
 /// # Safety
 ///
@@ -231,6 +238,16 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest_length(
 /// bool zhuyin_get_zhuyin_key(zhuyin_instance_t * instance,
 ///                            size_t offset, ChewingKey ** key);
 /// ```
+///
+/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Its contents change on the next successful call, and its storage outlives the instance. The
+/// caller does not free it. An ordinary miss writes null. A null instance returns false without
+/// writing.
+///
+/// # Aborts
+///
+/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false. A
+/// separator offset that fails the offset check also aborts (`zhuyin.cpp:1453`).
 ///
 /// # Safety
 ///
@@ -283,6 +300,16 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key(
 /// bool zhuyin_get_zhuyin_offset(zhuyin_instance_t * instance,
 ///                               size_t cursor, size_t * offset);
 /// ```
+///
+/// Clamp the byte cursor to the parsed length. Search backward from that column, including it,
+/// for a nonempty matrix column, and stop at zero. Then move the result backward across zero-key
+/// separator columns. The result can be the start of the key at the cursor, or the parsed
+/// length. It is not always the start of the preceding syllable. Success writes the lookup
+/// offset. Failure leaves the output untouched.
+///
+/// # Aborts
+///
+/// A positive clamped cursor on an empty key matrix aborts.
 ///
 /// # Safety
 ///
@@ -339,6 +366,13 @@ fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
 /// bool zhuyin_get_left_zhuyin_offset(zhuyin_instance_t * instance,
 ///                                    size_t offset, size_t * left);
 /// ```
+///
+/// Write the start of the preceding key, or zero if none ends at this offset. Returns true on
+/// success. An ordinary failure leaves the output untouched.
+///
+/// # Aborts
+///
+/// An offset that reaches an invalid matrix column or fails the separator check aborts.
 ///
 /// # Safety
 ///
@@ -398,6 +432,14 @@ pub unsafe extern "C" fn zhuyin_get_left_zhuyin_offset(
 /// bool zhuyin_get_right_zhuyin_offset(zhuyin_instance_t * instance,
 ///                                     size_t offset, size_t * right);
 /// ```
+///
+/// Write the end of the next key, skipping leading separator columns. Returns false when no key
+/// starts there. Returns true on success. An ordinary failure leaves the output untouched.
+///
+/// # Aborts
+///
+/// An offset that reaches an invalid matrix column or fails the separator check aborts. On an
+/// empty matrix any offset aborts.
 ///
 /// # Safety
 ///

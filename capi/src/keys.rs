@@ -26,6 +26,7 @@ use crate::types::{ChewingKey, GChar, PinyinInstance};
 
 // ── Single-key parsing ───────────────────────────────────────────────
 
+// pinyin.cpp:1484.
 /// Parse one full pinyin into a key.
 ///
 /// # C signature
@@ -35,10 +36,13 @@ use crate::types::{ChewingKey, GChar, PinyinInstance};
 ///                               ChewingKey * onekey);
 /// ```
 ///
-/// Upstream zeroes `*onekey` before its probe, so a failed parse leaves
-/// the zero key (`pinyin.cpp:1484`); the probe itself is
-/// `FullPinyinParser2::parse_one_key` over the live option word, with
-/// the `FORCE_TONE` law inside `USE_TONE`.
+/// Returns true and writes the key on success. A failed parse writes a zero key. A null argument
+/// returns false before writing.
+///
+/// # Aborts
+///
+/// An apostrophe in the single-key input aborts before the output is written
+/// (`pinyin_parser2.cpp:168-175`).
 ///
 /// # Safety
 ///
@@ -179,6 +183,7 @@ pub unsafe extern "C" fn pinyin_parse_chewing(
 
 // ── Display getters ──────────────────────────────────────────────────
 
+// chewing_key.cpp:91-105.
 /// Get the luoma pinyin string of a chewing key.
 ///
 /// # C signature
@@ -188,8 +193,14 @@ pub unsafe extern "C" fn pinyin_parse_chewing(
 ///                                     gchar ** utf8_str);
 /// ```
 ///
-/// The LUOMA full-pinyin index spelling; the tone digit is appended even
-/// for the first tone (`chewing_key.cpp:91-105`); caller-owned string.
+/// Returns true for a key with a spelling. Free the returned string with `g_free`. An unset key
+/// writes null and returns false. A null key returns false without writing. A null output
+/// returns false. The spelling includes a digit for the first tone.
+///
+/// # Aborts
+///
+/// A packed key with an out-of-range component, or an invalid tone reached during rendering,
+/// aborts (`chewing_key.cpp:28-42,75-108`).
 ///
 /// # Safety
 ///
@@ -207,6 +218,7 @@ pub unsafe extern "C" fn pinyin_get_luoma_pinyin_string(
     unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::luoma_pinyin_text) }
 }
 
+// chewing_key.cpp:107-121.
 /// Get the secondary zhuyin string of a chewing key.
 ///
 /// # C signature
@@ -216,8 +228,14 @@ pub unsafe extern "C" fn pinyin_get_luoma_pinyin_string(
 ///                                         gchar ** utf8_str);
 /// ```
 ///
-/// The `SECONDARY_ZHUYIN` index spelling; like luoma, the first tone gets
-/// its digit (`chewing_key.cpp:107-121`); caller-owned string.
+/// Returns true for a key with a spelling. Free the returned string with `g_free`. An unset key
+/// writes null and returns false. A null key returns false without writing. A null output
+/// returns false. The spelling includes a digit for the first tone.
+///
+/// # Aborts
+///
+/// A packed key with an out-of-range component, or an invalid tone reached during rendering,
+/// aborts (`chewing_key.cpp:28-42,75-108`).
 ///
 /// # Safety
 ///
@@ -239,6 +257,7 @@ oxpinyin::display_string_getter! {
     key: ChewingKey, char: GChar
 }
 
+// pinyin.cpp:2765-2774.
 /// Check whether a chewing key has neither a middle nor a final.
 ///
 /// # C signature
@@ -247,10 +266,11 @@ oxpinyin::display_string_getter! {
 ///                                      ChewingKey * key);
 /// ```
 ///
-/// `CHEWING_ZERO_MIDDLE == m_middle && CHEWING_ZERO_FINAL == m_final`
-/// (`pinyin.cpp:2765-2774`). Upstream asserts the tone is zero in the
-/// true branch — a toned initial-only key aborts the pin, and the process
-/// aborts here too (register row 4).
+/// Returns true when both the middle and final are zero. A null key returns false.
+///
+/// # Aborts
+///
+/// A key with neither a middle nor a final and with a nonzero tone aborts (`pinyin.cpp:2769`).
 ///
 /// # Safety
 ///

@@ -24,7 +24,9 @@ fn parse_full_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> 
 ///                                       const char * pinyins);
 /// ```
 ///
-/// Returns number of bytes consumed, 0 on failure.
+/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
+/// null instance or when no bytes were consumed.
 ///
 /// # Safety
 ///
@@ -58,8 +60,9 @@ pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
 ///                                   const char * chewings);
 /// ```
 ///
-/// Parses through [`oxpinyin::ZhuyinParser`] and drives the session
-/// with the apostrophe-joined full-pinyin spelling.
+/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
+/// null instance or when no bytes were consumed.
 ///
 /// # Safety
 ///
@@ -92,6 +95,9 @@ pub unsafe extern "C" fn zhuyin_parse_more_chewings(
 /// size_t zhuyin_get_parsed_input_length(zhuyin_instance_t * instance);
 /// ```
 ///
+/// Returns the input byte count from the last batch parse, or zero before parsing, after reset,
+/// or for a null instance.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
@@ -117,7 +123,9 @@ pub unsafe extern "C" fn zhuyin_get_parsed_input_length(instance: *mut ZhuyinIns
 ///                                 gchar *** symbols);
 /// ```
 ///
-/// `key` is a plain `char` value (not a pointer).
+/// Returns whether the selected keyboard maps this key. A null output checks membership only. A
+/// hit writes a null-terminated symbol vector that the caller frees with `g_strfreev`. A miss
+/// writes null. A null instance returns false without writing.
 ///
 /// # Safety
 ///

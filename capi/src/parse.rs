@@ -54,7 +54,9 @@ unsafe fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> 
 ///                                       const char * pinyins);
 /// ```
 ///
-/// Returns number of bytes consumed, 0 on failure.
+/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
+/// null instance or when no bytes were consumed.
 ///
 /// # Safety
 ///
@@ -78,8 +80,9 @@ pub unsafe extern "C" fn pinyin_parse_more_full_pinyins(
 ///                                         const char * pinyins);
 /// ```
 ///
-/// Parses through [`oxpinyin::DoublePinyinParser`] and drives the
-/// session with the apostrophe-joined full-pinyin spelling.
+/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
+/// null instance or when no bytes were consumed.
 ///
 /// # Safety
 ///
@@ -112,8 +115,9 @@ pub unsafe extern "C" fn pinyin_parse_more_double_pinyins(
 ///                                    const char * chewings);
 /// ```
 ///
-/// Parses through [`oxpinyin::ZhuyinParser`] (STANDARD) and drives
-/// the session with the apostrophe-joined full-pinyin spelling.
+/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
+/// null instance or when no bytes were consumed.
 ///
 /// # Safety
 ///
@@ -175,11 +179,9 @@ pub unsafe extern "C" fn pinyin_get_parsed_input_length(instance: *mut PinyinIns
 ///                                  gchar *** symbols);
 /// ```
 ///
-/// `key` is a plain `char` value (not a pointer).
-/// `symbols` receives a NULL-terminated string array; caller frees with
-/// `g_strfreev`.
-///
-/// Returns the Zhuyin symbol(s) for `key` under the current scheme.
+/// Returns whether the selected keyboard maps this key. A null output checks membership only. A
+/// hit writes a null-terminated symbol vector that the caller frees with `g_strfreev`. A miss
+/// writes null. A null instance returns false without writing.
 ///
 /// # Safety
 ///
