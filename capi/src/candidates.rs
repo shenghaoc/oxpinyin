@@ -18,6 +18,10 @@ use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candida
 /// bool pinyin_get_n_candidate(pinyin_instance_t * instance, guint * num);
 /// ```
 ///
+/// A null `instance` returns `false` without writing. Otherwise, the
+/// function returns `true`. A null `num` skips the write. A non-null `num`
+/// receives the candidate count.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `num` is an
@@ -52,14 +56,17 @@ pub unsafe extern "C" fn pinyin_get_n_candidate(
 ///                           lookup_candidate_t ** candidate);
 /// ```
 ///
-/// Out-param `candidate` is instance-borrowed (never freed by caller).
-/// Valid until the next `pinyin_guess_candidates` call.
+/// A null `instance` returns `false` without writing. Otherwise, the
+/// function returns `true` if the row exists and `false` if it is absent.
+/// If `candidate` is non-null, the function writes a borrowed pointer to
+/// the row, or null if the row is absent (`pinyin.cpp:2851-2863`).
+/// The caller does not free the pointer. See the
+/// [crate-level rule for borrowed objects](crate#borrowed-objects).
 ///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is an
-/// out-parameter. The serial-calls rule applies. The row written to `*candidate` is a borrowed
-/// object.
+/// out-parameter. The serial-calls rule applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_get_candidate(
     instance: *mut PinyinInstance,
@@ -179,9 +186,14 @@ pub unsafe extern "C" fn pinyin_get_candidate_string(
 ///                                       guint8 * index);
 /// ```
 ///
-/// W14: the stored tail rank of an `NBEST_MATCH_CANDIDATE` row
-/// (`m_nbest_index`, `pinyin.cpp:2878-2884`). Any other row type is the
-/// pin's `assert`, and the process aborts (register row 64).
+/// Returns `false` for a null `candidate`. For an `NBEST_MATCH_CANDIDATE`
+/// row, returns `true` and writes its stored tail rank to a non-null
+/// `index` (`m_nbest_index`, `pinyin.cpp:2880-2886`).
+///
+/// # Aborts
+///
+/// The process aborts if `candidate` points to a row of any other type,
+/// even if `index` is null (`pinyin.cpp:2883`, register row 64).
 ///
 /// # Safety
 ///

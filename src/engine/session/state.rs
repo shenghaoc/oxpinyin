@@ -118,10 +118,9 @@ where
 
     /// Whether a sentence lookup has run since the last reset.
     ///
-    /// The lookup-active half of the gate: while this is true,
-    /// `pinyin_get_sentence` answers decoded-or-nothing (upstream's
-    /// `0 == results.size()` false) and never the pre-lookup raw form,
-    /// even when the lookup produced no rows.
+    /// An active lookup can have no n-best rows. The C sentence getters
+    /// return `false` in that case (`pinyin.cpp:1470-1471`,
+    /// `zhuyin.cpp:988-989`).
     #[must_use]
     pub fn sentence_lookup_active(&self) -> bool {
         self.sentence.active()
@@ -284,9 +283,7 @@ where
     /// and simply stops consuming at the first byte no key matches
     /// (`pinyin_parser2.cpp:237-328` — there is no explicit stop, the
     /// termination is the DP's reachability), so space, control, and
-    /// non-ASCII bytes must REACH the decoder for it to stop there
-    /// (class B2 of the W12 differential). The decoder
-    /// hard-stops on them; this seam must not pre-filter them away.
+    /// non-ASCII bytes must reach the decoder for it to stop there.
     ///
     /// # Errors
     ///

@@ -189,10 +189,10 @@ pub trait Dictionary {
     /// Reads addon candidates into a caller-owned buffer and returns the
     /// same search's `SEARCH_CONTINUED` bit.
     ///
-    /// W11: the default facade stays on [`Self::candidate_search_into`];
-    /// the addon facade is a second pass so an addon token never has to be
-    /// distinguished from `MERGED_DICTIONARY` by nibble alone
-    /// (`docs/findings/phrase-union.md` §6.3).
+    /// The default lookup uses [`Self::candidate_search_into`]. A separate
+    /// pass keeps addon tokens distinct from `MERGED_DICTIONARY` tokens
+    /// that use the same library nibble. See
+    /// [candidate collection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/findings/phrase-union.md#63-candidate-collection).
     ///
     /// # Errors
     ///

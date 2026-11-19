@@ -1,68 +1,48 @@
-//! The C ABI of libpinyin's public API — the full live surface, all 79
-//! `pinyin_*` symbols `libpinyin.ver` exports, built as `libpinyin.so.15`.
+//! Implements the libpinyin C API and ABI.
 //!
-//! Every `#[unsafe(no_mangle)] pub unsafe extern "C" fn` matches the signature in
-//! upstream's `src/pinyin.h` at the pin (`074a2219`, 2.11.92)
-//! symbol-for-symbol; that header is byte-identical to tag 2.11.91's, and
-//! the checked-in `pinyin.h` is that file. History: the W8 bootstrap set
-//! was the 50 pinned ibus-libpinyin 1.16.5 symbols plus
-//! `pinyin_get_parsed_input_length` and `pinyin_clear_constraint`; the
-//! surface closed on the full 79 on 2026-08-30 (`docs/findings/abi-reference.md`,
-//! Boundary notes).
+//! Linux packages provide `libpinyin.so.15`.
+//! Native Rust interfaces are unsupported internal details.
+//! Each build selects exactly one database backend. The default is `tkrzw`.
 //!
-//! ## Panic discipline
+//! ## Further reading
 //!
-//! Panics follow constitution §4's pin-matched failure policy; class (b)
-//! rulings remain authoritative, and where the pin asserts or aborts
-//! oxpinyin calls `std::process::abort()` at the corresponding failure point
-//! (class (c) retired 2026-10-31 UTC): in any crate when all affected call
-//! paths require termination, or here on a typed error when the caller must
-//! determine the abort point. The library crates on this
-//! facade's path (`oxpinyin`, `-data`, `-store`, `-engine`, `-facade`,
-//! `-runtime`, `-user` and this crate) deny `clippy::unwrap_used`/
-//! `expect_used`/`panic`/`panic_in_result_fn`/`unreachable` outside tests —
-//! the macro-only `oxpinyin` carries the same lints. Permitted
-//! sites require narrowly scoped, justified
-//! `#[expect]` attributes under `rust-conventions.md`; these prove Clippy
-//! saw a construct, not that its failure condition matches the pin.
-//! Other panic sources also need to respect §4. A panic that reaches an
-//! `extern "C"` boundary aborts the process, but it can run `Drop`
-//! implementations first and is not a substitute for the pin's abort.
-//! There is deliberately no panic-catching wrapper.
-//! Abort at the ABI boundary applies under either panic strategy (the
-//! release profile is `unwind`; `panic = "abort"` was tried and reverted
-//! for its keystroke-cycle cost).
+//! - [C header](https://github.com/shenghaoc/oxpinyin/blob/main/capi/pinyin.h)
+//! - [Exported symbols](https://github.com/shenghaoc/oxpinyin/blob/main/capi/libpinyin.ver)
+//! - [C library packaging](https://github.com/shenghaoc/oxpinyin/blob/main/docs/packaging.md)
+//! - [Backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/runbooks/backends.md#selecting-a-backend)
+//! - [Supported external interfaces](https://github.com/shenghaoc/oxpinyin/blob/main/docs/constitution.md#external-interfaces)
+//! - [Upstream pin](https://github.com/shenghaoc/oxpinyin/blob/main/tools/oracle/oracle-pin.txt)
+//! - [Failure behaviour](https://github.com/shenghaoc/oxpinyin/blob/main/docs/findings/compatibility-policy.md#failure-behaviour)
 //!
 //! ## Safety
 //!
-//! Every entry point is an `unsafe extern "C" fn`: its caller upholds the
-//! `pinyin.h` contract. Each function's `# Safety` section names the rules
-//! below that bind its arguments, and adds its own requirements.
+//! The caller must uphold the C header contract. Each function's `# Safety`
+//! section identifies the rules below that apply and gives any additional
+//! requirements.
 //!
-//! - **Handles.** A context pointer is NULL or a pointer that `pinyin_init`
-//!   returned and `pinyin_fini` has not taken. `pinyin_fini` and
-//!   `pinyin_alloc_instance` also accept a pointer that `pinyin_fini` took:
-//!   they look it up in the registry of live contexts and refuse it. An
-//!   instance pointer is NULL or a pointer that `pinyin_alloc_instance`
-//!   returned and `pinyin_free_instance` has not freed. An iterator pointer
-//!   is NULL or a pointer that its `begin` function returned and its `end`
-//!   function has not freed.
-//! - **Strings.** A `const char *` argument is NULL or points to a
+//! - **Handles.** A context pointer must be null or point to a live context
+//!   returned by [`pinyin_init`]. [`pinyin_fini`] ends that context's lifetime.
+//!   The caller must not use the handle again, even if a later context gets
+//!   the same address. An instance pointer is null or a live pointer returned
+//!   by [`pinyin_alloc_instance`]. An iterator pointer is
+//!   null or a pointer that its `begin` function returned and its `end`
+//!   function has yet to free.
+//! - **Strings.** A `const char *` argument is null or points to a
 //!   NUL-terminated string that stays valid and unchanged for the call.
-//! - **Out-parameters.** A pointer the function writes through is NULL or is
+//! - **Out-parameters.** A pointer the function writes through is null or is
 //!   valid and aligned for a write of its pointee type.
-//! - **Borrowed objects.** A candidate pointer is NULL or a row that
-//!   `pinyin_get_candidate` answered, from a candidate list that is still
-//!   the current list of a live instance: the next call that rebuilds or
-//!   clears that instance's list, and its free, end the row. A key or
-//!   key-rest pointer is NULL or points to a `ChewingKey` or
-//!   `ChewingKeyRest` that is valid for reads.
-//! - **Serial calls.** Calls that use one context, its instances or its
-//!   iterators do not overlap: the caller serializes them.
+//! - **Serial calls.** Serialize calls that use the same context or its
+//!   instances or iterators.
 //!
-//! Opaque handles cross the boundary as `*mut T` via `Box::into_raw` /
-//! `Box::from_raw`. Every incoming pointer is null-checked before deref.
-//! `// SAFETY:` documents each `unsafe` block.
+//! ### Borrowed objects
+//!
+//! A candidate pointer is null or a pointer borrowed from a live instance by
+//! [`pinyin_get_candidate`]. The pointer becomes invalid when the instance's
+//! candidate list is rebuilt or cleared, including by [`pinyin_reset`], or
+//! when [`pinyin_free_instance`] frees the instance.
+//!
+//! A key pointer is null or points to a [`ChewingKey`] valid for reads. A
+//! key-rest pointer is null or points to a [`ChewingKeyRest`] valid for reads.
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
 // making failure unreachable; see docs/rust-conventions.md.

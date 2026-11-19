@@ -120,7 +120,7 @@ pub unsafe extern "C" fn zhuyin_parse_chewing(
     })
 }
 
-/// `zhuyin_get_zhuyin_string` — render the key's zhuyin spelling.
+/// Render a chewing key in Zhuyin.
 ///
 /// # C signature
 /// ```c
@@ -149,8 +149,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
     unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::zhuyin_text) }
 }
 
-/// `zhuyin_get_pinyin_string` — render the key's pinyin spelling, dispatching
-/// on the context's full-pinyin scheme (`zhuyin.cpp:1743-1766`).
+/// Render a chewing key in the context's full Pinyin scheme.
 ///
 /// # C signature
 /// ```c
@@ -158,9 +157,8 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
 ///                               ChewingKey * key, gchar ** utf8_str);
 /// ```
 ///
-/// Unlike the zhuyin getter this one reads the instance's scheme, so the pin
-/// dereferences it and a NULL one is register row 41's class (b) site; the
-/// guard answers `false`.
+/// The function reads the scheme through `instance` (`zhuyin.cpp:1743-1766`).
+/// A null `instance` returns `false` (register row 41, class (b)).
 ///
 /// # Safety
 ///

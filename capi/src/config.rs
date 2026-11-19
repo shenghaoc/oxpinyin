@@ -49,17 +49,14 @@ pub unsafe extern "C" fn pinyin_set_options(
 ///                                    FullPinyinScheme scheme);
 /// ```
 ///
-/// Exported by
-/// libpinyin.ver, never called by ibus-libpinyin 1.16.5, and added to
-/// the oxpinyin surface post-bootstrap. The Rust parameter is `c_int`:
-/// callers may pass any `int`. HANYU (1) is the default and keeps the
-/// frozen full-pinyin parser surface; LUOMA (2) and `SECONDARY_ZHUYIN`
-/// (3) switch the parse onto their pinned indexes. Any other value aborts
-/// the process, as `set_scheme`'s `default: abort()` does
+/// The Rust parameter is [`c_int`], so callers can pass any C `int`.
+/// `HANYU` (1) is the default. `LUOMA` (2) and `SECONDARY_ZHUYIN` (3)
+/// select their spelling indexes. Any other value aborts the process
 /// (`pinyin_parser2.cpp:398`, register row 5d).
 ///
-/// Exported in every build: it is in the pin's `libpinyin.ver`, and the
-/// export gate (`just abi exports`) checks the shipped artifact.
+/// The symbol is exported in every build. The export gate (`just abi exports`)
+/// checks the shipped artifact against the
+/// [export list](https://github.com/shenghaoc/oxpinyin/blob/main/capi/libpinyin.ver).
 ///
 /// # Safety
 ///
@@ -380,6 +377,7 @@ pub unsafe extern "C" fn pinyin_unload_phrase_library(
     ctx.core.unload_phrase_library(index)
 }
 
+/// Remove entries that match a phrase-token mask.
 ///
 /// # C signature
 /// ```c
@@ -388,15 +386,18 @@ pub unsafe extern "C" fn pinyin_unload_phrase_library(
 ///                      phrase_token_t value);
 /// ```
 ///
-/// The upstream predicate (`pinyin.cpp:1224`, `ngram_kyotodb.cpp:199`,
-/// `phrase_index.cpp:689`): every entry whose token satisfies
-/// `(token & mask) == value` is deleted — bigram rows (a matching
-/// predecessor drops its whole gram), unigram deltas, and user phrases.
-/// Immediate and durable (upstream writes the masked chunks/diff logs
-/// directly); it does **not** arm `m_modified`, matching upstream's
-/// set-sites (`pinyin_train` and `pinyin_end_add_phrases` only).
+/// Applying the mask removes bigram entries, unigram deltas, and user
+/// phrases whose tokens satisfy `(token & mask) == value`. A matching
+/// predecessor removes its whole gram (`pinyin.cpp:1224-1295`,
+/// `ngram_kyotodb.cpp:199`, `phrase_index.cpp:689`). In the pin, applying
+/// the mask leaves `m_modified` as it was. The pin sets that flag in
+/// [`crate::pinyin_train`] and [`crate::pinyin_end_add_phrases`].
 ///
 /// Returns `false` for a null context or a store failure.
+///
+/// If a loaded system library cannot be remapped, the function writes a
+/// diagnostic to `stderr` and returns `true` without applying the mask.
+/// No matching entries are removed. Unsaved changes remain in memory.
 ///
 /// The user table's `mask_out` walks every `user_pinyin_index.bin` record
 /// and dies of SIGABRT at the `switch` whose `default` is `abort()` when a

@@ -239,7 +239,7 @@ oxpinyin::display_string_getter! {
     key: ChewingKey, char: GChar
 }
 
-/// Whether a chewing key carries no middle and no final.
+/// Check whether a chewing key has neither a middle nor a final.
 ///
 /// # C signature
 /// ```c
@@ -248,7 +248,7 @@ oxpinyin::display_string_getter! {
 /// ```
 ///
 /// `CHEWING_ZERO_MIDDLE == m_middle && CHEWING_ZERO_FINAL == m_final`
-/// (`pinyin.cpp:2758-2766`). Upstream asserts the tone is zero in the
+/// (`pinyin.cpp:2765-2774`). Upstream asserts the tone is zero in the
 /// true branch — a toned initial-only key aborts the pin, and the process
 /// aborts here too (register row 4).
 ///

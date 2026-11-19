@@ -12,12 +12,11 @@ use crate::types::{GUint, PinyinInstance};
 /// bool pinyin_guess_sentence(pinyin_instance_t * instance);
 /// ```
 ///
-/// W14: runs the n-best sentence lookup (`Session::guess_sentence`, the
-/// port of `PhoneticLookup<2, 3>`). While the rows live, the candidate
-/// list carries them at its head typed `NBEST_MATCH_CANDIDATE`, and
-/// [`pinyin_get_sentence`] returns their decoded text — upstream's
-/// `m_nbest_results` gate (`pinyin.cpp:1373-1385`, `2292-2293`). Rows are
-/// cleared by [`crate::pinyin_reset`], nothing else.
+/// Run the n-best sentence lookup (`pinyin.cpp:1372-1387`).
+/// [`pinyin_get_sentence`] reads the decoded text of its rows. A candidate
+/// guess can include the rows as `NBEST_MATCH_CANDIDATE` entries
+/// (`pinyin.cpp:2295-2296`). [`crate::pinyin_reset`] clears the rows
+/// (`pinyin.cpp:2700`).
 ///
 /// # Safety
 ///
@@ -170,7 +169,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     crate::predict::prediction_answer(outcome)
 }
 
-/// Get a sentence string from the instance (n-best variant).
+/// Get the decoded text of n-best row `index`.
 ///
 /// # C signature
 /// ```c
@@ -179,17 +178,18 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 ///                          char ** sentence);
 /// ```
 ///
-/// Out-param `sentence` is caller-owned (`g_free`): the pin's `g_strdup` of
-/// the converted text. If no phrase converts, the getter writes NULL
-/// and answers `true` (`lookup/lookup.cpp:27-70`).
+/// A null `instance` or an empty n-best result returns `false` without
+/// writing. The pin checks for empty results at `pinyin.cpp:1470-1471`.
 ///
-/// Answers decoded-or-nothing, as the pin does: once a sentence lookup is
-/// active ([`pinyin_guess_sentence`] ran since the last reset), the text of
-/// n-best `index` through the phrase index (`pinyin.cpp:1463-1482`); with
-/// no row, `false` and `*sentence` untouched, upstream's
-/// `0 == results.size()` false. Before any lookup there is no row, so the
-/// answer is `false` too — the raw preedit the pre-W14 form returned is
-/// gone (register row 53).
+/// If the row exists, the function returns `true`. A null `sentence`
+/// skips the write. Otherwise, the function writes the decoded string to
+/// `*sentence`, or null if no phrase converts. The caller frees a non-null
+/// string with `g_free` (`pinyin.cpp:1463-1482`, `lookup/lookup.cpp:27-70`).
+///
+/// # Aborts
+///
+/// The process aborts when `index > 0`, at least one n-best row exists, and
+/// no row exists at `index` (`pinyin.cpp:1474`, register row 10).
 ///
 /// # Safety
 ///
@@ -497,22 +497,23 @@ fn lookup_window(
 /// the zhuyin keyboards — there `'` is out of scheme or a content symbol).
 /// The leading-run shape empties the snapshot and answers `false`; an
 /// offset two or more past the reserved slot aborts the process, as
-/// upstream's `_check_offset` does (register row 66). The lookup
-/// itself stays anchored at the session's composition offset, so
-/// `pinyin_choose_candidate(offset, cand)` keeps round-tripping for such
-/// candidates; the scan anchor is otherwise still positionless — the
-/// engine has no positional backend yet.
+/// upstream's `_check_offset` does (register row 66).
 ///
-/// W14 honours `SORT_WITHOUT_SENTENCE_CANDIDATE`: with
-/// the bit clear, sentence rows guessed by [`pinyin_guess_sentence`]
-/// appear at the head typed `NBEST_MATCH_CANDIDATE` with their tail rank;
-/// with the bit set the engine never prepends them (`pinyin.cpp:2295-2296`),
-/// so the phrase-string dedup after the prepend (`:2298-2300`) keeps a
-/// phrase row whose string repeats a sentence (issue #582) — the gate sits
-/// in the engine's list assembly, not in a filter here. §9 honours the rest of the word:
-/// `SORT_WITHOUT_LONGER_CANDIDATE` clear prepends a `LONGER_CANDIDATE`
-/// row (`:2292-2293`) and the three `SORT_BY_*` bits order the list
-/// (`:1678-1709`), both through the engine's sort word above.
+/// The normalized caller offset selects the lookup window for this call.
+/// The composition offset stays fixed during the lookup. Pass the original
+/// `offset` to [`crate::pinyin_choose_candidate`] to select a row from this
+/// lookup.
+///
+/// When [`SORT_WITHOUT_SENTENCE_CANDIDATE`](oxpinyin::engine::SORT_WITHOUT_SENTENCE_CANDIDATE)
+/// is clear, rows from [`pinyin_guess_sentence`] appear at the head as
+/// `NBEST_MATCH_CANDIDATE` entries with their tail rank. Setting the bit
+/// skips that prepend (`pinyin.cpp:2295-2296`). A phrase row with the same
+/// text as a skipped sentence can then survive deduplication
+/// (`pinyin.cpp:2298-2300`, issue #582). Clearing
+/// `SORT_WITHOUT_LONGER_CANDIDATE` allows the lookup to prepend a
+/// `LONGER_CANDIDATE` row when it finds a longer suggestion
+/// (`pinyin.cpp:1870-1932`, `:2292-2293`). The `SORT_BY_*` bits determine
+/// list order (`pinyin.cpp:1678-1709`).
 ///
 /// # Safety
 ///

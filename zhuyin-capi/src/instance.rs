@@ -62,12 +62,16 @@ pub unsafe extern "C" fn zhuyin_free_instance(instance: *mut ZhuyinInstance) {
     };
 }
 
-/// Reset the zhuyin instance (clear parsing and sentence state).
+/// Clear the instance's parsing state, sentence state, and candidate list.
 ///
 /// # C signature
 /// ```c
 /// bool zhuyin_reset(zhuyin_instance_t * instance);
 /// ```
+///
+/// The reset also clears constraints and phrase results (`zhuyin.cpp:1718-1729`).
+/// The function returns `false` for a null `instance` and `true` after the
+/// reset.
 ///
 /// # Safety
 ///

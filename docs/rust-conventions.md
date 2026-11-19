@@ -25,7 +25,9 @@ The [constitution](constitution.md) (§4) decides where a panic is permitted: on
 A reachable pin assert or abort uses `std::process::abort()` at the corresponding failure point, in any crate when all affected call paths require termination.
 Shared code may instead return a typed error when the caller must determine the abort point.
 A panic can run `Drop` implementations before termination and is not a substitute for the pin's abort.
-These lint conventions apply the rule.
+
+Use `# Aborts` to document when a function aborts the process.
+For `# Errors`, `# Panics`, and `# Safety`, see the [Rust API Guidelines on failure and safety](https://rust-lang.github.io/api-guidelines/documentation.html#c-failure).
 
 The non-test crate roots deny `clippy::unwrap_used`, `clippy::expect_used`, `clippy::panic`, `clippy::panic_in_result_fn` and `clippy::unreachable`, and these denials stay.
 A permitted site carries the narrowest scoped `#[expect(..., reason = "...")]`, which cites the established invariant that makes failure unreachable.
@@ -134,3 +136,5 @@ Behaviour is derived from the pin's source as the [source policy](source-policy.
 The code passes `cargo fmt --check` and `clippy -D warnings`.
 Formatting uses rustfmt's stable defaults; there is no `rustfmt.toml`.
 The [verification procedure](runbooks/verification.md) selects the applicable checks.
+
+See the Rustdoc Book for [item summaries](https://doc.rust-lang.org/rustdoc/how-to-write-documentation.html#documenting-components) and [intra-doc links](https://doc.rust-lang.org/rustdoc/write-documentation/linking-to-items-by-name.html).

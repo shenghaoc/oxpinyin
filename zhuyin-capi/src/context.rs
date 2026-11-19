@@ -99,16 +99,13 @@ fn refuse_init(error: &oxpinyin::facade::OpenFailure, system_path: &std::path::P
 /// its own (`zhuyin_init` only reads the marker, `zhuyin_fini` writes
 /// nothing, `zhuyin.cpp:126-162`, `:741-757`).
 ///
-/// A second call on a context that is already finalised (or was never
-/// handed out by `zhuyin_init`) returns at once: the pin deletes the freed
-/// context's members again (`zhuyin.cpp:741-757`), a double free that kills
-/// it with SIGSEGV (register row 105, class (b)).
+/// A null `context` returns immediately.
 ///
 /// # Safety
 ///
-/// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
-/// applies. After the call `context` is dangling: only the two functions that the handle rule
-/// names may receive it again.
+/// The [crate-level rules](crate#safety) for handles and serial calls apply.
+/// A non-null `context` must be a live handle returned by [`zhuyin_init`].
+/// This call takes ownership of the context and ends its lifetime.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
     // One step: the registry held the address and this call removed it, so
