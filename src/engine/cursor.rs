@@ -13,7 +13,7 @@
 //! - `pinyin_get_right_pinyin_offset` (`pinyin.cpp:3061-3094`): validate the
 //!   caller offset, skip a leading run of lone zero keys, answer `false`
 //!   when no key starts at the position (the pin's one graceful false,
-//!   `pinyin.cpp:3085-3086`), otherwise answer the first key's raw end and
+//!   `pinyin.cpp:3087-3088`), otherwise answer the first key's raw end and
 //!   validate the result.
 //!
 //! The pin validates with `_check_offset`, which ABORTS when the position
@@ -350,7 +350,7 @@ pub fn left_word_offset_over_spans(
 /// The word-level right move — the `pinyin_get_right_pinyin_offset` law.
 ///
 /// `Ok(None)` is the pin's one graceful false: no key starts at the
-/// (zero-run-skipped) position (`pinyin.cpp:3085-3086`). Validation aborts
+/// (zero-run-skipped) position (`pinyin.cpp:3087-3088`). Validation aborts
 /// are [`EngineError::ZeroKeyOffsetCheck`].
 ///
 /// # Errors

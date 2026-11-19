@@ -371,7 +371,7 @@ fn an_nbest_row_selects_from_the_receivers_results(#[values(true, false)] same_c
 }
 
 /// With no decoded results on the receiver, the NBEST choose's
-/// `check_result(results.get_result(0, best))` asserts (`pinyin.cpp:2516`).
+/// `check_result(results.get_result(0, best))` asserts (`pinyin.cpp:2517`).
 #[test]
 fn an_nbest_row_on_a_receiver_without_results_aborts() {
     assert_aborts(

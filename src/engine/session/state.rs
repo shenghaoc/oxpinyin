@@ -142,7 +142,7 @@ where
 
     /// Whether the decoded results hold row 0 and row `rank`: the two
     /// `check_result(results.get_result(...))` asserts of the pin's NBEST
-    /// choose (074a2219 `pinyin.cpp:2516-2517`).
+    /// choose (074a2219 `pinyin.cpp:2517-2518`).
     #[must_use]
     pub fn has_nbest_rank(&self, rank: u8) -> bool {
         usize::from(rank) < self.sentence.rows.len()

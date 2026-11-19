@@ -324,7 +324,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// `convert_to_utf8` does when the caller reads the sentence
     /// (`src/lookup/lookup.cpp:37-48` at 074a2219).
     ///
-    /// The pin ignores the result of `get_phrase_item` (`:43`), and a failed
+    /// The pin ignores the result of `get_phrase_item` (`:45`), and a failed
     /// read leaves the item as it was (`SubPhraseIndex::get_phrase_item`,
     /// `storage/phrase_index.cpp:180-206`). A token that does not resolve
     /// thus repeats the last phrase that resolved in the same read, or adds
@@ -332,7 +332,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// (`storage/phrase_index.h:81-84`).
     ///
     /// Each part is `None` where `g_ucs4_to_utf8` answers NULL for the
-    /// item's words (`:58`), which `convert_to_utf8` then leaves out.
+    /// item's words (`src/lookup/lookup.cpp:58`), which `convert_to_utf8` then leaves out.
     pub fn sentence_phrases(
         &self,
         index: u8,
@@ -575,7 +575,7 @@ impl<
     }
 
     /// Whether this instance's decoded results hold rank `rank` and row 0,
-    /// which the pin's NBEST choose asserts (074a2219 `pinyin.cpp:2516-2517`).
+    /// which the pin's NBEST choose asserts (074a2219 `pinyin.cpp:2517-2518`).
     #[must_use]
     pub fn has_nbest_rank(&self, rank: u8) -> bool {
         self.session.has_nbest_rank(rank)

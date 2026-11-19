@@ -65,7 +65,7 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
 /// Register entry "gen_pinyin_table truncated lead byte on the first line
 /// (policy row 126, class (b))": the pin's `char phrase[1024]` starts
 /// indeterminate (`gen_pinyin_table.cpp:135` at 074a2219) and
-/// `g_utf8_strlen` reads past the terminator (`:168`), so the pin's result
+/// `g_utf8_strlen` reads past the terminator (`:162`), so the pin's result
 /// is undefined and nothing runs on it. oxpinyin's prescribed result: the
 /// count stops on the zeroed buffer and the row takes the invalid UTF-8
 /// phrase refusal.

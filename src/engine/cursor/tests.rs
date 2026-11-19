@@ -7,7 +7,7 @@
 //! dead driver. Legend: values are the pin's answers; `ABORT` is the
 //! pin's `_check_offset` SIGABRT (the engine answers
 //! [`EngineError::ZeroKeyOffsetCheck`]); `false` is the pin's one graceful
-//! false (`pinyin.cpp:3085-3086`), encoded `Ok(None)` on the right move.
+//! false (`pinyin.cpp:3087-3088`), encoded `Ok(None)` on the right move.
 
 use crate::OptionBits;
 use crate::graph::SegmentGraph;

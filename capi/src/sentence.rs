@@ -54,7 +54,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) ->
 /// `zhuyin.cpp:1250`; register row 85): the process aborts. So does a Kyoto
 /// Cabinet read that fails after its size check, the pin's
 /// `check_result(vsiz == m_db->get(...))` in `Bigram::load`
-/// (`ngram_kyotodb.cpp:136-137`). A read past the value (`ngram.cpp:241`,
+/// (`ngram_kyotodb.cpp:138-139`). A read past the value (`ngram.cpp:241`,
 /// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
 /// the call answers `true` when `error` is that read.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::engine::EngineError) -> bool {
@@ -279,7 +279,7 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
     // SAFETY: `instance` is non-null and was produced by the facade's
     // alloc entry point.
     let inst = unsafe { instance_ref(instance) };
-    // `assert(offset < matrix.size())` (`pinyin.cpp:3205`) follows the
+    // `assert(offset < matrix.size())` (`pinyin.cpp:3203`) follows the
     // empty-matrix `false`, before the phrase is converted.
     let columns = inst.core.pin_matrix_columns();
     if columns > 0 && offset >= columns {
@@ -421,7 +421,7 @@ fn lookup_window(
         // process aborts in `refuse_lookup_gram`, or reads past a partial
         // one (class (b), one warning; `pinyin.cpp:2214`, `:1848-1849`).
         // Row 110: the `DYNAMIC_ADJUST` row's Kyoto Cabinet read failed after
-        // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:136-137`), and
+        // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:138-139`), and
         // the process aborts in `refuse_lookup_gram` too.
         Err(
             oxpinyin::engine::EngineError::ShortLookupPredecessor { .. }
