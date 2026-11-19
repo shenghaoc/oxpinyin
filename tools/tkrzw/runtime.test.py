@@ -15,7 +15,7 @@ from tools.dev.drivers import DriverServices
 from tools.tkrzw import runtime
 
 
-# The fixtures are /bin/sh stubs for uname, ldd and otool, and the adapter runs them: Unix loaders only.
+# The fixtures are /bin/sh stubs for uname and ldd: Unix loaders only.
 if sys.platform != 'win32':
     class AdapterControlTests(unittest.TestCase):
         def setUp(self):
@@ -31,7 +31,6 @@ if sys.platform != 'win32':
             for name, program in {
                 'uname': 'printf "%s\\n" "${FAKE_HOST:-Linux}"',
                 'ldd': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
-                'otool': 'printf "%s\\n" "$FAKE_LDD"; exit "${FAKE_STATUS:-0}"',
             }.items():
                 path = self.directory / name
                 path.write_text('#!/bin/sh\n' + program + '\n')
@@ -91,16 +90,6 @@ if sys.platform != 'win32':
         def test_relative_loader_entries_keep_the_callers_cwd(self):
             env = dict(self.env, FAKE_LDD='libtkrzw.so.1 => ./libtkrzw.so.1 (0x1)', OXPINYIN_TKRZW_LIBRARY='./libtkrzw.so.1')
             self.assertEqual(runtime.check('kc', 'fixture', 'pin', 'object', env=env, cwd=self.directory), self.library)
-
-        def test_darwin_install_name_and_override_refusals(self):
-            output = f'\t{self.library} (compatibility version 1.0.0, current version 1.0.0)'
-            # The install-name parser requires .dylib as the shell did.
-            dylib = self.directory / 'libtkrzw.dylib'
-            dylib.symlink_to(self.library)
-            output = f'\t{dylib} (compatibility version 1.0.0, current version 1.0.0)'
-            self.assertEqual(self.invoke(['kc', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', FAKE_LDD=output).returncode, 0)
-            for variable in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
-                self.assertEqual(self.invoke(['bdb', 'fixture', 'oracle', '/object'], FAKE_HOST='Darwin', **{variable: '/override'}).returncode, 1)
 
         def test_child_status_and_quiet_stderr(self):
             for code in (0, 7, 77, 127):
@@ -387,7 +376,167 @@ if sys.platform.startswith('linux'):
 
 
 if sys.platform == 'darwin':
-    class DarwinLoaderOverrideTests(unittest.TestCase):
+    class DarwinLoaderTests(unittest.TestCase):
+        def setUp(self):
+            directory = tempfile.TemporaryDirectory()
+            self.addCleanup(directory.cleanup)
+            self.root = Path(directory.name).resolve()
+            self.verified = self.root / 'verified/libtkrzw.fixture.dylib'
+            self.wrong = self.root / 'wrong/libtkrzw.fixture.dylib'
+            self.env = {name: value for name, value in os.environ.items() if not name.startswith('DYLD_')}
+            self.env['OXPINYIN_TKRZW_LIBRARY'] = str(self.verified)
+
+        def build(self, obj, source, *flags):
+            obj.parent.mkdir(parents=True, exist_ok=True)
+            code = obj.with_suffix('.c')
+            code.write_text(source + '\n')
+            subprocess.run(['cc', str(code), *map(str, flags), '-o', str(obj)], env=self.env, check=True)
+
+        def build_dependency(self, library, name=None):
+            value = 1 if library == self.verified else 2
+            self.build(library, f'int dependency(void) {{ return {value}; }}',
+                       '-dynamiclib', '-install_name', name or str(library))
+
+        def build_bridge(self, library, name, *flags):
+            bridge = self.root / 'bridge.dylib'
+            self.build(bridge, 'extern int dependency(void); int bridge(void) { return dependency(); }',
+                       '-dynamiclib', '-install_name', name, *flags, library)
+            return bridge
+
+        def transitive_subject(self, loaded, install_name=None, *bridge_flags):
+            for library in (self.verified, self.wrong):
+                self.build_dependency(library, install_name if library == loaded else None)
+            bridge = self.build_bridge(loaded, '@loader_path/bridge.dylib', *bridge_flags)
+            subject = self.root / 'subject.dylib'
+            self.build(subject, 'extern int bridge(void); int subject(void) { return bridge(); }',
+                       '-dynamiclib', bridge)
+            direct = subprocess.check_output(['otool', '-L', str(subject)], text=True)
+            self.assertIn('@loader_path/bridge.dylib', direct)
+            self.assertNotIn('libtkrzw', direct)
+            return subject
+
+        def check(self, subject):
+            return runtime.check('auto', 'transitive-runner', 'subject', subject.relative_to(self.root),
+                                 env=self.env, cwd=self.root)
+
+        def test_transitive_verified_dependency_is_accepted(self):
+            subject = self.transitive_subject(self.verified, '@loader_path/verified/libtkrzw.fixture.dylib')
+            self.assertEqual(self.check(subject), self.verified)
+
+        def test_transitive_wrong_dependency_is_refused(self):
+            subject = self.transitive_subject(self.wrong)
+            with self.assertRaisesRegex(runtime.RuntimeRefused, r'transitive-runner: subject:.*wrong/libtkrzw\.fixture\.dylib'):
+                self.check(subject)
+
+        def test_transitive_missing_dependency_is_refused(self):
+            subject = self.transitive_subject(self.wrong)
+            self.wrong.unlink()
+            with self.assertRaisesRegex(runtime.RuntimeRefused, r'libtkrzw\.fixture\.dylib'):
+                self.check(subject)
+
+        def test_transitive_executable_relative_dependency_is_refused(self):
+            relative = os.path.relpath(self.verified, Path(sys.executable).resolve().parent)
+            subject = self.transitive_subject(self.verified, '@executable_path/' + relative)
+            # The probe's own executable can resolve the verified library.
+            subprocess.run([sys.executable, '-I', '-S', '-c',
+                            'import ctypes, sys; ctypes.CDLL(sys.argv[1])', str(subject)],
+                           env=self.env, cwd=self.root, check=True)
+            with self.assertRaisesRegex(runtime.RuntimeRefused, r'main executable.*@executable_path'):
+                self.check(subject)
+
+        def test_transitive_executable_relative_runpath_is_refused(self):
+            relative = os.path.relpath(self.verified.parent, Path(sys.executable).resolve().parent)
+            install_name = '@rpath/' + self.verified.name
+            subject = self.transitive_subject(self.verified, install_name, '-rpath', '@executable_path/' + relative)
+            subprocess.run([sys.executable, '-I', '-S', '-c',
+                            'import ctypes, sys; ctypes.CDLL(sys.argv[1])', str(subject)],
+                           env=self.env, cwd=self.root, check=True)
+            with self.assertRaisesRegex(runtime.RuntimeRefused, r'main executable.*@rpath'):
+                self.check(subject)
+
+        def test_dylib_without_tkrzw_is_accepted(self):
+            subject = self.root / 'plain.dylib'
+            self.build(subject, 'int subject(void) { return 1; }', '-dynamiclib')
+            self.assertIsNone(self.check(subject))
+
+        def worker(self, dependency, symbol='dependency', *flags):
+            worker = self.root / 'bin/worker'
+            self.build(worker, f'''
+#include <stdio.h>
+extern int {symbol}(void);
+int main(void) {{
+    FILE *marker = fopen("launched", "w");
+    if (!marker) return 99;
+    fclose(marker);
+    return {symbol}();
+}}''', dependency, *flags)
+            return worker
+
+        def test_executable_accepts_verified_direct_import_without_running_main(self):
+            self.build_dependency(self.verified)
+            self.assertEqual(self.check(self.worker(self.verified)), self.verified)
+            self.assertFalse((self.root / 'launched').exists())
+
+        def test_executable_accepts_verified_import_through_bridge(self):
+            self.build_dependency(self.verified, '@loader_path/verified/' + self.verified.name)
+            bridge = self.build_bridge(self.verified, '@loader_path/../bridge.dylib')
+            worker = self.worker(bridge, 'bridge')
+            direct = subprocess.check_output(['otool', '-L', str(worker)], text=True)
+            self.assertIn('@loader_path/../bridge.dylib', direct)
+            self.assertNotIn('libtkrzw', direct)
+            self.assertEqual(self.check(worker), self.verified)
+            self.assertFalse((self.root / 'launched').exists())
+
+        def test_executable_refuses_wrong_transitive_import(self):
+            self.build_dependency(self.verified)
+            self.build_dependency(self.wrong)
+            bridge = self.build_bridge(self.wrong, '@loader_path/../bridge.dylib')
+            with self.assertRaisesRegex(runtime.RuntimeRefused, r'wrong/libtkrzw\.fixture\.dylib'):
+                self.check(self.worker(bridge, 'bridge'))
+
+        def test_executable_relative_imports_match_dyld(self):
+            self.build_dependency(self.verified, '@executable_path/../verified/' + self.verified.name)
+            bridge = self.build_bridge(self.verified, '@executable_path/../bridge.dylib')
+            worker = self.worker(bridge, 'bridge')
+            self.assertEqual(self.check(worker), self.verified)
+            self.assertFalse((self.root / 'launched').exists())
+            self.assertEqual(subprocess.run([worker], cwd=self.root, env=self.env).returncode, 1)
+
+        def test_executable_runpath_stack_matches_dyld(self):
+            self.build_dependency(self.verified, '@rpath/' + self.verified.name)
+            for owner in ('executable', 'bridge'):
+                with self.subTest(owner=owner):
+                    (self.root / 'launched').unlink(missing_ok=True)
+                    bridge_flags = ('-rpath', '@loader_path/verified') if owner == 'bridge' else ()
+                    main_flags = ('-rpath', '@executable_path/../verified') if owner == 'executable' else ()
+                    bridge = self.build_bridge(self.verified, '@loader_path/../bridge.dylib', *bridge_flags)
+                    worker = self.worker(bridge, 'bridge', *main_flags)
+                    self.assertEqual(self.check(worker), self.verified)
+                    self.assertFalse((self.root / 'launched').exists())
+                    self.assertEqual(subprocess.run([worker], cwd=self.root, env=self.env).returncode, 1)
+
+        def test_executable_refuses_an_unresolvable_import(self):
+            self.build_dependency(self.verified, '@rpath/' + self.verified.name)
+            worker = self.worker(self.verified, 'dependency', '-rpath', '@executable_path/../missing')
+            with self.assertRaisesRegex(runtime.RuntimeRefused, r'no candidate for @rpath/libtkrzw'):
+                self.check(worker)
+
+        def test_executable_refuses_multiple_runpath_candidates(self):
+            for library in (self.verified, self.wrong):
+                self.build_dependency(library, '@rpath/' + library.name)
+            worker = self.worker(self.verified, 'dependency',
+                                 '-rpath', '@executable_path/../verified',
+                                 '-rpath', '@executable_path/../wrong')
+            with self.assertRaisesRegex(runtime.RuntimeRefused, r'multiple candidates for @rpath/libtkrzw'):
+                self.check(worker)
+
+        def test_loader_diagnostics_do_not_block_certification(self):
+            self.build_dependency(self.verified)
+            worker = self.worker(self.verified)
+            self.env['DYLD_PRINT_LIBRARIES'] = '1'
+            self.env['DYLD_BIND_AT_LAUNCH'] = '1'
+            self.assertEqual(self.check(worker), self.verified)
+
         def test_tkrzw_so_refuses_both_dyld_overrides(self):
             script = Path(runtime.__file__)
             for name in ('DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
@@ -396,10 +545,8 @@ if sys.platform == 'darwin':
                         [sys.executable, str(script), '--resolve', '/bin/true'],
                         capture_output=True, text=True, env=dict(os.environ, **{name: '/tmp/override'}))
                     self.assertEqual(result.returncode, 1, result.stderr)
-                    self.assertIn('REFUSED: otool -L reports the recorded libtkrzw install name',
-                                  result.stderr)
-                    self.assertIn('which DYLD_LIBRARY_PATH or DYLD_FALLBACK_LIBRARY_PATH can bypass',
-                                  result.stderr)
+                    self.assertIn('REFUSED:', result.stderr)
+                    self.assertIn(name, result.stderr)
 
 
 if __name__ == '__main__':
