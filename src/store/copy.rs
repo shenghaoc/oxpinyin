@@ -38,11 +38,8 @@ pub(crate) fn copy(
     .map_err(|_| StoreError::FatalCopy)
 }
 
-/// Fault points in [`copy`] for other crates' death tests: no input makes an
-/// in-memory container fail a read or a write, and a file's own writes fail
-/// at a page flush or a growth, not at a chosen record. Test-only: the
-/// module exists only with the `test-hooks` feature, which no normal or
-/// shipped build enables (see the feature's comment in `Cargo.toml`).
+/// Fault injection for the store copy operations used by cross-crate death tests. These
+/// controls select a record at which the read or write fails.
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod faults {
     use std::sync::atomic::{AtomicUsize, Ordering};
