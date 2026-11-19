@@ -6,15 +6,24 @@ edition = "2024"
 
 # The fuzz workspace does not inherit the root workspace's lints (separate
 # workspace). deny rather than forbid: the FFI-driving capi-commands target
-# carries scoped unsafe with SAFETY comments.
+# and the entry point's TMPDIR setting carry scoped unsafe with SAFETY
+# comments.
 [lints.rust]
 unsafe_code = "deny"
 
-[package.metadata]
-cargo-fuzz = true
+# Every target is an ordinary executable that AFL++ runs once per input
+# (`just fuzz`, cargo-afl). src/lib.rs is their shared entry point.
+[lib]
+name = "oxpinyin_fuzz"
+path = "src/lib.rs"
+test = false
+doc = false
+
+# AFL++ records a signal as a crash, not an exit status: a panic must abort.
+[profile.release]
+panic = "abort"
 
 [dependencies]
-libfuzzer-sys = "=0.4.13"
 # test-hooks: the test-only library items the targets read.
 oxpinyin = { path = "..", features = ["test-hooks"] }
 # dict-loader: hostile bytes through the system chunk loader.

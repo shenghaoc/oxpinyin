@@ -33,6 +33,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
+from tools.dev import fuzz
+
 OVERRIDES = (
     'UV_PYTHON',
     'UV_PYTHON_VERSION',
@@ -219,6 +221,18 @@ def _nextest_verdict(tool, executable, environ):
     raise DoctorError(f'{tool.name} at {executable} could not check {tool.minimum} ({status})')
 
 
+def _cargo_afl_verdict(tool, executable, environ):
+    """Apply `tools.dev.fuzz.tools_rule`, the rule that `just fuzz` applies, to this cargo-afl.
+
+    The rule returns the accepted version line, or states the problem and the
+    setup step. Doctor compares no cargo-afl version itself."""
+    try:
+        found = fuzz.tools_rule(environ)
+    except fuzz.FuzzError as error:
+        raise DoctorError(f'{tool.name} at {executable} does not meet {tool.minimum}: {error}') from None
+    return f'{tool.name}: {found} at {executable} ({tool.minimum}: met)'
+
+
 # One row per tool. A minimum is the oldest version the repository has run
 # or documents. cargo-nextest enforces the nextest-version in .config/nextest.toml itself,
 # so its row asks it. uv enforces the required-version in uv.toml itself and has no row.
@@ -232,8 +246,9 @@ TOOLS = (
          'cargo install cargo-c --locked, or your distribution package'),
     Tool('cargo-deny', 'cargo-deny', ('--version',), _semver_format('cargo-deny'), CARGO_DENY_VERSION,
          f'cargo install cargo-deny --version {CARGO_DENY_VERSION} --locked'),
-    Tool('cargo-fuzz', 'cargo-fuzz', ('--version',), _semver_format('cargo-fuzz'), '0.13.2',
-         'cargo install cargo-fuzz --locked'),
+    Tool('cargo-afl', 'cargo-afl', ('afl', '--version'), _semver_format('cargo-afl'),
+         'the tools rule of `just fuzz`', fuzz.SETUP,
+         platform='linux', verdict=_cargo_afl_verdict),
     Tool('cargo-llvm-cov', 'cargo-llvm-cov', ('llvm-cov', '--version'), _semver_format('cargo-llvm-cov'),
          '0.9.0', 'cargo install cargo-llvm-cov --locked'),
     Tool('GNU ld', 'ld', ('--version',), Format(_parse_gnu_ld, _dotted_key), '2.42',

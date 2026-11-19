@@ -1,4 +1,3 @@
-#![no_main]
 //! Hostile bytes through the MemoryChunk phrase-library reader — the
 //! mmap'd per-library file `pinyin_init` opens sixteen of from a system
 //! directory a distro or a user wrote. `PhraseLibrary::open` must return
@@ -12,7 +11,6 @@
 
 use std::io::Write;
 
-use libfuzzer_sys::fuzz_target;
 use oxpinyin::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
 use oxpinyin::data::phrase_library::PhraseLibrary;
 
@@ -56,7 +54,12 @@ fn walk(library: &PhraseLibrary) -> Vec<(u32, Option<Vec<u32>>, usize, usize, u6
     rows
 }
 
-fuzz_target!(|payload: &[u8]| {
+fn main() {
+    oxpinyin_fuzz::run_once(run);
+}
+
+/// Runs one input.
+fn run(payload: &[u8]) {
     let path = scratch_path();
     write_chunk(&path, payload);
     let first = PhraseLibrary::open(&path).map(|lib| walk(&lib));
@@ -66,4 +69,4 @@ fuzz_target!(|payload: &[u8]| {
         (Err(_), Err(_)) => {}
         _ => panic!("open must be deterministic"),
     }
-});
+}

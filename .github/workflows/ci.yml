@@ -188,7 +188,7 @@ jobs:
         if: needs.changes.outputs.reuse != 'true'
       # Run on every selected rust job, including the main cache refresh.
       # The directory selects the nightly in fuzz/rust-toolchain.toml.
-      # No cargo-fuzz, corpus, sanitizer run or model data is needed.
+      # No AFL++, corpus, sanitizer run or model data is needed.
       - name: Install the fuzz toolchain
         working-directory: fuzz
         run: rustup toolchain install

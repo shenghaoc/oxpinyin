@@ -52,14 +52,24 @@ jobs:
     # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
     # move (26.04: actions/runner-images#14748) happens here under review.
     runs-on: &ubuntu ubuntu-26.04
-    # Two limits. The "Soak each target" step has 30: 7 targets at 180 s
-    # each soak for 21 min, and their builds add 1 to 3 min. The job has
-    # 10 more, for the steps before the soak (up to 4 min) and the upload
-    # after it. Add 3 to both numbers for each new target.
-    timeout-minutes: 40
+    # Two limits. The "Soak each target" step has 60: the target builds take
+    # up to 5 min, and each of the 7 targets runs under a FUZZ_GUARD_SECONDS
+    # (420 s) limit plus 30 s for the kill, 52.5 min in all. The guard holds
+    # FUZZ_SECONDS (180 s) of fuzzing and 240 s for afl-fuzz's start-up run,
+    # which calibrates every corpus input before the -V clock starts and
+    # grows with the cached corpus. The job has 25 more, for
+    # the steps before the soak (up to 15 min: LLVM, cargo-afl and the AFL++
+    # build) and the upload and cache save after it. The step limit is lower
+    # than the job limit, so an overrun fails the step and the crash upload
+    # still runs. Add 8 to both numbers for each new target.
+    timeout-minutes: 85
     defaults:
       run:
         shell: bash
+    env:
+      FUZZ_SECONDS: 180
+      FUZZ_GUARD_SECONDS: 420
+      AFL_NO_UI: 1
     steps:
       # The fuzz targets build the default tkrzw backend, which uses cxx;
       # only the bdb feature runs bindgen, so no libclang.
@@ -74,17 +84,34 @@ jobs:
         with:
           # The tkrzw action runs on the managed CPython.
           uv: 'true'
-          # One nightly toolchain serves both cargo-fuzz's build and the runs.
+          # The fuzz recipes (just fuzz-setup, just fuzz).
+          just: 'true'
+          # One nightly toolchain serves cargo-afl, its builds and the runs.
           # fuzz/rust-toolchain.toml names it, with rust-src. rustup reads that
-          # file for a command run in fuzz/, so each cargo step below runs
-          # there and no step names the nightly.
+          # file for a command run in fuzz/, so the fuzz recipes run there and
+          # no step names the nightly.
           rust-toolchain: 'true'
           rust-toolchain-dir: fuzz
       - name: Install tkrzw (vcpkg overlay and binary cache)
         uses: ./.github/actions/tkrzw
-      # Exact on purpose: cargo-fuzz passes unstable flags to the pinned nightly above, so the two move together.
-      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      # The AFL++ LLVM plugins load into the nightly's rustc, so they build
+      # against an LLVM of the same major version (llvm-config-<major>).
+      # Ubuntu's own archive carries it: fuzz/rust-toolchain.toml pins a
+      # nightly on LLVM 22. Without clang, AFL++ compiles the plugins with
+      # the system c++.
+      - name: Install the LLVM of the fuzz nightly (apt)
         working-directory: fuzz
+        run: |
+          major=$(rustc -vV | sed -n 's/^LLVM version: \([0-9]*\).*/\1/p')
+          sudo apt-get install -y --no-install-recommends "llvm-$major-dev"
+          "llvm-config-$major" --version
+      # afl-fuzz refuses a core_pattern that pipes crashes to a handler
+      # (apport on the runner), which delays crash reports past its waitpid.
+      - name: Let crashes reach afl-fuzz directly
+        run: echo core | sudo tee /proc/sys/kernel/core_pattern
+      # cargo-afl at the version of fuzz/tool-versions.env and the AFL++ it
+      # bundles, with the LLVM plugins.
+      - run: just fuzz-setup
       # Fuzzing memory, half one: the corpora persist across nightly runs
       # (latest-wins — the run-id key always misses so every run saves,
       # the prefix restore-key always loads the newest save), so a soak
@@ -128,10 +155,10 @@ jobs:
           [ "$status" -eq 0 ] || exit "$status"
           mkdir -p fuzz/corpus/dict-loader
           cp "${seeds[@]}" fuzz/corpus/dict-loader/
-          # dict-loader reads whole files. libFuzzer cuts a seed longer than
-          # -max_len, and the chunk length check then refuses the file before
-          # any decoding. The soak step gives this target alone a limit that
-          # admits its largest seed.
+          # dict-loader reads whole files. A mutation longer than its input
+          # limit is cut, and the chunk length check then refuses the file
+          # before any decoding. The soak step gives this target alone a
+          # limit (afl-fuzz -G) that admits its largest seed.
           largest=0
           for seed in "${seeds[@]}"; do
             size=$(($(wc -c < "$seed")))
@@ -147,7 +174,8 @@ jobs:
           tail -c +9 fixtures/w3/tkt/art.bin > fuzz/corpus/phrase-library/art.payload
           # capi-commands: one stream per operation that no mutation of an
           # empty corpus reaches soon (fuzz/fuzz_targets/capi_commands.rs
-          # gives the byte layout).
+          # gives the byte layout). just fuzz also copies fuzz/seeds/<target>;
+          # naming them here fails the step when one goes missing.
           mkdir -p fuzz/corpus/capi-commands
           cp "${capi_seeds[@]}" fuzz/corpus/capi-commands/
           # table-conf: libc scans the header, so no coverage feedback leads a
@@ -156,32 +184,37 @@ jobs:
           cp fixtures/w3/tkt/table.conf fuzz/corpus/table-conf/
       - name: Soak each target
         # Every target runs even if an earlier one fails; the accumulated
-        # status is the step's exit code. -print_final_stats leaves the
-        # coverage/edge counters in the log so a soak that explored
-        # nothing is visible as one, not just green.
-        working-directory: fuzz
+        # status is the step's exit code. just fuzz builds the target with
+        # the AFL++ LLVM plugins (CmpLog off), prints the instrumentation and
+        # LSAN_OPTIONS, runs afl-fuzz for FUZZ_SECONDS of fuzzing under the
+        # FUZZ_GUARD_SECONDS limit, prints afl-fuzz's statistics, and fails
+        # when afl-fuzz fails, stops on a seed issue, ran no input or saved a
+        # crash or a hang. New queue entries join fuzz/corpus, which the cache
+        # saves. actions/cache saves only when the job passes (post-if:
+        # success()), and the recipe removes no corpus file, so an input that
+        # stops afl-fuzz as a seed issue comes back the next night and fails
+        # again until the code is fixed.
         # Lower than the job limit: an overrun fails this step, so the
-        # crash upload below still runs. The job limit cancels the job,
-        # which skips that upload. The job's comment gives both numbers.
-        timeout-minutes: 30
+        # crash upload below still runs. The job's comment gives both numbers.
+        timeout-minutes: 60
+        # In fuzz/, rustup selects the fuzz nightly, the one toolchain here.
+        working-directory: fuzz
         run: |
-          mapfile -t targets < <(cargo fuzz list)
+          mapfile -t targets < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[].targets[] | select(.kind == ["bin"]) | .name')
           if [ "${#targets[@]}" -eq 0 ]; then
-            echo "::error::cargo fuzz list returned no targets"
+            echo "::error::fuzz/Cargo.toml lists no targets"
             exit 1
           fi
           status=0
           for target in "${targets[@]}"; do
             echo "::group::fuzz $target"
-            # The Seed step computed dict-loader's limit from its seeds.
+            # The Seed step computed dict-loader's input limit from its seeds.
             max_len=4096
             if [ "$target" = dict-loader ]; then
               max_len=$DICT_LOADER_MAX_LEN
             fi
-            # setarch -R disables ASLR for the process tree: runner
-            # kernels' mmap entropy exceeds ASan's shadow mapping
-            # (tools/dev/test_runner.py's sanitizer service does the same).
-            if ! setarch "$(uname -m)" -R cargo fuzz run "$target" -- -max_total_time=180 -timeout=15 -max_len="$max_len" -print_final_stats=1; then
+            if ! just fuzz "$target" -V "$FUZZ_SECONDS" -G "$max_len"; then
               status=1
               echo "::error::fuzz target $target failed"
             fi
@@ -189,15 +222,22 @@ jobs:
           done
           exit $status
       # Fuzzing memory, half two: a crash survives the runner as an
-      # artifact (cargo-fuzz writes crash-* inputs under
-      # fuzz/artifacts/<target>/), not as a log line that dies with the
-      # job.
+      # artifact, not as a log line that dies with the job. just fuzz gives
+      # each run its own directory, fuzz/out/<target>/<run>/: afl-fuzz writes
+      # crashing and hanging inputs under default/, and the recipe keeps a
+      # seed that crashes or times out in seed-issues/ and afl-fuzz's output
+      # in afl-fuzz.log.
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-artifacts
-          path: fuzz/artifacts/
+          path: |
+            fuzz/out/*/*/default/crashes/
+            fuzz/out/*/*/default/hangs/
+            fuzz/out/*/*/default/fuzzer_stats
+            fuzz/out/*/*/seed-issues/
+            fuzz/out/*/*/afl-fuzz.log
 
   # Latent-overflow lane: the release-optimized codepath with overflow
   # checks and debug assertions forced on — the "NDEBUG question" as CI,

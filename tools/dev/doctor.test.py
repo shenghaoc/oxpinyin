@@ -1,6 +1,9 @@
 """Unit tests for tools.dev.doctor."""
 from pathlib import Path
+import contextlib
+import io
 import json
+import os
 import re
 import sys
 import tempfile
@@ -160,7 +163,6 @@ SAMPLES = {
     'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.10.10', '0.10.11', '0.10.25'),
     # The minimum is the bootstrap action's version file, whatever it says.
     'cargo-deny': ('cargo-deny {}', '0.0.1', doctor.CARGO_DENY_VERSION, '999.0.0'),
-    'cargo-fuzz': ('cargo-fuzz {}', '0.13.1', '0.13.2', '0.14.0'),
     'cargo-llvm-cov': ('cargo-llvm-cov {}', '0.8.9', '0.9.0', '0.10.1'),
     'GNU ld': ('GNU ld (GNU Binutils for Debian) {}', '2.41', '2.42', '2.47'),
     'gcov': ('gcov (Debian 16.2.0-3) {}', '12.3.0', '13.0.0', '16.2.0'),
@@ -261,10 +263,71 @@ class ToolMinimumTests(ToolCase):
         self.assertEqual(doctor.cargo_tool_pins()['cargo-deny'], stated)
         self.assertIn(f'--version {stated}', deny.install)
 
+    def test_cargo_afl_applies_the_tools_rule_of_just_fuzz(self):
+        afl = tool('cargo-afl')
+        self.assertEqual((afl.install, afl.platform, afl.minimum),
+                         ('just fuzz-setup', 'linux', 'the tools rule of `just fuzz`'))
+        environ = {'PATH': '/tools'}
+        line = 'cargo-afl 0.18.2 (AFL++ version 4.40c with plugins)'
+        with mock.patch.object(doctor.shutil, 'which', return_value='/tools/x'), \
+                mock.patch.object(doctor.fuzz, 'tools_rule', return_value=line) as rule:
+            self.assertEqual(doctor.check_tool(afl, environ),
+                             f'cargo-afl: {line} at /tools/x (the tools rule of `just fuzz`: met)')
+        test_support.assert_calls(self, rule, [mock.call(environ)])
+        refused = doctor.fuzz.FuzzError("found 'cargo-afl 0.0.1', expected 'cargo-afl 0.18.2 "
+                                        "(AFL++ version <bundled> with plugins)'; run just fuzz-setup.")
+        with mock.patch.object(doctor.shutil, 'which', return_value='/tools/x'), \
+                mock.patch.object(doctor.fuzz, 'tools_rule', side_effect=refused), \
+                self.assertRaisesRegex(doctor.DoctorError, r"^cargo-afl at /tools/x does not meet the tools rule of "
+                                                           r"`just fuzz`: found 'cargo-afl 0\.0\.1', "
+                                                           r".*; run just fuzz-setup\.$"):
+            doctor.check_tool(afl, environ)
+
+    # The rule refuses before any build, but fuzz run applies it only on Linux, and
+    # the stub cargo is a POSIX shell script: this test is defined on Linux only.
+    if sys.platform.startswith('linux'):
+        def test_doctor_and_just_fuzz_refuse_the_same_cargo_afl(self):
+            # The real rule, with a stub cargo that prints a chosen version line. `fuzz run`
+            # applies the rule before it builds anything, so a refusal ends it at once.
+            pin = doctor.fuzz.read_tool_versions()['CARGO_AFL_VERSION']
+            with tempfile.TemporaryDirectory() as directory:
+                stub = Path(directory) / 'bin'
+                stub.mkdir()
+                for name in ('cargo', 'cargo-afl'):
+                    (stub / name).write_text('#!/bin/sh\n[ "$1 $2" = "afl --version" ] && echo "$STUB_AFL_VERSION"\n')
+                    (stub / name).chmod(0o755)
+                data = Path(directory) / 'data'
+                environ = dict(os.environ, PATH=f'{stub}{os.pathsep}{os.environ["PATH"]}', XDG_DATA_HOME=str(data))
+                accepted = f'cargo-afl {pin} (AFL++ version 4.40c with plugins)'
+                line = doctor.check_tool(tool('cargo-afl'), dict(environ, STUB_AFL_VERSION=accepted))
+                self.assertEqual(line, f'cargo-afl: {accepted} at {stub / "cargo-afl"} '
+                                       '(the tools rule of `just fuzz`: met)')
+                cases = {
+                    'a newer cargo-afl': 'cargo-afl 99.0.0 (AFL++ version 4.40c with plugins)',
+                    'an older cargo-afl': 'cargo-afl 0.0.1 (AFL++ version 4.40c with plugins)',
+                    'no plugins': f'cargo-afl {pin} (AFL++ version 4.40c)',
+                    'no cargo-afl': '',
+                    'a checkout left by cargo afl config --update': accepted,
+                }
+                for case, version in cases.items():
+                    with self.subTest(case=case):
+                        if case.startswith('a checkout'):
+                            (data / 'afl.rs/AFLplusplus/.git').mkdir(parents=True)
+                        probe = dict(environ, STUB_AFL_VERSION=version)
+                        with self.assertRaises(doctor.DoctorError) as refused:
+                            doctor.check_tool(tool('cargo-afl'), probe)
+                        self.assertRegex(str(refused.exception), r'run just fuzz-setup\.$')
+                        stderr = io.StringIO()
+                        with contextlib.redirect_stderr(stderr):
+                            self.assertEqual(doctor.fuzz.main(['run', 'no-such-target'], probe), 1)
+                        reason = str(refused.exception).split('`just fuzz`: ', 1)[1]
+                        self.assertEqual(stderr.getvalue(), f'fuzz: {reason}\n')
+                self.assertTrue((data / 'afl.rs/AFLplusplus/.git').is_dir())
+
     def test_linux_only_tools_are_skipped_elsewhere(self):
         linux_only = {candidate.name for candidate in doctor.TOOLS if candidate.platform == 'linux'}
-        self.assertEqual(linux_only, {'GNU ld', 'gcov', 'valgrind'})
-        reported = set(SAMPLES) | {'cargo-nextest'}
+        self.assertEqual(linux_only, {'GNU ld', 'gcov', 'valgrind', 'cargo-afl'})
+        reported = set(SAMPLES) | {'cargo-nextest', 'cargo-afl'}
         for platform_name, expected in (('darwin', reported - linux_only - {'pwsh'}),
                                         ('linux', reported - {'pwsh'})):
             with self.subTest(platform=platform_name), \
@@ -275,8 +338,10 @@ class ToolMinimumTests(ToolCase):
             self.assertEqual({line.split(':')[0] for line in lines}, expected)
 
     def test_tool_lines_collects_every_required_failure(self):
-        # nextest answers for itself, and its fake answer here is a success.
-        required = [candidate for candidate in VERSIONED if not candidate.platform]
+        # nextest answers for itself, and its fake answer, exit 0, is a success.
+        # cargo-afl is Linux-only, so it is not checked on darwin.
+        required = [candidate for candidate in doctor.TOOLS
+                    if 'darwin'.startswith(candidate.platform) and candidate.name != 'cargo-nextest']
         with mock.patch.object(doctor.sys, 'platform', 'darwin'), \
                 mock.patch.object(doctor.shutil, 'which', return_value='/tools/x'), \
                 mock.patch.object(doctor, '_run', return_value=completed('unrecognised version output')):
@@ -286,7 +351,7 @@ class ToolMinimumTests(ToolCase):
                          [f'FAIL: {failure}' for failure in failures])
 
 
-SEMVER_TOOLS = ('pwsh', 'cargo-c', 'cargo-fuzz', 'cargo-llvm-cov')
+SEMVER_TOOLS = ('pwsh', 'cargo-c', 'cargo-llvm-cov')
 
 
 def semver_line(subject, version):
@@ -315,7 +380,7 @@ def previous(minimum):
 
 
 class SemverToolTests(ToolCase):
-    """PowerShell, cargo-c, cargo-fuzz and cargo-llvm-cov print semantic versions
+    """PowerShell, cargo-c and cargo-llvm-cov print semantic versions
     (semver.org 2.0.0): a pre-release is older than the release it precedes, a pre-release of a
     newer release is newer than the minimum, and build metadata does not count."""
 

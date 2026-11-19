@@ -1,4 +1,3 @@
-#![no_main]
 //! Arbitrary mutation interleavings over the user store
 //! (`docs/testing/upstream-test-coverage.md`, "Fuzz harnesses"): no target mutated `UserStore`, so the
 //! add/remove/train/mask algebra had no hostile-sequence evidence.
@@ -25,7 +24,6 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use libfuzzer_sys::fuzz_target;
 use oxpinyin::data::table_info::TableConf;
 use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin::user::{
@@ -246,7 +244,12 @@ fn holds_foreign_token(store: &UserStore, text: &str) -> bool {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+fn main() {
+    oxpinyin_fuzz::run_once(run);
+}
+
+/// Runs one input.
+fn run(data: &[u8]) {
     let dir = fresh_dir();
     let mut store = open_session(dir.path());
 
@@ -458,4 +461,4 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(mut last) = LAST_PATH.lock() {
         *last = Some(dir);
     }
-});
+}

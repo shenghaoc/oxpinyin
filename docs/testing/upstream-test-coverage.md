@@ -168,10 +168,113 @@ The other targets feed hostile bytes to the parsers below the ABI:
 keyboards). `user-store-ops` drives arbitrary add, remove, train and mask-out
 interleavings over a fresh user directory.
 
-The nightly soak runs every target with cargo-fuzz 0.13.2 and its default
-`-s address` instrumentation. On Linux, this includes LeakSanitizer.
-`just fuzz <target>` runs one target locally. If an AFL++ lane is added, prefer a version-pinned tool
-over an ad-hoc build.
+### Engine
+
+The targets run under AFL++, as libchewing's fuzzer does: each target is an
+ordinary executable that reads one input from standard input, runs once and
+exits, and AFL++ starts it once per input through its forkserver. So a
+target holds no fuzzing-engine code, the fuzz workspace depends on no engine
+crate, and an input reproduces by running the executable with that input on
+standard input.
+
+- **Tooling.** `tools/dev/fuzz.py` holds the fuzz logic, and `just fuzz-setup`
+  and `just fuzz` are one-line recipes that call it
+  (`python -m tools.dev.fuzz setup` and `run`). Its tests,
+  `tools/dev/fuzz.test.py`, check the option refusals, the corpus rules and
+  the finding count without a fuzzer build.
+- **Build.** `just fuzz <target>` builds the target with cargo-afl,
+  AddressSanitizer and the AFL++ LLVM plugins (`afl-llvm-dict2file`,
+  `split-switches`, `SanitizerCoveragePCGUARD` and `afl-llvm-ijon`). CmpLog
+  is off by default. `FUZZ_CMPLOG=1` adds it: a second binary with the CmpLog
+  passes, run through `afl-fuzz -c`. Without the plugins the build fails; it
+  never falls back to plain sancov instrumentation. `cargo afl build` adds no
+  sanitizer: `just fuzz` sets `RUSTFLAGS=-Zsanitizer=address`, so rustc
+  instruments the crates and links its ASan runtime into the executable, and
+  cargo-afl appends its own flags. `--target` keeps build scripts and proc
+  macros out of the sanitizer. The build and the launch take the executable
+  from one place: cargo's target directory as `cargo metadata` reports it
+  (so `CARGO_TARGET_DIR` and `build.target-dir` apply), passed to the build
+  as `--target-dir`, with cargo's layout `<host>/release/<target>` below it.
+  The CmpLog binary is built and found the same way, under `cmplog/`.
+- **Crashes.** The fuzz workspace's release profile sets `panic = "abort"`, so
+  a panic, a failed assertion included, is a signal that AFL++ records as a
+  crash. A hang is an input that runs longer than the 15 s timeout.
+- **Seed issues.** By default afl-fuzz skips an initial input that crashes,
+  or one that times out when `-t` is given, and fuzzes on from the other
+  inputs, so the run passes. `just fuzz` sets `AFL_EXIT_ON_SEED_ISSUES=1`:
+  afl-fuzz stops on such an input, and the recipe fails and copies the queue
+  entry that afl-fuzz names into the run's `seed-issues/`. If it finds no such
+  entry, it still fails and says so. The input stays in the corpus: the
+  recipe never removes or renames a corpus file, and after a seed issue it
+  adds no queue entry to the corpus, so no second copy appears. The nightly
+  saves the corpus cache only when the job passes, so the input comes back
+  the next night and fails again until the code is fixed. It is also in the
+  uploaded `seed-issues/`.
+- **Findings.** Every file in `crashes/` or `hangs/` is a finding, except
+  AFL++'s `README.txt`, whatever its name: with `AFL_SHA1_FILENAMES=1`,
+  AFL++ names findings by hash, not `id:*`. Every queue entry joins the
+  corpus under its content name on the same terms, unless the corpus
+  already holds that content under any name. So a seed gets no second copy:
+  with `AFL_SHA1_FILENAMES=1`, afl-fuzz names each seed's queue entry by its
+  hash and stops on two seeds with the same content.
+- **Refused options.** The recipe feeds each input on standard input, runs
+  one afl-fuzz instance (`default/`) and supplies the target command. So it
+  refuses `-f`, any argument with `@@`, `-M`, `-S`, `--` and any other
+  argument that afl-fuzz would take as the target command. It reads the
+  arguments with afl-fuzz 4.40c's option string, so a value such as
+  `-x -f` is not taken for an option.
+- **Sanitizers.** `ASAN_OPTIONS` sets `abort_on_error=1`, so an ASan error
+  and a LeakSanitizer report at exit are both an abort, which AFL++ records
+  as a crash. `just fuzz` sets `LSAN_OPTIONS` explicitly. Without it,
+  afl-fuzz exports `fast_unwind_on_malloc=0` and `malloc_context_size=30`,
+  and every allocation takes the slow unwinder. LeakSanitizer is on.
+- **Isolation.** Each input is a new process. `oxpinyin_fuzz::run_once`
+  (`fuzz/src/lib.rs`) gives it a scratch `TMPDIR` and removes it afterwards,
+  so only an input that crashes leaves files behind.
+- **Runs.** Each run writes a new directory, `fuzz/out/<target>/<UTC
+  time>-<pid>/`, so a run never deletes the findings of an earlier one. In
+  a reused output directory, afl-fuzz deletes the earlier run's output,
+  findings included, when that run fuzzed for less than 25 minutes, and
+  refuses to start when it fuzzed longer.
+  Resuming the previous run (`AFL_AUTORESUME`) is not used: it reads the old
+  queue and not `fuzz/corpus/<target>`, so new seeds would not enter, and the
+  old crashes would fail every later run. Old run directories stay until you
+  delete them. afl-fuzz hard-links its seed queue entries to the corpus
+  files, so the recipe writes a seed into the corpus as a new file and renames
+  it over the old one: an earlier run's queue entry keeps its bytes. A run
+  directory holds afl-fuzz's output in `afl-fuzz.log`; through that pipe
+  afl-fuzz prints status lines, not its terminal UI.
+- **Versions.** `fuzz/tool-versions.env` states the cargo-afl version once.
+  AFL++ is the release that this cargo-afl bundles (4.40c for cargo-afl
+  0.18.2), so its version follows from the cargo-afl pin. `just fuzz-setup`
+  installs cargo-afl and builds that AFL++ with the plugins against an LLVM
+  of the fuzz nightly's major version (LLVM 22, `fuzz/rust-toolchain.toml`).
+  An AFL++ git checkout that `cargo afl config --update` left in cargo-afl's
+  data directory would be built in place of the bundled release, and it may
+  hold your own work. So `just fuzz-setup` and `just fuzz` refuse while one
+  exists and name the directory to remove; neither deletes it. One function,
+  `tools_rule` in `tools/dev/fuzz.py`, states the rule: the pinned cargo-afl,
+  with the plugins, and no such checkout. `just fuzz` applies it first, and
+  `just doctor` calls it, so the two accept the same installations and give
+  the same advice. The bundled AFL++ is Apache-2.0. It is a tool that
+  cargo-afl builds from source, and no shipping crate depends on it.
+- **Platforms.** Linux only, as in libchewing; AFL++ does not support
+  Windows. `just fuzz-setup` and `just fuzz` exist on every platform, and on
+  macOS and Windows `tools/dev/fuzz.py` refuses with one message. The setup
+  runbook's [fuzzing](../runbooks/setup.md#fuzzing) section gives the reason
+  and the route: a native Linux container of the host's own architecture.
+
+The nightly soak runs every target for 180 s of fuzzing (`afl-fuzz -V`,
+counted from the end of the start-up run that calibrates the corpus) with a
+per-target input limit, then fails on any crash or hang, on a target that ran
+no input, on a seed issue, and on a run that does not end within its time
+limit. On a failure it uploads each run's crashes, hangs, statistics,
+`seed-issues/` and `afl-fuzz.log`.
+`just fuzz <target> [afl-fuzz arguments]` runs one target locally: it fuzzes
+`fuzz/corpus/<target>`, copies the target's `fuzz/seeds/` into it, and
+writes findings to `fuzz/out/<target>/<run>/default/`.
+
+### Postconditions
 
 For valid command sequences, the contract tests in
 `capi/tests/it/contract.rs` hold the postconditions:

@@ -126,7 +126,7 @@ The applicable test kinds are:
 
 - Curated goldens.
 - Property tests with `proptest` for totality and determinism.
-- Fuzz tests with `cargo-fuzz`, from W1.
+- Fuzz tests with AFL++ (`just fuzz`), from W1.
 - Hard-kill crash-path tests on all operating systems.
 - Differentials against frozen captures of pinned libpinyin.
 

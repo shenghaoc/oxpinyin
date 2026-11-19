@@ -1,4 +1,3 @@
-#![no_main]
 //! Hostile bytes through `table.conf` as `pinyin_init` reads it: the pin's
 //! own scanner calls (`oxpinyin`) and `TableConf::load`'s decoding of
 //! what they answered. The load must answer on every input, never panic,
@@ -7,7 +6,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use libfuzzer_sys::fuzz_target;
 use oxpinyin::data::table_info::TableConf;
 
 /// One scratch file per fuzzing process: the scanner reads a `FILE *`.
@@ -18,7 +16,12 @@ fn scratch() -> &'static Path {
     })
 }
 
-fuzz_target!(|data: &[u8]| {
+fn main() {
+    oxpinyin_fuzz::run_once(run);
+}
+
+/// Runs one input.
+fn run(data: &[u8]) {
     let path = scratch();
     if std::fs::write(path, data).is_err() {
         return;
@@ -31,4 +34,4 @@ fuzz_target!(|data: &[u8]| {
         format!("{second:?}"),
         "load must be deterministic"
     );
-});
+}
