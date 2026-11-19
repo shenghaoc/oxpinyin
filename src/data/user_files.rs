@@ -1,26 +1,14 @@
-//! The user directory's file inventory and its two text/record codecs.
+//! User profile filenames and codecs. All three database backends use `user_bigram.db`
+//! for the hash database and `user_pinyin_index.bin` and `user_phrase_index.bin` for the
+//! tree indexes. The configured library rows name the individual chunks and change logs.
+//! [`UserTableInfo`] reads and writes the text marker `user.conf`.
 //!
-//! The pin's `pinyin_init`/`pinyin_save` read and write a fixed file set
-//! in the user dir (`src/pinyin.cpp`'s `_write_files`/`_rename_files`,
-//! `pinyin_internal.h:55-66`, the per-library user filenames in
-//! `data/table.conf.in`):
-//!
-//! | file | container | writer |
-//! |---|---|---|
-//! | `user_bigram.db` | the build DBM's **hash** | `Bigram::save_db` |
-//! | `user_pinyin_index.bin` | the build DBM's **tree** (despite the extension) | `ChewingLargeTable2::save_db` |
-//! | `user_phrase_index.bin` | the build DBM's tree | `PhraseLargeTable3::save_db` |
-//! | `user.bin`, `addon.bin`, `network.bin` | `MemoryChunk` images (the `USER_FILE` sub-indexes 7, 5, 6) | `FacadePhraseIndex::store` |
-//! | `gb_char.dbin`, `gbk_char.dbin`, `opengram.dbin`, `merged.dbin` | `MemoryChunk` images of `PhraseIndexLogger` records (the `SYSTEM_FILE` libraries' diffs) | `FacadePhraseIndex::diff` |
-//! | `user.conf` | text | `UserTableInfo::save` |
-//!
-//! On the two backends libpinyin itself builds against (Kyoto Cabinet,
-//! tkrzw) the DBM names are libpinyin's own, so a same-backend pair is
-//! byte-compatible in both directions.
-//! live in that backend's container under `<stem>.<ext>` — a libpinyin
-//! those backends never had, which [`UserTableInfo`]'s `database format`
-//! conformance line records explicitly: nothing upstream ships can read
-//! those files, and a same-backend oxpinyin pair is what stays conform.
+//! In the stock configuration, `user.bin`, `addon.bin` and `network.bin` contain whole
+//! user libraries. `gb_char.dbin`, `gbk_char.dbin`, `opengram.dbin` and `merged.dbin`
+//! contain changes to system libraries. The profile marker is plain text.
+
+// _write_files and _rename_files in pinyin.cpp; fixed names in pinyin_internal.h:55–66
+// and stock rows in data/table.conf.in:8–28.
 
 #[cfg(test)]
 use crate::data::chunk_format::CHUNK_HEADER_SIZE;
@@ -196,9 +184,11 @@ pub struct UserFileLayout {
 }
 
 impl UserFileLayout {
-    /// The layout every libpinyin install ships: `addon.bin`,
-    /// `network.bin`, `user.bin` for sub-indices 5–7 and the four `.dbin`
-    /// logs for 1–4.
+    /// The stock profile layout: `addon.bin`, `network.bin` and `user.bin`
+    /// for sub-indices 5–7, and four `.dbin` logs for 1–4.
+    ///
+    /// An installed `table.conf` can name different files;
+    /// [`Self::from_conf`] builds the layout for that configuration.
     #[must_use]
     pub fn stock() -> Self {
         Self::from_conf(&crate::data::table_info::TableConf::stock())
@@ -364,17 +354,17 @@ impl UserTableInfo {
         }
     }
 
-    /// `UserTableInfo::load(filename)` (`table_info.cpp:325-375`).
-    ///
-    /// A missing `database format:` value (the directive ran into the end
-    /// of input) is `UNKNOWN_FORMAT`; a counter that does not convert is 0
-    /// (`:356-359`).
+    // UserTableInfo::load, table_info.cpp:325–375. The caller handles the pin’s
+    // unknown-format abort; the counter conversion is at 356–359.
+    /// Reads format versions, the database format and the open counter from the user marker.
+    /// A missing database-format value at end of input leaves the format unspecified.
+    /// Otherwise the file must contain the `database format:` directive.
     ///
     /// # Errors
     ///
-    /// [`UserConfError::Unopenable`] and [`UserConfError::Line`] are the
-    /// load's `false` (the pin's open line has been written for the first).
-    /// [`UserConfError::UnknownDatabaseFormat`] is the abort point.
+    /// [`UserConfError::Unopenable`] reports an open failure, [`UserConfError::Line`] a
+    /// required field that could not be read, and [`UserConfError::UnknownDatabaseFormat`] an
+    /// unrecognized format name.
     pub fn load(filename: &(impl crate::input::FileName + ?Sized)) -> Result<Self, UserConfError> {
         let input = UserTableInfoReader::open(filename).map_err(|_| UserConfError::Unopenable)?;
         Self::read(input)

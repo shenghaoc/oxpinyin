@@ -51,13 +51,9 @@ impl SystemDbm {
     }
 }
 
-/// The four system libraries by nibble and base name — `table.conf`'s
-/// `default …_DICTIONARY` rows.
-///
-/// The base name is the library's identity
-/// across the whole pipeline: `<name>.table` is its model20 source,
-/// `<name>.bin` its chunk file (`SYSTEM_LIBRARY_FILES`); `gen_binary_files`
-/// compiles the first into the second.
+// Default SYSTEM_FILE entries, data/table.conf.in:8–28.
+/// Stock system-library indices and base names. An installed configuration can select
+/// other rows.
 pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
     (1, "gb_char"),
     (2, "gbk_char"),
@@ -65,9 +61,9 @@ pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
     (4, "merged"),
 ];
 
-/// The twelve addon libraries by addon index and base name —
-/// `table.conf`'s `addon N …` rows; see [`SYSTEM_LIBRARY_NAMES`] for what
-/// the name addresses.
+// Addon rows, data/table.conf.in:8–28.
+/// Stock addon-library indices and base names. See [`SYSTEM_LIBRARY_NAMES`] for the
+/// default dictionary’s stock libraries.
 pub const ADDON_LIBRARY_NAMES: &[(u8, &str)] = &[
     (4, "art"),
     (5, "culture"),
