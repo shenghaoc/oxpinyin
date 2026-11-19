@@ -13,8 +13,8 @@ use crate::types::{PinyinContext, PinyinInstance};
 /// pinyin_instance_t * pinyin_alloc_instance(pinyin_context_t * context);
 /// ```
 ///
-/// Returns NULL on failure, on a null context and on a context that
-/// `pinyin_fini` already finalised (register row 60).
+/// Returns NULL on failure and on a null context. A non-null `context` must be a live context,
+/// as the [crate-level handle rule](crate#safety) states.
 ///
 /// # Safety
 ///
@@ -78,7 +78,8 @@ pub unsafe extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *m
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
-/// applies. After the call `instance` is dangling, and so is every pointer borrowed from it.
+/// applies. After the call `instance` is dangling, as are its candidate rows and their strings.
+/// Key and key-rest getters use separate static storage.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
     if instance.is_null() {

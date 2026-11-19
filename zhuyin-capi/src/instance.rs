@@ -25,8 +25,7 @@ pub unsafe extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *
         return ptr::null_mut();
     }
     // A finalised context is freed memory the pin reads
-    // (`zhuyin.cpp:845-857`): class (b), answered NULL without a log
-    // (register row 60).
+    // (`zhuyin.cpp:845-857`): class (b), answered NULL without a log.
     if !crate::live::is_live(context) {
         return ptr::null_mut();
     }
@@ -48,7 +47,8 @@ pub unsafe extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
-/// applies. After the call `instance` is dangling, and so is every pointer borrowed from it.
+/// applies. After the call `instance` is dangling, as are its candidate rows and their strings.
+/// Key and key-rest getters use separate static storage.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zhuyin_free_instance(instance: *mut ZhuyinInstance) {
     if instance.is_null() {
