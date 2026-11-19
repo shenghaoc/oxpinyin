@@ -422,6 +422,118 @@ fn bigram_export_aborts_at_a_short_predecessor_before_a_partial_one() {
     );
 }
 
+/// A private system whose library 1 holds 你 under a valid key and 好 under
+/// `key`, and a profile whose user bigram holds 你's gram: the items that
+/// `successors` makes from the two tokens, 你 then 好. Answers the context.
+fn key_outside_the_table_fixture(
+    scratch: &std::path::Path,
+    user_dir: &std::path::Path,
+    key: u16,
+    successors: impl FnOnce(u32, u32) -> Vec<(u32, u32)>,
+) -> *mut crate::support::PinyinContext {
+    let system = crate::support::items_system(
+        &system_dir(),
+        scratch,
+        &[(&[0x4f60], &[0x1081], 100), (&[0x597d], &[key], 100)],
+        1000,
+    );
+    let (good, bad) = (0x0100_0001_u32, 0x0100_0002_u32);
+    let items = successors(good, bad);
+    let total = items.iter().map(|(_, count)| count).sum();
+    crate::support::plant_bigram(
+        user_dir,
+        vec![(
+            good.to_le_bytes().to_vec(),
+            crate::support::gram_bytes(total, &items),
+        )],
+    );
+    crate::support::init_at(&system, user_dir)
+}
+
+/// `pinyin.cpp:846`, `:859` → `chewing_key.cpp:47-50`, `:29-32`: the
+/// `has_next` that loads a pair renders both items' stored keys through
+/// `get_pinyin_string`, which asserts the tone and then the fields. The
+/// first `has_next` loads the gram and answers `false` (register row 36);
+/// the second loads the pair and dies.
+#[rstest::rstest]
+#[case::tone("tone", 0x6081)]
+#[case::fields("fields", 0x109f)]
+fn bigram_has_next_aborts_on_a_stored_key_outside_the_table(#[case] case: &str, #[case] key: u16) {
+    crate::support::assert_aborts(
+        &format!(
+            "import_export::bigram_has_next_aborts_on_a_stored_key_outside_the_table::case_{}_{case}",
+            if case == "tone" { 1 } else { 2 }
+        ),
+        || {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let user_dir = TempUserDir::new("export-key-has-next");
+            let context =
+                key_outside_the_table_fixture(scratch.path(), &user_dir.path, key, |_, bad| {
+                    vec![(bad, 100)]
+                });
+            let iter = unsafe { crate::support::pinyin_begin_get_bigram_phrases(context) };
+            assert!(!unsafe { crate::support::pinyin_bigram_iterator_has_next_phrase(iter) });
+            let _ = unsafe { crate::support::pinyin_bigram_iterator_has_next_phrase(iter) };
+        },
+    );
+}
+
+/// The same assert inside `get_next`: the pin writes the row's phrase,
+/// pinyin and count (`pinyin.cpp:904-906`), advances, and only then runs the
+/// `has_next` that loads the next pair and dies on its key (`:910`, `:859`).
+/// The out-params live in a page shared with the child, so the writes are
+/// read back after the abort.
+// Unix only: the out-params live in a page shared through `mmap(MAP_SHARED)` (`assert_aborts_sharing`).
+#[cfg(unix)]
+#[test]
+fn bigram_get_next_writes_its_row_before_the_key_assert_aborts() {
+    let slot = std::mem::size_of::<usize>();
+    let sentinel = vec![0xAB; 2 * slot + 4];
+    let page = crate::support::assert_aborts_sharing(
+        "import_export::bigram_get_next_writes_its_row_before_the_key_assert_aborts",
+        &sentinel,
+        |page| {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let user_dir = TempUserDir::new("export-row-then-key");
+            let context = key_outside_the_table_fixture(
+                scratch.path(),
+                &user_dir.path,
+                0x6081,
+                |good, bad| vec![(good, 100), (bad, 100)],
+            );
+            let iter = unsafe { crate::support::pinyin_begin_get_bigram_phrases(context) };
+            assert!(!unsafe { crate::support::pinyin_bigram_iterator_has_next_phrase(iter) });
+            assert!(unsafe { crate::support::pinyin_bigram_iterator_has_next_phrase(iter) });
+            // SAFETY: two pointer slots then a `c_int`, aligned in the page.
+            let (phrase, pinyin, count) = unsafe {
+                (
+                    page.cast::<*mut crate::support::GChar>(),
+                    page.add(slot).cast::<*mut crate::support::GChar>(),
+                    page.add(2 * slot).cast::<std::os::raw::c_int>(),
+                )
+            };
+            unsafe {
+                crate::support::pinyin_bigram_iterator_get_next_phrase(iter, phrase, pinyin, count)
+            };
+        },
+    );
+    let pointer = |at: usize| &page[at..at + slot];
+    assert!(
+        pointer(0) != &sentinel[..slot] && pointer(0).iter().any(|&b| b != 0),
+        "phrase written"
+    );
+    assert!(
+        pointer(slot) != &sentinel[..slot] && pointer(slot).iter().any(|&b| b != 0),
+        "pinyin written"
+    );
+    assert_eq!(
+        std::os::raw::c_int::from_ne_bytes(
+            page[2 * slot..2 * slot + 4].try_into().expect("4 bytes")
+        ),
+        200
+    );
+}
+
 /// Row 98 (class (b)) on the export walk: the walk ends with one warning
 /// where it loads the partial value, after the rows before it.
 #[test]

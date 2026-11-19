@@ -8,7 +8,7 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use oxpinyin::OptionBits;
-use oxpinyin::facade::{BigramExportWalk, BigramStep, ExportStep};
+use oxpinyin::facade::{BigramExportWalk, BigramProbeFault, BigramStep, ExportStep, GramLoadFault};
 use oxpinyin::graph::SegmentGraph;
 use oxpinyin::user::{PinyinKey, toned_key};
 
@@ -621,6 +621,11 @@ pub unsafe extern "C" fn pinyin_begin_get_bigram_phrases(
 /// Prepare the next readable row. Returns false for a null iterator, exhaustion, or a refused
 /// predecessor read.
 ///
+/// # Aborts
+///
+/// A stored key of the pair this call loads that is outside the table aborts in this call
+/// (`pinyin.cpp:846`, `:859`; `chewing_key.cpp:47-50`, `:29-32`).
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `iter` is a handle. The serial-calls rule
@@ -651,12 +656,17 @@ pub unsafe extern "C" fn pinyin_bigram_iterator_has_next_phrase(
 /// predecessor too short for its total, where `retrieve_all`'s assert dies
 /// and so does the process; class (b), register row 98, `ngram.cpp:133-143`,
 /// a partial item tail `retrieve_all` reads past, where the walk ends with
-/// one warning and `false`.
-fn walk_answer(more: Result<bool, oxpinyin::facade::GramLoadFault>, name: &str) -> bool {
+/// one warning and `false`; and a stored key of the loaded pair outside the
+/// table, where `get_pinyin_string` asserts inside the pin's `has_next`
+/// (`pinyin.cpp:846`, `:859`; the tone at `chewing_key.cpp:48`, then the
+/// fields at `:30-32`) and the process dies.
+fn walk_answer(more: Result<bool, BigramProbeFault>, name: &str) -> bool {
     match more {
         Ok(more) => more,
-        Err(oxpinyin::facade::GramLoadFault::ShortTotal { .. }) => std::process::abort(),
-        Err(oxpinyin::facade::GramLoadFault::PartialTail { .. }) => {
+        Err(
+            BigramProbeFault::Key(_) | BigramProbeFault::Gram(GramLoadFault::ShortTotal { .. }),
+        ) => std::process::abort(),
+        Err(BigramProbeFault::Gram(GramLoadFault::PartialTail { .. })) => {
             crate::ffi::log_warning(&format!(
                 "{name}: a user bigram value has a partial item tail \
                  (upstream reads past it, ngram.cpp:133-143)"
@@ -682,7 +692,10 @@ fn walk_answer(more: Result<bool, oxpinyin::facade::GramLoadFault>, name: &str) 
 ///
 /// # Aborts
 ///
-/// Reading without a prepared predecessor can abort (`pinyin.cpp:902`).
+/// Reading without a prepared predecessor can abort (`pinyin.cpp:902`). The trailing check for
+/// another row aborts when a stored key of the pair it loads is outside the table
+/// (`pinyin.cpp:846`, `:859`; `chewing_key.cpp:47-50`, `:29-32`). That abort comes after this
+/// call has written the current row's outputs (`pinyin.cpp:904-906`, `:910`).
 ///
 /// # Safety
 ///
