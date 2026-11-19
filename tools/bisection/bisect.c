@@ -2,8 +2,8 @@
  * bisect.c — three-subject ABI bisection fixture.
  *
  * Loads a pinyin shared object (libpinyin.so or liboxpinyin_capi.so) via
- * dlopen and runs its measurement modes: --perf, --perf-sentence,
- * --perf-typing-sequence and --teardown.
+ * dlopen and runs its measurement modes: --perf, --perf-sentence and
+ * --perf-typing-sequence.
  *
  * Usage:
  *   ./bisect --perf <path-to-so> <systemdir>   # perf/RAM JSON line
@@ -64,8 +64,6 @@
 #define PERF_EVENT_IOC_RESET 0
 #endif
 
-#include "driver-common.h"
-
 /* Callgrind client requests bracket each measured unit.
  * Valgrind's own header defines them; a build without it gets no-ops, and a
  * Callgrind run of that build then counts nothing, which the recipes refuse. */
@@ -84,8 +82,6 @@ typedef void pinyin_context_t;
 typedef void pinyin_instance_t;
 typedef void lookup_candidate_t;
 typedef void ChewingKeyRest;
-typedef void import_iterator_t;
-typedef void export_iterator_t;
 typedef void bigram_export_iterator_t;
 
 /* ── Scalar types (match pinyin.h / glib) ─────────────────────────────── */
@@ -125,7 +121,7 @@ typedef enum {
     PREDICTED_PUNCTUATION_CANDIDATE = 8,
 } lookup_candidate_type_t;
 
-/* ── Function pointer types for all 51 live symbols ───────────────────── */
+/* ── Function pointer types ───────────────────────────────────────────── */
 
 /* 1a. Context lifecycle */
 typedef pinyin_context_t *  (*fn_pinyin_init)(const char *, const char *);
@@ -138,13 +134,10 @@ typedef bool (*fn_pinyin_set_options)(pinyin_context_t *, pinyin_option_t);
 typedef bool (*fn_pinyin_set_double_pinyin_scheme)(pinyin_context_t *, int);
 typedef bool (*fn_pinyin_set_zhuyin_scheme)(pinyin_context_t *, int);
 typedef bool (*fn_pinyin_load_addon_phrase_library)(pinyin_context_t *, uint8_t);
-typedef bool (*fn_pinyin_save)(pinyin_context_t *);
 
 /* 1c. Parsing */
 typedef size_t   (*fn_pinyin_parse_more_full_pinyins)(pinyin_instance_t *, const char *);
 typedef size_t   (*fn_pinyin_parse_more_double_pinyins)(pinyin_instance_t *, const char *);
-typedef size_t   (*fn_pinyin_parse_more_chewings)(pinyin_instance_t *, const char *);
-typedef size_t   (*fn_pinyin_get_parsed_input_length)(pinyin_instance_t *);
 typedef bool (*fn_pinyin_in_chewing_keyboard)(pinyin_instance_t *, char, gchar ***);
 
 /* 1d. Sentence / guess */
@@ -186,15 +179,8 @@ typedef bool (*fn_pinyin_get_chewing_auxiliary_text)(pinyin_instance_t *, size_t
 /* 1j. User data */
 typedef bool           (*fn_pinyin_mask_out)(pinyin_context_t *, phrase_token_t, phrase_token_t);
 typedef bool           (*fn_pinyin_remember_user_input)(pinyin_instance_t *, const char *, gint);
-typedef import_iterator_t *(*fn_pinyin_begin_add_phrases)(pinyin_context_t *, uint8_t);
-typedef bool           (*fn_pinyin_iterator_add_phrase)(import_iterator_t *, const char *, const char *, gint);
-typedef void               (*fn_pinyin_end_add_phrases)(import_iterator_t *);
 
-/* 1k. Phrase / bigram export */
-typedef export_iterator_t *(*fn_pinyin_begin_get_phrases)(pinyin_context_t *, guint);
-typedef bool           (*fn_pinyin_iterator_has_next_phrase)(export_iterator_t *);
-typedef bool           (*fn_pinyin_iterator_get_next_phrase)(export_iterator_t *, gchar **, gchar **, gint *);
-typedef void               (*fn_pinyin_end_get_phrases)(export_iterator_t *);
+/* 1k. Bigram export */
 typedef bigram_export_iterator_t *(*fn_pinyin_begin_get_bigram_phrases)(pinyin_context_t *);
 typedef bool           (*fn_pinyin_bigram_iterator_has_next_phrase)(bigram_export_iterator_t *);
 typedef bool           (*fn_pinyin_bigram_iterator_get_next_phrase)(bigram_export_iterator_t *, gchar **, gchar **, gint *);
@@ -213,12 +199,9 @@ struct symbols {
     fn_pinyin_set_double_pinyin_scheme   set_double_pinyin_scheme;
     fn_pinyin_set_zhuyin_scheme          set_zhuyin_scheme;
     fn_pinyin_load_addon_phrase_library  load_addon_phrase_library;
-    fn_pinyin_save                       save;
     /* 1c */
     fn_pinyin_parse_more_full_pinyins    parse_full;
     fn_pinyin_parse_more_double_pinyins  parse_double;
-    fn_pinyin_parse_more_chewings        parse_chewing;
-    fn_pinyin_get_parsed_input_length    get_parsed_input_length;
     fn_pinyin_in_chewing_keyboard        in_chewing_keyboard;
     /* 1d */
     fn_pinyin_guess_sentence             guess_sentence;
@@ -253,14 +236,7 @@ struct symbols {
     /* 1j */
     fn_pinyin_mask_out                  mask_out;
     fn_pinyin_remember_user_input       remember_user_input;
-    fn_pinyin_begin_add_phrases         begin_add_phrases;
-    fn_pinyin_iterator_add_phrase       iterator_add_phrase;
-    fn_pinyin_end_add_phrases           end_add_phrases;
     /* 1k */
-    fn_pinyin_begin_get_phrases              begin_get_phrases;
-    fn_pinyin_iterator_has_next_phrase        iterator_has_next;
-    fn_pinyin_iterator_get_next_phrase        iterator_get_next;
-    fn_pinyin_end_get_phrases                end_get_phrases;
     fn_pinyin_begin_get_bigram_phrases       begin_get_bigram;
     fn_pinyin_bigram_iterator_has_next_phrase bigram_has_next;
     fn_pinyin_bigram_iterator_get_next_phrase bigram_get_next;
@@ -270,6 +246,16 @@ struct symbols {
 /* ── Symbol resolution ────────────────────────────────────────────────── */
 
 #ifndef _WIN32
+/* Count every missing symbol so the caller can report all gaps. */
+static inline void *dc_resolve(void *handle, const char *name, int *missing) {
+    void *symbol = dlsym(handle, name);
+    if (!symbol) {
+        fprintf(stderr, "  MISSING: %s\n", name);
+        (*missing)++;
+    }
+    return symbol;
+}
+
 #define RESOLVE(handle, table, field, name) \
     ((table).field = (typeof((table).field))dc_resolve(handle, name, &missing))
 
@@ -821,12 +807,13 @@ static bool user_dir_template(char *path, size_t capacity, const char *prefix) {
 }
 
 static int run_perf_mode(int argc, char **argv) {
-    if (argc < 4) {
+    const char *mode = getenv("PERF_MODE");
+    if (argc < 4 || (mode && strcmp(mode, "speed") != 0 && strcmp(mode, "rss-diag") != 0)) {
         fprintf(stderr,
                 "Usage: %s --perf <path-to-so> <systemdir>\n"
                 "  Environment: PERF_BACKEND (label), PERF_FACADE\n"
                 "    (pinyin|zhuyin, default pinyin), PERF_MODE\n"
-                "    (speed|ram-init|ram-cycle|rss-diag), PERF_CYCLES\n"
+                "    (speed|rss-diag), PERF_CYCLES\n"
                 "    (default 8), PERF_REPEATS (corpus passes per cycle,\n"
                 "    default 1), PERF_WORKLOAD_CHECKSUM (emit the cycle\n"
                 "    return/count fingerprint when non-empty). rss-diag\n"
@@ -845,7 +832,6 @@ static int run_perf_mode(int argc, char **argv) {
     const char *system_dir = argv[3];
 
     const char *backend    = getenv("PERF_BACKEND");
-    const char *mode       = getenv("PERF_MODE");
     const char *facade     = getenv("PERF_FACADE");
     const char *checksum_env = getenv("PERF_WORKLOAD_CHECKSUM");
     int cycles             = perf_env_count("PERF_CYCLES", 8);
@@ -957,7 +943,6 @@ static int run_perf_mode(int argc, char **argv) {
         goto cleanup_instance;
     }
 
-    bool run_cycles = strcmp(mode, "ram-init") != 0;
     uint64_t *cycle_ns = NULL, *cycle_cpu_ns = NULL;
     struct perf_memory after_first, after_last;
     int hw_wanted = getenv("PERF_HW") != NULL;
@@ -965,78 +950,76 @@ static int run_perf_mode(int argc, char **argv) {
     uint64_t hw_instructions = 0;
     uint64_t workload_checksum = 1469598103934665603ULL;
 
-    if (run_cycles) {
-        cycle_ns = calloc((size_t)cycles, sizeof *cycle_ns);
-        cycle_cpu_ns = calloc((size_t)cycles, sizeof *cycle_cpu_ns);
-        if (!cycle_ns || !cycle_cpu_ns) {
-            fprintf(stderr, "fatal: calloc cycle_ns failed\n");
+    cycle_ns = calloc((size_t)cycles, sizeof *cycle_ns);
+    cycle_cpu_ns = calloc((size_t)cycles, sizeof *cycle_cpu_ns);
+    if (!cycle_ns || !cycle_cpu_ns) {
+        fprintf(stderr, "fatal: calloc cycle_ns failed\n");
+        goto cleanup_cycles;
+    }
+
+    uint64_t expected = 0;
+    for (size_t i = 0; i < N_PERF_CYCLE_INPUTS; i++)
+        expected += strlen(PERF_CYCLE_INPUTS[i]);
+    expected *= (uint64_t)repeats;
+
+    /* Callgrind boundary for the hardware instruction counter: cycles
+     * 1..n-1, enabled and disabled around the steady anchor call, so
+     * the counted region is the one the callgrind toggle collects. */
+    if (hw_wanted) {
+        hw_fd = (int)perf_open_instruction_counter();
+        if (hw_fd < 0) {
+            hw_errno = errno;
+            fprintf(stderr,
+                    "perf_event_open: %s (errno %d) — this run "
+                    "carries no hardware instruction counts\n",
+                    strerror(hw_errno), hw_errno);
+        }
+    }
+
+    for (int i = 0; i < cycles; i++) {
+        uint64_t sink_before = perf_sink;
+        if (i > 0 && hw_fd >= 0)
+            (void)ioctl(hw_fd, PERF_EVENT_IOC_ENABLE, 0);
+        /* The CPU reads sit outside the wall-clock reads, so wall time is
+         * unchanged; with PERF_HW the counter also sees their user half. */
+        uint64_t cpu_start = cpu_ns();
+        uint64_t start = now_ns();
+        /* Cycle 0 is the cold one and goes through its own anchor, so a
+         * callgrind toggle on the steady anchor never sees it. */
+        perf_sink ^= (i == 0)
+                         ? bisect_perf_cold_unit(&sym, inst, repeats)
+                         : bisect_perf_steady_unit(&sym, inst, repeats);
+        uint64_t end = now_ns();
+        uint64_t cpu_end = cpu_ns();
+        /* Outside the timer: retain the existing cycle's return/count
+         * fingerprint without XOR-cancelling an even number of cycles.
+         * Full observable equivalence still belongs to contract-diff. */
+        workload_checksum ^= sink_before ^ perf_sink;
+        workload_checksum *= 1099511628211ULL;
+        if (i > 0 && hw_fd >= 0) {
+            uint64_t counted = 0;
+
+            (void)ioctl(hw_fd, PERF_EVENT_IOC_DISABLE, 0);
+            if (read(hw_fd, &counted, sizeof counted) == (ssize_t)sizeof counted) {
+                hw_instructions += counted;
+                hw_cycles++;
+            }
+            /* read() does not reset the counter and enable/disable do
+             * not zero it either: without this RESET every later read
+             * would return the running total again and the sum below
+             * would double-count earlier cycles. */
+            (void)ioctl(hw_fd, PERF_EVENT_IOC_RESET, 0);
+        }
+        if (measure_failed || measure_operations != expected * (uint64_t)(i + 1)) {
+            fputs("fatal: incomplete perf workload\n", stderr);
             goto cleanup_cycles;
         }
-
-        uint64_t expected = 0;
-        for (size_t i = 0; i < N_PERF_CYCLE_INPUTS; i++)
-            expected += strlen(PERF_CYCLE_INPUTS[i]);
-        expected *= (uint64_t)repeats;
-
-        /* Callgrind boundary for the hardware instruction counter: cycles
-         * 1..n-1, enabled and disabled around the steady anchor call, so
-         * the counted region is the one the callgrind toggle collects. */
-        if (hw_wanted) {
-            hw_fd = (int)perf_open_instruction_counter();
-            if (hw_fd < 0) {
-                hw_errno = errno;
-                fprintf(stderr,
-                        "perf_event_open: %s (errno %d) — this run "
-                        "carries no hardware instruction counts\n",
-                        strerror(hw_errno), hw_errno);
-            }
-        }
-
-        for (int i = 0; i < cycles; i++) {
-            uint64_t sink_before = perf_sink;
-            if (i > 0 && hw_fd >= 0)
-                (void)ioctl(hw_fd, PERF_EVENT_IOC_ENABLE, 0);
-            /* The CPU reads sit outside the wall-clock reads, so wall time is
-             * unchanged; with PERF_HW the counter also sees their user half. */
-            uint64_t cpu_start = cpu_ns();
-            uint64_t start = now_ns();
-            /* Cycle 0 is the cold one and goes through its own anchor, so a
-             * callgrind toggle on the steady anchor never sees it. */
-            perf_sink ^= (i == 0)
-                             ? bisect_perf_cold_unit(&sym, inst, repeats)
-                             : bisect_perf_steady_unit(&sym, inst, repeats);
-            uint64_t end = now_ns();
-            uint64_t cpu_end = cpu_ns();
-            /* Outside the timer: retain the existing cycle's return/count
-             * fingerprint without XOR-cancelling an even number of cycles.
-             * Full observable equivalence still belongs to contract-diff. */
-            workload_checksum ^= sink_before ^ perf_sink;
-            workload_checksum *= 1099511628211ULL;
-            if (i > 0 && hw_fd >= 0) {
-                uint64_t counted = 0;
-
-                (void)ioctl(hw_fd, PERF_EVENT_IOC_DISABLE, 0);
-                if (read(hw_fd, &counted, sizeof counted) == (ssize_t)sizeof counted) {
-                    hw_instructions += counted;
-                    hw_cycles++;
-                }
-                /* read() does not reset the counter and enable/disable do
-                 * not zero it either: without this RESET every later read
-                 * would return the running total again and the sum below
-                 * would double-count earlier cycles. */
-                (void)ioctl(hw_fd, PERF_EVENT_IOC_RESET, 0);
-            }
-            if (measure_failed || measure_operations != expected * (uint64_t)(i + 1)) {
-                fputs("fatal: incomplete perf workload\n", stderr);
-                goto cleanup_cycles;
-            }
-            cycle_ns[i] = end - start;
-            cycle_cpu_ns[i] = cpu_end - cpu_start;
-            if (i == 0)
-                read_perf_memory(&after_first);
-        }
-        read_perf_memory(&after_last);
+        cycle_ns[i] = end - start;
+        cycle_cpu_ns[i] = cpu_end - cpu_start;
+        if (i == 0)
+            read_perf_memory(&after_first);
     }
+    read_perf_memory(&after_last);
 
     printf("{\"pid\":%ld,\"backend\":", (long)getpid());
     perf_json_string(backend);
@@ -1058,88 +1041,86 @@ static int run_perf_mode(int argc, char **argv) {
         print_arena_state("arena_init", &arena_init);
     }
 
-    if (run_cycles) {
-        if (checksum_env && *checksum_env)
-            printf(",\"workload_checksum\":\"%016llx\"",
-                   (unsigned long long)workload_checksum);
+    if (checksum_env && *checksum_env)
+        printf(",\"workload_checksum\":\"%016llx\"",
+               (unsigned long long)workload_checksum);
 
-        /* The decisive experiment. Read the post-cycle state, then ask
-         * glibc to return everything it is merely retaining, then read
-         * the same state again. A gap that collapses here was allocator
-         * retention driven by transient churn; a gap that survives is
-         * held in live structures or in file-backed pages. */
-        struct smaps_rollup rollup_cycle;
-        struct arena_state arena_cycle;
-        struct perf_memory after_trim;
-        struct smaps_rollup rollup_trim;
-        struct arena_state arena_trim;
+    /* The decisive experiment. Read the post-cycle state, then ask
+     * glibc to return everything it is merely retaining, then read
+     * the same state again. A gap that collapses here was allocator
+     * retention driven by transient churn; a gap that survives is
+     * held in live structures or in file-backed pages. */
+    struct smaps_rollup rollup_cycle;
+    struct arena_state arena_cycle;
+    struct perf_memory after_trim;
+    struct smaps_rollup rollup_trim;
+    struct arena_state arena_trim;
 #if defined(__GLIBC__)
-        int trim_released = -1;
+    int trim_released = -1;
 #endif
 
-        if (rss_diag) {
-            read_smaps_rollup(&rollup_cycle);
-            read_arena_state(&arena_cycle);
-            if (diag_dir) {
-                (void)dump_proc_text(diag_dir, diag_tag, "maps-cycle",
-                                     "/proc/self/maps");
-                (void)dump_proc_text(diag_dir, diag_tag, "smaps-cycle",
-                                     "/proc/self/smaps");
-                (void)dump_proc_text(diag_dir, diag_tag,
-                                     "smaps-rollup-cycle",
-                                     "/proc/self/smaps_rollup");
-            }
-#if defined(__GLIBC__)
-            trim_released = malloc_trim(0);
-#endif
-            read_perf_memory(&after_trim);
-            read_smaps_rollup(&rollup_trim);
-            read_arena_state(&arena_trim);
-            if (diag_dir) {
-                (void)dump_proc_text(diag_dir, diag_tag, "maps-trim",
-                                     "/proc/self/maps");
-                (void)dump_proc_text(diag_dir, diag_tag, "smaps-trim",
-                                     "/proc/self/smaps");
-                (void)dump_proc_text(diag_dir, diag_tag,
-                                     "smaps-rollup-trim",
-                                     "/proc/self/smaps_rollup");
-            }
+    if (rss_diag) {
+        read_smaps_rollup(&rollup_cycle);
+        read_arena_state(&arena_cycle);
+        if (diag_dir) {
+            (void)dump_proc_text(diag_dir, diag_tag, "maps-cycle",
+                                 "/proc/self/maps");
+            (void)dump_proc_text(diag_dir, diag_tag, "smaps-cycle",
+                                 "/proc/self/smaps");
+            (void)dump_proc_text(diag_dir, diag_tag,
+                                 "smaps-rollup-cycle",
+                                 "/proc/self/smaps_rollup");
         }
-
-        printf(",\"cycles_ns\":[");
-        for (int i = 0; i < cycles; i++)
-            printf("%s%llu", i ? "," : "", (unsigned long long)cycle_ns[i]);
-        printf("],\"cycles_cpu_ns\":[");
-        for (int i = 0; i < cycles; i++)
-            printf("%s%llu", i ? "," : "", (unsigned long long)cycle_cpu_ns[i]);
-        printf("],\"after_first\":");
-        perf_print_memory_body(&after_first);
-        printf(",\"after_last\":");
-        perf_print_memory_body(&after_last);
-        if (rss_diag) {
-            putchar(',');
-            print_smaps_rollup("rollup_cycle", &rollup_cycle);
-            putchar(',');
-            print_arena_state("arena_cycle", &arena_cycle);
 #if defined(__GLIBC__)
-            printf(",\"trim_released\":%d", trim_released);
+        trim_released = malloc_trim(0);
+#endif
+        read_perf_memory(&after_trim);
+        read_smaps_rollup(&rollup_trim);
+        read_arena_state(&arena_trim);
+        if (diag_dir) {
+            (void)dump_proc_text(diag_dir, diag_tag, "maps-trim",
+                                 "/proc/self/maps");
+            (void)dump_proc_text(diag_dir, diag_tag, "smaps-trim",
+                                 "/proc/self/smaps");
+            (void)dump_proc_text(diag_dir, diag_tag,
+                                 "smaps-rollup-trim",
+                                 "/proc/self/smaps_rollup");
+        }
+    }
+
+    printf(",\"cycles_ns\":[");
+    for (int i = 0; i < cycles; i++)
+        printf("%s%llu", i ? "," : "", (unsigned long long)cycle_ns[i]);
+    printf("],\"cycles_cpu_ns\":[");
+    for (int i = 0; i < cycles; i++)
+        printf("%s%llu", i ? "," : "", (unsigned long long)cycle_cpu_ns[i]);
+    printf("],\"after_first\":");
+    perf_print_memory_body(&after_first);
+    printf(",\"after_last\":");
+    perf_print_memory_body(&after_last);
+    if (rss_diag) {
+        putchar(',');
+        print_smaps_rollup("rollup_cycle", &rollup_cycle);
+        putchar(',');
+        print_arena_state("arena_cycle", &arena_cycle);
+#if defined(__GLIBC__)
+        printf(",\"trim_released\":%d", trim_released);
 #else
-            printf(",\"trim_released\":null");
+        printf(",\"trim_released\":null");
 #endif
-            printf(",\"after_trim\":");
-            perf_print_memory_body(&after_trim);
-            putchar(',');
-            print_smaps_rollup("rollup_trim", &rollup_trim);
-            putchar(',');
-            print_arena_state("arena_trim", &arena_trim);
-        }
-        if (hw_fd >= 0) {
-            printf(",\"steady_hw_cycles\":%d"
-                   ",\"steady_hw_instructions\":%llu",
-                   hw_cycles, (unsigned long long)hw_instructions);
-        } else if (hw_wanted) {
-            printf(",\"hw_errno\":%d", hw_errno);
-        }
+        printf(",\"after_trim\":");
+        perf_print_memory_body(&after_trim);
+        putchar(',');
+        print_smaps_rollup("rollup_trim", &rollup_trim);
+        putchar(',');
+        print_arena_state("arena_trim", &arena_trim);
+    }
+    if (hw_fd >= 0) {
+        printf(",\"steady_hw_cycles\":%d"
+               ",\"steady_hw_instructions\":%llu",
+               hw_cycles, (unsigned long long)hw_instructions);
+    } else if (hw_wanted) {
+        printf(",\"hw_errno\":%d", hw_errno);
     }
 
     printf("}\n");
@@ -1524,7 +1505,6 @@ static int run_measure(int argc, char **argv) {
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 #ifndef _WIN32
-#include "teardown.h"
 #include "sentence_perf.h"
 #endif
 
@@ -1540,16 +1520,13 @@ int main(int argc, char **argv) {
     if (argc > 1 && (strcmp(argv[1], "--perf-sentence") == 0 ||
                      strcmp(argv[1], "--perf-typing-sequence") == 0))
         return run_sentence_perf_mode(argc, argv);
-    if (argc > 1 && strcmp(argv[1], "--teardown") == 0)
-        return run_teardown_mode(argc, argv);
     if (argc > 1 && strcmp(argv[1], "--perf") == 0)
         return run_perf_mode(argc, argv);
 
     fprintf(stderr,
             "Usage: %s --perf <path-to-so> <systemdir>\n"
-            "       %s --perf-sentence|--perf-typing-sequence ...\n"
-            "       %s --teardown pinyin|zhuyin SO DATA USER ...\n",
-            argv[0], argv[0], argv[0]);
+            "       %s --perf-sentence|--perf-typing-sequence ...\n",
+            argv[0], argv[0]);
     return 1;
 #else
     fputs("Windows supports --measure only\n", stderr);

@@ -59,7 +59,7 @@ def load(paths):
                 except json.JSONDecodeError as exc:
                     sys.exit(f"{path}:{lineno}: not JSON: {exc}")
                 if "cycles_ns" not in row:
-                    continue  # ram-init rows carry no cycle timings
+                    continue
                 # `repeats` predates nothing: captures taken before the knob
                 # existed have no such field and are, by construction, size 1.
                 key = (row.get("backend", "?"), int(row.get("repeats", 1)))
