@@ -768,12 +768,12 @@ impl<
         self.session.reset();
     }
 
-    /// Begin a parse without discarding instance-level constraints or
-    /// sentence rows. Every input replaces the matrix, including changed
-    /// and empty text; the next guess validates the stored constraints
-    /// against it (074a2219, pinyin.cpp:1497-1525, zhuyin.cpp:1017-1043,
-    /// lookup/phonetic_lookup.cpp:120-160). The engine separately keeps
-    /// its selection record safe for the replaced buffer.
+    // pinyin.cpp:1497–1525; zhuyin.cpp:1017–1043,1058–1081; lookup/phonetic_lookup.cpp:88–165.
+    /// Clears this instance’s stored parse state before every parse, including empty or
+    /// changed input. Constraints and sentence rows survive, and a clear after the parse
+    /// still indexes the constraint columns of the last validation. The next validation,
+    /// which a guess or a validating choose runs, checks the constraints against the
+    /// replacement matrix.
     pub fn begin_parse(&mut self, _original: &[u8]) {
         self.reset_parse_state();
     }
@@ -832,10 +832,19 @@ pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, Traini
     }
 }
 
-/// The lookup faults of a predecessor's bigram, system or user. A value too short for
-/// its total is the pin's assert in `get_total_freq`; a Kyoto Cabinet read
-/// that fails after its size check also aborts. A read past the value logs
-/// the one warning and answers `true`; every other fault answers `false`.
+// The pin asserts an incomplete toned key (pinyin_phrase3.h:146–157), and a bigram value
+// shorter than its total, system or user (ngram.cpp:303–304, through memory_chunk.h:387–392).
+// A failed Kyoto Cabinet body read after its size check asserts at ngram_kyotodb.cpp:131–139.
+/// Handles a lookup failure at the C boundary. A read past the end of a predecessor’s
+/// stored bigram value, from the system or the user gram, logs one warning and returns
+/// `true`. Any other error returns `false`.
+///
+/// # Aborts
+///
+/// Terminates when called with [`EngineError::TonedIncompleteKey`],
+/// [`EngineError::ShortLookupPredecessor`] (a system or user bigram value shorter than its
+/// total) or [`EngineError::ReadAfterCheck`] (a Kyoto Cabinet bigram read that fails after
+/// its size check).
 pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str)) -> bool {
     let message = match error {
         EngineError::TonedIncompleteKey => std::process::abort(),

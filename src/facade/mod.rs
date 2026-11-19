@@ -1,26 +1,10 @@
-//! The facade-orchestration layer shared by the pinyin and zhuyin C-ABI
-//! facades.
+//! Shared context, instance, candidate and cursor operations for the pinyin and Zhuyin C
+//! facades. Both use [`crate::runtime`] and the same libpinyin pin. Each facade chooses
+//! its own option forwarding, cursor behavior and profile-marker policy.
 //!
-//! `oxpinyin-capi` and `oxzhuyin-capi` drive the same
-//! `crate::runtime` session assembly through the laws this module holds:
-//! the parse-mode state machine (`begin_parse`'s continuation rule, the
-//! three batch-parse seams, the stored-parse originals), the shared halves
-//! of the candidate-snapshot machinery, the cursor/offset matrix laws, and
-//! the prefix/sentence seam. Each facade keeps only its C marshalling and
-//! the laws that differ between the two pins (the candidate-type enums,
-//! the guess re-anchor policies, the choose end-offset chains, the
-//! sentence-row display law).
-//!
-//! What this module does **not** do is unify per-facade parity decisions.
-//! Where the two facades' pins diverge — `FORCE_TONE` forwarding on the
-//! chewing seam, the `PINYIN_CORRECT_ALL` mask on the one-key full-pinyin
-//! probe, the `user.conf` open-counter lifecycle — the shared law is
-//! parameterized and each facade passes its own arm, so a divergence
-//! stays greppable instead of buried.
-//!
-//! No C types cross this boundary: the two C crates own the
-//! `#[repr(C)]` shapes, the pointer casts, and the `CString` snapshots.
-//! No module of the library depends on this one.
+//! Starting a parse clears the stored parse mode and original keys. Constraints and
+//! sentence rows have their own lifetimes. The C crates own the ABI handle types and
+//! pointer marshalling.
 
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
@@ -73,13 +57,12 @@ pub use parse::{PinyinCorrections, ToneForwarding, double_scheme, full_scheme, z
 pub use predict::{compute_prefixes, merged_suggestions};
 pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 
-/// The option word `pinyin_init` seeds (`USE_TONE`, and nothing else;
-/// `pinyin.cpp:329` at the pin) — the pinyin facade's distinguishing
-/// default: incomplete OFF, tone digits consumed.
+// pinyin_init, pinyin.cpp:329.
+/// Initial pinyin options. Tone input is enabled and incomplete input is disabled.
 pub const PINYIN_DEFAULT_OPTION_WORD: crate::OptionBits = crate::OptionBits::USE_TONE;
 
-/// The option word `zhuyin_init` seeds (`USE_TONE | FORCE_TONE`,
-/// `zhuyin.cpp:273` at both pins) — the zhuyin facade's distinguishing
-/// default: incomplete OFF, unlike `pinyin_init`.
+// zhuyin_init, zhuyin.cpp:273.
+/// Initial Zhuyin options. Tone input and forced tone are enabled and incomplete input is
+/// disabled.
 pub const ZHUYIN_DEFAULT_OPTION_WORD: crate::OptionBits =
     crate::OptionBits::USE_TONE.union(crate::OptionBits::FORCE_TONE);
