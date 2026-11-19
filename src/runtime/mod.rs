@@ -1,31 +1,12 @@
-//! The concrete engine assembly that `facade` and the C crates share.
+//! Assembles the system dictionary, language model, user storage and engine sessions.
+//! Opening a [`Runtime`] reads the system configuration, handles the profile and loads
+//! the configured phrase libraries. Without a user directory, the runtime owns transient
+//! user storage.
 //!
-//! Wiring only: this module opens a system data directory the way
-//! `pinyin_init` does — the pinyin and phrase DBMs, the per-library
-//! chunk files, `bigram.db`, `punct.bin`, the addon DBM pair, λ from
-//! `table.conf` — or as `zhuyin_init` does, without addon or punctuation
-//! tables. It installs the optional user store and hands out
-//! [`Session`]s over the merged backends. On each backend that
-//! directory is the backend's native data directory — the one a
-//! libpinyin build on the same backend uses, or what the pin's
-//! `gen_binary_files` / `import_interpolation` / `gen_unigram` sequence
-//! writes (the `oxpinyin-utils` binaries). Nothing is scanned at open: each reader in
-//! `crate::data` opens a handle, and a lookup is a point read. The exception is
-//! `SystemDictionary::checked_extension_tokens`, which walks the key range after the
-//! query's key. The algorithms stay where they
-//! belong — decoding and composition in `crate::engine`, the system tables
-//! and the model math in `crate::data` and `crate::model`, user state in
-//! `crate::user` — and the user-count overlay arithmetic lives in
-//! `crate::data`'s `*_with_user_delta` methods and `load_merged_row`, which
-//! [`RuntimeLm`] merely feeds. The one
-//! ordering law held here is `merge_suggestion_rows`, the pinned
-//! suggestion row order the facades rank predicted candidates in.
-//! Centralizing the assembly here is what keeps every C-ABI consumer
-//! on one construction and one set of semantics. The module depends on
-//! `engine`, `user`, `data` and `input`, and no module below it depends on
-//! it.
-//!
-//! Pure Rust; no FFI of any kind, `unsafe_code` forbidden.
+//! [`RuntimeDict`] and [`RuntimeLm`] provide views of the live data. [`RuntimeSession`]
+//! connects them to the engine.
+
+// pinyin_init, pinyin.cpp:331–396 and zhuyin_init, zhuyin.cpp:279–334.
 mod sentence_facts;
 
 use crate::{PHRASE_INDEX_LIBRARY_COUNT, phrase_index_library_index};
@@ -1483,11 +1464,10 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Perform context fini effects once: write the marker and close every
-    /// native file attachment, as the pin's fini deletes its tables. The
-    /// in-memory state stays for instances and iterators that outlive the
-    /// context; their reads through a closed attachment are misses with no
-    /// native call (compatibility row 42).
+    // pinyin_fini, pinyin.cpp:1195–1215, and zhuyin_fini, zhuyin.cpp:741–757. Compatibility
+    // row 42 covers surviving handles.
+    /// Applies the facade’s final marker policy and closes each native attachment once.
+    /// Repeated calls are inert. In-memory state remains available to surviving handles.
     pub fn finish(&mut self) {
         // pinyin.cpp:1200 writes the marker before deleting the tables.
         self.user.finish();
@@ -1532,7 +1512,7 @@ impl Drop for Runtime {
 /// names `""`.
 ///
 /// The marker save's answer is ignored, as the pin ignores it
-/// (`pinyin.cpp:187`; maintainer ruling 2026-10-28 UTC, D4), so the only
+/// (`pinyin.cpp:187`), so the only
 /// failure is the database-format abort point.
 fn check_profile_early(
     conf: &TableConf,
@@ -1666,7 +1646,7 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns [`OpenError`] when `table.conf` is one `SystemTableInfo2::load`
-    /// refuses, missing included (maintainer ruling 2026-10-28 UTC, D3), or
+    /// refuses, including a missing file, or
     /// when a required file is missing or a DBM or chunk file cannot be
     /// opened, and [`OpenError::UserSession`] where the user session cannot
     /// be built after the libraries were handed to it.
@@ -1743,7 +1723,7 @@ impl Runtime {
         // directory current when it is opened, as the pin's does. An
         // unusable directory must not fail init either — training then
         // refuses, upstream-style. The store persists in libpinyin's own
-        // user-dir file set (drop-in task 9): the profile is read through
+        // user-dir file set: the profile is read through
         // check_format, the session runs in memory, and `pinyin_save`
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
@@ -1887,11 +1867,16 @@ impl Runtime {
         &self.user
     }
 
-    /// Check training with operation-local bookkeeping, then release all phrase
-    /// readers before applying the observations to the sole store owner.
+    // pinyin_train checks the directory and result count and asserts the selected index,
+    // pinyin.cpp:2670–2690; zhuyin.cpp:1696–1715. train_result3 applies successive
+    // observations, lookup/phonetic_lookup.h:844–936.
+    /// Applies the retained session’s training plan at `index`. A runtime without a user
+    /// directory or a session without a training plan returns `Ok(false)`. Select an existing
+    /// sentence row when rows are present.
     ///
     /// # Errors
-    /// The engine's ordered training errors; completed observations stay applied.
+    ///
+    /// Returns the first training error. Completed observations can survive a later error.
     pub fn train_session(
         &mut self,
         state: &crate::engine::SessionState,
