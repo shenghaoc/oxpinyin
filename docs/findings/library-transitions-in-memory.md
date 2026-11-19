@@ -38,13 +38,13 @@ It asserts that the row is `SYSTEM_FILE` or `USER_FILE` (`:446-459`), and calls
 
 - For a system library, it maps the system chunk and loads it as the new
   sub-index (`FacadePhraseIndex::load`, `phrase_index.cpp:237-248`). It then
-  loads the user `.dbin` into a `MemoryChunk` and merges it (`:262-276`).
+  loads the user `.dbin` into a `MemoryChunk` and merges it (`src/pinyin.cpp:266-276`).
   `MemoryChunk::load` returns `false` and leaves the chunk empty when the
   file cannot be opened, is shorter than its header, or has a wrong length
   or checksum (`src/include/memory_chunk.h:416-464`). The merge of an empty
   log changes nothing.
 - For a `USER_FILE` library, it loads the saved chunk. When the chunk does
-  not load, it calls `create_sub_phrase` for an empty sub-index (`:303-321`).
+  not load, it calls `create_sub_phrase` for an empty sub-index (`src/pinyin.cpp:303-321`).
 
 The return value is `true`. Only the asserts of the merge (rows 91
 and 108) and the mapping of a directory (row 96) can stop it.
@@ -106,35 +106,27 @@ These paths add no abort. The fuzz harnesses need no filter:
   (`UserStore::check_profile`, then `UserStore::open_libpinyin_checked`) over a fresh user directory with no system
   library. Its operations include no library transition.
 
-## Tests and cases
+## Tests
 
-Unit tests:
-
-- `library_transition_tests` in `src/facade/context.rs`:
+- `facade::context::tests` in `src/facade/context/tests.rs`:
   `unload_then_reload_restores_the_saved_library`,
   `unload_then_save_leaves_the_unloaded_librarys_log_alone` and
   `reload_after_an_unreadable_log_loads_the_system_chunk_alone` (a missing
   and a short `.dbin`).
 - `a_save_skips_an_unloaded_user_library` and
-  `library_transitions_keep_the_independent_index` in `src/user/store_libpinyin.rs`.
+  `library_transitions_keep_the_independent_index` in `src/user/store_libpinyin/tests.rs`.
 
-Contract cases:
-
-| Case | What it holds |
+| Claim | Test |
 |---|---|
-| `unload-save-skips-library-{pinyin,zhuyin}` | save, unsaved change, unload GBK, save, load (`userdir`, `stderr`) |
-| `unload-save-skips-user-library-zhuyin` | the same for the `USER_FILE` library 7 |
-| `reload-unreadable-log-{missing,short}-{pinyin,zhuyin}` | reload over a missing or short `.dbin` (controls) |
+| A save after an unload skips the unloaded system library (save, unsaved change, unload GBK, save, load) | `unload_then_save_leaves_the_unloaded_librarys_log_alone` |
+| The same for the `USER_FILE` library 7 | `a_save_skips_an_unloaded_user_library` |
+| A reload over a missing or short `.dbin` | `reload_after_an_unreadable_log_loads_the_system_chunk_alone` |
 
-The other cases of unload, reload and candidates are
-`reload-drops-session-*`, `reload-keeps-saved-*`, `reload-refused-*`,
-`reload-user-zhuyin-*`, `reload-dangling-token-candidates{,-zhuyin}`,
-`reload-total-while-unloaded`, `unload-drops-accepted-bump`, the
-`library-*` and `stderr-library-control-*` loading cases (including
-`stderr-library-control-save-unloaded`) and `save-unloaded-replacement{,-zhuyin}`.
+These tests run under the pinyin rules; no test runs them under the zhuyin rules.
+Policy rows 76, 102, 103 and 104 name the tests of the other unload, reload and candidate behaviour.
 `an_unloaded_library_leaves_the_model` (`src/data/lm/tests.rs`)
-holds `reload-total-while-unloaded`.
-The export iterator cases are those whose names contain `iterator`.
+holds the model total while a library is unloaded.
+The export iterator tests are in the row 62 line of [Pin aborts reproduced](upstream-divergences.md#pin-aborts-reproduced).
 
 ## Mask-out order
 

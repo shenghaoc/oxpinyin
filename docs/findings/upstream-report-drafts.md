@@ -2,7 +2,7 @@
 
 Status: **open**. Drafts, not filed.
 
-This file holds thirteen draft upstream reports. Each states the defect with
+This file holds fifteen draft upstream reports. Each states the defect with
 its pin cites and, where one exists, a reproduction and a fix:
 
 - Items 1–4: four API defects, to file as one considered set.
@@ -13,8 +13,9 @@ its pin cites and, where one exists, a reproduction and a fix:
 - Item 9: the `SORT_BY_PINYIN_LENGTH` key wraps at 8 bits.
 - Items 10–12: reachable heap-comparator and tail-sort precondition violations, and the source-established node front-eviction inversion.
 - Item 13: a reloaded system library's total counts logged ADD and growing MODIFY records twice.
+- Items 14–15: the candidate-frequency stores convert an out-of-range `gfloat` to `guint32`, in the pinyin and the zhuyin facade.
 
-Items 5–13 are separate reports. Filing is the maintainer's action (and
+Items 5–15 are separate reports. Filing is the maintainer's action (and
 account). Nothing here has been filed upstream. The contributor rules give the
 collection mandate ("collected to report back to libpinyin once the rewrite
 is complete"). Filing before the rewrite is complete is the maintainer's
@@ -740,6 +741,61 @@ oxpinyin reproduces the reloaded total (unit test `a_mixed_profile_keeps_shipped
 
 ---
 
+## 14. Pinyin candidate frequency converts an out-of-range `gfloat` to `guint32`
+
+**Severity: low.** An undefined conversion and a wrong candidate frequency where it occurs, with no memory hazard.
+
+The defect follows from the source; no reproduction was run.
+
+`_compute_frequency_of_items` computes each candidate's frequency as a `gfloat` and stores it in a `guint32` (`src/pinyin.cpp:1794-1868` at `074a2219`):
+
+- a predicted prefix row: `((1 - lambda) * unigram / total) * 256 * 256 * 256` (`:1821-1824`);
+- an addon row: the same expression over the addon total (`:1838-1841`);
+- every other row: `(lambda * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT + (1 - lambda) * unigram / total) * 256 * 256 * 256` (`:1862-1866`).
+
+`_prepend_longer_candidates` stores the first expression the same way (`:1919-1921`).
+
+`lambda` is the `table.conf` value, scanned with `%f` and used with no range check (`src/storage/table_info.cpp:220`).
+C and C++ leave the conversion undefined when the truncated value does not fit the destination type (C11 6.3.1.4; C++ [conv.fpint]).
+The source allows such a value:
+
+- With `lambda` above 1 the unigram term is negative, so the score can be −1 or less.
+- With `lambda` far below 0, or a unigram far above the total, the score can reach 2^32.
+- `lambda` can be NaN, because `%f` accepts `nan`.
+- With a prefix or addon total of 0 the quotient is infinite or NaN. Only the last branch asserts `0 < total_freq` (`:1859`).
+
+The stored frequency is a key of the candidate sort (`:1701-1705`).
+
+**Suggested fix:** check `lambda` against `[0, 1]` when `table.conf` loads. Before each store, test the score and convert it only when it is in range:
+
+- a NaN score, or a score below 0, stores 0;
+- a score of 2^32 or more stores `G_MAXUINT32` directly;
+- any other score converts as it does now.
+
+A clamp between two `gfloat` bounds is not enough. A comparison passes NaN through, so the conversion stays undefined. `G_MAXUINT32` as a `gfloat` rounds to 2^32, so a score clamped to that bound still does not fit.
+
+oxpinyin stores the score with a saturating conversion: a negative or NaN score is 0, and a score of 2^32 or more is `0xffffffff`.
+A total of 0 is the exception: oxpinyin answers 0 before the division (`amplified_frequency_with_bigram`, `src/engine/session/mod.rs`), where the pin's expression is infinite or NaN.
+The unit test `candidate_scores_follow_rusts_saturating_conversion` holds each case.
+
+---
+
+## 15. Zhuyin candidate frequency converts a negative `gfloat` to `guint32` when λ is above 1
+
+**Severity: low.** The zhuyin form of item 14.
+
+The defect follows from the source; no reproduction was run.
+
+The zhuyin `_compute_frequency_of_items` computes `(lambda * bigram_poss + (1 - lambda) * unigram / total) * 256 * 256 * 256` as a `gfloat` and stores it in a `guint32` (`src/zhuyin.cpp:1264-1268` at `074a2219`).
+The same unchecked `lambda` applies (`src/storage/table_info.cpp:220`).
+With `lambda` above 1 the unigram term is negative. When the scaled sum is −1 or less, the conversion is undefined, as in item 14.
+
+**Suggested fix:** the range check and the guarded store of item 14.
+
+oxpinyin stores the score with the same saturating conversion (`src/engine/session/lookup.rs`).
+
+---
+
 ## Filing notes
 
 - Independence: no fix touches another. Items 1–4 are filed as four issues.
@@ -753,6 +809,7 @@ oxpinyin reproduces the reloaded total (unit test `a_mixed_profile_keeps_shipped
   - Items 10 and 11 report distinct comparator contracts. Item 12 reports
     a contract-valid algorithm defect and must not be conflated with them.
   - Item 13 is a separate phrase-index report.
+  - Items 14 and 15 report one conversion in two facades. They can be filed together.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Filing follows a search of GitHub and Fedora Bugzilla for an existing report.
 - Credit line under the historical attribution convention is the maintainer's to
