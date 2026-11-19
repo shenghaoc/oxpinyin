@@ -90,7 +90,13 @@ impl FullPinyinIndexKey {
     }
 }
 
-/// Result of one full-pinyin index parse.
+// FullPinyinParser2::parse and final_step, pinyin_parser2.cpp:217–251,279–310,332–380.
+// The pin uses signed 16-bit parse steps; this index stores positions and counts in
+// usize.
+/// The selected keys and consumed byte prefix for an alternate full-pinyin spelling
+/// index. Within the native parser’s representable input range, the longest reachable
+/// prefix wins, followed by the fewest keys and the first equal choice. Apostrophes
+/// consume bytes without producing a key. A key’s span includes its tone digit.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FullPinyinIndexParse {
     keys: Vec<FullPinyinIndexKey>,
