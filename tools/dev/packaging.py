@@ -180,12 +180,17 @@ class Tools:
     def load(self, path, symbol):
         """dlopen the library in a child with the dyld search overrides removed and look one symbol up.
 
-        Returns the loader's message on failure, else ''. The child asks dladdr where the symbol came
-        from, so a different image of the same install name cannot satisfy the check.
+        Returns the exit status and any diagnostic on failure, else ''. The child asks dladdr where
+        the symbol came from, so a different image of the same install name cannot satisfy the check.
         """
         env = {name: value for name, value in self.env.items() if not name.startswith('DYLD_')}
         done = self.capture([sys.executable, '-I', '-c', LOAD_CHILD, str(path), symbol], env=env)
-        return done.stdout.decode(errors='surrogateescape').strip() if done.status else ''
+        if done.status == 0:
+            return ''
+        failure = f'load check exited with status {done.status}'
+        diagnostic = (done.stdout.decode(errors='surrogateescape').strip()
+                      or done.stderr.decode(errors='surrogateescape').strip())
+        return f'{failure}: {diagnostic}' if diagnostic else failure
 
     def which(self, name):
         return shutil.which(name, path=self.env.get('PATH'))
