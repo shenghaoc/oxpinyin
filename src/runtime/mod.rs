@@ -2115,7 +2115,7 @@ impl Runtime {
 
     /// Maps the unloaded SYSTEM_FILE/DICTIONARY default library `index`
     /// again, as `_load_phrase_library` does before it merges the saved
-    /// `.dbin` (074a2219 `pinyin.cpp:246-264`, `zhuyin.cpp:298-312`). The
+    /// `.dbin` (074a2219 `pinyin.cpp:246-264`, `zhuyin.cpp:190-208`). The
     /// result is empty for a row with no system chunk (the `USER_FILE` row,
     /// the unused rows) and for an unreadable file. A row that names no user
     /// file is mapped like any other: `_load_phrase_library` reads the user

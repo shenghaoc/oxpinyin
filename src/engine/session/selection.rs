@@ -234,7 +234,7 @@ where
 
     /// Whether the pin's NBEST choose of row `rank` asserts (074a2219
     /// `pinyin.cpp:2515-2520`): the results do not hold row 0 and row
-    /// `rank` (`:2516-2517`), or `diff_result` meets a write that answers
+    /// `rank` (`:2517-2518`), or `diff_result` meets a write that answers
     /// zero (`phonetic_lookup.cpp:203`). The store and the rows are read as
     /// [`Session::select_nbest_row`] reads them, without validation. Reads
     /// only.

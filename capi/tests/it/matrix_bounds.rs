@@ -110,7 +110,7 @@ fn the_character_offset_past_the_last_column_aborts() {
 #[test]
 fn a_null_phrase_past_the_last_column_aborts() {
     // Result: a NULL phrase past the last column aborts at
-    // `assert(offset < matrix.size())` (`pinyin.cpp:3205`) rather than
+    // `assert(offset < matrix.size())` (`pinyin.cpp:3203`) rather than
     // answering `false`.
     assert_aborts(
         "matrix_bounds::a_null_phrase_past_the_last_column_aborts",

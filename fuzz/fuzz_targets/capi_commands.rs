@@ -96,7 +96,7 @@
 //!   `oxpinyin_choose_aborts`, `oxpinyin_train_aborts` and
 //!   `oxpinyin_import_aborts`. The choose asserts on a predicted row
 //!   (`:2507`), on a sentence row whose rank the results no longer hold
-//!   (`:2516-2517`), and on a sentence row with a differing phrase that
+//!   (`:2517-2518`), and on a sentence row with a differing phrase that
 //!   ends past the constraint array (`phonetic_lookup.cpp:64-65`, `:203`).
 //!   The array follows the matrix only at a sentence guess and at a normal
 //!   choose (`pinyin.cpp:1366`, `:2579`), and a sentence guess on an empty
@@ -219,7 +219,7 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 /// The compiled-in backend's own fixture directory — the same contract as
-/// the capi suites' `system_dir()` twins (oxpinyin-capi/src/test_support.rs,
+/// the capi suites' `system_dir()` twins (capi/src/test_support.rs,
 /// tests/it/support.rs): fixtures/w3 carries one complete DBM set per
 /// backend under its `DEFAULT_STORE_EXT` subdirectory, and the runtime
 /// opens only that backend's files. Passing the fixtures/w3 root asks for

@@ -66,7 +66,7 @@ fn a_zero_facade_total_before_offset_zero_ranks_nothing() {
 #[test]
 fn a_read_failure_after_the_size_check_aborts() {
     // Kyoto Cabinet's `Bigram::load` asserts where the body read fails
-    // after `check` found the record (`ngram_kyotodb.cpp:136-137`). No
+    // after `check` found the record (`ngram_kyotodb.cpp:138-139`). No
     // differential can make a read fail after a successful check, so
     // this death test holds the abort.
     crate::test_support::assert_aborts(

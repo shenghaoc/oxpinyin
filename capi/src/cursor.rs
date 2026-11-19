@@ -543,7 +543,7 @@ pub unsafe extern "C" fn pinyin_get_left_pinyin_offset(
 /// Steps syllable-to-syllable: the raw end of the first key starting at
 /// `offset`, skipping a leading lone-zero-key run first
 /// (`pinyin.cpp:3061-3094`). Answers `false` when no key starts there
-/// (the pin's own graceful false, `pinyin.cpp:3085-3086`). Where the pin
+/// (the pin's own graceful false, `pinyin.cpp:3087-3088`). Where the pin
 /// asserts — its validation (`pinyin.cpp:3067`, `:3092`), a column past the
 /// matrix, or any offset on an empty matrix (`phonetic_key_matrix.h:103`)
 /// — the process aborts (register rows 14 and 66).
@@ -570,7 +570,7 @@ pub unsafe extern "C" fn pinyin_get_right_pinyin_offset(
     abort_past_matrix(&inst.read(), offset);
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
-        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`. An empty
+        // The pin's own graceful `false`, `pinyin.cpp:3087-3088`. An empty
         // matrix, where the loop's `get_column_size` asserts first, has no
         // column, so `abort_past_matrix` above has already aborted.
         Ok(None) => return false,

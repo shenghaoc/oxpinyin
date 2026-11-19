@@ -47,7 +47,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) ->
 /// `zhuyin.cpp:1250`; register row 85): the process aborts. So does a Kyoto
 /// Cabinet read that fails after its size check, the pin's
 /// `check_result(vsiz == m_db->get(...))` in `Bigram::load`
-/// (`ngram_kyotodb.cpp:136-137`). A read past the value (`ngram.cpp:241`,
+/// (`ngram_kyotodb.cpp:138-139`). A read past the value (`ngram.cpp:241`,
 /// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
 /// the call answers `true` when `error` is that read.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::engine::EngineError) -> bool {

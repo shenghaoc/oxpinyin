@@ -227,7 +227,7 @@ pub unsafe extern "C" fn pinyin_get_candidate_nbest_index(
 /// user candidate (`NORMAL_CANDIDATE != type && LONGER_CANDIDATE != type`
 /// returns false, `pinyin.cpp:3712-3715`), and its token must live in the
 /// [`USER_DICTIONARY`](crate::USER_DICTIONARY) sub-index. Network (nibble 6) is not "user" —
-/// `if (USER_DICTIONARY != index) return false` (`:3718`). Predicted rows
+/// `if (USER_DICTIONARY != index) return false` (`:3720-3721`). Predicted rows
 /// and sentence-level/fallback rows carry no user status even when a
 /// predicted prefix token names the user library.
 ///
@@ -579,10 +579,10 @@ fn choose_phrase_row(
 ///   (row 9): `parsed_len` after a parse that placed a key, and -1 after
 ///   one that placed none, which leaves the matrix empty
 ///   (`phonetic_key_matrix.cpp:34-38`).
-/// - `LONGER_CANDIDATE` (`:2521-2530`): only the token's unigram trains,
+/// - `LONGER_CANDIDATE` (`pinyin.cpp:2523-2531`): only the token's unigram trains,
 ///   by `initial_seed * unigram_factor = 69 * 7 = 483`. The answer is 0
 ///   when the library total would overflow and 1 otherwise.
-/// - `ADDON_CANDIDATE` (`:2532-2562`): promoted into this context's
+/// - `ADDON_CANDIDATE` (`:2534-2563`): promoted into this context's
 ///   nibble-5 (`ADDON_DICTIONARY`, `addon.bin`) sub-index
 ///   (`docs/findings/addon-choose-promotion.md`). The supplied row becomes
 ///   a `NORMAL_CANDIDATE` at the new token, and its string is unchanged.
@@ -636,7 +636,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         let mut inst = unsafe { instance_mut(instance) };
         // `check_result(results.get_result(0, best))` and
         // `check_result(results.get_result(m_nbest_index, other))`
-        // (`pinyin.cpp:2516-2517`): both are `assert`s.
+        // (`pinyin.cpp:2517-2518`): both are `assert`s.
         if !inst.core.has_nbest_rank(row.nbest_index) {
             std::process::abort();
         }
@@ -693,10 +693,10 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
 /// Whether [`pinyin_choose_candidate`] with the same arguments reaches one
 /// of the pin's asserts, in the pin's order: a predicted row
 /// (`pinyin.cpp:2507`); for an `NBEST_MATCH_CANDIDATE` row, a result this
-/// instance does not hold (`:2516-2517`) or a differing phrase whose
+/// instance does not hold (`:2517-2518`) or a differing phrase whose
 /// constraint write answers zero (`phonetic_lookup.cpp:203`), the facade's
 /// [`oxpinyin::facade::InstanceView::nbest_choose_aborts`]; a nonzero
-/// `offset` under `SORT_WITHOUT_SENTENCE_CANDIDATE` (`:2566`), which a
+/// `offset` under `SORT_WITHOUT_SENTENCE_CANDIDATE` (`pinyin.cpp:2566`), which a
 /// `LONGER_CANDIDATE` row does not reach. Reads only. For the in-tree fuzz
 /// harness, which skips such a call: not in `pinyin.h`, a Rust function
 /// compiled only with `fuzz-api` and never into the shipped artifact.
@@ -839,7 +839,7 @@ pub unsafe extern "C" fn pinyin_clear_constraint(
 ///   since the guess), the failed `get_phrase_item` leaves the default
 ///   item (`phrase_index.h:81-84`, `:646-652`; `phrase_index.cpp:180-205`)
 ///   and the pin calls `add_index(0, phrase, token)`
-///   (`pinyin.cpp:2551-2553`). Its prefix walk starts at `size_t len =
+///   (`pinyin.cpp:2555-2557`). Its prefix walk starts at `size_t len =
 ///   phrase_length - 1`, which wraps to `SIZE_MAX`, and reads past the key
 ///   buffer on every backend (`phrase_large_table3_tkrzwdb.cpp:215-218`,
 ///   `phrase_large_table3_kyotodb.cpp:280-283`,
@@ -987,7 +987,7 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
         match user.observe_predicted(last, token) {
             Ok(_) => true,
             // Register row 85, `pinyin.cpp:2630` through `memory_chunk.h:390`:
-            // after the in-memory unigram add (`:2609-2612`) the pin loads
+            // after the in-memory unigram add (`pinyin.cpp:2609-2612`) the pin loads
             // the predecessor's gram, one too short for its total, and
             // `get_total_freq`'s assert dies.
             Err(oxpinyin::user::UserStoreError::ShortUserBigramValue) => std::process::abort(),

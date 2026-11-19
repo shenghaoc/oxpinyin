@@ -299,7 +299,7 @@ impl EngineError {
     /// A model failure while reading `token`'s bigram row:
     /// [`Self::ReadAfterCheck`] where the model reports the read that failed
     /// after its size check (Kyoto Cabinet's `Bigram::load` assert,
-    /// `ngram_kyotodb.cpp:136-137` at 074a2219), a scoring error otherwise.
+    /// `ngram_kyotodb.cpp:138-139` at 074a2219), a scoring error otherwise.
     pub(crate) fn row_read<L>(model: &L, token: u32, error: &L::Error) -> Self
     where
         L: crate::model::LanguageModel + ?Sized,
