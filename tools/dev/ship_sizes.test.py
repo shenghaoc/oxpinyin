@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from tools.dev import cell, packaging, ship_sizes, test_support
 
-VER = '''PINYIN {
+VER = '''LIBPINYIN {
   global:
     pinyin_init;
     pinyin_free;
@@ -25,7 +25,7 @@ VER = '''PINYIN {
 '''
 NM = '''0000000000001000 T pinyin_init@@LIBPINYIN
 0000000000001010 T pinyin_free@@LIBPINYIN
-0000000000001020 T _init
+0000000000000000 A LIBPINYIN
 '''
 
 
@@ -114,13 +114,26 @@ class KeyTests(unittest.TestCase):
 
 
 class ExportTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.script = Path(directory.name) / 'libpinyin.ver'
+        self.script.write_text(VER)
+
+    def test_declared_version_node_passes(self):
+        ship_sizes.check_exports('libpinyin', NM, self.script)
+
     def test_missing_and_extra_symbols_fail(self):
         for text, label in ((NM.replace('pinyin_free@@LIBPINYIN', 'x'), 'MISSING pinyin_free'),
                             (NM + '1 T pinyin_extra@@LIBPINYIN\n', 'EXTRA   pinyin_extra'),
-                            (NM + '1 T oxpinyin_extra\n', 'EXTRA   oxpinyin_extra')):
-            with self.subTest(label=label), self.assertRaises(ship_sizes.Failure) as raised:
-                ship_sizes.check_exports('libpinyin', text, VER)
-            self.assertIn(label, str(raised.exception))
+                            (NM + '1 T oxpinyin_extra\n', 'EXTRA   oxpinyin_extra'),
+                            (NM + '1 T _init\n', 'EXTRA   _init'),
+                            (NM + '1 A LIBPINYIN_EXTRA\n', 'EXTRA   LIBPINYIN_EXTRA'),
+                            (NM + '1 T LIBPINYIN\n', 'EXTRA   LIBPINYIN')):
+            with self.subTest(label=label):
+                with self.assertRaises(ship_sizes.Failure) as raised:
+                    ship_sizes.check_exports('libpinyin', text, self.script)
+                self.assertIn(label, str(raised.exception))
 
 
 # The size build is the Linux cell (ship_sizes.reference_cell).

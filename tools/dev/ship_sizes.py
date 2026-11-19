@@ -33,6 +33,7 @@ import sys
 from typing import Sequence
 
 from . import cell
+from .packaging import crate_dir, linux_exports, version_exports
 
 ROOT = Path(__file__).resolve().parents[2]
 # Each installed library, with its symbol prefix and [package.metadata.capi.library] name.
@@ -120,35 +121,19 @@ def recipe_key(revision: str, facts: dict[str, str], root: Path = ROOT) -> str:
     return KEY_PREFIX + hashlib.sha256(text.encode()).hexdigest()[:32]
 
 
-def exports(nm_text: str, prefix: str) -> set[str]:
-    """Defined dynamic symbols of one library, version suffix removed."""
-    names = set()
-    for line in nm_text.splitlines():
-        fields = line.split()
-        if len(fields) == 3 and fields[1] in 'TtWwDdBbRrVvi':
-            names.add(fields[2].split('@', 1)[0])
-    return {name for name in names if name.startswith(prefix + '_') or name.startswith('oxpinyin_')}
-
-
-def version_globals(text: str) -> set[str]:
-    from .abi import version_globals as parse
-    return parse(text)
-
-
 def version_script(source: Path, library: str) -> Path:
     """The version script in library's C crate directory, which the source's own Cargo metadata names.
 
     Only the crate directory is read: a fixture elsewhere in the tree can carry the same name
     (for example tests/fixtures/libpinyin.ver).
     """
-    from .packaging import crate_dir
     return crate_dir(source, LIBRARIES[library]) / f'{library}.ver'
 
 
-def check_exports(library: str, nm_text: str, version_text: str) -> None:
+def check_exports(library: str, nm_text: str, script: Path) -> None:
     """The installed object exports exactly its pin version script's set."""
-    prefix = LIBRARIES[library]
-    actual, expected = exports(nm_text, prefix), version_globals(version_text)
+    node, names = version_exports(script)
+    actual, expected = set(linux_exports(nm_text, node)), set(names)
     if actual != expected:
         lines = [f'{library}: exported symbols are not the version script set']
         lines += ['  MISSING ' + name for name in sorted(expected - actual)]
@@ -263,7 +248,7 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
         script = version_script(source, library)
         if not script.is_file():
             raise Failure(f'{revision}: no {library}.ver at {script.relative_to(source).as_posix()}')
-        check_exports(library, nm, script.read_text())
+        check_exports(library, nm, script)
         sizes[library] = stripped.stat().st_size
     return {'schema': SCHEMA, 'revision': git('rev-parse', revision, root=root), 'backend': cell.feature,
             'libraries': sizes}
@@ -392,7 +377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         return args.func(args)
-    except Failure as error:
+    except (Failure, ValueError) as error:
         print(f'error: {error}', file=sys.stderr)
         return 1
 

@@ -4,14 +4,15 @@ import io
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tools.dev import abi
-from tools.dev.abi import HostFacts, darwin_export_trie, exported_symbols, header_slots, version_globals
-from tools.dev.packaging import crate_dir
+from tools.dev.abi import HostFacts, darwin_export_trie, header_slots
+from tools.dev.packaging import crate_dir, version_exports
 from tools.dev.test_support import fixture_metadata
 
 
@@ -30,10 +31,6 @@ class SymbolTests(unittest.TestCase):
                                                ('get_name', 'owned', 'char-pp'),
                                                ('new_handle', 'return', 'ptr-return')])
 
-    def test_linux_dynamic_symbols(self):
-        symbols = '10 T pinyin_init\n20 W hook\n30 D private\n40 t local\n'
-        self.assertEqual(exported_symbols(symbols, HostFacts('Linux')), {'pinyin_init', 'hook', 'local'})
-
     def test_darwin_export_trie_includes_data_weak_and_reexports(self):
         text = '''library [arm64]:
     -exports:
@@ -47,10 +44,44 @@ class SymbolTests(unittest.TestCase):
             darwin_export_trie('mis-aligned LINKEDIT string pool')
 
 
+class LinuxExportGateTests(unittest.TestCase):
+    def gate(self, extra=''):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for crate, name in [('capi', 'pinyin'), ('zhuyin-capi', 'zhuyin')]:
+                (root / crate).mkdir()
+                (root / crate / f'lib{name}.ver').write_text(
+                    f'API_VERSION {{\n global:\n  {name}_init;\n local:\n  *;\n}};\n')
+            settings = SimpleNamespace(root=root, environment={},
+                                       artifact=lambda variable, filename, crate: root / filename)
+
+            def inspect(argv, **options):
+                self.assertEqual(argv[:3], ['nm', '-D', '--defined-only'])
+                name = 'pinyin' if 'pinyin' in Path(argv[-1]).name else 'zhuyin'
+                text = f'00 A API_VERSION\n10 T {name}_init@@API_VERSION\n' + extra
+                return subprocess.CompletedProcess(argv, 0, text, '')
+
+            output = io.StringIO()
+            with patch.object(abi.subprocess, 'run', side_effect=inspect), contextlib.redirect_stdout(output):
+                status = abi.check_exports(settings, HostFacts('Linux'))
+            return status, output.getvalue()
+
+    def test_declared_version_node_passes(self):
+        status, output = self.gate()
+        self.assertEqual(status, 0, output)
+
+    def test_each_extra_definition_fails(self):
+        for kind, name in [('D', 'private'), ('B', 'buffer'), ('R', 'constant'), ('V', 'weak_object'),
+                           ('A', 'API_VERSION_EXTRA'), ('D', 'API_VERSION'), ('A', 'API_VERSION@@OTHER')]:
+            with self.subTest(kind=kind, name=name):
+                status, output = self.gate(f'30 {kind} {name}\n')
+                self.assertEqual(status, 1, output)
+                self.assertIn('LEAKED non-ABI export: ' + name.split('@')[0] + '\n', output)
+
+
 class DarwinExportGateTests(unittest.TestCase):
     def gate(self, nm_extra='', trie_extra=''):
         import os
-        import tempfile
         with tempfile.TemporaryDirectory() as scratch:
             paths = [Path(scratch) / name for name in ('pinyin.dylib', 'zhuyin.dylib')]
             for path in paths:
@@ -59,7 +90,7 @@ class DarwinExportGateTests(unittest.TestCase):
                                               OXPINYIN_ZHUYIN_SO=str(paths[1])))
             def inspect(argv, **options):
                 crate, name = ('oxpinyin-capi', 'libpinyin') if argv[-1] == str(paths[0]) else ('oxzhuyin-capi', 'libzhuyin')
-                names = version_globals((crate_dir(settings.root, name.removeprefix('lib')) / (name + '.ver')).read_text())
+                _, names = version_exports(crate_dir(settings.root, name.removeprefix('lib')) / (name + '.ver'))
                 if argv[0] == 'nm':
                     output = ''.join('10 T _' + symbol + '\n' for symbol in names) + nm_extra
                 else:
