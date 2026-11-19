@@ -6,6 +6,7 @@ use crate::state::context_mut;
 use crate::types::{PinyinContext, PinyinOptionT};
 use oxpinyin::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
 
+// pinyin.cpp:1299-1306.
 /// Set pinyin options on the context.
 ///
 /// # C signature
@@ -13,11 +14,9 @@ use oxpinyin::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
 /// bool pinyin_set_options(pinyin_context_t * context, pinyin_option_t options);
 /// ```
 ///
-/// Stores the full option word in the live context. `PINYIN_INCOMPLETE`
-/// updates the setting sessions opened later use; the parsers read
-/// `USE_TONE` off the stored word. Already-allocated full-pinyin sessions
-/// read the rest of the word at their next parse; a guess reads it over
-/// the matrix that parse filled (`pinyin.cpp:1299-1306` at 074a2219).
+/// Replace the live context option word. Existing instances read the new options on subsequent
+/// operations. Setting options does not reparse input or save a profile. Returns false for a
+/// null context and true after setting the word.
 ///
 /// # Safety
 ///
@@ -49,14 +48,12 @@ pub unsafe extern "C" fn pinyin_set_options(
 ///                                    FullPinyinScheme scheme);
 /// ```
 ///
-/// The Rust parameter is [`c_int`], so callers can pass any C `int`.
-/// `HANYU` (1) is the default. `LUOMA` (2) and `SECONDARY_ZHUYIN` (3)
-/// select their spelling indexes. Any other value aborts the process
-/// (`pinyin_parser2.cpp:398`, register row 5d).
+/// Select HANYU (1), LUOMA (2), or SECONDARY_ZHUYIN (3) for subsequent parses. Returns false for
+/// a null context and true after selection.
 ///
-/// The symbol is exported in every build. The export gate (`just abi exports`)
-/// checks the shipped artifact against the
-/// [export list](https://github.com/shenghaoc/oxpinyin/blob/main/capi/libpinyin.ver).
+/// # Aborts
+///
+/// Any other scheme on a live context aborts the process (`pinyin_parser2.cpp:398`).
 ///
 /// # Safety
 ///
@@ -82,6 +79,7 @@ pub unsafe extern "C" fn pinyin_set_full_pinyin_scheme(
     true
 }
 
+// pinyin_custom2.h:108-117, pinyin.cpp:1155–1159.
 /// Set the double pinyin scheme.
 ///
 /// # C signature
@@ -90,20 +88,13 @@ pub unsafe extern "C" fn pinyin_set_full_pinyin_scheme(
 ///                                      DoublePinyinScheme scheme);
 /// ```
 ///
-/// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
-/// `#[repr(C)]` enum would be UB for an unknown discriminant.
+/// Select the double-pinyin scheme on a live context and return true. An unrecognised value
+/// other than DOUBLE_PINYIN_CUSTOMIZED keeps the previously selected scheme, clears its fallback
+/// table and returns true (`pinyin_parser2.cpp:580,614`). A null context returns false.
 ///
-/// The scheme value is the `DoublePinyinScheme` header discriminant
-/// (`pinyin_custom2.h:108-117`). `DOUBLE_PINYIN_CUSTOMIZED` (30) aborts the
-/// process, as upstream's `set_scheme` does (`pinyin_parser2.cpp:611`,
-/// register row 5a).
+/// # Aborts
 ///
-/// **Out-of-enum values** (negatives, 0, 7–29, 31+) reproduce
-/// upstream's half-mutation (`pinyin_parser2.cpp:580,614`;
-/// `pinyin.cpp:1155–1159`): the live scheme's fallback table is
-/// cleared (the unconditional `m_fallback_table = NULL` at `:580`) and
-/// the wrapper returns `true` (ignoring the parser's `false` at
-/// `:614`).
+/// DOUBLE_PINYIN_CUSTOMIZED (30) aborts on a live context (`pinyin_parser2.cpp:611`).
 ///
 /// # Safety
 ///
@@ -142,6 +133,7 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
     true
 }
 
+// zhuyin_parser2.cpp:295, pinyin.cpp:1189.
 /// Set the zhuyin scheme.
 ///
 /// # C signature
@@ -150,16 +142,13 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
 ///                                ZhuyinScheme scheme);
 /// ```
 ///
-/// The Rust parameter is `c_int`: callers may pass any `int`, and a closed
-/// `#[repr(C)]` enum would be UB for an unknown discriminant.
+/// Select the keyboard for subsequent chewing input. Returns false for a null context and true
+/// after selection.
 ///
-/// Every implemented Zhuyin keyboard is table-driven: the Simple
-/// keyboards (STANDARD 1, IBM 3, GINYIEH 4, ETEN 5), the Discrete
-/// keyboards (HSU 2, ETEN26 6, `HSU_DVORAK` 8), and `DACHEN_CP26` 9. The
-/// remaining `ZhuyinScheme` header discriminant — the `STANDARD_DVORAK`
-/// slot (`zhuyin_parser2.cpp:295`) — and every out-of-enum value
-/// (`pinyin.cpp:1189`) abort the process, as upstream does (register rows
-/// 5c and 5d).
+/// # Aborts
+///
+/// On a live context, STANDARD_DVORAK (7) or a value outside the supported keyboard schemes
+/// aborts the process.
 ///
 /// # Safety
 ///
@@ -194,10 +183,14 @@ pub unsafe extern "C" fn pinyin_set_zhuyin_scheme(
 ///                                       guint8 index);
 /// ```
 ///
-/// Loads addon library `index` from `addon_{index}_*` next to the
-/// system tables. Returns `false` when the context is null, the library is
-/// already loaded, or the exported tables are missing
-/// (`docs/findings/phrase-union.md` §3.5).
+/// Load the chunk named by the configured addon row and return true. Returns false for a null
+/// context, an out-of-range index, an unused (NOT_USED) row, an already loaded library, or a
+/// library file that cannot be loaded.
+///
+/// # Aborts
+///
+/// On a live context, selecting an addon row whose type is not DICTIONARY (a SYSTEM_FILE or
+/// USER_FILE row) aborts the process, as libpinyin asserts (`pinyin.cpp:491`).
 ///
 /// # Safety
 ///
@@ -228,6 +221,7 @@ fn addon_load_answer(result: Result<bool, &'static str>) -> bool {
     }
 }
 
+// pinyin.cpp:124-131.
 /// Unload an addon phrase library.
 ///
 /// # C signature
@@ -236,13 +230,12 @@ fn addon_load_answer(result: Result<bool, &'static str>) -> bool {
 ///                                         guint8 index);
 /// ```
 ///
-/// The pin (`pinyin.cpp:124-131`) asserts `index <
-/// PHRASE_INDEX_LIBRARY_COUNT`, calls `m_addon_phrase_index->unload(index)`
-/// and answers `true` unconditionally — including for a library that was
-/// never loaded. This mirrors that, the assert included: an index of 16 or
-/// more aborts the process (register row 21, `pinyin.cpp:499`).
+/// Returns true on a live context even if the library was absent. A null context returns false
+/// for an in-range index.
 ///
-/// Live call site: fcitx-libpinyin (`eim.cpp`).
+/// # Aborts
+///
+/// An index of 16 or greater aborts, even with a null context (`pinyin.cpp:499`).
 ///
 /// # Safety
 ///
@@ -266,6 +259,7 @@ pub unsafe extern "C" fn pinyin_unload_addon_phrase_library(
     ctx.unload_addon(index)
 }
 
+// pinyin.cpp:457.
 /// Load a default phrase library by index.
 ///
 /// # C signature
@@ -274,13 +268,17 @@ pub unsafe extern "C" fn pinyin_unload_addon_phrase_library(
 ///                                 guint8 index);
 /// ```
 ///
-/// Upstream answers `false` for an out-of-range index and `false` when the
-/// library is already loaded (the system tables load at init), and asserts
-/// on a row that is neither `SYSTEM_FILE` nor `USER_FILE`; that assert
-/// aborts the process here too (register rows 62 and 79,
-/// `pinyin.cpp:457`). The only `true` on a healthy context is GBK (2)
-/// after an unload, re-attaching from disk upstream and clearing the
-/// visibility mask here.
+/// Load the configured library from its system and saved user data. Changes dropped by an unload
+/// are lost unless saved beforehand.
+///
+/// Returns false for a null context, an out-of-range index or an already loaded library. A
+/// successful reload returns true. When the file of an unloaded system library cannot be mapped
+/// again, the call can return true without making the library visible: as in libpinyin, the
+/// result does not report the mapping. A later load can retry.
+///
+/// # Aborts
+///
+/// Selecting an in-range row other than SYSTEM_FILE or USER_FILE on a live context aborts.
 ///
 /// # Safety
 ///
@@ -331,6 +329,7 @@ pub unsafe extern "C" fn pinyin_load_phrase_library(
     }
 }
 
+// pinyin.cpp:464-472.
 /// Unload a default phrase library by index.
 ///
 /// # C signature
@@ -339,12 +338,13 @@ pub unsafe extern "C" fn pinyin_load_phrase_library(
 ///                                   guint8 index);
 /// ```
 ///
-/// The GBK-only gate, verbatim: upstream asserts the index in range and
-/// refuses every non-GBK library before unloading
-/// (`pinyin.cpp:464-472`) — an index of 16 or more aborts the process
-/// (register row 21), any other non-GBK library answers `false` — and
-/// for GBK calls `unload` and answers `true` whatever it returned
-/// (`:473-474`), so a repeat unload answers `true` as well.
+/// Only GBK can be unloaded. On a live context an accepted index returns true even if already
+/// unloaded. Unloading drops unsaved item changes. A refused index or null context returns
+/// false.
+///
+/// # Aborts
+///
+/// An index of 16 or greater aborts, even with a null context.
 ///
 /// # Safety
 ///

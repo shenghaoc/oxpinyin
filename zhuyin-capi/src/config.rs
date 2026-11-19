@@ -6,6 +6,7 @@ use std::os::raw::c_int;
 use crate::state::context_mut;
 use crate::types::{PinyinOptionT, ZhuyinContext};
 
+// zhuyin_parser2.cpp:295, zhuyin.cpp:736.
 /// Set the zhuyin scheme.
 ///
 /// # C signature
@@ -14,11 +15,13 @@ use crate::types::{PinyinOptionT, ZhuyinContext};
 ///                                ZhuyinScheme scheme);
 /// ```
 ///
-/// The Rust parameter is `c_int`: callers may pass any `int`.
-/// Every implemented Zhuyin keyboard is table-driven. The
-/// `ZHUYIN_STANDARD_DVORAK` (7) slot (`zhuyin_parser2.cpp:295`) and every
-/// out-of-enum value (`zhuyin.cpp:736`) abort the process, as upstream does
-/// (register rows 5c and 5d).
+/// Select the keyboard for subsequent chewing input. Returns false for a null context and true
+/// after selection.
+///
+/// # Aborts
+///
+/// On a live context, STANDARD_DVORAK (7) or a value outside the supported keyboard schemes
+/// aborts the process.
 ///
 /// # Safety
 ///
@@ -46,6 +49,7 @@ pub unsafe extern "C" fn zhuyin_set_chewing_scheme(
     true
 }
 
+// zhuyin.cpp:704.
 /// Set the full pinyin scheme.
 ///
 /// # C signature
@@ -54,9 +58,12 @@ pub unsafe extern "C" fn zhuyin_set_chewing_scheme(
 ///                                    FullPinyinScheme scheme);
 /// ```
 ///
-/// HANYU (1), LUOMA (2) and `SECONDARY_ZHUYIN` (3) are the schemes; any other
-/// value aborts the process, as `set_scheme`'s `default: abort()` does
-/// (`pinyin_parser2.cpp:398` via `zhuyin.cpp:704`, register row 5d).
+/// Select HANYU (1), LUOMA (2), or SECONDARY_ZHUYIN (3) for subsequent parses. Returns false for
+/// a null context and true after selection.
+///
+/// # Aborts
+///
+/// Any other scheme on a live context aborts the process (`pinyin_parser2.cpp:398`).
 ///
 /// # Safety
 ///
@@ -90,6 +97,10 @@ pub unsafe extern "C" fn zhuyin_set_full_pinyin_scheme(
 /// bool zhuyin_set_options(zhuyin_context_t * context,
 ///                         pinyin_option_t options);
 /// ```
+///
+/// Replace the live context option word. Existing instances read the new options on subsequent
+/// operations. Setting options does not reparse input or save a profile. Returns false for a
+/// null context and true after setting the word.
 ///
 /// # Safety
 ///
@@ -209,6 +220,18 @@ pub unsafe extern "C" fn zhuyin_mask_out(
 ///                                 guint8 index);
 /// ```
 ///
+/// Load the configured library from its system and saved user data. Changes dropped by an unload
+/// are lost unless saved beforehand.
+///
+/// Returns false for a null context, an out-of-range index or an already loaded library. A
+/// successful reload returns true. When the file of an unloaded system library cannot be mapped
+/// again, the call can return true without making the library visible: as in libpinyin, the
+/// result does not report the mapping. A later load can retry.
+///
+/// # Aborts
+///
+/// Selecting an in-range row other than SYSTEM_FILE or USER_FILE on a live context aborts.
+///
 /// # Safety
 ///
 /// Under the [crate-level rules](crate#safety): `context` is a handle. The serial-calls rule
@@ -266,6 +289,14 @@ pub unsafe extern "C" fn zhuyin_load_phrase_library(
 /// bool zhuyin_unload_phrase_library(zhuyin_context_t * context,
 ///                                   guint8 index);
 /// ```
+///
+/// TSI cannot be unloaded. Other in-range indices are accepted. On a live context an accepted
+/// index returns true even if already unloaded. Unloading drops unsaved item changes. A refused
+/// index or null context returns false.
+///
+/// # Aborts
+///
+/// An index of 16 or greater aborts, even with a null context.
 ///
 /// # Safety
 ///
