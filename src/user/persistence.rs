@@ -1,39 +1,14 @@
-//! The user directory as the backend's native user files — drop-in
-//! task 9's persistence half.
+//! Loads and saves the user’s native phrase libraries, indexes, bigram data and profile
+//! marker. [`crate::data::user_files`] describes the file formats. The user indexes
+//! retain the records actually written, including which readings were indexed.
 //!
-//! The store's durable representation is the pin's file set
-//! (`docs/findings/user-store.md` §4 for the save cycle's semantics,
-//! `crate::data::user_files` for the inventory and codecs):
-//!
-//! * load — `check_format` (user.conf conformance, the open counter,
-//!   `_clean_user_files` on a non-conform profile), then the bigram
-//!   hash, the `USER_FILE` chunk stores (`user.bin`, `addon.bin`,
-//!   `network.bin`), and the `SYSTEM_FILE` `.dbin` logs replayed onto the
-//!   original system chunks, and the user pinyin index's records.
-//!   `user_phrase_index.bin` records are loaded and saved verbatim
-//!   ([`UserState::phrase_table`]); only phrase-table operations edit them.
-//!   `user_pinyin_index.bin` is
-//!   not a derivative — a reading merged into an existing phrase is
-//!   never indexed
-//!   (`pinyin.cpp:569-582`) — so its records are loaded
-//!   ([`UserState::indexed`]) and saved back.
-//! * save — the pin's `_write_files` + `_rename_files`: every file is
-//!   written whole to a `.tmp` sibling, then renamed over its final one
-//!   after another in the pin's order: libraries by index, the pinyin
-//!   index, the phrase index, then the bigram. A failure before the first
-//!   rename leaves the old profile. A failure or crash between renames
-//!   can leave a mix of old and new files, as in libpinyin
-//!   (`pinyin.cpp:1025-1130` at 074a2219).
-//! * fini — `pinyin_fini`'s `user.conf` write: the open counter the load
-//!   raised, lowered again.
-//!
-//! The two facades share the files and the `user.conf` codec but not its
-//! lifecycle: [`UserConfLaw`] names which one a profile follows.
-//!
-//! Nothing here holds a container open: the DBM files are created,
-//! written and closed during save, and opened read-only during load —
-//! the pin's own lifecycle (`Bigram::load_db` copies into memory,
-//! `save_db` writes a fresh file).
+//! [`UserConfLaw`] selects the save order. Pinyin writes temporary files before its
+//! rename pass. Zhuyin renames each file as it goes. A hard failure can leave temporary
+//! files or a mix of old and new files. Finalization applies the selected facade’s marker
+//! policy.
+
+// pinyin.cpp:569–582,933–1130; zhuyin.cpp:585–698. Bigram::load_db copies into memory,
+// save_db writes a fresh file. See docs/findings/user-store.md §4.
 
 #[cfg(test)]
 use crate::ChewingKey;
@@ -541,10 +516,8 @@ impl SystemOriginals {
     }
 
     /// Publish dictionary remaps when replay has not replaced its originals.
-    /// The old implementation's dictionary and journal baseline could name
-    /// different mappings after a refused replay or a transient reload. Move
-    /// the old mapping into the original's slot before replacing the current
-    /// dictionary slot; both versions remain uniquely owned.
+    /// Retain the journal baseline when a refused replay or a transient reload
+    /// gives the dictionary a different mapping.
     pub(crate) fn publish_current(&mut self, mut incoming: Self) {
         for nibble in incoming.libraries.keys().copied() {
             let Some((path, mapping)) = incoming.mapped.take_mapping(nibble) else {
@@ -1031,7 +1004,7 @@ pub struct ProfileCheck {
 /// ahead of those loads, then reads the profile with `load_checked`.
 ///
 /// The marker save's answer is ignored, as `check_format` ignores it
-/// (`pinyin.cpp:187`; maintainer ruling 2026-10-28 UTC, D4): a marker that
+/// (`pinyin.cpp:187`): a marker that
 /// cannot be written leaves the pin's `write %s failed.` line and the
 /// profile is judged and used as it would be otherwise.
 ///
@@ -1068,6 +1041,8 @@ pub(crate) fn check_format(
     // libpinyin saves the marker before it wipes (`:187`, `:194-215`): a
     // profile file named `user.conf` is unlinked after the save.
     if law == UserConfLaw::Pinyin {
+        // The save's answer is ignored, and no extra line of oxpinyin's own
+        // follows a failure (maintainer ruling 2026-10-28 UTC, D4).
         let _ = write_marker(dir, versions, open_counter);
     }
     if !conform {
@@ -1209,17 +1184,10 @@ pub const fn lowered_open_counter(open_counter: i32) -> i32 {
     if counter > 1 { counter - 1 } else { 0 }
 }
 
-/// The facade's fini-time `user.conf` write under `law`: libpinyin
-/// lowers the counter the load raised and writes the conform marker
-/// (`pinyin_fini`, `pinyin.cpp:1195-1200`, whose `mark_version` runs
-/// whether or not a save came first); libzhuyin writes nothing
-/// (`zhuyin_fini`, `zhuyin.cpp:741-757`). Nothing else of the profile
-/// is touched. `dir` is `None` for a context without a user dir, whose
-/// marker the pin names `""`.
-///
-/// A process that never reaches its fini leaves the load's raised value
-/// on disk, as upstream's does. The save's answer is ignored, as
-/// `pinyin_fini` ignores it (`:1200`).
+// pinyin_fini and mark_version, pinyin.cpp:1195–1200; zhuyin_fini, zhuyin.cpp:741–757.
+/// Applies the facade’s final profile-marker policy. Pinyin lowers the open counter and
+/// attempts the marker write even if no save preceded it. With no directory it attempts
+/// the empty filename. Zhuyin skips the write. The write result is ignored.
 pub fn fini(dir: Option<&Path>, versions: &SystemVersions, law: UserConfLaw, open_counter: i32) {
     if law == UserConfLaw::Pinyin {
         let counter = lowered_open_counter(open_counter);
@@ -1230,12 +1198,10 @@ pub fn fini(dir: Option<&Path>, versions: &SystemVersions, law: UserConfLaw, ope
     }
 }
 
-/// `check_format` for a context without a user dir: the pin keeps
-/// `m_user_dir` NULL, so `g_build_filename(NULL, "user.conf", NULL)` is
-/// `""` (`pinyin.cpp:176-178`, `zhuyin.cpp:130-132`). The load's `fopen("")`
-/// fails with its `open  failed.` line, and libpinyin's save
-/// (`pinyin.cpp:187`) fails with `write  failed.`. The wipe that follows
-/// names files under `""` too and removes nothing.
+// check_format uses g_build_filename(NULL, "user.conf", NULL), pinyin.cpp:176–187 and
+// zhuyin.cpp:130–132.
+/// Checks the empty marker filename for a context opened without a user directory. The
+/// pinyin policy also attempts to write that marker.
 pub fn check_format_unnamed(versions: &SystemVersions, law: UserConfLaw) {
     let _ = UserTableInfo::load(c"");
     if law == UserConfLaw::Pinyin {

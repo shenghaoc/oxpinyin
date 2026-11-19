@@ -1846,27 +1846,28 @@ impl UserStore {
         self.inner.libpinyin.dir.is_some()
     }
 
-    /// The save the C facades use: the file set is written and renamed and
-    /// the marker rewritten whatever fails on the way, and the failures come
-    /// on stderr instead of ending the save. A store with no
-    /// libpinyin target (no directory to write) reports nothing. A completed
-    /// save leaves the store clean; a guard return leaves its state
-    /// unchanged.
+    // pinyin.cpp:933–1130 and zhuyin.cpp:585–698 define the distinct save sequences.
+    /// Saves the profile and reports soft write and rename failures on standard error.
+    /// Missing user storage or a clean store requires no write. Only a completed save clears
+    /// the dirty flag.
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] when the session cannot be exported or
-    /// encoded — failures the pin has no counterpart for. A filesystem
-    /// failure is never one.
+    /// Returns [`UserStoreError`] if exporting or encoding fails or a hard filesystem or
+    /// record-copy failure stops the save. Files written before that point may remain.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
         self.save_reporting_compacted(&[])
     }
 
-    /// [`Self::save_reporting`] with the nibbles whose live empty sub-index
-    /// the pin's `compact` rebuilt from no items: their saved log records a
-    /// new header total of zero even though the system chunk's old total is
-    /// the one the failed load read (`phrase_index.cpp:648-675`).
+    // FacadePhraseIndex::compact, phrase_index.cpp:648–675.
+    /// Saves the profile with the supplied library indices marked as compacted. Their empty
+    /// sub-indexes contribute a zero total to the saved log.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same [`UserStoreError`] as [`Self::save_reporting`]. Earlier file changes
+    /// can survive a hard error.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting_compacted(&mut self, compacted: &[u8]) -> Result<(), UserStoreError> {
         self.save_reporting_inner(

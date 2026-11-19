@@ -46,7 +46,8 @@ pub enum SystemItem<'a> {
 pub struct ReadingKeys<'a>(&'a [u8]);
 
 impl<'a> ReadingKeys<'a> {
-    /// The keys of a reading as the chunk stores them.
+    /// Borrows a reading as a sequence of two-byte packed keys. Supply complete two-byte
+    /// words.
     #[must_use]
     pub fn packed(bytes: &'a [u8]) -> Self {
         Self(bytes)
@@ -125,7 +126,9 @@ impl<'a> SystemItem<'a> {
         self.view().n_pronunciations()
     }
 
-    /// The phrase text, `None` where a character is not a scalar value.
+    /// Reads the item’s outward phrase text, retaining accepted non-scalar UCS-4 words. See
+    /// [`crate::data::phrase_library::PhraseItemView::phrase_text`] for the word
+    /// requirements.
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
         self.view().phrase_text()
@@ -148,7 +151,9 @@ impl<'a> SystemItem<'a> {
         })
     }
 
-    /// Every stored reading in stored order.
+    /// Iterates readings in stored order until the first unreadable reading.
+    /// [`crate::data::phrase_library::PhraseItemView::pronunciations`] visits each declared
+    /// position.
     pub fn pronunciations(&self) -> impl Iterator<Item = Reading<'_>> + '_ {
         (0..self.n_pronunciations()).map_while(|nth| self.pronunciation(nth))
     }

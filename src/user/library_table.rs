@@ -54,7 +54,9 @@ impl<T> LibraryTable<T> {
         self.get(library).is_some()
     }
 
-    /// Stores `value` for `library` and answers the value it replaced.
+    /// Stores `value` and returns the value previously at `library`. A first insertion and an
+    /// index outside the 16 slots both return [`None`]. Only an in-range insertion changes
+    /// the table.
     pub fn insert(&mut self, library: u8, value: T) -> Option<T> {
         self.slots.get_mut(usize::from(library))?.replace(value)
     }
@@ -78,7 +80,8 @@ impl<T> LibraryTable<T> {
         )
     }
 
-    /// `Self::get_or_insert_with` storing `T::default()`.
+    /// Gets or initializes the slot for `library` using [`Default`]. Returns [`None`] for an
+    /// index outside `0..16`.
     pub fn get_or_default(&mut self, library: u8) -> Option<&mut T>
     where
         T: Default,
