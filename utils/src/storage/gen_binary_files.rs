@@ -229,10 +229,14 @@ fn add_index_space(table: Option<&Tree>, key: &[u8], keys: &[oxpinyin::ChewingKe
 pub fn load_phrase_table(table: Option<&Tree>, file: &mut TableFile, refuse_invalid: bool) {
     while let Some(record) = read_pinyin_record(file) {
         let (phrase, _written) = tool::utf8_to_ucs4(&record.phrase);
-        if refuse_invalid && phrase.is_none() {
-            tool::exit(tool::EINVAL);
-        }
-        let phrase = phrase.unwrap_or_default();
+        let Some(phrase) = phrase else {
+            if refuse_invalid {
+                tool::exit(tool::EINVAL);
+            }
+            // gen_binary_files passes a nonempty NULL key to the backend
+            // (phrase_large_table3.cpp:131-135, phrase_large_table3_tkrzwdb.cpp:199-202).
+            tool::abort();
+        };
         add_phrase_index(table, &phrase, record.token);
     }
 }

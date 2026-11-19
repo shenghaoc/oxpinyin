@@ -218,6 +218,56 @@ mod frozen {
             }
         }
 
+        // Row 115: phrase_large_table3.cpp:131-135 consumes the failed conversion.
+        #[test]
+        fn invalid_utf8_aborts_before_the_phrase_index_pass() {
+            use std::os::unix::process::ExitStatusExt;
+
+            let directory = TempDir::new().expect("temporary model");
+            directory
+                .child("table.conf")
+                .write_str(&format!(
+                    "binary format version:7\nmodel data version:14\nlambda parameter:0.3\n\
+                 source table format:pinyin\ndatabase format:{}\n\
+                 default RESERVED NULL NULL NULL NOT_USED\n\
+                 default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n\
+                 default GBK_DICTIONARY other.table gbk_char.bin NULL DICTIONARY\n",
+                    oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
+                ))
+                .expect("configuration");
+            let rows = [
+                b"ni3\t\xff\t16777217\t1\n".as_slice(),
+                "hao3\t好\t16777218\t7\n".as_bytes(),
+            ]
+            .concat();
+            directory
+                .child("source.table")
+                .write_binary(&rows)
+                .expect("source rows");
+            directory
+                .child("other.table")
+                .write_str("ni3\t你\t33554433\t1\n")
+                .expect("dictionary row");
+            let output = cargo_bin_cmd!("gen_binary_files")
+                .current_dir(directory.path())
+                .env("LC_ALL", "C")
+                .output()
+                .expect("run gen_binary_files");
+            assert_eq!(output.status.signal(), Some(libc::SIGABRT));
+            // The phrase-index pass would diagnose the invalid row before saving.
+            assert!(output.stderr.is_empty(), "{:?}", output.stderr);
+            for name in ["gb_char.bin", "gbk_char.bin"] {
+                assert!(
+                    !directory
+                        .path()
+                        .join(name)
+                        .try_exists()
+                        .expect("file status"),
+                    "{name}"
+                );
+            }
+        }
+
         // `den` has a `content_table` row but no `pinyin_index` row
         // (074a2219 `pinyin_parser_table.h:9-672,3976-4418`), so the
         // direct parser refuses it (`pinyin_parser2.cpp:618-621,655`):
