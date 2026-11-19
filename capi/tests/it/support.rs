@@ -67,6 +67,17 @@ pub(crate) fn run_in_child(name: &str, body: impl FnOnce(&std::path::Path)) -> C
     }
 }
 
+/// A private system whose table.conf has `from` replaced by `to`.
+pub(crate) fn conf_system(parent: &Path, from: &str, to: &str) -> std::path::PathBuf {
+    let system = private_system(parent);
+    let path = system.join("table.conf");
+    let text = std::fs::read_to_string(system_dir().join("table.conf")).expect("table.conf");
+    assert!(text.contains(from), "table.conf holds {from}");
+    std::fs::remove_file(&path).expect("unlink the linked table.conf");
+    std::fs::write(&path, text.replace(from, to)).expect("write table.conf");
+    system
+}
+
 pub(crate) const NBEST: lookup_candidate_type_t = lookup_candidate_type_t::NBEST_MATCH_CANDIDATE;
 
 /// The first row of `kind` in the current list.

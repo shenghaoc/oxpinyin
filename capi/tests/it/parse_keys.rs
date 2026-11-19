@@ -104,6 +104,33 @@ fn init_options_parse_tones_but_not_initials() {
         assert_eq!(unsafe { parse(instance, text) }, parsed, "{text}");
         unsafe { pinyin_free_instance(instance) };
     }
+    // The single-key parser reads the same word (`pinyin.cpp:1484-1495`).
+    // It clears the key first, takes a last character of `1` to `5` as the
+    // tone under `USE_TONE`, and refuses a spelling the index lacks: an
+    // initial alone needs `PINYIN_INCOMPLETE` (`pinyin_parser2.cpp:174-213`).
+    // The key word is `m_initial:5`, `m_middle:2`, `m_final:5`, `m_tone:3`
+    // from bit 0 (`chewing_key.h:43-46`), with `CHEWING_N` 11, `CHEWING_ZH`
+    // 23, `CHEWING_I` 1, `CHEWING_A` 1 and `CHEWING_ANG` 4
+    // (`chewing_enum.h`).
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    for (text, parsed, word) in [
+        (c"n", false, 0),
+        (c"zzz", false, 0),
+        (c"ni", true, 11 | 1 << 5),
+        (c"ni3", true, 11 | 1 << 5 | 3 << 12),
+        (c"a1", true, 1 << 7 | 1 << 12),
+        (c"zhang", true, 23 | 4 << 7),
+    ] {
+        let mut key = 0xCDEF_u16;
+        assert_eq!(
+            unsafe { pinyin_parse_full_pinyin(instance, text.as_ptr(), (&raw mut key).cast()) },
+            parsed,
+            "{text:?}"
+        );
+        assert_eq!(key, word, "{text:?}");
+    }
+    unsafe { pinyin_free_instance(instance) };
     unsafe { pinyin_fini(context) };
 }
 
@@ -173,6 +200,61 @@ fn double_auxiliary_text_aborts_three_bytes_into_a_key() {
             unsafe { pinyin_get_double_pinyin_auxiliary_text(instance, 3, &raw mut render_aux) };
         },
     );
+}
+
+/// The double-pinyin and chewing auxiliary texts share the prefix walk of
+/// the full-pinyin one (`pinyin.cpp:3450`, `:3528`). After a leading
+/// apostrophe no key begins at column 0 and `fill_matrix` puts a zero key
+/// only between two keys (`phonetic_key_matrix.cpp:70-80`), so the column is
+/// empty and `assert(matrix.get_column_size(offset) >= 1)` fails
+/// (`pinyin.cpp:3311`).
+#[test]
+fn double_auxiliary_text_aborts_on_a_leading_apostrophe() {
+    assert_aborts(
+        "parse_keys::double_auxiliary_text_aborts_on_a_leading_apostrophe",
+        || {
+            let user = TempUserDir::new("aux-double-leading-apostrophe");
+            let (_context, instance) = open_at(&user.path);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "'nihao") }, 6);
+            let mut render_aux: *mut c_char = ptr::null_mut();
+            unsafe { pinyin_get_double_pinyin_auxiliary_text(instance, 2, &raw mut render_aux) };
+        },
+    );
+}
+
+/// The chewing twin of
+/// [`double_auxiliary_text_aborts_on_a_leading_apostrophe`].
+#[test]
+fn chewing_auxiliary_text_aborts_on_a_leading_apostrophe() {
+    assert_aborts(
+        "parse_keys::chewing_auxiliary_text_aborts_on_a_leading_apostrophe",
+        || {
+            let user = TempUserDir::new("aux-chewing-leading-apostrophe");
+            let (_context, instance) = open_at(&user.path);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            assert_eq!(unsafe { parse(instance, "'nihao") }, 6);
+            let mut render_aux: *mut c_char = ptr::null_mut();
+            unsafe {
+                crate::support::pinyin_get_chewing_auxiliary_text(instance, 2, &raw mut render_aux)
+            };
+        },
+    );
+}
+
+/// `get_pinyin_key` asserts on an empty matrix: `matrix.size() - 1` wraps,
+/// the offset test passes and `get_column_size(0)` asserts
+/// (`pinyin.cpp:2927-2930`, `phonetic_key_matrix.h:103`).
+#[test]
+fn key_aborts_on_an_empty_matrix() {
+    assert_aborts("parse_keys::key_aborts_on_an_empty_matrix", || {
+        let user = TempUserDir::new("key-empty");
+        let (_context, instance) = open_at(&user.path);
+        let mut key = ptr::null_mut();
+        unsafe { crate::support::pinyin_get_pinyin_key(instance, 0, &raw mut key) };
+    });
 }
 
 /// `get_pinyin_key_rest` asserts on an empty matrix.
@@ -294,6 +376,27 @@ fn invalid_input_bytes_stop_each_pinyin_parser() {
     assert_eq!(consumed(chewings, b"su\xff3"), 2);
     assert_eq!(consumed(chewings, b"su3\xff"), 3);
     assert_eq!(consumed(chewings, b"\xffsu3"), 0);
+    // The single-key parser hands the whole argument to the index search,
+    // which finds no such spelling: `false`, with the key cleared first
+    // (`pinyin.cpp:1491-1494`, `pinyin_parser2.cpp:174`, `:196-200`).
+    let mut key = 0xCDEF_u16;
+    assert!(!unsafe {
+        pinyin_parse_full_pinyin(instance, c"ni\xff".as_ptr(), (&raw mut key).cast())
+    });
+    assert_eq!(key, 0);
+    // `pinyin_lookup_tokens` searches the `g_utf8_to_ucs4` result, which is
+    // NULL with length 0 for a text that is not UTF-8 (`pinyin.cpp:2657-2667`).
+    // SAFETY: a fresh GArray of four-byte elements, freed below.
+    let tokens = unsafe { glib_sys::g_array_new(0, 0, 4) };
+    assert!(!unsafe {
+        crate::support::pinyin_lookup_tokens(instance, c"\xe4\xbd\xa0\xff".as_ptr(), tokens.cast())
+    });
+    // SAFETY: `tokens` is the live GArray allocated above.
+    assert_eq!(unsafe { (*tokens).len }, 0);
+    // SAFETY: allocated above and freed once.
+    unsafe { glib_sys::g_array_free(tokens, 1) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { lookup(instance, "你") }.len(), 1);
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };
@@ -1141,6 +1244,90 @@ fn auxiliary_text_shows_the_parsed_keys_under_the_divided_table() {
         unsafe { pinyin_free_instance(instance) };
     }
     unsafe { pinyin_fini(context) };
+}
+
+/// The resplit and fuzzy option bits do not change the text. The parser's
+/// keys do not depend on them: its resplit pass is compiled out
+/// (`pinyin_parser2.cpp:335-340`) and its index check masks the fuzzy bits
+/// (`:49-50`). `fill_matrix` appends those keys first
+/// (`phonetic_key_matrix.cpp:51-55`); `resplit_step`, `inner_split_step` and
+/// `fuzzy_syllable_step` run after it (`pinyin.cpp:1514-1520`) and append
+/// their alternates (`phonetic_key_matrix.cpp:150`, `:155`, `:211`, `:216`,
+/// `:256`, `:295`). The renderers read item 0 of a column and move to that
+/// key's end (`pinyin.cpp:3312`, `:3331`, `:3353`, `:3413`, `:3427`), so
+/// they meet the parser's keys only: a key that a resplit puts in an empty
+/// column is never visited.
+#[test]
+fn auxiliary_text_ignores_the_resplit_and_fuzzy_alternates() {
+    const USE_TONE: u32 = 1 << 5;
+    const USE_DIVIDED_TABLE: u32 = 1 << 7;
+    const USE_RESPLIT_TABLE: u32 = 1 << 8;
+    // PINYIN_AMB_Z_ZH | PINYIN_AMB_L_N | PINYIN_AMB_AN_ANG.
+    const FUZZY: u32 = 1 << 12 | 1 << 15 | 1 << 17;
+    let user = TempUserDir::new("aux-alternates");
+    let (context, _) = open_at(&user.path);
+    let texts = |input: &str| {
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { alloc(context) };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, input) }, input.len());
+        let mut rendered = Vec::new();
+        for cursor in 0..input.len() + 2 {
+            // The double-pinyin renderer aborts three bytes into a key.
+            let renders: &[Render] = if matches!(cursor, 0..=2) || cursor >= input.len() {
+                &[FULL_AUX, CHEWING_AUX, DOUBLE_AUX]
+            } else {
+                &[FULL_AUX, CHEWING_AUX]
+            };
+            for &render in renders {
+                // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
+                // into it.
+                rendered.push(unsafe { aux(instance, render, cursor) }.expect("a parsed matrix"));
+            }
+        }
+        unsafe { pinyin_free_instance(instance) };
+        rendered
+    };
+    for (word, inputs) in [
+        (
+            USE_RESPLIT_TABLE,
+            &["zhengfu", "xianan", "dianxin", "changan"][..],
+        ),
+        (
+            USE_DIVIDED_TABLE | USE_RESPLIT_TABLE,
+            &["xian", "zhengfu", "xianan"],
+        ),
+        (FUZZY, &["zongguo", "nan", "lan", "zi", "banggan"]),
+    ] {
+        for input in inputs {
+            assert!(unsafe { pinyin_set_options(context, USE_TONE) });
+            let plain = texts(input);
+            assert!(unsafe { pinyin_set_options(context, USE_TONE | word) });
+            assert_eq!(texts(input), plain, "{input} under {word:#x}");
+        }
+    }
+    // The texts themselves, for the parse the divided-table test names.
+    assert!(unsafe { pinyin_set_options(context, USE_TONE | USE_RESPLIT_TABLE) });
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "xianan") }, 6);
+    for (render, cursor, text) in [
+        (FULL_AUX, 3, "xia |nan "),
+        (CHEWING_AUX, 3, "ㄒㄧㄚ |ㄋㄢ "),
+        (DOUBLE_AUX, 2, "xia| nan "),
+    ] {
+        assert_eq!(
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { aux(instance, render, cursor) }.as_deref(),
+            Some(text),
+            "{cursor}"
+        );
+    }
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
 }
 
 /// With no parse each renderer answers false and writes an empty string

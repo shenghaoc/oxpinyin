@@ -118,6 +118,57 @@ fn addon_load_aborts_on_a_directory_library() {
     }
 }
 
+/// An addon row that is neither `NOT_USED` nor `DICTIONARY` aborts its load:
+/// `assert(DICTIONARY == table_info->m_file_type)` (`pinyin.cpp:487-491`).
+/// The init reads only the default rows (`:377-392`), so it succeeds.
+#[test]
+fn addon_load_aborts_on_a_row_that_is_not_a_dictionary() {
+    assert_aborts(
+        "library_loading::addon_load_aborts_on_a_row_that_is_not_a_dictionary",
+        || {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let system = crate::support::conf_system(
+                scratch.path(),
+                "art.bin NULL DICTIONARY",
+                "art.bin NULL SYSTEM_FILE",
+            );
+            let user = TempUserDir::new("addon-not-dictionary");
+            let context = init_at(&system, &user.path);
+            assert!(!context.is_null());
+            unsafe { pinyin_load_addon_phrase_library(context, 4) };
+        },
+    );
+}
+
+/// An addon library that cannot be mapped: the load writes the pin's
+/// `mmap %s failed!` line (`pinyin.cpp:286-291`, through `:493`) and answers
+/// `false`, with no GLib log. The pin then reads the empty chunk and dies
+/// (policy row 76, class (b)).
+#[test]
+fn addon_load_of_an_empty_library_writes_the_mmap_line() {
+    let run = crate::support::run_in_child(
+        "library_loading::addon_load_of_an_empty_library_writes_the_mmap_line",
+        |user| {
+            let system = crate::support::private_system(user.parent().expect("scratch"));
+            std::fs::remove_file(system.join("art.bin")).expect("unlink the library");
+            std::fs::write(system.join("art.bin"), b"").expect("an empty library");
+            let context = init_at(&system, user);
+            assert!(!context.is_null());
+            let logs = crate::support::LogCapture::new();
+            assert!(!unsafe { pinyin_load_addon_phrase_library(context, 4) });
+            assert_eq!(logs.take(), []);
+        },
+    );
+    let system = run.user_dir.parent().expect("scratch").join("system");
+    let line = format!(
+        "mmap {} failed!{}",
+        system.join("art.bin").display(),
+        crate::support::NL
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.ends_with(&line), "{stderr}");
+}
+
 #[test]
 fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     let system = TempSystemDir::new("addon-load");

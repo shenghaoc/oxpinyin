@@ -439,6 +439,22 @@ pub fn items_system(
     items: &[SystemItem<'_>],
     total: u32,
 ) -> PathBuf {
+    libraries_system(source, parent, &[(1, "gb_char.bin", items, total)])
+}
+
+/// One library of [`libraries_system`]: its index, its chunk file, its items
+/// and its total.
+pub type SystemLibrary<'a> = (u8, &'a str, &'a [SystemItem<'a>], u32);
+
+/// A private system under `parent`, linked from `source`, in which each
+/// library of `libraries` holds exactly its items (slots 1 on, in order)
+/// under its total. The pinyin and phrase indexes hold the items of these
+/// libraries and nothing else. Answers its path.
+pub fn libraries_system(
+    source: &std::path::Path,
+    parent: &std::path::Path,
+    libraries: &[SystemLibrary<'_>],
+) -> PathBuf {
     use std::collections::BTreeMap;
     let system = parent.join("system");
     std::fs::create_dir_all(&system).expect("private system dir");
@@ -446,58 +462,60 @@ pub fn items_system(
         let entry = entry.expect("system entry");
         link_file(&entry.path(), &system.join(entry.file_name()));
     }
-    let mut content = vec![0_u8; 8];
-    let mut offsets = vec![0_u32];
     let mut phonetic: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
     let mut phrases: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
-    for (slot, (text, keys, unigram)) in items.iter().enumerate() {
-        let token = 0x0100_0000 | u32::try_from(slot + 1).expect("slot");
-        let raw_text: Vec<u8> = text.iter().flat_map(|word| word.to_le_bytes()).collect();
-        let raw_keys: Vec<u8> = keys.iter().flat_map(|word| word.to_le_bytes()).collect();
-        offsets.push(u32::try_from(content.len()).expect("offset"));
-        content.extend([u8::try_from(text.len()).expect("length"), 1]);
-        content.extend(unigram.to_le_bytes());
-        content.extend(&raw_text);
-        content.extend(&raw_keys);
-        content.extend(10_u32.to_le_bytes());
-        let index: Vec<u8> = keys
+    for &(library, file, items, total) in libraries {
+        let mut content = vec![0_u8; 8];
+        let mut offsets = vec![0_u32];
+        for (slot, (text, keys, unigram)) in items.iter().enumerate() {
+            let token = u32::from(library) << 24 | u32::try_from(slot + 1).expect("slot");
+            let raw_text: Vec<u8> = text.iter().flat_map(|word| word.to_le_bytes()).collect();
+            let raw_keys: Vec<u8> = keys.iter().flat_map(|word| word.to_le_bytes()).collect();
+            offsets.push(u32::try_from(content.len()).expect("offset"));
+            content.extend([u8::try_from(text.len()).expect("length"), 1]);
+            content.extend(unigram.to_le_bytes());
+            content.extend(&raw_text);
+            content.extend(&raw_keys);
+            content.extend(10_u32.to_le_bytes());
+            let index: Vec<u8> = keys
+                .iter()
+                .flat_map(|word| (word & 4095).to_le_bytes())
+                .collect();
+            for end in (2..index.len()).step_by(2) {
+                phonetic.entry(index[..end].to_vec()).or_default();
+            }
+            let mut item = token.to_le_bytes().to_vec();
+            item.extend(&raw_keys);
+            item.resize(item.len().div_ceil(4) * 4, 0);
+            phonetic.entry(index).or_default().extend(item);
+            for end in (4..raw_text.len()).step_by(4) {
+                phrases.entry(raw_text[..end].to_vec()).or_default();
+            }
+            phrases
+                .entry(raw_text)
+                .or_default()
+                .extend(token.to_le_bytes());
+        }
+        let count = u32::try_from(offsets.len()).expect("offsets");
+        let index_two = 17 + count * 4 + 1;
+        let content_len = u32::try_from(content.len()).expect("content");
+        let mut payload: Vec<u8> = [total, 17, index_two, index_two + content_len + 1]
             .iter()
-            .flat_map(|word| (word & 4095).to_le_bytes())
+            .flat_map(|value| value.to_le_bytes())
             .collect();
-        for end in (2..index.len()).step_by(2) {
-            phonetic.entry(index[..end].to_vec()).or_default();
-        }
-        let mut item = token.to_le_bytes().to_vec();
-        item.extend(&raw_keys);
-        item.resize(item.len().div_ceil(4) * 4, 0);
-        phonetic.entry(index).or_default().extend(item);
-        for end in (4..raw_text.len()).step_by(4) {
-            phrases.entry(raw_text[..end].to_vec()).or_default();
-        }
-        phrases
-            .entry(raw_text)
-            .or_default()
-            .extend(token.to_le_bytes());
+        payload.push(b'#');
+        payload.extend(offsets.iter().flat_map(|value| value.to_le_bytes()));
+        payload.push(b'#');
+        payload.extend(&content);
+        payload.push(b'#');
+        let chunk = system.join(file);
+        std::fs::remove_file(&chunk).expect("unlink the library");
+        std::fs::write(
+            &chunk,
+            oxpinyin::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        )
+        .expect("write the library");
     }
-    let count = u32::try_from(offsets.len()).expect("offsets");
-    let index_two = 17 + count * 4 + 1;
-    let content_len = u32::try_from(content.len()).expect("content");
-    let mut payload: Vec<u8> = [total, 17, index_two, index_two + content_len + 1]
-        .iter()
-        .flat_map(|value| value.to_le_bytes())
-        .collect();
-    payload.push(b'#');
-    payload.extend(offsets.iter().flat_map(|value| value.to_le_bytes()));
-    payload.push(b'#');
-    payload.extend(&content);
-    payload.push(b'#');
-    let gb_char = system.join("gb_char.bin");
-    std::fs::remove_file(&gb_char).expect("unlink gb_char.bin");
-    std::fs::write(
-        &gb_char,
-        oxpinyin::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
-    )
-    .expect("gb_char.bin");
     for (name, rows) in [
         ("pinyin_index.bin", phonetic),
         ("phrase_index.bin", phrases),

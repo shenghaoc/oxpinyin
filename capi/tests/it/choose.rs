@@ -55,6 +55,42 @@ fn choose_candidate_aborts_on_a_predicted_prefix_row() {
     );
 }
 
+/// `choose_candidate` asserts on a predicted bigram row: the first half of
+/// `assert(PREDICTED_BIGRAM_CANDIDATE != type && PREDICTED_PREFIX_CANDIDATE
+/// != type)` (`pinyin.cpp:2507-2508`). The row comes from a user gram of 你.
+#[test]
+fn choose_candidate_aborts_on_a_predicted_bigram_row() {
+    assert_aborts(
+        "choose::choose_candidate_aborts_on_a_predicted_bigram_row",
+        || {
+            let user = TempUserDir::new("choose-bigram-row");
+            let (context, instance) = open_at(&user.path);
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let prefixes = unsafe { lookup(instance, "你") };
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let successor = unsafe { lookup(instance, "好") }[0];
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above
+            // and is not yet freed; nothing uses either handle after this call; only this thread
+            // calls into them.
+            unsafe { close(context, instance) };
+            let gram = gram_bytes(20, &[(successor, 20)]);
+            let rows: Vec<_> = prefixes
+                .iter()
+                .map(|token| (token.to_le_bytes().to_vec(), gram.clone()))
+                .collect();
+            replace_user_bigram(&user.path, &rows);
+            let (_context, instance) = open_at(&user.path);
+            assert!(unsafe {
+                pinyin_guess_predicted_candidates_with_punctuations(instance, c"你".as_ptr())
+            });
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+            let row = unsafe { row_of(instance, PREDICTED_BIGRAM) };
+            // SAFETY: the row belongs to this live instance and no call has invalidated its snapshot.
+            unsafe { pinyin_choose_candidate(instance, 0, row) };
+        },
+    );
+}
+
 /// `choose_predicted_candidate` asserts on a NORMAL row.
 #[test]
 fn choose_predicted_candidate_aborts_on_a_normal_row() {
@@ -142,6 +178,41 @@ fn remove_user_candidate_aborts_without_the_phrase_table() {
                 user.path.join("user_phrase_index.bin.gone"),
             )
             .expect("move the phrase table");
+            let (instance, cand) = user_row_of_dada(&user.path);
+            unsafe { pinyin_remove_user_candidate(instance, cand) };
+        },
+    );
+}
+
+/// `remove_user_candidate` asserts on a reading the user pinyin index does
+/// not hold. A second import of the same text into the same library adds its
+/// reading to the item and to no index (`pinyin.cpp:561-582`), so the
+/// removal's second `pinyin_table->remove_index` fails its
+/// `assert(ERROR_OK == retval)` (`:3754-3759`).
+#[test]
+fn remove_user_candidate_aborts_on_a_reading_the_index_lacks() {
+    assert_aborts(
+        "choose::remove_user_candidate_aborts_on_a_reading_the_index_lacks",
+        || {
+            let user = TempUserDir::new("remove-unindexed-reading");
+            let (context, instance) = open_at(&user.path);
+            assert_eq!(
+                // SAFETY: `context` was opened above and is not yet freed; only this thread calls
+                // into it.
+                unsafe {
+                    import_batch(
+                        context,
+                        7,
+                        &[("龘龘", "da2'da2", 5), ("龘龘", "da1'da1", 5)],
+                    )
+                },
+                [true, true]
+            );
+            assert!(unsafe { crate::support::pinyin_save(context) });
+            // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above
+            // and is not yet freed; nothing uses either handle after this call; only this thread
+            // calls into them.
+            unsafe { close(context, instance) };
             let (instance, cand) = user_row_of_dada(&user.path);
             unsafe { pinyin_remove_user_candidate(instance, cand) };
         },

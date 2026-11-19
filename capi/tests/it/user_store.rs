@@ -193,6 +193,36 @@ fn mask_out_aborts_on_two_log_headers_and_leaves_the_files() {
     assert_eq!(files_of(&run.user_dir), files_of(&before));
 }
 
+/// The init loads a log of two headers: `SubPhraseIndex::merge` applies each
+/// record as it reads it and counts no header (`phrase_index.cpp:438-486`).
+/// Only `_peek_header`, on the mask-out path, asserts `1 >= header_count`
+/// (`:745`).
+#[test]
+fn init_loads_a_log_of_two_headers() {
+    let user = TempUserDir::new("init-two-headers");
+    write_user_conf(&user.path, &system_dir());
+    // Each header names the library's total as its old total, so the merge
+    // applies both (`phrase_index.cpp:503-514`).
+    let library = std::fs::read(system_dir().join("gb_char.bin")).expect("gb_char.bin");
+    let total = u32::from_le_bytes(library[8..12].try_into().expect("a word"));
+    let headers = [
+        crate::support::modify_header(0, total, total),
+        crate::support::modify_header(0, total, total),
+    ]
+    .concat();
+    write_log(&user.path, "gb_char.dbin", &headers);
+    let context = init_at(&system_dir(), &user.path);
+    assert!(!context.is_null());
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0) });
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
+}
+
 /// Register row 97: `mask_out` reloads library 1 and `_mask_out_records`
 /// appends a kept ADD with both chunk pointers (`phrase_index_logger.h:245`).
 #[test]

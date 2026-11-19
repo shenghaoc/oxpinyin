@@ -145,6 +145,156 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     unsafe { close(context, instance) };
 }
 
+/// The zhuyin facade lists no longer phrase. `zhuyin_guess_candidates_after_cursor`
+/// has the span loop and the sentence prepend only (`zhuyin.cpp:1460-1539`);
+/// libpinyin's `_prepend_longer_candidates` has no counterpart, and
+/// `zhuyin.h` has no such row type. After one syllable every row is
+/// therefore one character, where the pinyin facade also lists a phrase that
+/// starts with the syllable.
+// tkrzw only: `candidate_rows` is.
+#[cfg(feature = "tkrzw")]
+#[test]
+fn the_after_cursor_list_has_no_longer_row() {
+    let (context, instance) = open();
+    assert_eq!(
+        unsafe { zhuyin_parse_more_chewings(instance, c"su3".as_ptr()) },
+        3
+    );
+    assert!(unsafe { zhuyin_guess_sentence(instance) });
+    assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let rows = unsafe { crate::support::candidate_rows(instance) };
+    assert!(rows.len() > 1, "the sentence row and a searched row");
+    for (_, kind, text) in rows {
+        assert!(
+            matches!(
+                kind,
+                lookup_candidate_type_t::BEST_MATCH_CANDIDATE
+                    | lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
+            ),
+            "{kind:?}"
+        );
+        let text = String::from_utf8(text).expect("UTF-8");
+        assert_eq!(text.chars().count(), 1, "{text}");
+    }
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
+}
+
+/// `zhuyin_train` on an instance with no result answers `false` before it
+/// marks the context modified (`zhuyin.cpp:1704-1707`), so the save has
+/// nothing to write and answers `false` (`:551-552`).
+#[test]
+fn a_fresh_instance_trains_nothing() {
+    let user_dir = TempUserDir::new("train-fresh");
+    let (context, instance) = open_with_user(&user_dir.path);
+    assert!(!unsafe { crate::support::zhuyin_train(instance) });
+    assert_eq!(
+        unsafe { zhuyin_parse_more_chewings(instance, c"su3cl3".as_ptr()) },
+        6
+    );
+    assert!(!unsafe { crate::support::zhuyin_train(instance) });
+    assert!(!unsafe { crate::support::zhuyin_save(context) });
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
+}
+
+/// `zhuyin_unload_phrase_library` refuses the TSI library, index 1, and
+/// answers `true` for every other index below 16, with or without a loaded
+/// library there (`zhuyin.cpp:379-390`; `TSI_DICTIONARY`,
+/// `novel_types.h:155`).
+#[test]
+fn unload_refuses_only_the_tsi_library() {
+    let (context, instance) = open();
+    for index in 0..16_u8 {
+        assert_eq!(
+            unsafe { zhuyin_unload_phrase_library(context, index) },
+            index != 1,
+            "library {index}"
+        );
+    }
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
+}
+
+/// The candidate frequency uses the `table.conf` lambda as scanned, outside
+/// `[0, 1]` too. The pin scans it with `%f` into a `gfloat`
+/// (`table_info.cpp:220`) and computes
+/// `(guint32)((lambda * bigram + (1 - lambda) * unigram / (gfloat) total) * 2^24)`
+/// with no bigram here (`zhuyin.cpp:1264-1268`). With a facade total of
+/// 2^26, 乙 (unigram 1) and 甲 (unigram 2) have the frequencies
+/// `(guint32) 0.25` and `(guint32) 0.5` at lambda 0: a tie, which the
+/// stable `g_array_sort` leaves in token order (`:1529`, `:1140-1143`). At
+/// lambda -2 the factor is 3: `(guint32) 0.75` = 0 and `(guint32) 1.5` = 1,
+/// so 甲 comes first. At lambda 1.5 the products are -0.125 and -0.25: both
+/// truncate to 0, which a `guint32` holds, so the conversion is defined and
+/// the tie keeps the token order. At lambda 6 the products are -1.25 and
+/// -2.5: they truncate to -1 and -2, which no `guint32` holds, so the pin's
+/// conversion is undefined (policy row 83, class (b)). oxpinyin stores 0 for
+/// both, as Rust's `as u32` does for a negative value, and the tie keeps the
+/// token order.
+// tkrzw only: `candidate_rows` is.
+#[cfg(feature = "tkrzw")]
+#[test]
+fn candidates_follow_a_lambda_outside_zero_to_one() {
+    for (lambda, order) in [
+        ("0", ["乙", "甲"]),
+        ("-2", ["甲", "乙"]),
+        ("1.5", ["乙", "甲"]),
+        ("6", ["乙", "甲"]),
+    ] {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = crate::support::libraries_system(
+            &crate::support::system_dir(),
+            scratch.path(),
+            &[
+                (
+                    1,
+                    "gb_char.bin",
+                    &[(&[0x4e59], &[0x1081], 1), (&[0x7532], &[0x1081], 2)],
+                    1 << 26,
+                ),
+                (2, "gbk_char.bin", &[], 0),
+                (3, "opengram.bin", &[], 0),
+                (4, "merged.bin", &[], 0),
+            ],
+        );
+        let conf = system.join("table.conf");
+        let text = std::fs::read_to_string(&conf).expect("table.conf");
+        assert!(text.contains("lambda parameter:0.312699"));
+        std::fs::remove_file(&conf).expect("unlink the linked table.conf");
+        std::fs::write(
+            &conf,
+            text.replace(
+                "lambda parameter:0.312699",
+                &format!("lambda parameter:{lambda}"),
+            ),
+        )
+        .expect("write table.conf");
+        let context = init_on(&system, None);
+        assert!(!context.is_null(), "lambda {lambda}");
+        let instance = unsafe { zhuyin_alloc_instance(context) };
+        assert_eq!(
+            unsafe { zhuyin_parse_more_full_pinyins(instance, c"ba1".as_ptr()) },
+            3
+        );
+        assert!(unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) });
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let texts: Vec<String> = unsafe { crate::support::candidate_rows(instance) }
+            .into_iter()
+            .map(|(_, _, text)| String::from_utf8(text).expect("UTF-8"))
+            .collect();
+        assert_eq!(texts, order, "lambda {lambda}");
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
+    }
+}
+
 /// A parse that places no key refuses the guess: an empty reparse, and a
 /// lone separator, which keeps the earlier sentence and clears the list
 /// (`phonetic_lookup.h:743-748`, `zhuyin.cpp:902-907`).

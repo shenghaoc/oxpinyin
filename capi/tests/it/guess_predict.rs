@@ -149,6 +149,284 @@ fn a_predicted_bigram_row_is_not_a_user_candidate() {
     unsafe { close(context, instance) };
 }
 
+/// A unigram add on one item changes the order of two others, through the
+/// facade total alone. `pinyin_token_add_unigram_frequency` adds the delta to
+/// the facade's `guint32` total (`pinyin.cpp:2836-2842`,
+/// `phrase_index.h:633`), which is the denominator of every candidate
+/// frequency: `(guint32)((1 - lambda) * unigram / (gfloat) total * 2^24)`
+/// with no bigram term here (`pinyin.cpp:1855-1866`).
+///
+/// 甲 (unigram 1) and 乙 (unigram 2) are both `ba1`; the loaded libraries
+/// total 2^24 (each load adds its library's total, `phrase_index.cpp:247`). With the fixture's lambda, 0.312699, the frequencies are
+/// `(guint32) 0.687` = 0 and `(guint32) 1.375` = 1, so the descending
+/// frequency order (`:1700-1708`) lists 乙 first. An add of 3 * 2^24 to 丙,
+/// which has another key, makes the total 2^26: both frequencies are 0, the
+/// comparator answers 0, and the stable `g_array_sort_with_data` keeps the
+/// order in which `_append_items` listed the tokens (`:1777-1781`): 甲, 乙.
+#[test]
+fn a_unigram_add_on_another_item_reorders_two_candidates() {
+    // SORT_WITHOUT_SENTENCE_CANDIDATE | SORT_WITHOUT_LONGER_CANDIDATE |
+    // SORT_BY_FREQUENCY.
+    const BY_FREQUENCY: u32 = 0x13;
+    let total = 1_u32 << 24;
+    let others: u32 = ["gbk_char.bin", "opengram.bin", "merged.bin"]
+        .into_iter()
+        .map(|name| {
+            let file = std::fs::read(system_dir().join(name)).expect("a fixture library");
+            u32::from_le_bytes(file[8..12].try_into().expect("a word"))
+        })
+        .sum();
+    let library_one = total - others;
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            (&[0x7532], &[0x1081], 1),
+            (&[0x4e59], &[0x1081], 2),
+            (&[0x4e19], &[0x1084], library_one - 3),
+        ],
+        library_one,
+    );
+    let user = TempUserDir::new("denominator");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ba1") }, 3);
+    let texts = || {
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, BY_FREQUENCY) });
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        (unsafe { capture_rows(instance) })
+            .into_iter()
+            .map(|(kind, text, _)| {
+                assert_eq!(kind, NORMAL);
+                text
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(texts(), ["乙", "甲"]);
+    assert!(unsafe {
+        crate::support::pinyin_token_add_unigram_frequency(instance, 0x0100_0003, 3 * total)
+    });
+    assert_eq!(texts(), ["甲", "乙"]);
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
+}
+
+/// A sole prediction row whose item a journal REMOVE took out is listed with
+/// a NULL string. The REMOVE clears the item and leaves the phrase table
+/// (`phrase_index.cpp:460-475`, `:219-236`), so the suggestion search still
+/// answers the token. `_compute_predicted_prefix_candidates` ignores the
+/// failed `get_phrase_item` and tests the length of its own fresh item, 0
+/// (`pinyin.cpp:2389-2405`); the row keeps the NULL string it starts with
+/// (`:107-115`); and with one row the duplicate pass compares nothing
+/// (`:2041-2083`). The getters answer from the row as it is
+/// (`:2866-2878`, `:3712-3718`).
+#[test]
+fn a_sole_removed_prefix_row_reads_null_through_the_getters() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let total = 1000_u32;
+    let system = crate::support::items_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            (&[0x7532], &[0x1081], 100),
+            (&[0x7532, 0x4e59], &[0x1081, 0x1081], 50),
+        ],
+        total,
+    );
+    craft_hash(&system.join("bigram.db"), &[]);
+    // Token 0x01000002 as `items_system` stores it: the length and reading
+    // count, the unigram, the text, the keys and the reading's count.
+    let item = [
+        &[2_u8, 1][..],
+        &50_u32.to_le_bytes(),
+        &0x7532_u32.to_le_bytes(),
+        &0x4e59_u32.to_le_bytes(),
+        &0x1081_u16.to_le_bytes(),
+        &0x1081_u16.to_le_bytes(),
+        &10_u32.to_le_bytes(),
+    ]
+    .concat();
+    let remove = [
+        &2_u32.to_le_bytes()[..],
+        &0x0100_0002_u32.to_le_bytes(),
+        &u16::try_from(item.len()).expect("a length").to_le_bytes(),
+        &item,
+    ]
+    .concat();
+    // A live row's string is the phrase after the prefix (`:2018-2022`).
+    for (removed, text) in [(false, Some("乙")), (true, None)] {
+        let user = TempUserDir::new("removed-prefix-row");
+        write_user_conf(&user.path, &system);
+        if removed {
+            crate::support::write_log(
+                &user.path,
+                "gb_char.dbin",
+                &[
+                    crate::support::modify_header(0, total, total),
+                    remove.clone(),
+                ]
+                .concat(),
+            );
+        }
+        let context = init_at(&system, &user.path);
+        assert!(!context.is_null());
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { alloc(context) };
+        assert!(unsafe {
+            crate::support::pinyin_guess_predicted_candidates(instance, c"甲".as_ptr())
+        });
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { n_candidate(instance) }, 1, "removed {removed}");
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let row = unsafe { candidate_at(instance, 0) };
+        let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
+        assert!(unsafe { pinyin_get_candidate_type(instance, row, &raw mut kind) });
+        assert_eq!(kind, PREDICTED_PREFIX);
+        let mut string = c"seed".as_ptr();
+        assert!(unsafe {
+            crate::support::pinyin_get_candidate_string(instance, row, &raw mut string)
+        });
+        // SAFETY: a non-NULL answer is the row's own NUL-terminated string, live with the list.
+        let found = (!string.is_null()).then(|| {
+            unsafe { std::ffi::CStr::from_ptr(string) }
+                .to_str()
+                .expect("UTF-8")
+        });
+        assert_eq!(found, text);
+        assert!(!unsafe { pinyin_is_user_candidate(instance, row) });
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
+    }
+}
+
+/// A prediction list keeps the pin's order where a frequency passes
+/// `gint`'s maximum. The comparator answers `-(freq_lhs - freq_rhs)` in
+/// `guint32`, read as `gint` (`pinyin.cpp:1700-1705`), under the prediction
+/// sort (`:2440-2445`). With a facade total of 1, 甲乙 (unigram 200) has the
+/// frequency `(guint32)(0.687 * 200 * 2^24)`, about 2.3e9 and above 2^31,
+/// and 甲丙 (unigram 100) has about 1.15e9 (`:1819-1824`). Their difference
+/// is below 2^31, so the wrapping order is the descending one: 甲乙 first.
+/// A comparison of the two values as `gint`s would put 甲丙 first.
+#[test]
+fn a_prediction_list_past_gint_max_keeps_the_wrapping_order() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = crate::support::libraries_system(
+        &system_dir(),
+        scratch.path(),
+        &[
+            (
+                1,
+                "gb_char.bin",
+                &[
+                    (&[0x7532], &[0x1081], 0),
+                    (&[0x7532, 0x4e19], &[0x1081, 0x1081], 100),
+                    (&[0x7532, 0x4e59], &[0x1081, 0x1081], 200),
+                ],
+                1,
+            ),
+            (2, "gbk_char.bin", &[], 0),
+            (3, "opengram.bin", &[], 0),
+            (4, "merged.bin", &[], 0),
+        ],
+    );
+    craft_hash(&system.join("bigram.db"), &[]);
+    let user = TempUserDir::new("predict-past-gint");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    assert_eq!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { predicted_texts(instance, c"甲") },
+        ["乙", "丙"]
+    );
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { close(context, instance) };
+}
+
+/// The candidate frequency uses the `table.conf` lambda as scanned, outside
+/// `[0, 1]` too. The pin scans it with `%f` into a `gfloat`
+/// (`table_info.cpp:220`) and computes
+/// `(guint32)((1 - lambda) * unigram / (gfloat) total * 2^24)`
+/// (`pinyin.cpp:1862-1866`). With a facade total of 2^26, 乙 (unigram 1) and
+/// 甲 (unigram 2) have the frequencies `(guint32) 0.25` and `(guint32) 0.5`
+/// at lambda 0: a tie, listed in token order (`:1777-1781`). At lambda -2 the
+/// factor is 3: `(guint32) 0.75` = 0 and `(guint32) 1.5` = 1, so 甲 comes
+/// first. At lambda 1.5 the products are -0.125 and -0.25: both truncate to
+/// 0, which a `guint32` holds, so the conversion is defined and the tie
+/// keeps the token order. At lambda 6 the products are -1.25 and -2.5: they
+/// truncate to -1 and -2, which no `guint32` holds, so the pin's conversion
+/// is undefined (policy row 83, class (b)). oxpinyin stores 0 for both, as
+/// Rust's `as u32` does for a negative value, and the tie keeps the token
+/// order.
+#[test]
+fn candidates_follow_a_lambda_outside_zero_to_one() {
+    // SORT_WITHOUT_SENTENCE_CANDIDATE | SORT_WITHOUT_LONGER_CANDIDATE |
+    // SORT_BY_FREQUENCY.
+    const BY_FREQUENCY: u32 = 0x13;
+    for (lambda, order) in [
+        ("0", ["乙", "甲"]),
+        ("-2", ["甲", "乙"]),
+        ("1.5", ["乙", "甲"]),
+        ("6", ["乙", "甲"]),
+    ] {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let system = crate::support::libraries_system(
+            &system_dir(),
+            scratch.path(),
+            &[
+                (
+                    1,
+                    "gb_char.bin",
+                    &[(&[0x4e59], &[0x1081], 1), (&[0x7532], &[0x1081], 2)],
+                    1 << 26,
+                ),
+                (2, "gbk_char.bin", &[], 0),
+                (3, "opengram.bin", &[], 0),
+                (4, "merged.bin", &[], 0),
+            ],
+        );
+        let conf = system.join("table.conf");
+        let text = std::fs::read_to_string(&conf).expect("table.conf");
+        assert!(text.contains("lambda parameter:0.312699"));
+        std::fs::remove_file(&conf).expect("unlink the linked table.conf");
+        std::fs::write(
+            &conf,
+            text.replace(
+                "lambda parameter:0.312699",
+                &format!("lambda parameter:{lambda}"),
+            ),
+        )
+        .expect("write table.conf");
+        let user = TempUserDir::new("lambda-outside");
+        let context = init_at(&system, &user.path);
+        assert!(!context.is_null(), "lambda {lambda}");
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { alloc(context) };
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { parse(instance, "ba1") }, 3);
+        assert!(unsafe { pinyin_guess_candidates(instance, 0, BY_FREQUENCY) });
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let texts: Vec<String> = unsafe { capture_rows(instance) }
+            .into_iter()
+            .map(|(_, text, _)| text)
+            .collect();
+        assert_eq!(texts, order, "lambda {lambda}");
+        // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
+        // is not yet freed; nothing uses either handle after this call; only this thread calls into
+        // them.
+        unsafe { close(context, instance) };
+    }
+}
+
 /// The prediction walk aborts on a gram with no item and a total left
 /// over (`ngram.cpp:70`).
 #[test]
