@@ -67,7 +67,7 @@ pub enum SaveOutcome {
     /// failure the pin has no counterpart for: the deliberate quiet
     /// `false`.
     NotSaved,
-    /// The file set was written and renamed: the pin's `true`.
+    /// The save sequence completed, including its rename and marker attempts.
     Saved,
     /// A chunk file's `MemoryChunk::save` header write failed; the pin
     /// `assert`s and dies of SIGABRT. The C adapters abort.
@@ -193,8 +193,12 @@ pub enum InitRefusal {
 }
 
 impl OpenFailure {
-    /// Applies the pin's failed-init decision and delegates only diagnostics
-    /// to the C boundary that owns their GLib and stderr calls.
+    /// Applies the init failure classification, calling the supplied diagnostic handler when
+    /// one is required.
+    ///
+    /// # Aborts
+    ///
+    /// Terminates the process when [`Self::init_refusal`] returns [`InitRefusal::Abort`].
     pub fn refuse_init(
         &self,
         system_path: &Path,
@@ -212,13 +216,10 @@ impl OpenFailure {
         }
     }
 
-    /// Classifies the failure at the point where init stopped.
-    ///
-    /// Unknown format aborts while reading user.conf (074a2219,
-    /// table_info.cpp:122-133, :353-354). Journal and session faults stop
-    /// after the earlier libraries and profile handling (phrase_index_logger.h:202,
-    /// memory_chunk.h:390, ngram_bdb.cpp:51-52). A directory read can assert
-    /// at memory_chunk.h:493, including a table row that names no chunk.
+    // Unknown user format: table_info.cpp:122–133,353–354. Journal, session and directory
+    // faults: phrase_index_logger.h:202, memory_chunk.h:390,493 and ngram_bdb.cpp:51–52.
+    /// Classifies an initialization failure for the supplied system directory.
+    /// [`Self::refuse_init`] acts on the returned decision.
     #[must_use]
     pub fn init_refusal(&self, system_path: &Path) -> InitRefusal {
         let Self::Runtime(error) = self;
@@ -449,13 +450,16 @@ impl ContextCore {
         Self::try_open(system_dir, user_dir, option_word, law).ok()
     }
 
-    /// `Self::open` with the failure kept: the C facades log it before
-    /// answering NULL, so a consumer can tell a missing directory from a
-    /// corrupt table without string-matching the logged message.
+    // pinyin_init, pinyin.cpp:331–346; zhuyin_init, zhuyin.cpp:275–292. The directory
+    // arguments are native paths.
+    /// Opens a context with the supplied live option word and [`UserConfLaw`]. An absent user
+    /// directory selects transient storage. An empty supplied directory names the working
+    /// directory. Profile checks and marker writes can precede a later failure during library
+    /// loading.
     ///
     /// # Errors
     ///
-    /// [`OpenFailure::Runtime`] with the typed [`OpenError`].
+    /// Returns [`OpenFailure::Runtime`] with the typed initialization error.
     pub fn try_open(
         system_dir: &Path,
         user_dir: Option<&Path>,
@@ -508,26 +512,16 @@ impl ContextCore {
         crate::facade::instance::InstanceCore::new(session, self.live.clone())
     }
 
-    /// `save`'s body: [`SaveOutcome::NotSaved`] without a user dir or when
-    /// unmodified, [`SaveOutcome::Saved`] after a dirty save, and
-    /// [`SaveOutcome::ChunkWriteFailed`] at the one write the pin dies on.
+    // _write_files and _rename_files, pinyin.cpp:933–1130, table_info.cpp:382.
+    // MemoryChunk::mmap and save, memory_chunk.h:432–439,493,541–548. SubPhraseIndex::load
+    // layout refusal uses the empty sub-index without its critical
+    // (docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical).
+    /// Saves a modified user profile and returns its [`SaveOutcome`]. A clean or transient
+    /// profile has nothing to save. Ordinary write and rename failures are reported as the
+    /// save proceeds. A hard stop can leave earlier file changes in place.
     ///
-    /// The pin never stops at a failing write or rename: it prints what
-    /// failed (`rename %s to %s failed.`, `write %s failed.`, raw
-    /// `fprintf(stderr, …)`, `pinyin.cpp:1061`…`:1123`,
-    /// `table_info.cpp:382`) and answers `true`. The store prints one line
-    /// per soft failure on stderr in the pin's order.
-    ///
-    /// A chunk header write is the exception: `MemoryChunk::save`'s
-    /// `assert`s (`memory_chunk.h:543`, `:547`) kill the process there, so
-    /// the store's `save_reporting` stops instead of reporting, and this
-    /// surface must fail the call. The caller logs the point.
-    ///
-    /// A system library whose layout `SubPhraseIndex::load` refuses again at
-    /// the save's remap is diffed against the pin's empty sub-index; the
-    /// pin's `g_return_val_if_fail` critical there is not reproduced
-    /// (2026-10-31 UTC ruling,
-    /// `docs/findings/upstream-divergences.md#phrase-library-layout-faults-write-no-critical`).
+    /// A failed chunk-header write, a failed header read during a remap and a fatal database
+    /// copy have distinct outcomes. [`SaveOutcome::Saved`] means the save sequence completed.
     pub fn save_user(&mut self) -> SaveOutcome {
         let store = self.user_store();
         if !store.has_user_directory() || !store.is_modified() {
@@ -928,7 +922,12 @@ impl ContextCore {
         user.mark_modified();
     }
 
-    /// Train retained composition after re-borrowing the current storage.
+    /// Trains a retained composition against the current context storage. See
+    /// [`crate::runtime::Runtime::train_session`] for its refusal cases and partial updates.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the training error after any preceding observations have been applied.
     pub fn train(
         &mut self,
         instance: &crate::facade::InstanceCore,
