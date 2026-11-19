@@ -303,9 +303,10 @@ pub struct TableConf {
 }
 
 impl TableConf {
-    /// The layout every libpinyin install ships (`data/table.conf.in`),
-    /// with `database_format` the backend this build is compiled against.
-    /// What a data directory without a `table.conf` stands for.
+    // Stock rows come from data/table.conf.in; pinyin_init loads table.conf
+    // (pinyin.cpp:335–340).
+    /// Constructs the stock table configuration for the selected database backend. Runtime
+    /// initialization reads the installed configuration from disk.
     #[must_use]
     pub fn stock() -> Self {
         let mut conf = Self {
@@ -524,13 +525,15 @@ impl TableConf {
         self.database_format
     }
 
-    /// The default row of sub-index `index` (`NOT_USED` when no row names it).
+    /// Returns the default row at `index`, including an unused row for an unnamed slot. An
+    /// index outside the library range yields [`None`].
     #[must_use]
     pub fn default_row(&self, index: u8) -> Option<&TableRow> {
         self.default.get(usize::from(index))
     }
 
-    /// The addon row of sub-index `index`.
+    /// Returns the addon row at `index`, including an unused row for an unnamed slot. An
+    /// index outside the library range yields [`None`].
     #[must_use]
     pub fn addon_row(&self, index: u8) -> Option<&TableRow> {
         self.addon.get(usize::from(index))
