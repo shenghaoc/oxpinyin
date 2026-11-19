@@ -574,9 +574,8 @@ class AppleSavedImageTests(unittest.TestCase):
                 info = tarfile.TarInfo(name)
                 info.size = len(data)
                 tar.addfile(info, io.BytesIO(data))
-            for name in extra:
-                info = tarfile.TarInfo(name)
-                tar.addfile(info, io.BytesIO(b''))
+            for member in extra:
+                tar.addfile(tarfile.TarInfo(member) if isinstance(member, str) else member)
         return buffer.getvalue()
 
     def archive(self, path, *, platform=('linux', 'amd64'), media=GZIP, corrupt=False, whiteout=False):
@@ -644,6 +643,78 @@ class AppleSavedImageTests(unittest.TestCase):
         self.assertEqual(oracle, self.directory / 'saved/opt/pinyin-oracle')
         self.assertFalse((self.directory / 'saved/etc').exists())
         self.assertFalse((self.directory / 'image.tar').exists())
+
+    def assert_layer_rejected(self, member, outside):
+        destination = self.directory / 'saved'
+        existing = destination / 'opt/pinyin-oracle/existing'
+        existing.parent.mkdir(parents=True, exist_ok=True)
+        existing.write_bytes(b'earlier layer')
+        layer = self.layer({'opt/pinyin-oracle/existing': b'replacement'}, [member])
+        with tarfile.open(fileobj=io.BytesIO(layer)) as tar, self.assertRaises(tarfile.FilterError):
+            images.extract_oracle(tar, destination)
+        self.assertEqual(existing.read_bytes(), b'earlier layer')
+        self.assertEqual(outside.read_bytes(), b'original')
+
+    def test_parent_traversal_preserves_existing_files(self):
+        outside = self.directory / 'victim.txt'
+        outside.write_bytes(b'original')
+        self.assert_layer_rejected('opt/pinyin-oracle/../../../victim.txt', outside)
+
+    def test_member_name_must_stay_under_the_oracle_prefix(self):
+        sibling = self.directory / 'saved/opt/victim.txt'
+        sibling.parent.mkdir(parents=True)
+        sibling.write_bytes(b'original')
+        self.assert_layer_rejected('opt/pinyin-oracle/../victim.txt', sibling)
+
+    def test_link_targets_must_stay_under_the_oracle_prefix(self):
+        sibling = self.directory / 'saved/opt/other/victim.txt'
+        sibling.parent.mkdir(parents=True)
+        sibling.write_bytes(b'original')
+        for kind, target in ((tarfile.SYMTYPE, '../other/victim.txt'), (tarfile.LNKTYPE, 'opt/other/victim.txt')):
+            with self.subTest(kind=kind):
+                link = tarfile.TarInfo('opt/pinyin-oracle/link')
+                link.type = kind
+                link.linkname = target
+                self.assert_layer_rejected(link, sibling)
+
+    if sys.platform != 'win32':
+        def test_links_within_the_oracle_use_their_tar_base_directories(self):
+            name = 'opt/pinyin-oracle/lib/version'
+            symlink = tarfile.TarInfo('opt/pinyin-oracle/lib/current')
+            symlink.type, symlink.linkname = tarfile.SYMTYPE, 'version'
+            hardlink = tarfile.TarInfo('opt/pinyin-oracle/copy')
+            hardlink.type, hardlink.linkname = tarfile.LNKTYPE, name
+            layer = self.layer({name: b'library'}, [symlink, hardlink])
+            with tarfile.open(fileobj=io.BytesIO(layer)) as tar:
+                images.extract_oracle(tar, self.directory)
+            self.assertEqual((self.directory / symlink.name).read_bytes(), b'library')
+            self.assertTrue((self.directory / hardlink.name).samefile(self.directory / name))
+
+        def test_ancestor_symlink_to_oracle_sibling_preserves_existing_files(self):
+            oracle = self.directory / 'saved/opt/pinyin-oracle'
+            oracle.mkdir(parents=True)
+            sibling = oracle.parent / 'other/victim.txt'
+            sibling.parent.mkdir()
+            sibling.write_bytes(b'original')
+            link = oracle / 'previous-layer-link'
+            link.symlink_to('../other', target_is_directory=True)
+            self.assert_layer_rejected('opt/pinyin-oracle/previous-layer-link/victim.txt', sibling)
+            self.assertEqual(link.readlink(), Path('../other'))
+
+        def test_escaping_ancestor_symlink_preserves_existing_files(self):
+            parent = self.directory / 'saved/opt/pinyin-oracle'
+            parent.mkdir(parents=True)
+            outside = self.directory / 'victim.txt'
+            outside.write_bytes(b'original')
+            link = parent / 'previous-layer-link'
+            link.symlink_to(self.directory, target_is_directory=True)
+            self.assert_layer_rejected('opt/pinyin-oracle/previous-layer-link/victim.txt', outside)
+            self.assertTrue(link.is_symlink())
+            # The full path now resolves inside, but unlink would still remove an entry outside.
+            outside_link = self.directory / 'back-inside'
+            outside_link.symlink_to(parent / 'existing')
+            self.assert_layer_rejected('opt/pinyin-oracle/previous-layer-link/back-inside', outside)
+            self.assertTrue(outside_link.is_symlink())
 
     def test_verify_image_creates_no_container(self):
         native = images.host_platform()

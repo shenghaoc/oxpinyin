@@ -457,12 +457,47 @@ def extract_oracle(tar, destination):
     """Extract TAR's opt/pinyin-oracle members into DESTINATION under the tar module's data filter.
 
     A file already at a member's path (from an earlier image layer) is replaced."""
+    root = Path(destination).resolve()
+    oracle = root / ORACLE_MEMBERS
+
+    def oracle_filter(member, destination):
+        path = root / member.name.removeprefix('./')
+        # unlink operates on this directory entry, even when its final component is a symlink.
+        entry = Path(os.path.normpath(path.parent.resolve() / path.name))
+        if oracle not in entry.parents and not (member.isdir() and entry == oracle):
+            raise tarfile.OutsideDestinationError(member, str(entry))
+        target = entry.resolve()
+        if not target.is_relative_to(oracle):
+            raise tarfile.OutsideDestinationError(member, str(target))
+
+        # Extract at the checked entry even on Python versions that normalize the name differently.
+        name = entry.relative_to(root).as_posix()
+        if name != member.name:
+            member = member.replace(name=name, deep=False)
+        member = tarfile.data_filter(member, destination)
+        if member.issym() or member.islnk():
+            base = entry.parent if member.issym() else root
+            source = base / member.linkname
+            target = source.resolve()
+            if not target.is_relative_to(oracle):
+                raise tarfile.LinkOutsideDestinationError(member, str(target))
+            # A hard link to a symlink can preserve its text at a different parent.
+            if member.islnk() and source.is_symlink():
+                target = (entry.parent / source.readlink()).resolve()
+                if not target.is_relative_to(oracle):
+                    raise tarfile.LinkOutsideDestinationError(member, str(target))
+        return member
+
     members = oracle_members(tar)
+    replacements = []
     for member in members:
-        target = Path(destination) / member.name.removeprefix('./')
-        if not member.isdir() and (target.is_symlink() or target.is_file()):
+        checked = oracle_filter(member, root)
+        if not checked.isdir():
+            replacements.append(root / checked.name)
+    for target in replacements:
+        if target.is_symlink() or target.is_file():
             target.unlink()
-    tar.extractall(destination, members=members, filter='data')
+    tar.extractall(root, members=members, filter=oracle_filter)
 
 
 OCI_INDEXES = ('application/vnd.oci.image.index.v1+json', 'application/vnd.docker.distribution.manifest.list.v2+json')
