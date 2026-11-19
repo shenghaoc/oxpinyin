@@ -21,15 +21,11 @@ pub const DEFAULT_PHRASE_COUNT: u64 = 5;
 /// path.
 pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
 
-/// One pinyin key in a stored pronunciation.
-///
-/// The low [`KEY_TONE_SHIFT`] bits hold either a canonical syllable id
-/// ([`crate::SyllableKey`] index) or a tagged packed key with no
-/// syllable-table row. The high three bits hold the key's
-/// `ChewingKey::m_tone` (0 = zero tone, 1..=5).
-/// libpinyin stores the tone with the key (`PhraseItem::add_pronunciation`
-/// copies the parsed `ChewingKey`s, `phrase_index.cpp:56-91`); the import
-/// parser keeps it under `USE_TONE` (`pinyin.cpp:630`).
+// PhraseItem::add_pronunciation copies tones with the parsed keys
+// (phrase_index.cpp:56–91). Import reads tone under USE_TONE (pinyin.cpp:630).
+/// A pronunciation key with a syllable identifier or tagged phonetic fields in the low 13
+/// bits and the tone in the upper three. [`toned_key`] constructs this representation.
+/// Use [`crate::ChewingKey`] for the packed C key.
 pub type PinyinKey = u16;
 
 /// Bit position of the tone inside a [`PinyinKey`].
@@ -56,10 +52,9 @@ const KEY_PACKED_FIELDS: PinyinKey = KEY_PACKED_TAG - 1;
 /// `SyllableKey::index`'s tag for the same packed form.
 const SYLLABLE_PACKED_TAG: usize = 0x8000;
 
-/// A [`PinyinKey`] for syllable index `syllable` carrying `tone`; `None`
-/// when the index does not fit the syllable bits or the tone is not
-/// 0..=[`MAX_KEY_TONE`]. A [`SyllableKey`] index tagged as a packed key
-/// keeps its packed fields.
+/// Combines a syllable identifier or tagged matrix key with a tone in `0..=5`. The fields
+/// must fit their representation. A representable index still needs a corresponding
+/// inventory entry or usable packed fields to resolve.
 #[must_use]
 pub fn toned_key(syllable: usize, tone: u8) -> Option<PinyinKey> {
     let syllable = if syllable & SYLLABLE_PACKED_TAG == 0 {
@@ -210,10 +205,7 @@ impl UserPronunciation {
     }
 }
 
-/// A user phrase: its token, text, and pronunciations.
-///
-/// This is the lookup surface T3 needs to resolve a user token. T2 does not
-/// wire it into Session or the C ABI.
+/// A user phrase with its library token, stored UCS-4 text and pronunciations.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserPhrase {
     token: PhraseToken,
@@ -222,7 +214,7 @@ pub struct UserPhrase {
 }
 
 impl UserPhrase {
-    /// Allocated user token (library nibble [`USER_DICTIONARY`]).
+    /// The allocated token, including the configured target library’s index.
     #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub const fn token(&self) -> PhraseToken {

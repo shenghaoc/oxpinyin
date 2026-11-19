@@ -1,9 +1,9 @@
-//! Pin `PhraseLargeTable3`: UCS-4 text keys and unnormalized token-array values.
-//!
-//! Ported from `src/storage/phrase_large_table3*.cpp` at
-//! `074a2219c90feaf962d0d24f034514033ece5f99`. Empty prefix records and
-//! duplicate tokens are state, including the KC/tkrzw mask visitor's retained
-//! suffix (`memory_chunk.h:290-296`); loading must not reconstruct these rows.
+//! Stores UCS-4 phrase keys and arrays of tokens. Empty prefix records and duplicates are
+//! significant. [`search_bytes`] checks the complete record before appending enabled
+//! tokens in stored order.
+
+// PhraseLargeTable3, src/storage/phrase_large_table3.cpp:29–52. KC and tkrzw mask
+// visitors retain the suffix from memory_chunk.h:290–296.
 
 use crate::store::StoreError;
 

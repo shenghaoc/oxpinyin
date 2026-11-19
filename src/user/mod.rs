@@ -1,30 +1,13 @@
-//! The user data of one libpinyin session: the user phrase arenas (the
-//! pin's `USER_FILE` sub-indexes), the user pinyin index and phrase table,
-//! the pin's own user bigram container, the live system items, and the
-//! user-file persistence behind `pinyin_save`. The user files are read and
-//! written with the compiled-in `DefaultStore` backend (tkrzw, Kyoto
-//! Cabinet or Berkeley DB — exactly one per build, selected by feature; see
-//! `crate::store`). The shared on-disk formats and the system-data readers
-//! belong to `crate::data`; this module owns the user overlays, the learning
-//! state and the profile persistence. Internal module — the supported
-//! external interfaces are the libpinyin-compatible and libzhuyin-compatible
-//! C APIs and ABIs.
+//! User phrase libraries, learning state and profile persistence. [`UserStore`] owns the
+//! user indexes, bigram counts and live system-item changes. The session reads these
+//! through [`crate::model::UserModel`]. [`UserStore::is_modified`] reports pending
+//! changes and [`crate::facade::ContextCore::save_user`] saves them.
 //!
-//! The integer count [`seed`] arithmetic is pinned in
-//! `docs/findings/user-store.md` §2, and `USER_DICTIONARY` token allocation
-//! in §3. The store is the [`crate::model::UserModel`] implementor (typed
-//! with the engine's [`crate::PhraseToken`]) the engine session and
-//! the C ABI reach; it exposes the counts as a
-//! [`crate::model::UserCountDelta`] so decode can merge them additively
-//! with the system model, the §4 `m_modified` gate
-//! ([`UserStore::is_modified`] / `UserStore::save_reporting`) behind `pinyin_save`,
-//! and the §9 export surface (`UserStore::export_phrases_in` /
-//! `UserStore::bigram_predecessors`) behind the C ABI's export iterators.
-//! Nothing is durable between saves: `save` writes the pin's own user file
-//! set (`.tmp` + rename), the pin's own shape (`docs/findings/user-store.md`
-//! §11). The user bigram is held once, as the pin's own `SingleGram`
-//! values, and every bigram operation runs the pin's `SingleGram` code over
-//! them (`crate::single_gram`; the `store` module documentation).
+//! [`crate::facade::PhraseExportCursor`] and [`crate::facade::BigramExportWalk`] expose
+//! phrase and bigram exports. [`crate::data`] owns the on-disk codecs.
+
+// The USER_FILE sub-indexes and user bigram supply pinyin_save. See
+// docs/findings/user-store.md §§2–4,9,11.
 #![warn(missing_docs)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
