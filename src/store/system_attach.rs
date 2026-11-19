@@ -1,9 +1,4 @@
-//! System attachments whose failed native objects survive initialization.
-//!
-//! The pin ignores attach's result and later calls the same object
-//! (pinyin.cpp:357,369,396,421,429,440 at 074a2219). The utilities'
-//! `Bigram::attach` keeps its failed object the same way
-//! ([`SystemAttachment::attach_bigram`]).
+//! System database attachments, including the state after a native open fails.
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -17,11 +12,11 @@ type FailedHandle = crate::store::kyotocabinet::KcUnopenedHandle;
 #[cfg(feature = "tkrzw")]
 type FailedHandle = crate::store::tkrzw::TkrzwUnopenedHandle;
 
-/// The result of one system-file attach, including a retained failed object.
+/// The result of attaching a system database, including an unsuccessful native open.
 pub enum SystemAttachment {
     /// The native file opened successfully.
     Open(DefaultStore),
-    /// The native object exists, but its file did not open.
+    /// The file did not open. Subsequent operations use [`UnopenedSystemDbm`].
     Unopened(UnopenedSystemDbm),
 }
 
@@ -70,8 +65,14 @@ impl SystemAttachment {
     }
 }
 
-/// The actual failed BDB, KC or tkrzw object, closed once at facade
-/// finalization.
+// Bigram attach, reads and walks: ngram_bdb.cpp:110–124,148–191;
+// ngram_kyotodb.cpp:110–120,186–196; ngram_tkrzwdb.cpp:86–99,160–172.
+/// Represents a system database whose native open failed. Berkeley DB has already closed
+/// its handle. Kyoto Cabinet and tkrzw retain theirs until [`Self::finish`].
+///
+/// Point reads provide no row and writes fail. Walks collect no keys. A Kyoto Cabinet
+/// walk before finalization succeeds. Berkeley DB, tkrzw and finalized attachments report
+/// failure.
 pub struct UnopenedSystemDbm {
     db: RefCell<Option<FailedHandle>>,
 }

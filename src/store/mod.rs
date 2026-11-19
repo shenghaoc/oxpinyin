@@ -4,40 +4,26 @@
 //! keyspace, split into two capability tiers — [`RawReadStore`] (open, point
 //! get, ranged scan, native walk, count) and [`WriteStore`] (creation, raw
 //! writes, compaction) — and provides the peer implementations behind it:
-// Each peer's type exists only under its own feature, so a build links the one
-// it compiles and names the other two in code spans (#1129).
+// Only the selected peer type is present in this build.
 #![cfg_attr(feature = "kyotocabinet", doc = " [`KcStore`] on Kyoto Cabinet,")]
 #![cfg_attr(not(feature = "kyotocabinet"), doc = " `KcStore` on Kyoto Cabinet,")]
 #![cfg_attr(feature = "tkrzw", doc = " [`TkrzwStore`] on tkrzw, and")]
 #![cfg_attr(not(feature = "tkrzw"), doc = " `TkrzwStore` on tkrzw, and")]
 #![cfg_attr(feature = "bdb", doc = " [`BdbStore`] on Berkeley DB.")]
 #![cfg_attr(not(feature = "bdb"), doc = " `BdbStore` on Berkeley DB.")]
-//! All are first-class and interchangeable: any oxpinyin binary
-//! picks exactly one at compile time via the cargo features and calls it
-//! through the same trait surface, and a table produced by any of them
-//! satisfies the same logical contract as the others. tkrzw is oxpinyin's
-//! default *selection* (the feature enabled when no other is named), not a
-//! privileged implementation. Berkeley DB is libpinyin's own autoconf
-//! default, the backend a bare `./configure` picks; oxpinyin does not
-//! follow it. Consumers depend on the narrowest tier
-//! they need; the concrete backend the current build resolves to is the
-//! [`DefaultStore`] alias.
+//! Each build selects one backend through [`DefaultStore`]. The backend determines the
+//! database container and its native iteration order.
 //!
 //! # Key ordering
 //!
-//! Keys are ordered by ascending **byte** order (`memcmp` on the raw stored
-//! key bytes) and nothing else — the store never decodes a key, so it has no
-//! notion of integer order.  Every backend satisfies exactly this: the
-//! tkrzw backend installs no comparator, so `TreeDBM` uses its default
-//! `LexicalKeyComparator` (plain unsigned byte order); and the Kyoto Cabinet
-//! backend opens `TreeDB` with no `rcomp` tuning parameter, exactly as
-//! libpinyin does, so Kyoto Cabinet's default `LEXICALCOMP` applies — again
-//! byte order, shorter key first on a shared prefix; and the Berkeley DB
-//! backend opens `DB_BTREE` with no `set_bt_compare`, exactly as libpinyin
-//! does, so BDB's default bytewise comparator applies.  Any further backend
-//! must match that default lexicographic comparator.  The rule and that
-//! obligation are the contract in `docs/findings/store-key-ordering.md`; the
-//! key encodings each layer chooses on top of the rule are the layer's own.
+//! [`RawReadStore::scan_raw`] and [`RawReadStore::range_raw`] traverse the requested
+//! bounds in ascending byte order, comparing raw keys lexicographically.
+//! [`RawReadStore::native_keys`] returns keys in the container’s own order. A hash
+//! database need not visit keys in sorted order.
+
+// TreeDBM uses LexicalKeyComparator, TreeDB uses LEXICALCOMP, and DB_BTREE uses its
+// default bytewise comparator. See docs/findings/store-key-ordering.md,
+// phrase_large_table3_tkrzwdb.cpp:155–190 and ngram_tkrzwdb.cpp:143–172.
 
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
@@ -527,27 +513,10 @@ pub trait WriteStore: RawReadStore {
     /// batch in a private mpool no other process can read. Callers must
     /// not read any of that as the contract.
     ///
-    /// Syncing every commit to the device instead was measured at
-    /// +1.18–1.85 ms per commit on tkrzw, a 13–31× per-commit
-    /// regression on a path the C ABI runs synchronously from a
-    /// keystroke, for a durability window narrower than the one
-    /// upstream libpinyin already leaves open;
-    /// the maintainer chose this split on 2026-09-10 for that
-    /// measured cost. That measurement is tkrzw's. The
-    /// equivalent per-commit cost on Berkeley DB, which has no soft tier
-    /// to fall back to, has not been measured.
-    ///
-    /// `compact` is no longer where `pinyin_save` reaches storage,
-    /// though. `UserStore::save_reporting` still calls it, but since the libpinyin
-    /// session moved into memory (#621) the store it compacts on that
-    /// path is the [`WriteStore::create_in_memory`] one, which has no
-    /// file. The profile `pinyin_save` writes goes out through
-    /// [`WriteStore::write_user_index`] and the user bigram's `save_db`,
-    /// at each backend's own level: tkrzw ends in the soft
-    /// `Synchronize` and Kyoto Cabinet dumps a snapshot with no sync
-    /// call at all; only Berkeley DB, which has no softer tier, ends in
-    /// `DB->sync`. A completed save is therefore not a promise that the
-    /// profile is on the device, and callers must not read it as one.
+    /// Profile saves compact the in-memory session store. They write through
+    /// [`WriteStore::write_user_index`] and the user bigram's save path. The
+    /// synchronization of those files depends on the backend. A successful save does not
+    /// guarantee that the whole profile has reached stable storage.
     ///
     /// The closure must not call [`WriteStore::write`] again. Backends may
     /// serialize write transactions, so a nested call can block forever.
@@ -757,20 +726,14 @@ pub trait RawReadStore {
     /// Returns [`StoreError`] when the backend read fails.
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError>;
 
-    /// Visit raw (unframed) rows whose keys fall in `[lo, hi]`, ascending
-    /// key-byte order — the ordered-walk half of the raw keyspace that
-    /// [`Self::get_raw`] point-reads. libpinyin's phrase table relies on
-    /// exactly this for its `search_suggestion` continuation walk
-    /// (`phrase_large_table3_tkrzwdb.cpp:155-190`).
-    ///
-    /// KC, Tkrzw and BDB walk the file's real keyspace.
+    // The continuation walk for search_suggestion relies on ordered bounds,
+    // phrase_large_table3_tkrzwdb.cpp:155–190.
+    /// Visits rows between the supplied bounds in ascending key-byte order. Returning
+    /// [`ControlFlow::Break`] from the visitor ends the walk successfully.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the backend walk fails; a visitor
-    /// error aborts the walk and propagates. A visitor
-    /// [`ControlFlow::Break`] ends the walk with `Ok(())`. The one
-    /// required raw walk: [`RawReadStore::range_raw`] is built on it.
+    /// Returns a backend or visitor [`StoreError`]. Earlier visitor calls have already run.
     fn scan_raw(
         &self,
         lo: Bound<&[u8]>,
@@ -1073,9 +1036,7 @@ pub(crate) fn sibling_temp(path: &Path) -> std::path::PathBuf {
 #[cfg(feature = "kyotocabinet")]
 pub type DefaultStore = KcStore;
 
-/// The default store backend — tkrzw, the feature enabled in the
-/// workspace's default set (maintainer decision 2026-10-30 UTC: tkrzw is
-/// maintained upstream; Berkeley DB and Kyoto Cabinet are not).
+/// The tkrzw store selected by the default feature set.
 #[cfg(feature = "tkrzw")]
 pub type DefaultStore = TkrzwStore;
 

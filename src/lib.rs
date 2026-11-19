@@ -3,6 +3,13 @@
 //! Native Rust interfaces are unsupported internal details.
 //! Each build selects exactly one database backend. The default is `tkrzw`.
 //!
+//! ## Aborts
+//!
+//! Malformed or corrupt stored data and failed backend operations can abort the process,
+//! as in libpinyin. Individual items omit these aborts. Their `Aborts` sections describe
+//! termination caused by caller arguments or call order, or by an operation that exits
+//! the process.
+//!
 //! ## Further reading
 //!
 //! - [Supported external interfaces](https://github.com/shenghaoc/oxpinyin/blob/main/docs/constitution.md#external-interfaces)

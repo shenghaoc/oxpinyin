@@ -1,73 +1,26 @@
-//! Kyoto Cabinet backend for the store's peer set.
+//! Kyoto Cabinet storage for raw keys and values. [`KcStore`] opens the tree or hash
+//! class that the caller requests. [`RawReadStore::scan_raw`] and
+//! [`RawReadStore::range_raw`] visit keys in ascending byte order for both classes. For
+//! a hash container, they collect the rows and sort them by key.
+//! [`RawReadStore::native_keys`] keeps the container's native iteration order.
 //!
-//! Enabled by the `kyotocabinet` cargo feature (`--no-default-features
-//! --features kyotocabinet`); the workspace's default selected backend is
-//! tkrzw.
-//! [`KcStore`] is a `TreeDB` implementation of the store's two capability
-//! tiers, addressed by `(table, key)` like every other backend.
+//! [`WriteStore::write`] applies changes inside a native transaction. On closure error it
+//! attempts rollback and returns the closure error. After a commit, synchronization can
+//! still fail. Deferred writes issue individual operations outside that transaction.
+//! The compact operation, available in tests and with `test-hooks`, requests hard
+//! synchronization.
 //!
-//! # The class is chosen by the caller, never by the file name
+//! The C caller serializes access to a context and its handles. The safe store uses a
+//! native bridge for database calls.
 //!
-//! The backend calls Kyoto Cabinet through a cxx bridge (`bridge`, behind
-//! `ffi`), which constructs the class the caller names, as libpinyin
-//! does, and opens the plain path. oxpinyin names its
-//! native tables `.kct` (the Kyoto Cabinet TreeDB convention), but nothing
-//! reads that suffix. `kclangc.h`'s `PolyDB` would pick the class from it,
-//! and fail outright on libpinyin's `.db` names (`kclangc.h:312-320`).
-//!
-//! # Key ordering
-//!
-//! `TreeDB` with no `rcomp` tuning parameter uses Kyoto Cabinet's default
-//! record comparator, `LEXICALCOMP` — byte-wise, shorter key first on a
-//! shared prefix. The cross-backend conformance tests in `super` assert
-//! this backend walks identically to the other peers over keys
-//! that cross 256 in the first and in a later element — where byte order
-//! and integer order genuinely differ.
-//!
-//! # Atomicity
-//!
-//! Kyoto Cabinet gives a standalone handle real transactions
-//! (`begin_transaction`/`end_transaction`), so [`WriteStore::write`] is the
-//! library's own transaction rather than a buffered imitation: the
-//! closure's writes go straight to the database inside the transaction,
-//! reads see them, and an `Err` rolls the whole thing back.
-//!
-//! Commits end with `synchronize(false)`: the commit is pushed to the
-//! operating system, so another process — or another handle in this one
-//! — observes it and it survives a process crash, but it is not yet on
-//! the device. `WriteStore::compact` is the hard `synchronize(true)`,
-//! the one point at which a file-backed store reaches stable storage.
-//! The tkrzw backend documents the same split and the measurement
-//! behind it.
-//!
-//! `compact` is no longer where `pinyin_save` reaches storage, though.
-//! `UserStore::save_reporting` still calls it, but since the libpinyin session
-//! moved into memory (#621) the store it compacts is the `ProtoTreeDB`
-//! of [`WriteStore::create_in_memory`], which has no file. The profile
-//! `pinyin_save` writes goes out through `write_user_index` and the
-//! user bigram's `save_db`, which dump a snapshot (`dump_snapshot`)
-//! and issue no sync at all — as the pin's own `save_db` does
-//! (`chewing_large_table2_kyotodb.cpp:124-130`,
-//! `phrase_large_table3_kyotodb.cpp:139-145`,
-//! `ngram_kyotodb.cpp:82-101` at `074a2219`).
-//!
-//! A power cut *during* the commit itself can still tear the
-//! transaction — TreeDB writes through no write-ahead log — the same
-//! residual the tkrzw backend documents.
-//!
-//! # Threading
-//!
-//! [`KcStore`] is neither `Send` nor `Sync`. The C contract serializes the
-//! calls that reach it: one call at a time on a context and all its handles.
-//! Kyoto Cabinet's database classes still take their own lock in every
-//! access method; nothing here relies on it.
-//!
-//! # Unsafe waiver
-//!
-//! This module carries none. Every `unsafe` in the backend — the calls
-//! to the bridge's region functions — is confined to `ffi`, and the bridge's declarations
-//! to `bridge`; each has an `expect(unsafe_code)` scoped to that module,
-//! so the safe wrapper here stays under the workspace `deny`.
+//! [`RawReadStore::scan_raw`]: crate::store::RawReadStore::scan_raw
+//! [`RawReadStore::range_raw`]: crate::store::RawReadStore::range_raw
+//! [`RawReadStore::native_keys`]: crate::store::RawReadStore::native_keys
+
+// TreeDB uses LEXICALCOMP without rcomp. The explicit class selection avoids PolyDB
+// suffix dispatch (kclangc.h:312–320). The user snapshots use
+// chewing_large_table2_kyotodb.cpp:124–130, phrase_large_table3_kyotodb.cpp:139–145 and
+// ngram_kyotodb.cpp:82–101; hash attachment is ngram_kyotodb.cpp:110–120.
 
 mod bridge;
 mod ffi;
@@ -81,7 +34,7 @@ use crate::store::{AttachMode, Flow, HashAttach, StoreError, WriteStore, WriteTx
 
 use ffi::{Db, DbType};
 
-/// A Kyoto Cabinet `TreeDB` store implementing both capability tiers.
+/// A raw-key Kyoto Cabinet tree or hash store implementing the read and write traits.
 pub struct KcStore {
     db: Db,
 }
@@ -589,12 +542,8 @@ impl WriteStore for KcStore {
         // block pool; there is no in-place rewrite that does not go
         // through a copy of the whole file, which is not what the other
         // backends' `compact` does either (Berkeley DB's successful
-        // `compact` also does not shrink the file). Making the current state
-        // durable on the device is the honest implementation — and it is
-        // a file-backed store's one stable-storage point. It is no longer
-        // where `pinyin_save` reaches storage: `UserStore::save_reporting`
-        // still calls this, but on the in-memory session store (#621), which
-        // has no file.
+        // `compact` also does not shrink the file). Hard synchronization makes a
+        // file-backed store durable. The profile save compacts an in-memory session store.
         self.db.sync(true)
     }
 }
