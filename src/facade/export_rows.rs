@@ -138,6 +138,32 @@ fn chewing_syllable(key: ChewingKey) -> (&'static str, Option<u8>) {
     (key.pinyin_spelling(), digit)
 }
 
+/// The keys of one stored reading, from its packed little-endian words.
+fn packed_keys(keys: &[u8]) -> impl Iterator<Item = ChewingKey> + '_ {
+    keys.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|bytes| ChewingKey::from_packed(u16::from_le_bytes(*bytes)))
+}
+
+/// The first `get_pinyin_string` assert the pin dies at while it renders
+/// the keys of one reading in stored order, if any. Each key asserts its
+/// tone (`chewing_key.cpp:48` at 074a2219) and then, in `get_table_index`,
+/// its initial, middle and final (`:30-32`, from `:49`). The phrase export
+/// (`pinyin.cpp:726-728`) and the bigram export (`:846`, `:859`) render
+/// through the same call.
+fn reading_assert(mut keys: impl Iterator<Item = ChewingKey>) -> Option<ExportAssert> {
+    keys.find_map(|key| {
+        if key.tone > MAX_KEY_TONE {
+            Some(ExportAssert::KeyTone)
+        } else if !key.elements_in_dims() {
+            Some(ExportAssert::KeyFields)
+        } else {
+            None
+        }
+    })
+}
+
 impl ExportRow<'_> {
     /// The row's stored phrase text. The C encoding is applied only in
     /// [`Self::with_text_bytes`].
@@ -165,16 +191,7 @@ impl ExportRow<'_> {
     #[must_use]
     pub fn key_assert(&self) -> Option<ExportAssert> {
         match &self.0 {
-            RowSource::Mapped { keys, .. } => keys.as_chunks::<2>().0.iter().find_map(|bytes| {
-                let key = ChewingKey::from_packed(u16::from_le_bytes(*bytes));
-                if key.tone > MAX_KEY_TONE {
-                    Some(ExportAssert::KeyTone)
-                } else if !key.elements_in_dims() {
-                    Some(ExportAssert::KeyFields)
-                } else {
-                    None
-                }
-            }),
+            RowSource::Mapped { keys, .. } => reading_assert(packed_keys(keys)),
         }
     }
 
@@ -492,9 +509,54 @@ impl ContextCore {
     }
 }
 
-/// One token's item as the bigram export reads it: the phrase text and
-/// each pronunciation's `'`-joined spelling.
-type RenderedItem = (PhraseText, Vec<String>);
+/// One token's item as the bigram export reads it. A token the phrase
+/// index does not resolve is the default: the pin's empty `PhraseItem`.
+#[derive(Clone, Default)]
+struct RenderedItem {
+    /// The phrase text.
+    text: PhraseText,
+    /// The `'`-joined spelling of each reading this engine renders.
+    pinyins: Vec<String>,
+    /// One entry for each stored reading, in stored order: the assert the
+    /// pin dies at when it renders that reading ([`reading_assert`]).
+    sites: Vec<Option<ExportAssert>>,
+}
+
+impl RenderedItem {
+    /// An item with its stored readings checked. The text and the spellings
+    /// are kept only together: an item with no text or no rendered reading
+    /// gives neither.
+    fn new(
+        text: Option<PhraseText>,
+        pinyins: Vec<String>,
+        sites: Vec<Option<ExportAssert>>,
+    ) -> Self {
+        match text {
+            Some(text) if !pinyins.is_empty() => Self {
+                text,
+                pinyins,
+                sites,
+            },
+            _ => Self {
+                sites,
+                ..Self::default()
+            },
+        }
+    }
+}
+
+/// The assert the pin dies at while it renders the readings of a pair
+/// (`pinyin.cpp:839-872` at 074a2219), if any. The pin renders the first
+/// item's reading `i`, then every reading of the second item, for each `i`
+/// in turn. A first item with no reading renders nothing.
+fn pair_assert(
+    first: &[Option<ExportAssert>],
+    second: &[Option<ExportAssert>],
+) -> Option<ExportAssert> {
+    let (head, rest) = first.split_first()?;
+    head.or_else(|| second.iter().copied().flatten().next())
+        .or_else(|| rest.iter().copied().flatten().next())
+}
 
 /// What a [`BigramExportWalk`] loads grams and renders tokens from: the
 /// context's user store and its system dictionary.
@@ -526,10 +588,12 @@ impl ExportSource<'_> {
             .collect())
     }
 
-    /// `(text, pinyin spellings)` for a token: user tokens render from the
-    /// user store's phrase/pronunciation tables, system tokens from the
-    /// system phrase index and the pinyin index (reverse-scanned).
-    fn render(&self, token: u32) -> Option<RenderedItem> {
+    /// The item of a token: user tokens render from the user store's
+    /// phrase/pronunciation tables, system tokens from the system phrase
+    /// index and the pinyin index (reverse-scanned). Every stored reading
+    /// is checked with [`reading_assert`], the check
+    /// [`ExportRow::key_assert`] performs, whether or not it is rendered.
+    fn render(&self, token: u32) -> RenderedItem {
         // `get_phrase_item` resolves a gram's token by its masked library
         // (074a2219 pinyin.cpp:812-815, phrase_index.h:647).
         let is_system = self
@@ -540,7 +604,12 @@ impl ExportSource<'_> {
                 .dict
                 .live_items()
                 .read(token, |item| {
-                    let text = item.phrase_text()?;
+                    let sites = item
+                        .pronunciations()
+                        .map(|reading| {
+                            reading_assert(reading.keys.iter().map(ChewingKey::from_packed))
+                        })
+                        .collect();
                     let pinyins: Vec<String> = item
                         .pronunciations()
                         .filter_map(|reading| {
@@ -553,21 +622,28 @@ impl ExportSource<'_> {
                                 .then(|| words.join("'"))
                         })
                         .collect();
-                    (!pinyins.is_empty()).then_some((text, pinyins))
+                    RenderedItem::new(item.phrase_text(), pinyins, sites)
                 })
                 .found()
-                .flatten();
+                .unwrap_or_default();
         }
-        let phrase = self.user.phrase(token)?;
+        let sites = self
+            .user
+            .with_user_item(token, |item| {
+                item.pronunciations()
+                    .map(|reading| reading_assert(packed_keys(reading.keys)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Some(phrase) = self.user.phrase(token) else {
+            return RenderedItem::new(None, Vec::new(), sites);
+        };
         let pinyins: Vec<String> = phrase
             .pronunciations()
             .iter()
             .filter_map(UserPronunciation::render_pinyin)
             .collect();
-        if pinyins.is_empty() {
-            return None;
-        }
-        Some((phrase.phrase_text()?, pinyins))
+        RenderedItem::new(phrase.phrase_text(), pinyins, sites)
     }
 }
 /// One rendered §9 bigram-export row: the `'`-joined pronunciation of the
@@ -600,6 +676,23 @@ pub enum GramLoadFault {
         /// The predecessor whose gram the walk loaded.
         token: u32,
     },
+}
+
+/// What stops a `has_next` of the bigram export walk
+/// ([`BigramExportWalk::has_next`]) where the pin's
+/// `pinyin_bigram_iterator_has_next_phrase` does not return normally.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BigramProbeFault {
+    /// The gram of the predecessor the walk loaded cannot be read.
+    Gram(GramLoadFault),
+    /// A stored key of the pair the walk loaded lies outside the table: the
+    /// `get_pinyin_string` assert the pin dies at while it renders the
+    /// pair's readings (`pinyin.cpp:846`, `:859` at 074a2219), the tone
+    /// (`chewing_key.cpp:48`) before the fields (`:30-32`, from `:49`). The
+    /// site is [`ExportAssert::KeyTone`] or [`ExportAssert::KeyFields`].
+    /// The C adapter aborts. The walk stays at the pair, so a repeated
+    /// `has_next` answers the same.
+    Key(ExportAssert),
 }
 
 /// The first-seed threshold the export filters on: a pair is exported
@@ -648,10 +741,11 @@ impl std::fmt::Debug for BigramExportWalk {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BigramStep {
     /// A row, and the `has_next` the pin's `get_next` runs after it
-    /// (`pinyin.cpp:910`): its answer, or the [`GramLoadFault`] of a predecessor
-    /// it loaded and could not read. The
-    /// pin has written the row's out-params by then (`:904-906`).
-    Row(ExportedBigramRow, Result<bool, GramLoadFault>),
+    /// (`pinyin.cpp:910`): its answer, or the [`BigramProbeFault`] of a
+    /// predecessor it loaded and could not read, or of a pair with a stored
+    /// key outside the table. The pin has written the row's out-params by
+    /// then (`:904-906`), so the C adapter writes them before it aborts.
+    Row(ExportedBigramRow, Result<bool, BigramProbeFault>),
     // pinyin_bigram_iterator_get_next_phrase asserts the predecessor at pinyin.cpp:902.
     /// The caller requested a row without a current predecessor or with the sentence-start
     /// predecessor. The iterator returns this decision to the facade.
@@ -668,9 +762,11 @@ impl BigramExportWalk {
     ///
     /// # Errors
     ///
-    /// Returns [`GramLoadFault`] if a predecessor cannot be loaded for the next pair. Earlier
-    /// rows have already been handed out.
-    pub fn has_next(&mut self, context: &ContextCore) -> Result<bool, GramLoadFault> {
+    /// Returns [`BigramProbeFault::Gram`] if a predecessor cannot be loaded for the next pair.
+    /// Returns [`BigramProbeFault::Key`] if a stored key of the next pair is outside the table,
+    /// where the pin asserts (`pinyin.cpp:846`, `:859`; `chewing_key.cpp:47-50`, `:29-32`). The
+    /// C adapter aborts the process on that fault. Earlier rows have already been handed out.
+    pub fn has_next(&mut self, context: &ContextCore) -> Result<bool, BigramProbeFault> {
         let source = ExportSource {
             user: context.user_store(),
             dict: context.runtime.dict(),
@@ -684,8 +780,8 @@ impl BigramExportWalk {
     fn advance(
         &mut self,
         load_gram: impl Fn(u32) -> Result<Vec<(u32, u32)>, GramLoadFault>,
-        render: impl Fn(u32) -> Option<RenderedItem>,
-    ) -> Result<bool, GramLoadFault> {
+        render: impl Fn(u32) -> RenderedItem,
+    ) -> Result<bool, BigramProbeFault> {
         if self.pair.is_some() && self.pinyin_index < self.pinyins.len() {
             return Ok(true);
         }
@@ -698,7 +794,10 @@ impl BigramExportWalk {
                 while let Some(&(token, count)) = self.phrase_tokens.front() {
                     // Find the next item above the threshold.
                     if count > EXPORT_THRESHOLD {
-                        self.load_row(token, count, &render);
+                        // The pin dies inside this `has_next` (`:846`,
+                        // `:859`), before it removes the item (`:874`).
+                        self.load_row(token, count, &render)
+                            .map_err(BigramProbeFault::Key)?;
                         self.phrase_tokens.pop_front();
                         retval = true;
                         break;
@@ -720,7 +819,7 @@ impl BigramExportWalk {
                     // The walk ends here: no later predecessor is read.
                     self.items.clear();
                     self.phrase_tokens.clear();
-                    return Err(fault);
+                    return Err(BigramProbeFault::Gram(fault));
                 }
             };
             self.phrase_tokens.extend(gram);
@@ -736,15 +835,17 @@ impl BigramExportWalk {
     // has_next (pinyin.cpp:896–911). The count expression at 901,906 multiplies by a guint32
     // factor before assigning to gint.
     /// Returns the current row and advances the iterator. A [`BigramStep::Row`] can contain
-    /// the current row together with an error from probing the following row. Call
-    /// [`Self::has_next`] before requesting a row.
+    /// the current row together with an error from probing the following row. For a
+    /// [`BigramProbeFault::Key`], the C adapter writes the row's out-parameters and then
+    /// aborts the process, as the pin's assert does. Call [`Self::has_next`] before
+    /// requesting a row.
     pub fn get_next(&mut self, context: &ContextCore) -> BigramStep {
         self.next_row(|walk| walk.has_next(context))
     }
 
     fn next_row(
         &mut self,
-        advance: impl FnOnce(&mut Self) -> Result<bool, GramLoadFault>,
+        advance: impl FnOnce(&mut Self) -> Result<bool, BigramProbeFault>,
     ) -> BigramStep {
         if self.index_token == NULL_TOKEN || self.index_token == SENTENCE_START {
             return BigramStep::Aborts;
@@ -788,20 +889,35 @@ impl BigramExportWalk {
     /// first-pronunciation × second-pronunciation pair joined by `'`. A
     /// token the phrase index does not resolve reads as the pin's empty
     /// `PhraseItem` — no text, no pronunciation.
-    fn load_row(&mut self, token: u32, count: u32, render: &impl Fn(u32) -> Option<RenderedItem>) {
-        let (first_text, first_pinyins) = render(self.index_token).unwrap_or_default();
-        let (second_text, second_pinyins) = render(token).unwrap_or_default();
-        self.pair = Some((first_text, second_text));
-        self.loads = self.loads.wrapping_add(1);
-        self.count = count;
-        self.pinyins = first_pinyins
+    ///
+    /// Answers the assert site, with the walk unchanged, where a stored key
+    /// of the pair is outside the table ([`pair_assert`]): the pin dies
+    /// there (`pinyin.cpp:846`, `:859`).
+    fn load_row(
+        &mut self,
+        token: u32,
+        count: u32,
+        render: &impl Fn(u32) -> RenderedItem,
+    ) -> Result<(), ExportAssert> {
+        let first = render(self.index_token);
+        let second = render(token);
+        if let Some(site) = pair_assert(&first.sites, &second.sites) {
+            return Err(site);
+        }
+        self.pinyins = first
+            .pinyins
             .iter()
             .flat_map(|first| {
-                second_pinyins
+                second
+                    .pinyins
                     .iter()
                     .map(move |second| format!("{first}'{second}"))
             })
             .collect();
+        self.pair = Some((first.text, second.text));
+        self.loads = self.loads.wrapping_add(1);
+        self.count = count;
+        Ok(())
     }
 }
 

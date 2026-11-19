@@ -41,8 +41,8 @@ pub use context::{
 };
 pub use cursor::{CursorFault, CursorLaw, KeyAt, ModeKeys, SpanSource};
 pub use export_rows::{
-    BigramExportWalk, BigramStep, ExportAssert, ExportRow, ExportStep, ExportedBigramRow,
-    GramLoadFault, PhraseExportCursor,
+    BigramExportWalk, BigramProbeFault, BigramStep, ExportAssert, ExportRow, ExportStep,
+    ExportedBigramRow, GramLoadFault, PhraseExportCursor,
 };
 pub use import::ImportPlan;
 pub use instance::{

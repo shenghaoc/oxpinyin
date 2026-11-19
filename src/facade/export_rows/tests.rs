@@ -1,5 +1,6 @@
 use super::{
-    BigramExportWalk, BigramStep, ExportedBigramRow, GramLoadFault, RenderedItem, SENTENCE_START,
+    BigramExportWalk, BigramProbeFault, BigramStep, ExportedBigramRow, GramLoadFault, RenderedItem,
+    SENTENCE_START,
 };
 use crate::{PhraseText, PhraseTextConcat};
 use std::collections::HashMap;
@@ -24,7 +25,7 @@ struct TestWalk {
 }
 
 impl TestWalk {
-    fn has_next(&mut self) -> Result<bool, GramLoadFault> {
+    fn has_next(&mut self) -> Result<bool, BigramProbeFault> {
         let Self { walk, grams, items } = self;
         Self::advance(walk, grams, items)
     }
@@ -38,10 +39,10 @@ impl TestWalk {
         walk: &mut BigramExportWalk,
         grams: &HashMap<u32, Option<Vec<(u32, u32)>>>,
         items: &HashMap<u32, RenderedItem>,
-    ) -> Result<bool, GramLoadFault> {
+    ) -> Result<bool, BigramProbeFault> {
         walk.advance(
             |token| Self::gram(grams.get(&token), token),
-            |token| items.get(&token).cloned(),
+            |token| items.get(&token).cloned().unwrap_or_default(),
         )
     }
 
@@ -54,6 +55,16 @@ impl TestWalk {
             Some(None) => Err(GramLoadFault::ShortTotal { token }),
             None => Ok(Vec::new()),
         }
+    }
+}
+
+/// A planted item with one stored reading, and the assert site of that
+/// reading.
+fn item(text: &str, pinyin: &str, site: Option<ExportAssert>) -> RenderedItem {
+    RenderedItem {
+        text: PhraseText::from(text),
+        pinyins: vec![pinyin.to_owned()],
+        sites: vec![site],
     }
 }
 
@@ -70,7 +81,7 @@ fn walk(items: &[u32], grams: &[(u32, &[(u32, u32)])]) -> TestWalk {
             (0x0100_0004, "爱", "ai"),
         ]
         .into_iter()
-        .map(|(token, text, pinyin)| (token, (PhraseText::from(text), vec![pinyin.to_owned()])))
+        .map(|(token, text, pinyin)| (token, item(text, pinyin, None)))
         .collect(),
         grams: grams
             .iter()
@@ -224,14 +235,68 @@ fn a_short_predecessor_faults_where_the_walk_loads_it() {
         panic!("the first predecessor's second row");
     };
     assert_eq!(row.count, 138);
-    assert_eq!(more, Err(GramLoadFault::ShortTotal { token: short }));
+    assert_eq!(
+        more,
+        Err(BigramProbeFault::Gram(GramLoadFault::ShortTotal {
+            token: short
+        }))
+    );
     // A walk that reaches it from `has_next` faults the same way.
     let mut direct = walk(&[short], &[]);
     direct.grams.insert(short, None);
     assert_eq!(
         direct.has_next(),
-        Err(GramLoadFault::ShortTotal { token: short })
+        Err(BigramProbeFault::Gram(GramLoadFault::ShortTotal {
+            token: short
+        }))
     );
+}
+
+/// `pinyin.cpp:839-872`: the pin renders the first item's reading `i`, then
+/// every reading of the second item, for each `i` in turn, and dies at the
+/// first key assert. A first item with no reading renders nothing.
+#[test]
+fn a_pair_asserts_in_the_pins_render_order() {
+    use ExportAssert::{KeyFields, KeyTone};
+    assert_eq!(super::pair_assert(&[], &[Some(KeyTone)]), None);
+    assert_eq!(super::pair_assert(&[None], &[]), None);
+    assert_eq!(
+        super::pair_assert(&[None, Some(KeyTone)], &[]),
+        Some(KeyTone)
+    );
+    assert_eq!(
+        super::pair_assert(&[Some(KeyFields)], &[Some(KeyTone)]),
+        Some(KeyFields)
+    );
+    assert_eq!(
+        super::pair_assert(&[None, Some(KeyFields)], &[None, Some(KeyTone)]),
+        Some(KeyTone)
+    );
+}
+
+/// `pinyin.cpp:846`, `:859`: a pair with a stored key outside the table
+/// faults in the `has_next` that loads it. The walk stays at the pair. The
+/// `has_next` inside `get_next` (`:910`) hands the fault back with the row,
+/// whose out-params the pin has written (`:904-906`).
+#[test]
+fn a_pair_with_a_key_outside_the_table_faults_where_the_walk_loads_it() {
+    let fault = Err(BigramProbeFault::Key(ExportAssert::KeyTone));
+    let grams: &[(u32, &[(u32, u32)])] = &[(0x0100_0001, &[(0x0100_0002, 138), (0x0100_0004, 69)])];
+    let mut planted = walk(&[0x0100_0001, 0x0100_0003], grams);
+    planted
+        .items
+        .insert(0x0100_0004, item("爱", "ai", Some(ExportAssert::KeyTone)));
+    assert_eq!(planted.has_next(), Ok(true));
+    let BigramStep::Row(row, more) = planted.get_next() else {
+        panic!("the first row");
+    };
+    assert_eq!(row.pinyin, "ni'hao");
+    assert_eq!(more, fault);
+    assert_eq!(pair_text(&planted.walk), Some(PhraseText::from("你好")));
+    assert_eq!(planted.walk.loads(), 1);
+    for _ in 0..2 {
+        assert_eq!(planted.has_next(), fault);
+    }
 }
 
 use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor};
@@ -571,7 +636,7 @@ fn a_user_library_import_after_begin_is_exported() {
 }
 
 mod native {
-    use super::super::{BigramExportWalk, BigramStep, ExportAssert, ExportStep};
+    use super::super::{BigramExportWalk, BigramProbeFault, BigramStep, ExportAssert, ExportStep};
     use crate::facade::ContextCore;
     #[cfg(unix)]
     use crate::facade::SaveOutcome;
@@ -692,6 +757,50 @@ mod native {
             matches!(cursor.get_next_with(&context, |_| ()), ExportStep::Assert(site) if site == expected)
         );
     }
+
+    /// `pinyin.cpp:846`, `:859` → `chewing_key.cpp:47-50`, `:29-32`: the
+    /// bigram export renders a system item's stored keys through
+    /// `get_pinyin_string`, which asserts the tone before the fields. The
+    /// fault comes from the `has_next` that loads the pair: the one inside
+    /// `get_next` (`:910`) after the row before it, then every direct one.
+    #[rstest::rstest]
+    #[case::tone(0x6081, ExportAssert::KeyTone)]
+    #[case::fields(0x109f, ExportAssert::KeyFields)]
+    fn bigram_export_refuses_an_invalid_system_reading(
+        #[case] key: u16,
+        #[case] expected: ExportAssert,
+    ) {
+        let scratch = tempfile::tempdir().unwrap();
+        let system = items_system(
+            &system_dir(),
+            scratch.path(),
+            &[(&[0x4f60], &[0x1081], 100), (&[0x597d], &[key], 100)],
+            1000,
+        );
+        let (good, bad) = (0x0100_0001_u32, 0x0100_0002_u32);
+        let user = TempUserDir::new("export-bigram-system-key");
+        plant_bigram(
+            &user.path,
+            vec![(
+                good.to_le_bytes().to_vec(),
+                gram_bytes(200, &[(good, 100), (bad, 100)]),
+            )],
+        );
+        let context = native_context(&system, &user.path, UserConfLaw::Pinyin);
+        let mut walk = context.bigram_export_walk().unwrap();
+        let fault = Err(BigramProbeFault::Key(expected));
+        assert_eq!(walk.has_next(&context), Ok(false));
+        assert_eq!(walk.has_next(&context), Ok(true));
+        let BigramStep::Row(row, more) = walk.get_next(&context) else {
+            panic!("the row of the pair before the fault")
+        };
+        assert_eq!(row.count, 200);
+        assert_eq!(more, fault);
+        for _ in 0..2 {
+            assert_eq!(walk.has_next(&context), fault);
+        }
+    }
+
     /// `user-gram-unsorted-export`: 你's stored gram holds `[龘龘 90, 号 80,
     /// 好 70]`, descending by token, not the ascending order the pin writes.
     /// The pin's export reads `retrieve_all`, which appends the raw items in
