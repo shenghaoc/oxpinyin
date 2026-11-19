@@ -24,6 +24,8 @@ from tools.dev.measure.fake_world import Stream, World
 
 NM = ('0000000000001130 t bisect_perf_cold_unit\n0000000000001140 t bisect_perf_steady_unit\n'
       '0000000000001150 T main\n')
+NEUTRALITY_FAILURE = ('FAIL: .text bytes differ — neutrality unproven. '
+                      'Diff the objdump -d output of the two libraries by hand.\n')
 
 
 class ControlTests(World):
@@ -40,9 +42,9 @@ class ControlTests(World):
     def test_dwarf_is_checked_and_the_neutrality_failure_propagates(self):
         with mock.patch.object(valgrind.bench, 'capture', return_value=pool.Completed(
                 0, b'  Compilation Unit @ offset 0:\n', b'')) as readelf, mock.patch(
-                'tools.dev.measure.neutrality.compare', return_value=(1, 'FAIL (c)\n')) as compare:
+                'tools.dev.measure.neutrality.compare', return_value=(1, NEUTRALITY_FAILURE)) as compare:
             status, out, err = self.control()
-        self.assertEqual((status, out, err), (1, 'profiled DWARF compilation units: 1\nFAIL (c)\n', ''))
+        self.assertEqual((status, out, err), (1, 'profiled DWARF compilation units: 1\n' + NEUTRALITY_FAILURE, ''))
         readelf.assert_called_once_with(['readelf', '--debug-dump=info', self.profile / 'libpinyin.so'], env={})
         compare.assert_called_once_with(self.profile / 'libpinyin.so', self.shipping / 'libpinyin.so')
         for stage in (self.profile, self.shipping):
@@ -238,7 +240,7 @@ class DifferentialTests(World):
         self.enterContext(mock.patch.object(valgrind, 'libraries', lambda env: dict(self.libs)))
         self.enterContext(mock.patch.object(valgrind, 'data_dir', lambda env: self.root / 'data'))
         self.nm_output = NM
-        self.neutral = (0, 'PASS (a): identical .text\n')
+        self.neutral = (0, 'PASS: identical .text bytes\n')
         fake = types.SimpleNamespace(compare=lambda first, second: self.neutral)
         self.enterContext(mock.patch.dict(sys.modules, {'tools.dev.measure.neutrality': fake}))
         self.enterContext(mock.patch('tools.dev.measure.neutrality', fake, create=True))
@@ -292,7 +294,7 @@ class DifferentialTests(World):
                      'cg.libpinyin-kc.r1.stdout', 'cg.oxpinyin-kc.r2.stderr', 'hw-instructions.jsonl', 'hw-instructions.md',
                      'hw.err', 'speed.jsonl', 'speed.err', 'timing.md'):
             self.assertTrue((self.out / name).exists(), name)
-        self.assertEqual((self.out / 'debuginfo-neutrality.txt').read_text(), '=== debug-info neutrality ===\nPASS (a): identical .text\n')
+        self.assertEqual((self.out / 'debuginfo-neutrality.txt').read_text(), '=== debug-info neutrality ===\nPASS: identical .text bytes\n')
         self.assertEqual((self.out / 'timing.md').read_text(), 'REPORT perf-ci.py\n')
         self.assertTrue(out.rstrip().endswith('timing.md'))
 
@@ -344,10 +346,10 @@ class DifferentialTests(World):
         self.assertEqual(self.workers_of(), [])
 
     def test_different_code_stops_the_run_before_any_profile(self):
-        self.neutral = (1, 'FAIL (c): instruction multiset differs\n')
+        self.neutral = (1, NEUTRALITY_FAILURE)
         status, out, _ = self.execute(valgrind.callgrind_differential, [], self.env)
         self.assertEqual(status, 1)
-        self.assertIn('FAIL (c)', out)
+        self.assertIn(NEUTRALITY_FAILURE, out)
         self.assertFalse((self.out / 'malloc-interception.txt').exists())
         self.assertEqual(self.workers_of(), [])
 

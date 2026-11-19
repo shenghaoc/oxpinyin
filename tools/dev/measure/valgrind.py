@@ -277,10 +277,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     if code:
         raise Finished(code)
 
-    # 2. debug-info neutrality: the profiled artifact carries debug info and the timed one does not, so
-    # the two must be the same code. Three outcomes, and only the last is fatal: identical .text; the
-    # same instruction multiset at other addresses (Ir is unaffected, the simulated cache and branch
-    # figures are layout-sensitive); a different multiset, which is different code.
+    # 2. Debug-info neutrality requires identical .text bytes in the profiled and timed libraries.
     from . import neutrality
     code, report = neutrality.compare(ox, nodebug)
     bench.tee(out / 'debuginfo-neutrality.txt', '=== debug-info neutrality ===\n' + report)
