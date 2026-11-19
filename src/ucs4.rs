@@ -34,7 +34,10 @@ fn stored_outward(buffer: &[u32]) -> &[u32] {
 }
 
 impl PhraseText {
-    /// Reads stored words, preserving non-scalars and zero suffixes.
+    // convert_to_utf8 converts each phrase separately, lookup/lookup.cpp:39–68.
+    /// Reads one phrase’s UCS-4 words. A word at or above `0x8000_0000` before the first zero
+    /// rejects the phrase. A zero ends the outward text. That zero and its suffix remain
+    /// available through [`Self::stored_words`].
     #[must_use]
     pub fn from_words(words: impl IntoIterator<Item = u32>) -> Option<Self> {
         Self::from_stored_words(words.into_iter().map(Some))
@@ -162,8 +165,11 @@ impl PhraseText {
     }
 }
 
-/// Concatenates ordinary texts in a CompactString, switching to stored words
-/// only when a component contains a zero or non-scalar word.
+// The per-phrase conversion boundary is convert_to_utf8, lookup/lookup.cpp:39–69.
+/// Concatenates the outward text of a sequence of phrases. Any component in stored-word
+/// form switches the result to stored words, even when that component contains only
+/// Unicode scalar values. Each component ends at its own first zero. When the result uses
+/// stored words, its combined declared length is capped at `u32::MAX`.
 #[derive(Default)]
 pub struct PhraseTextConcat {
     scalar: CompactString,
@@ -206,7 +212,8 @@ impl PhraseTextConcat {
         }
     }
 
-    /// Finishes with ordinary text or stored words and their declared count.
+    /// Finishes with ordinary text, whose length is its character count, or with stored
+    /// words and their combined declared count.
     #[must_use]
     pub fn finish(self) -> PhraseText {
         match self.words {

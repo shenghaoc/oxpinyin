@@ -32,11 +32,8 @@ pub fn scalar_text(input: Option<&CStr>) -> Option<String> {
     input?.to_str().ok().map(str::to_owned)
 }
 
-/// Preserve the prefix a raw-byte batch keyboard parser can consume.
-///
-/// Full/double pinyin and keyboard parsers stop before a byte outside their
-/// alphabets. Do not use this for direct zhuyin import: that parser rejects
-/// a complete space/apostrophe-delimited segment, not an arbitrary suffix.
+/// Returns the valid UTF-8 prefix of a nullable C string. A keyboard parser can reject
+/// bytes within that prefix. Use [`direct_zhuyin_reading`] for segmented Zhuyin text.
 #[must_use]
 pub fn parser_prefix(input: Option<&CStr>) -> String {
     let Some(input) = input else {
@@ -51,7 +48,8 @@ pub fn parser_prefix(input: Option<&CStr>) -> String {
     }
 }
 
-/// Define the nullable C-string borrow at a C ABI boundary.
+/// Defines an unsafe helper that borrows a nullable C string for one call. A non-null
+/// argument must remain readable and NUL-terminated throughout the borrow.
 #[macro_export]
 macro_rules! borrow_c_string_helpers {
     () => {
@@ -78,9 +76,10 @@ macro_rules! borrow_c_string_helpers {
     };
 }
 
-/// Keep complete direct-zhuyin segments before the first rejected segment.
-/// The pin splits on ASCII space/apostrophe before checking each spelling
-/// (074a2219 storage/zhuyin_parser2.cpp:914-959).
+// ZhuyinDirectParser2::parse, storage/zhuyin_parser2.cpp:914–959.
+/// Prepares input for [`crate::parse_zhuyin_direct`]. Valid UTF-8 passes through in full.
+/// On malformed UTF-8, the result ends just after the last ASCII space or apostrophe
+/// before the bad byte, or is empty when there is no such separator.
 #[must_use]
 pub fn direct_zhuyin_reading(input: Option<&CStr>) -> String {
     let Some(input) = input else {

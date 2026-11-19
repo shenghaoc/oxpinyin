@@ -16,27 +16,13 @@
 //! `libpinyin.ver` (79) / `libzhuyin.ver` (52) export gates and the C++
 //! header smoke test see an unchanged surface. These macros stamp only the
 //! crate-internal Rust helpers those entry points call.
-/// Stamps the opaque-handle marshalling helpers behind a facade's three C
-/// handle types: the context, the instance, and the borrowed lookup
-/// candidate.
+/// Defines casts, borrows and ownership transfers for the facade’s opaque C handles.
 ///
-/// Each facade exposes zero-sized `#[repr(C)]` marker types across the C
-/// ABI (`pinyin_context_t *` etc.) whose pointers actually address a
-/// heap-allocated backing struct (`CapiContext`/`CapiInstance`/
-/// `CapiCandidate`). This macro centralises the eight cast/box helpers that
-/// bridge the two representations so each call site stays readable and the
-/// two facades cannot drift:
-///
-/// - `context_ref` / `context_mut` — `*mut Marker` → `&`/`&mut Backing`
-/// - `instance_ref` / `instance_mut` — likewise for the instance handle
-/// - `candidate_ref` — `*mut CandMarker` → `&CandBacking`
-/// - `candidate_ptr` — `&CandBacking` → `*mut CandMarker`
-/// - `box_context` / `box_instance` — `Backing` → `*mut Marker` (leaks a
-///   `Box` for the caller to reclaim through its destructor entry point)
-///
-/// `$vis` is applied to every generated item, so a facade whose modules
-/// reach these through `crate::state::*` passes `pub` and one that keeps
-/// them crate-internal passes `pub(crate)`.
+/// Each context or instance pointer must refer to its live backing allocation. A shared
+/// borrow excludes mutation. A mutable borrow requires exclusive access for its lifetime.
+/// Borrowed candidate pointers expire with their backing candidate. The boxing helpers
+/// transfer ownership to the caller, which reclaims it through the matching destructor.
+/// The supplied visibility applies to every generated helper.
 ///
 /// # Example
 ///
@@ -143,8 +129,9 @@ pub mod input;
 pub mod phrase_text;
 pub mod ucs4;
 
-/// Defines the shared GLib output and allocation helpers in each C facade.
-/// The expanding crate supplies its existing GLib, libc and key-text names.
+/// Defines the C facade’s string, symbol-vector and sentence allocation helpers. The
+/// caller owns the returned buffers. Release returned strings with `g_free` and
+/// null-terminated string vectors with `g_strfreev`.
 #[macro_export]
 macro_rules! ffi_output_helpers {
     (glib: $glib:ident, key_text: $key_text:ident, malloc: $malloc:ident, free: $free:ident, domain: $domain:expr) => {
@@ -360,7 +347,18 @@ macro_rules! ffi_output_helpers {
     };
 }
 
-/// Defines the shared display_string_getter helper at each C ABI boundary.
+// _ChewingKey::get_table_index and the Luoma/secondary display getters,
+// chewing_key.cpp:27–45,91–121 and pinyin.cpp:2729–2749. The Rust boundary guards both
+// null pointers before writing the output (row 41).
+/// Defines a display getter that writes a caller-owned GLib string. Supply a readable key
+/// and a writable output pointer. The getter clears the output before checking the key’s
+/// dimensions and table row. A zero row leaves the output null. On a matching row the
+/// caller frees the result with `g_free`.
+///
+/// # Aborts
+///
+/// The generated getter aborts if the initial, middle or final exceeds its table
+/// dimensions, or if a nonzero row has a tone outside the display range.
 #[macro_export]
 macro_rules! display_string_getter {
     (key: $key:ident, char: $char:ident) => {
@@ -409,7 +407,9 @@ macro_rules! display_string_getter {
     };
 }
 
-/// Defines the shared append_stored_words helper at each C ABI boundary.
+/// Defines a helper that appends one reading’s packed keys to a two-byte-element
+/// `GArray`. A supplied reading consists of whole two-byte words. For a missing reading,
+/// `length` gives the number of zero words to append.
 #[macro_export]
 macro_rules! append_stored_words {
     (array: $array:ident, append: $append:ident) => {
@@ -451,8 +451,10 @@ macro_rules! append_stored_words {
     };
 }
 
-/// Defines facade handle ownership, borrows and instance views at the C boundary.
-/// The optional context field preserves the pinyin instance back-pointer.
+/// Defines ownership and borrowing helpers for facade contexts and instances. Serialize
+/// calls on a context and its handles. A shared view excludes mutation for the borrow,
+/// and an exclusive view excludes every other access. The optional context field retains
+/// the pinyin instance back-pointer.
 #[macro_export]
 macro_rules! state_handle_helpers {
     (context: $ctx:ident, instance: $inst:ident, instance_binding: $binding:ident, error: $error:ty, context_field: { $($context_field:tt)* }) => {
@@ -567,13 +569,11 @@ macro_rules! state_handle_helpers {
     };
 }
 
-/// Stamps a facade's `write_owned_sentence` helper: the `char **`-out
-/// sentence writer. The facade passes its sentence allocator,
-/// `fn(&[PhraseText]) -> *mut c_char`, which makes the pin's
-/// `convert_to_utf8` calls over the row's phrases (`lookup.cpp:27-69` at
-/// 074a2219): a fallible conversion per phrase, `g_strdup` of the first
-/// result, `g_strconcat` for each later one. As in the pin, the answer is
-/// `true` whether or not the result is NULL.
+// convert_to_utf8 converts each phrase, duplicates the first result and concatenates
+// later ones (lookup/lookup.cpp:27–69).
+/// Defines a sentence writer that passes an iterator of optional phrase borrows to the
+/// facade allocator. Supply a writable output pointer for the owned C string. The writer
+/// stores the allocator’s pointer, which may be null, and returns `true`.
 ///
 /// # Example
 ///
