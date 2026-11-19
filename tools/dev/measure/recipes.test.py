@@ -1,5 +1,6 @@
 """Tests for the measure recipe execution checks."""
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -132,6 +133,14 @@ if sys.platform == 'win32':
                     # One length for every staged prefix: the same bytes sit at same-length paths.
                     self.assertEqual({len(str(path)) for path, _, _ in staged.values()}, {len(str(staged['A'][0]))})
                     self.assertFalse(destinations[0].parent.exists())
+                    # The session identifies the removed prefixes by their hashes.
+                    session = json.loads(next((Path(directory) / 'measure/runs').iterdir()).joinpath('session.json').read_text())
+                    self.assertIs(session['staged_kept'], False)
+                    self.assertEqual(session['artifacts'], {label: dict(name='oxpinyin_capi.dll',
+                                     sha256=hashlib.sha256(b'product').hexdigest(),
+                                     driver_sha256=hashlib.sha256(b'identical driver').hexdigest())
+                                     for label in staged})
+                    self.assertTrue(all(not Path(path).exists() for path in session['staged'].values()))
 
         def test_unsupported_modes_fail_before_preparation(self):
             for argv in (['profile','--template','Allocations'],['neutrality']):
