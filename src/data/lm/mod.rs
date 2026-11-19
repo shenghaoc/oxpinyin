@@ -373,7 +373,7 @@ impl<
     /// row as the pin walks it, from `lower_bound`. A stored zero-count
     /// record is still a hit (`074a2219 ngram.cpp:231-250`).
     fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32, bool)>, LmError> {
-        let Some(row) = self.bigram.load_raw_successors(prev)? else {
+        let Some(row) = self.bigram.load_checked_successors(prev)? else {
             return Ok(None);
         };
         let count = single_gram::get_freq(&row, next);
@@ -408,10 +408,13 @@ impl<
     /// `phrase_lookup.cpp:268-276` at `074a2219`): `None` when both are
     /// absent, the present gram's own bytes when one is, and
     /// `merge_single_gram` otherwise ([`crate::model::MergedGram::merge`]).
-    /// The system value enters the merge as stored, from a fresh DBM read.
+    /// The system value enters the merge as stored, from a fresh DBM read,
+    /// whatever its length: the row's reads answer a value the pin cannot
+    /// read with the same faults as a user value ([`crate::GramFault`]).
     ///
     /// # Errors
-    /// Propagates DBM read and schema errors, including a present empty value.
+    /// Propagates the system read failures of
+    /// [`BigramTable::load_raw_successors`](crate::data::bigram_table::BigramTable::load_raw_successors).
     pub(crate) fn load_merged_row(
         &self,
         prev: u32,

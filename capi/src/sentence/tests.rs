@@ -285,3 +285,101 @@ fn a_mid_key_lookup_under_double_pinyin_lists_only_the_sentence_rows() {
     unsafe { crate::instance::pinyin_free_instance(instance) };
     unsafe { crate::context::pinyin_fini(context) };
 }
+
+/// A private system whose library 1 holds 甲 (`0x01000001`) and 乙 under
+/// `ba1` and `da1`, and whose `bigram.db` stores `value` under sentence
+/// start, as the pin's `load` keeps any stored value (`ngram_tkrzwdb.cpp:102-121`).
+fn corrupt_start_gram_system(scratch: &std::path::Path, value: Vec<u8>) -> std::path::PathBuf {
+    use crate::test_support::{craft_hash, items_system, system_dir};
+    let system = items_system(
+        &system_dir(),
+        scratch,
+        &[(&[0x7532], &[0x1081], 1), (&[0x4e59], &[0x1084], 1000)],
+        2000,
+    );
+    craft_hash(
+        &system.join("bigram.db"),
+        &[(oxpinyin::SENTENCE_START.to_le_bytes().to_vec(), value)],
+    );
+    system
+}
+
+/// With a user gram present, the merge reads the system total first and
+/// asserts on a value shorter than it (`check_result(system->get_total_freq(...))`,
+/// `ngram.cpp:303`, through `:48-50` and `memory_chunk.h:390`), from the
+/// phrase segmenter's `search_bigram2` (`phrase_lookup.cpp:269-272`).
+#[test]
+fn a_short_system_gram_merged_with_a_user_gram_aborts_the_segment() {
+    assert_aborts(
+        "sentence::tests::a_short_system_gram_merged_with_a_user_gram_aborts_the_segment",
+        || {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let system = corrupt_start_gram_system(scratch.path(), vec![0, 0]);
+            let user = TempUserDir::new("short-system-gram-merge");
+            crate::test_support::plant_bigram(
+                &user.path,
+                vec![(
+                    oxpinyin::SENTENCE_START.to_le_bytes().to_vec(),
+                    crate::test_support::gram_bytes(1, &[(0x0100_0001, 1)]),
+                )],
+            );
+            let context = crate::test_support::init_at(&system, &user.path);
+            let instance = unsafe { alloc(context) };
+            unsafe { crate::phrase::pinyin_phrase_segment(instance, cstr("甲").as_ptr()) };
+        },
+    );
+}
+
+/// With no user gram, the n-best ranged step's `search` reads nothing in
+/// `lower_bound` and then asserts in `get_total_freq` on a system value
+/// shorter than its total (`ngram.cpp:163-165`, `:48-50`), from
+/// `search_bigram2` (`phonetic_lookup.h:594-598`, `:626`).
+#[test]
+fn a_short_system_gram_aborts_the_ranged_step() {
+    assert_aborts(
+        "sentence::tests::a_short_system_gram_aborts_the_ranged_step",
+        || {
+            let scratch = tempfile::tempdir().expect("scratch");
+            let system = corrupt_start_gram_system(scratch.path(), vec![0, 0]);
+            let user = TempUserDir::new("short-system-gram-ranged");
+            let context = crate::test_support::init_at(&system, &user.path);
+            assert!(unsafe {
+                crate::config::pinyin_set_options(context, OptionBits::USE_TONE.bits())
+            });
+            let instance = unsafe { alloc(context) };
+            assert_eq!(unsafe { parse(instance, "ba1") }, 3);
+            unsafe { pinyin_guess_sentence(instance) };
+        },
+    );
+}
+
+/// A system value with a partial item tail and no whole item: the phrase
+/// segmenter's `get_freq` walk never meets `end` and reads past the value
+/// (`ngram.cpp:234-248`; register row 98, class (b)). The segment logs the
+/// one warning and returns false.
+#[test]
+fn a_partial_system_gram_tail_refuses_the_segment_with_one_warning() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut value = crate::test_support::gram_bytes(10, &[]);
+    value.extend_from_slice(&[0, 0, 0]);
+    let system = corrupt_start_gram_system(scratch.path(), value);
+    let user = TempUserDir::new("partial-system-gram");
+    let context = crate::test_support::init_at(&system, &user.path);
+    let instance = unsafe { alloc(context) };
+    let logs = crate::test_support::LogCapture::new();
+    assert!(!unsafe { crate::phrase::pinyin_phrase_segment(instance, cstr("甲").as_ptr()) });
+    let messages: Vec<String> = logs
+        .take_with_messages()
+        .into_iter()
+        .map(|(_, message)| message)
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "pinyin_phrase_segment: a bigram value would be read past its end (upstream reads past it)"
+        ]
+    );
+    drop(logs);
+    unsafe { pinyin_free_instance(instance) };
+    unsafe { pinyin_fini(context) };
+}

@@ -575,8 +575,11 @@ mod language_model {
         }
     }
 
+    /// A present empty system value enters the merged row as stored, where
+    /// its reads meet the pin's faults (`ngram.cpp:234-248`, `:48-50`); the
+    /// pair path, which decodes the value whole, still refuses it.
     #[test]
-    fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
+    fn reusable_row_keeps_visibility_live_and_reads_an_empty_value_as_stored() {
         use crate::model::NbestStepRow;
         let fix = Fixture::new();
         let store =
@@ -594,15 +597,18 @@ mod language_model {
                 .unwrap(),
             crate::model::NbestStepCosts::default()
         );
-        let Err(error) = lm.nbest_successors_in_row(&prev, &mut row) else {
-            panic!("a present empty value is corruption");
+        let Some(crate::model::NbestSuccessors::Row(gram)) =
+            lm.nbest_successors_in_row(&prev, &mut row).unwrap()
+        else {
+            panic!("a present empty value is a row");
+        };
+        assert_eq!(gram.total(), Err(crate::GramFault::Short));
+        assert_eq!(gram.get_freq(HAO), Err(crate::GramFault::OverRead));
+        let Err(error) = lm.nbest_step_costs(&prev, &HAO) else {
+            panic!("the pair path refuses a present empty value");
         };
         assert!(
             matches!(error, crate::data::lm::LmError::Parse(ref text) if text.contains("empty value"))
-        );
-        assert_eq!(
-            error.to_string(),
-            lm.nbest_step_costs(&prev, &HAO).unwrap_err().to_string()
         );
     }
 

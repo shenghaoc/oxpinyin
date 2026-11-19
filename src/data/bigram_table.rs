@@ -82,26 +82,46 @@ impl<D: ChewingDbm> BigramTable<D> {
     /// stored value is malformed (an empty value is corruption, reported
     /// rather than masked as a clean miss).
     pub fn load_successors(&self, prev_token: u32) -> Result<Option<BigramRow>, DictError> {
-        self.load_raw_successors(prev_token)?
+        self.load_checked_successors(prev_token)?
             .map(|value| parse_bigram_value(&value))
             .transpose()
     }
 
-    /// Reads one encoded successor value from the DBM without building a
-    /// decoded record array. N-best retains these bytes for only its
-    /// current step. Every load reads the attached handle, including
+    /// Reads one encoded successor value from the DBM as stored, without
+    /// building a decoded record array. N-best retains these bytes for only
+    /// its current step. Every load reads the attached handle, including
     /// sentence start: `ngram_bdb.cpp:140`, `ngram_kyotodb.cpp:131,138-139`
-    /// and `ngram_tkrzwdb.cpp:111` at `074a2219`.
+    /// and `ngram_tkrzwdb.cpp:111` at `074a2219`. The pin's `load` keeps any
+    /// stored value, so a value of any length comes back unchanged; the
+    /// reads over it decide where the pin asserts or reads past it.
     ///
     /// # Errors
-    /// Returns the same read and schema errors as [`Self::load_successors`],
-    /// including a present empty value.
+    /// Returns [`DictError`] for a read failure the pin asserts on: a body
+    /// read that fails after a good size check. Every other failed read is a
+    /// miss.
     pub fn load_raw_successors(&self, prev_token: u32) -> Result<Option<Vec<u8>>, DictError> {
         let key = encode_token_key(prev_token);
         let mut value = Vec::new();
         if !self.dbm.get_bigram(&key, &mut value)? {
             return Ok(None);
         }
+        Ok(Some(value))
+    }
+
+    /// [`Self::load_raw_successors`] for the callers that decode the value
+    /// whole: a value that is not a total and whole items is refused.
+    ///
+    /// # Errors
+    /// Returns the read errors of [`Self::load_raw_successors`], or `Parse`
+    /// when the stored value is malformed (an empty value is corruption,
+    /// reported rather than masked as a clean miss).
+    pub(crate) fn load_checked_successors(
+        &self,
+        prev_token: u32,
+    ) -> Result<Option<Vec<u8>>, DictError> {
+        let Some(value) = self.load_raw_successors(prev_token)? else {
+            return Ok(None);
+        };
         if value.is_empty() {
             // A present but empty value is malformed: a stored bigram
             // always carries at least its header. Report the corruption

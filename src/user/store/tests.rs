@@ -1283,16 +1283,6 @@ fn repeated_increments_move_the_live_unigram_and_total() {
     }
 }
 
-/// Only the checked-read failure is the pin's assert; every other
-/// store or I/O failure is an ordinary failed read.
-#[test]
-fn only_a_read_after_check_is_the_checked_read_failure() {
-    assert!(UserStoreError::Store(StoreError::ReadAfterCheck).is_read_after_check());
-    assert!(!UserStoreError::Store(StoreError::Backend("x".into())).is_read_after_check());
-    assert!(!UserStoreError::Io(std::io::Error::other("x")).is_read_after_check());
-    assert!(!UserStoreError::Decode.is_read_after_check());
-}
-
 mod backend_files {
     //! Behavioural ports of the upstream user-state test suites, over the
     //! libpinyin session the shipped libraries open.

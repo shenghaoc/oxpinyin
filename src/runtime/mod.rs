@@ -1311,16 +1311,12 @@ pub struct RuntimeLm<'a> {
 
 /// `m_user_bigram->load`'s answer to a failed read: no gram, which
 /// `search_bigram2` ignores (`phrase_lookup.cpp:269-270` at 074a2219), so
-/// the system gram then stands alone (`ngram.cpp:292-296`). The checked-read
-/// failure is the pin's assert and stays an error.
-fn user_gram_or_none(
-    read: Result<Option<Vec<u8>>, UserStoreError>,
-) -> Result<Option<Vec<u8>>, LmError> {
-    match read {
-        Err(error) if error.is_read_after_check() => Err(LmError::User(error.to_string())),
-        Err(_) => Ok(None),
-        Ok(row) => Ok(row),
-    }
+/// the system gram then stands alone (`ngram.cpp:292-296`). The pin's user
+/// bigram is the in-memory copy `load_db` makes (`pinyin.cpp:399-401`), so
+/// its checked read cannot fail after the size check; no user container
+/// reports that failure either.
+fn user_gram_or_none(read: Result<Option<Vec<u8>>, UserStoreError>) -> Option<Vec<u8>> {
+    read.ok().flatten()
 }
 
 impl RuntimeLm<'_> {
@@ -1340,7 +1336,7 @@ impl RuntimeLm<'_> {
     /// ([`BigramLanguageModel::load_merged_row`]). The user side is the
     /// stored value itself (`bigram_row`), `None` without a key.
     fn merged_row(&self, prev: u32) -> Result<Option<MergedGram>, LmError> {
-        let user = user_gram_or_none(self.user.bigram_row(prev))?;
+        let user = user_gram_or_none(self.user.bigram_row(prev));
         self.inner.load_merged_row(prev, user)
     }
 

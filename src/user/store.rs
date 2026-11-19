@@ -227,17 +227,6 @@ pub enum UserStoreError {
     FailedUserBigramStore,
 }
 
-impl UserStoreError {
-    /// Whether this is the checked-read failure, the one read failure the
-    /// pin's `Bigram::load` does not answer with a NULL gram: Kyoto
-    /// Cabinet's body read after a good size check asserts
-    /// (`ngram_kyotodb.cpp:138` at 074a2219).
-    #[must_use]
-    pub(crate) const fn is_read_after_check(&self) -> bool {
-        matches!(self, Self::Store(StoreError::ReadAfterCheck))
-    }
-}
-
 impl From<StoreError> for UserStoreError {
     fn from(e: StoreError) -> Self {
         match e {
