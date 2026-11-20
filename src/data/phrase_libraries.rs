@@ -12,6 +12,7 @@
 //! one the addon libraries (`m_addon_phrase_index`, indexes 4–15, loaded
 //! on demand by `pinyin_load_addon_phrase_library`).
 
+use crate::data::chunk_format::CHEWING_KEY_SIZE;
 use crate::phrase_index_library_index;
 use std::path::{Path, PathBuf};
 
@@ -452,7 +453,7 @@ impl PhraseLibraries {
         let item = library.item(token)?;
         Some(
             item.pronunciations()
-                .filter(|view| view.keys.len().is_multiple_of(2))
+                .filter(|view| view.keys.len().is_multiple_of(CHEWING_KEY_SIZE))
                 .map(|view| {
                     let keys = view
                         .keys
@@ -488,7 +489,7 @@ impl PhraseLibraries {
                 }
                 syllables.push(spelling);
             }
-            if ok && view.keys.len().is_multiple_of(2) && !syllables.is_empty() {
+            if ok && view.keys.len().is_multiple_of(CHEWING_KEY_SIZE) && !syllables.is_empty() {
                 out.push(LibraryPronunciation {
                     spelling: syllables.join("'"),
                     freq: u64::from(view.freq),
@@ -505,11 +506,11 @@ fn item_possibility(item: &PhraseItemView<'_>, query: &[ChewingKey]) -> (u64, u6
     let mut matched: u64 = 0;
     let mut total: u64 = 0;
     for view in item.pronunciations() {
-        if !view.keys.len().is_multiple_of(2) {
+        if !view.keys.len().is_multiple_of(CHEWING_KEY_SIZE) {
             continue;
         }
         total = total.saturating_add(u64::from(view.freq));
-        if view.keys.len() / 2 == query.len()
+        if view.keys.len() / CHEWING_KEY_SIZE == query.len()
             && query
                 .iter()
                 .zip(view.keys.as_chunks::<2>().0.iter())

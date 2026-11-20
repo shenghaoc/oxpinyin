@@ -16,6 +16,7 @@
 //! See `docs/findings/data-formats.md` §4 and
 //! `chewing_large_table2_tkrzwdb.cpp:133-296`.
 
+use crate::data::chunk_format::CHEWING_KEY_SIZE;
 use crate::{ChewingKey, MAX_PHRASE_LENGTH};
 
 use crate::data::dict::DictError;
@@ -443,7 +444,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
         let upper = prefix_upper_bound(&encoded);
         let mut found = false;
         self.dbm.walk(&encoded, upper.as_deref(), |key, _value| {
-            found = key.len() / 2 > MAX_PHRASE_LENGTH;
+            found = key.len() / CHEWING_KEY_SIZE > MAX_PHRASE_LENGTH;
             Ok(found)
         })?;
         Ok(found)
@@ -464,14 +465,14 @@ impl<D: ChewingDbm> ChewingTable<D> {
         let upper = prefix_upper_bound(&encoded);
         let mut overlong = false;
         self.dbm.walk(&encoded, upper.as_deref(), |key, value| {
-            overlong = key.len() / 2 > MAX_PHRASE_LENGTH;
+            overlong = key.len() / CHEWING_KEY_SIZE > MAX_PHRASE_LENGTH;
             if overlong {
                 return Ok(true);
             }
-            if value.is_empty() || !key.len().is_multiple_of(2) {
+            if value.is_empty() || !key.len().is_multiple_of(CHEWING_KEY_SIZE) {
                 return Ok(false);
             }
-            let length = key.len() / 2;
+            let length = key.len() / CHEWING_KEY_SIZE;
             let items = decode_items(value, length)?;
             visit(length, &items)
         })?;
@@ -507,8 +508,9 @@ fn with_index_key<R>(keys: &[ChewingKey], read: impl FnOnce(&[u8]) -> R) -> R {
         return read(&index_key(keys));
     }
     let incomplete = contains_incomplete(keys);
-    let mut buf = [0_u8; 2 * MAX_PHRASE_LENGTH];
-    for (word, key) in buf.as_chunks_mut::<2>().0.iter_mut().zip(keys) {
+    let mut buf = [0_u8; CHEWING_KEY_SIZE * MAX_PHRASE_LENGTH];
+    let (words, _) = buf.as_chunks_mut::<CHEWING_KEY_SIZE>();
+    for (word, key) in words.iter_mut().zip(keys) {
         let indexed = if incomplete {
             ChewingKey::new(key.initial, 0, 0, 0)
         } else {
@@ -516,7 +518,7 @@ fn with_index_key<R>(keys: &[ChewingKey], read: impl FnOnce(&[u8]) -> R) -> R {
         };
         *word = indexed.to_packed().to_le_bytes();
     }
-    read(&buf[..2 * keys.len()])
+    read(&buf[..CHEWING_KEY_SIZE * keys.len()])
 }
 
 /// `pinyin_compare_with_tones(query, stored, len) == 0`

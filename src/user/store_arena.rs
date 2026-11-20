@@ -1,6 +1,7 @@
 //! Session phrase operations over the arenas and the live system items.
 
 use super::*;
+use crate::data::chunk_format::ITEM_HEADER_SIZE;
 use crate::data::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
 use crate::data::phrase_library::PhraseItemView;
 use crate::user::replay::UnigramAdd;
@@ -76,7 +77,8 @@ fn merged_live_item(
     items
         .with_live(token, |bytes| {
             let view = PhraseItemView::from_bytes(bytes)?;
-            if view.as_bytes()[6..6 + 4 * view.phrase_length()] != phrase_table::key_ucs4(words) {
+            let text_end = ITEM_HEADER_SIZE + 4 * view.phrase_length();
+            if view.as_bytes()[ITEM_HEADER_SIZE..text_end] != phrase_table::key_ucs4(words) {
                 return None;
             }
             Some(UserLibrary::merged_reading(view, packed, delta))
@@ -384,7 +386,8 @@ impl UserStore {
             let Some(item) = phrases.item(token) else {
                 return Err(UserStoreError::InvalidPhrase);
             };
-            if item.as_bytes()[6..6 + 4 * item.phrase_length()] != phrase_table::key_ucs4(words) {
+            let text_end = ITEM_HEADER_SIZE + 4 * item.phrase_length();
+            if item.as_bytes()[ITEM_HEADER_SIZE..text_end] != phrase_table::key_ucs4(words) {
                 return Err(UserStoreError::InvalidPhrase);
             }
             phrases

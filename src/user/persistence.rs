@@ -25,7 +25,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::build_memory_chunk;
+use crate::data::chunk_format::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE, build_memory_chunk};
 use crate::data::chunk_write::{ChunkItem, ChunkWriteError, encode_phrase_item};
 use crate::data::phrase_libraries::PhraseLibraries;
 use crate::data::table_info::FileName;
@@ -1300,7 +1300,7 @@ fn load_user_pinyin_index(
     let mut set_failed = false;
     match store.copy_raw(|key, value| {
         set_failed |= index.push_record(key, value).is_err();
-        if key.len() < 2 || key.len() / 2 > crate::MAX_PHRASE_LENGTH {
+        if key.len() < CHEWING_KEY_SIZE || key.len() / CHEWING_KEY_SIZE > crate::MAX_PHRASE_LENGTH {
             exceptional.push(key.to_vec());
         }
     }) {
@@ -1960,7 +1960,7 @@ fn masked_total(
     library: u8,
 ) -> Result<Option<u32>, JournalFault> {
     let unigram = |item: &[u8], token: u32| {
-        if item.len() < 6 {
+        if item.len() < ITEM_HEADER_SIZE {
             Err(JournalFault::ShortMaskedItem { library, token })
         } else {
             Ok(raw_unigram(item))
@@ -2037,7 +2037,7 @@ fn retained_records(
 /// bytes, the unigram, the phrase, then each reading's keys and count),
 /// without judging its shape: the bytes of an item as it is.
 pub(crate) fn journal_item_bytes(item: &ChunkItem) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(6 + 4 * item.phrase.len());
+    let mut bytes = Vec::with_capacity(ITEM_HEADER_SIZE + 4 * item.phrase.len());
     bytes.push(u8::try_from(item.phrase.len()).unwrap_or(u8::MAX));
     bytes.push(u8::try_from(item.prons.len()).unwrap_or(u8::MAX));
     bytes.extend_from_slice(&item.unigram.to_le_bytes());

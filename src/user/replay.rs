@@ -14,6 +14,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use crate::PHRASE_MASK;
+use crate::data::chunk_format::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
 use crate::data::chunk_write::{ChunkItem, decode_phrase_item};
 use crate::data::phrase_library::{PhraseContent, PhraseItemView};
 use crate::data::user_files::LogRecord;
@@ -135,9 +136,6 @@ impl std::fmt::Display for JournalFault {
 
 impl std::error::Error for JournalFault {}
 
-/// `phrase_item_header` at 074a2219: the two length bytes and the unigram.
-const PHRASE_ITEM_HEADER: usize = 6;
-
 /// What `FacadePhraseIndex::add_unigram_frequency` answers, through
 /// `SubPhraseIndex::add_unigram_frequency`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -195,7 +193,7 @@ enum Slot {
 
 /// The unigram in a journal payload's six-byte wire header.
 pub(crate) fn raw_unigram(item: &[u8]) -> u32 {
-    item.get(2..6)
+    item.get(2..ITEM_HEADER_SIZE)
         .and_then(|bytes| bytes.try_into().ok())
         .map_or(0, u32::from_le_bytes)
 }
@@ -243,7 +241,7 @@ impl Merge {
     pub(crate) fn apply(&mut self, record: LogRecord<&[u8]>) -> Result<(), Stop> {
         match record {
             LogRecord::Add { token, new_item } => {
-                if new_item.len() < PHRASE_ITEM_HEADER {
+                if new_item.len() < ITEM_HEADER_SIZE {
                     return Err(Stop::ShortAdd(token));
                 }
                 self.live.total = self.live.total.wrapping_add(raw_unigram(new_item));
@@ -525,7 +523,7 @@ impl ReplayedLibrary {
     pub(crate) fn add_unigram(&mut self, slot: u32, delta: u32) -> UnigramAdd {
         let Some(fields) = self
             .fields(slot)
-            .filter(|bytes| bytes.len() >= PHRASE_ITEM_HEADER)
+            .filter(|bytes| bytes.len() >= ITEM_HEADER_SIZE)
         else {
             return UnigramAdd::Missing;
         };
@@ -538,7 +536,7 @@ impl ReplayedLibrary {
         let Some(bytes) = self.edit_fields(slot) else {
             return UnigramAdd::Missing;
         };
-        bytes[2..6].copy_from_slice(&frequency.to_le_bytes());
+        bytes[2..ITEM_HEADER_SIZE].copy_from_slice(&frequency.to_le_bytes());
         self.total = total;
         UnigramAdd::Accepted
     }
@@ -596,12 +594,12 @@ impl ReplayedLibrary {
             return false;
         };
         let length = usize::from(bytes[0]);
-        let first = PHRASE_ITEM_HEADER + 4 * length;
+        let first = ITEM_HEADER_SIZE + 4 * length;
         let end = bytes.len();
         let Some(bytes) = self.edit_fields(slot) else {
             return false;
         };
-        let keys_len = 2 * length;
+        let keys_len = CHEWING_KEY_SIZE * length;
         for reading in readings {
             let mut total = 0_u32;
             for entry in bytes[first..end].chunks_exact_mut(keys_len + 4) {

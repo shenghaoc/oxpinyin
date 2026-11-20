@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 use crate::ChewingKey;
 
 #[cfg(test)]
+use crate::data::chunk_format::CHEWING_KEY_SIZE;
+#[cfg(test)]
 use crate::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key_scalars};
 #[cfg(test)]
 use crate::data::row_format::pinyin_index::{
@@ -142,7 +144,7 @@ pub(crate) fn pinyin_index_entries(rows: &[PinyinIndexItem]) -> Entries {
 /// syllable is 2 bytes) — a prefix marker's key.
 #[cfg(test)]
 fn truncate_packed(key: &[u8], syllables: usize) -> Vec<u8> {
-    key[..2 * syllables].to_vec()
+    key[..CHEWING_KEY_SIZE * syllables].to_vec()
 }
 
 /// The phrase index rows (`phrase_index.bin`, `addon_phrase_index.bin`,
