@@ -21,7 +21,10 @@ use oxpinyin::input::tool::gen_pinyin_table::{self as edge, TableInput};
 use oxpinyin::input::tool::{
     self, OptionArg, OptionEntry, OptionValue, OutputStream, ucs4_to_utf8, utf8_to_ucs4,
 };
-use oxpinyin::{ChewingKey, MAX_PHRASE_LENGTH, OptionBits, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK};
+use oxpinyin::{
+    ChewingKey, MAX_PHRASE_LENGTH, OptionBits, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK,
+    phrase_index_make_token,
+};
 
 /// The pin's `static GOptionEntry entries[]` (`:38-43`): `phrase_index`
 /// starts at 0 and `outputfile` at `"temp.out"`.
@@ -49,7 +52,7 @@ pub(crate) fn entries() -> [OptionEntry; 2] {
 /// A key of `g_chewing_tree`: `phrase_item` (`:58-61`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PhraseItem {
-    /// `g_utf8_strlen(phrase, -1)`.
+    /// Number of words in the phrase, with one position per invalid UTF-8 sequence.
     length: usize,
     /// `g_utf8_to_ucs4(phrase, …)`.
     uniphrase: Uniphrase,
@@ -136,13 +139,7 @@ impl Table {
     /// keeps its NULL `uniphrase`, so the run reaches the output as the
     /// pin's does.
     pub fn feed_line(&mut self, input: &TableInput) {
-        self.feed_parts(
-            input.phrase(),
-            input.pinyin(),
-            input.freq(),
-            usize::try_from(input.phrase_utf8_strlen()).unwrap_or(0),
-            parse_keys,
-        );
+        self.feed_parts(input.phrase(), input.pinyin(), input.freq(), parse_keys);
     }
 
     /// Shared phrase/reading tree; each caller supplies its own pin parser.
@@ -151,14 +148,17 @@ impl Table {
         phrase: &CStr,
         pinyin: &CStr,
         freq: u32,
-        length: usize,
         parse: fn(&[u8]) -> Vec<ChewingKey>,
     ) {
+        let (uniphrase, _) = utf8_to_ucs4(phrase);
+        let length = uniphrase.as_ref().map_or_else(
+            || usize::try_from(tool::utf8_strlen(phrase)).unwrap_or_default(),
+            Vec::len,
+        );
         if length >= MAX_PHRASE_LENGTH {
             edge::report_too_long(phrase, pinyin, freq);
             return;
         }
-        let (uniphrase, _) = utf8_to_ucs4(phrase);
         let keys = parse(pinyin.to_bytes());
         if keys.len() != length {
             edge::report_invalid_pinyin(phrase, pinyin, freq);
@@ -215,9 +215,8 @@ pub struct Sorted<'a>(Vec<Vec<(&'a PhraseItem, &'a Vec<Reading>)>>);
 
 impl Sorted<'_> {
     /// `gen_phrase_file`'s rows (`:269-321`) into `output`, which the
-    /// caller opened and closes. The library bits are `(phrase_index << 24)
-    /// & PHRASE_INDEX_LIBRARY_MASK` with the shift wrapping, where the
-    /// pin's `int` shift overflows for an index of 128 and more.
+    /// caller opened and closes. The table stores the library index modulo
+    /// the number of library slots in a phrase token.
     ///
     /// An unconverted phrase is where the pin's `g_ucs4_to_utf8`
     /// (`:280-281`) reads through its NULL `uniphrase` and dies: undefined
@@ -244,7 +243,7 @@ impl Sorted<'_> {
         render: fn(ChewingKey) -> String,
         refuse: fn(&CStr),
     ) {
-        let library = phrase_index.cast_unsigned().wrapping_shl(24) & PHRASE_INDEX_LIBRARY_MASK;
+        let library = phrase_index.rem_euclid(c_int::from(PHRASE_INDEX_LIBRARY_COUNT)) as u8;
         let mut token: u32 = 1;
         for array in self.0.iter().skip(1) {
             for (item, readings) in array {
@@ -262,10 +261,10 @@ impl Sorted<'_> {
                     let pinyin_str = CString::new(pinyins.join("'")).unwrap_or_default();
                     // `if (freq < 3) freq = 3;` (`:311-312`).
                     let freq = reading.freq.max(3);
-                    let value = (library | (token & PHRASE_MASK)).cast_signed();
+                    let value = phrase_index_make_token(library, token).cast_signed();
                     edge::print_row(output, &pinyin_str, phrase_str.as_deref(), value, freq);
                 }
-                token = token.wrapping_add(1);
+                token = (token + 1) & PHRASE_MASK;
             }
         }
     }

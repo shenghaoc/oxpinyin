@@ -261,6 +261,18 @@ mod frozen {
                 files: &[],
             },
         )]
+        // The checked read aborts at an unreadable tag name
+        // (074a2219, tag_utility.cpp:149-157,239-256; converter:119).
+        #[case::kti_unreadable_tag_aborts(
+            &[],
+            b"\\data model \"k mixture model\" count 20 N 2 total_freq 20\n\\1-gram\n\\item 10 \xe7\x94\xb2 \xe2x freq 1\n\\end\n",
+            Run {
+                status: Signal(6),
+                stdout: Exact(INTERPOLATION_HEADER),
+                stderr: b"",
+                files: &[],
+            },
+        )]
         // kti-numeric-fields: utils/training/k_mixture_model_to_interpolation.cpp at 074a2219:
         // 188-213, 55-186; src/storage/tag_utility.cpp: 118-264.
         #[case::kti_numeric_fields(

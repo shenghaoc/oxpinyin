@@ -62,21 +62,19 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
         expected
     );
 }
-/// Register entry "gen_pinyin_table truncated lead byte on the first line
-/// (policy row 126, class (b))": the pin's `char phrase[1024]` starts
-/// indeterminate (`gen_pinyin_table.cpp:135` at 074a2219) and
-/// `g_utf8_strlen` reads past the terminator (`:162`), so the pin's result
-/// is undefined and nothing runs on it. oxpinyin's prescribed result: the
-/// count stops on the zeroed buffer and the row takes the invalid UTF-8
-/// phrase refusal.
-#[test]
-fn a_first_phrase_ending_in_a_truncated_lead_byte_is_refused() {
+/// The first row retains the class (b) refusal. POLICY-ACCEPTED for a
+/// later row: its phrase length comes from its own field (policy row 126).
+#[rstest::rstest]
+#[case::first(b"", 1)]
+#[case::after_longer_phrase("你好 nihao 5\n".as_bytes(), 2)]
+fn a_truncated_phrase_is_refused(#[case] prefix: &[u8], #[case] nodes: usize) {
     let newline = oxpinyin::input::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("in.txt"), b"\xe3 a 1\n").unwrap();
+    let input = [prefix, b"\xe3 a 1\n"].concat();
+    std::fs::write(dir.path().join("in.txt"), input).unwrap();
     let out = run(dir.path(), &["-o", "out.table", "in.txt"]);
     assert_eq!(out.status.code(), Some(1));
-    assert_eq!(out.stdout, format!("nnodes: 1{newline}").into_bytes());
+    assert_eq!(out.stdout, format!("nnodes: {nodes}{newline}").into_bytes());
     let mut stderr = b"gen_pinyin_table: invalid UTF-8 phrase: \xe3".to_vec();
     stderr.extend_from_slice(newline.as_bytes());
     assert_eq!(out.stderr, stderr);

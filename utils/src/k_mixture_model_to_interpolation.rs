@@ -8,10 +8,10 @@
 //! class (b) refusal. The utility parses no options, reads no argument
 //! (`main`, :188-213) and makes no locale call.
 //!
-//! The parse keeps the pin's control flow, including what follows from its
-//! static `linebuf`: a section header re-reads the line its section's
-//! parser stopped on (`goto retry`, :86-107), and `std::getline` leaves
-//! `linebuf` unchanged once the stream is at its end.
+//! A section header re-reads the line its section's parser stopped on
+//! (`goto retry`, :86-107). A final unterminated item with no end marker
+//! reaches the pin's section assertion. Other missing-token paths retain
+//! their prescribed refusal.
 
 use oxpinyin::SENTENCE_START;
 use std::ffi::{CStr, CString, OsString, c_int, c_long};
@@ -155,10 +155,10 @@ struct Converter<'a, R, S> {
 
 impl<R: BufRead, S: Sink> Converter<'_, R, S> {
     /// `taglib_read(linebuf, line_type, values, required)`.
-    fn read(&mut self) -> Result<bool, Failure> {
+    fn read(&mut self, checked: bool) -> Result<bool, Failure> {
         let line = self.input.c_str();
         self.model
-            .read(line)
+            .read(line, checked)
             .map_err(|undefined| Failure::Undefined {
                 reason: undefined.reason(),
                 line: line.to_owned(),
@@ -166,11 +166,14 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
     }
 
     /// `check_result(taglib_read(...))` (`src/include/pinyin_utils.h:26-31`).
-    fn check_read(&mut self) -> Result<(), Failure> {
-        if self.read()? {
-            Ok(())
-        } else {
-            Err(Failure::ReadRefused)
+    fn check_read(&mut self, final_item_at_eof: bool) -> Result<(), Failure> {
+        match self.read(true) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(Failure::ReadRefused),
+            // The section has ended. Its item tag is unavailable at the
+            // outer check, which rejects an unterminated final item.
+            Err(Failure::Undefined { .. }) if final_item_at_eof => Err(Failure::ReadRefused),
+            Err(error) => Err(error),
         }
     }
 
@@ -179,7 +182,7 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
         self.model
             .tags
             .add_tag(BEGIN_LINE, c"\\data", 0, c"model", c"count:N:total_freq");
-        if !self.read()? || self.model.value(b"model") != c"k mixture model" {
+        if !self.read(false)? || self.model.value(b"model") != c"k mixture model" {
             return Err(Failure::NotKmm);
         }
         self.output.header();
@@ -197,8 +200,9 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
         self.model
             .tags
             .add_tag(GRAM_2_LINE, c"\\2-gram", 0, c"", c"");
+        let mut final_item_at_eof = false;
         loop {
-            self.check_read()?;
+            self.check_read(final_item_at_eof)?;
             match self.model.line_type {
                 END_LINE => {
                     self.output.end();
@@ -207,12 +211,12 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
                 GRAM_1_LINE => {
                     self.output.gram_1();
                     self.input.getline();
-                    self.parse_unigram()?;
+                    final_item_at_eof = self.parse_unigram()?;
                 }
                 GRAM_2_LINE => {
                     self.output.gram_2();
                     self.input.getline();
-                    self.parse_bigram()?;
+                    final_item_at_eof = self.parse_bigram()?;
                 }
                 _ => return Err(Failure::LineTypeUnlisted),
             }
@@ -222,13 +226,13 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
     }
 
     /// `parse_unigram` (:113-149).
-    fn parse_unigram(&mut self) -> Result<(), Failure> {
+    fn parse_unigram(&mut self) -> Result<bool, Failure> {
         self.model.tags.push_state();
         self.model
             .tags
             .add_tag(GRAM_1_ITEM_LINE, c"\\item", 2, c"freq", c"count");
-        loop {
-            self.check_read()?;
+        let final_item_at_eof = loop {
+            self.check_read(false)?;
             match self.model.line_type {
                 GRAM_1_ITEM_LINE => {
                     let token = self.model.token(0);
@@ -240,25 +244,25 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
                         }
                     }
                 }
-                END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
+                END_LINE | GRAM_1_LINE | GRAM_2_LINE => break false,
                 _ => return Err(Failure::LineTypeUnlisted),
             }
             if !self.input.getline() {
-                break;
+                break self.input.last_line_was_unterminated();
             }
-        }
+        };
         self.model.tags.pop_state();
-        Ok(())
+        Ok(final_item_at_eof)
     }
 
     /// `parse_bigram` (:151-186).
-    fn parse_bigram(&mut self) -> Result<(), Failure> {
+    fn parse_bigram(&mut self) -> Result<bool, Failure> {
         self.model.tags.push_state();
         self.model
             .tags
             .add_tag(GRAM_2_ITEM_LINE, c"\\item", 4, c"count", c"T:N_n_0:n_1:Mr");
-        loop {
-            self.check_read()?;
+        let final_item_at_eof = loop {
+            self.check_read(false)?;
             match self.model.line_type {
                 GRAM_2_ITEM_LINE => {
                     let count = tool::atol(self.model.value(b"count"));
@@ -266,15 +270,15 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
                     let (word1, word2) = (self.model.phrase(1), self.model.phrase(3));
                     self.output.bigram(token1, word1, token2, word2, count);
                 }
-                END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
+                END_LINE | GRAM_1_LINE | GRAM_2_LINE => break false,
                 _ => return Err(Failure::LineTypeUnlisted),
             }
             if !self.input.getline() {
-                break;
+                break self.input.last_line_was_unterminated();
             }
-        }
+        };
         self.model.tags.pop_state();
-        Ok(())
+        Ok(final_item_at_eof)
     }
 }
 

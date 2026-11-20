@@ -184,7 +184,7 @@ mod frozen {
                  source table format:{format}\ndatabase format:{}\n\
                  default RESERVED NULL NULL NULL NOT_USED\n\
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n\
-                 addon RESERVED NULL NULL NULL NOT_USED\n\
+                 addon 0 NULL NULL NULL NOT_USED\n\
                  addon 1 source.table addon.bin NULL DICTIONARY\n",
                     oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
                 ))
