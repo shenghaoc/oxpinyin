@@ -64,6 +64,7 @@ fn append_u32_le(buf: &mut Vec<u8>, words: impl Iterator<Item = u32>) {
 pub mod pinyin_index {
     use crate::ChewingKey;
 
+    use crate::data::chunk_format::CHEWING_KEY_SIZE;
     use crate::data::dict::DictError;
 
     /// The C++ `sizeof(PinyinIndexItem2<L>)` with tail padding to 4-byte
@@ -78,12 +79,12 @@ pub mod pinyin_index {
     /// ```
     #[must_use]
     pub(crate) const fn item2_stride(phrase_length: usize) -> usize {
-        let raw = 4 + 2 * phrase_length;
+        let raw = 4 + CHEWING_KEY_SIZE * phrase_length;
         (raw + 3) & !3
     }
 
     /// The packed two-byte little-endian form of one key.
-    const fn pack(key: ChewingKey) -> [u8; 2] {
+    const fn pack(key: ChewingKey) -> [u8; CHEWING_KEY_SIZE] {
         key.to_packed().to_le_bytes()
     }
 
@@ -95,7 +96,7 @@ pub mod pinyin_index {
     /// key's tone, then encodes the array as the lookup key.
     #[must_use]
     pub fn encode_complete_key(keys: &[ChewingKey]) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(keys.len() * 2);
+        let mut buf = Vec::with_capacity(keys.len() * CHEWING_KEY_SIZE);
         for key in keys {
             buf.extend_from_slice(&pack(ChewingKey::new(
                 key.initial,
@@ -116,7 +117,7 @@ pub mod pinyin_index {
     /// only the initial bits.
     #[must_use]
     pub fn encode_incomplete_key(keys: &[ChewingKey]) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(keys.len() * 2);
+        let mut buf = Vec::with_capacity(keys.len() * CHEWING_KEY_SIZE);
         for key in keys {
             buf.extend_from_slice(&pack(ChewingKey::new(key.initial, 0, 0, 0)));
         }
@@ -170,7 +171,8 @@ pub mod pinyin_index {
                     "phrase_length must be at least 1".to_owned(),
                 ));
             }
-            (item2_stride(phrase_length), 2 * phrase_length)
+            let key_bytes = CHEWING_KEY_SIZE * phrase_length;
+            (item2_stride(phrase_length), key_bytes)
         };
         Ok(value
             .chunks_exact(stride)
@@ -188,8 +190,9 @@ pub mod pinyin_index {
     pub fn encode_item(token: u32, keys: &[ChewingKey]) -> Vec<u8> {
         let mut buf = vec![0_u8; item2_stride(keys.len())];
         buf[..4].copy_from_slice(&token.to_le_bytes());
-        for (index, key) in keys.iter().enumerate() {
-            buf[4 + 2 * index..6 + 2 * index].copy_from_slice(&pack(*key));
+        let (words, _) = buf[4..].as_chunks_mut::<CHEWING_KEY_SIZE>();
+        for (word, key) in words.iter_mut().zip(keys) {
+            *word = pack(*key);
         }
         buf
     }

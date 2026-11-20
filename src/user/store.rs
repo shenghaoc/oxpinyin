@@ -1761,6 +1761,8 @@ impl UserStore {
     #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn export_phrases_in(&self, library: u8) -> Vec<ExportedPhrase> {
+        use crate::data::chunk_format::ITEM_HEADER_SIZE;
+
         let phrases = self.inner.libpinyin.phrases();
         let mut out = Vec::new();
         if let Some(items) = phrases.libraries.get(&library) {
@@ -1783,7 +1785,8 @@ impl UserStore {
                         },
                     );
                     if let Some(pinyin) = pinyin {
-                        let text = item.as_bytes()[6..6 + 4 * item.phrase_length()]
+                        let text_end = ITEM_HEADER_SIZE + 4 * item.phrase_length();
+                        let text = item.as_bytes()[ITEM_HEADER_SIZE..text_end]
                             .as_chunks::<4>()
                             .0
                             .iter()

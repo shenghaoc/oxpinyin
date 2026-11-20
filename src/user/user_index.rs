@@ -18,6 +18,7 @@ use crate::store::StoreError;
 
 use std::collections::BTreeSet;
 
+use crate::data::chunk_format::CHEWING_KEY_SIZE;
 use crate::data::row_format::pinyin_index::{
     encode_complete_key, encode_incomplete_key, encode_item, item2_stride,
 };
@@ -182,7 +183,7 @@ fn index_keys(keys: &[ChewingKey]) -> [Vec<u8>; 2] {
 
 /// A probe key built on the stack: at most `MAX_PHRASE_LENGTH` packed
 /// words, always inside the inline capacity.
-type QueryKey = SmallVec<[u8; 2 * MAX_PHRASE_LENGTH]>;
+type QueryKey = SmallVec<[u8; CHEWING_KEY_SIZE * MAX_PHRASE_LENGTH]>;
 
 /// The key `ChewingLargeTable2::search` / `search_suggestion` probe, the
 /// bytes `encode_incomplete_key` or `encode_complete_key` give. Callers
@@ -190,7 +191,7 @@ type QueryKey = SmallVec<[u8; 2 * MAX_PHRASE_LENGTH]>;
 fn query_key(keys: &[ChewingKey]) -> QueryKey {
     // `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`).
     let incomplete = keys.iter().any(|key| key.middle == 0 && key.final_ == 0);
-    let mut query = QueryKey::with_capacity(2 * keys.len());
+    let mut query = QueryKey::with_capacity(CHEWING_KEY_SIZE * keys.len());
     for key in keys {
         let key = if incomplete {
             ChewingKey::new(key.initial, 0, 0, 0)
@@ -325,8 +326,8 @@ impl UserIndex {
     fn create_prefixes(&mut self, key: &[u8]) -> bool {
         // `add_index_internal` walks shorter keys downward and stops at the
         // first prefix the table already holds.
-        for words in (1..key.len() / 2).rev() {
-            let prefix = key[..2 * words].to_vec();
+        for words in (1..key.len() / CHEWING_KEY_SIZE).rev() {
+            let prefix = key[..CHEWING_KEY_SIZE * words].to_vec();
             if self.contains_key(&prefix) {
                 break;
             }
@@ -418,7 +419,7 @@ impl UserIndex {
             if key.len() == prefix.len() {
                 continue;
             }
-            if let Some(seen) = lengths.get_mut(key.len() / 2) {
+            if let Some(seen) = lengths.get_mut(key.len() / CHEWING_KEY_SIZE) {
                 *seen = true;
             }
         }
@@ -449,7 +450,7 @@ impl UserIndex {
         let mut scratch = Vec::new();
         self.records
             .rewrite(&mut |key, record, kept| {
-                let len = key.len() / 2;
+                let len = key.len() / CHEWING_KEY_SIZE;
                 if len == 0 || len > MAX_PHRASE_LENGTH {
                     kept.extend_from_slice(record);
                     return;
@@ -504,10 +505,10 @@ impl UserIndex {
         let Ok(()) = self
             .records
             .for_each_record::<std::convert::Infallible>(|key, value| {
-                if value.is_empty() || !key.len().is_multiple_of(2) {
+                if value.is_empty() || !key.len().is_multiple_of(CHEWING_KEY_SIZE) {
                     return Ok(());
                 }
-                let len = key.len() / 2;
+                let len = key.len() / CHEWING_KEY_SIZE;
                 if len == 0 || len > MAX_PHRASE_LENGTH {
                     return Ok(());
                 }
@@ -572,10 +573,10 @@ impl UserIndex {
         let prefix_key = query_key(prefix);
         let mut tokens = Vec::new();
         for key in self.records.keys_starting_with(&prefix_key) {
-            if key.len() <= prefix_key.len() || !key.len().is_multiple_of(2) {
+            if key.len() <= prefix_key.len() || !key.len().is_multiple_of(CHEWING_KEY_SIZE) {
                 continue;
             }
-            let len = key.len() / 2;
+            let len = key.len() / CHEWING_KEY_SIZE;
             let Some(value) = self.record(&key) else {
                 continue;
             };
@@ -617,7 +618,7 @@ impl UserIndex {
 /// compared, never a packed copy that would truncate an out-of-range one.
 /// The record holds at least `query.len()` words.
 fn record_matches_with_tones(query: &[ChewingKey], record: &[u8]) -> bool {
-    let (words, _) = record[4..4 + 2 * query.len()].as_chunks::<2>();
+    let (words, _) = record[4..4 + CHEWING_KEY_SIZE * query.len()].as_chunks::<2>();
     words.iter().zip(query).all(|(word, query)| {
         query.matches_with_tones(ChewingKey::from_packed(u16::from_le_bytes(*word)))
     })
@@ -635,7 +636,7 @@ fn value_has_reading(value: &[u8], len: usize, token: u32, packed: &[u16]) -> bo
     // Whole records only, as `search` reads them.
     value.chunks_exact(item2_stride(len)).any(|record| {
         record_token(record) == token
-            && record[4..4 + 2 * len]
+            && record[4..4 + CHEWING_KEY_SIZE * len]
                 .as_chunks::<2>()
                 .0
                 .iter()

@@ -3,6 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use crate::data::chunk_format::{
+    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
+};
 use crate::data::chunk_write::sub_phrase_index_sections;
 use crate::data::phrase_library::PhraseItemView;
 
@@ -104,7 +107,7 @@ impl SessionPhrases {
     }
 
     pub(crate) fn phrase(&self, token: u32, item: PhraseItemView<'_>) -> crate::user::UserPhrase {
-        let text = item.as_bytes()[6..6 + 4 * item.phrase_length()]
+        let text = item.as_bytes()[ITEM_HEADER_SIZE..ITEM_HEADER_SIZE + 4 * item.phrase_length()]
             .as_chunks::<4>()
             .0
             .iter()
@@ -198,8 +201,8 @@ impl UserLibrary {
             self.slots.remove(&slot);
             self.total = self.total.wrapping_sub(unigram);
         }
-        if self.content.len() < 8 {
-            self.content.resize(8, 0);
+        if self.content.len() < FIRST_ITEM_OFFSET as usize {
+            self.content.resize(FIRST_ITEM_OFFSET as usize, 0);
         }
         let start = self.content.len();
         self.content.extend_from_slice(bytes);
@@ -249,7 +252,7 @@ impl UserLibrary {
         let Some(start) = self.editable_start(slot) else {
             return false;
         };
-        self.content[start + 2..start + 6].copy_from_slice(&unigram.to_le_bytes());
+        self.content[start + 2..start + ITEM_HEADER_SIZE].copy_from_slice(&unigram.to_le_bytes());
         self.total = self.total.wrapping_add(delta);
         true
     }
@@ -296,7 +299,9 @@ impl UserLibrary {
                 .all(|(bytes, &key)| u16::from_le_bytes(*bytes) & 0x7fff == key & 0x7fff);
             if matches {
                 if total.checked_add(delta).is_some() {
-                    let position = 6 + 4 * keys.len() + i * (2 * keys.len() + 4) + 2 * keys.len();
+                    let keys_len = CHEWING_KEY_SIZE * keys.len();
+                    let position =
+                        ITEM_HEADER_SIZE + 4 * keys.len() + i * (keys_len + 4) + keys_len;
                     bytes[position..position + 4]
                         .copy_from_slice(&reading.freq.wrapping_add(delta).to_le_bytes());
                 }
@@ -307,7 +312,7 @@ impl UserLibrary {
         if bytes[1] == 0 {
             // The next get_phrase_item sizes the body from the wrapped header
             // (074a2219 phrase_index.cpp:195-204); no reading is then visible.
-            bytes.truncate(6 + keys.len() * 4);
+            bytes.truncate(ITEM_HEADER_SIZE + keys.len() * 4);
         } else {
             for key in keys {
                 bytes.extend_from_slice(&key.to_le_bytes());
@@ -329,15 +334,16 @@ impl UserLibrary {
         let Some(start) = self.editable_start(slot) else {
             return;
         };
-        let start = start + 6 + 4 * length;
+        let start = start + ITEM_HEADER_SIZE + 4 * length;
+        let keys_len = CHEWING_KEY_SIZE * length;
         for query in readings {
             if query.len() != length {
                 continue;
             }
             let mut total = 0_u32;
             for i in 0..count {
-                let position = start + i * (2 * length + 4);
-                let frequency = position + 2 * length;
+                let position = start + i * (keys_len + 4);
+                let frequency = position + keys_len;
                 let freq = u32::from_le_bytes(self.content[frequency..].as_chunks::<4>().0[0]);
                 total = total.wrapping_add(freq);
                 let matches = crate::user::store_libpinyin::pronunciation_matches(
@@ -481,9 +487,10 @@ impl UserLibrary {
     /// bytes and every readable item once. This is the `C` that `store`
     /// copies into a fresh chunk (`phrase_index.cpp:384`).
     pub(crate) fn compacted_content_len(&self) -> usize {
-        self.items().fold(8, |len, (_, item)| {
-            len.saturating_add(item.as_bytes().len())
-        })
+        self.items()
+            .fold(FIRST_ITEM_OFFSET as usize, |len, (_, item)| {
+                len.saturating_add(item.as_bytes().len())
+            })
     }
 
     /// Whether `store`'s content copy grows a fresh chunk by `C` bytes, and
@@ -503,7 +510,7 @@ impl UserLibrary {
         } else {
             self.token_end() as usize
         };
-        let index_two = 18_u32
+        let index_two = (INDEX_ONE + 1)
             .checked_add(u32::try_from(slots * 4).map_err(|e| e.to_string())?)
             .ok_or("offset array too large")?;
         let content_len = if self.is_empty() {
@@ -515,15 +522,15 @@ impl UserLibrary {
             .checked_add(u32::try_from(content_len).map_err(|e| e.to_string())?)
             .and_then(|end| end.checked_add(1))
             .ok_or("arena too large")?;
-        let mut payload = Vec::with_capacity(index_three as usize + 8);
+        let mut payload = Vec::with_capacity(index_three as usize + CHUNK_HEADER_SIZE);
         payload.resize(index_two as usize, 0);
-        payload[4..8].copy_from_slice(&17_u32.to_le_bytes());
+        payload[4..8].copy_from_slice(&INDEX_ONE.to_le_bytes());
         payload[8..12].copy_from_slice(&index_two.to_le_bytes());
         payload[12..16].copy_from_slice(&index_three.to_le_bytes());
-        payload[16] = b'#';
-        payload[index_two as usize - 1] = b'#';
+        payload[INDEX_ONE as usize - 1] = SEPARATOR;
+        payload[index_two as usize - 1] = SEPARATOR;
         if !self.is_empty() {
-            payload.resize(payload.len() + 8, 0);
+            payload.resize(payload.len() + FIRST_ITEM_OFFSET as usize, 0);
         }
         // `m_total_freq` is a `guint32` that `add_phrase_item` adds to with
         // no overflow check (`phrase_index.cpp:208-217`), and `store` writes
@@ -538,13 +545,13 @@ impl UserLibrary {
             }
             let offset =
                 u32::try_from(payload.len() - index_two as usize).map_err(|e| e.to_string())?;
-            let at = 17 + slot as usize * 4;
+            let at = INDEX_ONE as usize + slot as usize * 4;
             payload[at..at + 4].copy_from_slice(&offset.to_le_bytes());
             payload.extend_from_slice(view.as_bytes());
             total = total.wrapping_add(view.unigram());
         }
         payload[..4].copy_from_slice(&total.to_le_bytes());
-        payload.push(b'#');
+        payload.push(SEPARATOR);
         crate::data::chunk_format::build_memory_chunk_owned(payload).map_err(|e| e.to_string())
     }
 }

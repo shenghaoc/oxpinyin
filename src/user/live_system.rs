@@ -15,6 +15,7 @@
 use std::cell::Cell;
 
 use crate::PhraseText;
+use crate::data::chunk_format::CHEWING_KEY_SIZE;
 use crate::data::phrase_libraries::PhraseLibraries;
 use crate::data::phrase_library::PhraseItemView;
 
@@ -56,7 +57,7 @@ impl<'a> ReadingKeys<'a> {
     /// The number of keys.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.0.len() / 2
+        self.0.len() / CHEWING_KEY_SIZE
     }
 
     /// Whether the reading has no keys.
