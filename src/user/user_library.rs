@@ -338,8 +338,7 @@ impl UserLibrary {
             for i in 0..count {
                 let position = start + i * (2 * length + 4);
                 let frequency = position + 2 * length;
-                let bytes = &self.content[frequency..frequency + 4];
-                let freq = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                let freq = u32::from_le_bytes(self.content[frequency..].as_chunks::<4>().0[0]);
                 total = total.wrapping_add(freq);
                 let matches = crate::user::store_libpinyin::pronunciation_matches(
                     &query,

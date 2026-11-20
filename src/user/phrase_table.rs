@@ -56,14 +56,7 @@ impl PhraseTableEntry {
     /// `phrase_large_table3.cpp:56-71`).
     pub fn add_index(&mut self, token: u32) {
         let mut offset = self.bytes.len();
-        for (index, existing) in self
-            .bytes
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|word| decode(word))
-            .enumerate()
-        {
+        for (index, existing) in self.bytes.as_chunks::<4>().0.iter().map(decode).enumerate() {
             if existing == token {
                 return;
             }
@@ -84,7 +77,7 @@ impl PhraseTableEntry {
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|word| decode(word))
+            .map(decode)
             .position(|v| v == token)
         else {
             return;
@@ -96,7 +89,7 @@ impl PhraseTableEntry {
     pub fn mask_out(&mut self, mask: u32, value: u32) -> bool {
         let mut offset = 0;
         while offset < self.bytes.len() {
-            if decode(&self.bytes[offset..offset + 4]) & mask == value {
+            if decode(&self.bytes[offset..].as_chunks::<4>().0[0]) & mask == value {
                 self.bytes.drain(offset..offset + 4);
             } else {
                 offset += 4;
@@ -133,7 +126,7 @@ pub fn search_bytes(
 }
 
 fn search_tokens(bytes: &[u8], tokens: &mut Vec<u32>, mut enabled: impl FnMut(u32) -> bool) {
-    for token in bytes.as_chunks::<4>().0.iter().map(|word| decode(word)) {
+    for token in bytes.as_chunks::<4>().0.iter().map(decode) {
         if enabled(token) {
             tokens.push(token);
         }
@@ -149,6 +142,6 @@ pub(crate) fn validate(bytes: &[u8]) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn decode(bytes: &[u8]) -> u32 {
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+fn decode(bytes: &[u8; 4]) -> u32 {
+    u32::from_le_bytes(*bytes)
 }

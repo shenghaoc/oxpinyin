@@ -64,8 +64,9 @@ pub(crate) fn read_chunk_payload(bytes: &[u8]) -> Result<&[u8], ChunkReadError> 
     let header = bytes
         .get(..CHUNK_HEADER_SIZE)
         .ok_or(ChunkReadError::ShortHeader)?;
-    let length = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
-    let checksum = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    let words = header.as_chunks::<4>().0;
+    let length = u32::from_le_bytes(words[0]) as usize;
+    let checksum = u32::from_le_bytes(words[1]);
     if length as u32 != (bytes.len() - CHUNK_HEADER_SIZE) as u32 {
         return Err(ChunkReadError::TruncatedPayload);
     }

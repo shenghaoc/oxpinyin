@@ -42,12 +42,10 @@ pub const fn encode_token_key(token: u32) -> [u8; 4] {
     token.to_le_bytes()
 }
 
-/// Appends UCS-4 code points as raw little-endian `u32`s — the byte form
-/// `g_utf8_to_ucs4`'s `gunichar[]` has on disk, shared by the phrase
-/// index's keys and the punctuation table's values.
-fn push_ucs4(buf: &mut Vec<u8>, codes: impl Iterator<Item = u32>) {
-    for code in codes {
-        buf.extend_from_slice(&code.to_le_bytes());
+/// Appends raw little-endian `u32` values.
+fn append_u32_le(buf: &mut Vec<u8>, words: impl Iterator<Item = u32>) {
+    for word in words {
+        buf.extend_from_slice(&word.to_le_bytes());
     }
 }
 
@@ -177,7 +175,7 @@ pub mod pinyin_index {
         Ok(value
             .chunks_exact(stride)
             .map(move |record| PinyinIndexItemView {
-                token: u32::from_le_bytes([record[0], record[1], record[2], record[3]]),
+                token: u32::from_le_bytes(record.as_chunks::<4>().0[0]),
                 keys: &record[4..4 + key_bytes],
             }))
     }
@@ -252,7 +250,7 @@ pub mod pinyin_index {
 pub mod phrase_index {
     use crate::data::dict::DictError;
 
-    use super::push_ucs4;
+    use super::append_u32_le;
 
     /// Encodes a UTF-8 string into a UCS-4 DBM key (each char as `u32`
     /// LE) — how libpinyin encodes phrase text for the phrase index.
@@ -262,7 +260,7 @@ pub mod phrase_index {
     #[must_use]
     pub fn encode_ucs4_key(text: &str) -> Vec<u8> {
         let mut buf = Vec::with_capacity(text.len() * 4);
-        push_ucs4(&mut buf, text.chars().map(u32::from));
+        append_u32_le(&mut buf, text.chars().map(u32::from));
         buf
     }
 
@@ -271,7 +269,7 @@ pub mod phrase_index {
     #[must_use]
     pub fn encode_ucs4_key_scalars(codes: &[u32]) -> Vec<u8> {
         let mut buf = Vec::with_capacity(codes.len() * 4);
-        push_ucs4(&mut buf, codes.iter().copied());
+        append_u32_le(&mut buf, codes.iter().copied());
         buf
     }
 
@@ -280,9 +278,7 @@ pub mod phrase_index {
     #[must_use]
     pub fn encode_tokens(tokens: &[u32]) -> Vec<u8> {
         let mut buf = Vec::with_capacity(tokens.len() * 4);
-        for token in tokens {
-            buf.extend_from_slice(&token.to_le_bytes());
-        }
+        append_u32_le(&mut buf, tokens.iter().copied());
         buf
     }
 
@@ -357,7 +353,7 @@ pub mod punct {
     use crate::PhraseText;
 
     #[cfg(any(test, feature = "test-hooks"))]
-    use super::push_ucs4;
+    use super::append_u32_le;
 
     /// Encodes punctuation strings as a UCS-4 stream with `u32` zero
     /// terminators — `PunctTableEntry::escape`'s layout.
@@ -366,7 +362,7 @@ pub mod punct {
     pub fn encode_puncts<S: AsRef<str>>(puncts: &[S]) -> Vec<u8> {
         let mut buf = Vec::new();
         for punct in puncts {
-            push_ucs4(&mut buf, punct.as_ref().chars().map(u32::from));
+            append_u32_le(&mut buf, punct.as_ref().chars().map(u32::from));
             buf.extend_from_slice(&0_u32.to_le_bytes());
         }
         buf

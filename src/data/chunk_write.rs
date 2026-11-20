@@ -232,9 +232,9 @@ pub(crate) fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteEr
         .ok_or_else(|| ChunkWriteError("phrase item: no pronunciation count byte".to_owned()))?
         as usize;
     let mut offset = 2;
-    let unigram = bytes
-        .get(offset..offset + 4)
-        .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    let unigram = bytes[offset..]
+        .first_chunk()
+        .map(|word| u32::from_le_bytes(*word))
         .ok_or_else(|| ChunkWriteError("phrase item: no unigram".to_owned()))?;
     offset += 4;
 
@@ -263,9 +263,9 @@ pub(crate) fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteEr
             .map(|c| u16::from_le_bytes(*c))
             .collect();
         offset = keys_end;
-        let freq = bytes
-            .get(offset..offset + 4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        let freq = bytes[offset..]
+            .first_chunk()
+            .map(|word| u32::from_le_bytes(*word))
             .ok_or_else(|| {
                 ChunkWriteError("phrase item: pronunciation freq truncated".to_owned())
             })?;
@@ -288,21 +288,15 @@ pub(crate) fn decode_phrase_item(bytes: &[u8]) -> Result<ChunkItem, ChunkWriteEr
 pub(crate) fn sub_phrase_index_sections(
     payload: &[u8],
 ) -> Result<(u32, &[u8], &[u8]), ChunkWriteError> {
-    let header = payload
-        .get(..16)
+    let [total, index_one, index_two, index_three] = payload
+        .as_chunks::<4>()
+        .0
+        .first_chunk::<4>()
         .ok_or_else(|| ChunkWriteError("sub phrase index: short header".to_owned()))?;
-    let u32_at = |offset: usize| -> u32 {
-        u32::from_le_bytes([
-            header[offset],
-            header[offset + 1],
-            header[offset + 2],
-            header[offset + 3],
-        ])
-    };
-    let total = u32_at(0);
-    let index_one = u32_at(4) as usize;
-    let index_two = u32_at(8) as usize;
-    let index_three = u32_at(12) as usize;
+    let total = u32::from_le_bytes(*total);
+    let index_one = u32::from_le_bytes(*index_one) as usize;
+    let index_two = u32::from_le_bytes(*index_two) as usize;
+    let index_three = u32::from_le_bytes(*index_three) as usize;
 
     if payload.get(INDEX_ONE as usize - 1) != Some(&SEPARATOR) {
         return Err(ChunkWriteError(
