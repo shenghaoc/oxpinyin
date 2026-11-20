@@ -198,6 +198,10 @@ Inefficient code is never written to imitate internal GLib, libc or C++ behaviou
 
 No code is written to reproduce a behaviour of another programming language or of a library written for one.
 That includes C or C++ semantics (an integer-returning comparator, unsigned wrap-around, float-to-integer truncation, an integer width chosen for storage), GLib, glibc or another libc, libstdc++, and compiler or processor behaviour.
+Effects of C or C++ object lifetime, pointer aliasing, or reading past a record inside a buffer are language artefacts on any input, including malformed input.
+Where the pin aborts, oxpinyin aborts, even when an artefact causes the abort.
+Where the pin aborts, ignores a status, or wraps a value of ABI- or format-prescribed width, oxpinyin does the same. It invents an outcome only where reproducing the pin would imitate a language mechanism.
+A storage-width cut or wrap is reproduced where leaving it out would make oxpinyin refuse or abort where the pin continues.
 
 **The test.** Would a language-neutral requirement for the behaviour mention it?
 If not, it is a language artefact and is not reproduced.
