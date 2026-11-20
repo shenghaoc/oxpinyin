@@ -25,13 +25,14 @@ from tools.dev.runners import Finished
 
 # The documented provisioning command after `uv python install`, run from the repository root.
 PROVISION_COMMAND = ('uv', 'run', '--managed-python', 'python', '-X', 'utf8', '-m', 'tools.dev.provision')
+CARGO_C_VERSION_FILE = '.github/actions/bootstrap/cargo-c-version.txt'
 
 
 def copy_entrypoint_tree(root):
     """Copy the provisioning sources and their repository data dependencies."""
     shutil.copytree(ROOT / 'tools', root / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
     for name in ('.python-version', 'rust-toolchain.toml', 'Cargo.toml', 'justfile',
-                 '.config/nextest.toml', '.github/actions/bootstrap/cargo-deny-version.txt'):
+                 '.config/nextest.toml', CARGO_C_VERSION_FILE, '.github/actions/bootstrap/cargo-deny-version.txt'):
         destination = root / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, destination)
@@ -39,7 +40,7 @@ def copy_entrypoint_tree(root):
 
 # How each fake cargo tool answers the provisioner's check, as a tool that meets its requirement.
 # just and nextest enforce their own minimums, so their fakes answer for themselves and name no
-# version; the cargo-c and cargo-deny fakes report the floor in the doctor's row of ROOT's tree.
+# version. The cargo-c and cargo-deny fakes report the minimums for ROOT's tree.
 FAKE_ANSWERS = {
     'just': ("if '--summary' in sys.argv: sys.exit(0)\n"
              "if sys.argv[1:] == ['--version']: print('just (synthetic)'); sys.exit(0)\n"
@@ -47,8 +48,7 @@ FAKE_ANSWERS = {
     'cargo-nextest': ("if sys.argv[1:] != ['nextest', 'show-config', 'version']: sys.exit(97)\n"
                       "print('current nextest version: synthetic'); print('evaluation result: ok')\n"),
     'cargo-cinstall': ("if sys.argv[1:] != ['--version']: sys.exit(97)\n"
-                       "sys.path.insert(0, str(root)); from tools.dev.doctor import TOOLS\n"
-                       "print('cargo-c', next(t.minimum for t in TOOLS if t.name == 'cargo-c'))\n"),
+                       f"print('cargo-c', (root / {CARGO_C_VERSION_FILE!r}).read_text().strip())\n"),
     'cargo-deny': ("if sys.argv[1:] != ['--version']: sys.exit(97)\n"
                    "sys.path.insert(0, str(root)); from tools.dev.doctor import TOOLS\n"
                    "print('cargo-deny', next(t.minimum for t in TOOLS if t.name == 'cargo-deny'))\n"),
@@ -147,10 +147,11 @@ class CargoToolTests(unittest.TestCase):
         status, error, _ = self.provision()
         self.assertEqual(status, 0, error)
         self.assertIn('installing cargo-nextest with cargo (requires the nextest-version in .config/nextest.toml)', error)
+        cargo_c = (ROOT / CARGO_C_VERSION_FILE).read_text().strip()
         deny = provision.doctor.CARGO_DENY_VERSION
         self.assertEqual(self.recorded(), [
             'install cargo-nextest --locked --quiet',
-            'install cargo-c --version 0.10.25 --locked --quiet',
+            f'install cargo-c --version {cargo_c} --locked --quiet',
             f'install cargo-deny --version {deny} --locked --quiet',
         ])
 

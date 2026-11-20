@@ -5,9 +5,11 @@
 //! The real library's is `libpinyin.so.15` — libtool `-version-info 15:0`
 //! from `libpinyin_abi_current` in the pin's `configure.ac`, confirmed with
 //! `readelf -d` on Ubuntu's shipped `libpinyin15`. A consumer's `DT_NEEDED`
-//! records that string, so a drop-in replacement has to answer to it. Emitted
-//! as a `cdylib` link arg, so the `staticlib` and `rlib` artifacts are
-//! unaffected.
+//! records that string, so a drop-in replacement has to answer to it.
+//! Plain Cargo builds set the SONAME on the Linux cdylib and hide CXX
+//! archive symbols for the tkrzw and Kyoto Cabinet backends.
+//! cargo-c enables `capi` and sets the SONAME for its own Linux cdylib.
+//! With `capi` enabled, this script emits no cdylib link arguments.
 //!
 //! # Why there is no version script here
 //!
@@ -30,18 +32,10 @@
 //! script's version *definitions* while refusing to reassign the symbols,
 //! leaving exactly the shape that fails to load.
 //!
-//! So a version script here would turn a working drop-in into a broken one.
-//! Reaching upstream's shape needs the cdylib linked manually from the
-//! staticlib in the packaging step, where rustc's anonymous script is not in
-//! the link line. That step exists: `just packaging relink-versioned`,
-//! run by `just packaging install` on Linux after `cargo cinstall`,
-//! replaces the installed object with the versioned relink and verifies the
-//! export set against this crate's `libpinyin.ver` in both directions
+//! On Linux, `just packaging install` uses `just packaging relink-versioned`
+//! to link the shipped shared library from the cargo-c staticlib. The relink
+//! sets the SONAME, applies `libpinyin.ver`, and verifies the exact export set
 //! (docs/packaging.md#drop-in-identity states the requirement).
-//!
-//! Symbol scope is therefore enforced in the source — the shipped
-//! artifact defines every symbol in `libpinyin.ver` and nothing else —
-//! not by a linker script.
 //!
 //! # The complete `libpinyin.pc`
 //!
@@ -61,7 +55,9 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // Keep the Linux link setup in sync with zhuyin-capi/build.rs.
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux")
+        || env::var_os("CARGO_FEATURE_CAPI").is_some()
+    {
         return;
     }
     println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libpinyin.so.15");

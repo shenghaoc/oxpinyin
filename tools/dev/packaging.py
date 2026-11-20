@@ -432,7 +432,9 @@ def install_library(argv, tools):
         command.append(f'--destdir={layout.destdir}')
     system = tools.text(['uname', '-s'])
     env = None
-    if system == 'Darwin':
+    if system == 'Linux':
+        command += ['--library-type', 'staticlib']
+    elif system == 'Darwin':
         # rustc, cc and cargo-c read the target from the environment; the relink
         # below keeps the value that cargo-c's dylib records.
         env = {**tools.env, 'MACOSX_DEPLOYMENT_TARGET': deployment_target(tools)}
@@ -446,12 +448,18 @@ def install_library(argv, tools):
     emit(f'installed complete pkg-config file: {pc}')
     features = ['--features', layout.features()] if layout.features() else []
     if system == 'Linux':
+        soname = layout.library + '.so.15'
+        destination = Path(layout.destdir + layout.libdir) / (soname + '.0.0')
         with directory(tools.root):
             relink(['--staticlib', str(layout.qualified / (layout.library + '.a')),
                     '--ver', str(crate / (layout.library + '.ver')),
-                    '--soname', layout.library + '.so.15',
-                    '--dest', layout.destdir + layout.libdir + '/' + layout.library + '.so.15.0.0',
-                    '--backend', selected, *features], tools)
+                    '--soname', soname, '--dest', str(destination),
+                    '--backend', selected, *features], tools, require_destination=False)
+        with tempfile.TemporaryDirectory(dir=destination.parent) as scratch:
+            for name in (layout.library + '.so', soname):
+                link = Path(scratch) / name
+                link.symlink_to(destination.name)
+                link.replace(destination.with_name(name))
     if system == 'Darwin' and layout.triple.endswith('-apple-darwin'):
         dylib = Path(layout.destdir + layout.libdir) / (layout.library + '.15.0.0.dylib')
         relink_darwin(layout, dylib, tools, selected)
@@ -588,7 +596,7 @@ def backend_flags(backend, tools, cxx, platform):
     return [*flags, *([cxx] if backend == 'kyotocabinet' and cxx not in flags else [])]
 
 
-def relink(argv, tools):
+def relink(argv, tools, *, require_destination=True):
     values = dict(staticlib='', ver='', soname='', dest='', backend='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
                   cc=tools.env.get('CC') or 'cc')
     index = 0
@@ -609,9 +617,11 @@ def relink(argv, tools):
     for tool in (cc, 'nm', 'readelf'):
         if not tools.which(tool):
             fail(f"error: required tool '{tool}' not found")
-    for path, label in ((archive, 'staticlib'), (ver, 'version script'), (dest, 'installed object')):
+    for path, label in ((archive, 'staticlib'), (ver, 'version script')):
         if not Path(path).is_file():
             fail(f'error: {label} not found: {path}')
+    if require_destination and not Path(dest).is_file():
+        fail(f'error: installed object not found: {dest}')
     explicit = [peer for peer in cell.BACKENDS if peer in values['features'].replace(',', ' ').split()]
     parts = Path(archive).parts
     artifact_cell = next((parts[index + 1] for index, part in enumerate(parts[:-1]) if part == 'cells'), '')

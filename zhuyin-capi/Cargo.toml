@@ -26,9 +26,9 @@ keywords = ["libzhuyin", "zhuyin", "bopomofo", "input-method", "ffi"]
 # 0c5e80e1). The INSTALLED file is `libzhuyin.so.15` via
 # [package.metadata.capi.library].
 [lib]
-# cdylib is the ABI; rlib lets in-tree tools call the same symbols
-# in-process; staticlib is required by cargo-c and shipped alongside.
-crate-type = ["cdylib", "staticlib", "rlib"]
+# Plain Cargo builds produce the C ABI cdylib and the rlib for in-tree Rust callers.
+# cargo-c selects its own crate types.
+crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [features]
@@ -97,11 +97,8 @@ filename = "libzhuyin"
 description = "Library to deal with zhuyin"
 version = "2.11.92"
 requires = "glib-2.0"
-# cargo-c cannot emit the extra variables real consumers read (database_format,
-# libzhuyinincludedir, libzhuyin_binary_version), so `just packaging install`
-# computes them and fills the install-time prefix — the same wrapper
-# contract oxpinyin-capi uses (docs/findings/installed-naming.md).
-generate = false
+# `just packaging install` owns the complete .pc and overwrites cargo-c's file.
+# See docs/findings/installed-naming.md.
 
 [package.metadata.capi.library]
 # The INSTALLED artifact is libzhuyin.so.15, matching upstream's libtool

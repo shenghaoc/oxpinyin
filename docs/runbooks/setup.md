@@ -149,8 +149,8 @@ before `uv python install` makes it install that interpreter instead of the
 one `.python-version` names. Provisioning and `just doctor` then refuse the
 override, but the other interpreter is already installed.
 
-Install cargo-c when you build the shipping libraries. `just doctor` enforces
-cargo-c 0.10.11.
+Install cargo-c when you build the shipping libraries. Use a version at or above
+the minimum that `just doctor` enforces.
 
 | Host | cargo-c |
 |---|---|
