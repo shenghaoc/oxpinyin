@@ -16,7 +16,7 @@ through the crate's production entries. It lives in the module's sibling
 `tests.rs`, declared as `#[cfg(test)] mod tests;`, and may use the crate's
 private items. It calls a private helper directly only when the production entry
 cannot reach the case, reaches it only at a high cost, or when it compares
-retained speed code with its plain path. The pinyin C crate's `ffi/tests.rs` exercises core's pointer macros where their unsafe code compiles.
+retained speed code with its plain path. The Pinyin C crate tests its output allocations in `ffi/tests.rs` with the production helpers and their matching deallocators.
 A separate test target stays only where a compilation boundary is needed.
 
 A verification test checks behaviour at an interface that a consumer uses: an

@@ -240,8 +240,38 @@ pub unsafe extern "C" fn pinyin_token_get_n_pronunciation(
     true
 }
 
-oxpinyin::append_stored_words! {
-    array: GArray, append: g_array_append_vals
+/// Append one reading's stored packed words to the caller's array, or the
+/// pin's zeroed past-the-end words when the item has no such reading.
+///
+/// # Safety
+/// `keys` must be a non-NULL `GArray` whose element size is two bytes, as
+/// the caller of `pinyin_token_get_nth_pronunciation` creates it.
+unsafe fn append_stored_words(keys: *mut GArray, length: usize, words: Option<&[u8]>) {
+    match words {
+        None => {
+            let zeroed = vec![0_u16; length];
+            // SAFETY: `keys` has two-byte elements. The append copies from the live zeroed buffer.
+            unsafe {
+                g_array_append_vals(
+                    keys,
+                    zeroed.as_ptr().cast::<c_void>(),
+                    c_uint::try_from(zeroed.len()).unwrap_or(0),
+                );
+            }
+        }
+        Some(words) => {
+            // SAFETY: the caller guarantees a real GArray with element size
+            // two bytes; `words` holds `2 * phrase_length` stored bytes and
+            // outlives the append call, which copies from it.
+            unsafe {
+                g_array_append_vals(
+                    keys,
+                    words.as_ptr().cast::<c_void>(),
+                    c_uint::try_from(words.len() / 2).unwrap_or(0),
+                );
+            }
+        }
+    }
 }
 
 // pinyin.cpp:2805, pinyin.cpp:2808-2817.

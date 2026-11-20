@@ -23,11 +23,8 @@
 # 2026-10-31 UTC `owned_cstr` and `owned_cstr_list`) and the fallible
 # `malloc_cstr_with` are duplicated from the pinyin one by design, because
 # each is itself the unsafe edge and the constitution's unsafe allowlist
-# reaches only the two C-ABI crates. (The doc-light boilerplate above the
-# allocator — the handle casts and the `char **`-out sentence writer — is
-# macro-stamped from `oxpinyin`; the
-# allocator boundary these registers describe is not.) The two registers
-# are therefore checked separately rather than shared.
+# places C ABI marshalling in the two C crates. Each register is checked
+# against its own facade.
 #
 # Corrected 2026-10-14 (#681): the eight key-string getter slots (two
 # here, six in libpinyin.alloc) said `false-unreachable`. The relabel to

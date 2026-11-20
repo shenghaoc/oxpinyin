@@ -33,7 +33,7 @@ The next section states which modules it may depend on.
 | `user` | The user overlays, the learning state and the profile persistence of one session: the user phrase arenas, the user pinyin index and phrase table, the user bigram, the live system items and the save cycle. |
 | `runtime` | The engine assembly: it opens a system data directory and a user store, and hands out sessions over the merged models. |
 | `facade` | The orchestration that the two C crates share: the context and instance state machines, the parse modes, the candidate snapshots, the cursor and offset laws, import, export and prediction. |
-| `marshal` | The safe C marshalling helpers and the macros that the two C crates expand at the ABI boundary. |
+| `marshal` | Safe conversions between C-facing bytes and Rust values. |
 | `tool` | Under the `tools` feature only: the pin test programs' parser surface for the REPL and the utilities. |
 
 `fixture_doubles` and `parser_rows` are test-only modules.
@@ -93,7 +93,7 @@ Unsafe code is confined by module:
 - In `input`'s production code, only the `native` module and, under `tools`, the `tool` module carry a scoped `#[expect(unsafe_code)]`. The one test-only exception is `input::config::tests::numeric_locale`, which queries and restores the process numeric locale.
 - In `store`, only each backend's binding modules carry one: `bdb::ffi`, `kyotocabinet::bridge`, `kyotocabinet::ffi` and `tkrzw::bridge`.
 - Every unsafe block carries a `// SAFETY:` comment, and no raw pointer leaves these modules.
-- The two C crates allow unsafe code at the ABI boundary. The `marshal` macros generate their unsafe blocks there; `marshal` itself forbids unsafe code.
+- Each C crate defines its own unsafe ABI marshalling helpers. Clippy checks their blocks for safety comments, and review checks the reasons. The core `marshal` module forbids unsafe code.
 
 ### Chewing keys
 

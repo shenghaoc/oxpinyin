@@ -309,6 +309,12 @@ fn full_pinyin_one_key_surface() {
         pinyin_parse_full_pinyin(fixture.instance, cstr("nihao").as_ptr(), &raw mut key)
     });
     assert_eq!(key.packed, 0, "failed full-pinyin parse zeroes the key");
+    rendered = ptr::dangling_mut();
+    // SAFETY: the fixture is live and the local key and output slot are valid for this call.
+    assert!(!unsafe {
+        pinyin_get_luoma_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered)
+    });
+    assert!(rendered.is_null());
 
     // Initial-only keys parse and render; is_incomplete answers true.
     assert!(unsafe {
