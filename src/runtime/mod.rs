@@ -1902,32 +1902,6 @@ impl Runtime {
         &self.system_dir
     }
 
-    /// One validation pass over the system files this operation remaps.
-    /// Save and mask skip slot zero, absent sub-indices, unused rows and
-    /// rows without a user filename (`pinyin.cpp:927-943`, `:1235-1251`).
-    /// An explicit reload still checks its target, including slot zero.
-    #[must_use]
-    pub(crate) fn check_system_libraries(
-        &self,
-        only: Option<u8>,
-    ) -> crate::data::phrase_libraries::LibraryCheck {
-        self.libraries().check_now(
-            |nibble| {
-                only.is_some()
-                    || (nibble != 0
-                        && self.dict().library_visible(u32::from(nibble))
-                        && self.conf.default_row(nibble).is_some_and(|row| {
-                            row.user.is_some()
-                                && matches!(
-                                    row.file_type,
-                                    FileType::SystemFile | FileType::Dictionary
-                                )
-                        }))
-            },
-            only,
-        )
-    }
-
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
     /// sub-indices that are loaded: an unloaded library has no sub-index to
     /// compact (`phrase_index.cpp:651-652`). Returns the compacted nibbles.
@@ -1985,21 +1959,12 @@ impl Runtime {
         }
     }
 
-    /// Maps the unloaded SYSTEM_FILE/DICTIONARY default library `index`
-    /// again, as `_load_phrase_library` does before it merges the saved
-    /// `.dbin` (074a2219 `pinyin.cpp:246-264`, `zhuyin.cpp:190-208`). The
-    /// result is empty for a row with no system chunk (the `USER_FILE` row,
-    /// the unused rows) and for an unreadable file. A row that names no user
-    /// file is mapped like any other: `_load_phrase_library` reads the user
-    /// name only after it has mapped the chunk (`pinyin.cpp:266`), where the
-    /// mask loop skips such a row (`:1250-1251`).
-    /// Call it before [`Runtime::load_library`] makes the library visible,
-    /// so no reader sees the session's state of the freed sub-index.
+    /// Starts the single map for an explicit load. The facade uses the same
+    /// result for the diagnostic and the replacement sub-index
+    /// (`pinyin.cpp:242-277`, `zhuyin.cpp:186-221`).
     #[must_use]
-    pub(crate) fn reload_system_library(&mut self, index: u8) -> crate::user::SystemOriginals {
-        let mut walk = self.begin_remap(index..index.saturating_add(1), true);
-        self.remap_next(&mut walk);
-        self.finish_system_remap(walk)
+    pub(crate) fn begin_library_reload(&self, index: u8) -> RemapWalk {
+        self.begin_remap(index..index.saturating_add(1), true)
     }
 
     /// Starts the mask loop's remap over every loaded SYSTEM_FILE/DICTIONARY
@@ -2028,9 +1993,6 @@ impl Runtime {
         let dir = &self.system_dir;
         let libraries = self.libraries();
         while let Some(index) = walk.indices.next() {
-            if !(1..16).contains(&index) {
-                continue;
-            }
             let Some(row) = self.conf.default_row(index) else {
                 continue;
             };
@@ -2040,7 +2002,9 @@ impl Runtime {
             // library, and the user name is not read until it has.
             if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
                 || (!walk.reload
-                    && (row.user.is_none() || !self.dict().library_visible(u32::from(index))))
+                    && (row.user.is_none()
+                        || !self.dict().library_visible(u32::from(index))
+                        || !libraries.is_loaded(index)))
             {
                 continue;
             }
@@ -2048,9 +2012,6 @@ impl Runtime {
                 continue;
             };
             let path = crate::input::path::build_chunk_path(dir, name.as_ref());
-            if !libraries.is_loaded(index) {
-                continue;
-            }
             match crate::data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
                 Ok(library) => {
                     walk.originals.insert_mapping(index, path, library);

@@ -1011,6 +1011,21 @@ mod native {
     }
 
     #[test]
+    fn an_explicit_system_library_reload_opens_the_chunk_once() {
+        use crate::input::chunk::CHUNK_OPENS;
+        for (law, index) in [(UserConfLaw::Pinyin, 2), (UserConfLaw::Zhuyin, 1)] {
+            // A transient context has no saved log, so every chunk open is the system file.
+            let mut context = ContextCore::open(&system_dir(), None, super::WORD, law).unwrap();
+            assert!(context.unload_phrase_library(index));
+            CHUNK_OPENS.set(0);
+            assert_eq!(context.load_phrase_library(u32::from(index)), Ok(true));
+            assert_eq!(CHUNK_OPENS.get(), 1, "{law:?}");
+            assert_eq!(context.load_phrase_library(u32::from(index)), Ok(false));
+            assert_eq!(CHUNK_OPENS.get(), 1, "{law:?}");
+        }
+    }
+
+    #[test]
     fn reload_of_an_empty_library_reports_and_answers_true() {
         let Some((_scratch, user, run)) = child(
             "facade::context::tests::native::reload_of_an_empty_library_reports_and_answers_true",

@@ -559,21 +559,6 @@ impl ContextCore {
         SaveOutcome::Saved
     }
 
-    /// The system libraries (with `only`, that one) whose file the pin would
-    /// map again at this call and cannot: one `mmap %s failed!` each, in
-    /// library order ([`c_stderr::mmap_failed`]). The pin dies on the first;
-    /// nothing here does, and the call answers what it answered before.
-    fn check_system_libraries(&self, only: Option<u8>) -> bool {
-        let checked = self.runtime.check_system_libraries(only);
-        if checked.chunk_header_fault {
-            return true;
-        }
-        for path in checked.unmappable {
-            c_stderr::mmap_failed(&path);
-        }
-        false
-    }
-
     /// `FacadePhraseIndex::compact` over the system layout-failed empty
     /// sub-indices. The pin calls it before a save (`pinyin.cpp:1139`,
     /// `zhuyin.cpp:554`), at `end_add_phrases` (`pinyin.cpp:657`,
@@ -740,9 +725,6 @@ impl ContextCore {
         if runtime.dict().library_visible(index) {
             return Ok(false);
         }
-        if self.check_system_libraries(Some(row_index)) {
-            return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
-        }
         // The sub-index `unload` freed comes back as the system chunk plus
         // the saved log, so the session's unsaved changes to the library
         // are gone (`pinyin.cpp:264-277`, `phrase_index.cpp:237-248`;
@@ -760,16 +742,19 @@ impl ContextCore {
         // 108, `pinyin.cpp:276`, `zhuyin.cpp:219`): that is returned with
         // nothing replaced and the library still unloaded.
         let user_file = matches!(row.file_type, FileType::UserFile);
-        let mut originals = self.runtime.reload_system_library(row_index);
-        // The mask clears only for a library the remap mapped. A system row
-        // is mapped again whether or not it names a user file
-        // (`pinyin.cpp:246-264`); a file that cannot be mapped is the pin's
-        // SIGSEGV (row 76). The library then keeps its mask and the call its
-        // answer, and the next load tries again, so no reader meets a
-        // library whose bytes the session no longer holds.
-        if !user_file && !originals.contains_key(&row_index) {
-            return Ok(true);
+        let mut walk = runtime.begin_library_reload(row_index);
+        match runtime.remap_next(&mut walk) {
+            Some(RemapStep::Directory) => {
+                return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
+            }
+            Some(RemapStep::Unmappable(path)) => {
+                c_stderr::mmap_failed(&path);
+                return Ok(true);
+            }
+            None if !user_file => return Ok(true),
+            Some(RemapStep::Mapped(_)) | None => {}
         }
+        let mut originals = self.runtime.finish_system_remap(walk);
         let store = self.user_store_mut();
         let replay = {
             if user_file {
