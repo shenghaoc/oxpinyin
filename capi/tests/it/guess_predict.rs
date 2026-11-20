@@ -216,17 +216,9 @@ fn a_unigram_add_on_another_item_reorders_two_candidates() {
     unsafe { close(context, instance) };
 }
 
-/// A sole prediction row whose item a journal REMOVE took out is listed with
-/// a NULL string. The REMOVE clears the item and leaves the phrase table
-/// (`phrase_index.cpp:460-475`, `:219-236`), so the suggestion search still
-/// answers the token. `_compute_predicted_prefix_candidates` ignores the
-/// failed `get_phrase_item` and tests the length of its own fresh item, 0
-/// (`pinyin.cpp:2389-2405`); the row keeps the NULL string it starts with
-/// (`:107-115`); and with one row the duplicate pass compares nothing
-/// (`:2041-2083`). The getters answer from the row as it is
-/// (`:2866-2878`, `:3712-3718`).
+/// POLICY-ACCEPTED (row 106a): a removed item supplies no prefix suggestion.
 #[test]
-fn a_sole_removed_prefix_row_reads_null_through_the_getters() {
+fn a_sole_removed_prefix_item_is_omitted() {
     let scratch = tempfile::tempdir().expect("scratch");
     let total = 1000_u32;
     let system = crate::support::items_system(
@@ -259,7 +251,7 @@ fn a_sole_removed_prefix_row_reads_null_through_the_getters() {
     ]
     .concat();
     // A live row's string is the phrase after the prefix (`:2018-2022`).
-    for (removed, text) in [(false, Some("乙")), (true, None)] {
+    for removed in [false, true] {
         let user = TempUserDir::new("removed-prefix-row");
         write_user_conf(&user.path, &system);
         if removed {
@@ -281,7 +273,16 @@ fn a_sole_removed_prefix_row_reads_null_through_the_getters() {
             crate::support::pinyin_guess_predicted_candidates(instance, c"甲".as_ptr())
         });
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        assert_eq!(unsafe { n_candidate(instance) }, 1, "removed {removed}");
+        assert_eq!(
+            unsafe { n_candidate(instance) },
+            u32::from(!removed),
+            "removed {removed}"
+        );
+        if removed {
+            // SAFETY: both handles are live and closing them ends this test's use.
+            unsafe { close(context, instance) };
+            continue;
+        }
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
         let row = unsafe { candidate_at(instance, 0) };
         let mut kind = lookup_candidate_type_t::ZOMBIE_CANDIDATE;
@@ -291,13 +292,12 @@ fn a_sole_removed_prefix_row_reads_null_through_the_getters() {
         assert!(unsafe {
             crate::support::pinyin_get_candidate_string(instance, row, &raw mut string)
         });
-        // SAFETY: a non-NULL answer is the row's own NUL-terminated string, live with the list.
-        let found = (!string.is_null()).then(|| {
-            unsafe { std::ffi::CStr::from_ptr(string) }
-                .to_str()
-                .expect("UTF-8")
-        });
-        assert_eq!(found, text);
+        assert!(!string.is_null());
+        // SAFETY: the successful getter wrote a live, NUL-terminated string.
+        let found = unsafe { std::ffi::CStr::from_ptr(string) }
+            .to_str()
+            .expect("UTF-8");
+        assert_eq!(found, "乙");
         assert!(!unsafe { pinyin_is_user_candidate(instance, row) });
         // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
         // is not yet freed; nothing uses either handle after this call; only this thread calls into

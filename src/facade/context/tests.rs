@@ -394,10 +394,8 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
 }
 
 mod failed_attachment_fini {
-    //! Context finalization closes the system attachments, open or failed, while
-    //! an instance still holds the runtime (compatibility row 42): the pin's
-    //! `pinyin_fini` deletes the tables' objects (`pinyin.cpp:1205-1215`) and a
-    //! retained instance keeps only the context's in-memory state.
+    //! Context finalization closes open tables while an instance still holds
+    //! the runtime (compatibility row 42).
 
     use std::path::PathBuf;
 
@@ -414,7 +412,7 @@ mod failed_attachment_fini {
     }
 
     #[test]
-    fn context_finish_finalizes_failed_attachments_while_an_instance_holds_the_runtime() {
+    fn context_finish_closes_open_tables_after_a_failed_attachment() {
         let dir = tempfile::Builder::new()
             .prefix("oxpinyin-missing-index-")
             .tempdir()

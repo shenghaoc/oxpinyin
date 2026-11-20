@@ -20,9 +20,10 @@
 //! the store alone (promoted addon phrases included) without a by-token
 //! dictionary lookup.
 
-use crate::{PhraseText, PhraseToken};
+use std::ops::Range;
 
 use crate::engine::error::EngineError;
+use crate::{PhraseText, PhraseToken};
 
 /// One constraint cell (`trellis_constraint_t`,
 /// `phonetic_lookup.h:121-137`).
@@ -59,6 +60,38 @@ pub struct PhraseSpan {
 #[derive(Clone, Debug, Default)]
 pub struct ConstraintStore {
     cells: Vec<Cell>,
+    orphaned: Option<OrphanedConstraint>,
+}
+
+/// The clear assertion left by a tokenless choice at column zero. A later
+/// write can replace part of a span, including its middle. Keep the remaining
+/// span bounds and whether a real forcing has replaced the tokenless head.
+#[derive(Clone, Debug)]
+struct OrphanedConstraint {
+    spans: Vec<Range<usize>>,
+    tokenless_head: bool,
+}
+
+impl OrphanedConstraint {
+    fn overwrite(&mut self, written: Range<usize>) {
+        let mut right = None;
+        self.spans.retain_mut(|span| {
+            if written.end <= span.start || span.end <= written.start {
+                return true;
+            }
+            if span.start < written.start {
+                if written.end < span.end {
+                    right = Some(written.end..span.end);
+                }
+                span.end = written.start;
+            } else {
+                span.start = written.end;
+            }
+            span.start < span.end
+        });
+        self.spans.extend(right);
+        self.tokenless_head &= written.start != 0;
+    }
 }
 
 impl ConstraintStore {
@@ -68,19 +101,14 @@ impl ConstraintStore {
         self.cells.iter().any(|cell| !matches!(cell, Cell::None))
     }
 
-    /// Whether any forcing covers a span: a run of [`Self::runs`], which the
-    /// selection record can be rebuilt from. A null step alone
-    /// ([`Self::add_null_step`]) makes the store active without one.
-    pub(crate) fn has_runs(&self) -> bool {
-        self.cells
-            .iter()
-            .enumerate()
-            .any(|(start, cell)| matches!(cell, Cell::OneStep { end, .. } if *end > start))
+    pub(crate) fn has_spans_to_remap(&self) -> bool {
+        self.orphaned.is_some() || self.is_active()
     }
 
     /// `clear()` — `pinyin_reset`'s rule.
     pub(crate) fn clear(&mut self) {
         self.cells.clear();
+        self.orphaned = None;
     }
 
     /// Bounds-checked cell read (`get_constraint`).
@@ -115,6 +143,57 @@ impl ConstraintStore {
     /// array, it never drops existing forcings.
     pub(crate) fn resize(&mut self, len: usize) {
         self.cells.resize(len, Cell::None);
+        self.map_orphaned(|span| span.start..span.end.min(len));
+    }
+
+    /// Record the assertion condition without a zero-length forcing.
+    /// `add_constraint(0, 0, null_token)` replaces the head without clearing
+    /// its interior (`phonetic_lookup.cpp:61-86`).
+    pub(crate) fn choose_tokenless(&mut self) -> bool {
+        let end = match self.cell(0) {
+            Some(Cell::OneStep { end, .. }) => *end,
+            _ => 0,
+        };
+        if end > 0 {
+            self.clear_by_offset(0);
+        }
+        if end > 1 {
+            self.orphaned
+                .get_or_insert_with(|| OrphanedConstraint {
+                    spans: Vec::new(),
+                    tokenless_head: true,
+                })
+                .spans
+                .push(1..end);
+        }
+        if let Some(orphaned) = &mut self.orphaned {
+            orphaned.tokenless_head = true;
+        }
+        end > 0
+    }
+
+    pub(crate) fn note_write(&mut self, span: Range<usize>) {
+        if span.is_empty() {
+            return;
+        }
+        if let Some(orphaned) = &mut self.orphaned {
+            orphaned.overwrite(span);
+            if orphaned.spans.is_empty() {
+                self.orphaned = None;
+            }
+        }
+    }
+
+    fn map_orphaned(&mut self, map: impl Fn(&Range<usize>) -> Range<usize>) {
+        if let Some(orphaned) = &mut self.orphaned {
+            orphaned.spans.retain_mut(|span| {
+                *span = map(span);
+                span.start < span.end
+            });
+            if orphaned.spans.is_empty() {
+                self.orphaned = None;
+            }
+        }
     }
 
     /// `add_constraint` (`phonetic_lookup.cpp:61-86`): clear every forcing
@@ -123,6 +202,7 @@ impl ConstraintStore {
     /// included — then write the `OneStep` at `start` and `NoSearch`
     /// back-pointers on the interior. Returns the span length, or 0 when
     /// the span overruns the array (upstream's refusal, not an abort).
+    /// The clear of an orphaned continuation aborts if its head is gone.
     pub(crate) fn add(
         &mut self,
         start: usize,
@@ -136,50 +216,12 @@ impl ConstraintStore {
         for index in start..end {
             self.clear_by_offset(index);
         }
+        self.note_write(start..end);
         self.cells[start] = Cell::OneStep { token, end, text };
         for cell in &mut self.cells[start + 1..end] {
             *cell = Cell::NoSearch { start };
         }
         end - start
-    }
-
-    /// `add_constraint(0, 0, null_token)` (`phonetic_lookup.cpp:61-86`),
-    /// the write `pinyin_choose_candidate`'s normal branch makes for a row
-    /// with `m_begin = m_end = 0` and no token (`pinyin.cpp:114`,
-    /// `:2577-2590`): the overrun refusal (`end > len`) cannot fire for
-    /// `end = 0`, the clearing loop over `[0, 0)` is empty, and cell 0
-    /// becomes a zero-length `ONESTEP` of the null token. Any `NoSearch`
-    /// cells of a run the write replaced stay, pointing back at it. The
-    /// call answers the span length, 0.
-    ///
-    /// On an empty array the pin's write lands in the zero-terminated
-    /// array's terminator slot, which GLib always allocates (2.84.4
-    /// `garray.c:349-354`, `:1051-1079`); nothing reads it before a resize
-    /// zeroes it again, so the store is left as it is.
-    ///
-    /// Clearing and validation leave the cell in place because the run is
-    /// empty. Reset or a shrink to zero clears it. A later non-empty
-    /// constraint starting at 0 overwrites it ([`Self::add`]).
-    pub(crate) fn add_null_step(&mut self) {
-        if let Some(cell) = self.cells.first_mut() {
-            *cell = Cell::OneStep {
-                token: 0,
-                end: 0,
-                text: PhraseText::from(""),
-            };
-        }
-    }
-
-    /// Whether `clear_constraint` at `index` reaches the pin's assert
-    /// (`phonetic_lookup.cpp:98-104`): a `NoSearch` cell whose run start
-    /// holds no forcing. A zero-length step over a run leaves such cells
-    /// ([`Self::add_null_step`]) once a later forcing at the start is
-    /// cleared.
-    pub(crate) fn clear_asserts(&self, index: usize) -> bool {
-        matches!(
-            self.cells.get(index),
-            Some(Cell::NoSearch { start }) if !self.is_one_step_at(*start)
-        )
     }
 
     /// `clear_constraint` (`phonetic_lookup.cpp:88-105`): a free cell
@@ -190,7 +232,8 @@ impl ConstraintStore {
         let run_start = match self.cells.get(index) {
             Some(Cell::NoSearch { start }) => *start,
             Some(Cell::OneStep { .. }) => index,
-            Some(Cell::None) | None => return false,
+            Some(Cell::None) => return self.clear_orphaned(index),
+            None => return false,
         };
         let Some(Cell::OneStep { end, .. }) = self.cells.get(run_start) else {
             return false;
@@ -202,21 +245,37 @@ impl ConstraintStore {
         true
     }
 
+    fn clear_orphaned(&mut self, index: usize) -> bool {
+        let Some(orphaned) = &self.orphaned else {
+            return false;
+        };
+        if index != 0 && !orphaned.spans.iter().any(|span| span.contains(&index)) {
+            return false;
+        }
+        if orphaned.tokenless_head {
+            return true;
+        }
+        if index == 0 {
+            return false;
+        }
+        if !self.clear_by_offset(0) {
+            // A continuation reached a head that no longer exists.
+            // This is also the clear inside add_constraint (:67-68).
+            std::process::abort();
+        }
+        true
+    }
+
     /// Moves the store into new coordinates, the pin's cells keeping their
     /// matrix columns (`phonetic_lookup.cpp:120-163`). A caller whose store
     /// coordinates moved under a reparse runs this before validation.
     ///
-    /// `forcing` maps each forcing's `[start, end)`; the forcing keeps its
-    /// token and text, and `None` or an end before the start drops it.
-    /// `orphans` maps each group of `NoSearch` cells `[from, to)` that no
-    /// forcing covers, which a zero-length write over a run leaves
-    /// ([`Self::add_null_step`]), with the `start` they point at. It
-    /// answers the new `(start, from, to)`, or `None` to drop the group.
-    /// The orphans are written first, so a forcing that lands on them wins.
+    /// `forcing` maps each live forcing. `orphaned` maps the bounds of the
+    /// recorded assertion condition.
     pub(crate) fn remap(
         &mut self,
         forcing: impl Fn(usize, usize) -> Option<(usize, usize)>,
-        orphans: impl Fn(usize, usize, usize) -> Option<(usize, usize, usize)>,
+        orphaned: impl Fn(&Range<usize>) -> Range<usize>,
     ) {
         let forcings: Vec<(usize, usize, PhraseToken, PhraseText)> = self
             .cells
@@ -227,61 +286,19 @@ impl ConstraintStore {
                 Cell::None | Cell::NoSearch { .. } => None,
             })
             .collect();
-        let groups = self.orphan_groups();
+        let pending = self.orphaned.take();
         self.cells.fill(Cell::None);
-        for (start, from, to) in groups {
-            let Some((start, from, to)) = orphans(start, from, to) else {
-                continue;
-            };
-            self.fill_no_search(start, from, to);
-        }
         for (start, end, token, text) in forcings {
-            let Some((start, end)) = forcing(start, end).filter(|(start, end)| start <= end) else {
+            let Some((start, end)) = forcing(start, end).filter(|(start, end)| start < end) else {
                 continue;
             };
             if self.cells.len() <= end {
                 self.cells.resize(end + 1, Cell::None);
             }
-            self.cells[start] = Cell::OneStep { token, end, text };
-            self.fill_no_search(start, start + 1, end);
+            self.add(start, end, token, text);
         }
-    }
-
-    /// The `NoSearch` cells outside the span of the forcing they point at,
-    /// as `(start, from, to)` groups of adjacent cells with one `start`.
-    fn orphan_groups(&self) -> Vec<(usize, usize, usize)> {
-        let mut groups: Vec<(usize, usize, usize)> = Vec::new();
-        for (index, cell) in self.cells.iter().enumerate() {
-            let Cell::NoSearch { start } = *cell else {
-                continue;
-            };
-            let covered = matches!(
-                self.cells.get(start),
-                Some(Cell::OneStep { end, .. }) if start < index && index < *end
-            );
-            if covered {
-                continue;
-            }
-            match groups.last_mut() {
-                Some((last, _, to)) if *last == start && *to == index => *to = index + 1,
-                _ => groups.push((start, index, index + 1)),
-            }
-        }
-        groups
-    }
-
-    /// Points the cells `[from, to)` at `start`, growing the store to hold
-    /// them.
-    fn fill_no_search(&mut self, start: usize, from: usize, to: usize) {
-        if from >= to {
-            return;
-        }
-        if self.cells.len() < to {
-            self.cells.resize(to, Cell::None);
-        }
-        for cell in &mut self.cells[from..to] {
-            *cell = Cell::NoSearch { start };
-        }
+        self.orphaned = pending;
+        self.map_orphaned(orphaned);
     }
 
     /// `validate_constraint`'s per-cell pass (`phonetic_lookup.cpp:142-168`):
@@ -315,7 +332,7 @@ impl ConstraintStore {
     where
         F: Fn(usize, usize, PhraseToken) -> Result<bool, EngineError>,
     {
-        self.cells.resize(len, Cell::None);
+        self.resize(len);
         // The forcings to inspect, gathered before any mutation clears
         // cells the iteration would otherwise alias.
         let forcings: Vec<(usize, PhraseToken, usize)> = self
@@ -332,25 +349,12 @@ impl ConstraintStore {
             .collect();
         let mut dropped = false;
         for (index, token, end) in forcings {
-            // The spelling probe runs first even for a run that overruns: the
-            // pin reads the forced token's item before its overrun test
-            // (`phonetic_lookup.cpp:152-154`), and a later forcing whose item
-            // cannot be read is checked against that one. A read that fails
-            // for an overrunning run leaves the carried item as it was, as
-            // the pin's failed `get_phrase_item` leaves `item`
-            // (`:141-154`), and the run is cleared all the same.
+            // Resize and check the spelling of each forcing in matrix order.
             let spells = still_spells(index, end, token);
             let overruns = end >= self.cells.len();
             if overruns || !spells? {
-                // The run's interior cells go with it (`clear_constraint`).
-                // A zero-length run has none, and stays ([`Self::add_null_step`]).
-                let end = end.min(self.cells.len());
-                if index < end {
-                    for cell in &mut self.cells[index..end] {
-                        *cell = Cell::None;
-                    }
-                    dropped = true;
-                }
+                self.clear_by_offset(index);
+                dropped = true;
             }
         }
         Ok(dropped)
@@ -404,15 +408,14 @@ impl ConstraintStore {
     /// to right — the record-rebuild input. Gaps between runs are free
     /// spans (`diff_result` forces only the differing phrases); the
     /// caller supplies their text from the current buffer, so the rebuilt
-    /// record never drops raw input the forcings skip over. A zero-length
-    /// run ([`Self::add_null_step`]) forces no phrase and is not a run.
+    /// record preserves raw input the forcings skip over.
     pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, PhraseText)> {
         self.cells
             .iter()
             .enumerate()
             .filter_map(|(start, cell)| {
                 if let Cell::OneStep { token, end, text } = cell {
-                    (*end > start).then(|| (start, *end, *token, text.clone()))
+                    Some((start, *end, *token, text.clone()))
                 } else {
                     None
                 }

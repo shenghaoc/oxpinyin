@@ -834,11 +834,11 @@ impl BigramExportWalk {
     // pinyin_bigram_iterator_get_next_phrase writes the out parameters before calling
     // has_next (pinyin.cpp:896–911). The count expression at 901,906 multiplies by a guint32
     // factor before assigning to gint.
-    /// Returns the current row and advances the iterator. A [`BigramStep::Row`] can contain
-    /// the current row together with an error from probing the following row. For a
-    /// [`BigramProbeFault::Key`], the C adapter writes the row's out-parameters and then
-    /// aborts the process, as the pin's assert does. Call [`Self::has_next`] before
-    /// requesting a row.
+    /// Returns the current row — count × 2 in `guint32` — and advances the iterator. A
+    /// [`BigramStep::Row`] can contain the current row together with an error from probing
+    /// the following row. For a [`BigramProbeFault::Key`], the C adapter writes the row's
+    /// out-parameters and then aborts the process, as the pin's assert does. Call
+    /// [`Self::has_next`] before requesting a row.
     pub fn get_next(&mut self, context: &ContextCore) -> BigramStep {
         self.next_row(|walk| walk.has_next(context))
     }

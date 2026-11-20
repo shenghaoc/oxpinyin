@@ -48,18 +48,6 @@ impl UserCountDelta {
 pub struct UnreadableRows {
     /// Number of unreadable rows encountered.
     pub count: usize,
-    /// First unreadable token, when the search retained its identity.
-    pub first: Option<PhraseToken>,
-}
-
-impl UnreadableRows {
-    /// Adds a token without allocating storage for further failures.
-    pub fn push(&mut self, token: PhraseToken) {
-        if self.count == 0 {
-            self.first = Some(token);
-        }
-        self.count += 1;
-    }
 }
 
 /// Read-only seam the engine reads dictionaries through
@@ -392,7 +380,6 @@ pub trait PhraseList {
         let failed = self.lookup_into_flagged(syllables, out)?;
         let unreadable = UnreadableRows {
             count: usize::from(failed),
-            first: None,
         };
         Ok((unreadable, self.phrase_prefix_exists(syllables)?))
     }

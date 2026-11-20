@@ -138,12 +138,9 @@ fn choosing_the_fallback_completes_the_composition() {
     assert!(session.selected_text().is_empty());
 }
 
-/// A token-free selection survives [`Session::choose_null_step`]. The
-/// fallback row leaves text and a composition offset in the record with no
-/// token history; the null step makes the store active without giving it a
-/// run, so there is nothing to rebuild the record from and it is kept.
+/// A token-free selection survives a refused choose and a subsequent guess.
 #[test]
-fn a_null_step_after_a_fallback_selection_keeps_the_record() {
+fn a_refused_choose_after_a_fallback_selection_keeps_the_record() {
     let mut session = session();
     type_text(&mut session, "nihao");
     assert_eq!(
@@ -152,10 +149,8 @@ fn a_null_step_after_a_fallback_selection_keeps_the_record() {
     );
     assert!(session.selected_tokens().is_empty());
 
-    session
-        .choose_null_step()
-        .expect("the null step is written");
-    assert!(session.constraints.is_active());
+    assert_eq!(session.refuse_selection().unwrap(), Selection::Refused);
+    assert!(!session.constraints.is_active());
     assert_eq!(session.selected_text(), "nihao");
     assert_eq!(session.composition_offset(), 5);
     assert!(session.selected_tokens().is_empty());
@@ -171,23 +166,18 @@ fn a_null_step_after_a_fallback_selection_keeps_the_record() {
     assert_eq!(session.composition_offset(), 5);
 }
 
-/// A null step keeps the rebuild where runs exist. A temporary parse clears
-/// the record and leaves the store its two forcings; the validation before
-/// the null step is written finds runs with no token history, and rebuilds
-/// the record from them.
+/// A refused choose still validates and rebuilds a record from surviving runs.
 #[test]
-fn a_null_step_still_rebuilds_a_record_that_lost_its_runs() {
+fn a_refused_choose_still_rebuilds_a_record_that_lost_its_runs() {
     let mut session = trellis_session();
     type_and_select_over(&mut session, "ni", 1);
     type_and_select_over(&mut session, "hao", 2);
     session.replace_raw("n").expect("temporary parse");
     session.replace_raw("nihao").expect("restore input");
     assert!(session.selected_tokens().is_empty());
-    assert!(session.constraints.has_runs());
+    assert!(session.constraints.is_active());
 
-    session
-        .choose_null_step()
-        .expect("the null step is written");
+    assert_eq!(session.refuse_selection().unwrap(), Selection::Refused);
     assert_eq!(session.selected_tokens(), [1, 2]);
     assert_eq!(session.selected_text(), "你好");
     assert_eq!(session.composition_offset(), 5);
@@ -1828,7 +1818,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     ];
     let mut frequencies = vec![7; 5];
     session
-        .candidate_frequencies(&collected, None, true, &mut frequencies)
+        .candidate_frequencies(&collected, None, true, false, &mut frequencies)
         .expect("frequency reads cannot fail here");
     assert_eq!(
         frequencies,
@@ -4270,6 +4260,8 @@ fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
             kept,
             "{paths} paths / {total}"
         );
+        // POLICY-ACCEPTED: the read of an absent token has its own result.
+        assert!(!spelling.spells(&dictionary, 0, 2, 2).unwrap());
     }
 }
 

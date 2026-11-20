@@ -944,8 +944,8 @@ mod backend_files {
                 std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copy");
             }
         }
-        // Every backend keeps the failed native object and initializes
-        // (pinyin.cpp:357 at 074a2219 ignores the load's answer).
+        // Every backend initializes even when the pinyin index fails to open
+        // (pinyin.cpp:357 at 074a2219).
         assert!(Runtime::open(&dir, None).is_ok());
     }
 
@@ -3360,9 +3360,9 @@ use crate::data::support as chunk_fixture;
 #[path = "../../tests/support/unreadable_fixture.rs"]
 mod unreadable_fixture;
 
-/// The sole unreadable user-index row survives the system miss and keeps its token.
+/// A system miss still reports an unreadable user-index row to the caller.
 #[test]
-fn a_sole_unreadable_row_survives_the_user_table_fallback() {
+fn a_user_table_fallback_reports_its_unreadable_row() {
     let (system, user) = unreadable_fixture::dirs(unreadable_fixture::Case::Fallback);
     let runtime =
         Runtime::open_with_law(system.path(), Some(user.path()), UserConfLaw::Zhuyin).unwrap();
@@ -3376,10 +3376,8 @@ fn a_sole_unreadable_row_survives_the_user_table_fallback() {
         .candidates_at_for_abi(0, false)
         .unwrap();
     assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows.sole_unreadable_candidate().unwrap().token(),
-        Some(0x0100_0010)
-    );
+    assert!(rows.had_unreadable_item());
+    assert!(rows.iter().all(|row| row.token().is_none()));
     assert!(runtime.dict().token_phrase(0x0100_0010).is_none());
 }
 
@@ -3403,18 +3401,11 @@ fn a_library_mask_does_not_read_extension_rows() {
             .candidates_at_for_abi(0, false)
             .unwrap();
         assert_eq!(
-            usize::from(rows.sole_unreadable_candidate().is_some()),
+            usize::from(rows.had_unreadable_item()),
             expected,
             "unload {unload}"
         );
-        if expected == 1 {
-            assert!(
-                runtime
-                    .dict()
-                    .token_phrase(rows.sole_unreadable_candidate().unwrap().token().unwrap())
-                    .is_none()
-            );
-        }
+        assert!(rows.iter().all(|row| row.token().is_none()));
     }
 }
 

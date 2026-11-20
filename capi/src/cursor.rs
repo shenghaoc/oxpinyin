@@ -51,6 +51,13 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
     end: AtomicU16::new(0),
 };
 
+/// Applies the empty-matrix failure at the C key-accessor boundary.
+fn check_key_matrix(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
+    if offset != usize::MAX && !inst.core.mode_has_keys() {
+        std::process::abort();
+    }
+}
+
 /// Get the pinyin key rest at an offset.
 ///
 /// # C signature
@@ -94,12 +101,10 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
     // `pinyin_alloc_instance`; this call only reads the instance and writes
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
+    check_key_matrix(&inst, offset);
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
-        Ok(None) => {
-            abort_on_empty_matrix_below(&inst, offset);
-            return false;
-        }
+        Ok(None) => return false,
         Err(_) => {
             crate::ffi::log_warning("pinyin_get_pinyin_key_rest: zero-column assertion");
             return false;
@@ -122,29 +127,6 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
         }
     }
     true
-}
-
-/// Register rows 63 and 66, `phonetic_key_matrix.h:103`: with no matrix at
-/// all (a fresh or keyless instance: `fill_matrix` leaves it at size 0 when
-/// the parse placed no key, `phonetic_key_matrix.cpp:37`) the pin's
-/// `matrix.size() - 1` wraps, the offset test passes, and `get_column_size`
-/// asserts, so the process aborts. A matrix with keys is the graceful
-/// `false`.
-fn abort_on_empty_matrix(inst: &crate::state::CapiInstanceRead<'_>) {
-    if !inst.core.mode_has_keys() {
-        std::process::abort();
-    }
-}
-
-/// [`abort_on_empty_matrix`] for the key getters, which test
-/// `offset >= matrix.size() - 1` first (`pinyin.cpp:2927-2928`, `:2950-2951`):
-/// on an empty matrix that is `offset >= SIZE_MAX`, so `SIZE_MAX` itself
-/// answers `false` with the out-param NULLed, and only a smaller offset
-/// reaches the assert.
-fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
-    if offset != usize::MAX {
-        abort_on_empty_matrix(&inst.read());
-    }
 }
 
 /// Get the begin/end byte positions of a pinyin key rest.
@@ -685,12 +667,10 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key(
     // `pinyin_alloc_instance`; this call only reads the instance and writes
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
+    check_key_matrix(&inst, offset);
     let found = match inst.core.abi_key_at(offset, false) {
         Ok(Some(found)) => found,
-        Ok(None) => {
-            abort_on_empty_matrix_below(&inst, offset);
-            return false;
-        }
+        Ok(None) => return false,
         Err(_) => {
             crate::ffi::log_warning("pinyin_get_pinyin_key: zero-column assertion");
             return false;

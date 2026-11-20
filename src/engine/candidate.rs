@@ -250,26 +250,11 @@ impl Candidate {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct UnreadableCandidates {
-    pub count: usize,
-    first: Option<(PhraseToken, usize, usize)>,
-}
-
-impl UnreadableCandidates {
-    pub fn append(&mut self, rows: crate::model::UnreadableRows, start: usize, end: usize) {
-        if self.count == 0 {
-            self.first = rows.first.map(|token| (token, start, end));
-        }
-        self.count += rows.count;
-    }
-}
-
 /// An ordered, deterministic candidate list.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CandidateList {
     items: Vec<Candidate>,
-    unreadable_item: UnreadableCandidates,
+    unreadable_count: usize,
     ranked_phrase_row: bool,
 }
 
@@ -277,19 +262,13 @@ impl CandidateList {
     pub(crate) const fn from_vec(items: Vec<Candidate>) -> Self {
         Self {
             items,
-            unreadable_item: UnreadableCandidates {
-                count: 0,
-                first: None,
-            },
+            unreadable_count: 0,
             ranked_phrase_row: false,
         }
     }
 
-    pub(crate) const fn with_unreadable_item(
-        mut self,
-        unreadable_item: UnreadableCandidates,
-    ) -> Self {
-        self.unreadable_item = unreadable_item;
+    pub(crate) const fn with_unreadable_count(mut self, unreadable_count: usize) -> Self {
+        self.unreadable_count = unreadable_count;
         self
     }
 
@@ -317,19 +296,7 @@ impl CandidateList {
     /// available separately from that search metadata.
     #[must_use]
     pub const fn had_unreadable_item(&self) -> bool {
-        self.unreadable_item.count != 0
-    }
-
-    /// The searched row to publish with a null string if no other row survives.
-    #[must_use]
-    pub fn sole_unreadable_candidate(&self) -> Option<Candidate> {
-        if self.unreadable_item.count != 1 {
-            return None;
-        }
-        let (token, start, end) = self.unreadable_item.first?;
-        let mut candidate = Candidate::new("", CandidateKind::Phrase, 0, end, Some(token), None);
-        candidate.set_span_start(start);
-        Some(candidate)
+        self.unreadable_count != 0
     }
 
     /// The rows, for their storage to be reused.

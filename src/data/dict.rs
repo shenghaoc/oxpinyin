@@ -410,9 +410,8 @@ impl SystemDictionary {
         Ok(dict)
     }
 
-    /// Attaches the runtime's system tables, retaining failed attaches as
-    /// the pin does on every backend. No phrase library is mapped: the
-    /// pin's init attaches these before its library loop
+    /// Attaches the runtime's system tables before its library loop.
+    /// A table that fails to open is empty
     /// (`pinyin.cpp:350-373`, `zhuyin.cpp:294-316`).
     ///
     /// # Errors
@@ -515,7 +514,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             if let Some(entry) = entry {
                 out.push(entry);
             } else if library_loaded(self.libraries(), self.user_nibbles, token) {
-                unreadable.push(token);
+                unreadable.count += 1;
             }
         })?;
         Ok((unreadable, present))
@@ -1037,27 +1036,6 @@ impl AddonDictionary {
         if let Some(table) = &mut self.phrase {
             table.finish_attachment();
         }
-    }
-
-    /// Whether the addon pinyin index is the retained object of a failed
-    /// attach (`chewing_large_table2_tkrzwdb.cpp:87-88` at 074a2219). An
-    /// addon facade without the table answers `false`.
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn pinyin_attachment_failed(&self) -> bool {
-        self.pinyin
-            .as_ref()
-            .is_some_and(ChewingTable::attachment_failed)
-    }
-
-    /// Whether the addon phrase index is the retained object of a failed
-    /// attach (`phrase_large_table3_tkrzwdb.cpp:77-79` at 074a2219).
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn phrase_attachment_failed(&self) -> bool {
-        self.phrase
-            .as_ref()
-            .is_some_and(PhraseTable::attachment_failed)
     }
 
     /// Whether every addon index this facade holds is closed.

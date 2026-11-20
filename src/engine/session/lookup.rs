@@ -4,6 +4,16 @@ use crate::{MAX_PHRASE_LENGTH, phrase_index_library_index};
 
 use super::*;
 
+/// An unreadable item contributes no Rust row, but the pin still enters
+/// its scorer. Any short merged-gram header asserts before its zero total.
+fn abort_unreadable_ranking(gram: Option<&(u32, MergedGram)>) -> Result<(), EngineError> {
+    if let Some((previous, row)) = gram {
+        row.total()
+            .map_err(|fault| EngineError::lookup_gram(*previous, fault))?;
+    }
+    std::process::abort();
+}
+
 /// The LONGER winner law (`pinyin.cpp:1904-1917`): a strictly greater
 /// unigram replaces the winner, and an equal one only from an earlier
 /// library, because `reduce_tokens` concatenates the libraries first.
@@ -451,6 +461,7 @@ where
         collected: &[Candidate],
         gram: Option<(u32, &MergedGram)>,
         gate: bool,
+        abort_on_rank: bool,
         frequencies: &mut Vec<u32>,
     ) -> Result<(), EngineError> {
         // Tokens the table lacks rank as zero.
@@ -507,6 +518,11 @@ where
                 let count = self.model.unigram_freq(&token).map_err(|error| {
                     EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                 })?;
+                // The zero total asserts at this row's scorer, after its
+                // dynamic adjustment and before any later row or span.
+                if abort_on_rank {
+                    std::process::abort();
+                }
                 count.map(|count| {
                     if self.candidate_ranking == CandidateRanking::LengthThenFrequency {
                         // zhuyin.cpp:1264-1268 has no libpinyin 0.1
@@ -568,7 +584,6 @@ where
             let start = into.len();
             {
                 let mut buf = ScanBuf {
-                    span_start: 0,
                     span_base: anchor,
                     path: scratch.path,
                     tones: SmallVec::new(),
@@ -659,7 +674,6 @@ where
         end: usize,
     ) -> Result<(), EngineError> {
         let ScanBuf {
-            span_start,
             span_base,
             path,
             tones,
@@ -685,7 +699,7 @@ where
             .dictionary
             .candidate_search_into(path, tones, entries, row)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        unreadable.append(failed_item, *span_start, end);
+        **unreadable += failed_item.count;
         **continued |= extends;
         append_scan_entries(
             entries.drain(..),
@@ -798,7 +812,7 @@ where
         anchor: usize,
         out: &mut Vec<Candidate>,
         gate: bool,
-        abort_on_unreadable: bool,
+        abort_on_rank: bool,
     ) -> Result<(), EngineError> {
         out.clear();
         if anchor >= self.input.len() {
@@ -815,7 +829,7 @@ where
         }
 
         self.with_scan_scratch(|session, scratch| {
-            session.scan_window_with_scratch(anchor, out, gate, abort_on_unreadable, scratch)
+            session.scan_window_with_scratch(anchor, out, gate, abort_on_rank, scratch)
         })
     }
 
@@ -844,7 +858,7 @@ where
         anchor: usize,
         out: &mut Vec<Candidate>,
         gate: bool,
-        abort_on_unreadable: bool,
+        abort_on_rank: bool,
         scratch: &mut Scratch,
     ) -> Result<(), EngineError> {
         let Scratch {
@@ -872,7 +886,7 @@ where
         // row per candidate is Gate 3.
         let gram = self.dynamic_adjust_gram(anchor, gate)?;
         {
-            let mut unreadable = crate::engine::candidate::UnreadableCandidates::default();
+            let mut unreadable = 0;
             let mut scratch = ScanScratch {
                 unreadable: &mut unreadable,
                 path,
@@ -882,16 +896,8 @@ where
                 explicit: gate,
             };
             self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
-            // Aborting here, right after collection, is the pin's ranking
-            // assert (`pinyin.cpp:1845-1859`, `zhuyin.cpp:1247-1261`) with
-            // nothing observable skipped. Before the assert, each row's
-            // dynamic-adjust reads are `get_total_freq`/`get_freq` on the
-            // in-memory merged SingleGram: no I/O, and no observable
-            // failure. The merged-gram load, the only I/O, ran before the
-            // loop and ran above, before this abort. The only other
-            // writes are each row's `m_freq`, which the abort discards.
-            if abort_on_unreadable && unreadable.count != 0 {
-                std::process::abort();
+            if abort_on_rank && unreadable != 0 {
+                return abort_unreadable_ranking(gram.as_ref());
             }
             self.scan_unreadable = unreadable;
         }
@@ -912,6 +918,7 @@ where
             collected,
             gram.as_ref().map(|(prev, row)| (*prev, row)),
             gate,
+            abort_on_rank,
             frequencies,
         )?;
         // `Session::rank_word`: the sort word, or libzhuyin's fixed
@@ -1019,9 +1026,8 @@ where
         self.candidates_at_for_abi(offset, false)
     }
 
-    // The ranking path handles unreadable rows at pinyin.cpp:1845–1859.
     /// Builds the candidate window starting at a byte offset in the current input. The facade
-    /// supplies `abort_on_unreadable` when ranking requires a readable item at this offset.
+    /// supplies `abort_on_rank` when the facade unigram total is zero at this offset.
     ///
     /// # Errors
     ///
@@ -1030,12 +1036,12 @@ where
     ///
     /// # Aborts
     ///
-    /// When `abort_on_unreadable` is `true`, an unreadable candidate row met during the scan
-    /// aborts the process. With `false`, that abort branch is off.
+    /// When `abort_on_rank` is `true`, ranking any searched phrase row aborts,
+    /// including a row with an unreadable item.
     pub fn candidates_at_for_abi(
         &mut self,
         offset: usize,
-        abort_on_unreadable: bool,
+        abort_on_rank: bool,
     ) -> Result<CandidateList, EngineError> {
         if offset > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
@@ -1065,7 +1071,7 @@ where
                 session.prepend_nbest_rows(items);
                 return Ok(());
             }
-            session.scan_window(offset, items, true, abort_on_unreadable)?;
+            session.scan_window(offset, items, true, abort_on_rank)?;
             Ok(())
         })
     }
@@ -1074,7 +1080,7 @@ where
         &mut self,
         build: impl FnOnce(&mut Self, &mut Vec<Candidate>) -> Result<(), EngineError>,
     ) -> Result<CandidateList, EngineError> {
-        self.scan_unreadable = Default::default();
+        self.scan_unreadable = 0;
         self.scan_ranked_phrase = false;
         let mut items = core::mem::take(&mut self.scratch.window_items);
         if let Err(error) = build(self, &mut items) {
@@ -1083,7 +1089,7 @@ where
             return Err(error);
         }
         Ok(CandidateList::from_vec(items)
-            .with_unreadable_item(self.scan_unreadable)
+            .with_unreadable_count(self.scan_unreadable)
             .with_ranked_phrase_row(self.scan_ranked_phrase))
     }
 
@@ -1124,9 +1130,8 @@ where
         self.candidates_ending_at_for_abi(offset, false)
     }
 
-    // The before-cursor ranking path handles unreadable rows at zhuyin.cpp:1247–1261.
     /// Builds the candidate window ending at a byte offset in the current input. The facade
-    /// supplies `abort_on_unreadable` when ranking requires a readable item at this offset.
+    /// supplies `abort_on_rank` when the facade unigram total is zero at this offset.
     ///
     /// # Errors
     ///
@@ -1135,12 +1140,12 @@ where
     ///
     /// # Aborts
     ///
-    /// When `abort_on_unreadable` is `true`, an unreadable candidate row met during the scan
-    /// aborts the process. With `false`, that abort branch is off.
+    /// When `abort_on_rank` is `true`, ranking any searched phrase row aborts,
+    /// including a row with an unreadable item.
     pub fn candidates_ending_at_for_abi(
         &mut self,
         offset: usize,
-        abort_on_unreadable: bool,
+        abort_on_rank: bool,
     ) -> Result<CandidateList, EngineError> {
         if offset > self.input.len() {
             return Err(EngineError::LookupOffsetOutOfRange {
@@ -1160,7 +1165,7 @@ where
                 session.prepend_nbest_rows(items);
                 return Ok(());
             }
-            session.scan_window_ending(offset, items, abort_on_unreadable)?;
+            session.scan_window_ending(offset, items, abort_on_rank)?;
             Ok(())
         })
     }
@@ -1179,11 +1184,11 @@ where
         &mut self,
         offset: usize,
         out: &mut Vec<Candidate>,
-        abort_on_unreadable: bool,
+        abort_on_rank: bool,
     ) -> Result<usize, EngineError> {
         out.clear();
         self.with_scan_scratch(|session, scratch| {
-            session.scan_window_ending_with_scratch(offset, out, abort_on_unreadable, scratch)
+            session.scan_window_ending_with_scratch(offset, out, abort_on_rank, scratch)
         })
     }
 
@@ -1191,7 +1196,7 @@ where
         &mut self,
         offset: usize,
         out: &mut Vec<Candidate>,
-        abort_on_unreadable: bool,
+        abort_on_rank: bool,
         scratch: &mut Scratch,
     ) -> Result<usize, EngineError> {
         let rank_word = self.rank_word();
@@ -1212,7 +1217,7 @@ where
         // `rank_keys[i].0` is `out[i]`'s key: each slice appends its rows'
         // keys as it appends the rows.
         rank_keys.clear();
-        let mut unreadable = crate::engine::candidate::UnreadableCandidates::default();
+        let mut unreadable = 0;
         let mut ranked_phrase = false;
 
         for start in 0..bound {
@@ -1230,11 +1235,10 @@ where
                 continue;
             }
             let mut continued = false;
-            let prior_unreadable = unreadable.count;
+            let prior_unreadable = unreadable;
             group.clear();
             {
                 let mut buf = ScanBuf {
-                    span_start: start,
                     span_base: 0,
                     path,
                     tones: SmallVec::new(),
@@ -1250,8 +1254,8 @@ where
                 };
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
             }
-            if abort_on_unreadable && unreadable.count != prior_unreadable {
-                std::process::abort();
+            if abort_on_rank && unreadable != prior_unreadable {
+                abort_unreadable_ranking(gram.as_ref())?;
             }
             order_window_tail(&mut group, 0);
             flush_window_batch(window_addon, &mut group);
@@ -1275,6 +1279,7 @@ where
                 &group,
                 gram.as_ref().map(|(prev, row)| (*prev, row)),
                 true,
+                abort_on_rank,
                 frequencies,
             )?;
             let slice_start = rank_keys.len();

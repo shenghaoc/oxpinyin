@@ -350,7 +350,7 @@ pub(crate) struct GuessFrame {
     pub(crate) sentence_rows_only: bool,
     /// The facade total is zero and the lookup searches: ranking a searched
     /// row aborts (register row 61).
-    pub(crate) abort_on_unreadable: bool,
+    pub(crate) abort_on_rank: bool,
 }
 
 impl GuessFrame {
@@ -390,12 +390,12 @@ impl GuessFrame {
         } else {
             false
         };
-        let abort_on_unreadable = !sentence_rows_only && facade_total_is_zero(&inst.read());
+        let abort_on_rank = !sentence_rows_only && facade_total_is_zero(&inst.read());
         Self {
             offset,
             session_offset,
             sentence_rows_only,
-            abort_on_unreadable,
+            abort_on_rank,
         }
     }
 }
@@ -410,7 +410,7 @@ fn lookup_window(
     let window = match inst
         .core
         .session
-        .candidates_at_for_abi(frame.session_offset, frame.abort_on_unreadable)
+        .candidates_at_for_abi(frame.session_offset, frame.abort_on_rank)
     {
         Ok(window) => window,
         // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
@@ -468,19 +468,6 @@ fn lookup_window(
             return None;
         }
     };
-    // Register row 61, `pinyin.cpp:1859`: `assert (0 < total_freq)` while
-    // ranking a searched row, with the facade total wrapped to zero by
-    // `pinyin_token_add_unigram_frequency`. `_compute_frequency_of_items`
-    // runs on the freshly searched rows (`:2283`), before the sort, the
-    // LONGER and sentence prepends and the phrase-string dedup (`:2300`), and
-    // skips addon rows, which it scores against the addon total
-    // (`:1828-1840`); the engine reports whether that list held such a row,
-    // so a row the dedup removes still counts. A lookup strictly inside a
-    // key searches nothing at the pin. The process aborts there, before the
-    // phrase strings are read.
-    if frame.abort_on_unreadable && window.ranked_phrase_row() {
-        std::process::abort();
-    }
     Some(window)
 }
 

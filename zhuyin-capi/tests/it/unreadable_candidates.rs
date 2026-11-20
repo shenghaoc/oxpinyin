@@ -10,9 +10,8 @@ use std::ffi::CString;
 use std::ptr;
 
 use oxzhuyin_capi::{
-    zhuyin_choose_candidate, zhuyin_fini, zhuyin_get_candidate, zhuyin_get_candidate_string,
-    zhuyin_get_n_candidate, zhuyin_guess_candidates_after_cursor,
-    zhuyin_guess_candidates_before_cursor, zhuyin_init,
+    zhuyin_fini, zhuyin_get_candidate, zhuyin_get_candidate_string, zhuyin_get_n_candidate,
+    zhuyin_guess_candidates_after_cursor, zhuyin_guess_candidates_before_cursor, zhuyin_init,
 };
 
 use crate::support::{zhuyin_alloc_instance, zhuyin_free_instance, zhuyin_parse_more_chewings};
@@ -37,13 +36,7 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
     }
     let mut count = 0;
     assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
-    assert_eq!(
-        count,
-        u32::from(matches!(
-            case,
-            fixture::Case::Single | fixture::Case::Fallback | fixture::Case::Mixed
-        ))
-    );
+    assert_eq!(count, u32::from(matches!(case, fixture::Case::Mixed)));
     if count == 1 {
         let mut row = ptr::null_mut();
         assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
@@ -56,15 +49,7 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
         assert_eq!(row_type as i32, if before_cursor { 3 } else { 2 });
         let mut string = c"sentinel".as_ptr();
         assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut string) });
-        if matches!(case, fixture::Case::Mixed) {
-            assert!(!string.is_null());
-        } else {
-            assert!(string.is_null());
-            assert_eq!(
-                unsafe { zhuyin_choose_candidate(instance, 0, row) },
-                if before_cursor { 0 } else { 3 }
-            );
-        }
+        assert!(!string.is_null());
     }
     unsafe { zhuyin_free_instance(instance.cast()) };
     unsafe { zhuyin_fini(context) };
@@ -76,16 +61,9 @@ mod chunk_fixture;
 #[path = "../../../tests/support/unreadable_fixture.rs"]
 mod fixture;
 
-/// A journal REMOVE of a system item leaves a sole row with a NULL string
-/// on both cursor paths. The REMOVE clears the item and leaves the pinyin
-/// index (`phrase_index.cpp:460-475`, `:219-236`), so the search still
-/// answers the token. The facade total stays positive, 1000 - 100, so the
-/// ranking does not assert (`zhuyin.cpp:1257-1261`). The string pass ignores
-/// the failed read (`:1096-1104`) and one row is compared with nothing, so
-/// the row is listed with the NULL string it starts with (`:1537`, `:1630`).
-/// Without the log the row reads 甲.
+/// POLICY-ACCEPTED (row 106): both cursor paths omit an item removed by a journal.
 #[test]
-fn a_journal_remove_leaves_a_sole_null_row_on_both_cursor_paths() {
+fn a_journal_remove_omits_the_row_on_both_cursor_paths() {
     use crate::support::{
         init_on, libraries_system, modify_header, plant_log, system_dir, zhuyin_get_candidate_type,
         zhuyin_parse_more_full_pinyins,
@@ -142,7 +120,16 @@ fn a_journal_remove_leaves_a_sole_null_row_on_both_cursor_paths() {
             }
             let mut count = 0;
             assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
-            assert_eq!(count, 1, "removed {removed}, before {before_cursor}");
+            assert_eq!(
+                count,
+                u32::from(!removed),
+                "removed {removed}, before {before_cursor}"
+            );
+            if removed {
+                unsafe { zhuyin_free_instance(instance) };
+                unsafe { zhuyin_fini(context) };
+                continue;
+            }
             let mut row = ptr::null_mut();
             assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
             let mut row_type = std::mem::MaybeUninit::uninit();
@@ -152,30 +139,27 @@ fn a_journal_remove_leaves_a_sole_null_row_on_both_cursor_paths() {
             assert_eq!(row_type as i32, if before_cursor { 3 } else { 2 });
             let mut string = c"sentinel".as_ptr();
             assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut string) });
-            // SAFETY: a non-NULL answer is the row's own NUL-terminated string.
-            let text = (!string.is_null()).then(|| {
-                unsafe { std::ffi::CStr::from_ptr(string) }
-                    .to_str()
-                    .unwrap()
-            });
-            assert_eq!(
-                text,
-                (!removed).then_some("甲"),
-                "removed {removed}, before {before_cursor}"
-            );
+            assert!(!string.is_null());
+            // SAFETY: the successful getter wrote a live, NUL-terminated string.
+            let text = unsafe { std::ffi::CStr::from_ptr(string) }
+                .to_str()
+                .unwrap();
+            assert_eq!(text, "甲");
             unsafe { zhuyin_free_instance(instance) };
             unsafe { zhuyin_fini(context) };
         }
     }
 }
 
+/// POLICY-ACCEPTED (row 106).
 #[test]
-fn a_sole_unreadable_after_cursor_row_has_a_null_string() {
+fn a_sole_unreadable_after_cursor_row_is_omitted() {
     check_row(fixture::Case::Single, false);
 }
 
+/// POLICY-ACCEPTED (row 106).
 #[test]
-fn a_sole_unreadable_before_cursor_row_has_a_null_string() {
+fn a_sole_unreadable_before_cursor_row_is_omitted() {
     check_row(fixture::Case::Single, true);
 }
 
@@ -212,8 +196,9 @@ fn zero_total_aborts_before_cursor() {
 }
 
 use crate::support::zhuyin_unload_phrase_library;
+/// POLICY-ACCEPTED (row 106).
 #[test]
-fn a_sole_unreadable_row_survives_the_user_table_fallback() {
+fn a_sole_unreadable_row_is_omitted_after_the_user_table_fallback() {
     check_row(fixture::Case::Fallback, false);
 }
 
@@ -229,7 +214,7 @@ fn a_sole_unreadable_row_survives_the_user_table_fallback() {
 /// is never read.
 #[test]
 fn a_library_mask_does_not_read_extension_rows() {
-    for (unload, expected) in [(false, 1), (true, 0)] {
+    for unload in [false, true] {
         let (system, user) = fixture::dirs(fixture::Case::MaskedExtension);
         let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
         let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
@@ -254,14 +239,7 @@ fn a_library_mask_does_not_read_extension_rows() {
         );
         let mut count = u32::MAX;
         assert!(unsafe { zhuyin_get_n_candidate(instance, &raw mut count) });
-        assert_eq!(count, expected, "unload {unload}");
-        if count == 1 {
-            let mut row = ptr::null_mut();
-            assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
-            let mut string = c"sentinel".as_ptr();
-            assert!(unsafe { zhuyin_get_candidate_string(instance, row, &raw mut string) });
-            assert!(string.is_null());
-        }
+        assert_eq!(count, 0, "unload {unload}");
         // SAFETY: the C API instance is live and freed exactly once.
         unsafe { zhuyin_free_instance(instance.cast()) };
         unsafe { zhuyin_fini(context) };
