@@ -88,26 +88,34 @@ pub(crate) fn read_chunk_payload(bytes: &[u8]) -> Result<&[u8], ChunkReadError> 
 /// # Errors
 /// Returns an I/O error or an invalid-data error on a failed chunk load.
 pub(crate) fn load_chunk_payload(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    match try_load_chunk_payload(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(ChunkPayloadError::Load(error)) => Err(error),
+        Err(ChunkPayloadError::HeaderRead) => std::process::abort(),
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum ChunkPayloadError {
+    Load(std::io::Error),
+    HeaderRead,
+}
+
+/// The mask walk must replay earlier libraries before acting on a failed
+/// header read (`pinyin.cpp:1281-1285`, `memory_chunk.h:434-438`).
+pub(crate) fn try_load_chunk_payload(path: &std::path::Path) -> Result<Vec<u8>, ChunkPayloadError> {
     use crate::input::chunk::{ChunkLoadError, load};
-    let chunk = match load(path) {
-        Ok(chunk) => chunk,
-        Err(ChunkLoadError::Io(error)) => return Err(error),
-        Err(ChunkLoadError::ShortHeader) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                ChunkReadError::ShortHeader,
-            ));
-        }
-        // The pin asserts on either header word, including an interrupted
-        // read. Its assert is reproduced as a process abort.
-        Err(ChunkLoadError::Header) => std::process::abort(),
+    let invalid = |reason| {
+        ChunkPayloadError::Load(std::io::Error::new(std::io::ErrorKind::InvalidData, reason))
     };
-    chunk.finish(chunk_checksum).ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            ChunkReadError::ChecksumMismatch,
-        )
-    })
+    let chunk = load(path).map_err(|error| match error {
+        ChunkLoadError::Io(error) => ChunkPayloadError::Load(error),
+        ChunkLoadError::ShortHeader => invalid(ChunkReadError::ShortHeader),
+        ChunkLoadError::Header => ChunkPayloadError::HeaderRead,
+    })?;
+    chunk
+        .finish(chunk_checksum)
+        .ok_or_else(|| invalid(ChunkReadError::ChecksumMismatch))
 }
 
 /// One of the three DBM files of a user directory.

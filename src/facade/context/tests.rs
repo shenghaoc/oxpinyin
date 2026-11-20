@@ -1241,6 +1241,44 @@ mod native {
         [modify_header(0, 1, 1), modify_header(0, 1, 2)].concat()
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn mask_out_replays_the_saved_library_before_a_later_log_header_stop() {
+        let token = 0x0100_1225;
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let user = TempUserDir::new("mask-log-header");
+            write_user_conf(&user.path, &system_dir());
+            let mut context = native_context(&system_dir(), &user.path, law);
+            let original = unigram(&context, token).unwrap();
+            assert!(
+                context
+                    .user_store_mut()
+                    .add_system_unigram_frequency(token, 7)
+            );
+            context.user_store_mut().mark_modified();
+            assert_eq!(context.save_user(), SaveOutcome::Saved);
+            assert!(
+                context
+                    .user_store_mut()
+                    .add_system_unigram_frequency(token, 11)
+            );
+            assert_eq!(unigram(&context, token), Some(original + 18));
+
+            let header_stop = directory_library(&user.path, "gbk_char.dbin");
+            // Keep the odd slot in library 1. Library 2 is excluded, but its log is read.
+            let result = context.mask_out(0x0f00_0001, 0x0100_0000);
+            assert_eq!(
+                result,
+                if header_stop {
+                    MaskOutOutcome::ChunkHeaderRead
+                } else {
+                    MaskOutOutcome::Done(true)
+                }
+            );
+            assert_eq!(unigram(&context, token), Some(original + 7), "{law:?}");
+        }
+    }
+
     #[test]
     fn mask_out_skips_the_log_of_an_unloaded_library() {
         let user = TempUserDir::new("mask-unloaded-log");

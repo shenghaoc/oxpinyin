@@ -10,18 +10,11 @@ use crate::engine::SessionSettings;
 use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
 };
+use crate::user::persistence::MaskStop;
 use crate::user::{
     ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
 };
 use crate::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
-
-/// Where `mask_out`'s remap walk ended before it finished.
-enum MaskStop {
-    /// A library's saved log reached a header assertion (rows 91, 92).
-    Journal(JournalFault),
-    /// A library is a directory the pin asserts on (row 96).
-    Directory,
-}
 
 /// The `mask_out` answer for a fault of the user tables.
 fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
@@ -632,8 +625,8 @@ impl ContextCore {
             while let Some(step) = runtime.remap_next(&mut remap) {
                 match step {
                     RemapStep::Mapped(index) => {
-                        if let Some(fault) = store.read_mask_log(&mut logs, index, mask, value) {
-                            stop = Some(MaskStop::Journal(fault));
+                        stop = store.read_mask_log(&mut logs, index, mask, value);
+                        if stop.is_some() {
                             break;
                         }
                     }

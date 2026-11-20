@@ -32,8 +32,9 @@ use crate::data::table_info::FileName;
 #[cfg(test)]
 use crate::data::user_files::read_chunk_payload;
 use crate::data::user_files::{
-    LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout,
-    UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
+    ChunkPayloadError, LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm,
+    UserFileLayout, UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload,
+    log_records, try_load_chunk_payload,
 };
 use crate::input::path::{build_path, rename, unlink};
 use crate::store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
@@ -1536,6 +1537,14 @@ pub(crate) fn load_masked_logs_live(
     Ok((replayed, loaded.library_totals))
 }
 
+/// The first stop found by the mask walk, after the preceding libraries replay.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum MaskStop {
+    Journal(JournalFault),
+    /// A failed header read from the system chunk or its saved log.
+    Directory,
+}
+
 /// The validated payloads (or failed loads) `mask_out`'s walk already read,
 /// by sub-index, so replay consumes the result of that one read. A library absent
 /// here is read when the replay reaches it.
@@ -1545,7 +1554,7 @@ pub(crate) fn load_masked_logs_live(
 /// library slots (sub-index 0 is never remapped), one `Vec` each. The pin
 /// holds the same bytes, one library at a time, in `MemoryChunk::load`.
 #[derive(Default)]
-pub struct MaskLogs(crate::user::LibraryTable<std::io::Result<Vec<u8>>>);
+pub struct MaskLogs(crate::user::LibraryTable<Result<Vec<u8>, ChunkPayloadError>>);
 
 /// Read library `nibble`'s saved log once into `logs` and return the header
 /// fault `merge_with_mask` reaches in it, without touching any state:
@@ -1554,7 +1563,7 @@ pub struct MaskLogs(crate::user::LibraryTable<std::io::Result<Vec<u8>>>);
 /// unigram. `None` includes a successfully loaded library excluded by the
 /// mask (its records are not parsed), an absent or unreadable log, a log with
 /// no header, and merge faults that need the library's content. A failed chunk
-/// header read aborts during the load, including for an excluded library.
+/// header read stops the walk, including for an excluded library.
 pub(crate) fn read_mask_log(
     dir: &Path,
     layout: &UserFileLayout,
@@ -1562,17 +1571,17 @@ pub(crate) fn read_mask_log(
     nibble: u8,
     mask: u32,
     value: u32,
-) -> Option<JournalFault> {
+) -> Option<MaskStop> {
     let (_, file) = layout.system_logs().iter().find(|(n, _)| *n == nibble)?;
-    let read = load_chunk_payload(&build_path(dir, file.as_ref()));
+    let read = try_load_chunk_payload(&build_path(dir, file.as_ref()));
     let selected = (nibble & crate::phrase_index_library_index(mask))
         == crate::phrase_index_library_index(value);
-    let fault = if selected {
-        read.as_ref()
-            .ok()
-            .and_then(|payload| masked_log(payload, mask, value, nibble).err())
-    } else {
-        None
+    let fault = match &read {
+        Err(ChunkPayloadError::HeaderRead) => Some(MaskStop::Directory),
+        Ok(payload) if selected => masked_log(payload, mask, value, nibble)
+            .err()
+            .map(MaskStop::Journal),
+        Ok(_) | Err(ChunkPayloadError::Load(_)) => None,
     };
     logs.0.insert(nibble, read);
     fault
@@ -1619,11 +1628,15 @@ fn read_log_payload(
 ) -> Option<Vec<u8>> {
     let read = preread
         .and_then(|logs| logs.0.remove(&nibble))
-        .unwrap_or_else(|| load_chunk_payload(&build_path(dir, file.as_ref())));
+        .unwrap_or_else(|| {
+            load_chunk_payload(&build_path(dir, file.as_ref())).map_err(ChunkPayloadError::Load)
+        });
     match read {
         Ok(bytes) => Some(bytes),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => {
+        // The walk recorded the stop. This library has no log to merge.
+        Err(ChunkPayloadError::HeaderRead) => None,
+        Err(ChunkPayloadError::Load(e)) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(ChunkPayloadError::Load(e)) => {
             let name = file.display();
             record_skip(&mut loaded.skip_notes(), format_args!("{name}: {e}"));
             None
