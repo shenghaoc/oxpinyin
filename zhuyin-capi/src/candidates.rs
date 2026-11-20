@@ -364,23 +364,6 @@ fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
     }
 }
 
-/// The sole unreadable row of the window, which is published with null
-/// text: only when the lookup searched, every row is the engine's fallback
-/// row, and the facade total is not zero.
-fn sole_unreadable_row(
-    inst: &crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin::engine::CandidateList,
-    sentence_rows_only: bool,
-) -> Option<oxpinyin::engine::Candidate> {
-    window.sole_unreadable_candidate().filter(|_| {
-        !sentence_rows_only
-            && window
-                .iter()
-                .all(|row| row.kind() == oxpinyin::engine::CandidateKind::Fallback)
-            && !crate::sentence::facade_total_is_zero(&inst.read())
-    })
-}
-
 /// Fill the instance's candidate snapshot from a `CandidateList`.
 ///
 /// `before_cursor` selects the zhuyin enum tag for the normal rows. When
@@ -424,12 +407,7 @@ pub fn snapshot_candidates(
             .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
-    let unreadable = sole_unreadable_row(inst, window, sentence_rows_only);
-    for (cand, missing) in window
-        .iter()
-        .map(|row| (row, false))
-        .chain(unreadable.iter().map(|row| (row, true)))
-    {
+    for cand in window {
         // The rows keep the window's order, so a BEST_MATCH row stays at the head.
         if cand.kind() == CandidateKind::Fallback {
             continue;
@@ -459,14 +437,9 @@ pub fn snapshot_candidates(
             span_begin_session
         };
         let span_end = original_end(anchor.saturating_add(cand.consumed_bytes()));
-        let text = if missing {
-            oxpinyin::facade::TextSpan::NULL
-        } else {
-            let bytes = phrase_text_bytes(cand.text());
-            let Some(text) = inst.state.candidates.intern(&bytes) else {
-                continue;
-            };
-            text
+        let bytes = phrase_text_bytes(cand.text());
+        let Some(text) = inst.state.candidates.intern(&bytes) else {
+            continue;
         };
         if cand.text().outward_bytes().is_none() {
             inst.state.candidates.keep_stored_text(cand.text().clone());

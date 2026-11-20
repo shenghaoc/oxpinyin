@@ -24,7 +24,7 @@ pub use oxpinyin::facade::ExportedBigramRow;
 pub use oxpinyin::facade::InstanceCore;
 use oxpinyin::facade::{CandidateSnapshot, SnapshotRow, TextSpan};
 use oxpinyin::facade::{ContextCore, OpenFailure};
-pub use oxpinyin::runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
+pub use oxpinyin::runtime::RuntimeDict as SharedDict;
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 

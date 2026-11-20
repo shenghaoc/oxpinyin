@@ -22,15 +22,14 @@ use crate::types::PinyinInstance;
 ///
 /// Remember the phrase for each matching path through the current parse. A count of -1 selects
 /// the default of 5; other counts are interpreted as unsigned. Returns true if at least one path
-/// was added or merged, not all of them. Invalid phrase length, missing tokens, no matching path,
-/// or a store refusal returns false. A later failure can return false after earlier paths were
-/// already stored, so neither result promises an all-or-nothing update. The live change requires
-/// a separately armed save.
+/// was added or merged. Invalid phrase length, missing tokens, no matching path or a store
+/// refusal returns false. A later failure can return false after earlier paths were already
+/// stored. The live change requires a separately armed save.
 ///
 /// # Aborts
 ///
-/// After all phrase characters resolve, an empty key matrix aborts. A character resolving to
-/// more than four tokens also aborts. After a complete matching path, a whole phrase resolving to
+/// An empty key matrix aborts after all phrase characters resolve. A character resolving to
+/// more than four tokens aborts. After a complete matching path, a whole phrase resolving to
 /// more than four tokens aborts.
 ///
 /// # Safety
@@ -81,17 +80,11 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
             Some(&token) => tokens.push(token),
         }
     }
-    // `_remember_phrase_recur` starts with `end = matrix.size() - 1`, which
-    // wraps for an empty matrix (a fresh instance, or a parse that placed no
-    // key); `get_column_size(0)` then asserts
-    // (`phonetic_key_matrix.h:102`, register row 66).
     let Some(columns) = inst.core.matrix_columns() else {
-        std::process::abort()
+        std::process::abort();
     };
-    // The walk alternates dictionary reads with the store writes of
-    // `_add_phrase`, so each call re-derives its own borrow and ends it
-    // before returning; `inst` is not used again.
     let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
+    // Each callback borrows the context for its own dictionary read or store write.
     let mut pronounces = |key: MatrixKey, index: usize| -> Result<bool, EngineError> {
         // SAFETY: `instance` is live; no other borrow of it is held while
         // this closure runs, and the C caller serializes the call.

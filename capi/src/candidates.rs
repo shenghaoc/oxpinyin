@@ -383,22 +383,6 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
     }
 }
 
-/// The sole unreadable row of the window, which is published with null
-/// text: only when the lookup searched, every row is the engine's fallback
-/// row, and the facade total is not zero.
-fn sole_unreadable_row(
-    window: &oxpinyin::engine::CandidateList,
-    frame: &crate::sentence::GuessFrame,
-) -> Option<oxpinyin::engine::Candidate> {
-    window.sole_unreadable_candidate().filter(|_| {
-        !frame.sentence_rows_only
-            && window
-                .iter()
-                .all(|row| row.kind() == oxpinyin::engine::CandidateKind::Fallback)
-            && !frame.abort_on_unreadable
-    })
-}
-
 /// The published type of a window row; `is_longer` names the LONGER row.
 fn row_type(cand: &oxpinyin::engine::Candidate, is_longer: bool) -> lookup_candidate_type_t {
     match cand.kind() {
@@ -436,13 +420,8 @@ pub(crate) fn snapshot_candidates(
             .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
-    let unreadable = sole_unreadable_row(window, frame);
     let published_bound = inst.core.publication_bound_mapper(true);
-    for (cand, missing) in window
-        .iter()
-        .map(|row| (row, false))
-        .chain(unreadable.iter().map(|row| (row, true)))
-    {
+    for cand in window {
         // The engine's remaining-raw-input `Fallback` row is the
         // session-API affordance (`session-api.md`: it keeps `select`
         // meaningful when no phrase is found) —
@@ -473,14 +452,9 @@ pub(crate) fn snapshot_candidates(
         {
             continue;
         }
-        let text = if missing {
-            oxpinyin::facade::TextSpan::NULL
-        } else {
-            let bytes = phrase_text_bytes(cand.text());
-            let Some(text) = inst.state.candidates.intern(&bytes) else {
-                continue;
-            };
-            text
+        let bytes = phrase_text_bytes(cand.text());
+        let Some(text) = inst.state.candidates.intern(&bytes) else {
+            continue;
         };
         // The pin's `m_begin` and `m_end`: `m_begin` is the caller's guess
         // offset itself (`start = offset`, `pinyin.cpp:2228`, `:2246`), and
@@ -520,17 +494,8 @@ fn choose_phrase_row(
     token: Option<PhraseToken>,
     text: oxpinyin::engine::RowText,
 ) -> c_int {
-    // A row with no token reaching the normal branch is a predicted
-    // punctuation row, at `m_begin = m_end = 0` (`pinyin.cpp:114`). The pin
-    // writes `add_constraint(0, 0, null_token)` between its two validations
-    // and answers `offset + 0` (`:2577-2590`; `phonetic_lookup.cpp:61-86`):
-    // a zero-length null-token cell at 0 that blocks every later sentence
-    // decode until a reset clears it or a later non-empty forcing at 0
-    // overwrites it. After a reset the write lands in the empty array's
-    // terminator slot and changes nothing observable (GLib 2.84.4
-    // `garray.c:349-354`, `:1051-1079`).
     let Some(token) = token else {
-        return match inst.core.choose_null_step() {
+        return match inst.core.choose_tokenless() {
             Ok(()) => choose_answer(offset, 0),
             Err(_) => -1,
         };
@@ -583,6 +548,8 @@ fn choose_phrase_row(
 /// A predicted bigram or prefix row aborts. Choosing an n-best row aborts if its required result is absent or a
 /// differing constraint span cannot be applied. A nonzero offset aborts when the selection
 /// reaches the unigram-only path with sentence candidates disabled.
+///
+/// A phrase write aborts if clearing its span reaches a continuation whose head is gone.
 ///
 /// # Safety
 ///
@@ -779,9 +746,7 @@ fn unigram_leg_answer(outcome: UnigramAdd) -> c_int {
 ///
 /// # Aborts
 ///
-/// Choosing a row without a token writes an empty constraint at offset 0 over the constraint that
-/// started there, and the rest of that span still points at 0. If a later constraint at 0 is then
-/// cleared, a clear at a position left in that span aborts.
+/// The offset reaches a continuation whose head is gone.
 ///
 /// # Safety
 ///
@@ -926,7 +891,7 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
     // view ends before either exclusive context borrow below.
     let inst = unsafe { instance_ref(instance) };
     // A prefix row whose item the receiver lacks is still selectable. The
-    // pin advances the loaded facade's total by 483 (wrapping) and ignores
+    // pin advances the loaded facade's total by 483 and ignores
     // the failing sub-index write; the prefix branch then answers true
     // without a bigram (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`;
     // #1231 ruling). The receiver decides, not the row's display string.

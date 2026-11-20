@@ -72,9 +72,8 @@ pub(crate) fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]
 
 /// Why a runtime could not be opened.
 ///
-/// A missing or irregular system DBM file is not an error here: the pin
-/// keeps the failed native object and initializes (pinyin.cpp:357,369,396
-/// at 074a2219), and so does the runtime on every backend.
+/// A missing or irregular system DBM file leaves an empty table.
+/// Initialization continues (`pinyin.cpp:357,369,396` at 074a2219).
 #[derive(Debug)]
 pub enum OpenError {
     /// A required path exists but could not be read.
@@ -361,7 +360,7 @@ impl<'a> RuntimeDict<'a> {
                 }
                 let text = self.token_text(token);
                 if text.is_none() {
-                    unreadable.push(token);
+                    unreadable.count += 1;
                 }
                 text
             });
@@ -1471,9 +1470,8 @@ impl Runtime {
     pub fn finish(&mut self) {
         // pinyin.cpp:1200 writes the marker before deleting the tables.
         self.user.finish();
-        // pinyin.cpp:1205-1215 and zhuyin.cpp:744-748: the open files and
-        // the failed objects are closed in the pin's member order on every
-        // backend; a second finish finds them gone.
+        // Close open files in member order (pinyin.cpp:1205-1215 and
+        // zhuyin.cpp:744-748). A second finish finds them closed.
         self.system.finish_attachments();
         self.model.finish_attachment();
         self.addons.borrow_mut().dict.finish_attachments();
@@ -1490,7 +1488,7 @@ impl Runtime {
             && self.punct.attachment_finished()
     }
 
-    /// Whether the main pinyin index is a retained failed attachment.
+    /// Whether the main pinyin index failed to open.
     #[cfg(test)]
     #[must_use]
     pub fn pinyin_attachment_failed(&self) -> bool {

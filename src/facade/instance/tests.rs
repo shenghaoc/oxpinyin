@@ -198,39 +198,6 @@ mod native {
     }
 
     #[test]
-    fn a_choose_at_zero_after_a_null_step_brings_the_sentence_back() {
-        let first = |context: &ContextCore, instance: &mut InstanceCore| {
-            assert!(
-                native_window(context, instance, 0)
-                    .iter()
-                    .all(|row| row.kind() != CandidateKind::Sentence)
-            );
-            let row = published(context, instance, 0, "你");
-            assert_eq!(row.end, 2);
-            assert_ne!(choose(context, instance, &row), Selection::Refused);
-            assert!(guess(context, instance));
-            sentence(context, instance, 0)
-        };
-        let (plain_context, mut plain) = pinyin_instance();
-        assert_eq!(
-            plain.bind(&plain_context.runtime).parse_full_more("nihao"),
-            5
-        );
-        let expected = first(&plain_context, &mut plain);
-        assert_eq!(expected.as_deref(), Some("你好"));
-        let (context, mut instance) = pinyin_instance();
-        assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
-        instance
-            .bind(&context.runtime)
-            .session
-            .choose_null_step()
-            .unwrap();
-        assert!(guess(&context, &mut instance));
-        assert_eq!(sentence(&context, &instance, 0), None);
-        assert_eq!(first(&context, &mut instance), expected);
-    }
-
-    #[test]
     fn a_new_sentence_lookup_trains_a_forcing() {
         let user = TempUserDir::new("train-restep");
         let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);

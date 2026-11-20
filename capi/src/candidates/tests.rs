@@ -154,36 +154,16 @@ fn removing_a_user_candidate_keeps_the_instance_owner(#[values(false, true)] fin
     }
 }
 
-/// `pinyin_choose_candidate` on a predicted punctuation row, which carries
-/// the pin's default `m_begin = m_end = 0` and `m_token = null_token`
-/// (`pinyin.cpp:114`), in the three states the pin defines:
-///
-/// - While composing, the normal branch writes `add_constraint(0, 0,
-///   null_token)` between its two validations and answers `0 + 0`
-///   (`pinyin.cpp:2577-2590`). The write is a zero-length null-token
-///   ONESTEP at 0 that clearing and validation leave in place: `clear_constraint`
-///   walks `[0, 0)` and answers `true` (`phonetic_lookup.cpp:61-86`,
-///   `:88-118`). Every later decode stops at 0 (`search_matrix` over
-///   `[0, 0)` is no `SEARCH_OK`, `phonetic_lookup.h:776-790`), so a guess
-///   answers `true` with no results, `pinyin_get_sentence` answers `false`
-///   (`pinyin.cpp:1470`) and `pinyin_train` answers `false` (`:2678`).
-/// - After `pinyin_reset`, the same write lands in the empty array's
-///   terminator slot, which GLib allocates for a zero-terminated array
-///   (2.84.4 `garray.c:349-354`, `:1051-1079`) and zeroes again before any
-///   read, and the choose answers 0.
-/// - Under `SORT_WITHOUT_SENTENCE_CANDIDATE`, `add_unigram_frequency` of the
-///   null token meets the reserved library 0's missing sub-index
-///   (`phrase_index.h:628-635`) and the choose answers 1 (`pinyin.cpp:2565-2575`).
+/// POLICY-ACCEPTED: a punctuation row leaves the composition's constraints intact.
 #[rstest::rstest]
-#[case::composing(crate::test_support::DEFAULT_SORT, false, 0, None, true)]
-#[case::after_reset(crate::test_support::DEFAULT_SORT, true, 0, None, false)]
-#[case::sort_without_sentence(0x1, false, 1, Some("你好"), false)]
-fn a_predicted_punctuation_row_chooses_as_the_pin_does(
+#[case::composing(crate::test_support::DEFAULT_SORT, false, 0, Some("你好"))]
+#[case::after_reset(crate::test_support::DEFAULT_SORT, true, 0, None)]
+#[case::sort_without_sentence(0x1, false, 1, Some("你好"))]
+fn a_punctuation_row_returns_the_cursor_without_adding_a_constraint(
     #[case] sort: u32,
     #[case] reset: bool,
     #[case] answer: i32,
     #[case] after: Option<&str>,
-    #[case] cleared: bool,
 ) {
     let user = TempUserDir::new("choose-punctuation-normal");
     let (context, instance) = open_at(&user.path);
@@ -212,26 +192,7 @@ fn a_predicted_punctuation_row_chooses_as_the_pin_does(
         unsafe { crate::candidates::pinyin_train(instance, 0) },
         after.is_some()
     );
-    assert_eq!(
-        unsafe { crate::candidates::pinyin_clear_constraint(instance, 0) },
-        cleared
-    );
-    if !reset && after.is_none() {
-        // The cell survives its clear and a reparse. Reset clears it.
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        assert_eq!(unsafe { parse(instance, "nihao") }, 5);
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        assert_eq!(unsafe { sentence_after_guess(instance) }, None);
-        assert!(unsafe { pinyin_reset(instance) });
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        assert_eq!(unsafe { parse(instance, "nihao") }, 5);
-        assert_eq!(
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { sentence_after_guess(instance) }.as_deref(),
-            Some("你好")
-        );
-    }
+    assert!(!unsafe { crate::candidates::pinyin_clear_constraint(instance, 0) });
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };
@@ -579,12 +540,12 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
     unsafe { crate::context::pinyin_fini(context) };
 }
 
-/// A sole missing prefix row still chooses. The facade total takes the
-/// fixed 483 (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`), wrapping,
+/// A previously published prefix row still chooses after its item disappears. The facade total takes the
+/// fixed 483 (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`),
 /// while the absent item is not written; an unloaded library leaves the
 /// total alone and still answers true (#1231 ruling).
 #[rstest::rstest]
-fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
+fn choosing_an_existing_prefix_row_after_item_removal_advances_the_facade_total(
     #[values(false, true)] finalized: bool,
 ) {
     let user_dir = TempUserDir::new("missing-prefix-choose");
@@ -618,7 +579,7 @@ fn choosing_a_sole_missing_prefix_row_advances_the_facade_total(
     let inst = unsafe { instance_ref(instance) };
     let after = inst.core.lm.amplified_total();
     assert_eq!(
-        (after.wrapping_sub(before)) as u32,
+        after - before,
         483,
         "the loaded facade total takes the fixed increment"
     );
@@ -1627,6 +1588,7 @@ fn an_accepted_candidate_pointer_can_be_chosen_twice() {
     unsafe { close(context, instance) };
 }
 
+/// POLICY-ACCEPTED: a punctuation row leaves the sentence candidate available.
 #[test]
 fn a_normal_choose_after_punctuation_dispatches_the_retained_span() {
     let user = TempUserDir::new("punctuation-normal-dispatch");
@@ -1648,7 +1610,7 @@ fn a_normal_choose_after_punctuation_dispatches_the_retained_span() {
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
         unsafe { capture_rows(instance) }
             .iter()
-            .all(|(kind, _, _)| *kind != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE)
+            .any(|(kind, _, _)| *kind == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE)
     );
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let normal = unsafe { crate::test_support::row_with(instance, NORMAL, "你") };

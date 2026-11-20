@@ -8,8 +8,6 @@ use crate::test_support::{PREDICTED_BIGRAM, PREDICTED_PREFIX, predicted_texts};
 
 use crate::test_support::{close, open_at, wrap_facade_total_to_zero};
 
-use super::select_prefix_rows;
-
 use crate::candidates::{pinyin_choose_candidate, pinyin_get_candidate};
 
 use crate::config::pinyin_set_options;
@@ -32,7 +30,7 @@ use crate::test_support::{
 
 use crate::types::lookup_candidate_type_t;
 
-use oxpinyin::{PhraseText, phrase_index_library_index};
+use oxpinyin::phrase_index_library_index;
 
 /// Predicted bigram rows on a zero facade total abort in the scorer
 /// (register row 61).
@@ -71,64 +69,11 @@ fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
     );
 }
 
-fn text(phrase: &str) -> oxpinyin::PhraseText {
-    oxpinyin::PhraseText::from(phrase)
-}
-
 /// `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE | IS_PINYIN`.
 const OPTIONS: u32 = 0x18a;
 
 /// `DYNAMIC_ADJUST`.
 const DYNAMIC_ADJUST: u32 = 1 << 9;
-
-/// `_compute_predicted_bigram_candidates` keeps one `PhraseItem` for
-/// the whole walk (`pinyin.cpp:2342` at the pin `074a2219`). It skips a
-/// token only on `ERROR_NO_SUB_PHRASE_INDEX` (`:2352-2355`); a token
-/// with no item is compared by the length the previous read left
-/// (`:2357-2358`) and appended with its own token (`:2360-2363`). The
-/// item starts empty and carries over from the longer pass to the
-/// shorter one (`:2344`).
-#[test]
-fn a_bigram_token_with_no_item_rides_on_the_previous_items_length() {
-    use super::{ItemRead, select_bigram_rows};
-    let (one, two) = (text("好"), text("你好"));
-    let rows = |reads: &[(u32, ItemRead)]| -> Vec<(u32, bool)> {
-        select_bigram_rows(reads)
-            .into_iter()
-            .map(|(token, text)| (token, text.is_some()))
-            .collect()
-    };
-    // Before any read the cached item has length zero: no row.
-    assert_eq!(rows(&[(9, ItemRead::NoItem)]), []);
-    // After a one-character item, the token with no item is a row of
-    // the one-character pass.
-    assert_eq!(
-        rows(&[(1, ItemRead::Item(one.clone())), (9, ItemRead::NoItem)]),
-        [(1, true), (9, false)]
-    );
-    // The longer pass ends on the one-character item, so the shorter
-    // pass starts with it cached: the token with no item comes first.
-    assert_eq!(
-        rows(&[(9, ItemRead::NoItem), (1, ItemRead::Item(one.clone()))]),
-        [(9, false), (1, true)]
-    );
-    // A two-character item before it puts it in the longer pass; the
-    // shorter pass then reads the same item again and skips both.
-    assert_eq!(
-        rows(&[(2, ItemRead::Item(two.clone())), (9, ItemRead::NoItem)]),
-        [(2, true), (9, false)]
-    );
-    // A library with no sub-index is skipped and leaves the cached item.
-    assert_eq!(
-        rows(&[
-            (1, ItemRead::Item(one)),
-            (8, ItemRead::NoSubIndex),
-            (9, ItemRead::NoItem),
-            (2, ItemRead::Item(two)),
-        ]),
-        [(2, true), (1, true), (9, false)]
-    );
-}
 
 #[rstest::rstest]
 #[case::plain("你", false, false, true)]
@@ -216,60 +161,6 @@ fn predicted_sort_is_stable_and_uses_wrapping_frequency_after_length() {
     );
 }
 
-#[test]
-fn a_sole_missing_suggestion_survives_the_length_gate() {
-    let (kept, sole) = select_prefix_rows(vec![(7, None)], 5, 0);
-    assert!(kept.is_empty());
-    assert_eq!(sole, Some(7));
-}
-
-#[test]
-fn a_missing_suggestion_with_any_other_row_adds_no_candidate() {
-    // A live row and the missing row: two pre-dedup rows, class (b).
-    let (kept, sole) =
-        select_prefix_rows(vec![(1, Some(PhraseText::from("abc"))), (2, None)], 5, 0);
-    assert_eq!(kept.len(), 1);
-    assert_eq!(sole, None);
-    // A preexisting bigram row is enough even without a live prefix row.
-    let (kept, sole) = select_prefix_rows(vec![(2, None)], 5, 1);
-    assert!(kept.is_empty());
-    assert_eq!(sole, None);
-    // Two missing rows also reach the NULL comparison.
-    let (kept, sole) = select_prefix_rows(vec![(2, None), (3, None)], 5, 0);
-    assert!(kept.is_empty());
-    assert_eq!(sole, None);
-}
-
-#[test]
-fn the_stale_length_skips_a_missing_suggestion_after_a_skipped_read() {
-    // The long live row is itself skipped, but its successful read still
-    // updates the loop-wide length, so the following missing row is
-    // skipped too rather than becoming a sole NULL candidate.
-    let (kept, sole) =
-        select_prefix_rows(vec![(1, Some(PhraseText::from("abcdef"))), (2, None)], 5, 0);
-    assert!(kept.is_empty());
-    assert_eq!(sole, None);
-}
-
-#[test]
-fn a_short_live_row_after_the_stale_skip_still_replaces_the_gate() {
-    // The skipped long row leaves its own length; the missing row is
-    // skipped on it. A later short successful read replaces the gate and
-    // is appended normally.
-    let (kept, sole) = select_prefix_rows(
-        vec![
-            (1, Some(PhraseText::from("abcdef"))),
-            (2, None),
-            (3, Some(PhraseText::from("ab"))),
-        ],
-        5,
-        0,
-    );
-    assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].0, 3);
-    assert_eq!(sole, None);
-}
-
 /// The predicted scorer passes no predecessor, so neither DYNAMIC_ADJUST
 /// nor the bigram counts move a row (`pinyin.cpp:2418`, `:2438`): two
 /// successors of 你 rank the same whichever has the larger count.
@@ -317,15 +208,7 @@ fn prefix_rows_rank_on_a_zero_facade_total() {
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let before = unsafe { predicted_texts(instance, c"你") };
-    // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-    let total = unsafe { crate::state::instance_ref(instance) }
-        .core
-        .lm
-        .amplified_total();
-    let total = u32::try_from(total).expect("a guint32 total");
-    assert!(unsafe {
-        crate::dict::pinyin_token_add_unigram_frequency(instance, 0x0100_0001, total.wrapping_neg())
-    });
+    unsafe { wrap_facade_total_to_zero(instance) };
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let mut after = unsafe { predicted_texts(instance, c"你") };
     after.sort();

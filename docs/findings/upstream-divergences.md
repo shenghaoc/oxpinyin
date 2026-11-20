@@ -112,12 +112,12 @@ An entry holds nothing else.
 - **Rejected:** a registry of live instances for a second `*_free_instance` (`pinyin.cpp:1347-1356`, `zhuyin.cpp:876-884`), which would cost time and space on every alloc and free; that call stays caller UB.
 - **Tests:** `init_and_save::fini_twice_returns_silently` (`oxpinyin-capi`) and `init_and_save::fini_twice_returns_silently` (`oxzhuyin-capi`).
 
-### A prediction candidate whose phrase item a journal REMOVE took out (policy row 106a, class (b))
+### Candidate and prediction suggestions for an absent phrase item (policy rows 106 and 106a)
 
-- **Pin:** `_compute_predicted_prefix_candidates` ignores `get_phrase_item`'s result and gates on the last successful read's length (`src/pinyin.cpp:2389-2405`). A missing token keeps a NULL string (`:2018-2022`, `:1635-1637`): with two or more pre-dedup rows the dedup `strcmp` dies of SIGSEGV (`:2041-2068`, `:2082`); a sole row survives, and choosing it adds to the facade total (`:2608-2616`; `src/storage/phrase_index.h:628-634`).
-- **oxpinyin:** `select_prefix_rows` (`capi/src/predict.rs`) keeps `last_read_length` in the pin's order, keeps a sole missing row as `TextSpan::NULL` and drops missing rows beside any other row; `pinyin_choose_predicted_candidate` advances the loaded facade total and returns `true` for a prefix row whose item the choosing instance's context lacks.
-- **Decision:** accepted, class (b): the NULL `strcmp` is not reproduced; the defined single-row path is the pin's.
-- **Tests:** `choosing_a_sole_missing_prefix_row_advances_the_facade_total`, `guess_predict::a_sole_removed_prefix_row_reads_null_through_the_getters` (`oxpinyin-capi`; the getters after a journal REMOVE).
+- **Pin:** candidate construction can leave the phrase string NULL after a failed item lookup (`src/pinyin.cpp:1635–1637,2010–2022,2389–2405`). Prediction can also keep the previous item's length. Multiple rows reach a NULL comparison (`:2041–2068,2082`), while a sole row can survive.
+- **oxpinyin:** a missing item supplies no suggestion. A previously published live handle still follows the receiver's choice and training rules.
+- **Decision:** accepted under the language-artefact rule for stale fields and cardinality-dependent NULL publication, and class (b) for a NULL comparison.
+- **Tests:** `a_journal_removed_item_adds_no_candidate`, `a_sole_removed_prefix_item_is_omitted` and the C facades' `unreadable_candidates` tests.
 
 ### NULL string conversion after defined prior work
 
@@ -153,6 +153,20 @@ An entry holds nothing else.
 - **oxpinyin:** the getters return the available header fields, text and complete readings inside the selected record. The nth getter returns false for an unavailable reading.
 - **Decision:** accepted, class (b), for an out-of-bounds read. The record boundary also applies when later records are present.
 - **Tests:** `a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields` and `an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array`.
+
+### Constraint checks use the current token's item (policy row 164)
+
+- **Pin:** constraint validation can keep the prior item's readings when a failed lookup leaves the view unchanged (`src/lookup/phonetic_lookup.cpp:141,150–164`; `src/storage/phrase_index.h:649–650`; `src/storage/phrase_index.cpp:189–193`).
+- **oxpinyin:** the constraint needs readings for its own token. An absent item clears its constraint.
+- **Decision:** accepted under the language-artefact rule. The previous token does not supply readings for the current one.
+- **Tests:** `constraint_spelling_sums_duplicate_paths_at_the_f32_boundary`.
+
+### Punctuation constraint abort stays at the clear or write (policy row 165)
+
+- **Pin:** the zero-length punctuation choice replaces the head cell of the span at column zero and leaves its continuations. A later clear or span write through a continuation asserts when the head no longer owns it (`src/pinyin.cpp:2577–2590`, `src/lookup/phonetic_lookup.cpp:61–118`).
+- **oxpinyin:** returns the caller's offset and records the affected span bounds in one marker. It trims the bounds when a later write covers them. A clear or write through a marked span aborts if the head is gone. Reset discards the marker.
+- **Decision:** accepted under the language-artefact rule. The marker preserves the later clear or write assertion without retaining a zero-length constraint or any orphaned cells.
+- **Tests:** `choose::a_clear_through_a_freed_run_start_aborts`, `choose::choosing_across_a_freed_run_start_aborts`, `choose::punctuation_allows_clear_until_a_live_head_is_freed`, `choose::reset_discards_punctuation_constraint_history`.
 
 ## Accepted divergences — store and data files
 
@@ -537,6 +551,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | Pinyin left and right offset after a separator or past the matrix (row 14) | `pinyin.cpp:3035`, `:3057`, `:3067`, `:3092`; `storage/phonetic_key_matrix.h:103` | `parse_keys::left_offset_aborts_after_a_separator`, `parse_keys::right_offset_aborts_after_a_separator`, `matrix_bounds::the_left_move_past_an_early_stopped_parse_aborts`, `matrix_bounds::the_right_move_from_past_the_last_column_aborts` |
 | `*_get_character_offset` past the matrix or after a separator (row 19) | `pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`; `zhuyin.cpp:2110`, `:2158`, `:1453` | `parse_keys::character_offset_aborts_on_an_empty_leading_column`, `matrix_bounds::the_character_offset_past_the_last_column_aborts`, `sentence::tests::the_character_offset_after_a_separator_aborts`, `matrix_bounds::a_null_phrase_past_the_last_column_aborts` (both facades), `parse_keys::character_offset_on_a_leading_separator_aborts` |
 | `*_parse_full_pinyin` with `'`; pinyin library unload at index 16 or more (row 21) | `storage/pinyin_parser2.cpp:170`; `pinyin.cpp:466`, `:499` | `parse_keys::full_key_parse_aborts_on_an_apostrophe_after_invalid_bytes`, `parse_keys::a_single_key_apostrophe_aborts`, `null_arguments::null_context_unload_phrase_library_orders_assert_first`, `null_arguments::null_context_unload_addon_phrase_library_aborts_on_index_16` |
+| A pinyin clear or span write reaches a continuation whose head is gone (row 165) | `lookup/phonetic_lookup.cpp:61–118`; `pinyin.cpp:2577–2590,2641–2647` | `choose::a_clear_through_a_freed_run_start_aborts`, `choose::choosing_across_a_freed_run_start_aborts` |
 | `pinyin_train` past nonempty results (row 38) | `pinyin.cpp:2684` | `pinned_data::training_one_past_the_nbest_results_aborts` |
 | `*_init` on an unknown `user.conf` database format (row 44) | `storage/table_info.cpp:132`, from `:353-354` | `init_and_save::init_aborts_on_an_unknown_user_conf_database_format`, `init_and_save::an_unknown_user_database_format_aborts_and_keeps_user_conf` |
 | `pinyin_choose_candidate` at a nonzero offset without sentence candidates (row 45) | `pinyin.cpp:2566` | `choose::choose_candidate_aborts_at_offset_one_without_a_sentence` |
@@ -546,6 +561,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | Pinyin key getters on an empty matrix, below `SIZE_MAX`; auxiliary text (row 63) | `storage/phonetic_key_matrix.h:103`; `pinyin.cpp:3311`, `:3488` | `parse_keys::key_rest_aborts_on_an_empty_matrix`, `parse_keys::full_auxiliary_text_aborts_on_a_leading_apostrophe`, `parse_keys::double_auxiliary_text_aborts_three_bytes_into_a_key`; `parse_keys::the_key_getters_answer_false_at_size_max_on_an_empty_matrix`, `parse_keys::key_aborts_on_an_empty_matrix`, `parse_keys::double_auxiliary_text_aborts_on_a_leading_apostrophe`, `parse_keys::chewing_auxiliary_text_aborts_on_a_leading_apostrophe` |
 | A candidate of the wrong row type or a non-user token (row 64) | `pinyin.cpp:2507`, `:2593`, `:2883`, `:3734`, `:3738` | `choose::choose_candidate_aborts_on_a_predicted_prefix_row`, `choose::choose_predicted_candidate_aborts_on_a_normal_row`, `choose::nbest_index_aborts_on_a_normal_row`, `choose::remove_user_candidate_aborts_on_a_system_token`, `choose::remove_user_candidate_aborts_on_a_sentence_row`, `choose::choose_candidate_aborts_on_a_predicted_bigram_row` |
 | Pinyin right offset on an empty matrix; candidates two or more past the reserved slot (row 66) | `storage/phonetic_key_matrix.h:103`, through `pinyin.cpp:3075` and `:2226` | `matrix_bounds::right_offset_zero_over_a_keyless_parse_aborts`, `matrix_bounds::guess_candidates_past_an_early_stopped_parse_aborts` |
+| Pinyin remember-input on an empty matrix after resolving the phrase tokens (row 66) | `pinyin.cpp:3590–3601,3685–3695`; `storage/phonetic_key_matrix.h:103` | `user_store::remember_user_input_aborts_on_a_fresh_instance`, `user_store::remember_user_input_aborts_on_a_keyless_parse` |
 | Zhuyin library load and unload, key accessors below `SIZE_MAX`, offsets and cursor guesses past the matrix (row 66) | `zhuyin.cpp:372`, `:381`, `:1453`, `:1261`; `storage/phonetic_key_matrix.h:103` | `init_and_save::loading_library_zero_aborts`, `null_arguments::null_context_unload_phrase_library_orders_assert_first`, `parse_keys::key_rest_on_an_empty_matrix_aborts`, `parse_keys::left_offset_past_the_matrix_aborts`, `parse_keys::right_offset_past_the_matrix_aborts`, `parse_keys::left_offset_just_past_a_separator_aborts`, `parse_keys::right_offset_just_past_a_separator_aborts`, `parse_keys::key_rest_just_past_a_separator_aborts`, `sentence_and_candidates::after_cursor_guess_one_past_the_reserved_slot_aborts`, `sentence::tests::a_zero_facade_total_aborts_the_after_cursor_ranking`, `matrix_bounds::a_cursor_over_a_keyless_parse_aborts`; `parse_keys::the_key_accessors_answer_false_at_size_max_on_an_empty_matrix` |
 | More than four libraries hold a searched string (row 74) | `storage/phrase_large_table3.h:95`, `:106`; `pinyin.cpp:541`, `:1415`, `:2664`, `:3117`; `zhuyin.cpp:427`, `:933`, `:1690`, `:2080` | `library_tokens::the_prefix_guess_aborts_on_five_tokens`, `library_tokens::the_prediction_aborts_on_five_tokens`, `library_tokens::the_character_offset_aborts_on_five_tokens`, `library_tokens::remember_aborts_on_five_tokens`, `oxpinyin::facade::import::tests::an_import_into_an_unused_library_after_five_refuses`, `pinned_data::a_prefix_guess_over_five_library_tokens_aborts`; `oxpinyin::facade::import::tests::an_import_refuses_five_tokens_before_the_library_refusal` |
 | `*_save` on a chunk header or checksum write (row 77) | `include/memory_chunk.h:543`, `:547` | `init_and_save::save_aborts_where_the_chunk_header_write_fails`, `init_and_save::a_save_cut_after_the_chunk_length_word_aborts` |

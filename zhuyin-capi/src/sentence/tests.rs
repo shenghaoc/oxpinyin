@@ -3,11 +3,7 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use crate::test_support::{chewing, n_candidate};
-
 use crate::candidates::{zhuyin_get_candidate, zhuyin_get_candidate_type, zhuyin_get_n_candidate};
-
-use crate::dict::zhuyin_token_add_unigram_frequency;
 
 use crate::parse::zhuyin_parse_more_chewings;
 
@@ -16,7 +12,7 @@ use crate::sentence::{
     zhuyin_guess_sentence,
 };
 
-use crate::test_support::{assert_aborts, close, cstr, open};
+use crate::test_support::{assert_aborts, chewing, close, cstr, n_candidate, open};
 
 use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t};
 
@@ -43,7 +39,7 @@ unsafe fn zero_total(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
         .amplified_total();
     let total = u32::try_from(total).expect("a guint32 total");
     assert!(unsafe {
-        zhuyin_token_add_unigram_frequency(instance, 0x0100_0001, total.wrapping_neg())
+        crate::dict::zhuyin_token_add_unigram_frequency(instance, 0x0100_0001, total.wrapping_neg())
     });
     instance
 }
@@ -61,6 +57,34 @@ fn a_zero_facade_total_before_offset_zero_ranks_nothing() {
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };
+}
+
+/// A zero facade total asserts while the after-cursor guess ranks a row
+/// (`zhuyin.cpp:1261`, register rows 61 and 66).
+#[test]
+fn a_zero_facade_total_aborts_the_after_cursor_ranking() {
+    assert_aborts(
+        "sentence::tests::a_zero_facade_total_aborts_the_after_cursor_ranking",
+        || {
+            let (context, _) = open();
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+            let instance = unsafe { zero_total(context) };
+            unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) };
+        },
+    );
+}
+
+/// The before-cursor guess also asserts when a span reaches ranking.
+#[test]
+fn a_zero_facade_total_aborts_the_before_cursor_ranking() {
+    assert_aborts(
+        "sentence::tests::a_zero_facade_total_aborts_the_before_cursor_ranking",
+        || {
+            let (context, _) = open();
+            let instance = unsafe { zero_total(context) };
+            unsafe { zhuyin_guess_candidates_before_cursor(instance, 6) };
+        },
+    );
 }
 
 #[test]
@@ -219,24 +243,9 @@ fn only_a_guess_puts_a_sentence_row_in_the_before_cursor_window() {
     unsafe { close(context, instance) };
 }
 
-/// A zero facade total asserts while the after-cursor guess ranks a row
-/// (`zhuyin.cpp:1261`, register rows 61 and 66).
-#[test]
-fn a_zero_facade_total_aborts_the_after_cursor_ranking() {
-    assert_aborts(
-        "sentence::tests::a_zero_facade_total_aborts_the_after_cursor_ranking",
-        || {
-            let (context, _) = open();
-            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
-            let instance = unsafe { zero_total(context) };
-            unsafe { zhuyin_guess_candidates_after_cursor(instance, 0) };
-        },
-    );
-}
-
 #[cfg(feature = "tkrzw")]
 mod configured_window {
-    use super::*;
+    use super::zhuyin_guess_candidates_after_cursor;
     use crate::test_support::{candidate_rows, open_on};
 
     use crate::config::zhuyin_set_options;

@@ -13,7 +13,7 @@ use std::os::raw::c_char;
 use oxpinyin::user::UserStore;
 use oxpinyin::{PhraseText, PhraseToken, single_gram};
 
-use crate::state::{CapiCandidate, SharedDict, SharedLm, instance_mut};
+use crate::state::{CapiCandidate, SharedDict, instance_mut};
 use crate::types::{PinyinInstance, lookup_candidate_type_t};
 
 /// Minimum user-bigram count for a predicted successor.
@@ -111,53 +111,17 @@ fn guess_predicted_result(
     let successors = predicted_bigram_items(inst.core.user, prefixes)?;
 
     let mut items = Vec::new();
-    // The bigram rows of a token with no item: they count as rows until the
-    // duplicate removal, where register row 106 drops them.
-    let rows_without_item = append_predicted_bigrams(
-        &inst.core.dict,
-        &inst.core.lm,
-        inst.state.predicted_lambda,
-        inst.core.user,
-        &successors,
+    append_predicted_bigrams(&inst.core.dict, &successors, &mut items);
+    append_predicted_prefix(&inst.core.dict, inst.core.user, prefix, &mut items);
+    score_predictions(
         &mut items,
-    );
-    // pinyin.cpp:1859 asserts only for the general scorer branch, so
-    // prefix-only rows do not reach it; a predicted bigram row does, and the
-    // process aborts there (register row 61).
-    if !items.is_empty() && predicted_total(&inst.core.lm) == 0 {
-        std::process::abort();
-    }
-    let missing = append_predicted_prefix(
         &inst.core.dict,
-        &inst.core.lm,
-        inst.state.predicted_lambda,
         inst.core.user,
-        prefix,
-        rows_without_item,
-        &mut items,
+        inst.core.lm.amplified_total(),
+        inst.state.predicted_lambda,
     );
-
-    if let Some(token) = missing {
-        // Only one pre-dedup row: neither strcmp runs. Its opaque score and
-        // length are unobservable; preserve the NULL getter and choose token.
-        inst.state.candidates.push(CapiCandidate {
-            text: oxpinyin::facade::TextSpan::NULL,
-            text_ptr: std::ptr::null(),
-            type_tag: Cell::new(lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE.tag()),
-            nbest_index: 0,
-            token: Cell::new(Some(token)),
-            begin: 0,
-            end: 0,
-        });
-        return Ok(true);
-    }
-
     sort_predicted(&mut items);
 
-    // A bigram row of a token with no item has a NULL phrase string here,
-    // and the pin's `strcmp` reads it (`pinyin.cpp:2053`): register row 106.
-    // Its registered result is that the token adds no candidate, so
-    // `rows_without_item` rows end here.
     // Dedup retains the numerically higher score even if the pin's signed
     // comparator put it later (`pinyin.cpp:2128-2136`). Equal scores keep
     // the first row. The winner remains at its original sorted position.
@@ -332,173 +296,53 @@ fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
     inst.state.candidates.append(rest);
 }
 
-/// What `FacadePhraseIndex::get_phrase_item` answers for a gram item's
-/// token (`phrase_index.h:646-651`, `phrase_index.cpp:180-206` at the pin
-/// `074a2219`).
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ItemRead {
-    /// `ERROR_NO_SUB_PHRASE_INDEX`: the token's library has no sub-index.
-    NoSubIndex,
-    /// `ERROR_NO_ITEM`: the sub-index is there and the slot holds no item.
-    NoItem,
-    /// The item, by its phrase text.
-    Item(PhraseText),
-}
-
-/// The rows `_compute_predicted_bigram_candidates` appends
-/// (`pinyin.cpp:2342-2365` at the pin `074a2219`), over the gram items that
-/// passed the count filter (`:2349-2350`). One `PhraseItem` serves the whole
-/// walk (`:2342`): it starts empty, with length zero, and every read that
-/// finds an item replaces it. A token whose library has no sub-index is
-/// skipped (`:2352-2355`). A token with no item leaves the cached item as
-/// the previous read left it, so its row is appended when that item's
-/// length is the pass's length (`:2357-2363`). The longer pass runs first,
-/// and the cached item carries over from it.
-///
-/// A row is its token and its phrase text, `None` for a token with no item.
-fn select_bigram_rows(reads: &[(u32, ItemRead)]) -> Vec<(u32, Option<&PhraseText>)> {
-    let mut cached_length = 0;
-    let mut rows = Vec::new();
-    for length in [2_usize, 1] {
-        for (token, read) in reads {
-            let text = match read {
-                ItemRead::NoSubIndex => continue,
-                ItemRead::NoItem => None,
-                ItemRead::Item(text) => {
-                    cached_length = text.phrase_length();
-                    Some(text)
-                }
-            };
-            if cached_length == length {
-                rows.push((*token, text));
-            }
-        }
-    }
-    rows
-}
-
-/// Appends the predicted bigram rows that have an item, and answers how
-/// many rows the pin appends for a token with no item.
-///
-/// Such a row has no phrase string: `_token_get_phrase` fails and leaves
-/// `m_phrase_string` NULL (`pinyin.cpp:1635-1637`, `:2013-2016`). It never
-/// stands alone, because the cached item that let it through belongs to a
-/// row of the same pass. The duplicate removal therefore sorts at least two
-/// rows and its `strcmp` reads the NULL string (`:2053`, `:2069-2070`):
-/// register row 106, whose result is that the token adds no candidate. The
-/// caller applies it there.
+/// Appends readable one- and two-character successors in gram order.
 fn append_predicted_bigrams(
     dict: &SharedDict,
-    lm: &SharedLm,
-    lambda: f32,
-    user: &UserStore,
     successors: &[(u32, u32)],
     into: &mut Vec<Predicted>,
-) -> usize {
-    let total = predicted_total(lm);
-    let reads: Vec<(u32, ItemRead)> = successors
-        .iter()
-        // pinyin.cpp:2349-2350: skip when `m_count < filter` (10).
-        .filter(|(_, count)| *count >= BIGRAM_FILTER)
-        .map(|(token, _)| {
-            // `prepare_tokens` and `get_phrase_item` see the same
-            // sub-indices: a library with none answers
-            // `ERROR_NO_SUB_PHRASE_INDEX`.
-            let read = if !dict.phrase_table_token_enabled(*token) {
-                ItemRead::NoSubIndex
-            } else if !dict.library_visible_token(*token) {
-                // A journal REMOVE took the item out of its sub-index.
-                ItemRead::NoItem
-            } else {
-                phrase_text(dict, user, *token).map_or(ItemRead::NoItem, ItemRead::Item)
-            };
-            (*token, read)
-        })
-        .collect();
-    let mut without_item = 0;
-    for (token, text) in select_bigram_rows(&reads) {
-        let Some(text) = text else {
-            without_item += 1;
+) {
+    for &(token, count) in successors {
+        if count < BIGRAM_FILTER || !dict.phrase_table_token_enabled(token) {
+            continue;
+        }
+        let Some(text) = dict.token_text(token) else {
             continue;
         };
+        let phrase_length = text.phrase_length();
+        if !(1..=2).contains(&phrase_length) {
+            continue;
+        }
         into.push(Predicted {
-            phrase_length: text.phrase_length(),
-            // The caller passes null_token to the scorer, so the bigram
-            // term is zero even with DYNAMIC_ADJUST (`pinyin.cpp:2418,2438`).
-            frequency: predicted_frequency(dict, user, token, total, lambda),
-            text: text.clone(),
+            phrase_length,
+            frequency: 0,
+            text,
             token,
             candidate_type: lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
         });
     }
-    without_item
-}
-
-/// The pin's stale-length gate and missing-item cardinality
-/// (`pinyin.cpp:2389-2405`, `:2443-2451`).
-///
-/// `last_read_length` is the loop-wide `PhraseItem`'s length: it starts at
-/// the default header's zero and every successful item read replaces it
-/// *before* the `2 * prefix_len + 1` check, including a read the check then
-/// skips. A failed read leaves it unchanged, so a missing token can pass or
-/// be skipped on the previous success's length.
-///
-/// `existing_rows` counts the pre-dedup rows already collected (the bigram
-/// candidates). A sole missing row with no other row survives to the C
-/// surface; with any other row the pin's dedup reaches the NULL string, so
-/// class (b) takes row 106's answer and the missing token adds no candidate.
-fn select_prefix_rows(
-    suggestions: Vec<(u32, Option<PhraseText>)>,
-    limit: usize,
-    existing_rows: usize,
-) -> (Vec<(u32, PhraseText)>, Option<u32>) {
-    let mut last_read_length = 0;
-    let mut kept = Vec::new();
-    let mut missing = Vec::new();
-    for (token, text) in suggestions {
-        if let Some(text) = &text {
-            last_read_length = text.phrase_length();
-        }
-        if last_read_length > limit {
-            continue;
-        }
-        match text {
-            Some(text) => kept.push((token, text)),
-            None => missing.push(token),
-        }
-    }
-    let sole_missing = if missing.len() == 1 && existing_rows + kept.len() == 0 {
-        missing.pop()
-    } else {
-        None
-    };
-    (kept, sole_missing)
 }
 
 fn append_predicted_prefix(
     dict: &SharedDict,
-    lm: &SharedLm,
-    lambda: f32,
     user: &UserStore,
     prefix: &PhraseText,
-    earlier_rows_without_item: usize,
     into: &mut Vec<Predicted>,
-) -> Option<u32> {
+) {
     // `m_prefix_len`, the converted word count (`pinyin.cpp:2395`, `:2401`).
     let prefix_len = prefix.outward_words().count();
     if prefix_len == 0 {
-        return None;
+        return;
     }
     let limit = prefix_len.saturating_mul(2).saturating_add(1);
     // The facade merge reproduces reduce_tokens: library groups first,
     // then each DBM's UCS-4 byte cursor order. The stable length/score sort
     // preserves this collection order on ties, including user/system ties.
-    let suggestions = oxpinyin::facade::merged_suggestions(dict, user, prefix);
-    let total = predicted_total(lm);
-    let (kept, sole_missing) =
-        select_prefix_rows(suggestions, limit, into.len() + earlier_rows_without_item);
-    for (token, text) in kept {
+    for (token, text) in oxpinyin::facade::merged_suggestions(dict, user, prefix) {
         let phrase_length = text.phrase_length();
+        if phrase_length > limit {
+            continue;
+        }
         // The prefix subtraction the pin applies twice (`pinyin.cpp:1976-1980`):
         // the display string is sliced from `m_begin` (`:2018-2023`) and the
         // phrase-length sort key subtracts it. Storing the sliced text here
@@ -509,53 +353,37 @@ fn append_predicted_prefix(
         let display_length = display
             .char_count()
             .unwrap_or_else(|| phrase_length.saturating_sub(prefix_len));
-        // The sort key is the amplified law, not the raw count: the pin's
-        // PREDICTED_PREFIX branch computes `(1−λ)·unigram/total·2²⁴`
-        // truncated (`pinyin.cpp:1811-1824`), the same law the normal
-        // candidate path pins.
         into.push(Predicted {
-            frequency: predicted_frequency(dict, user, token, total, lambda),
+            frequency: 0,
             text: display,
             phrase_length: display_length,
             token,
             candidate_type: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
         });
     }
-    sole_missing
 }
 
-/// The live facade total is guint32 and wraps, including both training
-/// deltas and ABI add overlays (`phrase_index.h:633`, `pinyin.cpp:1814-1815`).
-fn predicted_total(lm: &SharedLm) -> u64 {
-    lm.amplified_total()
-}
-
-/// Both predicted row kinds read the live item counter. Imports, training
-/// and ABI increments share the same live phrase items.
-fn predicted_frequency(
+/// Scores after both lookups. Only bigram rows reach the ranking assertion
+/// (`pinyin.cpp:1812–1825, 1855–1859, 2432–2438`). The caller passes
+/// `null_token` as the predecessor, leaving the bigram term at zero.
+fn score_predictions(
+    items: &mut [Predicted],
     dict: &SharedDict,
     user: &UserStore,
-    token: u32,
     total: u64,
     lambda: f32,
-) -> u32 {
-    let store_count = || user.unigram_delta(token);
-    // Read the system item or the user arena's count.
-    let unigram = dict
-        .live_items()
-        .effective_unigram(token)
-        .unwrap_or_else(store_count);
-    // The pin's candidate `m_freq` for predicted rows is the same
-    // expression as the lookup candidates' (`pinyin.cpp:1811-1824`, the
-    // `PREDICTED_PREFIX` branch), so the engine's function computes it.
-    oxpinyin::engine::amplified_frequency(unigram, total, lambda)
-}
-
-fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<PhraseText> {
-    if let Some(phrase) = store.phrase(token) {
-        return phrase.phrase_text();
+) {
+    for item in items {
+        let unigram = dict
+            .live_items()
+            .effective_unigram(item.token)
+            .unwrap_or_else(|| user.unigram_delta(item.token));
+        if total == 0 && item.candidate_type == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
+        {
+            std::process::abort();
+        }
+        item.frequency = oxpinyin::engine::amplified_frequency(unigram, total, lambda);
     }
-    dict.token_text(token)
 }
 
 #[cfg(test)]

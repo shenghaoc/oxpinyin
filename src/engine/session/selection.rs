@@ -586,37 +586,22 @@ where
         Ok(self.selection_outcome())
     }
 
-    /// `pinyin_choose_candidate`'s normal branch for a row with no token and
-    /// `m_begin = m_end = 0`, which every predicted row carries
-    /// (`pinyin.cpp:114`): validate the store, `add_constraint(0, 0,
-    /// null_token)`, validate again (`:2577-2590`). The write is a
-    /// zero-length null-token cell at 0, which neither validation removes.
-    /// While it stays, no sentence decode passes position 0 (the n-best
-    /// walk's `ONESTEP` branch searches `[0, 0)`, which is no span, as the
-    /// pin's `search_matrix` answers `SEARCH_CONTINUED` there,
-    /// `phonetic_lookup.h:776-790`). A reset or a shrink of the store to
-    /// zero clears the cell, and a later non-empty forcing that starts at 0
-    /// overwrites it: `add_constraint` finds nothing to clear in the empty
-    /// run and writes its `ONESTEP` over the cell
-    /// (`phonetic_lookup.cpp:61-86`). The selection record, which the pin
-    /// does not keep, is left alone.
+    /// Validates a tokenless choice at the start of the composition and
+    /// records any orphaned span for a later clear or forcing write.
     ///
     /// # Errors
-    ///
-    /// [`EngineError`] from either validation's spelling probe.
-    pub fn choose_null_step(&mut self) -> Result<(), EngineError> {
+    /// Returns a lookup error from either constraint validation.
+    pub fn choose_tokenless(&mut self) -> Result<(), EngineError> {
         self.validate_selection_constraints()?;
-        self.constraints.add_null_step();
+        if self.constraints.choose_tokenless() {
+            self.rebuild_selection_from_constraints();
+        }
         self.validate_selection_constraints()
     }
 
-    /// Choose a searched row whose display string is null. Preserve the
-    /// pin's constraint write and validation without decoding a sentence.
-    ///
-    /// # Errors
-    ///
-    /// Returns a lookup error from constraint validation.
-    pub fn choose_unreadable_step(
+    /// Choose a previously published row whose item is currently unreadable.
+    /// Apply its constraint and validate it without decoding a sentence.
+    fn choose_unreadable_step(
         &mut self,
         start: usize,
         end: usize,
@@ -720,9 +705,11 @@ where
     ) -> Result<Selection, EngineError> {
         self.validate_selection_constraints()?;
         let mut cleared = false;
-        for index in start..end.min(self.constraints.cell_count()) {
+        let end = end.min(self.constraints.cell_count());
+        for index in start..end {
             cleared |= self.constraints.clear_by_offset(index);
         }
+        self.constraints.note_write(start..end);
         if cleared {
             self.rebuild_selection_from_constraints();
         }
@@ -756,10 +743,7 @@ where
             })
         };
         self.constraints = store;
-        // Only a run can restore a record that lost its tokens. A null step
-        // alone leaves the store active with none, and a rebuild from no
-        // runs would clear a token-free selection.
-        if result? || (self.constraints.has_runs() && self.record.history().is_empty()) {
+        if result? || (self.constraints.is_active() && self.record.history().is_empty()) {
             self.rebuild_selection_from_constraints();
         }
         Ok(())
@@ -824,20 +808,13 @@ where
     pub(crate) fn remap_constraints(
         &mut self,
         forcing: impl Fn(usize, usize) -> Option<(usize, usize)>,
-        orphans: impl Fn(usize, usize, usize) -> Option<(usize, usize, usize)>,
+        orphaned: impl Fn(&std::ops::Range<usize>) -> std::ops::Range<usize>,
     ) {
-        if !self.constraints.is_active() {
+        if !self.constraints.has_spans_to_remap() {
             return;
         }
-        self.constraints.remap(forcing, orphans);
+        self.constraints.remap(forcing, orphaned);
         self.rebuild_selection_from_constraints();
-    }
-
-    /// Whether a clear at `offset` reaches the pin's `clear_constraint`
-    /// assert (`ConstraintStore::clear_asserts`).
-    #[must_use]
-    pub(crate) fn clear_constraint_asserts(&self, offset: usize) -> bool {
-        self.constraints.clear_asserts(offset)
     }
 
     /// Clears the constraint run at `offset` — `pinyin_clear_constraint`
@@ -847,8 +824,7 @@ where
     /// selection record follows the surviving forcings, so the cleared
     /// phrase's text and token leave the record.
     ///
-    /// Returns `false` for a free cell or an out-of-range offset —
-    /// upstream's own defined return, never an abort.
+    /// Returns `false` for a free cell or an out-of-range offset.
     #[must_use]
     pub fn clear_constraint(&mut self, offset: usize) -> bool {
         if !self.constraints.clear_by_offset(offset) {

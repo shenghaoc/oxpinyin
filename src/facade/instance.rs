@@ -619,11 +619,6 @@ impl<
     /// array's length refuses (`phonetic_lookup.cpp:88-90`). Any other
     /// offset maps through that validation's keys to session coordinates.
     /// The caller selects the transformed seams its facade can populate.
-    ///
-    /// # Aborts
-    ///
-    /// Aborts where the pin asserts: the offset reaches a `NoSearch` cell
-    /// whose run start holds no forcing (`phonetic_lookup.cpp:98-104`).
     pub fn clear_abi_constraint(&mut self, offset: usize, map_double_pinyin: bool) -> bool {
         let layout = &self.validated;
         if offset >= layout.columns {
@@ -634,12 +629,6 @@ impl<
             .as_deref()
             .filter(|_| map_double_pinyin || !layout.double_pinyin)
             .map_or(offset, |images| session_bound(images, offset, false));
-        // A `NOSEARCH` cell whose run start holds no forcing:
-        // `assert(constraint->m_type == CONSTRAINT_ONESTEP)`
-        // (`phonetic_lookup.cpp:98-104`).
-        if self.session.clear_constraint_asserts(session_offset) {
-            std::process::abort();
-        }
         self.session.clear_constraint(session_offset)
     }
 
@@ -652,10 +641,8 @@ impl<
     /// through the current parse. A span that overruns the new matrix is
     /// dropped (`phonetic_lookup.cpp:153-156`). A bound inside a key maps
     /// inside the key's text, where no column is filled, so validation drops
-    /// it as the pin does (`phonetic_key_matrix.cpp:592-595`). `NoSearch`
-    /// cells that a zero-length step left outside any forcing move with
-    /// their columns too, cut off at the new array's end. Then the layout
-    /// this validation sizes the array to is recorded.
+    /// it as the pin does (`phonetic_key_matrix.cpp:592-595`). The layout
+    /// records the bounds for subsequent clears.
     fn note_validation(&mut self) {
         let images = self.abi_key_images(true);
         let columns = self.pin_matrix_columns();
@@ -679,11 +666,9 @@ impl<
                     let (start, end) = (original(start), original(end));
                     (end < columns).then(|| (start_at(start), end_at(end)))
                 },
-                // Cells past the new array are cut off
-                // (`phonetic_lookup.cpp:135-138`).
-                |start, from, to| {
-                    let (from, to) = (original(from), original(to).min(columns));
-                    (from < to).then(|| (start_at(original(start)), start_at(from), end_at(to)))
+                |span| {
+                    let (start, end) = (original(span.start), original(span.end).min(columns));
+                    start_at(start)..end_at(end)
                 },
             );
         }
@@ -705,15 +690,13 @@ impl<
         self.session.refuse_selection()
     }
 
-    /// A choose of a row with no token: the null-step write between the
-    /// pin's two validations (`pinyin.cpp:2577-2590`).
+    /// Validates a tokenless choice against the receiving instance's parse.
     ///
     /// # Errors
-    ///
-    /// Returns [`EngineError`] from constraint validation.
-    pub fn choose_null_step(&mut self) -> Result<(), EngineError> {
+    /// Returns a lookup error from constraint validation.
+    pub fn choose_tokenless(&mut self) -> Result<(), EngineError> {
         self.note_validation();
-        self.session.choose_null_step()
+        self.session.choose_tokenless()
     }
 
     /// Runs the n-best sentence lookup after the caller's matrix check. A

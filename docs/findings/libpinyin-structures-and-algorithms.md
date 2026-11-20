@@ -741,16 +741,13 @@ matrix against the stored pronunciations of the item, with no expansion and
 no cap. An incomplete key matches any final
 (`storage/pinyin_phrase3.h:80-86`).
 
-`ConstraintSpelling::spells` (`nbest.rs`) ports `validate_constraint` and
-`compute_pronunciation_possibility` through
-`Dictionary::phrase_item_pronunciations`. It carries the last item read
-across a pass, as the single `PhraseItem` of the pin does. It borrows the
-parse's placed matrix and shares `GenerationView::sum_paths` with sentence
-pricing. Each leaf sums matching stored frequencies and the total with u32
-wrap, divides in f32 (`phrase_index.h:136-163`), and each recursion frame adds
-its children in matrix order (`phonetic_key_matrix.cpp:534-600`). The final
-sum is kept at or above f32::EPSILON, including equality. No integer-zero
-substitute or model20-only boundary assumption remains.
+`ConstraintSpelling::spells` reads each forced token through
+`Dictionary::phrase_item_pronunciations`. A missing item clears its forcing.
+The method borrows the parse's placed matrix and shares
+`GenerationView::sum_paths` with sentence pricing. It sums the total once,
+sums the matching frequencies at each leaf with wrapping u32 arithmetic and divides in f32.
+Each frame adds its children's probabilities in matrix order. The final sum
+keeps the forcing at or above f32::EPSILON.
 
 For P complete paths, V visited prefixes, and C pronunciation-match work per
 leaf, revalidation costs O(V + PC), like the pin's walk. It uses O(d) walk
@@ -762,27 +759,23 @@ O(k) work for k original column entries and a constant number of swaps; the
 removed collapse took O(k²). The split passes and dictionary-call costs are
 unchanged. Net wall time, peak RSS and allocation effects are unknown.
 
-**Equivalence: argued**, given that the parse's columns are the pin's
-`fill_matrix` columns, and measured on the pin for the abbreviation case
-below. `ConstraintSpelling::spells` (`src/engine/nbest.rs:1300-1390`)
-and `ConstraintStore::validate` (`src/engine/constraint.rs:220-263`)
-follow `validate_constraint` (`lookup/phonetic_lookup.cpp:120-169`):
+For a readable item, the probability calculation follows the pin, including
+the wrapping u32 sums and the zero-total refusal. The abbreviation case
+below also has a pin capture. Constraint validation uses these rules.
 
-- the item is read before the overrun test and the last successful read
-  is carried (`:141,150`; `src/engine/nbest.rs:1342-1348`); before any read the pin's
-  zero item gives 0 and Rust answers false (`:1361-1363`);
-- `end >= len` and an empty start or end column clear
-  (`phonetic_key_matrix.cpp:593-596`; `nbest.rs:1279-1284`);
-- `total` and `matched` wrap as u32, a zero total gives 0, and the f32
-  quotient is the pin's (`phrase_index.h:136-164`; `nbest.rs:1298-1314`);
-- each frame adds its children in column order in f32
-  (`phonetic_key_matrix.cpp:534-585`; `nbest.rs:1021-1034`);
-- `>= f32::EPSILON` keeps exactly what the pin's `< FLT_EPSILON` clears
-  (`phonetic_lookup.cpp:162-163`);
-- query tones are compared (`nbest.rs:1028`) and the incomplete rule is
-  symmetric (`pinyin_phrase3.h:80-86`; `nbest.rs:1327-1336`);
-- a zero-length run is kept (`phonetic_lookup.cpp:88-118`;
-  `constraint.rs:253-258`).
+- Read each item in matrix order. A forcing clears when it overruns the
+  matrix or when its start or end column is empty
+  (`phonetic_lookup.cpp:141–164`, `phonetic_key_matrix.cpp:593–596`).
+- Add each frame's children in column order in f32
+  (`phonetic_key_matrix.cpp:534–585`).
+- Keep a forcing when the probability is at least f32::EPSILON
+  (`phonetic_lookup.cpp:162–163`).
+- Compare query tones and apply the symmetric incomplete-key rule
+  (`pinyin_phrase3.h:80–86`).
+- A tokenless punctuation choice marks the span whose forcing at column zero
+  it removes. A clear of that span succeeds while the head is present. A
+  clear or the clearing pass of a later span write aborts if it reaches
+  a marked span whose head is gone (`phonetic_lookup.cpp:61–118`).
 
 A phrase forced over its abbreviation, one initial-only key per syllable,
 takes the incomplete disjunct on both sides with no expansion and no cap

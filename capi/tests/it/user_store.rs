@@ -309,7 +309,7 @@ fn remember_user_input_aborts_on_two_same_library_tokens() {
                 unsafe { pinyin_parse_more_full_pinyins(instance, cstr("nihao").as_ptr()) },
                 5
             );
-            let _ = unsafe { pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -1) };
+            let _ = unsafe { pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -2) };
         },
     );
 }

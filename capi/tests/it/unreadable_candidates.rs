@@ -7,10 +7,9 @@
 )]
 
 use oxpinyin_capi::{
-    pinyin_alloc_instance, pinyin_choose_candidate, pinyin_fini, pinyin_free_instance,
-    pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
-    pinyin_guess_candidates, pinyin_init, pinyin_parse_more_full_pinyins,
-    pinyin_unload_phrase_library,
+    pinyin_alloc_instance, pinyin_fini, pinyin_free_instance, pinyin_get_candidate,
+    pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_guess_candidates, pinyin_init,
+    pinyin_parse_more_full_pinyins, pinyin_unload_phrase_library,
 };
 
 use std::ffi::CString;
@@ -31,8 +30,6 @@ mod fixture {
         Single,
         Pair,
         Mixed,
-        #[cfg_attr(not(unix), allow(dead_code))]
-        ChooseToZero,
         Fallback,
         MaskedExtension,
         #[cfg(unix)]
@@ -42,7 +39,6 @@ mod fixture {
     pub(super) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         let user = tempfile::tempdir().unwrap();
         let total = match case {
-            Case::ChooseToZero => u32::MAX - 482,
             #[cfg(unix)]
             Case::Zero => 0,
             Case::Single | Case::Pair | Case::Mixed | Case::Fallback | Case::MaskedExtension => 1,
@@ -79,17 +75,12 @@ mod fixture {
             ("opengram.bin", 0),
         ] {
             let mut chunk = super::chunk_fixture::ChunkBuilder::new(total);
-            if name == "gb_char.bin" && matches!(case, Case::Mixed | Case::ChooseToZero) {
-                let reading = if matches!(case, Case::Mixed) {
-                    key
-                } else {
-                    ChewingKey::from_pinyin("hao").unwrap()
-                };
+            if name == "gb_char.bin" && matches!(case, Case::Mixed) {
                 chunk.add(
                     0x11,
                     1,
                     "你",
-                    vec![(reading.with_tone(3).to_packed().to_le_bytes().to_vec(), 1)],
+                    vec![(key.with_tone(3).to_packed().to_le_bytes().to_vec(), 1)],
                 );
             }
             fs::write(dir.join(name), chunk.build()).unwrap();
@@ -134,13 +125,6 @@ mod fixture {
                         // row fails.
                         txn.put_raw(&extension, &[1, 2, 3])?;
                     }
-                    if matches!(case, Case::ChooseToZero) {
-                        let hao = ChewingKey::from_pinyin("hao").unwrap();
-                        txn.put_raw(
-                            &encode_complete_key(&[hao]),
-                            &encode_item(0x0100_0011, &[hao.with_tone(3)]),
-                        )?;
-                    }
                     Ok(())
                 })
                 .unwrap();
@@ -163,16 +147,7 @@ fn check_row(case: fixture::Case, sort: u32) {
     assert!(unsafe { pinyin_guess_candidates(instance, 0, sort) });
     let mut count = 0;
     assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
-    assert_eq!(
-        count,
-        u32::from(matches!(
-            case,
-            fixture::Case::Single
-                | fixture::Case::Fallback
-                | fixture::Case::Mixed
-                | fixture::Case::ChooseToZero
-        ))
-    );
+    assert_eq!(count, u32::from(matches!(case, fixture::Case::Mixed)));
     if count == 1 {
         let mut row = ptr::null_mut();
         assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut row) });
@@ -185,35 +160,15 @@ fn check_row(case: fixture::Case, sort: u32) {
         assert_eq!(row_type as i32, 2);
         let mut string = c"sentinel".as_ptr();
         assert!(unsafe { pinyin_get_candidate_string(instance, row, &raw mut string) });
-        if matches!(case, fixture::Case::Mixed) {
-            assert!(!string.is_null());
-        } else {
-            assert!(string.is_null());
-            assert_eq!(
-                unsafe { pinyin_choose_candidate(instance, 0, row) },
-                if sort & 1 == 1 { 1 } else { 2 }
-            );
-            if sort & 1 == 0 {
-                let cleared = unsafe { crate::support::pinyin_clear_constraint(instance, 0) };
-                assert!(!cleared);
-            }
-        }
-    }
-    if matches!(case, fixture::Case::ChooseToZero) {
-        // The missing item's choose increments the total by 483, wrapping
-        // it to zero. Ranking the readable hao row must now abort.
-        assert_eq!(
-            unsafe { pinyin_parse_more_full_pinyins(instance, c"hao".as_ptr()) },
-            3
-        );
-        assert!(unsafe { pinyin_guess_candidates(instance, 0, sort) });
+        assert!(!string.is_null());
     }
     unsafe { pinyin_free_instance(instance) };
     unsafe { pinyin_fini(context) };
 }
 
+/// POLICY-ACCEPTED (row 106): omit an unreadable item even when it is the only match.
 #[test]
-fn a_sole_unreadable_after_cursor_row_has_a_null_string() {
+fn a_sole_unreadable_after_cursor_row_is_omitted() {
     check_row(fixture::Case::Single, 0x1f);
 }
 
@@ -222,14 +177,10 @@ fn two_unreadable_rows_are_omitted() {
     check_row(fixture::Case::Pair, 0x1f);
 }
 
+/// POLICY-ACCEPTED (row 106): omit an unreadable item found through the user table.
 #[test]
-fn a_sole_unreadable_row_survives_the_user_table_fallback() {
+fn a_sole_unreadable_row_is_omitted_after_the_user_table_fallback() {
     check_row(fixture::Case::Fallback, 0x1f);
-}
-
-#[test]
-fn choosing_a_sole_unreadable_row_reports_the_span_and_clears_the_constraint() {
-    check_row(fixture::Case::Single, 0x1e);
 }
 
 #[test]
@@ -244,11 +195,10 @@ fn a_readable_candidate_displaces_an_unreadable_candidate() {
 /// `chewing_large_table2_kyotodb.cpp:160-166` at 074a2219); the mask only
 /// drops a token at `convert`'s NULL range (`chewing_large_table2.h:107-111`).
 /// For `ni` alone the guess searches only `ni` (`pinyin.cpp:2229-2280`), so
-/// the malformed `ni'hao` row is never read. Unloaded, the GBK token is
-/// hidden; loaded, it is row 106's sole row with a NULL string.
+/// the malformed `ni'hao` row is never read. The GBK token has no readable item.
 #[test]
 fn a_library_mask_does_not_read_extension_rows() {
-    for (unload, expected) in [(false, 1), (true, 0)] {
+    for unload in [false, true] {
         let (system, user) = fixture::dirs(fixture::Case::MaskedExtension);
         let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
         let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
@@ -269,28 +219,10 @@ fn a_library_mask_does_not_read_extension_rows() {
         );
         let mut count = u32::MAX;
         assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
-        assert_eq!(count, expected, "unload {unload}");
-        if count == 1 {
-            let mut row = ptr::null_mut();
-            assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut row) });
-            let mut string = c"sentinel".as_ptr();
-            assert!(unsafe { pinyin_get_candidate_string(instance, row, &raw mut string) });
-            assert!(string.is_null());
-        }
+        assert_eq!(count, 0, "unload {unload}");
         unsafe { pinyin_free_instance(instance) };
         unsafe { pinyin_fini(context) };
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn choosing_the_unreadable_row_adds_483_to_the_facade_total() {
-    crate::support::assert_aborts(
-        "unreadable_candidates::choosing_the_unreadable_row_adds_483_to_the_facade_total",
-        || {
-            check_row(fixture::Case::ChooseToZero, 0x1f);
-        },
-    );
 }
 
 #[cfg(unix)]

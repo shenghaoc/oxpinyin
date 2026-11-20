@@ -23,7 +23,7 @@ use crate::{
     ChewingKey, PhraseText, PhraseToken, SyllableKey,
     model::{
         Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
-        PronunciationRows, TokenPhrase, TrellisItem,
+        TokenPhrase, TrellisItem,
     },
 };
 use smallvec::SmallVec;
@@ -1265,17 +1265,12 @@ where
 /// `fill_matrix` writes.
 pub(crate) struct ConstraintSpelling<'a> {
     parsed: &'a ParsedMatrix,
-    /// The last item a read returned: the pin's one `PhraseItem item`.
-    last_item: RefCell<Option<PronunciationRows>>,
 }
 
 impl<'a> ConstraintSpelling<'a> {
     /// Borrow the parse's already placed matrix. No second matrix is built.
     pub(crate) const fn new(parsed: &'a ParsedMatrix) -> Self {
-        Self {
-            parsed,
-            last_item: RefCell::new(None),
-        }
+        Self { parsed }
     }
 
     /// Whether the forced `token` still spells over `[start, end)`:
@@ -1312,21 +1307,12 @@ impl<'a> ConstraintSpelling<'a> {
     {
         let dictionary_error =
             |error: D::Error| EngineError::Scoring(ScoringError::Dictionary(error.to_string()));
-        // `PhraseItem item;` is declared once before the pin's loop
-        // (`phonetic_lookup.cpp:141`) and `get_phrase_item` leaves it alone
-        // when it fails (`phrase_index.h:649-650`, `phrase_index.cpp:189-193`):
-        // a token with no readable item is checked against the item the
-        // last successful read left, and against a zero-length one only
-        // when no read has succeeded yet. The read comes before the
-        // overrun test (`:154`), so a forcing that is then cleared for
-        // overrunning still leaves its item behind.
-        let read = dictionary
+        let PhraseItemRead::Item(rows) = dictionary
             .phrase_item_pronunciations(token)
-            .map_err(dictionary_error)?;
-        let mut last = self.last_item.borrow_mut();
-        if let PhraseItemRead::Item(rows) = read {
-            *last = Some(rows);
-        }
+            .map_err(dictionary_error)?
+        else {
+            return Ok(false);
+        };
         let parsed = self.parsed;
         let columns = parsed;
         if end >= columns.len()
@@ -1338,9 +1324,6 @@ impl<'a> ConstraintSpelling<'a> {
         let generation = GenerationView {
             columns,
             zeros: &parsed.zeros,
-        };
-        let Some(rows) = last.as_ref() else {
-            return Ok(false);
         };
         // `phrase_length`: every stored pronunciation spells it.
         let Some(length) = rows.first().map(|(keys, _)| keys.len()) else {

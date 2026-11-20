@@ -413,89 +413,91 @@ fn choosing_behind_the_composition_under_double_pinyin_answers_the_chosen_span()
     unsafe { crate::support::pinyin_fini(context) };
 }
 
-/// A punctuation row chosen through `pinyin_choose_candidate` writes
-/// `add_constraint(0, 0, null_token)` over the 你好 run at 0 and leaves the
-/// run's `NOSEARCH` cells at columns 1-3 (074a2219 `pinyin.cpp:2577-2590`,
-/// `phonetic_lookup.cpp:61-86`). Validation keeps cells at their columns
-/// (`phonetic_lookup.cpp:120-163`), so after a reparse that respells the
-/// first key (`nihk` to `vhhk`, Microsoft double pinyin) and a guess, a
-/// clear at 1 still jumps to the zero-length step at 0 and answers true
-/// (`phonetic_lookup.cpp:88-118`).
+/// The shorter forcing is cleared before a later clear reaches the old tail.
 #[test]
-fn an_orphaned_nosearch_cell_keeps_its_column_across_a_respelling() {
-    let user = TempUserDir::new("orphan-nosearch-respell");
+fn a_clear_through_a_freed_run_start_aborts() {
+    assert_aborts_after_setup(
+        "choose::a_clear_through_a_freed_run_start_aborts",
+        || instance_with_a_freed_constraint_head("nihao"),
+        |(_user, _context, instance)| {
+            unsafe { crate::support::pinyin_clear_constraint(instance, 3) };
+        },
+    );
+}
+
+/// Adding a forcing also clears the covered cells before writing the new span.
+#[test]
+fn choosing_across_a_freed_run_start_aborts() {
+    assert_aborts_after_setup(
+        "choose::choosing_across_a_freed_run_start_aborts",
+        || {
+            let (user, context, instance) = instance_with_a_freed_constraint_head("nihao");
+            assert!(unsafe { pinyin_guess_candidates(instance, 2, DEFAULT_SORT) });
+            let next = unsafe { row_with(instance, NORMAL, "好") };
+            (user, context, instance, next)
+        },
+        |(_user, _context, instance, next)| {
+            unsafe { pinyin_choose_candidate(instance, 2, next) };
+        },
+    );
+}
+
+#[test]
+fn punctuation_allows_clear_until_a_live_head_is_freed() {
+    let (_user, context, instance) = instance_after_punctuation("nihaoma");
+    // A clear through the original interior still finds the head.
+    assert!(unsafe { crate::support::pinyin_clear_constraint(instance, 3) });
+    assert!(!unsafe { crate::support::pinyin_clear_constraint(instance, 6) });
+    put_and_clear_a_shorter_forcing(instance);
+    // The shorter forcing's interior was overwritten and then cleared.
+    assert!(!unsafe { crate::support::pinyin_clear_constraint(instance, 1) });
+    // These offsets were outside the original phrase span.
+    assert!(!unsafe { crate::support::pinyin_clear_constraint(instance, 6) });
+    assert!(!unsafe { crate::support::pinyin_clear_constraint(instance, 7) });
+    unsafe { close(context, instance) };
+}
+
+#[test]
+fn reset_discards_punctuation_constraint_history() {
+    let (_user, context, instance) = instance_with_a_freed_constraint_head("nihao");
+    assert!(unsafe { crate::support::pinyin_reset(instance) });
+    assert_eq!(unsafe { parse(instance, "nihao") }, 5);
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(!unsafe { crate::support::pinyin_clear_constraint(instance, 3) });
+    unsafe { close(context, instance) };
+}
+
+fn instance_with_a_freed_constraint_head(
+    input: &str,
+) -> (TempUserDir, *mut PinyinContext, *mut PinyinInstance) {
+    let (user, context, instance) = instance_after_punctuation(input);
+    put_and_clear_a_shorter_forcing(instance);
+    (user, context, instance)
+}
+
+fn instance_after_punctuation(
+    input: &str,
+) -> (TempUserDir, *mut PinyinContext, *mut PinyinInstance) {
+    let user = TempUserDir::new("punctuation-forcing");
     let (context, instance) = open_at(&user.path);
-    assert!(unsafe { crate::support::pinyin_set_double_pinyin_scheme(context, 2) });
-    let parse_double = |text: &str| {
-        let keys = cstr(text);
-        assert_eq!(
-            unsafe { crate::support::pinyin_parse_more_double_pinyins(instance, keys.as_ptr()) },
-            text.len()
-        );
-    };
-    parse_double("nihk");
+    assert_eq!(unsafe { parse(instance, input) }, input.len());
     assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let phrase = unsafe { row_with(instance, NORMAL, "你好") };
-    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, phrase) }, 4);
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, phrase) }, 5);
     assert!(unsafe {
         pinyin_guess_predicted_candidates_with_punctuations(instance, c"好".as_ptr())
     });
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let punctuation = unsafe { row_of(instance, PREDICTED_PUNCTUATION) };
     assert_eq!(
         unsafe { pinyin_choose_candidate(instance, 0, punctuation) },
         0
     );
-    parse_double("vhhk");
-    unsafe { pinyin_guess_sentence(instance) };
-    assert!(unsafe { crate::support::pinyin_clear_constraint(instance, 1) });
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
+    (user, context, instance)
 }
 
-/// A clear on a `NOSEARCH` cell whose run start holds no forcing asserts
-/// (074a2219 `phonetic_lookup.cpp:98-104`). Over `nihao`, 你好 forces
-/// [0, 5); a punctuation row writes the zero-length step at 0 and leaves
-/// cells 1-4 pointing at 0 (`pinyin.cpp:2577-2590`,
-/// `phonetic_lookup.cpp:61-86`). 你 then forces [0, 2), and clearing it
-/// frees 0 and 1 only. Cell 3 still points at the free cell 0.
-#[test]
-fn a_clear_through_a_freed_run_start_aborts() {
-    assert_aborts_after_setup(
-        "choose::a_clear_through_a_freed_run_start_aborts",
-        || {
-            let user = TempUserDir::new("orphan-freed-start");
-            let (context, instance) = open_at(&user.path);
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
-            // into it.
-            assert_eq!(unsafe { parse(instance, "nihao") }, 5);
-            assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
-            // into it.
-            let phrase = unsafe { row_with(instance, NORMAL, "你好") };
-            assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, phrase) }, 5);
-            assert!(unsafe {
-                pinyin_guess_predicted_candidates_with_punctuations(instance, c"好".as_ptr())
-            });
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
-            // into it.
-            let punctuation = unsafe { row_of(instance, PREDICTED_PUNCTUATION) };
-            assert_eq!(
-                unsafe { pinyin_choose_candidate(instance, 0, punctuation) },
-                0
-            );
-            assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls
-            // into it.
-            let first = unsafe { row_with(instance, NORMAL, "你") };
-            assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, first) }, 2);
-            assert!(unsafe { crate::support::pinyin_clear_constraint(instance, 0) });
-            (user, context, instance)
-        },
-        |(_user, _context, instance)| {
-            unsafe { crate::support::pinyin_clear_constraint(instance, 3) };
-        },
-    );
+fn put_and_clear_a_shorter_forcing(instance: *mut PinyinInstance) {
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, DEFAULT_SORT) });
+    let first = unsafe { row_with(instance, NORMAL, "你") };
+    assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, first) }, 2);
+    assert!(unsafe { crate::support::pinyin_clear_constraint(instance, 0) });
 }

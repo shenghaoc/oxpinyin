@@ -46,17 +46,18 @@ pub fn compute_prefixes(
     Ok(tokens)
 }
 
-// _compute_predicted_prefix_candidates needs the token for its stale-length and
-// sole-missing-item cases, pinyin.cpp:2389–2405,2443–2451; the latter is class (b).
-/// Merges enabled system and user suggestion tokens in lookup order and resolves their
-/// live text. A token remains in the result if its text is absent. A failed system
-/// suggestion read leaves the user contribution available.
+/// The system and user phrase-table suggestion tokens for `prefix`,
+/// merged in the order `_compute_predicted_prefix_candidates` receives
+/// them, keeping only suggestions with a readable phrase item.
+///
+/// The loaded-library mask applies to both tables. The ordering law is
+/// `runtime::merge_suggestion_rows`.
 #[must_use]
 pub fn merged_suggestions(
     dict: &RuntimeDict,
     user: &UserStore,
     prefix: &PhraseText,
-) -> Vec<(u32, Option<PhraseText>)> {
+) -> Vec<(u32, PhraseText)> {
     let prefix: Vec<u32> = prefix.outward_words().collect();
     let system: Vec<u32> = dict
         .system()
@@ -74,12 +75,7 @@ pub fn merged_suggestions(
     // UCS-4 values that cannot be represented by a Rust String.
     crate::runtime::merge_suggestion_rows(&system, &user_rows)
         .into_iter()
-        .map(|token| {
-            // A failed item read leaves no text; it must still reach the
-            // caller's stale-length filter and sole-NULL/class-(b) split
-            // (074a2219 pinyin.cpp:2393–2451).
-            (token, dict.token_text(token))
-        })
+        .filter_map(|token| dict.token_text(token).map(|text| (token, text)))
         .collect()
 }
 

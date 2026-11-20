@@ -35,69 +35,6 @@ fn add_writes_the_run_and_clear_walks_it_back() {
     assert!(!store.clear_by_offset(1));
 }
 
-/// `add_constraint(0, 0, null_token)` (`phonetic_lookup.cpp:61-86`):
-/// cell 0 becomes a zero-length null-token ONESTEP over the run it
-/// replaces, whose interior cells stay; neither a clear nor a
-/// validation can remove it (`:88-118`, `:142-168`), and it is no run of
-/// the record. On an empty store it writes nothing. A non-empty forcing
-/// that starts at 0 overwrites it: `add_constraint` finds nothing to
-/// clear in the empty run and writes its ONESTEP over the cell
-/// (`:61-86`).
-#[test]
-fn a_null_step_replaces_cell_zero_and_nothing_clears_it() {
-    let mut empty = ConstraintStore::default();
-    empty.add_null_step();
-    assert_eq!(empty.cell_count(), 0);
-
-    let mut store = ConstraintStore::default();
-    store.resize(6);
-    assert_eq!(store.add(0, 2, token(7), "你".into()), 2);
-    assert!(store.has_runs());
-    store.add_null_step();
-    let null = Cell::OneStep {
-        token: token(0),
-        end: 0,
-        text: "".into(),
-    };
-    assert_eq!(store.cell(0), Some(&null));
-    assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
-    assert!(store.clear_by_offset(0));
-    assert!(store.clear_by_offset(1));
-    assert!(
-        !store.validate(6, |_, _, _| Ok(false)).expect("validate"),
-        "nothing is cleared"
-    );
-    assert_eq!(store.cell(0), Some(&null));
-    assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
-    assert!(store.runs().is_empty());
-    assert!(store.is_active());
-    assert!(!store.has_runs(), "active, with no run to rebuild from");
-    assert_eq!(store.add(2, 5, token(8), "好".into()), 3);
-    assert!(store.has_runs(), "a run beside the null step counts");
-    assert_eq!(store.add(0, 2, token(9), "你".into()), 2);
-    assert_eq!(
-        store.cell(0),
-        Some(&Cell::OneStep {
-            token: token(9),
-            end: 2,
-            text: "你".into()
-        }),
-        "a forcing that starts at 0 overwrites the null step"
-    );
-    assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
-    assert_eq!(
-        store
-            .runs()
-            .iter()
-            .map(|run| (run.0, run.1))
-            .collect::<Vec<_>>(),
-        [(0, 2), (2, 5)]
-    );
-    store.resize(0);
-    store.resize(6);
-    assert!(!store.is_active(), "a shrink to nothing frees it");
-}
-
 #[test]
 fn add_refuses_an_overrunning_span() {
     let mut store = ConstraintStore::default();
@@ -111,6 +48,24 @@ fn clear_out_of_range_answers_false() {
     let mut store = ConstraintStore::default();
     store.resize(2);
     assert!(!store.clear_by_offset(9));
+}
+
+#[test]
+fn an_overwritten_middle_is_not_an_orphan_after_its_clear() {
+    let mut store = ConstraintStore::default();
+    store.resize(10);
+    store.add(0, 8, token(7), "你好嗎".into());
+    assert!(store.choose_tokenless());
+    assert!(store.clear_by_offset(7));
+
+    store.add(3, 5, token(8), "好".into());
+    assert!(store.clear_by_offset(3));
+    store.add(0, 2, token(9), "你".into());
+    assert!(store.clear_by_offset(0));
+
+    assert!(!store.clear_by_offset(3));
+    let marker = store.orphaned.as_ref().unwrap();
+    assert_eq!(marker.spans, [2..3, 5..8]);
 }
 
 #[test]

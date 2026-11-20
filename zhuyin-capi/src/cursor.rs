@@ -38,29 +38,6 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
     end: AtomicU16::new(0),
 };
 
-/// Register row 66, `phonetic_key_matrix.h:103`: on an empty matrix (a
-/// fresh or keyless instance: `fill_matrix` leaves it at size 0 when the
-/// parse placed no key, `phonetic_key_matrix.cpp:37`) the pin's first
-/// `get_column_size` asserts — the key accessors' after `matrix.size() - 1`
-/// wraps (`zhuyin.cpp:1892-1895`, `:1914-1917`) — and the process aborts.
-/// The right move's assert in its loop (`:2037-2038`) is
-/// [`abort_past_matrix`]'s: an empty matrix has no column.
-fn abort_on_empty_matrix(inst: &crate::state::CapiInstanceRead<'_>) {
-    if !inst.core.mode_has_keys() {
-        std::process::abort();
-    }
-}
-
-/// [`abort_on_empty_matrix`] for the key accessors, which test
-/// `offset >= matrix.size() - 1` first (`zhuyin.cpp:1892-1893`,
-/// `:1914-1915`): on an empty matrix that is `offset >= SIZE_MAX`, so
-/// `SIZE_MAX` itself answers `false` with the out-param NULLed.
-fn abort_on_empty_matrix_below(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
-    if offset != usize::MAX {
-        abort_on_empty_matrix(&inst.read());
-    }
-}
-
 /// The key accessors' answer for an `abi_key_at` error:
 /// `_check_offset`'s assert on a lone zero key before the offset
 /// (`zhuyin.cpp:1453` via `:1898`, `:1920`) aborts the process (register row
@@ -75,6 +52,13 @@ fn key_lookup_failed(error: &oxpinyin::engine::EngineError, name: &str) -> bool 
     }
     crate::ffi::log_warning(&format!("{name}: the lookup failed"));
     false
+}
+
+/// Applies the empty-matrix failure at the C key-accessor boundary.
+fn check_key_matrix(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
+    if offset != usize::MAX && !inst.core.mode_has_keys() {
+        std::process::abort();
+    }
 }
 
 /// Get the zhuyin key rest at an offset.
@@ -92,8 +76,8 @@ fn key_lookup_failed(error: &oxpinyin::engine::EngineError, name: &str) -> bool 
 ///
 /// # Aborts
 ///
-/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false. A
-/// separator offset that fails the offset check also aborts (`zhuyin.cpp:1453`).
+/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false.
+/// A separator offset that fails the offset check also aborts (`zhuyin.cpp:1453`).
 ///
 /// # Safety
 ///
@@ -120,7 +104,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest(
     // `zhuyin_alloc_instance`; this call only reads the instance and writes
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
-    abort_on_empty_matrix_below(&inst, offset);
+    check_key_matrix(&inst, offset);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
@@ -246,8 +230,8 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest_length(
 ///
 /// # Aborts
 ///
-/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false. A
-/// separator offset that fails the offset check also aborts (`zhuyin.cpp:1453`).
+/// On an empty matrix, an offset other than `SIZE_MAX` aborts. `SIZE_MAX` returns false.
+/// A separator offset that fails the offset check also aborts (`zhuyin.cpp:1453`).
 ///
 /// # Safety
 ///
@@ -274,7 +258,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key(
     // `zhuyin_alloc_instance`; this call only reads the instance and writes
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
-    abort_on_empty_matrix_below(&inst, offset);
+    check_key_matrix(&inst, offset);
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
