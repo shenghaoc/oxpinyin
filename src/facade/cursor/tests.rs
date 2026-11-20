@@ -4,7 +4,7 @@
 use crate::engine::EngineError;
 
 use super::{CursorFault, CursorLaw};
-use crate::facade::ToneForwarding;
+use crate::facade::ChewingCorrections;
 use crate::facade::test_fixture::{open_context, pinyin_instance, zhuyin_instance};
 
 #[rstest::rstest]
@@ -62,7 +62,7 @@ fn the_zhuyin_candidate_offset_one_past_the_reserved_slot_asserts() {
     let (context, mut inst) = zhuyin_instance();
     assert_eq!(
         inst.bind(&context.runtime)
-            .parse_chewing_more("su3cl3", ToneForwarding::ZhuyinFacade),
+            .parse_chewing_more("su3cl3", ChewingCorrections::FromOptions),
         6
     );
     let read = inst.bind(&context.runtime);
@@ -140,7 +140,7 @@ fn cursor_laws_step_by_key_in_both_modes() {
     assert_eq!(
         zhuyin
             .bind(&zhuyin_context.runtime)
-            .parse_chewing_more("su3cl3", ToneForwarding::ZhuyinFacade),
+            .parse_chewing_more("su3cl3", ChewingCorrections::FromOptions),
         6
     );
     let read = zhuyin.bind(&zhuyin_context.runtime);
@@ -177,7 +177,7 @@ mod native {
     use crate::OptionBits;
     use crate::engine::CandidateKind;
     use crate::facade::test_fixture::{native_fixture::*, *};
-    use crate::facade::{ContextCore, InstanceCore, ToneForwarding};
+    use crate::facade::{ChewingCorrections, ContextCore, InstanceCore};
     use crate::user::UserConfLaw;
 
     fn luoma_xian() -> (ContextCore, InstanceCore) {
@@ -220,9 +220,9 @@ mod native {
             instance.bind(&context.runtime).parse_chewing_more(
                 input,
                 if law == UserConfLaw::Pinyin {
-                    ToneForwarding::PinFacade
+                    ChewingCorrections::Masked
                 } else {
-                    ToneForwarding::ZhuyinFacade
+                    ChewingCorrections::FromOptions
                 },
             )
         };

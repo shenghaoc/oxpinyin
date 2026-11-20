@@ -872,9 +872,9 @@ strictly sorted in byte order with no repeated spelling, so `equal_range`
 and `partition_point` select the same single row; `strcmp` order is byte
 order for strings without NUL. The flag bits Rust drops gate nothing. The
 forced bits apply only in the batch parse, as at the pin
-(`zhuyin_parser2.cpp:221,272,413,474-486`), and the caller's
-`ZHUYIN_CORRECT_ALL` is stripped at every entry
-(`pinyin.cpp:1573,1589,1621`; `src/facade/parse.rs:210,349`).
+(`zhuyin_parser2.cpp:221,272,413,474-486`). For one-key and batch parsing,
+Pinyin clears `ZHUYIN_CORRECT_ALL` (`pinyin.cpp:1573,1589`).
+Zhuyin forwards the full option word (`zhuyin.cpp:1049-1054,1061-1070`).
 Each `m_pinyin_str` is unique among the 441 content rows, so the key is the
 content key, and the canonical column is the `m_zhuyin_str` that
 `get_zhuyin_string` prints (`chewing_key.cpp:74-89`).

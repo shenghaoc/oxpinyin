@@ -9,21 +9,22 @@ use crate::{
 
 use crate::facade::instance::{InstanceState, InstanceView};
 
-/// Which option bits the chewing batch seam forwards into the parser.
-///
-/// Both facades forward the caller's whole option word into
-/// [`ZhuyinParser::parse_with_options`]; the one difference is the
-/// `ZHUYIN_CORRECT_ALL` strip, which the pinyin facade applies
-/// (`pinyin.cpp:1589` at the pin) and the libzhuyin facade does not
-/// (`zhuyin.cpp:1061`). The shared skeleton is identical; this enum is
-/// the difference, kept greppable.
+/// How the facade forwards the option word for one-key and batch chewing parses.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ToneForwarding {
-    /// The pinyin facade's law: `parse_with_options(word minus
-    /// ZHUYIN_CORRECT_ALL)`.
-    PinFacade,
-    /// The libzhuyin facade's law: `parse_with_options(full word)`.
-    ZhuyinFacade,
+pub enum ChewingCorrections {
+    /// Pinyin clears `ZHUYIN_CORRECT_ALL` (`pinyin.cpp:1573,1589`).
+    Masked,
+    /// Zhuyin forwards the full option word (`zhuyin.cpp:1049-1054,1061-1070`).
+    FromOptions,
+}
+
+impl ChewingCorrections {
+    fn apply(self, options: OptionBits) -> OptionBits {
+        match self {
+            Self::Masked => options - OptionBits::ZHUYIN_CORRECT_ALL,
+            Self::FromOptions => options,
+        }
+    }
 }
 
 /// Which correction bits the one-key full-pinyin probe reads.
@@ -200,14 +201,15 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         parser.parse_one_key(self.options(), text.as_bytes())
     }
 
-    /// The one-key chewing probe — the `parse_chewing` law both facades
-    /// implement identically: the live scheme parses after the API's
-    /// `ZHUYIN_CORRECT_ALL` strip (the caller's corrections never reach
-    /// the chewing parser). `None` is upstream's `false`.
+    /// Parses one chewing key with the live scheme and the facade's correction options.
     #[must_use]
-    pub fn parse_one_chewing(&self, text: &str) -> Option<ChewingKey> {
+    pub fn parse_one_chewing(
+        &self,
+        text: &str,
+        corrections: ChewingCorrections,
+    ) -> Option<ChewingKey> {
         let scheme = zhuyin_scheme(self.live.zhuyin_scheme.get())?;
-        let options = self.options() - OptionBits::ZHUYIN_CORRECT_ALL;
+        let options = corrections.apply(self.options());
         ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes())
     }
 
@@ -320,13 +322,12 @@ impl<
 
     /// The chewing batch seam — the shared skeleton (continue/restart,
     /// scheme dispatch, empty check, exact-input drive, state store) with
-    /// the parser invocation selected by `forwarding` (see
-    /// [`ToneForwarding`]).
+    /// the facade's [`ChewingCorrections`].
     ///
     /// Returns the original-input bytes consumed, 0 on failure or empty
     /// input.
     #[must_use]
-    pub fn parse_chewing_more(&mut self, text: &str, forwarding: ToneForwarding) -> usize {
+    pub fn parse_chewing_more(&mut self, text: &str, corrections: ChewingCorrections) -> usize {
         self.begin_parse(text.as_bytes());
         // The pin fills and fuzzes with the live context word before a
         // sentence guess (pinyin.cpp:1589-1604, zhuyin.cpp:1061-1076).
@@ -338,23 +339,7 @@ impl<
             return 0;
         };
         let parser = ZhuyinParser::with_scheme(scheme);
-        let parsed = match forwarding {
-            // Both facades forward the whole option word; the pinyin
-            // facade strips only `ZHUYIN_CORRECT_ALL`
-            // (`pinyin.cpp:1589` at the pin — the caller's zhuyin
-            // corrections never reach the chewing parser), the libzhuyin
-            // facade strips nothing.
-            ToneForwarding::PinFacade => parser.parse_with_options(
-                text.as_bytes(),
-                self.options() - OptionBits::ZHUYIN_CORRECT_ALL,
-            ),
-            // The libzhuyin facade forwards the whole word, so the pin's
-            // default `USE_TONE | FORCE_TONE` is honoured by the batch
-            // law (`zhuyin.cpp:1061` at the pin).
-            ToneForwarding::ZhuyinFacade => {
-                parser.parse_with_options(text.as_bytes(), self.options())
-            }
-        };
+        let parsed = parser.parse_with_options(text.as_bytes(), corrections.apply(self.options()));
 
         if text.is_empty() {
             // The same fill_matrix empty-input law as full pinyin.

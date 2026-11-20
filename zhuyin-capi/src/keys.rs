@@ -82,9 +82,8 @@ pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
 ///                           ChewingKey * onekey);
 /// ```
 ///
-/// Uses the current keyboard. This implementation masks the chewing correction options for the
-/// single-key probe. The pin passes its option word to the keyboard parser
-/// (`zhuyin.cpp:1045-1056`). Only a successful parse writes the key.
+/// Passes the full option word to the current keyboard's parser (`zhuyin.cpp:1045-1055`).
+/// Only a successful parse writes the key.
 ///
 /// # Safety
 ///
@@ -103,11 +102,13 @@ pub unsafe extern "C" fn zhuyin_parse_chewing(
         unsafe { crate::ffi::borrow_c_string(onechewing) },
     )
     .unwrap_or_default();
-    inst.core.parse_one_chewing(&text).is_some_and(|key| {
-        // SAFETY: Null-checked above.
-        unsafe { *onekey = ChewingKey::from_core(key) };
-        true
-    })
+    inst.core
+        .parse_one_chewing(&text, oxpinyin::facade::ChewingCorrections::FromOptions)
+        .is_some_and(|key| {
+            // SAFETY: Null-checked above.
+            unsafe { *onekey = ChewingKey::from_core(key) };
+            true
+        })
 }
 
 // zhuyin.cpp:1732-1741.

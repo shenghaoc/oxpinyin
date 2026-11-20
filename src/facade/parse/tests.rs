@@ -116,13 +116,13 @@ fn one_key_probes_follow_the_live_schemes() {
     assert!(
         zhuyin
             .bind(&zhuyin_context.runtime)
-            .parse_one_chewing("su3")
+            .parse_one_chewing("su3", ChewingCorrections::FromOptions)
             .is_some()
     );
     assert!(
         zhuyin
             .bind(&zhuyin_context.runtime)
-            .parse_one_chewing("")
+            .parse_one_chewing("", ChewingCorrections::FromOptions)
             .is_none()
     );
 }
@@ -132,7 +132,7 @@ mod native {
     #[cfg(feature = "tkrzw")]
     use crate::facade::test_fixture::native_fixture::*;
     use crate::facade::test_fixture::*;
-    use crate::facade::{PINYIN_DEFAULT_OPTION_WORD, ToneForwarding};
+    use crate::facade::{ChewingCorrections, PINYIN_DEFAULT_OPTION_WORD};
     #[cfg(feature = "tkrzw")]
     use crate::user::UserConfLaw;
 
@@ -199,7 +199,7 @@ mod native {
             assert_eq!(
                 instance
                     .bind(&context.runtime)
-                    .parse_chewing_more(text, ToneForwarding::PinFacade),
+                    .parse_chewing_more(text, ChewingCorrections::Masked),
                 expected
             );
         }
@@ -222,7 +222,7 @@ mod native {
         assert_eq!(
             instance
                 .bind(&context.runtime)
-                .parse_chewing_more("vu0", ToneForwarding::PinFacade),
+                .parse_chewing_more("vu0", ChewingCorrections::Masked),
             3
         );
         let zhuyin = texts(&context, &mut instance);
@@ -247,7 +247,7 @@ mod native {
         assert_eq!(
             instance
                 .bind(&context.runtime)
-                .parse_chewing_more("2p", ToneForwarding::PinFacade),
+                .parse_chewing_more("2p", ChewingCorrections::Masked),
             2
         );
         assert!(
@@ -287,7 +287,7 @@ mod native {
         assert_eq!(
             instance
                 .bind(&context.runtime)
-                .parse_chewing_more("vu0", ToneForwarding::PinFacade),
+                .parse_chewing_more("vu0", ChewingCorrections::Masked),
             3
         );
         assert!(guess(&context, &mut instance));

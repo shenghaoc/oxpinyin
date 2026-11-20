@@ -4,7 +4,7 @@
 //! unlike the `parse_more_*` batch entries they touch no instance parse
 //! state — no matrix, no `m_parsed_len` (upstream `pinyin_parse_full_pinyin`
 //! `pinyin.cpp:1476-1491`, `pinyin_parse_double_pinyin` `:1523-1534`,
-//! `pinyin_parse_chewing` `:1560-1575`). The display getters read the key
+//! `pinyin_parse_chewing` `:1566-1579`). The display getters read the key
 //! a caller hands them through the packed ABI word
 //! (`pinyin_get_zhuyin_string` and siblings, `pinyin.cpp:2700-2766`).
 //!
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn pinyin_parse_double_pinyin(
 ///
 /// The context's live Zhuyin scheme parses the probe after the API's
 /// `ZHUYIN_CORRECT_ALL` strip (`options &= ~ZHUYIN_CORRECT_ALL`,
-/// `pinyin.cpp:1568-1569` — the caller's corrections never reach the
+/// `pinyin.cpp:1573` — the caller's corrections never reach the
 /// chewing parser). The key is written only on success, like the double
 /// entry.
 ///
@@ -156,11 +156,13 @@ pub unsafe extern "C" fn pinyin_parse_chewing(
         unsafe { crate::ffi::borrow_c_string(onechewing) },
     )
     .unwrap_or_default();
-    inst.core.parse_one_chewing(&text).is_some_and(|key| {
-        // SAFETY: Null-checked above.
-        unsafe { *onekey = ChewingKey::from_core(key) };
-        true
-    })
+    inst.core
+        .parse_one_chewing(&text, oxpinyin::facade::ChewingCorrections::Masked)
+        .is_some_and(|key| {
+            // SAFETY: Null-checked above.
+            unsafe { *onekey = ChewingKey::from_core(key) };
+            true
+        })
 }
 
 // ── Display getters ──────────────────────────────────────────────────

@@ -11,7 +11,7 @@ fn parse_chewing_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) 
     // The pin preserves candidate rows and strings across parsing; only a
     // candidate guess, reset or instance destruction invalidates them.
     inst.core
-        .parse_chewing_more(text, oxpinyin::facade::ToneForwarding::ZhuyinFacade)
+        .parse_chewing_more(text, oxpinyin::facade::ChewingCorrections::FromOptions)
 }
 
 fn parse_full_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> usize {
