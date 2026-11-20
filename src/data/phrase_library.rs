@@ -365,6 +365,29 @@ fn map_chunk(path: &Path) -> Result<crate::input::chunk::Mapping, LibraryError> 
     Ok(pending.finish())
 }
 
+/// Whether the pin writes its `mmap %s failed!` line for a row that names no
+/// chunk. `g_build_filename(dir, NULL, NULL)` is `dir`, so `MemoryChunk::mmap`
+/// opens the directory itself (`pinyin.cpp:252-256`, `:286-290`,
+/// `zhuyin.cpp:196-200` at 074a2219). Where the directory reads as a chunk,
+/// the `read` of its length word fails and the pin asserts
+/// (`memory_chunk.h:493`) before writing anything. Where `lseek(SEEK_END)`
+/// fails or answers under the header (tmpfs), `mmap` refuses it
+/// (`memory_chunk.h:486-489`), the pin writes `mmap %s failed!` naming `dir`
+/// and then dies of SIGSEGV on the empty chunk (`phrase_index.cpp:354`). The
+/// answer and warning stay the abort site's either way. The boundary says
+/// whether this platform lets the chunk loader open a directory; where it
+/// does not, the pin reaches neither branch.
+pub(crate) fn writes_null_chunk_line(
+    dir: &Path,
+    reads_as_a_chunk: impl FnOnce(&Path) -> bool,
+) -> bool {
+    crate::input::chunk::opens_directories() && !reads_as_a_chunk(dir)
+}
+
+pub(crate) fn null_chunk_writes_mmap_line(dir: &Path) -> bool {
+    writes_null_chunk_line(dir, directory_reads_as_a_chunk)
+}
+
 fn map_header(
     path: &Path,
     file_size: u64,

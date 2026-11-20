@@ -13,9 +13,7 @@ use crate::{PHRASE_INDEX_LIBRARY_COUNT, phrase_index_library_index};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
-pub(crate) use crate::data::phrase_library::{
-    LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
-};
+pub(crate) use crate::data::phrase_library::{LibraryError, PhraseItemView, RowFault};
 pub(crate) use crate::data::table_info::{FileType, TableConfSite};
 pub(crate) use crate::data::table_info::{TableConf, TableConfError};
 use crate::data::user_files::{SystemVersions, UserFileLayout};
@@ -154,35 +152,6 @@ pub(crate) enum SaveRemapFault {
 }
 
 impl OpenError {
-    /// The system library file the pin's `MemoryChunk::mmap` refuses, when
-    /// that is why the open failed: the pin writes `mmap %s failed!` for it
-    /// (`pinyin.cpp:256`) and dies on the empty chunk it goes on with. A
-    /// layout fault past the chunk and every other failure answer `None`.
-    #[must_use]
-    pub(crate) fn unmappable_library(&self) -> Option<&Path> {
-        match self {
-            Self::Dict(DictError::Library(error)) => error.unmappable_path(),
-            Self::Io(..)
-            | Self::Dict(_)
-            | Self::Lm(_)
-            | Self::UnknownDatabaseFormat(_)
-            | Self::TableConf(_)
-            | Self::Journal(_)
-            | Self::UserSession(_) => None,
-        }
-    }
-
-    /// Whether the open failed on a default row that names no system chunk
-    /// ([`TableConfSite::NullSystemFile`]): the pin reads the system
-    /// directory itself as the chunk.
-    #[must_use]
-    pub(crate) fn null_system_chunk(&self) -> bool {
-        matches!(
-            self,
-            Self::TableConf(TableConfError::Abort(TableConfSite::NullSystemFile))
-        )
-    }
-
     /// Whether the open failed on a system library that is a directory the
     /// pin's `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`, register
     /// row 96), after the libraries before it were mapped and merged. The C
@@ -1623,12 +1592,9 @@ impl Runtime {
         Self::open_with_law_reporting(system_dir, user_dir, law, &mut |_| {})
     }
 
-    /// [`Runtime::open_with_law`], calling `unmapped` with each default
-    /// library whose system chunk is absent, in index order, as the pin's
-    /// init loop reaches it and writes `mmap %s failed!`
-    /// (`pinyin.cpp:253-256`, `zhuyin.cpp:197-200`). Where the open stops
-    /// at a default row the pin dies on, only the libraries the loop
-    /// passed before that row are reported.
+    /// Calls `unmapped` at each default row where the pin writes
+    /// `mmap %s failed!` (`pinyin.cpp:253-256`, `zhuyin.cpp:197-200`).
+    /// A fault ends the loop before the next row.
     ///
     /// # Errors
     ///
@@ -1681,42 +1647,23 @@ impl Runtime {
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
         let rows = LibraryLoopRows::new(system_dir, &conf, user_dir);
-        let opened = (|| {
-            profile
-                .load_libraries(user_profile, &mut originals, &rows)
-                .map_err(library_loop_error)?;
-            // The system bigram attaches first (pinyin.cpp:394-401, zhuyin.cpp:336-343).
-            let bigram = crate::input::path::build_path(
-                system_dir,
-                std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
-            );
-            let lm = crate::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
-            let user = UserStore::open_session(
-                user_dir,
-                &mut originals,
-                SystemVersions::from_conf(&conf),
-                law,
-                profile,
-            )
-            .map_err(OpenError::UserSession)?;
-            Ok((user, lm))
-        })();
-        // The one exit from the loop. The pin wrote each absent library's
-        // line as it reached it (`pinyin.cpp:253-256` within `:377-392`); the
-        // list holds only the libraries this loop reached, and none of them
-        // stopped it.
-        let (user, mut lm) = match opened {
-            Ok(pair) => pair,
-            Err(error) => {
-                for path in originals.phrase_libraries().unmapped() {
-                    unmapped(path);
-                }
-                return Err(error);
-            }
-        };
-        for path in user.originals().phrase_libraries().unmapped() {
-            unmapped(path);
-        }
+        profile
+            .load_libraries(user_profile, &mut originals, &rows, unmapped)
+            .map_err(library_loop_error)?;
+        // The system bigram attaches first (pinyin.cpp:394-401, zhuyin.cpp:336-343).
+        let bigram = crate::input::path::build_path(
+            system_dir,
+            std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
+        );
+        let mut lm = crate::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
+        let user = UserStore::open_session(
+            user_dir,
+            &mut originals,
+            SystemVersions::from_conf(&conf),
+            law,
+            profile,
+        )
+        .map_err(OpenError::UserSession)?;
 
         // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);

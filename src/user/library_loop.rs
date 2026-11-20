@@ -89,8 +89,9 @@ impl<'a> LibraryLoopRows<'a> {
     pub(crate) fn map_libraries(
         &self,
         originals: &mut SystemOriginals,
+        unmapped: &mut dyn FnMut(&Path),
     ) -> Result<(), LibraryLoopStop> {
-        run(&self.steps, self.system_dir, originals, None)
+        run(&self.steps, self.system_dir, originals, None, unmapped)
     }
 }
 
@@ -100,16 +101,24 @@ pub(crate) fn run(
     system_dir: &Path,
     originals: &mut SystemOriginals,
     mut session: Option<SessionProfile<'_>>,
+    unmapped: &mut dyn FnMut(&Path),
 ) -> Result<(), LibraryLoopStop> {
     for &(index, step) in rows {
         match step {
-            DefaultRowStep::Stop(site) => return Err(LibraryLoopStop::Row(site)),
+            DefaultRowStep::Stop(site) => {
+                if site == TableConfSite::NullSystemFile
+                    && crate::data::phrase_library::null_chunk_writes_mmap_line(system_dir)
+                {
+                    unmapped(system_dir);
+                }
+                return Err(LibraryLoopStop::Row(site));
+            }
             DefaultRowStep::System {
                 file,
                 null_user_file,
             } => {
                 originals
-                    .map_library(index, system_dir, file)
+                    .map_library(index, system_dir, file, unmapped)
                     .map_err(LibraryLoopStop::Library)?;
                 if let Some(session) = &mut session
                     && let Some(live) = originals.take_live_library(index)
