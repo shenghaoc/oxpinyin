@@ -149,6 +149,67 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+#[test]
+fn unknown_table_conf_tokens_abort_before_the_model_opens() {
+    let cases: [(&str, &[u8]); 3] = [
+        (
+            // `to_table_database_format_type` (`table_info.cpp:132`, `:233`).
+            "database format",
+            b"binary format version:7\nmodel data version:14\nlambda parameter:0.3\n\
+              source table format:pinyin\ndatabase format:unknown\n",
+        ),
+        (
+            // `to_table_phonetic_type` (`table_info.cpp:119`, `:229`).
+            "source format",
+            b"binary format version:7\nmodel data version:14\nlambda parameter:0.3\n\
+              source table format:unknown\ndatabase format:Tkrzw\n",
+        ),
+        (
+            // `to_table_target` (`table_info.cpp:142`, `:264`).
+            "table row",
+            b"binary format version:7\nmodel data version:14\nlambda parameter:0.3\n\
+              source table format:pinyin\ndatabase format:Tkrzw\n\
+              bogus GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\n",
+        ),
+    ];
+    for (case, conf) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("table.conf"), conf).unwrap();
+        for name in [
+            "gen_k_mixture_model",
+            "import_k_mixture_model",
+            "export_k_mixture_model",
+        ] {
+            let out = run(
+                dir.path(),
+                name,
+                &["--k-mixture-model-file", "model.db"],
+                None,
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt as _;
+                assert_eq!(
+                    out.status.signal(),
+                    Some(libc::SIGABRT),
+                    "{case}, {name}: {out:?}"
+                );
+            }
+            #[cfg(windows)]
+            assert_eq!(
+                out.status.code(),
+                Some(-1_073_740_791),
+                "{case}, {name}: {out:?}"
+            );
+            assert!(
+                out.stdout.is_empty() && out.stderr.is_empty(),
+                "{case}, {name}: {out:?}"
+            );
+            assert!(!dir.path().join("model.db").exists(), "{case}, {name}");
+        }
+    }
+}
+
 fn expected_text(text: &str) -> String {
     text.replace('\n', oxpinyin::input::TEXT_NEWLINE)
 }
