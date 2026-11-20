@@ -6,6 +6,7 @@ include!("table_data/syllable_inventory.rs");
 
 /// Complete full-pinyin syllables in pinned upstream numeric-ID order.
 #[cfg(test)]
+#[must_use]
 pub fn full_pinyin_syllables()
 -> impl ExactSizeIterator<Item = &'static str> + DoubleEndedIterator + Clone {
     crate::string_tables::full_pinyin_syllables()
