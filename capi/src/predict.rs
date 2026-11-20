@@ -13,6 +13,7 @@ use std::os::raw::c_char;
 use oxpinyin::user::UserStore;
 use oxpinyin::{PhraseText, PhraseToken, single_gram};
 
+use crate::ffi::borrow_or_return;
 use crate::state::{CapiCandidate, SharedDict, instance_mut};
 use crate::types::{PinyinInstance, lookup_candidate_type_t};
 
@@ -214,13 +215,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates(
     instance: *mut PinyinInstance,
     prefix: *const c_char,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     if clear_borrowed_prefix(&mut inst, prefix) {
         return false;
     }

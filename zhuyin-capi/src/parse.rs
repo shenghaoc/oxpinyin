@@ -3,6 +3,7 @@
 
 use std::os::raw::c_char;
 
+use crate::ffi::borrow_or_return;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, ZhuyinInstance};
 
@@ -104,13 +105,7 @@ pub unsafe extern "C" fn zhuyin_parse_more_chewings(
 /// applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zhuyin_get_parsed_input_length(instance: *mut ZhuyinInstance) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, 0);
     inst.core.parsed_input_length()
 }
 
@@ -137,13 +132,7 @@ pub unsafe extern "C" fn zhuyin_in_chewing_keyboard(
     key: std::os::raw::c_char,
     symbols: *mut *mut *mut GChar,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // `c_char` is `i8` on some targets and `u8` on others (aarch64
     // Linux among them); `as u8` is a lossless reinterpret on both,
     // and the cast is not "unnecessary" on the targets where it is

@@ -8,7 +8,7 @@ use oxpinyin::ZhuyinParse;
 use oxpinyin::graph::SegmentGraph;
 
 use crate::aux_matrix::{AuxText, SharedMatrix, split_zhuyin};
-use crate::ffi::{strconcat_aux, strdup};
+use crate::ffi::{borrow_or_return, strconcat_aux, strdup, write_if_nonnull};
 use crate::state::instance_ref;
 use crate::types::{GChar, PinyinInstance};
 
@@ -230,18 +230,13 @@ fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor:
 /// initialized.
 unsafe fn write_aux(aux_text: *mut *mut GChar, text: Option<AuxText>) -> bool {
     let answered = text.is_some();
-    if !aux_text.is_null() {
-        let owned = text.map_or_else(
+    write_if_nonnull!(
+        aux_text,
+        text.map_or_else(
             || strdup(""),
             |text| strconcat_aux(&text.prefix, &text.middle, &text.postfix),
-        );
-        // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
-        // Ownership transfers to the caller,
-        // which frees it with `g_free`.
-        unsafe {
-            *aux_text = owned;
-        }
-    }
+        )
+    );
     answered
 }
 
@@ -272,13 +267,7 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     cursor: usize,
     aux_text: *mut *mut GChar,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // Upstream returns false with an allocated empty string when
     // the matrix is empty — no parse, or a parse that placed no key
     // (`pinyin.cpp:3382-3386`).
@@ -344,13 +333,7 @@ pub unsafe extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     cursor: usize,
     aux_text: *mut *mut GChar,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // Upstream returns false with an allocated empty string when
     // the matrix is empty (pinyin.cpp:3442-3445).
     if !inst.core.mode_has_keys() {
@@ -395,13 +378,7 @@ pub unsafe extern "C" fn pinyin_get_chewing_auxiliary_text(
     cursor: usize,
     aux_text: *mut *mut GChar,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     if !inst.core.mode_has_keys() {
         // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
         // without conflicting with live borrows. Its contents need not be initialized.

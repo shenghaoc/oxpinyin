@@ -7,6 +7,7 @@
 
 use std::os::raw::c_char;
 
+use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::ZhuyinInstance;
 
@@ -26,13 +27,7 @@ use crate::types::ZhuyinInstance;
 /// applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     let matrix_has_keys = matrix_has_keys(&inst.read());
     let result = inst.core.guess_sentence_with_matrix(matrix_has_keys);
     oxpinyin::facade::guess_result(result, "zhuyin_guess_sentence", crate::ffi::log_warning)
@@ -101,13 +96,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     instance: *mut ZhuyinInstance,
     prefix: *const c_char,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
     let prefix = oxpinyin::marshal::ucs4::prefix_text(
@@ -161,13 +150,7 @@ pub unsafe extern "C" fn zhuyin_get_sentence(
     instance: *mut ZhuyinInstance,
     sentence: *mut *mut c_char,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // The pin answers from `m_nbest_results` alone: with no row — no
     // `zhuyin_guess_sentence` since the last reset — it returns `false` and
     // leaves `*sentence` untouched (`zhuyin.cpp:988-989`). The raw preedit
@@ -200,13 +183,7 @@ unsafe fn write_owned_sentence(
     phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::PhraseText>>>,
     sentence: *mut *mut c_char,
 ) -> bool {
-    if !sentence.is_null() {
-        let owned = crate::ffi::sentence_text(phrases);
-        // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
-        unsafe {
-            *sentence = owned;
-        }
-    }
+    write_if_nonnull!(sentence, crate::ffi::sentence_text(phrases));
     true
 }
 
@@ -244,13 +221,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
     offset: usize,
     length: *mut usize,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by the facade's
-    // alloc entry point.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // `assert(offset < matrix.size())` follows the empty-matrix `false`,
     // before the phrase is converted.
     let columns = inst.core.pin_matrix_columns();
@@ -270,11 +241,8 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
             // (`*plength = length`, `zhuyin.cpp:2192`); the earlier returns
             // (no keys, empty phrase, a character without a token) leave it
             // untouched.
-            if walked && !length.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *length = 0;
-                }
+            if walked {
+                write_if_nonnull!(length, 0);
             }
             return false;
         }
@@ -295,12 +263,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
             }
         },
     };
-    if !length.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *length = char_count;
-        }
-    }
+    write_if_nonnull!(length, char_count);
     true
 }
 
@@ -329,12 +292,7 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_after_cursor(
     instance: *mut ZhuyinInstance,
     offset: usize,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-    // SAFETY: Handles guarantees a live instance; Serial calls excludes
-    // overlapping access, and this caller retains no other instance view.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     guess_candidates(&mut inst, offset, false)
 }
 
@@ -363,12 +321,7 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_before_cursor(
     instance: *mut ZhuyinInstance,
     offset: usize,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-    // SAFETY: Handles guarantees a live instance; Serial calls excludes
-    // overlapping access, and this caller retains no other instance view.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     guess_candidates(&mut inst, offset, true)
 }
 

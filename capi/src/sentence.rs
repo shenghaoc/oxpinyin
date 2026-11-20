@@ -2,6 +2,7 @@
 
 use std::os::raw::c_char;
 
+use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance};
 
@@ -22,13 +23,7 @@ use crate::types::{GUint, PinyinInstance};
 /// applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     // `get_nbest_match` answers `false` before it clears anything when the
     // matrix has no step (`0 == nstep`, `phonetic_lookup.h:743-745`), and
     // `fill_matrix` leaves the matrix empty for a parse without keys
@@ -86,13 +81,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     instance: *mut PinyinInstance,
     prefix: *const c_char,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`pinyin.cpp:1431-1434`); `None` adds nothing.
     let prefix = oxpinyin::marshal::ucs4::prefix_text(
@@ -148,13 +137,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     instance: *mut PinyinInstance,
     prefix: *const c_char,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     // The nested prediction's aliased-prefix outcome leaves no prefix, so
     // no punctuation is prepended, and the pin answers `true`
     // (`pinyin.cpp:2459-2498`).
@@ -202,13 +185,7 @@ pub unsafe extern "C" fn pinyin_get_sentence(
     index: u8,
     sentence: *mut *mut c_char,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // The pin answers from `m_nbest_results` alone: with no row — no
     // `pinyin_guess_sentence` since the last reset — it returns `false`
     // and leaves `*sentence` untouched (`pinyin.cpp:1470-1471`); past the
@@ -250,13 +227,7 @@ unsafe fn write_owned_sentence(
     phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::PhraseText>>>,
     sentence: *mut *mut c_char,
 ) -> bool {
-    if !sentence.is_null() {
-        let owned = crate::ffi::sentence_text(phrases);
-        // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
-        unsafe {
-            *sentence = owned;
-        }
-    }
+    write_if_nonnull!(sentence, crate::ffi::sentence_text(phrases));
     true
 }
 
@@ -291,13 +262,7 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
     offset: usize,
     length: *mut usize,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by the facade's
-    // alloc entry point.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // `assert(offset < matrix.size())` (`pinyin.cpp:3203`) follows the
     // empty-matrix `false`, before the phrase is converted.
     let columns = inst.core.pin_matrix_columns();
@@ -317,11 +282,8 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
             // (`*plength = length`, `pinyin.cpp:3238`); the earlier
             // returns (no keys, empty phrase, a character without a
             // token) leave it untouched.
-            if walked && !length.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *length = 0;
-                }
+            if walked {
+                write_if_nonnull!(length, 0);
             }
             return false;
         }
@@ -341,12 +303,7 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
             }
         },
     };
-    if !length.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *length = char_count;
-        }
-    }
+    write_if_nonnull!(length, char_count);
     true
 }
 
@@ -531,13 +488,7 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     offset: usize,
     sort_option: GUint,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     // The pin frees the candidates before any check (`pinyin.cpp:2193`),
     // so every `false` below leaves an empty list.
     inst.state.candidates.clear();

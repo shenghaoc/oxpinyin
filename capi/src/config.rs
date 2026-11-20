@@ -2,6 +2,7 @@
 
 use std::os::raw::c_int;
 
+use crate::ffi::borrow_or_return;
 use crate::state::context_mut;
 use crate::types::{PinyinContext, PinyinOptionT};
 use oxpinyin::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
@@ -27,12 +28,7 @@ pub unsafe extern "C" fn pinyin_set_options(
     context: *mut PinyinContext,
     options: PinyinOptionT,
 ) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     // The shared set_options law (stored word and incomplete setting);
     // the zhuyin facade's setter runs the same body. Bits without a flag are kept.
     ctx.core
@@ -64,12 +60,7 @@ pub unsafe extern "C" fn pinyin_set_full_pinyin_scheme(
     context: *mut PinyinContext,
     scheme: c_int,
 ) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     if !matches!(scheme, 1..=3) {
         // Register row 5d, `pinyin_parser2.cpp:398`: `set_scheme`'s
         // `default:` is an `abort()`.
@@ -105,12 +96,7 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
     context: *mut PinyinContext,
     scheme: c_int,
 ) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     let scheme = match oxpinyin::DoublePinyinScheme::try_from(scheme) {
         // CUSTOMIZED (30): register row 5a, `pinyin_parser2.cpp:611`
         // `abort()`. The `m_fallback_table = NULL` before it (`:580`) is
@@ -159,12 +145,7 @@ pub unsafe extern "C" fn pinyin_set_zhuyin_scheme(
     context: *mut PinyinContext,
     scheme: c_int,
 ) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
         // Register rows 5c and 5d: `pinyin.cpp:1189` (`default:`) and, for
         // the `STANDARD_DVORAK` slot, `zhuyin_parser2.cpp:295`; both are
@@ -201,12 +182,7 @@ pub unsafe extern "C" fn pinyin_load_addon_phrase_library(
     context: *mut PinyinContext,
     index: u8,
 ) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     let result = ctx.load_addon(index);
     addon_load_answer(result)
 }
@@ -250,12 +226,7 @@ pub unsafe extern "C" fn pinyin_unload_addon_phrase_library(
         // `pinyin.cpp:499`: `assert`, before the context is read at `:502`.
         std::process::abort();
     }
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     ctx.unload_addon(index)
 }
 
@@ -289,12 +260,7 @@ pub unsafe extern "C" fn pinyin_load_phrase_library(
     context: *mut PinyinContext,
     index: u8,
 ) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { crate::state::context_mut(context) };
+    let ctx = borrow_or_return!(context, crate::state::context_mut, false);
     // `pinyin.cpp:457`: the pin `assert`s that the row of a loaded library
     // is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more answers
     // `false` first, `:448`); which rows are is the context's `table.conf`.
@@ -365,12 +331,7 @@ pub unsafe extern "C" fn pinyin_unload_phrase_library(
     if index != GBK_DICTIONARY {
         return false;
     }
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { crate::state::context_mut(context) };
+    let ctx = borrow_or_return!(context, crate::state::context_mut, false);
     // `FacadePhraseIndex::unload` is in memory and the pin answers `true`
     // (policy row 103): the session drops the library and its visibility
     // mask sets, with nothing written and nothing that can fail.
@@ -419,13 +380,7 @@ pub unsafe extern "C" fn pinyin_mask_out(
     mask: u32,
     value: u32,
 ) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`;
-    // the unique borrow lasts only for the mask call.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     let outcome = ctx.core.mask_out(mask, value);
     match outcome {
         oxpinyin::facade::MaskOutOutcome::Done(answer) => answer,

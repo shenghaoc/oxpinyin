@@ -13,6 +13,46 @@ unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
 
+// Callers uphold the typed borrow's handle and serialization contracts.
+macro_rules! borrow_or_return {
+    ($pointer:expr, $borrow:path, $failure:expr $(, $required:ident)* $(,)?) => {{
+        let pointer = $pointer;
+        if pointer.is_null() $(|| $required.is_null())* {
+            return $failure;
+        }
+        let borrow = $borrow;
+        // SAFETY: The guard excludes NULL. The caller supplies the live handle
+        // and the access required by this typed borrow.
+        unsafe { borrow(pointer) }
+    }};
+}
+pub(crate) use borrow_or_return;
+
+/// Borrows the concrete backing of a C pointer.
+///
+/// # Safety
+///
+/// The caller guarantees validity and alignment through the borrow and
+/// excludes overlapping mutation.
+pub(crate) unsafe fn backing_ref<'a, T>(pointer: *const T) -> &'a T {
+    // SAFETY: The caller supplies a valid, aligned pointer and shared access.
+    unsafe { &*pointer }
+}
+
+// The value is evaluated only when the caller supplied an output slot.
+macro_rules! write_if_nonnull {
+    ($output:expr, $value:expr $(,)?) => {{
+        let output = $output;
+        if !output.is_null() {
+            let value = $value;
+            // SAFETY: The output is non-null, and the caller guarantees that
+            // it is aligned and writable for its pointee type.
+            unsafe { *output = value };
+        }
+    }};
+}
+pub(crate) use write_if_nonnull;
+
 /// Borrow a nullable C string for one C call.
 ///
 /// # Safety

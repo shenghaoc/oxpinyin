@@ -3,6 +3,7 @@
 
 use std::ptr;
 
+use crate::ffi::borrow_or_return;
 use crate::state::{CapiInstance, box_instance, context_ref, instance_mut};
 use crate::types::{PinyinContext, PinyinInstance};
 
@@ -58,13 +59,7 @@ pub unsafe extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *
 /// `pinyin_fini` may already have taken it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_get_context(instance: *mut PinyinInstance) -> *mut PinyinContext {
-    if instance.is_null() {
-        return ptr::null_mut();
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { crate::state::instance_state_ref(instance) };
+    let inst = borrow_or_return!(instance, crate::state::instance_state_ref, ptr::null_mut());
     inst.context
 }
 
@@ -110,13 +105,7 @@ pub unsafe extern "C" fn pinyin_free_instance(instance: *mut PinyinInstance) {
 /// applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_reset(instance: *mut PinyinInstance) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     inst.core.full_reset();
     inst.state.candidates.clear();
     true

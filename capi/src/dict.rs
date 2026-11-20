@@ -27,6 +27,7 @@ use std::os::raw::{c_char, c_uint, c_void};
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
 
+use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::instance_ref;
 use crate::types::{GArray, GChar, GUint, PhraseTokenT, PinyinInstance};
 
@@ -59,12 +60,7 @@ pub unsafe extern "C" fn pinyin_lookup_tokens(
     phrase: *const c_char,
     tokenarray: *mut crate::types::GArray,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     let text = oxpinyin::marshal::input::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
@@ -155,42 +151,29 @@ pub unsafe extern "C" fn pinyin_token_get_phrase(
     len: *mut GUint,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     // An unknown token answers `false` with both out-params untouched
     // (`_token_get_phrase` returns before writing, `pinyin.cpp:1627`).
     let Some(phrase) = inst.core.token_phrase(token) else {
         return false;
     };
-    if !len.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *len = GUint::try_from(phrase.phrase_length).unwrap_or(GUint::MAX);
-        }
-    }
-    if !utf8_str.is_null() {
-        // A word at or above 0x80000000 makes `g_ucs4_to_utf8` answer NULL;
-        // the pin stores that NULL and still answers true (074a2219
-        // pinyin.cpp:1641-1645, zhuyin.cpp:1110-1113).
-        let rendered = phrase.text.map_or(std::ptr::null_mut(), |text| {
+    write_if_nonnull!(
+        len,
+        GUint::try_from(phrase.phrase_length).unwrap_or(GUint::MAX)
+    );
+    // The pin stores NULL and answers true when g_ucs4_to_utf8 cannot
+    // convert a word or allocate the string (pinyin.cpp:1641-1645,
+    // zhuyin.cpp:1110-1113).
+    write_if_nonnull!(
+        utf8_str,
+        phrase.text.map_or(std::ptr::null_mut(), |text| {
             let text = phrase_text_bytes(&text);
             crate::ffi::malloc_cstr_with(text.len(), |out| {
                 out.copy_from_slice(&text);
                 text.len()
             })
-        });
-        // SAFETY: Null-checked above.
-        unsafe {
-            *utf8_str = rendered;
-        }
-        // The pin ignores the nonfatal g_ucs4_to_utf8 allocation failure
-        // (074a2219 pinyin.cpp:1643-1644, zhuyin.cpp:1112-1113).
-    }
+        })
+    );
     true
 }
 
@@ -215,28 +198,12 @@ pub unsafe extern "C" fn pinyin_token_get_n_pronunciation(
     token: PhraseTokenT,
     num: *mut GUint,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
-    if !num.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *num = 0;
-        }
-    }
+    let inst = borrow_or_return!(instance, instance_ref, false);
+    write_if_nonnull!(num, 0);
     let Some(count) = inst.core.token_pronunciation_count(token) else {
         return false;
     };
-    if !num.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *num = count;
-        }
-    }
+    write_if_nonnull!(num, count);
     true
 }
 
@@ -397,29 +364,13 @@ pub unsafe extern "C" fn pinyin_token_get_unigram_frequency(
     token: PhraseTokenT,
     freq: *mut GUint,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
-    if !freq.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *freq = 0;
-        }
-    }
+    let inst = borrow_or_return!(instance, instance_ref, false);
+    write_if_nonnull!(freq, 0);
     // `get_phrase_item` fails if the default index owns no item.
     let Some(count) = inst.core.token_unigram_frequency(token) else {
         return false;
     };
-    if !freq.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *freq = GUint::try_from(count).unwrap_or(GUint::MAX);
-        }
-    }
+    write_if_nonnull!(freq, GUint::try_from(count).unwrap_or(GUint::MAX));
     true
 }
 
@@ -447,13 +398,7 @@ pub unsafe extern "C" fn pinyin_token_add_unigram_frequency(
     token: PhraseTokenT,
     delta: GUint,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: the live instance retains its runtime allocation, and the C
-    // caller serializes mutations across every handle sharing that allocation.
-    let ctx = unsafe { crate::state::instance_context_mut(instance) };
+    let ctx = borrow_or_return!(instance, crate::state::instance_context_mut, false);
     ctx.core.runtime.add_unigram_delta(token, u64::from(delta))
 }
 

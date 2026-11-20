@@ -12,7 +12,10 @@ use oxpinyin::facade::{BigramExportWalk, BigramProbeFault, BigramStep, ExportSte
 use oxpinyin::graph::SegmentGraph;
 use oxpinyin::user::{PinyinKey, toned_key};
 
-use crate::ffi::{malloc_cstr_with, strconcat_pair, strdup, strdup_raw, strjoinv};
+use crate::ffi::{
+    backing_mut, backing_ref, borrow_or_return, malloc_cstr_with, strconcat_pair, strdup,
+    strdup_raw, strjoinv, write_if_nonnull,
+};
 use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_ref};
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -282,12 +285,13 @@ pub unsafe fn oxpinyin_import_aborts(
     phrase: *const c_char,
     pinyin: *const c_char,
 ) -> bool {
-    if iter.is_null() || phrase.is_null() || pinyin.is_null() {
-        return false;
-    }
-    // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_add_phrases`; the shared borrow lasts for this call.
-    let handle = unsafe { &*(iter.cast::<ImportHandle>()) };
+    let handle = borrow_or_return!(
+        iter.cast::<ImportHandle>(),
+        backing_ref,
+        false,
+        phrase,
+        pinyin
+    );
     let Some(owner) = handle.owner.as_ref() else {
         return false;
     };
@@ -382,12 +386,7 @@ pub unsafe extern "C" fn pinyin_begin_get_phrases(
     context: *mut PinyinContext,
     index: GUint,
 ) -> *mut ExportIterator {
-    if context.is_null() {
-        return ptr::null_mut();
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = borrow_or_return!(context, context_ref, ptr::null_mut());
     // The pin's begin cannot fail: its sub-index is in memory, and so are
     // the session's phrases (policy row 62).
     let cursor = ctx.core.phrase_export_cursor(index);
@@ -409,13 +408,7 @@ pub unsafe extern "C" fn pinyin_begin_get_phrases(
 /// applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> bool {
-    if iter.is_null() {
-        return false;
-    }
-
-    // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_get_phrases`.
-    let handle = unsafe { &*(iter.cast::<ExportHandle>()) };
+    let handle = borrow_or_return!(iter.cast::<ExportHandle>(), backing_ref, false);
     handle.cursor.has_next()
 }
 
@@ -450,13 +443,7 @@ pub unsafe extern "C" fn pinyin_iterator_get_next_phrase(
     pinyin: *mut *mut GChar,
     count: *mut c_int,
 ) -> bool {
-    if iter.is_null() {
-        return false;
-    }
-
-    // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
-    let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
+    let handle = borrow_or_return!(iter.cast::<ExportHandle>(), backing_mut, false);
     // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&handle.owner) };
     let step = handle.cursor.get_next_with(&context.core, |row| {
@@ -491,18 +478,9 @@ pub unsafe extern "C" fn pinyin_iterator_get_next_phrase(
         // process aborts, after its first line wrote
         // `*phrase = NULL; *pinyin = NULL; *count = -1;` (`:703`).
         ExportStep::Assert(_) => {
-            // SAFETY: each out-param is null-checked before its write.
-            unsafe {
-                if !phrase.is_null() {
-                    *phrase = ptr::null_mut();
-                }
-                if !pinyin.is_null() {
-                    *pinyin = ptr::null_mut();
-                }
-                if !count.is_null() {
-                    *count = -1;
-                }
-            }
+            write_if_nonnull!(phrase, ptr::null_mut());
+            write_if_nonnull!(pinyin, ptr::null_mut());
+            write_if_nonnull!(count, -1);
             std::process::abort()
         }
     };
@@ -518,12 +496,7 @@ pub unsafe extern "C" fn pinyin_iterator_get_next_phrase(
             *pinyin = reading;
         }
     }
-    if !count.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *count = frequency;
-        }
-    }
+    write_if_nonnull!(count, frequency);
     true
 }
 
@@ -583,12 +556,7 @@ pub unsafe extern "C" fn pinyin_end_get_phrases(iter: *mut ExportIterator) {
 pub unsafe extern "C" fn pinyin_begin_get_bigram_phrases(
     context: *mut PinyinContext,
 ) -> *mut BigramExportIterator {
-    if context.is_null() {
-        return ptr::null_mut();
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { context_ref(context) };
+    let ctx = borrow_or_return!(context, context_ref, ptr::null_mut());
     // Register row 86, `ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`): the
     // user bigram carries a key that is not a phrase_token_t and the pin's
     // `get_all_items` assert dies.
@@ -634,14 +602,7 @@ pub unsafe extern "C" fn pinyin_begin_get_bigram_phrases(
 pub unsafe extern "C" fn pinyin_bigram_iterator_has_next_phrase(
     iter: *mut BigramExportIterator,
 ) -> bool {
-    if iter.is_null() {
-        return false;
-    }
-
-    // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for this
-    // call (the pin's `has_next` advances the iterator).
-    let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
+    let handle = borrow_or_return!(iter.cast::<BigramHandle>(), backing_mut, false);
     // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&handle.owner) };
     let more = handle.walk.has_next(&context.core);
@@ -708,14 +669,7 @@ pub unsafe extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     pinyin: *mut *mut GChar,
     count: *mut c_int,
 ) -> bool {
-    if iter.is_null() {
-        return false;
-    }
-
-    // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for
-    // this call.
-    let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
+    let handle = borrow_or_return!(iter.cast::<BigramHandle>(), backing_mut, false);
     // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&handle.owner) };
     let (row, more) = match handle.walk.get_next(&context.core) {
@@ -728,21 +682,12 @@ pub unsafe extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     // `pinyin.cpp:904-905`: `g_strdup` of the pair's `m_phrase` (NULL for
     // NULL) and of the row's pinyin, both allocated by GLib, before the
     // `has_next` that may load and convert the next pair (`:910`).
-    if !phrase.is_null() {
-        // SAFETY: `handle.phrase` is NULL or the handle's NUL-terminated
-        // GLib string; `phrase` is null-checked.
-        unsafe { *phrase = strdup_raw(handle.phrase) };
-    }
-    if !pinyin.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe { *pinyin = strdup(&row.pinyin) };
-    }
-    if !count.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
-        }
-    }
+    write_if_nonnull!(phrase, {
+        // SAFETY: `handle.phrase` is NULL or the handle's NUL-terminated GLib string.
+        unsafe { strdup_raw(handle.phrase) }
+    });
+    write_if_nonnull!(pinyin, strdup(&row.pinyin));
+    write_if_nonnull!(count, c_int::try_from(row.count).unwrap_or(c_int::MAX));
     // The `has_next` the pin's `get_next` returns (`pinyin.cpp:910`), after
     // the row's out-params were written (`:904-906`); it converts the pair
     // it loaded, unless it died loading it.

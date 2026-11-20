@@ -20,7 +20,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::key_text;
+use crate::ffi::{borrow_or_return, key_text};
 use crate::state::instance_ref;
 use crate::types::{ChewingKey, GChar, PinyinInstance};
 
@@ -54,13 +54,7 @@ pub unsafe extern "C" fn pinyin_parse_full_pinyin(
     onepinyin: *const c_char,
     onekey: *mut ChewingKey,
 ) -> bool {
-    if instance.is_null() || onepinyin.is_null() || onekey.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false, onepinyin, onekey);
     let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
@@ -116,13 +110,7 @@ pub unsafe extern "C" fn pinyin_parse_double_pinyin(
     onepinyin: *const c_char,
     onekey: *mut ChewingKey,
 ) -> bool {
-    if instance.is_null() || onepinyin.is_null() || onekey.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false, onepinyin, onekey);
     let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
@@ -161,13 +149,7 @@ pub unsafe extern "C" fn pinyin_parse_chewing(
     onechewing: *const c_char,
     onekey: *mut ChewingKey,
 ) -> bool {
-    if instance.is_null() || onechewing.is_null() || onekey.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false, onechewing, onekey);
     let text = oxpinyin::marshal::input::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
