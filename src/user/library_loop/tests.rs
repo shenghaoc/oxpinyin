@@ -6,7 +6,7 @@ use crate::data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
 
 use super::*;
 use crate::user::persistence::{
-    LoadedProfile, UserConfLaw, begin_session_profile, check_format, system_originals,
+    LoadedPinyinIndex, LoadedProfile, UserConfLaw, check_format, system_originals,
 };
 
 const LAWS: [UserConfLaw; 2] = [UserConfLaw::Pinyin, UserConfLaw::Zhuyin];
@@ -91,7 +91,10 @@ impl Fixture {
             crate::data::phrase_libraries::PhraseLibraries::empty(),
             layout,
         );
-        let mut profile = begin_session_profile(&self.user, &check).expect("the user tables");
+        let mut profile = LoadedPinyinIndex::open(Some((&self.user, check)))
+            .unwrap()
+            .load_phrase_table()
+            .unwrap();
         let stop = run(
             rows,
             &self.system,

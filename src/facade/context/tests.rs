@@ -904,6 +904,63 @@ mod native {
     use crate::user::UserConfLaw;
     use std::path::Path;
 
+    /// Berkeley DB names each invalid file on stderr when its native open runs.
+    #[cfg(feature = "bdb")]
+    #[test]
+    fn init_opens_each_system_db_before_its_user_db() {
+        let names = [
+            "pinyin_index.bin",
+            "user_pinyin_index.bin",
+            "phrase_index.bin",
+            "user_phrase_index.bin",
+            "bigram.db",
+            "user_bigram.db",
+        ];
+        let Some((_scratch, user, run)) = child(
+            "facade::context::tests::native::init_opens_each_system_db_before_its_user_db",
+            |user| {
+                let system = private_system(user.parent().unwrap());
+                write_user_conf(user, &system);
+                for name in names {
+                    let path = if name.starts_with("user_") {
+                        user
+                    } else {
+                        &system
+                    }
+                    .join(name);
+                    if path.exists() {
+                        std::fs::remove_file(&path).unwrap();
+                    }
+                    std::fs::write(path, b"invalid DB").unwrap();
+                }
+                for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+                    native_context(&system, user, law);
+                }
+            },
+        ) else {
+            return;
+        };
+        let system = user.parent().unwrap().join("system");
+        let paths = names.map(|name| {
+            (if name.starts_with("user_") {
+                &user
+            } else {
+                &system
+            })
+            .join(name)
+        });
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        let observed: Vec<_> = stderr
+            .lines()
+            .filter_map(|line| {
+                paths
+                    .iter()
+                    .position(|path| line.contains(path.to_str().unwrap()))
+            })
+            .collect();
+        assert_eq!(observed, [0, 1, 2, 3, 4, 5].repeat(2), "{stderr}");
+    }
+
     #[test]
     fn init_reports_an_absent_library_and_succeeds() {
         let Some((_scratch, user, run)) = child(
