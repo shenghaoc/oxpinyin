@@ -1,7 +1,7 @@
 //! The pin's line tagger, `src/storage/tag_utility.cpp` at libpinyin
 //! 074a2219: a stack of tag registrations (`:70-104`, `:280-299`),
 //! `split_line` (`:118-169`) and `taglib_read` (`:171-264`). The utilities
-//! that read the pin's text models share it. Its character steps and
+//! that read the pin's text models share it. Unicode classification and
 //! warnings are GLib's, through the tool boundary. Its
 //! `g_return_val_if_fail` checks are plain Rust that answer the pin's value
 //! without GLib's critical (maintainer ruling 2026-10-31 UTC).
@@ -132,7 +132,8 @@ impl TagLib {
     /// `taglib_read(input_line, line_type, values, required)`
     /// (`:171-264`): the pin's answer, after its warnings,
     /// with `values` and `required` as it leaves them. `line_type` is set
-    /// only once a tag matches, as the pin's is.
+    /// only once a tag matches, as the pin's is. A checked read refuses
+    /// a tag name interrupted by malformed UTF-8.
     ///
     /// # Errors
     ///
@@ -140,6 +141,7 @@ impl TagLib {
     pub fn read(
         &self,
         input_line: &CStr,
+        checked: bool,
         line_type: &mut c_int,
         values: &mut Vec<CString>,
         required: &mut Required,
@@ -150,7 +152,6 @@ impl TagLib {
             let _ = tool::strv_length_null();
             return Err(Undefined::UnterminatedEscape);
         };
-        let num_of_tokens = tokens.len();
         let tag_array = self.top();
         let Some(line_tag) = tokens.first() else {
             if tag_array.is_empty() {
@@ -158,9 +159,12 @@ impl TagLib {
             }
             return Err(Undefined::NoToken);
         };
+        if checked && line_tag.unreadable() {
+            return Ok(false);
+        }
         let Some(cur_entry) = tag_array
             .iter()
-            .find(|entry| entry.line_tag == line_tag.to_bytes())
+            .find(|entry| entry.line_tag == line_tag.text.to_bytes())
         else {
             return Ok(false);
         };
@@ -171,40 +175,61 @@ impl TagLib {
             let Some(value) = tokens.get(i) else {
                 return Ok(false);
             };
-            values.push(value.clone());
+            values.push(value.text.clone());
         }
 
-        let mut i = cur_entry.num_of_values + 1;
-        while i < num_of_tokens {
-            let tmp = tokens[i].to_bytes();
-            if cur_entry.ignored_tags.iter().any(|tag| tag == tmp) {
-                i += 2;
+        Ok(Self::read_pairs(
+            &tokens[cur_entry.num_of_values + 1..],
+            cur_entry,
+            required,
+            checked,
+        ))
+    }
+
+    fn read_pairs(
+        tokens: &[Token],
+        entry: &TagEntry,
+        required: &mut Required,
+        checked: bool,
+    ) -> bool {
+        for pair in tokens.chunks(2) {
+            let [name, value @ ..] = pair else { continue };
+            if checked && name.unreadable() {
+                return false;
+            }
+            let name_bytes = name.text.to_bytes();
+            if entry.ignored_tags.iter().any(|tag| tag == name_bytes) {
                 continue;
             }
-            if !cur_entry.required_tags.iter().any(|tag| tag == tmp) {
-                tool::warn_unexpected_tag(&tokens[i]);
-                i += 2;
+            if !entry.required_tags.iter().any(|tag| tag == name_bytes) {
+                tool::warn_unexpected_tag(&name.text);
                 continue;
             }
-            let key = tmp.to_vec();
-            i += 1;
             // g_return_val_if_fail(i < num_of_tokens, false) (`:246`).
-            let Some(value) = tokens.get(i) else {
-                return Ok(false);
+            let Some(value) = value.first() else {
+                return false;
             };
-            required.insert(key, value.clone());
-            i += 1;
+            required.insert(name_bytes.to_vec(), value.text.clone());
         }
-
-        for required_tag in &cur_entry.required_tags {
-            if !required.contains_key(required_tag) {
-                tool::warn_missed_required_tag(
-                    &CString::new(required_tag.clone()).unwrap_or_default(),
-                );
-                return Ok(false);
+        for tag in &entry.required_tags {
+            if !required.contains_key(tag) {
+                tool::warn_missed_required_tag(&CString::new(tag.clone()).unwrap_or_default());
+                return false;
             }
         }
-        Ok(true)
+        true
+    }
+}
+
+struct Token {
+    text: CString,
+    /// The bounded UTF-8 decoder found an invalid sequence in this unquoted name.
+    malformed_boundary: bool,
+}
+
+impl Token {
+    fn unreadable(&self) -> bool {
+        self.malformed_boundary || self.text.to_str().is_err()
     }
 }
 
@@ -212,46 +237,48 @@ impl TagLib {
 /// answers NULL.
 ///
 /// # Errors
-///
-/// [`Undefined::PastLineEnd`] where the pin's next `*cur` would read past
-/// the line's NUL.
-fn split_line(line: &CStr) -> Result<Option<Vec<CString>>, Undefined> {
+/// [`Undefined::PastLineEnd`] for an incomplete sequence at the end of the line.
+fn split_line(input: &CStr) -> Result<Option<Vec<Token>>, Undefined> {
     const QUOTE: u32 = '"' as u32;
     let line = LineCursor {
-        line,
-        bytes: line.to_bytes_with_nul(),
+        bytes: input.to_bytes_with_nul(),
     };
     let mut tokens = Vec::new();
     let mut cur = 0;
     while line.at(cur)? != 0 {
-        let unichar = line.get_char(cur)?;
-        let mut begin = cur;
-        if tool::unichar_isspace(unichar) {
-            cur = line.next(cur);
+        let (unichar, width) = line.character(cur)?;
+        if unichar.is_some_and(tool::unichar_isspace) {
+            cur += width;
             continue;
-        } else if unichar == QUOTE {
-            cur = line.next(cur);
-            begin = cur;
+        }
+        let quoted = unichar == Some(QUOTE);
+        if quoted {
+            cur += width;
+        }
+        let begin = cur;
+        cur = if quoted {
             let Some(end) = line.quoted_end(cur)? else {
                 return Ok(None);
             };
-            cur = end;
-            tokens.push(line.token(begin, cur));
+            end
         } else {
-            cur = line.graph_end(cur)?;
-            tokens.push(line.token(begin, cur));
-        }
-        if line.at(cur)? == 0 {
+            line.graph_end(cur)?
+        };
+        let (separator, width) = line.character(cur)?;
+        tokens.push(Token {
+            text: line.token(begin, cur),
+            malformed_boundary: !quoted && separator.is_none(),
+        });
+        if separator == Some(0) {
             break;
         }
-        cur = line.next(cur);
+        cur += width;
     }
     Ok(Some(tokens))
 }
 
-/// The pin's `cur` pointer over one line of `split_line`.
+/// A borrowed view of one line of `split_line`.
 struct LineCursor<'a> {
-    line: &'a CStr,
     /// The line's bytes with its NUL.
     bytes: &'a [u8],
 }
@@ -262,14 +289,24 @@ impl LineCursor<'_> {
         self.bytes.get(cur).copied().ok_or(Undefined::PastLineEnd)
     }
 
-    /// `g_utf8_get_char(cur)`, called only where `*cur` was just read.
-    fn get_char(&self, cur: usize) -> Result<u32, Undefined> {
-        tool::utf8_get_char_at(self.line, cur).ok_or(Undefined::PastLineEnd)
-    }
-
-    /// `g_utf8_next_char(cur)`.
-    fn next(&self, cur: usize) -> usize {
-        cur + tool::utf8_next_char_step(self.bytes[cur])
+    /// One scalar or malformed sequence, with its byte width.
+    fn character(&self, cur: usize) -> Result<(Option<u32>, usize), Undefined> {
+        let byte = self.at(cur)?;
+        let width = match byte {
+            0..=0x7F => return Ok((Some(u32::from(byte)), 1)),
+            0xC2..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF4 => 4,
+            _ => return Ok((None, 1)),
+        };
+        let end = (cur + width).min(self.bytes.len() - 1);
+        match std::str::from_utf8(&self.bytes[cur..end]) {
+            Ok(text) => Ok((text.chars().next().map(u32::from), width)),
+            Err(error) => error
+                .error_len()
+                .map(|width| (None, width))
+                .ok_or(Undefined::PastLineEnd),
+        }
     }
 
     /// The token of the bytes from `begin` to `end`.
@@ -284,17 +321,19 @@ impl LineCursor<'_> {
         const QUOTE: u32 = '"' as u32;
         const BACKSLASH: u32 = '\\' as u32;
         while self.at(cur)? != 0 {
-            let unichar = self.get_char(cur)?;
-            if unichar == BACKSLASH {
-                cur = self.next(cur);
+            let (unichar, width) = self.character(cur)?;
+            if unichar == Some(BACKSLASH) {
+                cur += width;
                 // g_return_val_if_fail(*cur, NULL) (`:137`).
                 if self.at(cur)? == 0 {
                     return Ok(None);
                 }
-            } else if unichar == QUOTE {
+                cur += self.character(cur)?.1;
+            } else if unichar == Some(QUOTE) {
                 break;
+            } else {
+                cur += width;
             }
-            cur = self.next(cur);
         }
         Ok(Some(cur))
     }
@@ -303,8 +342,9 @@ impl LineCursor<'_> {
     /// graphic characters.
     fn graph_end(&self, mut cur: usize) -> Result<usize, Undefined> {
         while self.at(cur)? != 0 {
-            if tool::unichar_isgraph(self.get_char(cur)?) {
-                cur = self.next(cur);
+            let (unichar, width) = self.character(cur)?;
+            if unichar.is_some_and(tool::unichar_isgraph) {
+                cur += width;
             } else {
                 break;
             }

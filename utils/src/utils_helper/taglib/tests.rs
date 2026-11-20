@@ -5,7 +5,7 @@ fn split(line: &CStr) -> Result<Option<Vec<String>>, Undefined> {
         tokens.map(|tokens| {
             tokens
                 .iter()
-                .map(|token| token.to_string_lossy().into_owned())
+                .map(|token| token.text.to_string_lossy().into_owned())
                 .collect()
         })
     })
@@ -47,22 +47,16 @@ fn split_line_answers_the_pins_null_and_its_undefined_reads() {
     assert_eq!(split(c"\"a\\").unwrap(), None);
     assert_eq!(split(c"a \xe4"), Err(Undefined::PastLineEnd));
     assert_eq!(split(c"\"\xe4"), Err(Undefined::PastLineEnd));
-    // Inside the line, a truncated sequence only makes odd tokens.
-    // The lead byte's step of three lands on `b`.
-    assert_eq!(
-        split(c"\xe4 abc").unwrap(),
-        Some(vec![String::new(), "bc".into()])
-    );
 }
 
-/// POLICY-ACCEPTED
-/// (`docs/findings/upstream-divergences.md#g_utf8_next_char-from-a-byte-that-leads-no-sequence`):
-/// a byte that leads no UTF-8 sequence steps one byte. The pin steps
-/// GLib's table, 5 at `0xF8..=0xFB` and 6 at `0xFC..=0xFD`, so it
-/// answers `["", "e"]`, `["", "f"]`, and reads past the NUL of
-/// `"\xf8ab"`.
+/// POLICY-ACCEPTED (policy row 135): malformed UTF-8 does not consume the
+/// valid bytes that follow it.
 #[test]
-fn split_line_steps_one_byte_from_a_byte_that_leads_no_sequence() {
+fn split_line_keeps_bytes_after_a_malformed_sequence() {
+    assert_eq!(
+        split(c"\xe4 abc").unwrap(),
+        Some(vec![String::new(), "abc".into()])
+    );
     assert_eq!(
         split(c"\xf8abcd e").unwrap(),
         Some(vec![String::new(), "abcd".into(), "e".into()])
@@ -75,11 +69,9 @@ fn split_line_steps_one_byte_from_a_byte_that_leads_no_sequence() {
         split(c"\xf8ab").unwrap(),
         Some(vec![String::new(), "ab".into()])
     );
-    // Control: 0xF5 leads a four-byte form on both sides, and its step
-    // of four lands on the space.
     assert_eq!(
         split(c"\xf5abc d").unwrap(),
-        Some(vec![String::new(), "d".into()])
+        Some(vec![String::new(), "abc".into(), "d".into()])
     );
 }
 
@@ -90,6 +82,33 @@ fn tags() -> TagLib {
 }
 
 #[test]
+fn a_checked_read_refuses_an_unreadable_tag() {
+    let tags = tags();
+    let read = |line: &CStr, checked| {
+        tags.read(
+            line,
+            checked,
+            &mut 0,
+            &mut Vec::new(),
+            &mut Required::default(),
+        )
+    };
+    assert_eq!(
+        read(c"\\item 10 \xe7\x94\xb2 \xe2x freq 1", true),
+        Ok(false)
+    );
+    assert_eq!(
+        read(c"\\item 10 \xe7\x94\xb2 \xe2x freq 1", false),
+        Ok(true)
+    );
+    assert_eq!(read(c"\\item 10 \xe7\x94\xb2 freq 1", true), Ok(true));
+    assert_eq!(
+        read(c"\\item 10 \xe7\x94\xb2 \xe2", true),
+        Err(Undefined::PastLineEnd)
+    );
+}
+
+#[test]
 fn read_walks_values_then_pairs() {
     let taglib = tags();
     let mut line_type = 0;
@@ -97,6 +116,7 @@ fn read_walks_values_then_pairs() {
     let mut required = Required::default();
     let read = taglib.read(
         c"\\item 10 甲 count 2 freq 3 freq 4",
+        false,
         &mut line_type,
         &mut values,
         &mut required,
@@ -106,15 +126,27 @@ fn read_walks_values_then_pairs() {
     assert_eq!(values, [c"10".to_owned(), c"甲".to_owned()]);
     assert_eq!(required[&b"freq".to_vec()].as_c_str(), c"4");
     assert_eq!(
-        taglib.read(c"\\item 10", &mut line_type, &mut values, &mut required),
+        taglib.read(
+            c"\\item 10",
+            false,
+            &mut line_type,
+            &mut values,
+            &mut required
+        ),
         Ok(false)
     );
     assert_eq!(
-        taglib.read(c"\\other", &mut line_type, &mut values, &mut required),
+        taglib.read(
+            c"\\other",
+            false,
+            &mut line_type,
+            &mut values,
+            &mut required
+        ),
         Ok(false)
     );
     assert_eq!(
-        taglib.read(c"", &mut line_type, &mut values, &mut required),
+        taglib.read(c"", false, &mut line_type, &mut values, &mut required),
         Err(Undefined::NoToken)
     );
 }

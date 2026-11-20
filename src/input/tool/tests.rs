@@ -57,7 +57,7 @@ fn exit_on_store_error_prints_one_line_and_exits_with_status_1() {
 }
 
 #[test]
-fn getline_keeps_the_pins_lines_and_its_last_line() {
+fn getline_reads_the_final_line_once_and_clears_on_eof() {
     let mut input = LineReader::from_bytes(b"a\nb\0c\n\nlast");
     let mut lines = Vec::new();
     while input.getline() {
@@ -72,11 +72,10 @@ fn getline_keeps_the_pins_lines_and_its_last_line() {
             (b"last".to_vec(), c"last".to_owned()),
         ]
     );
-    // The sentry refuses the stream at its end: the line stays.
-    assert_eq!(input.line(), b"last");
+    // POLICY-ACCEPTED: a failed read clears the previous record.
+    assert!(input.line().is_empty());
     assert!(!input.getline());
-    assert_eq!(input.line(), b"last");
-    // After a newline-terminated last line, the next read erases it.
+    assert!(input.line().is_empty());
     let mut input = LineReader::from_bytes(b"one\n");
     assert!(input.getline());
     assert!(!input.getline());
@@ -186,12 +185,14 @@ fn numeric_fields_are_the_c_librarys() {
 }
 
 #[test]
-fn text_calls_are_glibs() {
+fn text_calls_keep_their_format_contracts() {
     assert_eq!(
         strsplit_set(c"1 2\t3 4", c" \t", 2),
         [b"1".to_vec(), b"2\t3 4".to_vec()]
     );
     assert_eq!(utf8_strlen(c"你好"), 2);
+    // POLICY-ACCEPTED: the malformed sequence leaves subsequent bytes to count.
+    assert_eq!(utf8_strlen(c"\xe4 abc"), 5);
     assert_eq!(utf8_to_ucs4(c"你好"), (Some(vec![0x4F60, 0x597D]), 2));
     assert_eq!(utf8_to_ucs4(c"a\xff").0, None);
     assert_eq!(
@@ -211,23 +212,4 @@ fn text_calls_are_glibs() {
     assert!(unichar_isspace(0x3000));
     assert!(!unichar_isgraph(0x200B));
     assert!(unichar_isgraph(u32::from('a')));
-    // A lead byte steps its sequence's length; every other byte steps
-    // one, including 0xF8..=0xFD, where GLib's table steps 5 or 6.
-    for (lead, step) in [
-        (b'a', 1),
-        (0x80, 1),
-        (0xBF, 1),
-        (0xC0, 2),
-        (0xDF, 2),
-        (0xE4, 3),
-        (0xF0, 4),
-        (0xF7, 4),
-        (0xF8, 1),
-        (0xFD, 1),
-        (0xFF, 1),
-    ] {
-        assert_eq!(utf8_next_char_step(lead), step, "{lead:#04x}");
-    }
-    assert_eq!(utf8_get_char_at(c"a\xe4\xbd\xa0", 1), Some(0x4F60));
-    assert_eq!(utf8_get_char_at(c"a", 2), None);
 }

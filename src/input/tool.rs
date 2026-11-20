@@ -390,11 +390,16 @@ pub fn strsplit_set(string: &CStr, delimiters: &CStr, max_tokens: c_int) -> Vec<
     parts
 }
 
-/// `g_utf8_strlen(str, -1)` (`ngseg.cpp:190`).
+/// Counts UTF-8 characters in one field, treating malformed sequences as
+/// replacement characters.
 #[must_use]
 pub fn utf8_strlen(str: &CStr) -> c_long {
-    // SAFETY: `str` is NUL-terminated and outlives the call.
-    unsafe { glib_sys::g_utf8_strlen(str.as_ptr(), -1) }
+    let length = str
+        .to_bytes()
+        .utf8_chunks()
+        .map(|chunk| chunk.valid().chars().count() + usize::from(!chunk.invalid().is_empty()))
+        .sum::<usize>();
+    length as c_long
 }
 
 /// `g_utf8_to_ucs4(str, -1, NULL, &len, NULL)` (`ngseg.cpp:192`): the
@@ -454,40 +459,6 @@ pub fn unichar_isspace(c: u32) -> bool {
 pub fn unichar_isgraph(c: u32) -> bool {
     // SAFETY: a plain value call.
     unsafe { glib_sys::g_unichar_isgraph(c) != 0 }
-}
-
-// g_utf8_get_char, tag_utility.cpp:122,133,150. The pin reads outside its buffer past
-// NUL.
-/// Reads the character beginning at a byte offset in a C string. Pass an offset at a
-/// character boundary within the terminated buffer.
-#[must_use]
-pub fn utf8_get_char_at(line: &CStr, offset: usize) -> Option<u32> {
-    let bytes = line.to_bytes_with_nul();
-    if offset >= bytes.len() {
-        return None;
-    }
-    // SAFETY: `offset` is within the NUL-terminated string, and
-    // `g_utf8_get_char` reads a continuation byte only after a continuation
-    // byte, so it stops at the NUL at the latest (GLib 2.84.4
-    // glib/gutf8.c:44-63, UTF8_GET).
-    Some(unsafe { glib_sys::g_utf8_get_char(bytes.as_ptr().add(offset).cast()) })
-}
-
-/// `g_utf8_next_char`'s step from the byte `c`: the length of the UTF-8
-/// sequence `c` leads. GLib documents the macro for a valid UTF-8 string,
-/// with no error checking (maintainer ruling 2026-10-31 UTC: a macro that
-/// does work is implemented from its contract). A byte that leads no
-/// sequence of one to four bytes steps one; GLib's table steps 5 at
-/// `0xF8..=0xFB` and 6 at `0xFC..=0xFD`, a POLICY-ACCEPTED difference
-/// (`docs/findings/upstream-divergences.md#g_utf8_next_char-from-a-byte-that-leads-no-sequence`).
-#[must_use]
-pub const fn utf8_next_char_step(c: u8) -> usize {
-    match c.leading_ones() {
-        2 => 2,
-        3 => 3,
-        4 => 4,
-        _ => 1,
-    }
 }
 
 /// `g_warning(format, text)` for a format with one `%s`: `g_log` with
@@ -610,14 +581,12 @@ impl Drop for OutputStream {
     }
 }
 
-/// A C++ input stream as `std::getline(stream, linebuf)` reads it into the
-/// pin's `LineString`: its `eofbit`/`failbit` and one reusable line, which
-/// ends in the NUL `c_str()` adds.
+/// A line reader with a reusable, NUL-terminated buffer.
 pub struct LineReader<R> {
     reader: Option<R>,
     tied: bool,
-    eof: bool,
     fail: bool,
+    unterminated_line: bool,
     line: Vec<u8>,
     open_errno: Option<c_int>,
 }
@@ -663,7 +632,7 @@ impl<R: BufRead> LineReader<R> {
             fail: reader.is_none(),
             reader,
             tied,
-            eof: false,
+            unterminated_line: false,
             line: vec![0],
             open_errno: None,
         }
@@ -682,30 +651,38 @@ impl<R: BufRead> LineReader<R> {
         !self.fail
     }
 
-    // std::getline and its sentry, [string.io]; ngseg.cpp:105–137,188.
-    /// Reads a line into the reusable buffer, removing its LF. A final line without LF is
-    /// still returned. A read started after EOF or failure returns `false` and leaves the
-    /// buffered line intact.
+    /// Whether the last successful read ended at EOF without a newline.
+    #[must_use]
+    pub fn last_line_was_unterminated(&self) -> bool {
+        self.unterminated_line
+    }
+
+    /// Reads the next line, which may end at EOF. A failed read clears the
+    /// line buffer.
     pub fn getline(&mut self) -> bool {
-        let Some(reader) = self.reader.as_mut().filter(|_| !self.eof && !self.fail) else {
+        self.line.clear();
+        let Some(reader) = self
+            .reader
+            .as_mut()
+            .filter(|_| !self.fail && !self.unterminated_line)
+        else {
             self.fail = true;
+            self.line.push(0);
             return false;
         };
         if self.tied {
             // SAFETY: `stdout` is the C runtime's open stream.
             unsafe { libc::fflush(c_stdout()) };
         }
-        self.line.clear();
         match reader.read_until(b'\n', &mut self.line) {
-            Ok(0) => {
-                self.eof = true;
+            Ok(0) | Err(_) => {
+                self.line.clear();
                 self.fail = true;
             }
             Ok(_) if self.line.last() == Some(&b'\n') => {
                 self.line.pop();
             }
-            Ok(_) => self.eof = true,
-            Err(_) => self.fail = true,
+            Ok(_) => self.unterminated_line = true,
         }
         self.line.push(0);
         !self.fail
@@ -791,19 +768,14 @@ pub mod pin_tests {
 // utils/storage/gen_pinyin_table.cpp.
 /// File input, table output and diagnostics for the pinyin table generator.
 pub mod gen_pinyin_table {
-    use super::{FILE, NonNull, OutputStream, c_int, c_long, c_stderr, c_void, print_text};
+    use super::{FILE, NonNull, OutputStream, c_int, c_stderr, c_void, print_text};
     use std::ffi::CStr;
 
-    /// gen_pinyin_table's `char phrase[1024], pinyin[1024]` (`:136`) plus
-    /// eight zero bytes past them, so a `g_utf8_next_char` step over a
-    /// truncated sequence at the end of a `%1023s` word stays inside the
-    /// buffer.
-    const FIELD: usize = 1024 + 8;
+    /// Space for one `%1023s` field and its terminator.
+    const FIELD: usize = 1024;
 
-    /// One input file of `feed_file` (`:134-157`) and its `char phrase[1024],
-    /// pinyin[1024]` and `guint32 freq` locals, which keep their bytes from
-    /// one `fscanf` to the next as the pin's do. They start zeroed where the
-    /// pin's start indeterminate. The stream is closed exactly once.
+    /// One input file of `feed_file` (`:134-157`) and the fields scanned
+    /// from it. The stream is closed exactly once.
     pub struct TableInput {
         stream: NonNull<FILE>,
         phrase: Box<[u8; FIELD]>,
@@ -865,19 +837,6 @@ pub mod gen_pinyin_table {
         #[must_use]
         pub const fn freq(&self) -> u32 {
             self.freq
-        }
-
-        /// `g_utf8_strlen(phrase, -1)` (`:162`) over the buffer itself: a
-        /// truncated sequence at the word's end steps past its NUL into the
-        /// bytes an earlier, longer word left, as the pin's does.
-        #[must_use]
-        pub fn phrase_utf8_strlen(&self) -> c_long {
-            // SAFETY: `%1023s` (or the zeroed buffer) leaves a NUL within the
-            // first 1024 bytes, and `g_utf8_strlen` steps at most six bytes
-            // past the last lead byte before it reads that NUL or one of the
-            // eight zero bytes after the 1024, so every byte it reads is in
-            // the buffer.
-            unsafe { glib_sys::g_utf8_strlen(self.phrase.as_ptr().cast(), -1) }
         }
 
         /// `fclose(infile)` (`:156`).

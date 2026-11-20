@@ -54,13 +54,7 @@ fn feed_file(table: &mut Table, filename: &CString) {
         };
         let phrase = CString::new(phrase.clone()).unwrap_or_default();
         let pinyin = CString::new(pinyin.clone()).unwrap_or_default();
-        // Pad the GLib scan against a truncated final UTF-8 lead byte. The
-        // pin reads past its allocation there (class b); valid text is exact.
-        let mut padded = phrase.as_bytes_with_nul().to_vec();
-        padded.extend_from_slice(&[0; 8]);
-        let phrase = std::ffi::CStr::from_bytes_until_nul(&padded).unwrap_or_default();
-        let length = usize::try_from(tool::utf8_strlen(phrase)).unwrap_or(0);
-        table.feed_parts(phrase, &pinyin, frequency, length, parse_keys);
+        table.feed_parts(&phrase, &pinyin, frequency, parse_keys);
     }
 }
 

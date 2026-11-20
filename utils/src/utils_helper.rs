@@ -36,9 +36,10 @@ impl TaggedModel {
         }
     }
 
-    pub(crate) fn read(&mut self, line: &CStr) -> Result<bool, taglib::Undefined> {
+    pub(crate) fn read(&mut self, line: &CStr, checked: bool) -> Result<bool, taglib::Undefined> {
         self.tags.read(
             line,
+            checked,
             &mut self.line_type,
             &mut self.values,
             &mut self.required,
@@ -47,12 +48,12 @@ impl TaggedModel {
 
     /// The importers abort where the pin's read is undefined (class (b)).
     pub(crate) fn read_or_abort(&mut self, line: &CStr) -> bool {
-        self.read(line).unwrap_or_else(|_| tool::abort())
+        self.read(line, false).unwrap_or_else(|_| tool::abort())
     }
 
     /// `check_result(taglib_read(...))` in the importers.
     pub(crate) fn check_read(&mut self, line: &CStr) {
-        if !self.read_or_abort(line) {
+        if !self.read(line, true).unwrap_or_else(|_| tool::abort()) {
             tool::abort();
         }
     }
