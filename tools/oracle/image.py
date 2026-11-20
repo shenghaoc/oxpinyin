@@ -764,13 +764,6 @@ def container_resources(engine):
     return ['--cpus', '4', '--memory', '6G'] if is_apple(engine) else []
 
 
-def oracle_build_command(engine, root, selected_platform, tag, target):
-    """The build of Dockerfile.oracle's TARGET stage (docker grammar)."""
-    return [engine, 'build', *container_resources(engine), '--platform', selected_platform,
-            '--build-arg', f'ORACLE_PLATFORM={selected_platform}', '--target', target,
-            '-f', Path(root) / 'tools/oracle/Dockerfile.oracle', '-t', tag, root]
-
-
 # The inputs of Dockerfile.oracle's deps stage. .python-version: the stage installs the managed
 # interpreter it names.
 DEPS_INPUTS = ('tools/oracle/Dockerfile.oracle', 'tools/oracle/versions.py', 'tools/oracle/version-manifest.json',

@@ -47,7 +47,6 @@ ARCHIVE_NAME = 'model20.text.tar.gz'
 MARKER_SCHEMA = 'pinyin-model-cache-v1'
 # The eighteen-file inventory; the guest builder owns it and cannot import tools.dev.
 EXPECTED_MODEL_FILES = MODEL_FILES
-FETCH_HINT = 'just fetch-model'
 
 USAGE = """\
 Usage: just fetch-model [OPTIONS]

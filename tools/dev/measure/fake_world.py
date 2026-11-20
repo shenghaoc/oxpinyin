@@ -47,8 +47,6 @@ class World(unittest.TestCase):
         for name, fake in fakes.items():
             self.enterContext(mock.patch.object(bench, name, fake))
         self.enterContext(mock.patch('shutil.which', lambda name, path=None: '/usr/bin/taskset' if name == 'taskset' else None))
-        self.enterContext(mock.patch.object(identity, 'loadavg', lambda proc=None, fields=None: (
-            '0.1 0.2 0.3 1/2 3' if fields is None else '0.1 0.2 0.3')))
         for name, value in (('cpu_model', 'Fancy CPU'), ('memory_total', 'MemTotal: 1 kB'), ('processors', 4),
                             ('pc_version', 'Version: 2.11.92'), ('first_output_line', 'tool 1.0'),
                             ('perf_event_paranoid', '2')):

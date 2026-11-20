@@ -48,6 +48,3 @@ def cpp_smoke(ctx: Context, args: Sequence[str]) -> int:
         return status(result.returncode)
     ctx.emit('cpp-smoke: ok')
     return 0
-
-
-RECIPES = {'cpp-smoke': cpp_smoke}
