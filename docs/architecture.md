@@ -164,7 +164,8 @@ Its `tool` module, under the `tools` feature, adds the utilities' GLib option ca
 - `fst` is not used for the prefix tables.
   It was slower there than the existing binary search.
 - `zerocopy` is not used.
-  Packed records are decoded as the [C struct parsing rule](rust-conventions.md#c-struct-parsing) states.
+  The fixed headers contain only a few little-endian fields.
+  Some readers must check fields in order, and variable-length records still need explicit stride calculations and bounds checks.
 - `arrayvec` is not used.
   The bounded collections already stay inline, as the `SmallVec` `QueryKey` in `user::user_index` does, or use plain arrays, as `engine::nbest` does.
 
