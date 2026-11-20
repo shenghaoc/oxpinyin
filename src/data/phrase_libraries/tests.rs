@@ -177,16 +177,20 @@ mod phrase_library {
 
     #[cfg(unix)]
     #[test]
-    fn libraries_record_absent_files() {
+    fn libraries_report_absent_files() {
         let dir = tempfile::tempdir().expect("scratch directory");
         let first = dir.path().join("a.bin");
         std::fs::write(&first, sample()).expect("write a.bin");
-        let libraries = PhraseLibraries::open(dir.path(), &[(1, "a.bin"), (2, "b.bin")])
-            .expect("b.bin is absent");
+        let mut libraries = PhraseLibraries::empty();
+        let mut reported = Vec::new();
+        for (nibble, file) in [(1, "a.bin"), (2, "b.bin")] {
+            libraries
+                .map_library(nibble, dir.path(), file.as_ref(), &mut |path| {
+                    reported.push(path.to_owned())
+                })
+                .unwrap();
+        }
         assert!(libraries.is_loaded(1) && !libraries.is_loaded(2));
-        assert_eq!(
-            libraries.unmapped().collect::<Vec<_>>(),
-            [dir.path().join("b.bin")]
-        );
+        assert_eq!(reported, [dir.path().join("b.bin")]);
     }
 }

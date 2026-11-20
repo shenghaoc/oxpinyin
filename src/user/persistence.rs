@@ -454,8 +454,10 @@ impl SystemOriginals {
         nibble: u8,
         system_dir: &Path,
         file: &FileName,
+        unmapped: &mut dyn FnMut(&Path),
     ) -> Result<(), LibraryError> {
-        self.mapped.map_library(nibble, system_dir, file.as_ref())?;
+        self.mapped
+            .map_library(nibble, system_dir, file.as_ref(), unmapped)?;
         if self.layout.system_logs().iter().any(|(n, _)| *n == nibble)
             && let Some(library) = library_metadata(&self.mapped, nibble)
         {
@@ -1107,6 +1109,7 @@ impl LoadedProfile {
         user: Option<(&Path, ProfileCheck)>,
         originals: &mut SystemOriginals,
         rows: &crate::user::LibraryLoopRows<'_>,
+        unmapped: &mut dyn FnMut(&Path),
     ) -> Result<(), crate::user::LibraryLoopStop> {
         if let Some((user_dir, check)) = user {
             crate::user::library_loop::run(
@@ -1118,9 +1121,10 @@ impl LoadedProfile {
                     profile: self,
                     conform: check.conform,
                 }),
+                unmapped,
             )
         } else {
-            rows.map_libraries(originals)?;
+            rows.map_libraries(originals, unmapped)?;
             self.replayed = originals.take_live_libraries();
             Ok(())
         }
@@ -1136,7 +1140,7 @@ pub(crate) fn load_session_in_loop(
 ) -> Result<(LoadedProfile, Result<(), crate::user::LibraryLoopStop>), PersistenceError> {
     let user = Some((dir, *check));
     let mut profile = LoadedPinyinIndex::open(user)?.load_phrase_table()?;
-    let stop = profile.load_libraries(user, originals, rows);
+    let stop = profile.load_libraries(user, originals, rows, &mut |_| {});
     Ok((profile, stop))
 }
 

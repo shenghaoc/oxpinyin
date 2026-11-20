@@ -1,4 +1,4 @@
-use super::writes_null_chunk_line;
+use crate::data::phrase_library::writes_null_chunk_line;
 use std::path::Path;
 
 // Unix only: the pin's read of a directory as a chunk (`phrase_library::directory_chunk_fault`); `writes_null_chunk_line` is false elsewhere.
@@ -538,7 +538,7 @@ mod library_directory {
 
     /// Whether a directory in `system`'s place reads as a chunk here.
     fn reaches_the_assert(system: &Path) -> bool {
-        crate::runtime::directory_reads_as_a_chunk(system)
+        crate::data::phrase_library::directory_reads_as_a_chunk(system)
     }
 
     /// The user directory's file names, sorted.
@@ -671,6 +671,32 @@ mod library_directory {
         std::fs::write(&path, b"abc").expect("short library");
     }
 
+    #[test]
+    fn init_reports_a_missing_library_before_opening_the_next_row() {
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let system = private_system("inline-mmap");
+            let user = scratch("inline-mmap-user");
+            conforming_profile(&system, &user);
+            let first = system.join("gbk_char.bin");
+            let later = system.join("merged.bin");
+            std::fs::remove_file(&first).unwrap();
+            let mut reported = Vec::new();
+            crate::runtime::Runtime::open_with_law_reporting(
+                &system,
+                Some(&user),
+                law,
+                &mut |path| {
+                    reported.push(path.to_owned());
+                    if path == first {
+                        std::fs::remove_file(&later).unwrap();
+                    }
+                },
+            )
+            .unwrap();
+            assert_eq!(reported, [first, later], "{law:?}");
+        }
+    }
+
     /// Library 1's log asserts before the loop opens library 2 or library 4, so
     /// neither writes its line and the fault is the log's. With a sound log the
     /// loop reaches them: library 2's line, then library 4's refusal.
@@ -684,13 +710,12 @@ mod library_directory {
             make_unmappable(&system, "merged.bin");
 
             let (opened, lines) = open_lines(&system, &user, law);
-            let error = opened.err().expect("the open fails");
+            assert!(opened.is_err(), "{law:?}");
             assert_eq!(
-                error.unmappable_library(),
-                Some(system.join("merged.bin").as_path()),
+                lines,
+                [system.join("gbk_char.bin"), system.join("merged.bin")],
                 "{law:?}"
             );
-            assert_eq!(lines, [system.join("gbk_char.bin")], "{law:?}");
 
             plant_header_token_log(&user, "gb_char.dbin");
             let (opened, lines) = open_lines(&system, &user, law);

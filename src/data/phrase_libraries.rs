@@ -61,8 +61,6 @@ struct Loaded {
 pub struct PhraseLibraries {
     /// nibble → library, `None` = not loaded.
     by_nibble: [Option<Loaded>; 16],
-    /// Files `Self::map_library` found absent.
-    unmapped: Vec<PathBuf>,
     /// `FacadePhraseIndex::m_total_freq` (074a2219 `phrase_index.h:440`)
     /// over every loaded library: each library's stored `total_freq` is
     /// added when it loads and subtracted when it unloads or is replaced,
@@ -91,7 +89,6 @@ impl PhraseLibraries {
     pub fn empty() -> Self {
         Self {
             by_nibble: Default::default(),
-            unmapped: Vec::new(),
             total: 0,
             stocked: 0,
         }
@@ -126,16 +123,15 @@ impl PhraseLibraries {
                 )));
             }
             seen[slot] = true;
-            this.map_library(nibble, dir, file.as_ref())?;
+            this.map_library(nibble, dir, file.as_ref(), &mut |_| {})?;
         }
         Ok(this)
     }
 
     /// Maps one default library from `dir`, the mapping half of the pin's
     /// `_load_phrase_library` (`pinyin.cpp:254-264`, `zhuyin.cpp:198-208`).
-    /// An absent file leaves the library unloaded and is recorded in
-    /// [`Self::unmapped`]; any other file that is not a regular one is
-    /// skipped without a word.
+    /// Reports a refused map where it occurs. An absent file leaves the
+    /// library unloaded. Other non-regular files are skipped silently.
     ///
     /// # Errors
     ///
@@ -148,6 +144,7 @@ impl PhraseLibraries {
         nibble: u8,
         dir: &Path,
         file: &std::ffi::OsStr,
+        unmapped: &mut dyn FnMut(&Path),
     ) -> Result<(), LibraryError> {
         // `g_build_filename`: a name never leaves the directory.
         let path = crate::input::path::build_chunk_path(dir, file);
@@ -162,18 +159,15 @@ impl PhraseLibraries {
             // The pin's `open` fails and `MemoryChunk::mmap` answers
             // `false`; the library stays unloaded here.
             Err(_) => {
-                self.unmapped.push(path);
+                unmapped(&path);
                 return Ok(());
             }
         }
-        self.load(nibble, &path).map(|_| ())
-    }
-
-    /// The files `Self::map_library` found absent, in the order it met
-    /// them: where the pin writes `mmap %s failed!` at init and goes on
-    /// with an empty chunk (`pinyin.cpp:256`).
-    pub(crate) fn unmapped(&self) -> impl Iterator<Item = &Path> {
-        self.unmapped.iter().map(PathBuf::as_path)
+        self.load(nibble, &path).map(|_| ()).inspect_err(|error| {
+            if let Some(path) = error.unmappable_path() {
+                unmapped(path);
+            }
+        })
     }
 
     /// Validate each selected loaded library once, retaining both the

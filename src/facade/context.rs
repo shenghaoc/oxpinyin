@@ -9,7 +9,6 @@ use crate::data::c_stderr;
 use crate::engine::SessionSettings;
 use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
-    directory_reads_as_a_chunk,
 };
 use crate::user::{
     ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
@@ -300,22 +299,6 @@ pub enum LibraryLoadFault {
     Journal(JournalFault),
 }
 
-/// Whether the pin writes its `mmap %s failed!` line for a row that names no
-/// chunk. `g_build_filename(dir, NULL, NULL)` is `dir`, so `MemoryChunk::mmap`
-/// opens the directory itself (`pinyin.cpp:252-256`, `:286-290`,
-/// `zhuyin.cpp:196-200` at 074a2219). Where the directory reads as a chunk,
-/// the `read` of its length word fails and the pin asserts
-/// (`memory_chunk.h:493`) before writing anything. Where `lseek(SEEK_END)`
-/// fails or answers under the header (tmpfs), `mmap` refuses it
-/// (`memory_chunk.h:486-489`), the pin writes `mmap %s failed!` naming `dir`
-/// and then dies of SIGSEGV on the empty chunk (`phrase_index.cpp:354`). The
-/// answer and warning stay the abort site's either way. The boundary says
-/// whether this platform lets the chunk loader open a directory; where it
-/// does not, the pin reaches neither branch.
-fn writes_null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bool) -> bool {
-    crate::input::chunk::opens_directories() && !reads_as_a_chunk(dir)
-}
-
 /// Whether the pin's `MemoryChunk::mmap` asserts (`memory_chunk.h:493`) on
 /// `dir` read as the chunk of a row that names none — the complement of
 /// `writes_null_chunk_line`: where it does not assert, it writes
@@ -323,14 +306,14 @@ fn writes_null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bo
 /// (b)). The C facades abort the process on the assert shape.
 #[must_use]
 pub fn null_chunk_asserts(dir: &Path) -> bool {
-    !writes_null_chunk_line(dir, directory_reads_as_a_chunk)
+    !crate::data::phrase_library::null_chunk_writes_mmap_line(dir)
 }
 
 /// Writes the pin's `mmap %s failed!` line for `dir` with
 /// [`c_stderr::mmap_failed`], if `writes_null_chunk_line` says the pin
 /// writes it on this file system.
 fn null_chunk_refused(dir: &Path) {
-    if writes_null_chunk_line(dir, directory_reads_as_a_chunk) {
+    if crate::data::phrase_library::null_chunk_writes_mmap_line(dir) {
         c_stderr::mmap_failed(dir);
     }
 }
@@ -473,18 +456,7 @@ impl ContextCore {
         let runtime = Runtime::open_with_law_reporting(system_dir, user_dir, law, &mut |path| {
             c_stderr::mmap_failed(path)
         })
-        .map_err(|error| {
-            // A system library the pin cannot map: its line, then the
-            // pin dies on the empty chunk (`pinyin.cpp:256`,
-            // `zhuyin.cpp:200`); this open answers NULL as it did. The
-            // line follows `check_format`'s, so it is the shim's too.
-            if let Some(path) = error.unmappable_library() {
-                c_stderr::mmap_failed(path);
-            } else if error.null_system_chunk() {
-                null_chunk_refused(system_dir);
-            }
-            OpenFailure::Runtime(error)
-        })?;
+        .map_err(OpenFailure::Runtime)?;
         Ok(Self {
             settings: SessionSettings::default(),
             runtime,

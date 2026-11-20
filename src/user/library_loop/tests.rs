@@ -95,6 +95,7 @@ impl Fixture {
             .unwrap()
             .load_phrase_table()
             .unwrap();
+        let mut unmapped = Vec::new();
         let stop = run(
             rows,
             &self.system,
@@ -104,14 +105,11 @@ impl Fixture {
                 profile: &mut profile,
                 conform: check.conform,
             }),
+            &mut |path| unmapped.push(path.to_owned()),
         );
         Run {
             stop,
-            unmapped: originals
-                .phrase_libraries()
-                .unmapped()
-                .map(Path::to_path_buf)
-                .collect(),
+            unmapped,
             loaded: (0..16)
                 .filter(|&nibble| originals.phrase_libraries().is_loaded(nibble))
                 .collect(),
@@ -197,7 +195,13 @@ fn a_bad_log_aborts_before_a_later_fatal_row() {
                 "{law:?} {site:?}: {:?}",
                 reached.stop
             );
-            assert_eq!(reached.unmapped, [fixture.system.join("b.bin")], "{law:?}");
+            let mut expected = vec![fixture.system.join("b.bin")];
+            if site == TableConfSite::NullSystemFile
+                && crate::data::phrase_library::null_chunk_writes_mmap_line(&fixture.system)
+            {
+                expected.push(fixture.system.clone());
+            }
+            assert_eq!(reached.unmapped, expected, "{law:?}");
 
             fixture.bad_log("a.dbin");
             let run = fixture.run(law, &rows);
@@ -207,8 +211,7 @@ fn a_bad_log_aborts_before_a_later_fatal_row() {
     }
 }
 
-/// the loop's own list holds the absent library when a
-/// later chunk stops it, so its line precedes the later one's
+/// An absent library reports before the later chunk that stops the loop
 /// (`pinyin.cpp:256`; register row 76's prefix).
 #[test]
 fn an_absent_library_keeps_its_line_before_a_later_unmappable_one() {
@@ -226,7 +229,11 @@ fn an_absent_library_keeps_its_line_before_a_later_unmappable_one() {
             Some(fixture.system.join("c.bin").as_path()),
             "{law:?}"
         );
-        assert_eq!(run.unmapped, [fixture.system.join("a.bin")], "{law:?}");
+        assert_eq!(
+            run.unmapped,
+            [fixture.system.join("a.bin"), fixture.system.join("c.bin")],
+            "{law:?}"
+        );
     }
 }
 
@@ -301,14 +308,15 @@ fn the_loop_without_a_profile_stops_at_the_first_fault() {
         crate::data::phrase_libraries::PhraseLibraries::empty(),
         UserFileLayout::from_conf(&conf),
     );
-    let stop = rows.map_libraries(&mut originals);
+    let mut unmapped = Vec::new();
+    let stop = rows.map_libraries(&mut originals, &mut |path| unmapped.push(path.to_owned()));
     assert!(
         matches!(&stop, Err(LibraryLoopStop::Library(error)) if error.unmappable_path().is_some()),
         "{stop:?}"
     );
     assert_eq!(
-        originals.phrase_libraries().unmapped().collect::<Vec<_>>(),
-        [fixture.system.join("a.bin")]
+        unmapped,
+        [fixture.system.join("a.bin"), fixture.system.join("b.bin")]
     );
     assert!(!originals.phrase_libraries().is_loaded(3));
 }
