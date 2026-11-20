@@ -253,3 +253,56 @@ fn a_journal_surrogate_is_published_as_historical_utf8() {
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { crate::test_support::close(context, instance) };
 }
+
+/// An available `USER_FILE` reading is copied from the session arena into
+/// the caller's array; a reading past the item's count appends the pin's
+/// zeroed `phrase_length` keys (074a2219 `pinyin.cpp:2801-2818`).
+#[test]
+fn nth_pronunciation_copies_a_user_reading_and_zeroes_out_of_range() {
+    let user_dir = TempUserDir::new("user-reading-words");
+    let path = user_dir.path.to_str().expect("UTF-8 path").to_owned();
+    let (context, instance) = open(&path);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let iter = unsafe { pinyin_begin_add_phrases(context, 7) };
+    assert!(unsafe {
+        pinyin_iterator_add_phrase(iter, cstr("你好").as_ptr(), cstr("ni3'hao3").as_ptr(), 1)
+    });
+    unsafe { pinyin_end_add_phrases(iter) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let tokens = unsafe { crate::test_support::lookup(instance, "你好") };
+    let token = tokens
+        .into_iter()
+        .find(|token| token >> 24 == 7)
+        .expect("library 7 token");
+    // SAFETY: the array stores packed two-byte keys and is freed below; the
+    // entry point clears it before each append.
+    unsafe {
+        let keys = glib_sys::g_array_new(0, 0, 2);
+        assert!(super::pinyin_token_get_nth_pronunciation(
+            instance,
+            token,
+            0,
+            keys.cast()
+        ));
+        assert_eq!((*keys).len, 2);
+        assert_eq!(
+            std::slice::from_raw_parts((*keys).data.cast::<u16>(), 2),
+            [0x302b, 0x3286]
+        );
+        assert!(super::pinyin_token_get_nth_pronunciation(
+            instance,
+            token,
+            1,
+            keys.cast()
+        ));
+        assert_eq!((*keys).len, 2);
+        assert_eq!(
+            std::slice::from_raw_parts((*keys).data.cast::<u16>(), 2),
+            [0, 0]
+        );
+        glib_sys::g_array_free(keys, 1);
+    }
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
+}

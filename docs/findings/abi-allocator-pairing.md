@@ -274,7 +274,7 @@ resolve repeats the last phrase that resolved in the same read, or adds ""
 when none has: the pin ignores the result of `get_phrase_item` (`:43`), and
 a failed read leaves the item as it was (`storage/phrase_index.cpp:180-206`,
 `storage/phrase_index.h:81-84`). The C helpers (`ffi::sentence_text`,
-`write_owned_sentence!`) take that iterator. The GLib calls and their order
+`write_owned_sentence`) take that iterator. The GLib calls and their order
 are unchanged. The candidate
 string stays a snapshot (`zhuyin.cpp:1865-1870`). `BigramExportWalk::get_next` does not
 build the phrase of the row. `ExportedBigramRow` carries the pinyin and count.

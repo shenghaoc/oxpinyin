@@ -48,34 +48,6 @@ pub fn parser_prefix(input: Option<&CStr>) -> String {
     }
 }
 
-/// Defines an unsafe helper that borrows a nullable C string for one call. A non-null
-/// argument must remain readable and NUL-terminated throughout the borrow.
-#[macro_export]
-macro_rules! borrow_c_string_helpers {
-    () => {
-        /// Borrow a nullable C string for one C call.
-        ///
-        /// # Safety
-        ///
-        /// Under the crate-level Strings rule, NULL is accepted. A non-NULL
-        /// pointer must address a live NUL-terminated string, readable through
-        /// its terminator in one allocation within `isize::MAX` bytes. It must
-        /// stay valid and unchanged for all of `'a`. The borrow must not
-        /// outlive the C call.
-        pub(crate) unsafe fn borrow_c_string<'a>(
-            pointer: *const ::std::os::raw::c_char,
-        ) -> Option<&'a ::std::ffi::CStr> {
-            if pointer.is_null() {
-                None
-            } else {
-                // SAFETY: The Strings contract guarantees readable, unchanged
-                // NUL-terminated storage for the returned borrow's lifetime.
-                Some(unsafe { ::std::ffi::CStr::from_ptr(pointer) })
-            }
-        }
-    };
-}
-
 // ZhuyinDirectParser2::parse, storage/zhuyin_parser2.cpp:914–959.
 /// Prepares input for [`crate::parse_zhuyin_direct`]. Valid UTF-8 passes through in full.
 /// On malformed UTF-8, the result ends just after the last ASCII space or apostrophe

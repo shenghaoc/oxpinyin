@@ -253,8 +253,47 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
     unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::secondary_zhuyin_text) }
 }
 
-oxpinyin::display_string_getter! {
-    key: ChewingKey, char: GChar
+/// The shared body of the two index-spelling display getters: NULL the
+/// out-param, refuse the zero key on `get_table_index() == 0`, then hand
+/// out the rendering made with the pin's `g_strdup`/`g_strdup_printf`
+/// call (`chewing_key.cpp:97-114`), caller-owned (`g_free`).
+///
+/// # Safety
+///
+/// Under the crate-level rules, Out-parameters and Borrowed objects: a
+/// non-NULL output is aligned and writable, and a non-NULL key is valid
+/// for reads. Access must not conflict with live borrows.
+unsafe fn display_string_getter(
+    key: *mut ChewingKey,
+    utf8_str: *mut *mut GChar,
+    render: impl FnOnce(oxpinyin::ChewingKey) -> oxpinyin::KeyText,
+) -> bool {
+    // The pin never reads `instance` (`pinyin.cpp:2729-2749`); it writes
+    // `*utf8_str` before any check, so a NULL out stays guarded (row 41).
+    if key.is_null() || utf8_str.is_null() {
+        return false;
+    }
+
+    // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
+    unsafe {
+        *utf8_str = ptr::null_mut();
+    }
+    // SAFETY: Borrowed objects guarantees a readable key; NULL was checked.
+    let core = unsafe { *key }.to_core();
+    if !core.elements_in_dims() {
+        std::process::abort();
+    }
+    if core.table_index() == 0 {
+        return false;
+    }
+    if !core.tone_in_dims() {
+        std::process::abort();
+    }
+    // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
+    unsafe {
+        *utf8_str = key_text(render(core));
+    }
+    true
 }
 
 // pinyin.cpp:2765-2774.

@@ -385,3 +385,39 @@ fn a_partial_system_gram_tail_refuses_the_segment_with_one_warning() {
     unsafe { pinyin_free_instance(instance) };
     unsafe { pinyin_fini(context) };
 }
+
+#[test]
+fn sentence_null_out_param_answers_true() {
+    assert!(
+        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
+        unsafe { write_owned_sentence([Some(PhraseText::from("你"))], std::ptr::null_mut()) }
+    );
+}
+
+#[test]
+fn sentence_null_allocation_still_answers_true() {
+    // The pin's `convert_to_utf8` returns true even when its result is NULL.
+    let mut out = std::ptr::dangling_mut::<c_char>();
+    assert!(
+        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
+        unsafe { write_owned_sentence([None::<PhraseText>], &mut out) }
+    );
+    assert!(out.is_null());
+}
+
+#[test]
+fn sentence_phrases_write_through() {
+    let phrases = [
+        PhraseText::from("你"),
+        PhraseText::from("好"),
+        PhraseText::from("x"),
+    ];
+    let mut out = std::ptr::null_mut();
+    assert!(
+        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
+        unsafe { write_owned_sentence(phrases.iter().map(Some), &mut out) }
+    );
+    assert!(!out.is_null());
+    // SAFETY: the writer returned a caller-owned GLib string.
+    assert_eq!(unsafe { crate::ffi::take_owned_cstr(out) }, "你好x");
+}
