@@ -34,13 +34,8 @@ pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) ->
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
     let matrix_has_keys = matrix_has_keys(&inst.read());
-    match inst.core.guess_sentence_with_matrix(matrix_has_keys) {
-        Ok(found) => found,
-        Err(error) => {
-            refuse_lookup_gram("zhuyin_guess_sentence", &error);
-            false
-        }
-    }
+    let result = inst.core.guess_sentence_with_matrix(matrix_has_keys);
+    oxpinyin::facade::guess_result(result, "zhuyin_guess_sentence", crate::ffi::log_warning)
 }
 
 /// The lookup faults of a predecessor's user bigram. A value too short for
@@ -130,16 +125,14 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
         std::process::abort();
     };
     let matrix_has_keys = matrix_has_keys(&inst.read());
-    match inst
+    let result = inst
         .core
-        .guess_sentence_with_prefix_and_matrix(&prefixes, matrix_has_keys)
-    {
-        Ok(found) => found,
-        Err(error) => {
-            refuse_lookup_gram("zhuyin_guess_sentence_with_prefix", &error);
-            false
-        }
-    }
+        .guess_sentence_with_prefix_and_matrix(&prefixes, matrix_has_keys);
+    oxpinyin::facade::guess_result(
+        result,
+        "zhuyin_guess_sentence_with_prefix",
+        crate::ffi::log_warning,
+    )
 }
 
 /// Get the decoded text of the top-ranked sentence.

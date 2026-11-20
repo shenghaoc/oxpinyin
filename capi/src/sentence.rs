@@ -35,13 +35,8 @@ pub unsafe extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) ->
     // (`phonetic_key_matrix.cpp:34-38`): `"'"` and `"!"` consume a byte or
     // none and place nothing.
     let matrix_has_keys = inst.core.mode_has_keys();
-    match inst.core.guess_sentence_with_matrix(matrix_has_keys) {
-        Ok(found) => found,
-        Err(error) => {
-            refuse_lookup_gram("pinyin_guess_sentence", &error);
-            false
-        }
-    }
+    let result = inst.core.guess_sentence_with_matrix(matrix_has_keys);
+    oxpinyin::facade::guess_result(result, "pinyin_guess_sentence", crate::ffi::log_warning)
 }
 
 /// The lookup faults of a predecessor's user bigram. A value too short for
@@ -114,16 +109,14 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
         std::process::abort();
     };
     let matrix_has_keys = inst.core.mode_has_keys();
-    match inst
+    let result = inst
         .core
-        .guess_sentence_with_prefix_and_matrix(&prefixes, matrix_has_keys)
-    {
-        Ok(found) => found,
-        Err(error) => {
-            refuse_lookup_gram("pinyin_guess_sentence_with_prefix", &error);
-            false
-        }
-    }
+        .guess_sentence_with_prefix_and_matrix(&prefixes, matrix_has_keys);
+    oxpinyin::facade::guess_result(
+        result,
+        "pinyin_guess_sentence_with_prefix",
+        crate::ffi::log_warning,
+    )
 }
 
 // pinyin.cpp:2454-2498.

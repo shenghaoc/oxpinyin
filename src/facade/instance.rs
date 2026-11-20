@@ -815,6 +815,18 @@ pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, Traini
     }
 }
 
+/// Returns the plain or prefixed sentence guess. On a lookup error, apply
+/// the facade's diagnostic or abort, then return false if control returns.
+pub fn guess_result(result: Result<bool, EngineError>, name: &str, log: impl FnOnce(&str)) -> bool {
+    match result {
+        Ok(found) => found,
+        Err(error) => {
+            refuse_lookup_gram(name, &error, log);
+            false
+        }
+    }
+}
+
 // The pin asserts an incomplete toned key (pinyin_phrase3.h:146–157), and a bigram value
 // shorter than its total, system or user (ngram.cpp:303–304, through memory_chunk.h:387–392).
 // A failed Kyoto Cabinet body read after its size check asserts at ngram_kyotodb.cpp:131–139.
