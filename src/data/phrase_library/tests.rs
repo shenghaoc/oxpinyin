@@ -30,18 +30,18 @@ fn mapping_header_size_and_read_failure_follow_pin() {
         Err(std::io::ErrorKind::Other.into())
     };
     assert!(matches!(
-        map_header(path, 7, read),
+        map_header(path, 7, true, read),
         Err(LibraryError::Unmappable { .. })
     ));
     assert_eq!(calls.get(), 0);
     assert!(matches!(
-        map_header(path, 8, read),
+        map_header(path, 8, true, read),
         Err(LibraryError::Row(RowFault::ChunkHeaderRead))
     ));
     assert_eq!(calls.get(), 1);
     let mut reads = 0;
     assert!(matches!(
-        map_header(path, 8, || {
+        map_header(path, 8, true, || {
             reads += 1;
             if reads == 1 {
                 Ok([0; 4])
@@ -52,7 +52,37 @@ fn mapping_header_size_and_read_failure_follow_pin() {
         Err(LibraryError::Row(RowFault::ChunkHeaderRead))
     ));
     assert_eq!(reads, 2);
-    assert!(map_header(path, 8, || Ok([0; 4])).is_ok());
+    assert!(map_header(path, 8, true, || Ok([0; 4])).is_ok());
+}
+
+#[test]
+fn mapped_length_read_aborts() {
+    crate::store::death_test::assert_aborts(
+        "data::phrase_library::tests::mapped_length_read_aborts",
+        || {
+            let _ = map_header(Path::new("chunk"), 8, false, || {
+                Err(std::io::ErrorKind::Other.into())
+            });
+        },
+    );
+}
+
+#[test]
+fn mapped_checksum_read_aborts() {
+    crate::store::death_test::assert_aborts(
+        "data::phrase_library::tests::mapped_checksum_read_aborts",
+        || {
+            let mut reads = 0;
+            let _ = map_header(Path::new("chunk"), 8, false, || {
+                reads += 1;
+                if reads == 1 {
+                    Ok([0; 4])
+                } else {
+                    Err(std::io::ErrorKind::Other.into())
+                }
+            });
+        },
+    );
 }
 
 #[test]
@@ -101,7 +131,7 @@ mod sparse_mapping_tests {
         file.set_len((1_u64 << 32) + 8).expect("sparse length");
         file.write_all(&[0_u8; 8]).expect("header");
         drop(file);
-        let mapped = map_chunk(&path).expect("map");
+        let mapped = map_chunk(&path, false).expect("map");
         assert_eq!(
             mapped.as_slice().len(),
             (1_usize << 32) + 8,
@@ -326,54 +356,29 @@ mod phrase_library {
 
     // ── the files the pin's `MemoryChunk::mmap` refuses (#545) ──────────
 
-    /// `MemoryChunk::mmap` on a directory (`memory_chunk.h:479-493`): the size
-    /// `lseek(SEEK_END)` reports decides between the ordinary refusal (under the
-    /// 8-byte header) and the `read` failure the pin asserts on. The size is the
-    /// file system's, so the test reads it the way the pin does and expects the
-    /// matching outcome, whatever the temporary directory's file system is.
-    // Unix only: a directory opens as a file, so `lseek(SEEK_END)` reports its size.
+    /// A directory larger than the header aborts on its first word read.
+    /// On file systems reporting a shorter directory, the short gate is soft.
     #[cfg(unix)]
     #[test]
     fn a_directory_chunk_follows_the_size_the_file_system_reports() {
-        let scratch = tempfile::tempdir().expect("scratch directory");
-        use crate::data::phrase_library::{LibraryError, RowFault};
         use std::io::{Seek, SeekFrom};
-        for (name, entry) in [("long", "e".repeat(25)), ("short", "x".to_owned())] {
-            let path = scratch.path().join(format!("directory-chunk-{name}"));
-            std::fs::create_dir(&path).expect("create temp dir");
-            std::fs::write(path.join(&entry), b"x").expect("fill the directory");
-            let size = std::fs::File::open(&path).and_then(|mut dir| dir.seek(SeekFrom::End(0)));
-            for error in [
-                PhraseLibrary::open(&path).expect_err(name),
-                verify_chunk(&path).expect_err(name),
-            ] {
-                match &size {
-                    Err(seek_error) => {
-                        assert_eq!(error.unmappable_path(), Some(path.as_path()), "{name}");
-                        let LibraryError::Unmappable { cause, .. } = &error else {
-                            panic!("{name}: {error}");
-                        };
-                        let LibraryError::Io(io_error) = cause.as_ref() else {
-                            panic!("{name}: {error}");
-                        };
-                        assert_eq!(io_error.raw_os_error(), seek_error.raw_os_error(), "{name}");
-                    }
-                    Ok(size) if *size >= 8 => {
-                        assert!(
-                            matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead)),
-                            "{name}: size {size}: {error}"
-                        );
-                        assert!(error.unmappable_path().is_none(), "{name}");
-                    }
-                    Ok(size) => {
-                        assert_eq!(
-                            error.unmappable_path(),
-                            Some(path.as_path()),
-                            "{name}: {size}"
-                        );
-                    }
-                }
-            }
+        let scratch = tempfile::tempdir().expect("scratch directory");
+        let path = scratch.path().join("directory-chunk");
+        std::fs::create_dir(&path).expect("create temp dir");
+        std::fs::write(path.join("e".repeat(25)), b"x").expect("fill the directory");
+        let size = std::fs::File::open(&path).and_then(|mut dir| dir.seek(SeekFrom::End(0)));
+        if matches!(size, Ok(n) if n >= 8) {
+            crate::store::death_test::assert_aborts(
+                "data::phrase_library::tests::phrase_library::a_directory_chunk_follows_the_size_the_file_system_reports",
+                || {
+                    let _ = PhraseLibrary::open(&path);
+                },
+            );
+        } else {
+            assert_eq!(
+                PhraseLibrary::open(&path).unwrap_err().unmappable_path(),
+                Some(path.as_path()),
+            );
         }
     }
 

@@ -50,8 +50,8 @@ pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys,
 pub use lookup::UserLookup;
 
 pub use persistence::{
-    ChunkHeaderField, MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals,
-    UserConfLaw, system_originals,
+    MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals, UserConfLaw,
+    system_originals,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use phrase::FIRST_USER_TOKEN;

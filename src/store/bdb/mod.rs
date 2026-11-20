@@ -315,7 +315,7 @@ impl RawReadStore for BdbStore {
     /// `PhraseLargeTable3::load_db` (`chewing_large_table2_bdb.cpp:99-133`,
     /// `phrase_large_table3_bdb.cpp:114-148` at 074a2219): the file's cursor
     /// walk into the in-memory table. A cursor that does not open is its
-    /// own error; a failed copy is [`StoreError::FatalCopy`].
+    /// own error; a failed copy aborts at its record operation.
     fn copy_raw(&self, mut visit: impl FnMut(&[u8], &[u8])) -> Result<(), StoreError> {
         copy_bdb(&self.db, |key, value| {
             visit(key, value);
@@ -434,7 +434,7 @@ impl WriteStore for BdbStore {
         crate::store::remove_if_present(path)?;
         let file = Db::open(path, ffi::DB_BTREE, false, true, ffi::USER_FILE_MODE)?;
         // `copy_bdb` asserts on a failed `put` or source walk.
-        crate::store::copy::copy(records, |key, value| file.put(key, value))?;
+        crate::store::copy::copy(records, |key, value| file.put(key, value));
         file.close_unsynced();
         Ok(())
     }
@@ -550,7 +550,7 @@ pub struct BdbUserBigramDb {
 /// records of `src` in its cursor order, each handed to `set`. A cursor
 /// that does not open is the pin's soft `return false` (`:49-52`): its own
 /// error. A failed `put` or a cursor walk that ends in an error is
-/// [`StoreError::FatalCopy`], where the copy asserts (`:61`, `:67`).
+/// an abort, where the copy asserts (`:61`, `:67`).
 fn copy_bdb(
     src: &Db,
     set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
@@ -561,14 +561,15 @@ fn copy_bdb(
     crate::store::copy::copy(
         |visit| {
             let mut seek = ffi::Seek::First;
-            while let Some(row) = cursor.get(seek)? {
+            while let Some(row) = cursor.get(seek).unwrap_or_else(|_| std::process::abort()) {
                 visit(row.key, row.value)?;
                 seek = ffi::Seek::Next;
             }
             Ok(())
         },
         set,
-    )
+    );
+    Ok(())
 }
 
 impl BdbUserBigramDb {
@@ -595,9 +596,7 @@ impl BdbUserBigramDb {
             // A cursor that does not open leaves the container as it is:
             // `load_db` returns false and its callers ignore the answer. A
             // failed copy is where the pin asserts.
-            if let Err(StoreError::FatalCopy) = copy_bdb(&file, |key, value| db.put(key, value)) {
-                return Err(StoreError::FatalCopy);
-            }
+            let _ = copy_bdb(&file, |key, value| db.put(key, value));
         }
         Ok(Self { db: Some(db) })
     }

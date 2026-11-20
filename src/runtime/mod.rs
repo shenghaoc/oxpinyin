@@ -80,15 +80,6 @@ pub enum OpenError {
     Dict(DictError),
     /// The language model failed to open or parse.
     Lm(LmError),
-    /// The user dir's `user.conf` names a database format upstream's
-    /// mapper does not know, where `to_table_database_format_type`
-    /// `abort()`s (`table_info.cpp:122-133`, called at `:353-354` from
-    /// `UserTableInfo::load`, which `check_format` calls).
-    ///
-    /// The open fails here and the C adapters abort, as upstream does
-    /// (register row 44). Nothing is cleaned and no marker is written —
-    /// upstream never reaches its wipe either.
-    UnknownDatabaseFormat(PathBuf),
     /// The system `table.conf` is one the pin refuses or dies on
     /// (`SystemTableInfo2::load`, `table_info.cpp:194-294`, and the init
     /// loop's asserts, `pinyin.cpp:377-392`): [`TableConfError::Unopenable`]
@@ -146,25 +137,6 @@ pub(crate) enum SaveRemapFault {
     /// `MemoryChunk::mmap` refuses the file: the pin writes
     /// `mmap %s failed!` (row 76, class (b)).
     Unmappable(PathBuf),
-    /// The file is a directory whose header read `MemoryChunk::mmap`
-    /// asserts on (`memory_chunk.h:493`, register row 96).
-    ChunkHeaderRead,
-}
-
-impl OpenError {
-    /// Whether the open failed on a system library that is a directory the
-    /// pin's `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`, register
-    /// row 96), after the libraries before it were mapped and merged. The C
-    /// adapters abort.
-    #[must_use]
-    pub(crate) fn chunk_header_read(&self) -> bool {
-        matches!(
-            self,
-            Self::Dict(DictError::Library(LibraryError::Row(
-                RowFault::ChunkHeaderRead
-            )))
-        )
-    }
 }
 
 impl core::fmt::Display for OpenError {
@@ -173,11 +145,6 @@ impl core::fmt::Display for OpenError {
             Self::Io(path, error) => write!(f, "cannot read {}: {error}", path.display()),
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
-            Self::UnknownDatabaseFormat(path) => write!(
-                f,
-                "unknown database format in {} (upstream aborts, table_info.cpp:132)",
-                path.join("user.conf").display()
-            ),
             Self::TableConf(error) => write!(f, "table.conf: {error}"),
             Self::Journal(fault) => write!(f, "journal replay: {fault}"),
             Self::UserSession(error) => write!(f, "user session: {error}"),
@@ -1494,17 +1461,12 @@ fn check_profile_early(
     let layout = UserFileLayout::from_conf(conf);
     match UserStore::check_profile(user_dir, &versions, &layout, law) {
         Ok(check) => Ok(Some(check)),
-        Err(UserStoreError::UnknownDatabaseFormat) => {
-            Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
-        }
         Err(
             error @ (UserStoreError::Io(_)
             | UserStoreError::Store(_)
             | UserStoreError::Decode
             | UserStoreError::InvalidPhrase
             | UserStoreError::Persistence(_)
-            | UserStoreError::ChunkHeaderWrite(_)
-            | UserStoreError::LibraryChunkHeaderRead
             | UserStoreError::SaveRemapFailed
             | UserStoreError::SaveTooLarge
             | UserStoreError::UnigramTotalOverflow
@@ -1520,10 +1482,6 @@ fn check_profile_early(
             | UserStoreError::SessionSeed(_)
             | UserStoreError::FailedUserBigramStore),
         ) => Err(OpenError::Dict(DictError::Parse(error.to_string()))),
-        // A failed record copy is the pin's assert (`tkrzwdb_utils.h:65`,
-        // `:72`; `bdb_utils.h:61`, `:67`). It fails the session.
-        // `check_format` does not copy records.
-        Err(error @ UserStoreError::FatalCopy) => Err(OpenError::UserSession(error)),
     }
 }
 
@@ -1943,15 +1901,13 @@ impl Runtime {
         };
         match crate::data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
             Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
-            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => {
-                Err(SaveRemapFault::ChunkHeaderRead)
-            }
+            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => std::process::abort(),
             Err(
                 error @ (LibraryError::Io(_)
                 | LibraryError::Format(_)
                 | LibraryError::Layout(_)
                 | LibraryError::Unmappable { .. }
-                | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName)),
+                | LibraryError::Row(RowFault::NullChunkName)),
             ) => match error.unmappable_path() {
                 Some(path) => Err(SaveRemapFault::Unmappable(path.to_path_buf())),
                 None => Ok(SaveBaseline::Keep),
@@ -2012,7 +1968,12 @@ impl Runtime {
                 continue;
             };
             let path = crate::input::path::build_chunk_path(dir, name.as_ref());
-            match crate::data::phrase_library::PhraseLibrary::open_retaining_layout(&path) {
+            let opened = if walk.reload {
+                crate::data::phrase_library::PhraseLibrary::open_retaining_layout(&path)
+            } else {
+                crate::data::phrase_library::PhraseLibrary::open_for_mask_prefetch(&path)
+            };
+            match opened {
                 Ok(library) => {
                     walk.originals.insert_mapping(index, path, library);
                     return Some(RemapStep::Mapped(index));
@@ -2026,7 +1987,7 @@ impl Runtime {
                     | LibraryError::Format(_)
                     | LibraryError::Layout(_)
                     | LibraryError::Unmappable { .. }
-                    | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName)),
+                    | LibraryError::Row(RowFault::NullChunkName)),
                 ) => {
                     if let Some(path) = error.unmappable_path() {
                         return Some(RemapStep::Unmappable(path.to_path_buf()));

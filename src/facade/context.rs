@@ -11,9 +11,7 @@ use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
 };
 use crate::user::persistence::MaskStop;
-use crate::user::{
-    ChunkHeaderField, JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError,
-};
+use crate::user::{JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError};
 use crate::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 
 /// The `mask_out` answer for a fault of the user tables.
@@ -29,9 +27,6 @@ fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
         | UserStoreError::Decode
         | UserStoreError::InvalidPhrase
         | UserStoreError::Persistence(_)
-        | UserStoreError::UnknownDatabaseFormat
-        | UserStoreError::ChunkHeaderWrite(_)
-        | UserStoreError::LibraryChunkHeaderRead
         | UserStoreError::SaveRemapFailed
         | UserStoreError::SaveTooLarge
         | UserStoreError::UnigramTotalOverflow
@@ -41,18 +36,14 @@ fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
         | UserStoreError::UserReadingRemoval
         | UserStoreError::SessionSeed(_)
         | UserStoreError::FailedUserBigramStore => MaskOutOutcome::Done(false),
-        UserStoreError::FatalCopy => MaskOutOutcome::FatalCopy,
     }
 }
 
 /// What `save_user` did, for the C facades' `pinyin_save` / `zhuyin_save`
 /// and the `pinyin_end_add_phrases` import commit.
 ///
-/// Upstream's save never stops at a filesystem failure and answers `true`
-/// (`pinyin.cpp:1132-1147`); the one failure it *does* stop at is the
-/// chunk header `assert` (`memory_chunk.h:543`/`:547`), where it dies.
-/// The facade reports that failure alone, so it can be told apart from the
-/// quiet `false` and from the pin's `true`; the C adapters abort on it.
+/// Upstream's save continues past soft filesystem failures. Its header-write
+/// and record-copy assertions abort in the input and store layers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SaveOutcome {
     /// No user directory, nothing modified, or an internal encode/compact
@@ -61,22 +52,6 @@ pub enum SaveOutcome {
     NotSaved,
     /// The save sequence completed, including its rename and marker attempts.
     Saved,
-    /// A chunk file's `MemoryChunk::save` header write failed; the pin
-    /// `assert`s and dies of SIGABRT. The C adapters abort.
-    ChunkWriteFailed(ChunkHeaderField),
-    /// A loaded system library's file is a directory the pin maps again and
-    /// asserts on (`memory_chunk.h:493`, `_write_files`' diff of each system
-    /// library, `pinyin.cpp:955`, `zhuyin.cpp:588`; register row 96). The
-    /// save stopped at that library, with the earlier libraries' `.tmp`
-    /// files written and, for libzhuyin, renamed, as the pin leaves them.
-    /// The C adapters abort.
-    ChunkHeaderRead,
-    /// A tkrzw or Berkeley DB record copy failed where the pin's
-    /// `copy_tkrzwdb` or `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`;
-    /// `bdb_utils.h:61`, `:67`). The save stopped in that file's copy:
-    /// libpinyin's earlier `.tmp` files written and none renamed,
-    /// libzhuyin's earlier files renamed, no marker. The C adapters abort.
-    FatalCopy,
 }
 
 impl SaveOutcome {
@@ -125,22 +100,13 @@ pub enum MaskOutOutcome {
     /// `get_length` asserts (`ngram.cpp:70`, from `Bigram::mask_out`,
     /// `ngram_bdb.cpp:243`). The C adapters abort.
     ResidualUserBigramGram,
-    /// A loaded system library's file is a directory the pin reloads and
-    /// asserts on (`memory_chunk.h:493`, `pinyin.cpp:1265`,
-    /// `zhuyin.cpp:799`; register row 96), after the user tables were masked
-    /// and the libraries before it reloaded. The C adapters abort.
+    /// A mask walk finished preceding library replays before the header fault.
     ChunkHeaderRead,
     /// A loaded system library's user `.dbin`, reloaded through
     /// `merge_with_mask` after the user tables were masked, reached a pin
     /// assertion ([`JournalFault`], rows 91, 92, 97 and 108). The pin dies
     /// there; the C adapters abort.
     Journal(JournalFault),
-    /// A tkrzw or Berkeley DB record copy failed where the pin's
-    /// `copy_tkrzwdb` or `copy_bdb` asserts (`tkrzwdb_utils.h:65`, `:72`;
-    /// `bdb_utils.h:61`, `:67`). The C adapters abort. `mask_out` does not
-    /// copy, so it never answers this today; it keeps
-    /// [`UserStoreError::FatalCopy`] from reading as a soft `false`.
-    FatalCopy,
 }
 
 impl MaskOutOutcome {}
@@ -216,9 +182,7 @@ impl OpenFailure {
     pub fn init_refusal(&self, system_path: &Path) -> InitRefusal {
         let Self::Runtime(error) = self;
         match error {
-            OpenError::UnknownDatabaseFormat(_)
-            | OpenError::Journal(_)
-            | OpenError::UserSession(_) => InitRefusal::Abort,
+            OpenError::Journal(_) | OpenError::UserSession(_) => InitRefusal::Abort,
             OpenError::TableConf(conf) => {
                 // table_info.cpp:119, :132, :142, :156, :175 and :276
                 // abort/assert on malformed rows and enums. A chunkless
@@ -251,13 +215,7 @@ impl OpenFailure {
                     )
                 }
             }
-            OpenError::Dict(_) => {
-                if error.chunk_header_read() {
-                    InitRefusal::Abort
-                } else {
-                    InitRefusal::OpenWarning
-                }
-            }
+            OpenError::Dict(_) => InitRefusal::OpenWarning,
             OpenError::Io(..) | OpenError::Lm(_) => InitRefusal::OpenWarning,
         }
     }
@@ -270,22 +228,13 @@ impl OpenFailure {
 /// directory because the row names no file (`memory_chunk.h:493`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LibraryRowAssert {
-    /// `SYSTEM_FILE == m_file_type || USER_FILE == m_file_type` failed.
-    NotLoadable,
-    /// `DICTIONARY == m_file_type` failed.
-    NotDictionary,
     /// `ret_len == sizeof(length)` failed in `MemoryChunk::mmap`.
     NullChunkName,
-    /// The same assert, for a library file that is a directory the pin maps
-    /// again at this call (`memory_chunk.h:493`).
-    ChunkHeaderRead,
 }
 
 /// Why [`ContextCore::load_phrase_library`] did not load.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LibraryLoadFault {
-    /// The pin `assert`s on the library's row.
-    Row(LibraryRowAssert),
     /// The reloaded system library's `.dbin` merge reached a pin assertion
     /// ([`JournalFault`], rows 91 and 108; `pinyin.cpp:276`,
     /// `zhuyin.cpp:219`). The library stays unloaded; the C adapters abort.
@@ -486,7 +435,7 @@ impl ContextCore {
     /// save proceeds. A hard stop can leave earlier file changes in place.
     ///
     /// A failed chunk-header write, a failed header read during a remap and a fatal database
-    /// copy have distinct outcomes. [`SaveOutcome::Saved`] means the save sequence completed.
+    /// copy abort at the operation. [`SaveOutcome::Saved`] means the save sequence completed.
     pub fn save_user(&mut self) -> SaveOutcome {
         let store = self.user_store();
         if !store.has_user_directory() || !store.is_modified() {
@@ -514,18 +463,10 @@ impl ContextCore {
                         c_stderr::mmap_failed(&path);
                         crate::user::SaveBaseline::Unmappable
                     }
-                    Err(crate::runtime::SaveRemapFault::ChunkHeaderRead) => {
-                        crate::user::SaveBaseline::ChunkHeaderRead
-                    }
                 }
             };
         match store.save_reporting_with_baseline(&compacted, baseline) {
             Ok(()) => (),
-            Err(UserStoreError::ChunkHeaderWrite(field)) => {
-                return SaveOutcome::ChunkWriteFailed(field);
-            }
-            Err(UserStoreError::LibraryChunkHeaderRead) => return SaveOutcome::ChunkHeaderRead,
-            Err(UserStoreError::FatalCopy) => return SaveOutcome::FatalCopy,
             // Row 76: the save stopped at a library whose file cannot be
             // mapped again, with the session still dirty.
             Err(UserStoreError::SaveRemapFailed) => return SaveOutcome::NotSaved,
@@ -538,7 +479,6 @@ impl ContextCore {
                 | UserStoreError::Decode
                 | UserStoreError::InvalidPhrase
                 | UserStoreError::Persistence(_)
-                | UserStoreError::UnknownDatabaseFormat
                 | UserStoreError::UnigramTotalOverflow
                 | UserStoreError::OverlongIndexKey
                 | UserStoreError::NonTokenUserBigramKey
@@ -698,14 +638,12 @@ impl ContextCore {
     ///
     /// # Errors
     ///
-    /// The pin's asserts, nothing else: [`LibraryRowAssert::NotLoadable`]
-    /// when the index is in range and its default row is neither
-    /// `SYSTEM_FILE` nor `USER_FILE` (`pinyin.cpp:457`, `zhuyin.cpp:372`),
-    /// or [`LibraryRowAssert::ChunkHeaderRead`] when the library being
-    /// loaded again is a directory (`memory_chunk.h:493`), both under
-    /// [`LibraryLoadFault::Row`]; or [`LibraryLoadFault::Journal`] when the
-    /// saved `.dbin`'s merge reaches an assert, with the library still
-    /// unloaded.
+    /// [`LibraryLoadFault::Journal`] when the saved `.dbin`'s merge
+    /// reaches an assert, with the library still unloaded.
+    ///
+    /// # Aborts
+    /// An in-range row with the wrong file type, or a library header read
+    /// that fails, aborts at the pin's assertion.
     pub fn load_phrase_library(&mut self, index: u32) -> Result<bool, LibraryLoadFault> {
         let runtime = &self.runtime;
         let Ok(row_index) = u8::try_from(index) else {
@@ -716,7 +654,7 @@ impl ContextCore {
             return Ok(false);
         };
         if !matches!(row.file_type, FileType::SystemFile | FileType::UserFile) {
-            return Err(LibraryLoadFault::Row(LibraryRowAssert::NotLoadable));
+            std::process::abort();
         }
         // A reload maps the file again (`pinyin.cpp:256`); a library that is
         // a directory the pin asserts on kills it there
@@ -744,9 +682,7 @@ impl ContextCore {
         let user_file = matches!(row.file_type, FileType::UserFile);
         let mut walk = runtime.begin_library_reload(row_index);
         match runtime.remap_next(&mut walk) {
-            Some(RemapStep::Directory) => {
-                return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
-            }
+            Some(RemapStep::Directory) => std::process::abort(),
             Some(RemapStep::Unmappable(path)) => {
                 c_stderr::mmap_failed(&path);
                 return Ok(true);
@@ -781,19 +717,21 @@ impl ContextCore {
     ///
     /// # Errors
     ///
-    /// The [`LibraryRowAssert`] the pin dies on: the addon row is neither
-    /// `DICTIONARY` nor `NOT_USED` (`pinyin.cpp:491`), or names no chunk.
+    /// [`LibraryRowAssert::NullChunkName`] when the addon row names no chunk.
+    ///
+    /// # Aborts
+    /// An addon row with the wrong file type or a failed library header read
+    /// aborts at the pin's assertion.
     pub fn load_addon_phrase_library(&mut self, index: u8) -> Result<bool, LibraryRowAssert> {
         let runtime = &mut self.runtime;
         match runtime.load_system_addon_reporting(index) {
             Ok(loaded) => Ok(loaded),
             Err(crate::runtime::LibraryError::Row(fault)) => Err(match fault {
-                RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
                 RowFault::NullChunkName => {
                     null_chunk_refused(runtime.system_dir());
                     LibraryRowAssert::NullChunkName
                 }
-                RowFault::ChunkHeaderRead => LibraryRowAssert::ChunkHeaderRead,
+                RowFault::ChunkHeaderRead => std::process::abort(),
             }),
             Err(
                 error @ (crate::runtime::LibraryError::Io(_)

@@ -21,7 +21,6 @@ use std::rc::Rc;
 use crate::store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 use crate::{ChewingKey, Completeness, SyllableKey, model::UserCountDelta, single_gram};
 
-use crate::user::persistence::ChunkHeaderField;
 use crate::user::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, PinyinKey, UserPhrase,
 };
@@ -83,31 +82,6 @@ pub enum UserStoreError {
     /// byte stream that does not parse).
     #[error("libpinyin user-dir persistence: {0}")]
     Persistence(String),
-    /// `user.conf` names a database format upstream's mapper does not
-    /// know — the point `to_table_database_format_type` `abort()`s on
-    /// (`table_info.cpp:122-133`). Returned before anything is cleaned or
-    /// written; the C adapters abort.
-    #[error("user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)")]
-    UnknownDatabaseFormat,
-    /// A library chunk's `MemoryChunk::save` header write failed
-    /// (`memory_chunk.h:543`/`:547`) — the pin `assert`s and dies of
-    /// SIGABRT. The save stops there; the C adapters abort.
-    #[error(
-        "user chunk header write failed ({}; upstream asserts, \
-                 memory_chunk.h:543/547)",
-        .0.assert_expression()
-    )]
-    ChunkHeaderWrite(ChunkHeaderField),
-    /// A loaded system library's file, mapped again where the save's
-    /// library loop reaches it, is a directory whose header read the pin's
-    /// `MemoryChunk::mmap` asserts on (`pinyin.cpp:955`, `zhuyin.cpp:588`,
-    /// `memory_chunk.h:493`; register row 96). The save stopped there with
-    /// the earlier libraries' files written; the C adapters abort.
-    #[error(
-        "a system library is a directory whose chunk header cannot be read \
-                 (upstream asserts, memory_chunk.h:493)"
-    )]
-    LibraryChunkHeaderRead,
     /// `MemoryChunk::mmap` refused a loaded system library's file where the
     /// save's library loop maps it again (`pinyin.cpp:956`, `zhuyin.cpp:589`;
     /// register row 76). The save stopped at that library: the earlier
@@ -122,13 +96,6 @@ pub enum UserStoreError {
     /// no marker is written, the session stays dirty and a later save retries.
     #[error("a save copy reaches the pin's unsafe size (upstream memory_chunk.h:95-98)")]
     SaveTooLarge,
-    /// A tkrzw or Berkeley DB record copy of a load or a save failed where
-    /// the pin's `copy_tkrzwdb` or `copy_bdb` asserts
-    /// (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`, `:67`). The load or
-    /// save stopped there: no later rename and no marker. The C adapters
-    /// abort.
-    #[error("{}", StoreError::FatalCopy)]
-    FatalCopy,
     /// The unigram add of an accepted predicted candidate overflowed its
     /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
     /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
@@ -231,7 +198,6 @@ impl From<StoreError> for UserStoreError {
     fn from(e: StoreError) -> Self {
         match e {
             StoreError::Io(io) => Self::Io(io),
-            StoreError::FatalCopy => Self::FatalCopy,
             other @ (StoreError::Backend(_)
             | StoreError::ReadOnly
             | StoreError::InvalidInput(_)
@@ -935,9 +901,6 @@ impl UserStore {
                 | UserStoreError::Decode
                 | UserStoreError::InvalidPhrase
                 | UserStoreError::Persistence(_)
-                | UserStoreError::UnknownDatabaseFormat
-                | UserStoreError::ChunkHeaderWrite(_)
-                | UserStoreError::LibraryChunkHeaderRead
                 | UserStoreError::SaveRemapFailed
                 | UserStoreError::SaveTooLarge
                 | UserStoreError::UnigramTotalOverflow
@@ -950,8 +913,7 @@ impl UserStore {
                 | UserStoreError::LibraryLoop(_)
                 | UserStoreError::UserReadingRemoval
                 | UserStoreError::SessionSeed(_)
-                | UserStoreError::FailedUserBigramStore
-                | UserStoreError::FatalCopy),
+                | UserStoreError::FailedUserBigramStore),
             ) => Err(error),
         }
     }
@@ -1853,8 +1815,13 @@ impl UserStore {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] if exporting or encoding fails or a hard filesystem or
-    /// record-copy failure stops the save. Files written before that point may remain.
+    /// Returns [`UserStoreError`] if exporting or encoding fails or a hard filesystem
+    /// failure stops the save. Files written before that point may remain.
+    ///
+    /// # Aborts
+    ///
+    /// A failed chunk length or checksum write, or a fatal record-copy failure,
+    /// aborts at the failed operation.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
         self.save_reporting_compacted(&[])
@@ -1868,6 +1835,10 @@ impl UserStore {
     ///
     /// Returns the same [`UserStoreError`] as [`Self::save_reporting`]. Earlier file changes
     /// can survive a hard error.
+    ///
+    /// # Aborts
+    ///
+    /// As [`Self::save_reporting`].
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting_compacted(&mut self, compacted: &[u8]) -> Result<(), UserStoreError> {
         self.save_reporting_inner(

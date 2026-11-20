@@ -3,6 +3,11 @@
 
 /// The variable that names the one test a child runs for real.
 const DEATH_TEST: &str = "OXPINYIN_STORE_DEATH_TEST";
+const DEATH_TEST_DIR: &str = "OXPINYIN_STORE_DEATH_TEST_DIR";
+
+pub(crate) fn is_child(name: &str) -> bool {
+    std::env::var_os(DEATH_TEST).is_some_and(|value| value == name)
+}
 
 /// The exit status of a death-test child whose operation panicked. A panic
 /// that reaches a non-unwinding `extern "C"` function or cxx's unwind guard
@@ -45,22 +50,56 @@ pub(crate) fn assert_aborts_after_setup<T>(
     setup: impl FnOnce() -> T,
     operation: impl FnOnce(T),
 ) -> Vec<u8> {
-    #[cfg(unix)]
-    use std::os::unix::process::ExitStatusExt;
-    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
+    if is_child(name) {
         let value = setup();
         exit_on_panic();
         operation(value);
         // Reached only when `operation` did not abort.
         std::process::exit(0);
     }
-    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    run_child(name, None)
+}
+
+/// Runs a death test with a parent-owned directory. Setup and inspection run
+/// in the parent; the child only performs the operation that must abort.
+pub(crate) fn assert_aborts_in_tempdir(
+    name: &str,
+    setup: impl FnOnce(&std::path::Path),
+    operation: impl FnOnce(&std::path::Path),
+    inspect: impl FnOnce(&std::path::Path),
+) -> Vec<u8> {
+    if is_child(name) {
+        let dir = std::path::PathBuf::from(
+            std::env::var_os(DEATH_TEST_DIR).expect("parent-owned death-test directory"),
+        );
+        exit_on_panic();
+        operation(&dir);
+        std::process::exit(0);
+    }
+    let dir = tempfile::tempdir().expect("death-test directory");
+    setup(dir.path());
+    let stderr = run_child(name, Some(dir.path()));
+    inspect(dir.path());
+    stderr
+}
+
+fn run_child(name: &str, dir: Option<&std::path::Path>) -> Vec<u8> {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"));
+    child
         .args(["--exact", name, "--test-threads=1"])
         .env(DEATH_TEST, name)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .expect("re-run the test binary");
+        .stderr(std::process::Stdio::piped());
+    if let Some(dir) = dir {
+        child
+            .env(DEATH_TEST_DIR, dir)
+            .env("TMPDIR", dir)
+            .env("TMP", dir)
+            .env("TEMP", dir);
+    }
+    let output = child.output().expect("re-run the test binary");
     assert_ne!(
         output.status.code(),
         Some(OPERATION_PANICKED),

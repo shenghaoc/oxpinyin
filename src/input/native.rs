@@ -537,18 +537,10 @@ pub(crate) fn report_mmap_failed(filename: &CStr) {
     }
 }
 
-/// Which header word of `MemoryChunk::save` a failed write targeted.
-#[derive(Clone, Copy)]
-pub(crate) enum HeaderField {
-    Length,
-    Checksum,
-}
-
 /// The result of `MemoryChunk::save`'s native calls.
 pub(crate) enum ChunkWrite {
     Saved,
     Open(std::io::Error),
-    Header(HeaderField, std::io::Error),
     Payload(std::io::Error),
 }
 
@@ -644,14 +636,8 @@ pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
     let split = bytes.len().min(8);
     let (header, payload) = bytes.split_at(split);
     let (length, checksum) = header.split_at(header.len().min(4));
-    if let Err(source) = write_chunk_word(fd, length) {
-        close(fd);
-        return ChunkWrite::Header(HeaderField::Length, source);
-    }
-    if let Err(source) = write_chunk_word(fd, checksum) {
-        close(fd);
-        return ChunkWrite::Header(HeaderField::Checksum, source);
-    }
+    write_chunk_word(fd, length);
+    write_chunk_word(fd, checksum);
     if let Err(source) = write_chunk_payload(fd, payload) {
         close(fd);
         return ChunkWrite::Payload(source);
@@ -672,14 +658,12 @@ pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
 
 /// `write(fd, word, sizeof(word))` for one header word.
 #[cfg(unix)]
-fn write_chunk_word(fd: c_int, word: &[u8]) -> Result<(), std::io::Error> {
+fn write_chunk_word(fd: c_int, word: &[u8]) {
     // SAFETY: `word` is a live slice for the length passed, and `fd` is the
     // open descriptor from `save_chunk`.
     let written = unsafe { libc::write(fd, word.as_ptr().cast(), word.len()) };
-    if written == word.len() as isize {
-        Ok(())
-    } else {
-        Err(short_write(word.len(), written, "header"))
+    if written != word.len() as isize {
+        std::process::abort();
     }
 }
 
@@ -737,22 +721,14 @@ pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
     let split = bytes.len().min(8);
     let (header, payload) = bytes.split_at(split);
     let (length, checksum) = header.split_at(header.len().min(4));
-    for (word, field) in [
-        (length, HeaderField::Length),
-        (checksum, HeaderField::Checksum),
-    ] {
+    for word in [length, checksum] {
         // SAFETY: fd is open; word holds the header bytes for this write.
         let written = unsafe {
             clear_crt_os_error();
             libc::write(fd, word.as_ptr().cast(), word.len() as u32)
         };
         if written as isize != word.len() as isize {
-            let error = if written < 0 {
-                crt_error()
-            } else {
-                short_write(word.len(), written as isize, "header")
-            };
-            return ChunkWrite::Header(field, error);
+            std::process::abort();
         }
     }
     // SAFETY: fd is open; payload is live for the modulo-2^32 count the

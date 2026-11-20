@@ -180,13 +180,9 @@ fn failed_read_is_a_miss(
     value: &mut Vec<u8>,
 ) -> Result<bool, DictError> {
     match read {
-        // A failed record copy is a pin assert too (`tkrzwdb_utils.h:65`,
-        // `:72`; `bdb_utils.h:61`, `:67`); a point read does not copy,
-        // so it never reaches here.
-        Err(
-            error
-            @ (crate::store::StoreError::ReadAfterCheck | crate::store::StoreError::FatalCopy),
-        ) => Err(DictError::Table(error.into())),
+        Err(error @ crate::store::StoreError::ReadAfterCheck) => {
+            Err(DictError::Table(error.into()))
+        }
         Err(
             crate::store::StoreError::Io(_)
             | crate::store::StoreError::Backend(_)

@@ -2,7 +2,7 @@
 //! produced by [`crate::data::chunk_format::build_memory_chunk`] to [`save`]. Saving
 //! truncates the destination before writing it. Failure can leave a partial file.
 //!
-//! [`ChunkSaveError`] distinguishes a header-write fault from an ordinary I/O failure.
+//! A failed header write aborts where `MemoryChunk::save` asserts.
 
 // MemoryChunk::mmap and MemoryChunk::save, include/memory_chunk.h:536–557. The native
 // path opens with O_TRUNC, writes the header words and payload, then calls g_fsync and
@@ -71,18 +71,31 @@ pub(crate) enum ChunkLoadError {
 /// validation remains with the caller.
 ///
 /// # Errors
-/// Returns the failed operation, including a short header read.
+/// Returns an open, seek, allocation, short-file, or payload read failure.
+///
+/// # Aborts
+/// A failed read of either header word aborts at the pin's assertion.
 pub(crate) fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
-    load_with(path, |source, payload| source.read_payload(payload, None))
+    load_with(path, false, |source, payload| {
+        source.read_payload(payload, None)
+    })
+}
+
+/// Prefetch for a mask walk whose caller must first replay preceding libraries.
+pub(crate) fn load_for_mask_prefetch(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
+    load_with(path, true, |source, payload| {
+        source.read_payload(payload, None)
+    })
 }
 
 fn load_with(
     path: &Path,
+    defer_header_fault: bool,
     read_payload: impl FnOnce(&mut native::ReadChunk, &mut Vec<u8>) -> io::Result<usize>,
 ) -> Result<LoadedChunk, ChunkLoadError> {
     let mut source = MappingSource::open(path).map_err(ChunkLoadError::Io)?;
     let file_size = source.file_size();
-    let (length, checksum) = load_header(file_size, || source.read_word())?;
+    let (length, checksum) = load_header(file_size, defer_header_fault, || source.read_word())?;
     let available = available_payload_length(file_size);
     let declared = u32::from_le_bytes(length);
     if declared != available {
@@ -107,13 +120,19 @@ fn load_with(
 
 fn load_header(
     file_size: u64,
+    defer_header_fault: bool,
     mut read_word: impl FnMut() -> io::Result<[u8; 4]>,
 ) -> Result<([u8; 4], [u8; 4]), ChunkLoadError> {
     if file_size < 8 {
         return Err(ChunkLoadError::ShortHeader);
     }
-    let length = read_word().map_err(|_| ChunkLoadError::Header)?;
-    let checksum = read_word().map_err(|_| ChunkLoadError::Header)?;
+    let mut read = || match read_word() {
+        Ok(word) => Ok(word),
+        Err(_) if defer_header_fault => Err(ChunkLoadError::Header),
+        Err(_) => std::process::abort(),
+    };
+    let length = read()?;
+    let checksum = read()?;
     Ok((length, checksum))
 }
 
@@ -228,49 +247,22 @@ impl Mapping {
     }
 }
 
-/// Which of MemoryChunk::save's two header writes the filesystem refused:
-/// the length word (memory_chunk.h:543, assert(ret_len == sizeof(length)))
-/// or the checksum word (:547).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChunkHeaderField {
-    /// write(fd, &length, sizeof(guint32)) - memory_chunk.h:543.
-    Length,
-    /// write(fd, &checksum, sizeof(guint32)) - memory_chunk.h:547.
-    Checksum,
-}
-
-impl ChunkHeaderField {
-    /// The pin's assert expression at this write, for the error text.
-    #[must_use]
-    pub(crate) const fn assert_expression(self) -> &'static str {
-        match self {
-            Self::Length => "ret_len == sizeof(length)",
-            Self::Checksum => "ret_len == sizeof(checksum)",
-        }
-    }
-}
-
-/// A failed chunk save. Io is the pin's soft false (the open or the payload
-/// write); Header is the write the pin asserts on.
+/// A failed chunk save after an open or payload write. Header writes abort.
 #[derive(Debug)]
 pub enum ChunkSaveError {
     /// The open or the payload write failed; MemoryChunk::save answers
     /// false and its callers ignore that answer.
     Io(io::Error),
-    /// A header word write failed or was short, where the pin aborts.
-    Header {
-        /// Which header word the write refused.
-        field: ChunkHeaderField,
-        /// The underlying write error.
-        source: io::Error,
-    },
 }
 
 /// MemoryChunk::save(filename) over path with the chunk's complete bytes.
 ///
 /// # Errors
 ///
-/// ChunkSaveError when the open or a write fails.
+/// [`ChunkSaveError`] when the open or payload write fails.
+///
+/// # Aborts
+/// A failed write of either header word aborts at the pin's assertion.
 pub fn save(path: &Path, bytes: &[u8]) -> Result<(), ChunkSaveError> {
     #[cfg(unix)]
     let result = native::save_chunk(&path::c_string(path.as_os_str()), bytes);
@@ -281,13 +273,6 @@ pub fn save(path: &Path, bytes: &[u8]) -> Result<(), ChunkSaveError> {
         native::ChunkWrite::Open(error) | native::ChunkWrite::Payload(error) => {
             Err(ChunkSaveError::Io(error))
         }
-        native::ChunkWrite::Header(field, source) => Err(ChunkSaveError::Header {
-            field: match field {
-                native::HeaderField::Length => ChunkHeaderField::Length,
-                native::HeaderField::Checksum => ChunkHeaderField::Checksum,
-            },
-            source,
-        }),
     }
 }
 

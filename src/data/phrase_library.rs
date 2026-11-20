@@ -106,10 +106,6 @@ pub enum LibraryError {
 /// path dies.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RowFault {
-    /// `assert(DICTIONARY == table_info->m_file_type)`
-    /// (`pinyin.cpp:491`): the addon row is neither `DICTIONARY` nor
-    /// `NOT_USED`.
-    NotDictionary,
     /// The row names no system chunk (`NULL`), so the path is the
     /// directory itself and `MemoryChunk::mmap` asserts on reading it
     /// (`memory_chunk.h:493`).
@@ -142,9 +138,6 @@ impl fmt::Display for LibraryError {
             Self::Format(message) => write!(f, "phrase library format error: {message}"),
             Self::Layout(_) => f.write_str("phrase library layout error: separator check failed"),
             Self::Unmappable { cause, .. } => cause.fmt(f),
-            Self::Row(RowFault::NotDictionary) => {
-                f.write_str("addon table.conf row is not a DICTIONARY")
-            }
             Self::Row(RowFault::NullChunkName) => f.write_str("table.conf row names no chunk file"),
             Self::Row(RowFault::ChunkHeaderRead) => {
                 f.write_str("chunk path is a directory the header cannot be read from")
@@ -330,7 +323,10 @@ impl PhraseItemView<'_> {
 /// that the header's length word is the payload length and that the
 /// checksum verifies. Every refusal is [`LibraryError::Unmappable`], the
 /// one error after which the pin writes `mmap %s failed!`.
-fn map_chunk(path: &Path) -> Result<crate::input::chunk::Mapping, LibraryError> {
+fn map_chunk(
+    path: &Path,
+    defer_header_fault: bool,
+) -> Result<crate::input::chunk::Mapping, LibraryError> {
     use crate::input::chunk::MappingSource;
 
     let unmappable = |cause: LibraryError| LibraryError::Unmappable {
@@ -341,7 +337,8 @@ fn map_chunk(path: &Path) -> Result<crate::input::chunk::Mapping, LibraryError> 
     let mut source =
         MappingSource::open(path).map_err(|error| unmappable(LibraryError::Io(error)))?;
     let file_size = source.file_size();
-    let (length, checksum) = map_header(path, file_size, || source.read_word())?;
+    let (length, checksum) =
+        map_header(path, file_size, defer_header_fault, || source.read_word())?;
     let declared = u32::from_le_bytes(length);
     let checksum = u32::from_le_bytes(checksum);
     let payload_len = (file_size - CHUNK_HEADER_SIZE as u64) as u32;
@@ -390,6 +387,7 @@ pub(crate) fn null_chunk_writes_mmap_line(dir: &Path) -> bool {
 fn map_header(
     path: &Path,
     file_size: u64,
+    defer_header_fault: bool,
     mut read_word: impl FnMut() -> std::io::Result<[u8; 4]>,
 ) -> Result<([u8; 4], [u8; 4]), LibraryError> {
     if file_size < CHUNK_HEADER_SIZE as u64 {
@@ -400,8 +398,13 @@ fn map_header(
             )),
         });
     }
-    let length = read_word().map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?;
-    let checksum = read_word().map_err(|_| LibraryError::Row(RowFault::ChunkHeaderRead))?;
+    let mut read = || match read_word() {
+        Ok(word) => Ok(word),
+        Err(_) if defer_header_fault => Err(LibraryError::Row(RowFault::ChunkHeaderRead)),
+        Err(_) => std::process::abort(),
+    };
+    let length = read()?;
+    let checksum = read()?;
     Ok((length, checksum))
 }
 
@@ -435,8 +438,11 @@ pub(crate) fn directory_size_reads_as_a_chunk(size: std::io::Result<u64>) -> boo
 /// # Errors
 ///
 /// [`LibraryError::Unmappable`] when the chunk does not map.
+///
+/// # Aborts
+/// A failed header word read aborts at the pin's assertion.
 pub fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
-    map_chunk(path).map(drop)
+    map_chunk(path, false).map(drop)
 }
 
 /// A writable private view of one library's offset array and phrase-content
@@ -617,8 +623,23 @@ impl PhraseLibrary {
     ///
     /// # Errors
     /// Returns the same mapping and out-of-bounds layout errors as [`Self::open`].
+    ///
+    /// # Aborts
+    /// A failed header word read aborts at the pin's assertion.
     pub(crate) fn open_retaining_layout(path: &Path) -> Result<Self, LibraryError> {
-        let file = LibraryBytes::Mapped(map_chunk(path)?);
+        Self::open_with_header_policy(path, false)
+    }
+
+    /// Defer a header read fault until the mask walk has replayed preceding libraries.
+    pub(crate) fn open_for_mask_prefetch(path: &Path) -> Result<Self, LibraryError> {
+        Self::open_with_header_policy(path, true)
+    }
+
+    fn open_with_header_policy(
+        path: &Path,
+        defer_header_fault: bool,
+    ) -> Result<Self, LibraryError> {
+        let file = LibraryBytes::Mapped(map_chunk(path, defer_header_fault)?);
         let bytes = file.as_slice();
         let payload = CHUNK_HEADER_SIZE
             ..CHUNK_HEADER_SIZE + ((bytes.len() - CHUNK_HEADER_SIZE) as u32 as usize);
@@ -629,6 +650,9 @@ impl PhraseLibrary {
     ///
     /// # Errors
     /// Returns a read, checksum, or layout error.
+    ///
+    /// # Aborts
+    /// A failed header word read aborts at the pin's assertion.
     pub fn load_heap(path: &Path) -> Result<Self, LibraryError> {
         let loaded = crate::input::chunk::load(path).map_err(|error| match error {
             crate::input::chunk::ChunkLoadError::Header => {

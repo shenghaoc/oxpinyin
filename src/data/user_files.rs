@@ -88,8 +88,11 @@ pub(crate) fn read_chunk_payload(bytes: &[u8]) -> Result<&[u8], ChunkReadError> 
 ///
 /// # Errors
 /// Returns an I/O error or an invalid-data error on a failed chunk load.
+///
+/// # Aborts
+/// A failed header word read aborts at the pin's assertion.
 pub(crate) fn load_chunk_payload(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-    match try_load_chunk_payload(path) {
+    match chunk_payload(path, false) {
         Ok(bytes) => Ok(bytes),
         Err(ChunkPayloadError::Load(error)) => Err(error),
         Err(ChunkPayloadError::HeaderRead) => std::process::abort(),
@@ -105,11 +108,23 @@ pub(crate) enum ChunkPayloadError {
 /// The mask walk must replay earlier libraries before acting on a failed
 /// header read (`pinyin.cpp:1281-1285`, `memory_chunk.h:434-438`).
 pub(crate) fn try_load_chunk_payload(path: &std::path::Path) -> Result<Vec<u8>, ChunkPayloadError> {
-    use crate::input::chunk::{ChunkLoadError, load};
+    chunk_payload(path, true)
+}
+
+fn chunk_payload(
+    path: &std::path::Path,
+    defer_header_fault: bool,
+) -> Result<Vec<u8>, ChunkPayloadError> {
+    use crate::input::chunk::{ChunkLoadError, load, load_for_mask_prefetch};
     let invalid = |reason| {
         ChunkPayloadError::Load(std::io::Error::new(std::io::ErrorKind::InvalidData, reason))
     };
-    let chunk = load(path).map_err(|error| match error {
+    let loaded = if defer_header_fault {
+        load_for_mask_prefetch(path)
+    } else {
+        load(path)
+    };
+    let chunk = loaded.map_err(|error| match error {
         ChunkLoadError::Io(error) => ChunkPayloadError::Load(error),
         ChunkLoadError::ShortHeader => invalid(ChunkReadError::ShortHeader),
         ChunkLoadError::Header => ChunkPayloadError::HeaderRead,
@@ -334,8 +349,7 @@ pub struct UserTableInfo {
     /// end of the file before it converted anything (`UNKNOWN_FORMAT`).
     /// Upstream recognises exactly `UPSTREAM_DB_FORMATS`; any other
     /// token reaches `to_table_database_format_type`'s `abort()`, which
-    /// [`UserTableInfo::load`] answers with
-    /// [`UserConfError::UnknownDatabaseFormat`] instead.
+    /// [`UserTableInfo::load`] aborts at the converter.
     pub database_format: Option<String>,
     /// `open counter:` — upstream's `int m_open_counter`
     /// (`table_info.h:102`), negative whenever `%d` reads a negative
@@ -363,8 +377,7 @@ impl UserTableInfo {
         }
     }
 
-    // UserTableInfo::load, table_info.cpp:325–375. The caller handles the pin’s
-    // unknown-format abort; the counter conversion is at 356–359.
+    // UserTableInfo::load, table_info.cpp:325–375. The counter conversion is at 356–359.
     /// Reads format versions, the database format and the open counter from the user marker.
     /// A missing database-format value at end of input leaves the format unspecified.
     /// Otherwise the file must contain the `database format:` directive.
@@ -372,8 +385,10 @@ impl UserTableInfo {
     /// # Errors
     ///
     /// [`UserConfError::Unopenable`] reports an open failure, [`UserConfError::Line`] a
-    /// required field that could not be read, and [`UserConfError::UnknownDatabaseFormat`] an
-    /// unrecognized format name.
+    /// required field that could not be read.
+    ///
+    /// # Aborts
+    /// An unknown database format aborts at the scanner's conversion.
     pub fn load(filename: &(impl crate::input::FileName + ?Sized)) -> Result<Self, UserConfError> {
         let input = UserTableInfoReader::open(filename).map_err(|_| UserConfError::Unopenable)?;
         Self::read(input)
@@ -392,12 +407,12 @@ impl UserTableInfo {
             .ok_or(UserConfError::Line("model data version"))?;
         let database_format = match input.database_format() {
             Scanned::Eof => None,
-            Scanned::Unassigned => return Err(UserConfError::UnknownDatabaseFormat),
+            Scanned::Unassigned => std::process::abort(),
             Scanned::Assigned(token) => Some(
                 UPSTREAM_DB_FORMATS
                     .into_iter()
                     .find(|known| known.as_bytes() == token.to_bytes())
-                    .ok_or(UserConfError::UnknownDatabaseFormat)?
+                    .unwrap_or_else(|| std::process::abort())
                     .to_owned(),
             ),
         };
@@ -417,6 +432,9 @@ impl UserTableInfo {
     ///
     /// As [`Self::load`]; a path holding a NUL is
     /// [`UserConfError::Unopenable`].
+    ///
+    /// # Aborts
+    /// As [`Self::load`].
     pub fn load_path(path: &std::path::Path) -> Result<Self, UserConfError> {
         if crate::input::path::path_to_bytes(path).contains(&0) {
             return Err(UserConfError::Unopenable);
@@ -510,15 +528,6 @@ pub enum UserConfError {
     /// (`table_info.cpp:339-342`, `:345-348`): upstream leaves the marker
     /// at its reset defaults and the profile reads as non-conforming.
     Line(&'static str),
-    /// The `database format:` directive reached
-    /// `to_table_database_format_type`, which `abort()`s on any token it
-    /// does not know (`table_info.cpp:122-133`, called at `:353-354`). The
-    /// token was either read
-    /// and unrecognised, or never read at all: a matching failure leaves
-    /// upstream's `str` unwritten and maps it anyway, which is the same
-    /// abort from an indeterminate buffer. Both answer `Err`, and the
-    /// C adapters abort on it (register row 44).
-    UnknownDatabaseFormat,
 }
 
 impl std::fmt::Display for UserConfError {
@@ -531,10 +540,6 @@ impl std::fmt::Display for UserConfError {
                     "user.conf: the `{line}` directive is missing or malformed"
                 )
             }
-            Self::UnknownDatabaseFormat => write!(
-                f,
-                "user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)"
-            ),
         }
     }
 }
