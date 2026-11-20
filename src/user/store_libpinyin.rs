@@ -1,7 +1,7 @@
 //! The libpinyin-file user store — [`crate::user::UserStore`] over the pin's own
 //! user-dir file set (drop-in task 9's wiring half).
 //!
-//! [`UserStore::open_libpinyin_checked`] opens a user *directory* (not a store
+//! `UserStore::open_session` opens a user *directory* (not a store
 //! file): [`crate::user::persistence`] reads the profile into the session's
 //! state in process memory — the user library arenas, the pinyin index
 //! and phrase table, the user bigram container, the live system items and
@@ -92,7 +92,7 @@ impl Target {
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
 /// lowers the open counter its init raised and writes the marker, saved
 /// or not (`pinyin_fini`, `pinyin.cpp:1194-1200`); libzhuyin writes
-/// nothing. Armed on the handle [`UserStore::open_libpinyin_checked`]
+/// nothing. Armed on the handle `UserStore::open_session`
 /// returns, so it runs once per open — every open runs its own
 /// `check_format` — at explicit context fini, or on drop if unfinished. A process that dies before then leaves the raised
 /// counter on disk, as upstream's does.
@@ -162,12 +162,17 @@ impl UserStore {
     /// Returns [`UserStoreError::SessionSeed`] if an in-memory container
     /// cannot be created or seeded with the system libraries' allocation
     /// bases, where the pin dies.
+    #[cfg(test)]
     pub(crate) fn open_transient(
         mut originals: SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(None, &mut originals, versions, law)
+        let profile = persistence::LoadedProfile {
+            replayed: originals.take_live_libraries(),
+            ..Default::default()
+        };
+        Self::open_session(None, &mut originals, versions, law, profile)
     }
 
     /// Open the user store on a libpinyin user directory whose profile
@@ -198,7 +203,9 @@ impl UserStore {
         law: UserConfLaw,
         check: crate::user::persistence::ProfileCheck,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(Some((user_dir, check, rows)), originals, versions, law)
+        let (profile, stop) = persistence::load_session_in_loop(user_dir, originals, rows, &check)?;
+        stop.map_err(UserStoreError::LibraryLoop)?;
+        Self::open_session(Some(user_dir), originals, versions, law, profile)
     }
 
     /// `check_format` alone, for an init that must judge the profile before
@@ -224,39 +231,15 @@ impl UserStore {
         persistence::check_format_unnamed(versions, law);
     }
 
-    // Keeps one shared copy of this function for its three callers
-    // (`open_transient`, `open_libpinyin_checked`).
-    // Generic over its steps, LLVM otherwise inlined it into each caller
-    // the C libraries reach: `shipping-sizes` measured +65,536 B
-    // (libpinyin) and +69,632 B (libzhuyin) stripped at 235438d.
+    /// Seed the session and load the user bigram after the system bigram attach.
     #[inline(never)]
-    fn open_session(
-        user: Option<(
-            &Path,
-            crate::user::persistence::ProfileCheck,
-            &crate::user::library_loop::LibraryLoopRows<'_>,
-        )>,
+    pub(crate) fn open_session(
+        user_dir: Option<&Path>,
         originals: &mut SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
+        profile: persistence::LoadedProfile,
     ) -> Result<Self, UserStoreError> {
-        let user_dir = user.map(|(dir, _, _)| dir);
-        let profile = if let Some((dir, check, rows)) = user {
-            // The library loop's fault: the open returns here, after
-            // `check_format`'s writes and the rows before it, before the
-            // fini guard is armed, so the raised counter stays on disk.
-            let (profile, stop) = persistence::load_session_in_loop(dir, originals, rows, &check)?;
-            stop.map_err(UserStoreError::LibraryLoop)?;
-            profile
-        } else {
-            // Without a user dir the pin's `check_format` reads and writes
-            // `""`, which the init runs where the pin does
-            // ([`Self::check_profile_unnamed`]); there is no profile.
-            persistence::LoadedProfile {
-                replayed: originals.take_live_libraries(),
-                ..Default::default()
-            }
-        };
         let persistence::LoadedProfile {
             loaded,
             replayed,

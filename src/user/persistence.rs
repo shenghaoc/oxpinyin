@@ -1054,74 +1054,90 @@ pub(crate) fn check_format(
     })
 }
 
-/// The init's profile load: the user tables first (`pinyin.cpp:350-373`),
-/// then the library loop, each row judged, mapped and merged before the next
-/// (`:377-392`). Without a conforming profile the loop only maps: the wipe
-/// left nothing to read. The stop is the loop's first fault, after everything
-/// the pin does before it.
-///
-/// # Errors
-///
-/// [`PersistenceError::FatalCopy`] where a user index copy fails, before
-/// the loop (`pinyin.cpp:350-373` precede it).
+/// User pinyin records and load results that precede the system phrase attach.
+pub(crate) struct LoadedPinyinIndex<'a> {
+    conform_dir: Option<&'a Path>,
+    loaded: Loaded,
+    index: UserIndex,
+    overlong: Vec<Vec<u16>>,
+}
+
+impl<'a> LoadedPinyinIndex<'a> {
+    pub(crate) fn open(user: Option<(&'a Path, ProfileCheck)>) -> Result<Self, PersistenceError> {
+        let mut loaded = Loaded {
+            open_counter: user.map_or(0, |(_, check)| check.open_counter),
+            #[cfg(test)]
+            wiped: user.is_some_and(|(_, check)| !check.conform),
+            ..Loaded::default()
+        };
+        let conform_dir = user.filter(|(_, check)| check.conform).map(|(dir, _)| dir);
+        let mut index = UserIndex::default();
+        let mut overlong = Vec::new();
+        if let Some(dir) = conform_dir {
+            load_user_pinyin_index(dir, &mut loaded, &mut overlong, &mut index)?;
+        }
+        Ok(Self {
+            conform_dir,
+            loaded,
+            index,
+            overlong,
+        })
+    }
+
+    /// The second user index, after the system phrase attach.
+    pub(crate) fn load_phrase_table(mut self) -> Result<LoadedProfile, PersistenceError> {
+        let mut phrase_table = UserPhraseTable::default();
+        if let Some(dir) = self.conform_dir {
+            load_user_phrase_index(dir, &mut self.loaded, &mut phrase_table)?;
+        }
+        Ok(LoadedProfile {
+            loaded: self.loaded,
+            index: self.index,
+            overlong_index_keys: self.overlong,
+            phrase_table,
+            user_libraries: Default::default(),
+            replayed: Default::default(),
+        })
+    }
+}
+
+impl LoadedProfile {
+    pub(crate) fn load_libraries(
+        &mut self,
+        user: Option<(&Path, ProfileCheck)>,
+        originals: &mut SystemOriginals,
+        rows: &crate::user::LibraryLoopRows<'_>,
+    ) -> Result<(), crate::user::LibraryLoopStop> {
+        if let Some((user_dir, check)) = user {
+            crate::user::library_loop::run(
+                rows.steps(),
+                rows.system_dir(),
+                originals,
+                Some(SessionProfile {
+                    user_dir,
+                    profile: self,
+                    conform: check.conform,
+                }),
+            )
+        } else {
+            rows.map_libraries(originals)?;
+            self.replayed = originals.take_live_libraries();
+            Ok(())
+        }
+    }
+}
+
+/// Load a standalone user profile without system DBM attachments.
 pub(crate) fn load_session_in_loop(
     dir: &Path,
     originals: &mut SystemOriginals,
-    rows: &crate::user::library_loop::LibraryLoopRows<'_>,
+    rows: &crate::user::LibraryLoopRows<'_>,
     check: &ProfileCheck,
-) -> Result<
-    (
-        LoadedProfile,
-        Result<(), crate::user::library_loop::LibraryLoopStop>,
-    ),
-    PersistenceError,
-> {
-    let mut profile = begin_session_profile(dir, check)?;
-    let stop = crate::user::library_loop::run(
-        rows.steps(),
-        rows.system_dir(),
-        originals,
-        Some(SessionProfile {
-            user_dir: dir,
-            profile: &mut profile,
-            conform: check.conform,
-        }),
-    );
+) -> Result<(LoadedProfile, Result<(), crate::user::LibraryLoopStop>), PersistenceError> {
+    let user = Some((dir, *check));
+    let mut profile = LoadedPinyinIndex::open(user)?.load_phrase_table()?;
+    let stop = profile.load_libraries(user, originals, rows);
     Ok((profile, stop))
-}
-
-/// The part of a session load that precedes the library loop.
-///
-/// # Errors
-///
-/// [`PersistenceError::FatalCopy`] where a user index copy fails.
-pub(crate) fn begin_session_profile(
-    dir: &Path,
-    check: &ProfileCheck,
-) -> Result<LoadedProfile, PersistenceError> {
-    let mut profile = LoadedProfile {
-        loaded: Loaded {
-            open_counter: check.open_counter,
-            #[cfg(test)]
-            wiped: !check.conform,
-            ..Loaded::default()
-        },
-        replayed: crate::user::LibraryTable::new(),
-        user_libraries: crate::user::LibraryTable::new(),
-        overlong_index_keys: Vec::new(),
-        index: UserIndex::default(),
-        phrase_table: UserPhraseTable::default(),
-    };
-    if check.conform {
-        load_user_pinyin_index(
-            dir,
-            &mut profile.loaded,
-            &mut profile.overlong_index_keys,
-            &mut profile.index,
-        )?;
-        load_user_phrase_index(dir, &mut profile.loaded, &mut profile.phrase_table)?;
-    }
-    Ok(profile)
 }
 
 /// The library loop's steps over a user profile.

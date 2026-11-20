@@ -410,24 +410,27 @@ impl SystemDictionary {
         Ok(dict)
     }
 
-    /// Attaches the runtime's system tables before its library loop.
-    /// A table that fails to open is empty
-    /// (`pinyin.cpp:350-373`, `zhuyin.cpp:294-316`).
-    ///
-    /// # Errors
-    /// Returns failures before native attach.
-    pub(crate) fn attach_tables(
-        system_dir: &Path,
-        conf: &TableConf,
-    ) -> Result<SystemTables, DictError> {
-        Ok(SystemTables {
-            pinyin: ChewingTable::new(crate::data::chewing_table::DefaultDbm::attach(
+    /// The system half of the first index pair in init (pinyin.cpp:357).
+    pub(crate) fn attach_pinyin(system_dir: &Path) -> Result<ChewingTable, DictError> {
+        Ok(ChewingTable::new(
+            crate::data::chewing_table::DefaultDbm::attach(
                 &crate::input::path::build_path(
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
                 ),
                 false,
-            )?),
+            )?,
+        ))
+    }
+
+    /// Attach the system phrase index after the user pinyin index (pinyin.cpp:369).
+    pub(crate) fn attach_phrase(
+        system_dir: &Path,
+        conf: &TableConf,
+        pinyin: ChewingTable,
+    ) -> Result<SystemTables, DictError> {
+        Ok(SystemTables {
+            pinyin,
             phrase: PhraseTable::new(crate::data::chewing_table::DefaultDbm::attach(
                 &crate::input::path::build_path(
                     system_dir,

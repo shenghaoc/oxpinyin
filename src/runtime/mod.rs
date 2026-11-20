@@ -1552,61 +1552,10 @@ fn check_profile_early(
             | UserStoreError::FailedUserBigramStore),
         ) => Err(OpenError::Dict(DictError::Parse(error.to_string()))),
         // A failed record copy is the pin's assert (`tkrzwdb_utils.h:65`,
-        // `:72`; `bdb_utils.h:61`, `:67`), which fails the open as
-        // `open_user_store` fails it; `check_format` does not copy, so it
-        // never reaches here.
+        // `:72`; `bdb_utils.h:61`, `:67`). It fails the session.
+        // `check_format` does not copy records.
         Err(error @ UserStoreError::FatalCopy) => Err(OpenError::UserSession(error)),
     }
-}
-
-/// Opens the user dir's session over the libraries the loop maps:
-/// `check_format`'s `user.conf` half has already run
-/// ([`check_profile_early`]).
-///
-/// A failure is never a degraded open. A `user.conf` whose `database
-/// format:` upstream cannot map is where `check_format` `abort()`s
-/// (`table_info.cpp:132`): [`OpenError::UnknownDatabaseFormat`]. The loop's
-/// first fault is the pin's. Anything else fails after the loop handed the
-/// session the system libraries, where the pin dies
-/// ([`OpenError::UserSession`]).
-fn open_user_store(
-    conf: &TableConf,
-    user_dir: &Path,
-    originals: &mut crate::user::SystemOriginals,
-    rows: &LibraryLoopRows<'_>,
-    law: UserConfLaw,
-    check: crate::user::ProfileCheck,
-) -> Result<UserStore, OpenError> {
-    let versions = SystemVersions::from_conf(conf);
-    UserStore::open_libpinyin_checked(user_dir, originals, rows, versions, law, check).map_err(
-        |error| match error {
-            UserStoreError::UnknownDatabaseFormat => {
-                OpenError::UnknownDatabaseFormat(user_dir.to_path_buf())
-            }
-            UserStoreError::LibraryLoop(stop) => library_loop_error(stop),
-            error @ (UserStoreError::Io(_)
-            | UserStoreError::Store(_)
-            | UserStoreError::Decode
-            | UserStoreError::InvalidPhrase
-            | UserStoreError::Persistence(_)
-            | UserStoreError::ChunkHeaderWrite(_)
-            | UserStoreError::LibraryChunkHeaderRead
-            | UserStoreError::SaveRemapFailed
-            | UserStoreError::SaveTooLarge
-            | UserStoreError::UnigramTotalOverflow
-            | UserStoreError::OverlongIndexKey
-            | UserStoreError::NonTokenUserBigramKey
-            | UserStoreError::ShortUserBigramValue
-            | UserStoreError::PartialUserBigramTail
-            | UserStoreError::ResidualUserBigramGram
-            | UserStoreError::Journal(_)
-            | UserStoreError::TrainingSetFreqMiss
-            | UserStoreError::UserReadingRemoval
-            | UserStoreError::SessionSeed(_)
-            | UserStoreError::FailedUserBigramStore
-            | UserStoreError::FatalCopy) => OpenError::UserSession(error),
-        },
-    )
 }
 
 /// The library loop's fault, as the open's answer.
@@ -1695,9 +1644,15 @@ impl Runtime {
         // `zhuyin.cpp:279-284`).
         let conf = TableConf::load_from_dir(system_dir).map_err(OpenError::TableConf)?;
         let early = check_profile_early(&conf, user_dir, law)?;
-        // The pin attaches the system tables before its library loop
-        // (`pinyin.cpp:350-373`, `zhuyin.cpp:294-316`).
-        let dict = SystemDictionary::attach_tables(system_dir, &conf).map_err(OpenError::Dict)?;
+        let user_profile = user_dir.zip(early);
+        let pinyin = SystemDictionary::attach_pinyin(system_dir).map_err(OpenError::Dict)?;
+        let user_pinyin = crate::user::persistence::LoadedPinyinIndex::open(user_profile)
+            .map_err(|error| OpenError::UserSession(error.into()))?;
+        let dict =
+            SystemDictionary::attach_phrase(system_dir, &conf, pinyin).map_err(OpenError::Dict)?;
+        let mut profile = user_pinyin
+            .load_phrase_table()
+            .map_err(|error| OpenError::UserSession(error.into()))?;
         // The library mask is shared with the language model: an unloaded
         // library's items leave both the lookups and the unigram denominator,
         // as freeing the sub-index does upstream.
@@ -1726,34 +1681,32 @@ impl Runtime {
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
         let rows = LibraryLoopRows::new(system_dir, &conf, user_dir);
-        let opened = match (user_dir, early) {
-            (Some(dir), Some(check)) => {
-                open_user_store(&conf, dir, &mut originals, &rows, law, check)
-            }
-            _ => rows
-                .map_libraries(&mut originals)
-                .map_err(library_loop_error)
-                .and_then(|()| {
-                    UserStore::open_transient(
-                        std::mem::replace(
-                            &mut originals,
-                            crate::user::SystemOriginals::new(
-                                Default::default(),
-                                UserFileLayout::from_conf(&conf),
-                            ),
-                        ),
-                        SystemVersions::from_conf(&conf),
-                        law,
-                    )
-                    .map_err(OpenError::UserSession)
-                }),
-        };
+        let opened = (|| {
+            profile
+                .load_libraries(user_profile, &mut originals, &rows)
+                .map_err(library_loop_error)?;
+            // The system bigram attaches first (pinyin.cpp:394-401, zhuyin.cpp:336-343).
+            let bigram = crate::input::path::build_path(
+                system_dir,
+                std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
+            );
+            let lm = crate::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
+            let user = UserStore::open_session(
+                user_dir,
+                &mut originals,
+                SystemVersions::from_conf(&conf),
+                law,
+                profile,
+            )
+            .map_err(OpenError::UserSession)?;
+            Ok((user, lm))
+        })();
         // The one exit from the loop. The pin wrote each absent library's
         // line as it reached it (`pinyin.cpp:253-256` within `:377-392`); the
         // list holds only the libraries this loop reached, and none of them
         // stopped it.
-        let user = match opened {
-            Ok(user) => user,
+        let (user, mut lm) = match opened {
+            Ok(pair) => pair,
             Err(error) => {
                 for path in originals.phrase_libraries().unmapped() {
                     unmapped(path);
@@ -1765,13 +1718,6 @@ impl Runtime {
             unmapped(path);
         }
 
-        // The bigram follows the library loop (`pinyin.cpp:394-397`,
-        // `zhuyin.cpp:336-339`).
-        let bigram = crate::input::path::build_path(
-            system_dir,
-            std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
-        );
-        let mut lm = crate::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
         // λ is the `gfloat` table.conf's scanner read.
         lm.set_lambda_from_conf(&conf);
 
