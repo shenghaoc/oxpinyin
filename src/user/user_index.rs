@@ -69,13 +69,7 @@ impl<'a> Entry<'a> {
     }
 
     fn token(&self, index: usize) -> u32 {
-        let base = index * self.stride;
-        u32::from_le_bytes([
-            self.bytes[base],
-            self.bytes[base + 1],
-            self.bytes[base + 2],
-            self.bytes[base + 3],
-        ])
+        record_token(&self.bytes[index * self.stride..])
     }
 
     /// Two standard partition searches in exact key order.
@@ -631,7 +625,7 @@ fn record_matches_with_tones(query: &[ChewingKey], record: &[u8]) -> bool {
 
 /// The `phrase_token_t` leading a `PinyinIndexItem2` record.
 fn record_token(record: &[u8]) -> u32 {
-    u32::from_le_bytes([record[0], record[1], record[2], record[3]])
+    u32::from_le_bytes(record.as_chunks::<4>().0[0])
 }
 
 fn value_has_reading(value: &[u8], len: usize, token: u32, packed: &[u16]) -> bool {
@@ -640,7 +634,7 @@ fn value_has_reading(value: &[u8], len: usize, token: u32, packed: &[u16]) -> bo
     }
     // Whole records only, as `search` reads them.
     value.chunks_exact(item2_stride(len)).any(|record| {
-        u32::from_le_bytes([record[0], record[1], record[2], record[3]]) == token
+        record_token(record) == token
             && record[4..4 + 2 * len]
                 .as_chunks::<2>()
                 .0

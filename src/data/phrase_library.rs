@@ -171,8 +171,7 @@ impl From<std::io::Error> for LibraryError {
 
 /// Reads a little-endian `u32` at `offset`, or `None` past the end.
 fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
-    let chunk = bytes.get(offset..offset.checked_add(4)?)?;
-    Some(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+    Some(u32::from_le_bytes(*bytes.get(offset..)?.first_chunk()?))
 }
 
 // ── phrase item view ────────────────────────────────────────────────

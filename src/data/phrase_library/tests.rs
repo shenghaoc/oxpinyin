@@ -316,7 +316,7 @@ mod phrase_library {
     }
 
     fn u32_at(bytes: &[u8]) -> u32 {
-        u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        u32::from_le_bytes(*bytes.first_chunk::<4>().expect("whole fixture word"))
     }
 
     fn fix_checksum(bytes: &mut [u8]) {
