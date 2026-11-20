@@ -20,9 +20,7 @@ use crate::{
     model::{TokenPhrase, TrellisItem},
 };
 
-use crate::data::phrase_library::{
-    LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk,
-};
+use crate::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary};
 
 #[cfg(test)]
 pub use crate::data::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
@@ -71,16 +69,6 @@ pub struct PhraseLibraries {
     /// item: whether a frequency table is there to price with, which the
     /// wrapping [`Self::total`] cannot tell when it lands on zero.
     stocked: u32,
-}
-
-/// The fault and diagnostic paths from one validation of each selected
-/// library. The first fault determines the pin's stopping site.
-#[derive(Default)]
-pub struct LibraryCheck {
-    /// The first failed validation reaches `memory_chunk.h:493`.
-    pub chunk_header_fault: bool,
-    /// Files that produce the pin's ordinary `mmap failed` diagnostic.
-    pub unmappable: Vec<PathBuf>,
 }
 
 impl PhraseLibraries {
@@ -168,38 +156,6 @@ impl PhraseLibraries {
                 unmapped(path);
             }
         })
-    }
-
-    /// Validate each selected loaded library once, retaining both the
-    /// first fault's classification and the reportable paths. The caller
-    /// applies its operation's table-row and visibility guards.
-    #[must_use]
-    pub(crate) fn check_now(
-        &self,
-        selected: impl Fn(u8) -> bool,
-        only: Option<u8>,
-    ) -> LibraryCheck {
-        let mut checked = LibraryCheck::default();
-        let mut first_fault = false;
-        for (_, slot) in (0u8..)
-            .zip(&self.by_nibble)
-            .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && selected(nibble))
-        {
-            let Some(loaded) = slot.as_ref() else {
-                continue;
-            };
-            if let Err(error) = verify_chunk(&loaded.path) {
-                if !first_fault {
-                    checked.chunk_header_fault =
-                        matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead));
-                    first_fault = true;
-                }
-                if error.unmappable_path().is_some() {
-                    checked.unmappable.push(loaded.path.clone());
-                }
-            }
-        }
-        checked
     }
 
     /// Loads `path` as library `nibble` — `FacadePhraseIndex::load`.

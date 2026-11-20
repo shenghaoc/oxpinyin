@@ -1,4 +1,5 @@
 use super::*;
+use crate::data::phrase_library::verify_chunk;
 
 #[test]
 fn open_of_an_empty_directory_loads_nothing() {

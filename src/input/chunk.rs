@@ -131,6 +131,11 @@ pub(crate) struct MappingSource {
     file_size: u64,
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CHUNK_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl MappingSource {
     /// Open read-only, seek to the end, then rewind, as `MemoryChunk::mmap`
     /// does at `src/include/memory_chunk.h:479-484` (074a2219).
@@ -138,6 +143,8 @@ impl MappingSource {
     /// # Errors
     /// Returns the open or end-seek error.
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
+        #[cfg(test)]
+        CHUNK_OPENS.set(CHUNK_OPENS.get() + 1);
         let source = native::ReadChunk::open(path)?;
         let file_size = source.size_and_rewind()?;
         Ok(Self { source, file_size })
