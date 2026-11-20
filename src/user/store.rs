@@ -718,8 +718,7 @@ impl UserStore {
     }
 
     /// Read system library `nibble`'s saved log once into `logs` and return
-    /// the header fault `mask_out`'s reload would reach in it (rows 91 and
-    /// 92), found without changing any state; `None` when it reaches none.
+    /// the chunk-read or journal fault the walk reached (rows 91, 92 and 96).
     /// [`Self::reload_system_libraries_prefetched`] merges the bytes read here.
     pub(crate) fn read_mask_log(
         &self,
@@ -727,7 +726,7 @@ impl UserStore {
         nibble: u8,
         mask: PhraseToken,
         value: PhraseToken,
-    ) -> Option<crate::user::JournalFault> {
+    ) -> Option<crate::user::persistence::MaskStop> {
         let dir = self.inner.libpinyin.dir.as_deref()?;
         crate::user::persistence::read_mask_log(
             dir,
