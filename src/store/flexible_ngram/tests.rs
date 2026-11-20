@@ -678,26 +678,36 @@ mod flexible_bigram {
 
     /// The pin asserts a record shorter than its array header
     /// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371`,
-    /// `flexible_ngram_tkrzwdb.h:388` at 074a2219); the store reports that fault
-    /// as its own error, and the K-mixture tools abort on it.
+    /// `flexible_ngram_tkrzwdb.h:388` at 074a2219).
     #[test]
-    fn a_short_array_header_is_a_typed_fault() {
-        let scratch = tempfile::tempdir().expect("scratch directory");
-        let path = scratch.path().join("short.db");
-        {
-            let db = DefaultStore::create_hash(&path).expect("hash create");
-            db.write(|txn| {
-                txn.put_raw(&MAGIC_KEY, b"KMMP")?;
-                txn.put_raw(&7u32.to_ne_bytes(), &[0u8; 4])?;
-                Ok(())
-            })
-            .expect("short record");
-        }
-        let bigram = open_read_only(&path);
-        assert!(matches!(
-            bigram.get_array_header(7),
-            Err(StoreError::ShortArrayHeader)
-        ));
+    fn a_short_array_header_aborts_at_the_getter() {
+        let before = std::cell::RefCell::new(Vec::new());
+        crate::store::death_test::assert_aborts_in_tempdir(
+            "store::flexible_ngram::tests::flexible_bigram::a_short_array_header_aborts_at_the_getter",
+            |scratch| {
+                let path = scratch.join("short.db");
+                {
+                    let db = DefaultStore::create_hash(&path).expect("hash create");
+                    db.write(|txn| {
+                        txn.put_raw(&MAGIC_KEY, b"KMMP")?;
+                        txn.put_raw(&7u32.to_ne_bytes(), &[0u8; 4])?;
+                        Ok(())
+                    })
+                    .expect("short record");
+                }
+                *before.borrow_mut() = fs::read(&path).expect("saved record");
+            },
+            |scratch| {
+                let bigram = open_read_only(&scratch.join("short.db"));
+                let _ = bigram.get_array_header(7);
+            },
+            |scratch| {
+                assert_eq!(
+                    fs::read(scratch.join("short.db")).unwrap(),
+                    *before.borrow()
+                );
+            },
+        );
     }
 
     // ── pin-written file ───────────────────────────────────────────────

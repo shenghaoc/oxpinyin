@@ -185,10 +185,6 @@ pub unsafe extern "C" fn zhuyin_mask_out(
         // Register row 96, `memory_chunk.h:493`: after the user tables, the
         // mask maps each loaded system library again and one is a directory.
         oxpinyin::facade::MaskOutOutcome::ChunkHeaderRead => std::process::abort(),
-        // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
-        // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
-        // `:67`). The mask does not copy, so it never reaches here.
-        oxpinyin::facade::MaskOutOutcome::FatalCopy => std::process::abort(),
     }
 }
 
@@ -227,33 +223,12 @@ pub unsafe extern "C" fn zhuyin_load_phrase_library(
     // `false` first, `:362-363`); which rows are is the context's
     // `table.conf`. The facade answers that before it maps or logs
     // anything, and the process aborts (register rows 66 and 79).
-    let outcome = ctx.core.load_phrase_library(u32::from(index));
-    if outcome
-        == Err(oxpinyin::facade::LibraryLoadFault::Row(
-            oxpinyin::facade::LibraryRowAssert::NotLoadable,
-        ))
-    {
-        std::process::abort();
-    }
-    match outcome {
+    match ctx.core.load_phrase_library(u32::from(index)) {
         Ok(loaded) => loaded,
-        // Register row 96, `memory_chunk.h:493`: the library being loaded
-        // again is a directory the pin maps and asserts on, before anything
-        // changes.
-        Err(oxpinyin::facade::LibraryLoadFault::Row(
-            oxpinyin::facade::LibraryRowAssert::ChunkHeaderRead,
-        )) => std::process::abort(),
         // Register rows 91 and 108: the reloaded library's saved `.dbin`
         // merge reached a pin assertion (`zhuyin.cpp:219`, then
         // `phrase_index_logger.h:202` or `memory_chunk.h:390`).
         Err(oxpinyin::facade::LibraryLoadFault::Journal(_)) => std::process::abort(),
-        // `NotLoadable` aborted above; the facade answers no other row
-        // fault here.
-        Err(oxpinyin::facade::LibraryLoadFault::Row(
-            oxpinyin::facade::LibraryRowAssert::NotLoadable
-            | oxpinyin::facade::LibraryRowAssert::NotDictionary
-            | oxpinyin::facade::LibraryRowAssert::NullChunkName,
-        )) => false,
     }
 }
 

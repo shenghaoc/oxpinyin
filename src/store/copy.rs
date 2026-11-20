@@ -6,9 +6,8 @@
 //! `bdb_utils.h:61`) and on a source walk that ends in anything but its
 //! normal end (`tkrzwdb_utils.h:72`, `bdb_utils.h:67`). The reference build
 //! keeps its asserts, so the pin stops there, before the caller renames a
-//! staged file or keeps a partly filled container. [`copy`] stops there
-//! with [`StoreError::FatalCopy`], which the callers propagate to the C
-//! adapters, which abort (constitution §4). The soft failures before the
+//! staged file or keeps a partly filled container. [`copy`] aborts at the
+//! failed record operation. The soft failures before the
 //! copy (a file that does not open, a missing iterator or cursor, a failed
 //! unlink) stay with the callers. Kyoto Cabinet's `load_snapshot` and
 //! `dump_snapshot` assert nothing and do not come here.
@@ -18,24 +17,23 @@ use crate::store::StoreError;
 /// Copies the records that `walk` hands its visitor into `set`, in the walk's
 /// order. A failed `set` stops the copy at that record.
 ///
-/// # Errors
-///
-/// [`StoreError::FatalCopy`] when a `set` fails or the walk ends in an
-/// error: the points where the pin's copy asserts.
+/// # Aborts
+/// A failed destination write or source walk aborts at the pin's assertion.
 pub(crate) fn copy(
     walk: impl FnOnce(&mut crate::store::RecordSink<'_>) -> Result<(), StoreError>,
     mut set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
-) -> Result<(), StoreError> {
+) {
     walk(&mut |key, value| {
         #[cfg(any(test, feature = "test-hooks"))]
-        faults::source_read()?;
+        faults::source_read().unwrap_or_else(|_| std::process::abort());
         #[cfg(any(test, feature = "test-hooks"))]
         let written = faults::destination_write().and_then(|()| set(key, value));
         #[cfg(not(any(test, feature = "test-hooks")))]
         let written = set(key, value);
-        written.map_err(|_| StoreError::FatalCopy)
+        written.unwrap_or_else(|_| std::process::abort());
+        Ok(())
     })
-    .map_err(|_| StoreError::FatalCopy)
+    .unwrap_or_else(|_| std::process::abort());
 }
 
 /// Fault injection for the store copy operations used by cross-crate death tests. These
@@ -100,5 +98,42 @@ pub mod faults {
     /// The fault point before a copy's source iterator is made.
     pub(crate) fn make_iterator() -> Result<(), StoreError> {
         take(&ITERATORS)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn two_records() {
+        copy(
+            |sink| {
+                sink(b"one", b"1")?;
+                sink(b"two", b"2")
+            },
+            |_, _| Ok(()),
+        )
+    }
+
+    #[test]
+    fn source_walk_failure_aborts() {
+        crate::store::death_test::assert_aborts(
+            "store::copy::tests::source_walk_failure_aborts",
+            || {
+                faults::fail_source_read_after(1);
+                two_records();
+            },
+        );
+    }
+
+    #[test]
+    fn destination_write_failure_aborts() {
+        crate::store::death_test::assert_aborts(
+            "store::copy::tests::destination_write_failure_aborts",
+            || {
+                faults::fail_destination_write_after(1);
+                two_records();
+            },
+        );
     }
 }

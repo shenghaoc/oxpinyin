@@ -56,16 +56,12 @@ const USER_CONF: &str = "user.conf";
 /// against the reset defaults, so the profile reads as non-conforming and is
 /// wiped — the session load does the same.
 ///
-/// `Err` is the pin's abort site: the `database format:` directive reached
-/// `to_table_database_format_type`, which `abort()`s upstream
-/// (`:122-133`, called at `:353-354`). No profile is judged and nothing
-/// is written or cleaned — the open fails here, as `check_format` never
-/// gets to run, and the C adapters abort on it.
+/// An unknown `database format:` aborts in the reader before this function
+/// can judge the profile or change a file (`table_info.cpp:122-133`).
 fn load_user_conf(filename: &Path) -> Result<Option<UserTableInfo>, PersistenceError> {
     match UserTableInfo::load_path(filename) {
         Ok(info) => Ok(Some(info)),
         Err(UserConfError::Unopenable | UserConfError::Line(_)) => Ok(None),
-        Err(UserConfError::UnknownDatabaseFormat) => Err(PersistenceError::UnknownDatabaseFormat),
     }
 }
 
@@ -132,12 +128,6 @@ pub enum SaveBaseline {
     /// marker is written, the session stays dirty and the save answers
     /// `false`.
     Unmappable,
-    /// The library's system file is a directory whose header read
-    /// `MemoryChunk::mmap` asserts on at this point of the loop
-    /// (`pinyin.cpp:955`, `zhuyin.cpp:588`, `memory_chunk.h:493`; register
-    /// row 96): the save stops here, with the earlier libraries' `.tmp`
-    /// files written (and, for libzhuyin, renamed) and nothing else done.
-    ChunkHeaderRead,
 }
 
 impl<M, I: Default> Default for SystemLibrary<M, I> {
@@ -670,14 +660,6 @@ impl UserState {
     }
 }
 
-/// Which of `MemoryChunk::save`'s two header writes the filesystem
-/// refused, from the boundary's own chunk save: the `length` word
-/// (`memory_chunk.h:543`) or the `checksum` word (`:547`). Both sit under
-/// `pinyin_save` / `zhuyin_save`, and the pin is built with asserts live,
-/// so a full filesystem or an `RLIMIT_FSIZE` that cuts the header kills the
-/// process. The save answers the failure, typed, and the C adapters abort.
-pub use crate::input::chunk::ChunkHeaderField;
-
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
 #[derive(Debug)]
@@ -688,39 +670,13 @@ pub enum PersistenceError {
     Store(StoreError),
     /// A byte stream did not parse under its frozen format.
     Codec(String),
-    /// A library chunk's `MemoryChunk::save` header write failed
-    /// (`memory_chunk.h:543`/`:547`): the pin `assert`s and dies of
-    /// SIGABRT. Carried apart from [`Self::Io`] because a short *payload*
-    /// write is the pin's own soft failure (`pinyin_save` answers `false` and
-    /// every caller ignores it), not an abort.
-    ChunkHeaderWrite {
-        /// Which header word the write refused.
-        field: ChunkHeaderField,
-        /// The underlying write error.
-        source: std::io::Error,
-    },
-    /// A system library's file, mapped again at the save's `_write_files`
-    /// position, is a directory whose header read `MemoryChunk::mmap`
-    /// asserts on (`memory_chunk.h:493`, register row 96): the save stops
-    /// there, as the pin dies there.
-    LibraryChunkHeaderRead,
     /// `MemoryChunk::mmap` refused a system library's file at the save's
     /// remap (register row 76): the save stopped at that library.
     SystemRemapFailed,
-    /// `user.conf` names a database format upstream's
-    /// `to_table_database_format_type` does not know, where that function
-    /// `abort()`s (`table_info.cpp:122-133`). The open fails here, with
-    /// nothing cleaned or written, and the C adapters abort.
-    UnknownDatabaseFormat,
     /// A bulk copy into a fresh chunk reaches the pin's unsafe threshold
     /// (register row 112, #1514): the save stops there and answers `false`,
     /// keeping the earlier files as written, and the session stays dirty.
     SaveTooLarge,
-    /// A tkrzw or Berkeley DB record copy failed where the pin's
-    /// `copy_tkrzwdb` or `copy_bdb` asserts ([`StoreError::FatalCopy`]).
-    /// No soft path absorbs it: the load or save stops there, before any
-    /// later rename or marker write, and the C adapters abort.
-    FatalCopy,
 }
 
 impl std::fmt::Display for PersistenceError {
@@ -729,30 +685,14 @@ impl std::fmt::Display for PersistenceError {
             Self::Io(error) => write!(f, "user file io: {error}"),
             Self::Store(error) => write!(f, "user file store: {error}"),
             Self::Codec(message) => write!(f, "user file codec: {message}"),
-            Self::ChunkHeaderWrite { field, source } => write!(
-                f,
-                "user chunk header ({}): {source}",
-                field.assert_expression()
-            ),
-            Self::LibraryChunkHeaderRead => write!(
-                f,
-                "a system library is a directory whose chunk header cannot be read \
-                 (upstream asserts, memory_chunk.h:493)"
-            ),
             Self::SystemRemapFailed => write!(
                 f,
                 "a system library's file cannot be mapped again (upstream: mmap failed!)"
-            ),
-            Self::UnknownDatabaseFormat => write!(
-                f,
-                "user.conf: unknown database format (upstream aborts, \
-                 table_info.cpp:122-133, so the open is refused)"
             ),
             Self::SaveTooLarge => write!(
                 f,
                 "a save copy reaches the pin's unsafe size (memory_chunk.h:95-98)"
             ),
-            Self::FatalCopy => write!(f, "user file store: {}", StoreError::FatalCopy),
         }
     }
 }
@@ -762,19 +702,12 @@ impl std::error::Error for PersistenceError {}
 impl PersistenceError {
     /// Whether a save carries on past this failure of one file, as the
     /// pin's `_write_files` and `zhuyin_save` do: a filesystem or container
-    /// failure the pin answers with `false`. A copy the pin asserts on is
-    /// never one, however it is wrapped.
+    /// failure the pin answers with `false`.
     fn is_soft_write(&self) -> bool {
         match self {
             Self::Io(_) => true,
-            Self::Store(error) => !matches!(error, StoreError::FatalCopy),
-            Self::Codec(_)
-            | Self::ChunkHeaderWrite { .. }
-            | Self::LibraryChunkHeaderRead
-            | Self::SystemRemapFailed
-            | Self::UnknownDatabaseFormat
-            | Self::SaveTooLarge
-            | Self::FatalCopy => false,
+            Self::Store(_) => true,
+            Self::Codec(_) | Self::SystemRemapFailed | Self::SaveTooLarge => false,
         }
     }
 }
@@ -787,13 +720,7 @@ impl From<std::io::Error> for PersistenceError {
 
 impl From<StoreError> for PersistenceError {
     fn from(error: StoreError) -> Self {
-        // Never a soft [`Self::Store`]: `tolerate` and `Staged::finish`
-        // pass those through.
-        if matches!(error, StoreError::FatalCopy) {
-            Self::FatalCopy
-        } else {
-            Self::Store(error)
-        }
+        Self::Store(error)
     }
 }
 
@@ -1011,10 +938,9 @@ pub struct ProfileCheck {
 /// cannot be written leaves the pin's `write %s failed.` line and the
 /// profile is judged and used as it would be otherwise.
 ///
-/// # Errors
+/// # Aborts
 ///
-/// [`PersistenceError::UnknownDatabaseFormat`], the abort point, before
-/// any write or wipe.
+/// Unknown database format aborts before any write or wipe.
 pub(crate) fn check_format(
     dir: &Path,
     versions: &SystemVersions,
@@ -1272,7 +1198,7 @@ fn clean_user_files(dir: &Path, layout: &UserFileLayout, law: UserConfLaw) {
 /// One walk of `user_pinyin_index.bin` into the session's native tree, plus the over-long readings the pin's mask `switch` refuses. An
 /// absent file or one that does not open leaves the table empty, as an
 /// empty `ChewingLargeTable2` does. A copy that fails part way on tkrzw or
-/// Berkeley DB is [`PersistenceError::FatalCopy`] ([`RawReadStore::copy_raw`]).
+/// Berkeley DB aborts at [`RawReadStore::copy_raw`].
 fn load_user_pinyin_index(
     dir: &Path,
     loaded: &mut Loaded,
@@ -1297,22 +1223,19 @@ fn load_user_pinyin_index(
     // `ChewingLargeTable2::load_db`'s copy into its in-memory table: on
     // tkrzw and Berkeley DB a failed walk is fatal, as the pin's copy
     // asserts; Kyoto Cabinet's snapshot load keeps what it read.
-    let mut set_failed = false;
     match store.copy_raw(|key, value| {
-        set_failed |= index.push_record(key, value).is_err();
+        index
+            .push_record(key, value)
+            .unwrap_or_else(|_| std::process::abort());
         if key.len() < CHEWING_KEY_SIZE || key.len() / CHEWING_KEY_SIZE > crate::MAX_PHRASE_LENGTH {
             exceptional.push(key.to_vec());
         }
     }) {
         Ok(()) => {}
-        Err(StoreError::FatalCopy) => return Err(PersistenceError::FatalCopy),
         Err(error) => record_skip(
             &mut loaded.skip_notes(),
             format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
         ),
-    }
-    if set_failed {
-        return Err(PersistenceError::FatalCopy);
     }
     *overlong = exceptional
         .into_iter()
@@ -1351,14 +1274,13 @@ fn load_user_phrase_index(
         }
     };
     // `PhraseLargeTable3::load_db`'s copy, as for the pinyin index.
-    let mut set_failed = false;
-    let copied = store.copy_raw(|key, value| set_failed |= arena.push_record(key, value).is_err());
-    if set_failed {
-        return Err(PersistenceError::FatalCopy);
-    }
+    let copied = store.copy_raw(|key, value| {
+        arena
+            .push_record(key, value)
+            .unwrap_or_else(|_| std::process::abort());
+    });
     match copied {
         Ok(()) => {}
-        Err(StoreError::FatalCopy) => return Err(PersistenceError::FatalCopy),
         Err(error) => record_skip(
             &mut loaded.skip_notes(),
             format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
@@ -2252,7 +2174,7 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
 
 /// The save carries on past a file it could not write, as the pin's
 /// `_write_files` does. A chunk header write the pin `assert`s on and an
-/// encoding failure stop it, and so does [`PersistenceError::FatalCopy`], a
+/// encoding failure stop it, and so does a failed record copy, a
 /// DBM copy that the pin asserts on: none of them is passed through here.
 fn tolerate<T>(result: Result<T, PersistenceError>) -> Result<(), PersistenceError> {
     match result {
@@ -2276,13 +2198,9 @@ fn log_payload(
     // live sub-index the new one.
     let disk = match baseline {
         Some(SaveBaseline::Changed(disk)) => disk.view(),
-        Some(
-            SaveBaseline::Keep
-            | SaveBaseline::Unloaded
-            | SaveBaseline::Unmappable
-            | SaveBaseline::ChunkHeaderRead,
-        )
-        | None => original,
+        Some(SaveBaseline::Keep | SaveBaseline::Unloaded | SaveBaseline::Unmappable) | None => {
+            original
+        }
     };
     let records = diff_live_records(
         live.live_library(nibble, original),
@@ -2309,13 +2227,13 @@ fn log_baseline<B: FnMut(u8) -> SaveBaseline>(
         let path = mapped.source_path()?;
         Some(match PhraseLibrary::open_retaining_layout(path) {
             Ok(current) => SaveBaseline::Changed(SystemLibrary::from_library(current)),
-            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => SaveBaseline::ChunkHeaderRead,
+            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => std::process::abort(),
             Err(
                 LibraryError::Io(_)
                 | LibraryError::Format(_)
                 | LibraryError::Layout(_)
                 | LibraryError::Unmappable { .. }
-                | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName),
+                | LibraryError::Row(RowFault::NullChunkName),
             ) => SaveBaseline::Unmappable,
         })
     })
@@ -2409,12 +2327,6 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
             // stops at this library with every earlier file as written.
             if matches!(baseline, Some(SaveBaseline::Unmappable)) {
                 return Err(PersistenceError::SystemRemapFailed);
-            }
-            // Register row 96: the pin's `MemoryChunk::mmap` asserts here,
-            // after the earlier libraries' files were written (libzhuyin
-            // renamed each as it went).
-            if matches!(baseline, Some(SaveBaseline::ChunkHeaderRead)) {
-                return Err(PersistenceError::LibraryChunkHeaderRead);
             }
             let bytes = match kind {
                 LibraryFile::User => user_library_chunk(libraries, nibble)?,
@@ -2547,16 +2459,11 @@ fn stage_chunk(
 /// `MemoryChunk::save` (`memory_chunk.h:536-557`), made by the boundary's
 /// chunk save: the pin's `open`, two header `write`s, one payload `write`,
 /// `g_fsync` and `close`. A short header write is the failure the pin
-/// `assert`s on, returned typed; the open and a short payload write are
+/// `assert`s on; the open and a short payload write are
 /// the pin's soft `false`, carried as `Io`.
 fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
-    match crate::input::chunk::save(path, bytes) {
-        Ok(()) => Ok(()),
-        Err(crate::input::chunk::ChunkSaveError::Io(error)) => Err(PersistenceError::Io(error)),
-        Err(crate::input::chunk::ChunkSaveError::Header { field, source }) => {
-            Err(PersistenceError::ChunkHeaderWrite { field, source })
-        }
-    }
+    crate::input::chunk::save(path, bytes)
+        .map_err(|crate::input::chunk::ChunkSaveError::Io(error)| PersistenceError::Io(error))
 }
 
 #[cfg(test)]

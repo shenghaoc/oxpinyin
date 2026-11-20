@@ -290,10 +290,6 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
             | oxpinyin::user::UserStoreError::ResidualUserBigramGram
             | oxpinyin::user::UserStoreError::UserReadingRemoval,
         ) => std::process::abort(),
-        // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
-        // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
-        // `:67`). This call does not copy, so it never reaches here.
-        Err(oxpinyin::user::UserStoreError::FatalCopy) => std::process::abort(),
         // A store failure the pin has no counterpart for.
         Err(
             oxpinyin::user::UserStoreError::Io(_)
@@ -301,9 +297,6 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
             | oxpinyin::user::UserStoreError::Decode
             | oxpinyin::user::UserStoreError::InvalidPhrase
             | oxpinyin::user::UserStoreError::Persistence(_)
-            | oxpinyin::user::UserStoreError::UnknownDatabaseFormat
-            | oxpinyin::user::UserStoreError::ChunkHeaderWrite(_)
-            | oxpinyin::user::UserStoreError::LibraryChunkHeaderRead
             | oxpinyin::user::UserStoreError::SaveRemapFailed
             | oxpinyin::user::UserStoreError::SaveTooLarge
             | oxpinyin::user::UserStoreError::UnigramTotalOverflow
@@ -856,10 +849,6 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
             // the predecessor's gram, one too short for its total, and
             // `get_total_freq`'s assert dies.
             Err(oxpinyin::user::UserStoreError::ShortUserBigramValue) => std::process::abort(),
-            // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
-            // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
-            // `:67`). This call does not copy, so it never reaches here.
-            Err(oxpinyin::user::UserStoreError::FatalCopy) => std::process::abort(),
             // Class (b), register row 100: a partial item tail is read past
             // by `get_freq`/`insert_freq` (`ngram.cpp:241`, `:190`). Nothing
             // changed; one warning, as before.
@@ -876,9 +865,6 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
                 | oxpinyin::user::UserStoreError::Decode
                 | oxpinyin::user::UserStoreError::InvalidPhrase
                 | oxpinyin::user::UserStoreError::Persistence(_)
-                | oxpinyin::user::UserStoreError::UnknownDatabaseFormat
-                | oxpinyin::user::UserStoreError::ChunkHeaderWrite(_)
-                | oxpinyin::user::UserStoreError::LibraryChunkHeaderRead
                 | oxpinyin::user::UserStoreError::SaveRemapFailed
                 | oxpinyin::user::UserStoreError::SaveTooLarge
                 | oxpinyin::user::UserStoreError::UnigramTotalOverflow

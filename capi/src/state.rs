@@ -99,9 +99,6 @@ impl CapiContext {
         }
         match self.core.load_addon_phrase_library(index) {
             Ok(loaded) => Ok(loaded),
-            // Register row 79, `pinyin.cpp:491`: the pin asserts a loaded
-            // addon row is a `DICTIONARY`, and the process aborts.
-            Err(oxpinyin::facade::LibraryRowAssert::NotDictionary) => std::process::abort(),
             // Register row 79, `memory_chunk.h:493`: a row naming no chunk
             // maps the system directory, and where that directory reads as
             // a chunk the pin asserts on its length word. Where it does not,
@@ -116,12 +113,6 @@ impl CapiContext {
             Err(oxpinyin::facade::LibraryRowAssert::NullChunkName) => {
                 Err(oxpinyin::data::table_info::TableConfSite::NullSystemFile.warning())
             }
-            // Register row 96: `pinyin.cpp:290` maps the addon through the same
-            // `MemoryChunk::mmap`, and a directory of header size or more fails
-            // the read at `memory_chunk.h:493`.
-            Err(oxpinyin::facade::LibraryRowAssert::ChunkHeaderRead) => std::process::abort(),
-            // The addon load answers no `NotLoadable`.
-            Err(oxpinyin::facade::LibraryRowAssert::NotLoadable) => Ok(false),
         }
     }
 

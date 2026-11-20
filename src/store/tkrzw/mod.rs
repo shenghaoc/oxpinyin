@@ -759,7 +759,7 @@ impl crate::store::RawReadStore for TkrzwStore {
     /// `PhraseLargeTable3::load_db` (`chewing_large_table2_tkrzwdb.cpp:
     /// 92-109`, `phrase_large_table3_tkrzwdb.cpp:83-100` at 074a2219): the
     /// file's iterator walk into the in-memory table. An iterator that is not
-    /// made is its own error; a failed copy is [`StoreError::FatalCopy`]
+    /// made is its own error; a failed copy aborts at its record operation
     /// (`tkrzwdb_utils.h:72`).
     fn copy_raw(&self, mut visit: impl FnMut(&[u8], &[u8])) -> Result<(), StoreError> {
         copy_tkrzwdb(&self.db, |key, value| {
@@ -844,7 +844,7 @@ impl WriteStore for TkrzwStore {
         crate::store::remove_if_present(path)?;
         let file = open(path, true)?;
         // `copy_tkrzwdb` asserts on a failed `Set` or source walk.
-        crate::store::copy::copy(records, |key, value| file.db.set(key, value))?;
+        crate::store::copy::copy(records, |key, value| file.db.set(key, value));
         file.db.synchronize(false)
     }
 
@@ -987,28 +987,37 @@ pub struct TkrzwUserBigramDb {
 /// `MakeIterator` comes before the copy's fatal phase: an iterator that is
 /// not made is the pin's soft `return false` (`:52-54`), its own error. A
 /// failed `Set` or a `Get` that ends in anything but `NOT_FOUND_ERROR` is
-/// [`StoreError::FatalCopy`], where the copy asserts (`:65`, `:72`).
+/// an abort, where the copy asserts (`:65`, `:72`).
 fn copy_tkrzwdb(
     src: &Db,
     set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     #[cfg(any(test, feature = "test-hooks"))]
     crate::store::copy::faults::make_iterator()?;
-    let cursor = src.cursor()?;
+    let mut cursor = src.cursor()?;
     crate::store::copy::copy(
         |visit| {
-            drive_cursor(
-                cursor,
-                Bound::Unbounded,
-                Bound::Unbounded,
-                &mut |key, value| {
-                    visit(key, value)?;
-                    Ok(Flow::Continue(()))
-                },
-            )
+            // The pin ignores First and Next statuses, then asserts on an
+            // abnormal Get result before destroying its iterator.
+            let _ = cursor.first();
+            let_cxx_string!(key = "");
+            let_cxx_string!(value = "");
+            loop {
+                let status = cursor.get(key.as_mut(), value.as_mut());
+                if status.code == STATUS_NOT_FOUND_ERROR {
+                    break;
+                }
+                if status.code != STATUS_SUCCESS {
+                    std::process::abort();
+                }
+                visit(key.as_bytes(), value.as_bytes())?;
+                let _ = cursor.next();
+            }
+            Ok(())
         },
         set,
-    )
+    );
+    Ok(())
 }
 
 impl crate::store::UserBigramDb for TkrzwUserBigramDb {
@@ -1045,10 +1054,7 @@ impl crate::store::UserBigramDb for TkrzwUserBigramDb {
             // (`tkrzwdb_utils.h:65`, `:72`): the init stops there. An
             // iterator that is not made leaves the container as it is, and
             // `load_db` ignores the copy's answer (`ngram_tkrzwdb.cpp:58`).
-            if let Err(StoreError::FatalCopy) = copy_tkrzwdb(&file, |key, value| db.set(key, value))
-            {
-                return Err(StoreError::FatalCopy);
-            }
+            let _ = copy_tkrzwdb(&file, |key, value| db.set(key, value));
         }
         Ok(this)
     }
@@ -1108,10 +1114,8 @@ fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
     // the native destination sequence, including its empty file and timestamp.
     // `save_db` ignores the copy's answer (`ngram_tkrzwdb.cpp:78`), so an
     // iterator that is not made goes on to the synchronize.
-    if let Some(db) = db
-        && let Err(StoreError::FatalCopy) = copy_tkrzwdb(db, |key, value| file.db.set(key, value))
-    {
-        return Err(StoreError::FatalCopy);
+    if let Some(db) = db {
+        let _ = copy_tkrzwdb(db, |key, value| file.db.set(key, value));
     }
     file.db.synchronize(false)
 }

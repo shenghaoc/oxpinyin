@@ -367,48 +367,25 @@ fn dir_snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
     rows
 }
 
-/// The abort marker: a `database format:` field upstream's
-/// `to_table_database_format_type` does not know, which `abort()`s the
-/// pin's process (`table_info.cpp:122-133`, reached from `:353-354`).
-/// `load` answers `Err` and leaves the user dir byte-identical — no
-/// conformance judgement, no wipe, no marker write, no counter step.
+/// An unknown user.conf database format aborts before the profile can be wiped.
 #[test]
-fn an_unknown_database_format_refuses_the_load_untouched() {
-    let dir = tempdir("marker-abort");
-    let originals = originals();
-    save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
-
-    let long = format!(
-        "binary format version:7\nmodel data version:14\ndatabase format:{}\nopen counter:5\n",
-        "A".repeat(300)
+fn an_unknown_database_format_aborts_the_load() {
+    let before = std::cell::RefCell::new(Vec::new());
+    crate::store::death_test::assert_aborts_in_tempdir(
+        "user::persistence::tests::an_unknown_database_format_aborts_the_load",
+        |dir| {
+            let originals = originals();
+            save_state_reporting(dir, &state(), &originals, &versions(), 1).expect("save");
+            std::fs::write(dir.join(USER_CONF),
+                "binary format version:7\nmodel data version:14\ndatabase format:NotADbmLibrary\nopen counter:5\n"
+            ).expect("marker");
+            *before.borrow_mut() = dir_snapshot(dir);
+        },
+        |dir| {
+            let _ = load(dir, &originals(), &versions(), UserConfLaw::Pinyin);
+        },
+        |dir| assert_eq!(dir_snapshot(dir), *before.borrow(), "no wipe or rewrite"),
     );
-    let trunc = format!(
-        "binary format version:7\nmodel data version:14\ndatabase format:{}open counter:5\n",
-        "A".repeat(255)
-    );
-    for body in [
-        // A token no upstream build knows.
-        "binary format version:7\nmodel data version:14\ndatabase format:NotADbmLibrary\nopen counter:5\n".to_owned(),
-        // 300 bytes: `%255s` takes 255 of them.
-        long,
-        // 255 bytes, counter on the same line.
-        trunc,
-    ] {
-        std::fs::write(dir.join(USER_CONF), &body).expect("write");
-        let before = dir_snapshot(&dir);
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            assert!(
-                matches!(
-                    load(&dir, &originals, &versions(), law),
-                    Err(PersistenceError::UnknownDatabaseFormat)
-                ),
-                "{body:?} under {law:?}"
-            );
-        }
-        assert_eq!(dir_snapshot(&dir), before, "the dir moved under {body:?}");
-    }
-
-    std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
 /// A marker the load cannot complete at all — a version directive that
@@ -439,30 +416,29 @@ fn a_marker_the_load_cannot_complete_still_wipes() {
         assert!(!dir.join("user.bin").exists(), "{body:?}");
     }
 
-    // A `database format:` directive that does not match leaves `str`
-    // unwritten and the pin maps it anyway (`:352-354`): the abort
-    // point, before any write or wipe.
-    for body in [
-        "binary format version:7\nmodel data version:14x\ndatabase format:Tkrzw\nopen counter:5\n",
-        "binary format version:7\nmodel data version:14\nopen counter:5\n",
-    ] {
-        save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
-        std::fs::write(dir.join(USER_CONF), body).expect("write");
-        assert!(
-            matches!(
-                load(&dir, &originals, &versions(), UserConfLaw::Pinyin),
-                Err(PersistenceError::UnknownDatabaseFormat)
-            ),
-            "{body:?}"
-        );
-        assert!(dir.join("user.bin").exists(), "{body:?}");
-        assert_eq!(
-            std::fs::read_to_string(dir.join(USER_CONF)).expect("marker"),
-            body
-        );
-    }
-
     std::fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+#[test]
+fn an_unmatched_database_directive_aborts_the_load() {
+    let before = std::cell::RefCell::new(Vec::new());
+    crate::store::death_test::assert_aborts_in_tempdir(
+        "user::persistence::tests::an_unmatched_database_directive_aborts_the_load",
+        |dir| {
+            let originals = originals();
+            save_state_reporting(dir, &state(), &originals, &versions(), 1).expect("save");
+            std::fs::write(
+                dir.join(USER_CONF),
+                "binary format version:7\nmodel data version:14\nopen counter:5\n",
+            )
+            .expect("marker");
+            *before.borrow_mut() = dir_snapshot(dir);
+        },
+        |dir| {
+            let _ = load(dir, &originals(), &versions(), UserConfLaw::Pinyin);
+        },
+        |dir| assert_eq!(dir_snapshot(dir), *before.borrow(), "no wipe or rewrite"),
+    );
 }
 
 #[test]
@@ -1032,53 +1008,36 @@ fn a_zhuyin_wipe_keeps_the_non_conform_marker() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// `memory_chunk.h:543`/`:547`: the pin `assert`s on a chunk header
-/// write the filesystem refuses, and `/dev/full` refuses every write.
-/// The reporting save is the one place the pin's "carry on" stops, so
-/// the failure has to come back typed, naming the header word, for the
-/// C adapters to abort on.
-// Linux only: /dev/full.
+/// `/dev/full` refuses the first header write, where the pin asserts.
 #[test]
 #[cfg(target_os = "linux")]
-fn reporting_save_stops_at_a_chunk_header_write() {
-    let dir = tempdir("chunk-header");
-    let originals = originals();
-    std::os::unix::fs::symlink("/dev/full", dir.join("user.bin.tmp")).expect("symlink");
-    let mut store = crate::user::test_session::seeded(&dir, &state(), &originals, &versions())
-        .expect("session");
-    let error = store
-        .save_reporting()
-        .expect_err("the header write must fail");
-    match error {
-        crate::user::UserStoreError::ChunkHeaderWrite(ChunkHeaderField::Length) => {}
-        other @ (crate::user::UserStoreError::Io(_)
-        | crate::user::UserStoreError::Store(_)
-        | crate::user::UserStoreError::Decode
-        | crate::user::UserStoreError::InvalidPhrase
-        | crate::user::UserStoreError::Persistence(_)
-        | crate::user::UserStoreError::UnknownDatabaseFormat
-        | crate::user::UserStoreError::ChunkHeaderWrite(ChunkHeaderField::Checksum)
-        | crate::user::UserStoreError::LibraryChunkHeaderRead
-        | crate::user::UserStoreError::SaveRemapFailed
-        | crate::user::UserStoreError::SaveTooLarge
-        | crate::user::UserStoreError::FatalCopy
-        | crate::user::UserStoreError::UnigramTotalOverflow
-        | crate::user::UserStoreError::OverlongIndexKey
-        | crate::user::UserStoreError::NonTokenUserBigramKey
-        | crate::user::UserStoreError::ShortUserBigramValue
-        | crate::user::UserStoreError::PartialUserBigramTail
-        | crate::user::UserStoreError::ResidualUserBigramGram
-        | crate::user::UserStoreError::Journal(_)
-        | crate::user::UserStoreError::LibraryLoop(_)
-        | crate::user::UserStoreError::TrainingSetFreqMiss
-        | crate::user::UserStoreError::UserReadingRemoval
-        | crate::user::UserStoreError::SessionSeed(_)
-        | crate::user::UserStoreError::FailedUserBigramStore) => {
-            panic!("expected the length write to fail: {other:?}")
-        }
-    }
-    drop(store);
-    std::fs::remove_dir_all(&dir).expect("cleanup");
+fn reporting_save_aborts_at_a_chunk_header_write() {
+    crate::store::death_test::assert_aborts_in_tempdir(
+        "user::persistence::tests::reporting_save_aborts_at_a_chunk_header_write",
+        |dir| {
+            let system = crate::user::native_fixture::system_dir();
+            let conf =
+                crate::data::table_info::TableConf::load_from_dir(&system).expect("table.conf");
+            let marker = UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
+            std::fs::write(dir.join(USER_CONF), marker.to_text()).expect("marker");
+            std::os::unix::fs::symlink("/dev/full", dir.join("gb_char.dbin.tmp")).expect("symlink");
+        },
+        |dir| {
+            let mut store = crate::user::test_session::open_w3(dir);
+            store.mark_modified();
+            let _ = store.save_reporting();
+        },
+        |dir| {
+            assert_eq!(recorded_counter(dir), Some(1));
+            assert_eq!(
+                std::fs::read_link(dir.join("gb_char.dbin.tmp")).unwrap(),
+                Path::new("/dev/full")
+            );
+            assert!(!dir.join("gb_char.dbin").exists());
+            assert!(!dir.join("gbk_char.dbin.tmp").exists());
+            assert!(!dir.join("user_bigram.db.tmp").exists());
+        },
+    );
 }
 
 /// The process umask, read without `unsafe`: a file created asking

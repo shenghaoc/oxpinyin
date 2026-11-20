@@ -62,7 +62,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
             | LibraryError::Format(_)
             | LibraryError::Layout(_)
             | LibraryError::Unmappable { .. }
-            | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName),
+            | LibraryError::Row(RowFault::NullChunkName),
         )) => {
             let c_name = oxpinyin::input::c_path(Path::new(name.as_ref()));
             tool::storage::report_load_failed(c_name.as_deref());

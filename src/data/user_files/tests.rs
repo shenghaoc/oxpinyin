@@ -112,10 +112,6 @@ fn user_conf_round_trips_and_conforms() {
     // not even parsable any more: the `database format:` directive
     // refuses it where upstream's mapper aborts (#590).
     assert!(!conform_with("NotADbmLibrary").is_conform(&versions));
-    assert!(matches!(
-        parse(b"binary format version:7\nmodel data version:14\ndatabase format:NotADbmLibrary\n"),
-        Err(UserConfError::UnknownDatabaseFormat)
-    ));
 
     // The open-counter rebuild limit.
     let tired = UserTableInfo {
@@ -239,12 +235,33 @@ fn marker_fields_follow_the_scanner() {
     );
     let missing = good.replace("open counter:3\n", "");
     assert_eq!(parse(missing.as_bytes()).unwrap().open_counter, 0);
-    // A directive that does not match leaves `str` unwritten: the abort
-    // point, not `UNKNOWN_FORMAT`.
-    assert!(matches!(
-        parse(good.replace("database format:", "database:").as_bytes()),
-        Err(UserConfError::UnknownDatabaseFormat)
-    ));
+}
+
+#[test]
+fn unknown_database_format_aborts_at_scanner() {
+    let marker =
+        b"binary format version:7\nmodel data version:14\ndatabase format:NotADbmLibrary\n";
+    crate::store::death_test::assert_aborts_in_tempdir(
+        "data::user_files::tests::unknown_database_format_aborts_at_scanner",
+        |dir| std::fs::write(dir.join("user.conf"), marker).expect("marker"),
+        |dir| {
+            let _ = UserTableInfo::load_path(&dir.join("user.conf"));
+        },
+        |dir| assert_eq!(std::fs::read(dir.join("user.conf")).unwrap(), marker),
+    );
+}
+
+#[test]
+fn unmatched_database_format_directive_aborts_at_scanner() {
+    let marker = b"binary format version:7\nmodel data version:14\ndatabase:KyotoCabinet\n";
+    crate::store::death_test::assert_aborts_in_tempdir(
+        "data::user_files::tests::unmatched_database_format_directive_aborts_at_scanner",
+        |dir| std::fs::write(dir.join("user.conf"), marker).expect("marker"),
+        |dir| {
+            let _ = UserTableInfo::load_path(&dir.join("user.conf"));
+        },
+        |dir| assert_eq!(std::fs::read(dir.join("user.conf")).unwrap(), marker),
+    );
 }
 
 #[test]

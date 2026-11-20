@@ -69,10 +69,8 @@
 //! one array header long, `assert(db_data.size == sizeof(ArrayHeader))` and
 //! `assert(retsize >= vsiz)` (`flexible_ngram_bdb.h:388`,
 //! `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`),
-//! [`FlexibleBigram::get_array_header`] returns
-//! [`StoreError::ShortArrayHeader`]. It does no work before that point, as
-//! the pin's read does none, and the K-mixture tools call
-//! `std::process::abort()` on it. [`FlexibleBigram::load`] returns the same
+//! [`FlexibleBigram::get_array_header`] aborts there. It does no work before
+//! that point, as the pin's read does none. [`FlexibleBigram::load`] returns the same
 //! error for such a value. The pin loads that value and later reads outside
 //! it, and the tools report it as a store error (class (b),
 //! `upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
@@ -580,14 +578,13 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::ShortArrayHeader`] when the stored value is
-    /// shorter than the pin's array header, where the pin asserts the
-    /// partial read's size (`flexible_ngram_bdb.h:388`) or
-    /// `retsize >= vsiz` (`flexible_ngram_kyotodb.h:371`,
-    /// `flexible_ngram_tkrzwdb.h:388`). The read itself writes nothing, so
-    /// the caller has done all of the pin's work before that point. Returns
-    /// another [`StoreError`] when the read fails, which is the pin's
-    /// `false`, or when the header bytes do not decode.
+    /// Returns a [`StoreError`] when the record read fails or the header
+    /// bytes do not decode.
+    ///
+    /// # Aborts
+    /// A record shorter than the array header aborts at the pin's size
+    /// assertion (`flexible_ngram_bdb.h:388`,
+    /// `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`).
     pub fn get_array_header(&self, token: u32) -> Result<Option<S::ArrayHeader>, StoreError> {
         let header_len = <S::ArrayHeader as FixedRecord>::LEN;
         #[cfg(feature = "bdb")]
@@ -596,7 +593,7 @@ where
                 return Ok(None);
             };
             if value.len() != header_len {
-                return Err(StoreError::ShortArrayHeader);
+                std::process::abort();
             }
             Ok(Some(S::ArrayHeader::decode(&value)?))
         }
@@ -606,7 +603,7 @@ where
                 return Ok(None);
             };
             let Some(header) = value.get(..header_len) else {
-                return Err(StoreError::ShortArrayHeader);
+                std::process::abort();
             };
             Ok(Some(S::ArrayHeader::decode(header)?))
         }

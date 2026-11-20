@@ -467,11 +467,8 @@ mod library_directory {
 
     use std::path::{Path, PathBuf};
 
-    #[cfg(unix)]
-    use crate::facade::SaveOutcome;
-
     use crate::facade::{
-        ContextCore, InitRefusal, MaskOutOutcome, OpenFailure, PINYIN_DEFAULT_OPTION_WORD,
+        ContextCore, MaskOutOutcome, PINYIN_DEFAULT_OPTION_WORD, ZHUYIN_DEFAULT_OPTION_WORD,
     };
 
     use crate::{data::user_files::SystemVersions, user::UserConfLaw};
@@ -504,8 +501,14 @@ mod library_directory {
 
     /// A private system directory: every fixture file linked in.
     fn private_system(name: &str) -> PathBuf {
-        let fixture = fixture_dir();
         let dir = scratch(&format!("{name}-system"));
+        populate_system(&dir);
+        dir
+    }
+
+    fn populate_system(dir: &Path) {
+        let fixture = fixture_dir();
+        std::fs::create_dir_all(dir).expect("system directory");
         for entry in std::fs::read_dir(&fixture).expect("fixture dir") {
             let entry = entry.expect("fixture entry");
             let link = dir.join(entry.file_name());
@@ -524,7 +527,6 @@ mod library_directory {
                 panic!("link a fixture file {}: {error}", link.display());
             }
         }
-        dir
     }
 
     /// Replaces the system library `file` with a non-empty directory whose entry
@@ -539,23 +541,6 @@ mod library_directory {
     /// Whether a directory in `system`'s place reads as a chunk here.
     fn reaches_the_assert(system: &Path) -> bool {
         crate::data::phrase_library::directory_reads_as_a_chunk(system)
-    }
-
-    /// The user directory's file names, sorted.
-    #[cfg(unix)]
-    fn listing(dir: &Path) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(dir)
-            .expect("user dir")
-            .map(|entry| {
-                entry
-                    .expect("entry")
-                    .file_name()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect();
-        names.sort();
-        names
     }
 
     /// A `.dbin` holding one `MODIFY_HEADER` with a token: the replay's
@@ -589,59 +574,45 @@ mod library_directory {
         std::fs::write(user.join("user.conf"), marker.to_text()).expect("write the marker");
     }
 
-    /// Init's library loop maps each default library and merges its log in
-    /// order (`pinyin.cpp:377-392`): a directory at library 4 stops the open
-    /// there, after library 1's log merged, so library 1's bad log asserts
-    /// first (row 91); a directory at library 2 stops it before library 3's bad
-    /// log is read.
+    #[cfg(unix)]
     #[test]
-    fn init_returns_the_fault_where_its_library_loop_maps_the_directory() {
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            let system = private_system("init");
-            let user = scratch("init-user");
-            conforming_profile(&system, &user);
-            let reaches = reaches_the_assert(&system);
-
-            make_directory(&system, "gbk_char.bin");
-            plant_header_token_log(&user, "opengram.dbin");
-            match ContextCore::try_open(&system, Some(&user), PINYIN_DEFAULT_OPTION_WORD, law) {
-                Err(failure) => {
-                    let OpenFailure::Runtime(error) = &failure;
-                    if reaches {
-                        // The directory's abort, not library 3's journal.
-                        assert_eq!(
-                            failure.init_refusal(&system),
-                            InitRefusal::Abort,
-                            "{law:?}: {failure}"
-                        );
-                        assert!(error.chunk_header_read(), "{law:?}: {failure}");
-                    } else {
-                        assert!(!error.chunk_header_read(), "{law:?}: {failure}");
-                    }
-                }
-                Ok(_) => panic!("{law:?}: a directory library must fail the open"),
+    fn init_aborts_where_its_library_loop_maps_the_directory() {
+        const NAME: &str = "facade::context::tests::library_directory::init_aborts_where_its_library_loop_maps_the_directory";
+        if !crate::store::death_test::is_child(NAME) {
+            let probe = scratch("init-header-probe");
+            if !reaches_the_assert(&probe) {
+                return;
             }
-
-            plant_header_token_log(&user, "gb_char.dbin");
-            let failure =
-                ContextCore::try_open(&system, Some(&user), PINYIN_DEFAULT_OPTION_WORD, law)
-                    .err()
-                    .expect("the open fails");
-            if reaches {
-                let OpenFailure::Runtime(error) = &failure;
-                assert_eq!(
-                    failure.init_refusal(&system),
-                    InitRefusal::Abort,
-                    "{law:?}: {failure}"
-                );
-                assert!(
-                    matches!(error, crate::runtime::OpenError::Journal(_)),
-                    "{law:?}: {failure}"
-                );
-            }
-            let _ = std::fs::remove_dir_all(&system);
-            let _ = std::fs::remove_dir_all(&user);
         }
+        crate::store::death_test::assert_aborts_in_tempdir(
+            NAME,
+            |root| {
+                let system = root.join("system");
+                let user = root.join("user");
+                populate_system(&system);
+                std::fs::create_dir(&user).expect("user directory");
+                conforming_profile(&system, &user);
+                make_directory(&system, "gbk_char.bin");
+                plant_header_token_log(&user, "opengram.dbin");
+            },
+            |root| {
+                let system = root.join("system");
+                let user = root.join("user");
+                let _ = ContextCore::try_open(
+                    &system,
+                    Some(&user),
+                    PINYIN_DEFAULT_OPTION_WORD,
+                    UserConfLaw::Pinyin,
+                );
+            },
+            |root| {
+                let marker =
+                    crate::data::user_files::UserTableInfo::load_path(&root.join("user/user.conf"))
+                        .expect("marker after abort");
+                assert_eq!(marker.open_counter, 2);
+                assert!(root.join("user/opengram.dbin").is_file());
+            },
+        );
     }
 
     /// An open and the lines it reports: only the libraries the library loop
@@ -729,59 +700,82 @@ mod library_directory {
         }
     }
 
-    /// `_write_files` maps each loaded system library at its place in the
-    /// library loop (`pinyin.cpp:955-956`), so at the directory in library 4
-    /// libpinyin has written the `.tmp` logs of libraries 1 to 3 and renamed
-    /// nothing (`pinyin.cpp:940-1128`); libzhuyin renames each library's file as
-    /// it writes it (`zhuyin.cpp:554-617`), so libraries 1 to 3 are in place.
-    /// Nothing else is written, and the store's clean-up does not run.
-    // Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
-    // size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
-    // without a word there (`oxpinyin`, `phrase_libraries.rs`), which no pin observation
-    // covers.
+    /// The save remaps a loaded system library and aborts on its header read.
     #[cfg(unix)]
     #[test]
-    fn save_stops_at_the_directory_with_the_pins_files() {
-        for (law, expected) in [
-            (
-                UserConfLaw::Pinyin,
-                ["gb_char.dbin.tmp", "gbk_char.dbin.tmp", "opengram.dbin.tmp"],
-            ),
-            (
-                UserConfLaw::Zhuyin,
-                ["gb_char.dbin", "gbk_char.dbin", "opengram.dbin"],
-            ),
-        ] {
-            let system = private_system("save");
-            let user = scratch("save-user");
-            conforming_profile(&system, &user);
-            // Without these logs on disk, a rename shows up in the listing.
-            for log in ["gb_char.dbin", "gbk_char.dbin", "opengram.dbin"] {
-                let _ = std::fs::remove_file(user.join(log));
+    fn save_aborts_at_directory_header_read() {
+        const NAME: &str =
+            "facade::context::tests::library_directory::save_aborts_at_directory_header_read";
+        if !crate::store::death_test::is_child(NAME) {
+            let probe = scratch("save-header-probe");
+            if !reaches_the_assert(&probe) {
+                return;
             }
-            let reaches = reaches_the_assert(&system);
-            let mut context =
-                ContextCore::open(&system, Some(&user), PINYIN_DEFAULT_OPTION_WORD, law)
-                    .expect("open");
-            context.user_store_mut().mark_modified();
-            let before = listing(&user);
-            make_directory(&system, "merged.bin");
-            let outcome = context.save_user();
-            if reaches {
-                assert_eq!(outcome, SaveOutcome::ChunkHeaderRead, "{law:?}");
-                let mut want: Vec<String> =
-                    expected.iter().map(|name| (*name).to_owned()).collect();
-                want.extend(before.iter().cloned());
-                want.sort();
-                want.dedup();
-                assert_eq!(listing(&user), want, "{law:?}");
-            } else {
-                assert_eq!(outcome, SaveOutcome::Saved, "{law:?}");
-            }
-            drop(context);
-            let _ = std::fs::remove_dir_all(&system);
-            let _ = std::fs::remove_dir_all(&user);
         }
+        save_header_abort(NAME, UserConfLaw::Pinyin);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn zhuyin_save_aborts_after_earlier_log_renames() {
+        const NAME: &str = "facade::context::tests::library_directory::zhuyin_save_aborts_after_earlier_log_renames";
+        if !crate::store::death_test::is_child(NAME) {
+            let probe = scratch("zhuyin-save-header-probe");
+            if !reaches_the_assert(&probe) {
+                return;
+            }
+        }
+        save_header_abort(NAME, UserConfLaw::Zhuyin);
+    }
+
+    #[cfg(unix)]
+    fn save_header_abort(name: &str, law: UserConfLaw) {
+        crate::store::death_test::assert_aborts_in_tempdir(
+            name,
+            |root| {
+                let system = root.join("system");
+                let user = root.join("user");
+                populate_system(&system);
+                std::fs::create_dir(&user).expect("user directory");
+                conforming_profile(&system, &user);
+            },
+            |root| {
+                let system = root.join("system");
+                let user = root.join("user");
+                let mut context = ContextCore::open(
+                    &system,
+                    Some(&user),
+                    if law == UserConfLaw::Pinyin {
+                        PINYIN_DEFAULT_OPTION_WORD
+                    } else {
+                        ZHUYIN_DEFAULT_OPTION_WORD
+                    },
+                    law,
+                )
+                .expect("open");
+                context.user_store_mut().mark_modified();
+                make_directory(&system, "merged.bin");
+                let _ = context.save_user();
+            },
+            |root| {
+                let user = root.join("user");
+                for name in ["gb_char.dbin", "gbk_char.dbin", "opengram.dbin"] {
+                    let final_path = user.join(name);
+                    let staged = user.join(format!("{name}.tmp"));
+                    if law == UserConfLaw::Pinyin {
+                        assert!(staged.is_file(), "{name} was staged");
+                        assert!(!final_path.exists(), "{name} was not renamed");
+                    } else {
+                        assert!(final_path.is_file(), "{name} was renamed");
+                        assert!(!staged.exists(), "{name} has no staging file");
+                    }
+                }
+                assert!(!user.join("merged.dbin.tmp").exists());
+                assert!(!user.join("merged.dbin").exists());
+                assert!(!user.join("user_pinyin_index.bin.tmp").exists());
+                assert!(!user.join("user_bigram.db.tmp").exists());
+            },
+        );
     }
 
     /// `pinyin_mask_out` masks the user tables, then maps each loaded system
@@ -1080,76 +1074,75 @@ mod native {
     }
 
     #[cfg(any(feature = "tkrzw", feature = "bdb"))]
-    fn copy_failure(user: &Path) {
-        let before = user.parent().unwrap().join("before");
-        std::fs::create_dir(&before).unwrap();
-        for (name, bytes) in files_of(user) {
-            std::fs::write(before.join(name), bytes).unwrap();
-        }
-        crate::store::copy_faults::fail_source_read_after(1);
-        let error = ContextCore::try_open(
-            &system_dir(),
-            Some(user),
-            crate::facade::PINYIN_DEFAULT_OPTION_WORD,
-            UserConfLaw::Pinyin,
-        )
-        .err()
-        .expect("copy fails");
-        assert!(
-            matches!(
-                error,
-                crate::facade::OpenFailure::Runtime(crate::runtime::OpenError::UserSession(
-                    crate::user::UserStoreError::FatalCopy
-                ))
-            ),
-            "{error:?}"
-        );
-    }
-
-    #[cfg(any(feature = "tkrzw", feature = "bdb"))]
     #[test]
-    fn init_returns_the_source_copy_failure_after_writing_the_open_counter() {
-        let Some((_scratch, user, _run)) = child(
-            "facade::context::tests::native::init_returns_the_source_copy_failure_after_writing_the_open_counter",
-            |user| {
+    fn init_aborts_at_source_copy_failure_after_the_open_counter() {
+        crate::store::death_test::assert_aborts_in_tempdir(
+            "facade::context::tests::native::init_aborts_at_source_copy_failure_after_the_open_counter",
+            |scratch| {
+                let user = scratch.join("user");
+                std::fs::create_dir(&user).unwrap();
                 plant_bigram(
-                    user,
+                    &user,
                     vec![
                         (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
                         (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
                     ],
                 );
-                copy_failure(user);
             },
-        ) else {
-            return;
-        };
-        let before = files_of(&user.parent().unwrap().join("before"));
-        let after = files_of(&user);
-        let conf = String::from_utf8_lossy(&after["user.conf"]);
-        assert!(
-            conf.ends_with(&format!("open counter:2{}", crate::input::TEXT_NEWLINE)),
-            "{conf}"
+            |scratch| {
+                let user = scratch.join("user");
+                crate::store::copy_faults::fail_source_read_after(1);
+                let _ = ContextCore::try_open(
+                    &system_dir(),
+                    Some(&user),
+                    crate::facade::PINYIN_DEFAULT_OPTION_WORD,
+                    UserConfLaw::Pinyin,
+                );
+            },
+            |scratch| {
+                let marker = crate::data::user_files::UserTableInfo::load_path(
+                    &scratch.join("user/user.conf"),
+                )
+                .expect("marker after abort");
+                assert_eq!(
+                    marker.open_counter, 2,
+                    "the init raised 1 to 2 before copying"
+                );
+            },
         );
-        assert_eq!(after["user_bigram.db"], before["user_bigram.db"]);
     }
 
     #[cfg(any(feature = "tkrzw", feature = "bdb"))]
     #[test]
-    fn init_returns_the_user_index_copy_failure_without_changing_the_file() {
-        let Some((_scratch, user, _run)) = child(
-            "facade::context::tests::native::init_returns_the_user_index_copy_failure_without_changing_the_file",
-            |user| {
-                set_phrase_table_row(user, "你好", &[0x0100_0001]);
-                set_phrase_table_row(user, "再见", &[0x0100_0002]);
-                copy_failure(user);
+    fn init_aborts_at_user_index_copy_failure() {
+        crate::store::death_test::assert_aborts_in_tempdir(
+            "facade::context::tests::native::init_aborts_at_user_index_copy_failure",
+            |scratch| {
+                let user = scratch.join("user");
+                std::fs::create_dir(&user).unwrap();
+                set_phrase_table_row(&user, "你好", &[0x0100_0001]);
+                set_phrase_table_row(&user, "再见", &[0x0100_0002]);
             },
-        ) else {
-            return;
-        };
-        assert_eq!(
-            files_of(&user)["user_phrase_index.bin"],
-            files_of(&user.parent().unwrap().join("before"))["user_phrase_index.bin"]
+            |scratch| {
+                let user = scratch.join("user");
+                crate::store::copy_faults::fail_source_read_after(1);
+                let _ = ContextCore::try_open(
+                    &system_dir(),
+                    Some(&user),
+                    crate::facade::PINYIN_DEFAULT_OPTION_WORD,
+                    UserConfLaw::Pinyin,
+                );
+            },
+            |scratch| {
+                let marker = crate::data::user_files::UserTableInfo::load_path(
+                    &scratch.join("user/user.conf"),
+                )
+                .expect("marker after abort");
+                assert_eq!(
+                    marker.open_counter, 2,
+                    "the init raised 1 to 2 before copying"
+                );
+            },
         );
     }
 

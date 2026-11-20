@@ -9,15 +9,18 @@ fn header_size_and_read_failure_follow_pin_load() {
         Err(io::ErrorKind::Other.into())
     };
     assert!(matches!(
-        load_header(7, read),
+        load_header(7, true, read),
         Err(ChunkLoadError::ShortHeader)
     ));
     assert_eq!(calls.get(), 0);
-    assert!(matches!(load_header(8, read), Err(ChunkLoadError::Header)));
+    assert!(matches!(
+        load_header(8, true, read),
+        Err(ChunkLoadError::Header)
+    ));
     assert_eq!(calls.get(), 1);
     let mut reads = 0;
     assert!(matches!(
-        load_header(8, || {
+        load_header(8, true, || {
             reads += 1;
             if reads == 1 {
                 Ok([0; 4])
@@ -28,7 +31,35 @@ fn header_size_and_read_failure_follow_pin_load() {
         Err(ChunkLoadError::Header)
     ));
     assert_eq!(reads, 2);
-    assert!(load_header(8, || Ok([0; 4])).is_ok());
+    assert!(load_header(8, true, || Ok([0; 4])).is_ok());
+}
+
+#[test]
+fn length_read_aborts_at_load_header() {
+    crate::store::death_test::assert_aborts(
+        "input::chunk::tests::length_read_aborts_at_load_header",
+        || {
+            let _ = load_header(8, false, || Err(io::ErrorKind::Other.into()));
+        },
+    );
+}
+
+#[test]
+fn checksum_read_aborts_at_load_header() {
+    crate::store::death_test::assert_aborts(
+        "input::chunk::tests::checksum_read_aborts_at_load_header",
+        || {
+            let mut reads = 0;
+            let _ = load_header(8, false, || {
+                reads += 1;
+                if reads == 1 {
+                    Ok([0; 4])
+                } else {
+                    Err(io::ErrorKind::Other.into())
+                }
+            });
+        },
+    );
 }
 
 #[test]
@@ -38,7 +69,7 @@ fn short_payload_is_checksummed_at_the_returned_length() {
     // The checksum names the single returned byte, not the whole payload.
     std::fs::write(&path, [4, 0, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4]).unwrap();
     let calls = std::cell::Cell::new(0);
-    let chunk = load_with(&path, |source, buffer| {
+    let chunk = load_with(&path, false, |source, buffer| {
         calls.set(calls.get() + 1);
         source.read_payload(buffer, Some(1))
     })
@@ -49,7 +80,10 @@ fn short_payload_is_checksummed_at_the_returned_length() {
 
     // The same short result against a different checksum is a refusal.
     std::fs::write(&path, [4, 0, 0, 0, 2, 0, 0, 0, 1, 2, 3, 4]).unwrap();
-    let chunk = load_with(&path, |source, buffer| source.read_payload(buffer, Some(1))).unwrap();
+    let chunk = load_with(&path, false, |source, buffer| {
+        source.read_payload(buffer, Some(1))
+    })
+    .unwrap();
     assert_eq!(chunk.finish(|bytes| u32::from(bytes[0])), None);
 }
 
@@ -59,7 +93,7 @@ fn interrupted_payload_read_is_not_retried() {
     let path = dir.path().join("chunk");
     std::fs::write(&path, [4, 0, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4]).unwrap();
     let calls = std::cell::Cell::new(0);
-    let Err(ChunkLoadError::Io(error)) = load_with(&path, |_, _| {
+    let Err(ChunkLoadError::Io(error)) = load_with(&path, false, |_, _| {
         calls.set(calls.get() + 1);
         Err(io::ErrorKind::Interrupted.into())
     }) else {
@@ -80,7 +114,7 @@ fn file_size_is_narrowed_before_length_comparison() {
     std::fs::write(&path, [4, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5]).unwrap();
     let called = std::cell::Cell::new(false);
     assert!(matches!(
-        load_with(&path, |_, _| {
+        load_with(&path, false, |_, _| {
             called.set(true);
             Ok(0)
         }),
@@ -302,11 +336,10 @@ fn saving_over_a_read_only_file_is_permission_denied() {
 fn a_header_write_failure_is_the_abort_site() {
     // /dev/full opens for writing and refuses every write, which is the
     // pin's first header `assert` (memory_chunk.h:543).
-    assert!(matches!(
-        save(Path::new("/dev/full"), &chunk(0)),
-        Err(ChunkSaveError::Header {
-            field: ChunkHeaderField::Length,
-            ..
-        })
-    ));
+    crate::store::death_test::assert_aborts(
+        "input::chunk::tests::a_header_write_failure_is_the_abort_site",
+        || {
+            let _ = save(Path::new("/dev/full"), &chunk(0));
+        },
+    );
 }

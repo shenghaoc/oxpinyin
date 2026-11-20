@@ -71,7 +71,7 @@ pub(crate) fn load(with_bigram: bool) -> Result<Tables, TablesError> {
                 | LibraryError::Format(_)
                 | LibraryError::Layout(_)
                 | LibraryError::Unmappable { .. }
-                | LibraryError::Row(RowFault::NotDictionary | RowFault::NullChunkName),
+                | LibraryError::Row(RowFault::NullChunkName),
             ) => return Err(TablesError::Chunk(c_name)),
         }
     }

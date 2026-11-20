@@ -133,18 +133,9 @@ impl Drop for FiniGuard {
 
 impl From<PersistenceError> for UserStoreError {
     fn from(error: PersistenceError) -> Self {
-        // The two abort sites keep their own variants: neither is a
-        // degraded store — one is a failed open (see `persistence::check_format`),
-        // the other a failed save; the C adapters abort on both.
         match error {
-            PersistenceError::UnknownDatabaseFormat => UserStoreError::UnknownDatabaseFormat,
-            PersistenceError::ChunkHeaderWrite { field, .. } => {
-                UserStoreError::ChunkHeaderWrite(field)
-            }
-            PersistenceError::LibraryChunkHeaderRead => UserStoreError::LibraryChunkHeaderRead,
             PersistenceError::SystemRemapFailed => UserStoreError::SaveRemapFailed,
             PersistenceError::SaveTooLarge => UserStoreError::SaveTooLarge,
-            PersistenceError::FatalCopy => UserStoreError::FatalCopy,
             other @ (PersistenceError::Io(_)
             | PersistenceError::Store(_)
             | PersistenceError::Codec(_)) => UserStoreError::Persistence(other.to_string()),
@@ -214,7 +205,7 @@ impl UserStore {
     ///
     /// # Errors
     ///
-    /// [`UserStoreError::UnknownDatabaseFormat`] at the abort point.
+    /// Unknown database format aborts at the read point.
     pub fn check_profile(
         user_dir: &Path,
         versions: &SystemVersions,
@@ -297,18 +288,8 @@ impl UserStore {
         // refused; one the pin cannot create ends the process in the
         // backend, and a Berkeley DB one whose open failed is the pin's
         // failed container.
-        let bigram_db = load_user_bigram(target.dir.as_deref()).map_err(|error| {
-            let seeded = seed_fault(&error);
-            // `copy_tkrzwdb` / `copy_bdb` assert in `load_db`
-            // (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`, `:67`): the
-            // guard is abandoned as for any seed fault, and the copy keeps
-            // its own typed error.
-            if matches!(error, PersistenceError::FatalCopy) {
-                UserStoreError::FatalCopy
-            } else {
-                seeded
-            }
-        })?;
+        let bigram_db =
+            load_user_bigram(target.dir.as_deref()).map_err(|error| seed_fault(&error))?;
         let has_user_data = holds_user_data(&target, &replayed);
 
         // The replay's buffers are the sub-indices' items from here on: the

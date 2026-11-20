@@ -1116,7 +1116,7 @@ impl AddonDictionary {
             FileType::NotUsed => return Ok(false),
             FileType::Dictionary => {}
             FileType::SystemFile | FileType::UserFile => {
-                return Err(LibraryError::Row(RowFault::NotDictionary));
+                std::process::abort();
             }
         }
         let file = row.system.clone();

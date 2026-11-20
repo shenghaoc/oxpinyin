@@ -177,23 +177,6 @@ pub unsafe extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
     // not reach it.
     let outcome = ctx.core.save_user();
     match outcome {
-        // Register row 77, `memory_chunk.h:543`/`:547`: a chunk file's
-        // header write failed and the pin `assert`s there. The save stopped
-        // at the same point: every earlier library's `.tmp` written, this
-        // one's created with the words that were written, no rename and no
-        // `user.conf`. The abort skips every destructor, so nothing else is
-        // written either.
-        oxpinyin::facade::SaveOutcome::ChunkWriteFailed(_) => std::process::abort(),
-        // Register row 96, `memory_chunk.h:493`: the save's library loop
-        // maps a loaded system library again and it is a directory. The
-        // save stopped there with the earlier libraries' `.tmp` files
-        // written and none renamed (`pinyin.cpp:940-1020`).
-        oxpinyin::facade::SaveOutcome::ChunkHeaderRead => std::process::abort(),
-        // `copy_tkrzwdb` / `copy_bdb` assert on a failed destination write
-        // or source walk (`tkrzwdb_utils.h:65`, `:72`; `bdb_utils.h:61`,
-        // `:67`). The save stopped in that copy, before its rename and the
-        // marker.
-        oxpinyin::facade::SaveOutcome::FatalCopy => std::process::abort(),
         outcome @ (oxpinyin::facade::SaveOutcome::NotSaved
         | oxpinyin::facade::SaveOutcome::Saved) => outcome.is_saved(),
     }

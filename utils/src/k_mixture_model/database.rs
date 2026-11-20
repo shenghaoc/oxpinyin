@@ -135,7 +135,7 @@ impl Database {
             // A failed record copy is a pin assert too (`tkrzwdb_utils.h:65`,
             // `:72`; `bdb_utils.h:61`, `:67`); the flexible bigram does not
             // copy, so it never reaches here.
-            Err(StoreError::ReadAfterCheck | StoreError::FatalCopy) => abort(),
+            Err(StoreError::ReadAfterCheck) => abort(),
             Err(
                 StoreError::Io(_)
                 | StoreError::Backend(_)
@@ -195,7 +195,7 @@ impl Database {
     pub fn get_array_header(&self, token: u32) -> Option<KMixtureModelArrayHeader> {
         match self.inner.as_ref()?.get_array_header(token) {
             Ok(header) => header,
-            Err(StoreError::ShortArrayHeader | StoreError::FatalCopy) => abort(),
+            Err(StoreError::ShortArrayHeader) => abort(),
             Err(
                 StoreError::Io(_)
                 | StoreError::Backend(_)

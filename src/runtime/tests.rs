@@ -108,29 +108,71 @@ fn unloading_an_absent_system_chunk_still_guards_the_session() {
 #[cfg(unix)]
 #[test]
 fn the_save_remap_skips_the_reserved_library() {
-    let system = tempfile::tempdir().unwrap();
-    for entry in std::fs::read_dir(system_dir()).unwrap() {
-        let path = entry.unwrap().path();
-        std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
+    const NAME: &str = "runtime::tests::the_save_remap_skips_the_reserved_library";
+    let prepare = |system: &Path| {
+        for entry in std::fs::read_dir(system_dir()).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, system.join(path.file_name().unwrap())).unwrap();
+        }
+    };
+    let reaches_assert = if crate::store::death_test::is_child(NAME) {
+        true
+    } else {
+        let probe = tempfile::tempdir().unwrap();
+        let probe_file = probe.path().join("gb_char.bin");
+        std::fs::create_dir(&probe_file).unwrap();
+        std::fs::write(probe_file.join("e".repeat(25)), b"x").unwrap();
+        crate::data::phrase_library::directory_reads_as_a_chunk(&probe_file)
+    };
+    if reaches_assert {
+        crate::store::death_test::assert_aborts_in_tempdir(
+            NAME,
+            prepare,
+            |system| {
+                let mut runtime =
+                    Runtime::open_with_law(system, None, UserConfLaw::Pinyin).unwrap();
+                let gb = system.join("gb_char.bin");
+                assert!(
+                    runtime
+                        .originals_mut()
+                        .phrase_libraries_mut()
+                        .load(0, &gb)
+                        .unwrap()
+                );
+                std::fs::remove_file(&gb).unwrap();
+                std::fs::create_dir(&gb).unwrap();
+                std::fs::write(gb.join("e".repeat(25)), b"x").unwrap();
+                let originals = runtime.user.originals();
+                assert!(matches!(
+                    Runtime::read_save_baseline(originals, 0, 0),
+                    Ok(SaveBaseline::Keep)
+                ));
+                let _ = Runtime::read_save_baseline(originals, 0, 1);
+            },
+            |system| assert!(system.join("gb_char.bin").is_dir()),
+        );
+    } else {
+        let system = tempfile::tempdir().unwrap();
+        prepare(system.path());
+        let mut runtime = Runtime::open_with_law(system.path(), None, UserConfLaw::Pinyin).unwrap();
+        let gb = system.path().join("gb_char.bin");
+        assert!(
+            runtime
+                .originals_mut()
+                .phrase_libraries_mut()
+                .load(0, &gb)
+                .unwrap()
+        );
+        std::fs::remove_file(&gb).unwrap();
+        std::fs::create_dir(&gb).unwrap();
+        std::fs::write(gb.join("e".repeat(25)), b"x").unwrap();
+        let originals = runtime.user.originals();
+        assert!(matches!(
+            Runtime::read_save_baseline(originals, 0, 0),
+            Ok(SaveBaseline::Keep)
+        ));
+        assert!(Runtime::read_save_baseline(originals, 0, 1).is_err());
     }
-    let mut runtime = Runtime::open_with_law(system.path(), None, UserConfLaw::Pinyin).unwrap();
-    let gb = system.path().join("gb_char.bin");
-    assert!(
-        runtime
-            .originals_mut()
-            .phrase_libraries_mut()
-            .load(0, &gb)
-            .unwrap()
-    );
-    std::fs::remove_file(&gb).unwrap();
-    std::fs::create_dir(&gb).unwrap();
-    std::fs::write(gb.join("e".repeat(25)), b"x").unwrap();
-    let originals = runtime.user.originals();
-    assert!(matches!(
-        Runtime::read_save_baseline(originals, 0, 0),
-        Ok(SaveBaseline::Keep)
-    ));
-    assert!(Runtime::read_save_baseline(originals, 0, 1).is_err());
 }
 
 /// `PHRASE_INDEX_LIBRARY_INDEX` ignores the high four bits

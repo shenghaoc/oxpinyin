@@ -120,10 +120,9 @@ pub(crate) fn load_system_libraries(
 /// `save_dictionary` (`utils_helper.h:97-145`).
 pub(crate) fn save_and_reload_library(name: &CStr, file: &[u8]) -> PhraseLibrary {
     let path = crate::training::path_of(name);
-    if let Err(error) = oxpinyin::input::chunk::save(&path, file) {
-        if matches!(error, oxpinyin::input::chunk::ChunkSaveError::Header { .. }) {
-            tool::abort();
-        }
+    if let Err(oxpinyin::input::chunk::ChunkSaveError::Io(_)) =
+        oxpinyin::input::chunk::save(&path, file)
+    {
         tool::storage::report_save_failed(name);
         tool::exit(tool::ENOENT);
     }
