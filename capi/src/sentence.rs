@@ -243,10 +243,29 @@ pub unsafe extern "C" fn pinyin_get_sentence(
     }
 }
 
-// The `char **`-out sentence writer, stamped from the shared marshalling
-// macro (byte-identical to the zhuyin facade's). `crate::ffi::sentence_text`
-// makes the pin's `convert_to_utf8` calls — the per-facade allocator edge.
-oxpinyin::write_owned_sentence!(crate::ffi::sentence_text);
+/// Writes the allocator's result for `phrases` through the
+/// caller-owned out-param, NULL where the pin's would be, and
+/// answers `true` (`lookup.cpp:69`).
+///
+/// # Safety
+///
+/// Under the crate-level rules, Out-parameters: a non-NULL sentence
+/// destination is aligned and writable without conflicting with live
+/// borrows, including the phrase inputs. Its contents need not be
+/// initialized.
+unsafe fn write_owned_sentence(
+    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::PhraseText>>>,
+    sentence: *mut *mut c_char,
+) -> bool {
+    if !sentence.is_null() {
+        let owned = crate::ffi::sentence_text(phrases);
+        // SAFETY: Out-parameters guarantees aligned writable storage; NULL was checked.
+        unsafe {
+            *sentence = owned;
+        }
+    }
+    true
+}
 
 // pinyin.cpp:3193-3241, pinyin.cpp:3147.
 /// Get the character offset within `phrase` for a lookup byte offset.

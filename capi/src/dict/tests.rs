@@ -253,3 +253,24 @@ fn a_journal_surrogate_is_published_as_historical_utf8() {
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { crate::test_support::close(context, instance) };
 }
+
+#[test]
+fn append_words_copies_reading_or_zeroes() {
+    let words = [1_u16, 2];
+    let stored: Vec<_> = words.into_iter().flat_map(u16::to_ne_bytes).collect();
+    // SAFETY: GLib creates an array of two-byte elements. Both appends copy
+    // into this live array. Read its initialized data after the last append,
+    // then free the array and its segment.
+    unsafe {
+        let array = glib_sys::g_array_new(0, 0, 2);
+        super::append_stored_words(array, 2, Some(&stored));
+        assert_eq!((*array).len, 2);
+        super::append_stored_words(array, 2, None);
+        assert_eq!((*array).len, 4);
+        assert_eq!(
+            std::slice::from_raw_parts((*array).data.cast::<u16>(), 4),
+            [1, 2, 0, 0]
+        );
+        glib_sys::g_array_free(array, 1);
+    }
+}
