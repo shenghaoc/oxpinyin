@@ -6,32 +6,9 @@
 #[cfg(target_os = "linux")]
 use crate::test_support::open_descriptors;
 
-use super::{insert, is_live, register, remove, unregister};
+use super::{is_live, register, unregister};
 
 use crate::test_support::{TempUserDir, open};
-
-#[test]
-fn poisoned_mutex_aborts() {
-    crate::test_support::assert_aborts_after_setup(
-        "live::tests::poisoned_mutex_aborts",
-        // The panic that poisons the mutex is setup, before the strict
-        // check is armed.
-        || {
-            let mutex = std::sync::Mutex::new(());
-            let panic = std::panic::catch_unwind(|| {
-                let _guard = mutex.lock().expect("unpoisoned mutex");
-                panic!("poison the mutex");
-            });
-            assert!(panic.is_err());
-            mutex
-        },
-        |mutex| {
-            let result = mutex.lock();
-            assert!(result.is_err(), "the mutex must be poisoned");
-            drop(super::lock_result_or_abort(result));
-        },
-    );
-}
 
 #[test]
 fn instance_outlives_context() {
@@ -136,31 +113,4 @@ fn a_context_is_live_from_init_to_fini() {
     assert!(unregister(stray));
     assert!(!unregister(stray), "a second removal finds nothing");
     assert!(!is_live(stray));
-}
-
-#[test]
-fn the_registry_holds_no_allocation_once_it_empties() {
-    // The shared static is also used by every other test, so exercise the
-    // same transitions on a private value.
-    let mut live = Vec::new();
-    insert(&mut live, 8);
-    insert(&mut live, 16);
-    insert(&mut live, 8);
-    assert_eq!(live.len(), 2, "an address is held once");
-    assert!(remove(&mut live, 8));
-    assert_eq!(live, [16], "an entry is still live");
-    assert!(remove(&mut live, 16));
-    assert_eq!(
-        live.capacity(),
-        0,
-        "the last entry takes the buffer with it"
-    );
-    assert!(!remove(&mut live, 16));
-    assert_eq!(
-        live.capacity(),
-        0,
-        "forgetting an unknown address allocates nothing"
-    );
-    insert(&mut live, 8);
-    assert_eq!(live, [8], "a later context registers again");
 }

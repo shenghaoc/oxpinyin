@@ -1141,7 +1141,7 @@ mod copy;
 ))]
 pub use copy::faults as copy_faults;
 #[cfg(test)]
-mod death_test;
+pub(crate) mod death_test;
 /// The read-only stores' point-read fault point for other crates' tests.
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod read_faults;

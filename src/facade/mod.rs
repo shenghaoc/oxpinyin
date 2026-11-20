@@ -40,6 +40,7 @@ mod cursor;
 mod export_rows;
 mod import;
 mod instance;
+mod live;
 mod offsets;
 mod parse;
 mod predict;
@@ -65,6 +66,7 @@ pub use instance::{
     InstanceCore, InstanceMut, InstanceRead, InstanceState, InstanceView, PublishedRow,
     SelectionSpan, TrainingRefusal, refuse_lookup_gram, training_answer,
 };
+pub use live::LiveContexts;
 pub use offsets::{
     double_offset_is_mid_key, double_session_offset, zhuyin_lookup_session_offset,
     zhuyin_offset_is_mid_key, zhuyin_original_offset, zhuyin_session_offset,
