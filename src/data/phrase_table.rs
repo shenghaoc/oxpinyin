@@ -67,7 +67,7 @@ impl<D: ChewingDbm> PhraseTable<D> {
     /// - Key found, empty value → empty (prefix marker)
     /// - Key found, non-empty → decoded tokens
     pub(crate) fn search(&self, text: &str) -> Result<Vec<u32>, DictError> {
-        if text.is_empty() && !self.dbm.attachment_failed() {
+        if text.is_empty() {
             return Ok(Vec::new());
         }
         self.search_key(&encode_ucs4_key(text))
@@ -77,7 +77,7 @@ impl<D: ChewingDbm> PhraseTable<D> {
     /// above-Unicode values. The key is compared as stored, without
     /// building a `char` or `str` from a non-scalar.
     pub(crate) fn search_ucs4(&self, words: &[u32]) -> Result<Vec<u32>, DictError> {
-        if words.is_empty() && !self.dbm.attachment_failed() {
+        if words.is_empty() {
             return Ok(Vec::new());
         }
         self.search_key(&encode_ucs4_key_scalars(words))
@@ -130,9 +130,6 @@ impl<D: ChewingDbm> PhraseTable<D> {
             return Ok(Vec::new());
         }
         let key = encode_ucs4_key_scalars(prefix);
-        if self.dbm.failed_suggestion(&key) {
-            return Ok(Vec::new());
-        }
         if !self.dbm.contains(&key)? {
             return Ok(Vec::new());
         }

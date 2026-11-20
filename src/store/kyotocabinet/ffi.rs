@@ -315,11 +315,8 @@ pub(super) fn take_native_calls() -> Vec<(usize, NativeCall)> {
 /// `phrase_large_table3_kyotodb.cpp:76-88`, `punct_table_kyotodb.cpp:37-49`,
 /// `ngram_kyotodb.cpp:43-50`); those owners call [`Db::with_reset_sync`].
 /// `FlexibleBigram` makes its `synchronize()` through
-/// [`crate::store::WriteStore::flush`] (`flexible_ngram_kyotodb.h:86-92`), and its
-/// object is destroyed after the close, which the pin leaves undone. Its
-/// failed open without CREATE is [`Db::delete_unopened`]: the object is destroyed
-/// unclosed (`flexible_ngram_kyotodb.h:145-150`), and `~HashDB` closes only
-/// an open object (`kchashdb.h:532-546`). Kyoto Cabinet's destructors close
+/// [`crate::store::WriteStore::flush`] (`flexible_ngram_kyotodb.h:86-92`).
+/// Kyoto Cabinet's destructors close
 /// an open object implicitly (`kchashdb.h:532-546`, `kcplantdb.h:1018-1028`,
 /// `kcprotodb.h:352`, `kcstashdb.h:324`); the explicit close keeps the pin's
 /// position for it.
@@ -327,6 +324,7 @@ pub(crate) struct Db {
     db: UniquePtr<sys::BasicDB>,
     db_type: DbType,
     read_only: bool,
+    opened: bool,
     /// Whether teardown calls `synchronize(false)` before `close()`.
     sync_before_close: bool,
 }
@@ -355,19 +353,16 @@ impl Db {
         read_only: bool,
         create: bool,
     ) -> Result<Self, StoreError> {
-        let (db, opened) = Self::open_retained(path, db_type, read_only, create)?;
+        let (db, opened) = Self::open_native(path, db_type, read_only, create)?;
         if !opened {
             return Err(db.error("kcdbopen"));
         }
         Ok(db)
     }
 
-    /// Retains the concrete object when open fails, as the pin's system
-    /// attach does (chewing_large_table2_kyotodb.cpp:87-89 and
-    /// ngram_kyotodb.cpp:117-119 at 074a2219). KC's omode_ stays zero
-    /// (kcplantdb.h:1516; kchashdb.h:823-832); later calls are valid
-    /// object operations returning INVALID, not calls through a null DB.
-    pub(crate) fn open_retained(
+    /// Attempts the native open, preserving the difference between its
+    /// answer and an error before the call.
+    pub(crate) fn open_native(
         path: &Path,
         db_type: DbType,
         read_only: bool,
@@ -393,6 +388,7 @@ impl Db {
             db: db_type.allocate(),
             db_type,
             read_only,
+            opened: false,
             sync_before_close: false,
         })
     }
@@ -411,6 +407,7 @@ impl Db {
         let bytes = cxx_path(path)?;
         let_cxx_string!(native_path = bytes);
         let opened = self.db.pin_mut().open(&native_path, mode);
+        self.opened |= opened;
         #[cfg(test)]
         record_native_call(self.address(), NativeCall::Open(bytes.to_vec(), mode));
         Ok(opened)
@@ -421,19 +418,6 @@ impl Db {
     pub(crate) const fn with_reset_sync(mut self) -> Self {
         self.sync_before_close = true;
         self
-    }
-
-    /// `delete m_db` with no `close`, as the pin deletes a `HashDB` whose
-    /// open failed (`flexible_ngram_kyotodb.h:145-150`). Call it only after
-    /// a failed open: `~HashDB` closes only an open object
-    /// (`kchashdb.h:532-534`), so nothing else reaches the library. The
-    /// virtual destructor runs now, and `Drop` finds nothing left.
-    pub(crate) fn delete_unopened(mut self) {
-        #[cfg(test)]
-        let object = self.address();
-        self.db = UniquePtr::null();
-        #[cfg(test)]
-        record_native_call(object, NativeCall::Delete);
     }
 
     /// The library's own account of the last failure on this handle.
@@ -764,23 +748,21 @@ impl Db {
 
 impl Drop for Db {
     fn drop(&mut self) {
-        if self.db.is_null() {
-            // `delete_unopened` destroyed the object already.
-            return;
-        }
-        // The owner's `reset()`: every answer is ignored, as the pin
-        // ignores it, and the object is destroyed either way.
-        if self.sync_before_close {
-            let _ = self.synchronize(false);
-        }
-        let _ = self.db.pin_mut().close();
         #[cfg(test)]
         let object = self.address();
+        if self.opened {
+            if self.sync_before_close {
+                let _ = self.synchronize(false);
+            }
+            let _ = self.db.pin_mut().close();
+            #[cfg(test)]
+            record_native_call(object, NativeCall::Close);
+        }
         #[cfg(test)]
-        record_native_call(object, NativeCall::Close);
-        self.db = UniquePtr::null();
-        #[cfg(test)]
-        record_native_call(object, NativeCall::Delete);
+        {
+            self.db = UniquePtr::null();
+            record_native_call(object, NativeCall::Delete);
+        }
     }
 }
 

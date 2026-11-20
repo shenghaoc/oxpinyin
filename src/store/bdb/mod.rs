@@ -99,64 +99,15 @@ pub struct BdbStore {
     db: Db,
 }
 
-/// A Berkeley DB attach whose `DB->open` failed. The pin keeps that
-/// handle and calls it again (`chewing_large_table2_bdb.cpp:87-93`,
-/// `ngram_bdb.cpp:40-42`, `flexible_ngram_bdb.h:110-146` at 074a2219), and
-/// libdb answers each call with `BDB1565`. Berkeley DB requires
-/// `DB->close` after a failed open and no other call on the handle
-/// (`dbopen.html`, `dbclose.html`, 5.3.28), so `Db::open` has already
-/// closed it: nothing here reaches libdb (compatibility register,
-/// Berkeley DB failed handles).
-pub struct BdbUnopenedHandle {
-    _closed: (),
-}
-
-impl BdbUnopenedHandle {
-    /// `Bigram::store`'s answer on the failed handle: the pin's `DB->put`
-    /// gets `EINVAL` and `store` returns false (`ngram_bdb.cpp:148-163`).
-    pub(crate) fn write(&self, _key: &[u8], _value: &[u8]) -> Result<(), StoreError> {
-        Err(StoreError::Backend(
-            "DB->put: method not permitted before handle's open method".into(),
-        ))
-    }
-
-    /// `Bigram::remove`'s answer on the failed handle: the pin's `DB->del`
-    /// gets `EINVAL` and `remove` returns false (`ngram_bdb.cpp:165-176`).
-    pub(crate) fn delete(&self, _key: &[u8]) -> Result<(), StoreError> {
-        Err(StoreError::Backend(
-            "DB->del: method not permitted before handle's open method".into(),
-        ))
-    }
-
-    /// `Bigram::get_all_items`' answer on the failed handle: the pin's
-    /// `DB->cursor` leaves no cursor and the walk returns false
-    /// (`ngram_bdb.cpp:178-191`).
-    pub(crate) fn walk(&self) -> Result<(), StoreError> {
-        Err(StoreError::Backend(
-            "DB->cursor: method not permitted before handle's open method".into(),
-        ))
-    }
-}
-
-/// The pin's `attach` answer: an opened store, or a failed open.
-pub enum BdbOpen {
-    /// `DB->open` succeeded.
-    Open(BdbStore),
-    /// `DB->open` failed and its handle is closed.
-    Unopened(BdbUnopenedHandle),
-}
-
-pub(crate) fn open_pin(
+pub(crate) fn open_system(
     path: &Path,
     hash: bool,
     read_only: bool,
-) -> Result<BdbOpen, crate::store::StoreError> {
+) -> Result<Option<BdbStore>, StoreError> {
     let db_type = if hash { ffi::DB_HASH } else { ffi::DB_BTREE };
     Ok(
-        match Db::open_attach(path, db_type, read_only, !read_only, ffi::SYSTEM_FILE_MODE)? {
-            Some(db) => BdbOpen::Open(BdbStore { db }),
-            None => BdbOpen::Unopened(BdbUnopenedHandle { _closed: () }),
-        },
+        Db::open_attach(path, db_type, read_only, !read_only, ffi::SYSTEM_FILE_MODE)?
+            .map(|db| BdbStore { db }),
     )
 }
 
@@ -589,11 +540,10 @@ impl WriteTxn for BdbTxn<'_> {
 /// When the in-memory `DB->open` fails, `load_db` returns before the file
 /// is read and the pin carries on with that handle (`ngram_bdb.cpp:54-57`;
 /// `pinyin.cpp:401` and `zhuyin.cpp:343` ignore the answer). This is the
-/// failed container: its handle is closed ([`BdbUnopenedHandle`], register
-/// row 113), and each call answers as the pin's call on the failed handle
-/// does.
+/// failed container: Berkeley DB requires closing its handle
+/// immediately (compatibility register row 113).
 pub struct BdbUserBigramDb {
-    db: Result<Db, BdbUnopenedHandle>,
+    db: Option<Db>,
 }
 
 /// `copy_bdb(srcdb, destdb)` (`bdb_utils.h:43-74` at 074a2219): the
@@ -625,9 +575,7 @@ impl BdbUserBigramDb {
     /// The failed container `load_db` leaves when its in-memory `DB->open`
     /// fails (`ngram_bdb.cpp:54-57`).
     const fn failed() -> Self {
-        Self {
-            db: Err(BdbUnopenedHandle { _closed: () }),
-        }
+        Self { db: None }
     }
 
     /// [`crate::store::UserBigramDb::load_db`] over `create`, the in-memory container's
@@ -651,15 +599,14 @@ impl BdbUserBigramDb {
                 return Err(StoreError::FatalCopy);
             }
         }
-        Ok(Self { db: Ok(db) })
+        Ok(Self { db: Some(db) })
     }
 }
 
 impl crate::store::UserBigramDb for BdbUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
-        Ok(match Db::open_in_memory_hash_attach()? {
-            Some(db) => Self { db: Ok(db) },
-            None => Self::failed(),
+        Ok(Self {
+            db: Db::open_in_memory_hash_attach()?,
         })
     }
 
@@ -669,10 +616,10 @@ impl crate::store::UserBigramDb for BdbUserBigramDb {
 
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         match &self.db {
-            Ok(db) => db.get(key, value),
+            Some(db) => db.get(key, value),
             // `Bigram::load`'s `DB->get` fails, so `load` answers no gram
             // (`ngram_bdb.cpp:140-142`).
-            Err(_) => {
+            None => {
                 value.clear();
                 Ok(false)
             }
@@ -681,15 +628,15 @@ impl crate::store::UserBigramDb for BdbUserBigramDb {
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         match &self.db {
-            Ok(db) => db.put(key, value),
-            Err(handle) => handle.write(key, value),
+            Some(db) => db.put(key, value),
+            None => Err(failed_bigram_open()),
         }
     }
 
     fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
         match &self.db {
-            Ok(db) => db.del(key).map(drop),
-            Err(handle) => handle.delete(key),
+            Some(db) => db.del(key).map(drop),
+            None => Err(failed_bigram_open()),
         }
     }
 
@@ -698,7 +645,7 @@ impl crate::store::UserBigramDb for BdbUserBigramDb {
         // one vector of four-byte tokens, as `get_all_items` appends them
         // to one `GArray` (`ngram_bdb.cpp:178-215` at 074a2219). Berkeley
         // DB keeps no record count to reserve by, so it grows as it goes.
-        let Ok(db) = &self.db else {
+        let Some(db) = &self.db else {
             // `get_all_items` empties the array, then its `DB->cursor` leaves
             // no cursor and it answers false (`ngram_bdb.cpp:178-191`). Every
             // caller ignores that answer and reads the empty array
@@ -717,7 +664,7 @@ impl crate::store::UserBigramDb for BdbUserBigramDb {
     }
 
     fn is_empty(&self) -> Result<bool, StoreError> {
-        let Ok(db) = &self.db else {
+        let Some(db) = &self.db else {
             return Ok(true);
         };
         Ok(db.cursor()?.key(ffi::Seek::First)?.is_none())
@@ -726,13 +673,13 @@ impl crate::store::UserBigramDb for BdbUserBigramDb {
     const CAN_FAIL: bool = true;
 
     fn is_failed(&self) -> bool {
-        self.db.is_err()
+        self.db.is_none()
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
         match &self.db {
-            Ok(db) => save_bigram_db(db, path),
-            Err(handle) => save_failed_bigram_db(handle, path),
+            Some(db) => save_bigram_db(db, path),
+            None => save_failed_bigram_db(path),
         }
     }
 }
@@ -746,11 +693,15 @@ impl crate::store::UserBigramDb for BdbUserBigramDb {
 /// successful save closes it. The caller's rename still runs, as the
 /// pin's does (`pinyin.cpp:1121`, `zhuyin.cpp:687`), so the empty file
 /// replaces the profile's `user_bigram.db`.
-fn save_failed_bigram_db(handle: &BdbUnopenedHandle, path: &Path) -> Result<(), StoreError> {
+fn save_failed_bigram_db(path: &Path) -> Result<(), StoreError> {
     crate::store::remove_if_present(path)?;
     let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
     file.close_unsynced();
-    handle.walk()
+    Err(failed_bigram_open())
+}
+
+fn failed_bigram_open() -> StoreError {
+    StoreError::Backend("the user bigram container did not open".into())
 }
 
 fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {

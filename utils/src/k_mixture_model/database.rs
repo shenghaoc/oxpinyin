@@ -4,10 +4,9 @@
 //! The pin's tools attach a container and then call
 //! `get_magic_header`, `get_all_items`, `load`, `store`, `get_array_header`,
 //! `set_array_header`, `remove` and `set_magic_header`, almost always
-//! ignoring the answer. The object `attach` leaves and its answer are kept
-//! apart ([`KmmBigram::attach`]): a failed attach may still leave an object
-//! that the later calls reach, or none, and then the same calls answer
-//! `false` without touching a file. The `*_checked` methods are the pin's
+//! ignoring the answer. A container that opened remains accessible if
+//! its signature check fails ([`KmmBigram::attach`]). If the file did not
+//! open, later operations have no container. The `*_checked` methods are the pin's
 //! `check_result(…)` sites, which abort on a false answer in the reference
 //! build.
 
@@ -246,12 +245,10 @@ impl Database {
     }
 }
 
-/// The object an attach leaves. A failed native open is `Ok` on every
-/// backend: an object with a false answer, or none
-/// (`FlexibleBigram::attach`, `HashAttach`). An error is a failure before
-/// the open, such as an unsupported library, an allocation failure or a
-/// rejected path, with no pin counterpart: the utility reports it and exits
-/// before it creates or writes anything, never as a missing object.
+/// The result of an attach. A failed native open is `Ok` with a false
+/// attach answer and no open container. A failure before the open, such as
+/// an unsupported library or a rejected path, is reported by the utility
+/// before it creates or writes anything.
 fn attached(result: Result<KmmBigram, StoreError>) -> KmmBigram {
     result.unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error))
 }

@@ -280,11 +280,10 @@ pub enum AttachMode {
 /// the backend's own open and retry sequence
 /// ([`WriteStore::attach_hash`]).
 pub enum HashAttach<B> {
-    /// No object remains: the pin's `m_db` is null.
+    /// The native open failed.
     Closed,
-    /// The object remains, although no open succeeded. Every later call
-    /// reaches it and fails.
-    Unopened(B),
+    /// The open failed, but walking the keys succeeds with no entries.
+    EmptyWalk,
     /// An existing container opened; the caller checks its signature.
     Opened(B),
     /// The CREATE retry created the container and wrote the signature.
@@ -1114,7 +1113,7 @@ pub use tkrzw::{TkrzwStore, TkrzwTxn, TkrzwUserBigramDb};
 #[cfg(feature = "bdb")]
 mod bdb;
 #[cfg(feature = "bdb")]
-pub use bdb::{BdbOpen, BdbStore, BdbTxn, BdbUnopenedHandle, BdbUserBigramDb};
+pub use bdb::{BdbStore, BdbTxn, BdbUserBigramDb};
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
@@ -1127,7 +1126,7 @@ pub use flexible_ngram::{
     ArrayItemWithToken, DefaultFlexibleBigram, FixedRecord, FlexibleBigram, FlexibleGramSpec,
     MAGIC_KEY, SingleGram, SpecGram,
 };
-pub use system_attach::{SystemAttachment, UnopenedSystemDbm};
+pub use system_attach::SystemAttachment;
 
 // ── tests ──────────────────────────────────────────────────────────
 

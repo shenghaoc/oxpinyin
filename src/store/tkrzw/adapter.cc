@@ -110,10 +110,6 @@ NativeStatus close(::tkrzw::DBM& dbm) {
   return wrap(dbm.Close());
 }
 
-bool is_open(const ::tkrzw::DBM& dbm) {
-  return dbm.IsOpen();
-}
-
 NativeStatus get(const ::tkrzw::DBM& dbm, rust::Slice<const std::uint8_t> key,
                  std::string& value) {
   return wrap(mutable_dbm(dbm).Get(view(key), &value));

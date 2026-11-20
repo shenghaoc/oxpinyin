@@ -307,11 +307,10 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
 /// backend (`DefaultStore` through [`DefaultFlexibleBigram`], or an
 /// explicitly named peer for a cross-backend caller).
 pub struct FlexibleBigram<B: WriteStore, S> {
-    /// The pin's `m_db`: `None` when it is null.
+    /// The container, when its native open succeeded.
     db: Option<B>,
-    /// Whether `db`'s native open succeeded. Kyoto Cabinet keeps an object
-    /// whose CREATE retry failed ([`HashAttach::Unopened`]).
-    opened: bool,
+    /// Whether a failed attach still reports a successful empty key walk.
+    empty_walk: bool,
     /// `attach`'s answer, kept apart from the object it leaves.
     attached: bool,
     read_only: bool,
@@ -346,8 +345,8 @@ where
     /// the backend opens the hash container ([`WriteStore::attach_hash`]),
     /// and an existing container is checked against
     /// [`FlexibleGramSpec::MAGIC_NUMBER`]. [`Self::attached`] is the
-    /// answer; the object stays whatever the answer is, where the pin's
-    /// stays, and every later call reaches it.
+    /// answer. A container that opened stays accessible even when the
+    /// signature check fails.
     ///
     /// # Errors
     ///
@@ -355,7 +354,7 @@ where
     pub fn attach(path: Option<&Path>, mode: AttachMode) -> Result<Self, StoreError> {
         let mut this = Self {
             db: None,
-            opened: false,
+            empty_walk: false,
             attached: false,
             read_only: mode == AttachMode::ReadOnly,
             _spec: PhantomData,
@@ -365,15 +364,13 @@ where
         };
         match B::attach_hash(path, mode, (&MAGIC_KEY, &S::MAGIC_NUMBER))? {
             HashAttach::Closed => {}
-            HashAttach::Unopened(db) => this.db = Some(db),
+            HashAttach::EmptyWalk => this.empty_walk = true,
             HashAttach::Created(db, answer) => {
                 this.db = Some(db);
-                this.opened = true;
                 this.attached = answer;
             }
             HashAttach::Opened(db) => {
                 this.db = Some(db);
-                this.opened = true;
                 // A failed signature read is the pin's `false`, as a
                 // missing or different magic number is.
                 this.attached = this
@@ -652,9 +649,15 @@ where
     // The pin's training utilities ignore the tkrzw ProcessEach status returned by
     // flexible_ngram_tkrzwdb.h:274–282 (for example, export_k_mixture_model.cpp:53,74).
     /// Collects token keys in the container’s native walk order. The magic key and other keys
-    /// outside the token width are skipped. A closed handle gives [`None`]. A retained
-    /// unopened Kyoto Cabinet handle yields an empty list. On a walk failure, Kyoto Cabinet
-    /// and tkrzw return the token keys collected before the failure, which may be empty.
+    /// outside the token width are skipped. A closed handle gives [`None`]. On a walk
+    /// failure, Kyoto Cabinet and tkrzw return the token keys collected before the
+    /// failure, which may be empty.
+    ///
+    /// The order is the backend's, not sorted: [`RawReadStore::native_keys`]
+    /// is the shared seam, and its hash-container arms are the pin's own
+    /// walks — a Berkeley DB `DB_NEXT` cursor, a Kyoto Cabinet `iterate`
+    /// and a tkrzw `ProcessEach`, each in its library's order. A failed
+    /// Kyoto Cabinet CREATE retry answers an empty walk.
     ///
     /// # Aborts
     ///
@@ -662,10 +665,13 @@ where
     /// to standard error and terminates the process with status 5.
     #[must_use]
     pub fn get_all_items(&self) -> Option<Vec<u32>> {
+        if self.empty_walk {
+            return Some(Vec::new());
+        }
         let db = self.db.as_ref()?;
         let mut keys = Vec::new();
         let status = db.native_keys(&mut keys);
-        if cfg!(feature = "bdb") && self.opened && status.is_err() {
+        if cfg!(feature = "bdb") && status.is_err() {
             training_db_error();
         }
         Some(

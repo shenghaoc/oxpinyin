@@ -36,20 +36,12 @@ pub use crate::data::row_format::pinyin_index::{
 /// logic runs over the production [`DefaultDbm`] and over the in-memory,
 /// counting and failing test doubles alike.
 pub trait ChewingDbm {
-    /// Whether this is the retained object of a failed system attach.
+    /// Whether the system table failed to open.
     fn attachment_failed(&self) -> bool {
         false
     }
 
-    /// Performs the failed suggestion's native first call, returning
-    /// whether the failed attachment handled the operation.
-    fn failed_suggestion(&self, _key: &[u8]) -> bool {
-        false
-    }
-
-    /// Closes the native attachment once, at facade fini: an open file or
-    /// a retained failed object (`pinyin.cpp:1205-1215`, `zhuyin.cpp:744-748`
-    /// at 074a2219). Every later read is a miss with no native call.
+    /// Closes the native attachment at facade fini. Later reads are misses.
     fn finish_attachment(&mut self) {}
 
     /// Whether [`Self::finish_attachment`] has closed the native object.
@@ -139,7 +131,7 @@ pub struct RawChewingDbm<S> {
 
 enum DbmState<S> {
     Open(S),
-    Unopened(crate::store::UnopenedSystemDbm),
+    Unopened,
     /// The open file after facade fini: the handle is dropped, which closes
     /// it and releases its lock. An instance or iterator that outlives the
     /// context reads misses here (compatibility row 42).
@@ -156,7 +148,7 @@ impl<S> RawChewingDbm<S> {
     fn store(&self) -> Option<&S> {
         match &self.state {
             DbmState::Open(store) => Some(store),
-            DbmState::Unopened(_) | DbmState::Closed => None,
+            DbmState::Unopened | DbmState::Closed => None,
         }
     }
 }
@@ -171,8 +163,8 @@ impl DefaultDbm {
         Ok(
             match SystemAttachment::open(path, hash).map_err(|e| DictError::Table(e.into()))? {
                 SystemAttachment::Open(store) => Self::new(store),
-                SystemAttachment::Unopened(db) => Self {
-                    state: DbmState::Unopened(db),
+                SystemAttachment::Unopened => Self {
+                    state: DbmState::Unopened,
                 },
             },
         )
@@ -210,38 +202,19 @@ fn failed_read_is_a_miss(
 
 impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     fn attachment_failed(&self) -> bool {
-        matches!(self.state, DbmState::Unopened(_))
-    }
-
-    fn failed_suggestion(&self, key: &[u8]) -> bool {
-        match &self.state {
-            DbmState::Open(_) | DbmState::Closed => {
-                let _ = key;
-                false
-            }
-            DbmState::Unopened(db) => {
-                db.suggest(key);
-                true
-            }
-        }
+        matches!(self.state, DbmState::Unopened)
     }
 
     fn finish_attachment(&mut self) {
-        match &self.state {
-            // Dropping the store closes the native file.
-            DbmState::Open(_) => self.state = DbmState::Closed,
-            DbmState::Unopened(db) => db.finish(),
-            DbmState::Closed => {}
+        // A failed open still controls the phrase-prefix walk after fini.
+        if matches!(self.state, DbmState::Open(_)) {
+            self.state = DbmState::Closed;
         }
     }
 
     #[cfg(test)]
     fn attachment_finished(&self) -> bool {
-        match &self.state {
-            DbmState::Open(_) => false,
-            DbmState::Unopened(db) => db.is_finished(),
-            DbmState::Closed => true,
-        }
+        !matches!(self.state, DbmState::Open(_))
     }
 
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
@@ -249,12 +222,7 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
             DbmState::Open(store) => store
                 .get_raw(key, value)
                 .map_err(|e| DictError::Table(e.into())),
-            DbmState::Unopened(db) => {
-                value.clear();
-                db.read(key);
-                Ok(false)
-            }
-            DbmState::Closed => {
+            DbmState::Unopened | DbmState::Closed => {
                 value.clear();
                 Ok(false)
             }
@@ -271,12 +239,7 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         match &self.state {
             DbmState::Open(store) => failed_read_is_a_miss(store.get_bigram_raw(key, value), value),
-            DbmState::Unopened(db) => {
-                value.clear();
-                db.read(key);
-                Ok(false)
-            }
-            DbmState::Closed => {
+            DbmState::Unopened | DbmState::Closed => {
                 value.clear();
                 Ok(false)
             }
@@ -294,7 +257,7 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
                 Err(crate::store::StoreError::ReadAfterCheck) => std::process::abort(),
                 read => failed_read_is_a_miss(read, value),
             },
-            DbmState::Unopened(_) | DbmState::Closed => self.get(key, value),
+            DbmState::Unopened | DbmState::Closed => self.get(key, value),
         }
     }
 
@@ -313,11 +276,7 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
             // `phrase_large_table3_tkrzwdb.cpp:166` at 074a2219), as its
             // Kyoto Cabinet `check` and Berkeley DB cursor do.
             DbmState::Open(store) => Ok(store.contains_raw(key).unwrap_or(false)),
-            DbmState::Unopened(db) => {
-                db.read(key);
-                Ok(false)
-            }
-            DbmState::Closed => Ok(false),
+            DbmState::Unopened | DbmState::Closed => Ok(false),
         }
     }
 
@@ -329,8 +288,6 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     ) -> Result<(), DictError> {
         use std::ops::{Bound, ControlFlow};
         let Some(store) = self.store() else {
-            // Auxiliary Rust scans do not correspond to a pin read.
-            // Suggestions dispatch their native first call separately.
             return Ok(());
         };
         // The store's visitor speaks `StoreError` and answers
@@ -500,9 +457,6 @@ impl<D: ChewingDbm> ChewingTable<D> {
         keys: &[ChewingKey],
         mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
     ) -> Result<bool, DictError> {
-        if self.dbm.attachment_failed() && self.dbm.failed_suggestion(&index_key(keys)) {
-            return Ok(false);
-        }
         if !self.key_exists(keys)? {
             return Ok(false);
         }

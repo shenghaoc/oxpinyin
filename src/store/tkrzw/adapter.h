@@ -59,8 +59,6 @@ NativeStatus open(::tkrzw::DBM& dbm, rust::Slice<const std::uint8_t> path, bool 
                   std::int32_t options);
 // `DBM::Close()`.
 NativeStatus close(::tkrzw::DBM& dbm);
-// `DBM::IsOpen()`.
-bool is_open(const ::tkrzw::DBM& dbm);
 
 // `DBM::Get(key, &value)`: the value is assigned into `value` on SUCCESS.
 NativeStatus get(const ::tkrzw::DBM& dbm, rust::Slice<const std::uint8_t> key,
