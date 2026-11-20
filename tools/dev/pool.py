@@ -353,17 +353,6 @@ class UnitHandle:
         return self.poll()
 
 
-def cancelled_from(check: Callable[[], object]) -> Callable[[], bool]:
-    """Turn CHECK, which raises when the run is cancelled, into a flag the pool polls."""
-    def flag() -> bool:
-        try:
-            check()
-        except Exception:
-            return True
-        return False
-    return flag
-
-
 def run_units(units: Sequence[tuple[str, Callable[[UnitContext], object]]], workers: int, *,
               cancelled: Callable[[], bool], launcher: ProcessLauncher | None = None,
               emit: Callable[[str, object], object] | None = None,

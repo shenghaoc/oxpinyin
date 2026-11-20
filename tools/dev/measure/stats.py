@@ -92,14 +92,3 @@ def stable_residency(ox, control):
     band = max(RESIDENCY_FLOOR_KIB, RESIDENCY_FRACTION * abs(statistics.median(ox)))
     return dict(difference=difference, stable=within(difference, -band, band), bound_kib=band,
                 rule=dict(floor_kib=RESIDENCY_FLOOR_KIB, fraction=RESIDENCY_FRACTION))
-
-
-def exact_control(ox, control):
-    """Compare deterministic control and ox counts with no tolerance.
-
-    Return their values, control-minus-ox difference, and VALID or INVALID.
-    """
-    # §7.5 item 3: scoped instruction counts and deterministic heap
-    # accounting must be equal. No tolerance: any difference is INVALID.
-    return dict(rule='exact', ox=ox, control=control, difference=control - ox,
-                verdict='VALID' if control == ox else 'INVALID')

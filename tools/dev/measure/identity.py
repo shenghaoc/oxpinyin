@@ -84,12 +84,6 @@ def memory_total(proc: Path = PROC) -> str:
     return _first_line(proc / 'meminfo', 'MemTotal') or ''
 
 
-def loadavg(proc: Path = PROC, fields: int | None = None) -> str:
-    """/proc/loadavg without its final newline, or its first FIELDS space-separated fields."""
-    text = (proc / 'loadavg').read_text().rstrip('\n')
-    return text if fields is None else ' '.join(text.split(' ')[:fields])
-
-
 def perf_event_paranoid(proc: Path = PROC) -> str:
     """The kernel's perf_event_paranoid setting, or `unknown` where it cannot be read."""
     try:
