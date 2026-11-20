@@ -257,7 +257,7 @@ path and leaves the deliberate one open. Policy closes the rest.
 - **Panic on user input** (6.1): `assert!` and `unwrap` abort in the same way
   as `__assert_perror_fail`. Constitution rule 4 prevents it (every
   public API returns `Result`; a panic is a defect of the same severity
-  as data loss). Proptest totality, fuzzing from W1 and
+  as data loss). Totality tests, fuzzing from W1 and
   Kani bounded proofs enforce the rule. This tier is written down because libchewing,
   a competent Rust rewrite by the original author, still shipped
   "panic when selecting phrases backwards at the end of buffer" in
@@ -289,7 +289,7 @@ path and leaves the deliberate one open. Policy closes the rest.
 | 4.1 i686 segfault | A | checked byte parsing of tables | loader fixture cross-check (W3-T0) |
 | 4.2 sparc64 bus error | A | same | 3-OS + advisory-target CI |
 | 5.1 BDB lock hang | C | tkrzw by default; the Berkeley DB backend opens no locking subsystem | — (no hard-kill test in the tree) |
-| 6.1 assert on `zhuan` | C | rule 4: `Result`, never `assert` on input | proptest, fuzz, Kani; F-E |
+| 6.1 assert on `zhuan` | C | rule 4: `Result`, never `assert` on input | totality tests, fuzz, Kani; F-E |
 | 6.2 proxy/libsoup | C | Rust stack for any cloud; FFI audited | ASan jobs (verification stack) |
 
 ### Claims discipline

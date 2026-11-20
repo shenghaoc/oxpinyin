@@ -9,9 +9,3 @@
 
 fixtures/** -text
 fuzz/corpus/** -text
-
-# proptest writes these itself and recommends committing them: the seeds are
-# re-run before any novel case, so a bug a property found stays found.
-# Generated, not authored — collapse them in diffs and keep them out of
-# language stats.
-**/proptest-regressions/** linguist-generated

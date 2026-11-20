@@ -16,6 +16,8 @@ if str(ROOT) not in sys.path:
 
 from tools.dev import doctor, test_support
 
+CARGO_C_VERSION = (ROOT / '.github/actions/bootstrap/cargo-c-version.txt').read_text().strip()
+
 
 def completed(text, returncode=0):
     return mock.Mock(returncode=returncode, stdout=text + '\n', stderr='')
@@ -145,7 +147,7 @@ class DoctorTests(unittest.TestCase):
     def test_collect_reports_an_unsupported_tool(self):
         info = dict(uv='uv 0.13.1', implementation='cpython', version='3.14.0',
                     managed=True, gil_enabled=True, executable='/managed/python')
-        failure = 'cargo-c 0.10.11 or later required; found 0.10.10 at /tools/cargo-cinstall'
+        failure = f'cargo-c {CARGO_C_VERSION} or later required; found 0.0.1 at /tools/cargo-cinstall'
         with mock.patch.object(doctor, 'host_lines', return_value=[]), \
                 mock.patch.object(doctor, 'identity', return_value=info), \
                 mock.patch.object(doctor, 'tool_lines',
@@ -160,8 +162,8 @@ class DoctorTests(unittest.TestCase):
 # shapes are the ones the tools print on the hosts this repository runs on.
 SAMPLES = {
     'pwsh': ('PowerShell {}', '7.4.99', doctor.PWSH_MINIMUM, '7.6.1'),
-    'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.10.10', '0.10.11', '0.10.25'),
-    # The minimum is the bootstrap action's version file, whatever it says.
+    # cargo-c and cargo-deny take their minimums from the bootstrap version files.
+    'cargo-c': ('cargo-c {}+cargo-0.98.0', '0.0.1', CARGO_C_VERSION, '999.0.0'),
     'cargo-deny': ('cargo-deny {}', '0.0.1', doctor.CARGO_DENY_VERSION, '999.0.0'),
     'cargo-llvm-cov': ('cargo-llvm-cov {}', '0.8.9', '0.9.0', '0.10.1'),
     'GNU ld': ('GNU ld (GNU Binutils for Debian) {}', '2.41', '2.42', '2.47'),
@@ -256,11 +258,14 @@ class ToolMinimumTests(ToolCase):
                 self.assertTrue(line.startswith(f'GNU ld: not found, ld is {output} at /tools/ld '), line)
                 self.assertIn('requires 2.42 or later', line)
 
-    def test_cargo_deny_requires_the_version_of_the_bootstrap_file(self):
+    def test_cargo_tools_use_the_versions_of_the_bootstrap_files(self):
+        pins = doctor.cargo_tool_pins()
+        self.assertEqual(tool('cargo-c').minimum, CARGO_C_VERSION)
+        self.assertEqual(pins['cargo-c'], CARGO_C_VERSION)
         stated = (ROOT / '.github/actions/bootstrap/cargo-deny-version.txt').read_text().strip()
-        deny = next(candidate for candidate in doctor.TOOLS if candidate.name == 'cargo-deny')
+        deny = tool('cargo-deny')
         self.assertEqual(deny.minimum, stated)
-        self.assertEqual(doctor.cargo_tool_pins()['cargo-deny'], stated)
+        self.assertEqual(pins['cargo-deny'], stated)
         self.assertIn(f'--version {stated}', deny.install)
 
     def test_cargo_afl_applies_the_tools_rule_of_just_fuzz(self):

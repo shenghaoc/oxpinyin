@@ -4,7 +4,7 @@
 # but its generator has a fixed field set (prefix, exec_prefix, includedir,
 # libdir, Name, Description, Version, Requires, Requires.private, Libs,
 # Libs.private, Cflags, Conflicts) and no way to declare custom variables --
-# cargo-c 0.10.25 reads exactly seven keys: name, filename, description,
+# cargo-c reads exactly seven keys: name, filename, description,
 # version, requires, requires_private, strip_include_path_components.
 #
 # Four of the real file's variables therefore cannot be emitted:

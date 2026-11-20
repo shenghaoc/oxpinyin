@@ -54,7 +54,8 @@ PYTHON_MINIMUM = '3.14.0'
 PYTHON_BELOW = '3.15'
 PWSH_MINIMUM = Path(__file__).with_name('pwsh-floor.txt').read_text().strip()
 ROOT = Path(__file__).resolve().parents[2]
-# The bootstrap action installs exactly this cargo-deny; the file is the one statement of it.
+# The bootstrap action reads these same files for the exact versions it installs.
+CARGO_C_VERSION = (ROOT / '.github/actions/bootstrap/cargo-c-version.txt').read_text().strip()
 CARGO_DENY_VERSION = (ROOT / '.github/actions/bootstrap/cargo-deny-version.txt').read_text().strip()
 
 
@@ -242,7 +243,7 @@ TOOLS = (
     Tool('cargo-nextest', 'cargo-nextest', ('nextest', 'show-config', 'version'), _semver_format('cargo-nextest'),
          'the nextest-version in .config/nextest.toml', 'cargo install cargo-nextest --locked',
          verdict=_nextest_verdict),
-    Tool('cargo-c', 'cargo-cinstall', ('--version',), _semver_format('cargo-c'), '0.10.11',
+    Tool('cargo-c', 'cargo-cinstall', ('--version',), _semver_format('cargo-c'), CARGO_C_VERSION,
          'cargo install cargo-c --locked, or your distribution package'),
     Tool('cargo-deny', 'cargo-deny', ('--version',), _semver_format('cargo-deny'), CARGO_DENY_VERSION,
          f'cargo install cargo-deny --version {CARGO_DENY_VERSION} --locked'),
@@ -540,7 +541,7 @@ def cargo_tool_pins(root=ROOT):
     match = re.search(r'^set minimum-version := "([^"]+)"$', (root / 'justfile').read_text(), re.MULTILINE)
     if match is None:
         raise DoctorError(f'{root / "justfile"} has no minimum-version declaration')
-    return {'just': match.group(1), 'cargo-nextest': None, 'cargo-c': '0.10.25',
+    return {'just': match.group(1), 'cargo-nextest': None, 'cargo-c': CARGO_C_VERSION,
             'cargo-deny': CARGO_DENY_VERSION}
 
 

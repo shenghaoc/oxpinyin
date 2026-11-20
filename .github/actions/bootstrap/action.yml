@@ -230,14 +230,14 @@ runs:
       if: inputs.cargo-c == 'true'
       shell: bash
       env:
-        CARGO_C_VERSION: 0.10.25
-        CARGO_C_SHA256: 0e73d1841be8a582ab9c37e1049f6a2fa352b3a40b0f97276603f987b19f64e8
+        CARGO_C_SHA256: d1f50b54a6918acde11e0129c3f737f129a6cefe14e16ea1fc1a2c2ef7941039
       run: |
         set -euo pipefail
         if [ "$RUNNER_OS-$RUNNER_ARCH" != macOS-ARM64 ]; then
           printf '::error::the cargo-c archive is for macOS on ARM64, not %s on %s\n' "$RUNNER_OS" "$RUNNER_ARCH"
           exit 1
         fi
+        CARGO_C_VERSION=$(cat .github/actions/bootstrap/cargo-c-version.txt)
         archive="$RUNNER_TEMP/cargo-c-macos.zip"
         curl --fail --location --retry 3 --show-error --output "$archive" \
           "https://github.com/lu-zero/cargo-c/releases/download/v$CARGO_C_VERSION/cargo-c-macos.zip"
