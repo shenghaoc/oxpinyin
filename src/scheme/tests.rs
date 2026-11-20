@@ -1369,10 +1369,10 @@ fn with_fallback_suppressed_clears_only_the_fallback() {
 // on every `cargo test`, not only where the oracle is built.
 //
 // The replay seam is the one the pinyin facade forwards to
-// (`parse_chewing_more`, `ToneForwarding::PinFacade`):
+// (`parse_chewing_more`, `ChewingCorrections::Masked`):
 // `ZhuyinParser::parse_with_options` with the `USE_TONE` and
-// `ZHUYIN_INCOMPLETE` bits read off the captured option word — `FORCE_TONE` never crosses
-// that facade. Per key the fixture carries both renderings the oracle
+// `ZHUYIN_INCOMPLETE` bits read off the captured option word.
+// Per key the fixture carries both renderings the oracle
 // hands out: the pinyin string (`_ChewingKey::get_pinyin_string`'s law:
 // canonical spelling plus the tone digit for a non-zero tone) and the
 // zhuyin string (`get_zhuyin_string`'s law: tone marks on tones 2..5).

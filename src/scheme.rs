@@ -719,11 +719,8 @@ include!("table_data/tone_symbols.rs");
 /// search compares the whole spelling, so no second equality test
 /// follows it.
 ///
-/// `options` carries only parser-owned bits — `ZHUYIN_CORRECT_SHUFFLE`
-/// (forced by `ZhuyinSimpleParser2::set_scheme`, `:272`) and optionally
-/// `ZHUYIN_INCOMPLETE` passed through from the caller's option word
-/// (`pinyin.cpp` strips `ZHUYIN_CORRECT_ALL` from caller options at every
-/// chewing entry point, so caller corrections can never reach this gate).
+/// The one-key probe uses the correction bits supplied by its facade.
+/// Batch parsing also enables the keyboard's own corrections.
 fn search_zhuyin_index(
     index: crate::zhuyin_map::ZhuyinIndex,
     zhuyin: &str,
@@ -1194,7 +1191,6 @@ impl ZhuyinParser {
 
     // ZhuyinSimpleParser2::parse_one_key, ZhuyinDiscreteParser2::parse_one_key and
     // ZhuyinDaChenCP26Parser2::parse_one_key, zhuyin_parser2.cpp:162–210,335–405,573–716.
-    // The pinyin facade strips ZHUYIN_CORRECT_ALL at pinyin.cpp:1621.
     /// Parses one complete keystroke sequence on the selected Zhuyin keyboard.
     ///
     /// The lookup uses the supplied Zhuyin correction bits and removes pinyin ambiguity bits.

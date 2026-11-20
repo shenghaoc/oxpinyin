@@ -4,13 +4,12 @@
 //! (`oxpinyin::facade::InstanceCore`); the laws themselves — the
 //! continue-or-restart rule, the scheme dispatch, the exact-input drive,
 //! the LUOMA / `SECONDARY_ZHUYIN` index branch — live there once, shared
-//! with the zhuyin facade. This facade's chewing seam forwards
-//! [`ToneForwarding::PinFacade`] (`FORCE_TONE` does not cross it — the
-//! recorded open divergence); the zhuyin facade forwards the whole word.
+//! with the zhuyin facade. Chewing parses use [`ChewingCorrections::Masked`]
+//! to clear the caller's Zhuyin correction flags.
 
 use std::os::raw::c_char;
 
-use oxpinyin::facade::ToneForwarding;
+use oxpinyin::facade::ChewingCorrections;
 
 use crate::ffi::borrow_or_return;
 use crate::state::{instance_mut, instance_ref};
@@ -141,7 +140,7 @@ pub unsafe extern "C" fn pinyin_parse_more_chewings(
     // SAFETY: `instance` is non-null (checked above).
     let mut inst = unsafe { instance_mut(instance) };
     inst.core
-        .parse_chewing_more(&text, ToneForwarding::PinFacade)
+        .parse_chewing_more(&text, ChewingCorrections::Masked)
 }
 
 /// Get the parsed length of the input.

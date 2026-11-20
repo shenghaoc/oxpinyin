@@ -373,6 +373,38 @@ fn parse_chewing_writes_the_key_only_on_success() {
     unsafe { close(context, instance) };
 }
 
+/// At 074a2219, Standard `1,u` spells ㄅㄝㄧ (src/storage/zhuyin_table.h:10,15,41).
+/// Its row requires SHUFFLE and resolves to bie (src/storage/pinyin_parser_table.h:1496,3995).
+/// src/zhuyin.cpp:1049-1055 forwards the options to the one-key lookup
+/// (src/storage/zhuyin_parser2.cpp:162-179,185-208), whose flag check is at :44-63,89-97.
+#[test]
+fn parse_chewing_accepts_a_shuffled_reading_when_enabled() {
+    let (context, instance) = open();
+    let mut key = ChewingKey::ZERO;
+    let input = c"1,u";
+    let shuffle = oxpinyin::OptionBits::ZHUYIN_CORRECT_SHUFFLE.bits();
+    let mut text = ptr::null_mut();
+    // SAFETY: The fixture handles are live and used serially. The output slots are local,
+    // and the successful getter transfers ownership of its string to this test.
+    unsafe {
+        assert!(zhuyin_set_options(context, 0));
+        assert!(!zhuyin_parse_chewing(
+            instance,
+            input.as_ptr(),
+            &raw mut key
+        ));
+        assert!(zhuyin_set_options(context, shuffle));
+        assert!(zhuyin_parse_chewing(instance, input.as_ptr(), &raw mut key));
+        assert!(zhuyin_get_pinyin_string(
+            instance,
+            &raw mut key,
+            &raw mut text
+        ));
+        assert_eq!(take_sentence(text), "bie");
+        close(context, instance);
+    }
+}
+
 /// The `ZHUYIN_STANDARD_DVORAK` slot aborts the process, as the pin's
 /// `set_scheme` falls through to `abort()` (`zhuyin_parser2.cpp:295`,
 /// register row 5c).

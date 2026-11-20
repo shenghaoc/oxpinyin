@@ -6,7 +6,7 @@
 //! Fixture selection follows the compiled backend. Initialization succeeds
 //! even after a failed system attach, so it cannot identify a file format.
 
-use crate::facade::ToneForwarding;
+use crate::facade::ChewingCorrections;
 
 use crate::facade::test_fixture::{pinyin_instance, zhuyin_instance};
 
@@ -48,7 +48,7 @@ fn lookup_offset_validation_follows_the_active_mode() {
     assert_eq!(
         zhuyin
             .bind(&zhuyin_context.runtime)
-            .parse_chewing_more("su3cl3", ToneForwarding::ZhuyinFacade),
+            .parse_chewing_more("su3cl3", ChewingCorrections::FromOptions),
         6
     );
     // The zhuyin mode validates against the parse's consumed length.
@@ -120,7 +120,7 @@ mod native {
     use crate::OptionBits;
     use crate::engine::{CandidateKind, Selection};
     use crate::facade::test_fixture::{native_fixture::*, *};
-    use crate::facade::{ContextCore, InstanceCore, ToneForwarding};
+    use crate::facade::{ChewingCorrections, ContextCore, InstanceCore};
     use crate::user::UserConfLaw;
 
     #[rstest::rstest]
@@ -416,7 +416,7 @@ mod native {
             assert_eq!(
                 instance
                     .bind(&context.runtime)
-                    .parse_chewing_more("su3cl3", ToneForwarding::ZhuyinFacade),
+                    .parse_chewing_more("su3cl3", ChewingCorrections::FromOptions),
                 6
             );
             let window = native_window(context, instance, 0);
