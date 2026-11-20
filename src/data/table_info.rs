@@ -396,18 +396,15 @@ impl TableConf {
             .lambda_parameter()
             .assigned()
             .ok_or(TableConfError::Header)?;
-        // The two format directives' answers are not checked (`:228-233`):
-        // each mapping reads whatever `str` holds by then.
-        let _ = input.source_table_format();
-        let phonetic = match input.str().map(CStr::to_bytes) {
+        let phonetic = match input.source_table_format().assigned().map(CStr::to_bytes) {
             None => return Err(TableConfError::UninitialisedSourceFormat),
             Some(b"pinyin") => PhoneticType::Pinyin,
             Some(b"zhuyin") => PhoneticType::Zhuyin,
             Some(_) => return Err(TableConfError::Abort(TableConfSite::SourceFormat)),
         };
-        let _ = input.database_format();
         let database_format = input
-            .str()
+            .database_format()
+            .assigned()
             .and_then(|token| token.to_str().ok())
             .and_then(DatabaseFormat::from_token)
             .ok_or(TableConfError::Abort(TableConfSite::DatabaseFormat))?;

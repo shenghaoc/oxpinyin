@@ -269,6 +269,15 @@ impl Merge {
         }
     }
 
+    /// A bounded header without totals can leave an already-zero total alone.
+    pub(crate) fn apply_header_without_totals(&self) -> Result<(), Stop> {
+        if self.live.total == 0 {
+            Ok(())
+        } else {
+            Err(Stop::Mismatch("header", 0))
+        }
+    }
+
     fn remove(&mut self, token: u32, old_item: &[u8]) -> Result<(), Stop> {
         let slot = token & PHRASE_MASK;
         let mismatch = Stop::Mismatch("REMOVE", token);

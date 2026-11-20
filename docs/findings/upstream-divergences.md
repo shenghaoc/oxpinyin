@@ -270,6 +270,20 @@ An entry holds nothing else.
 - **Decision:** accepted under the language-artefact rule. Object lifetime after a failed open is an implementation detail.
 - **Tests:** `a_failed_bigram_attach_attempts_the_open_and_releases_the_object`, `a_create_retry_reopens_the_same_hashdb_and_a_failed_open_releases_it`, `a_failed_create_retry_preserves_the_backend_walk_result`, `a_system_tree_synchronizes_before_close_and_a_hash_does_not`.
 
+### Assigned configuration values (policy row 79)
+
+- **Pin:** the two format directives reuse a C buffer even after a failed scan (`src/storage/table_info.cpp:227–233`).
+- **oxpinyin:** validates each format using its assigned value and keeps the prescribed missing-format outcomes.
+- **Decision:** accepted under the language-artefact rule. The configuration specifies format names.
+- **Tests:** `a_missing_directive_does_not_supply_the_previous_word`.
+
+### Incomplete journal records stop at the missing field (policy row 159)
+
+- **Pin:** short token, length and header-total reads can leave zero in their destinations (`src/storage/phrase_index_logger.h:158–215`; `src/include/memory_chunk.h:372–377`; `src/storage/phrase_index.cpp:503–514,721–746`).
+- **oxpinyin:** stops before applying an incomplete record, keeps the complete prefix and retains rollback for a truncated payload. A fully framed header counts even when its totals are unavailable. In ordinary replay it leaves a zero live total alone and stops on a nonzero total. Masking checks the record shape and can emit a replacement journal only from decoded totals.
+- **Decision:** accepted under the language-artefact rule. A field absent from the wire record does not supply zero.
+- **Tests:** `incomplete_records_stop_after_the_last_complete_record`, `bounded_short_header_runs_keep_later_journal_faults_reachable`.
+
 ## Accepted divergences — utilities
 
 ### gen_pinyin_table invalid UTF-8 phrase (class (b))

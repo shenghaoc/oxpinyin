@@ -1764,8 +1764,9 @@ where
     I: Iterator<Item = Result<LogRecord<&'a [u8]>, LogFault>>,
 {
     for record in records() {
-        let record = match record {
-            Ok(record) => record,
+        let outcome = match record {
+            Ok(record) => merge.apply(record),
+            Err(LogFault::MissingHeaderTotals) => merge.apply_header_without_totals(),
             Err(LogFault::HeaderToken(token)) => {
                 return Err(JournalFault::HeaderToken { library, token });
             }
@@ -1773,7 +1774,6 @@ where
             // unmasked replay reaches this.
             Err(LogFault::OverRead) => return Ok(MergeEnd::OverRead),
         };
-        let outcome = merge.apply(record);
         if let Err(stop) = outcome {
             match stop {
                 Stop::ShortAdd(token) => return Err(JournalFault::ShortAdd { library, token }),
@@ -1829,23 +1829,29 @@ fn masked_log(
         mask: mask & PHRASE_MASK,
         value: value & PHRASE_MASK,
     };
-    let (records, end) = read_log(payload, library)?;
-    let Some(old_total) = sole_header(&records, library)? else {
+    let walk = read_log(payload, library)?;
+    let Some(header) = walk.header else {
         return Ok(None);
+    };
+    let old_total = match header {
+        ReadHeader::MissingTotals => None,
+        ReadHeader::Total(total) => Some(total),
     };
     // `_peek_header` ended on a record type it does not know: `m_error`
     // survives both rewinds (`phrase_index_logger.h:128-129`, `:141-144`),
     // so `_compute_new_header` and `_mask_out_records` read nothing
     // (`phrase_index.cpp:851-869`) and the new logger is the header alone,
     // its total unchanged.
-    if end == Some(LogEnd::UnknownType) {
-        return Ok(Some(vec![LogRecord::ModifyHeader {
-            old_total,
-            new_total: old_total,
-        }]));
+    if walk.end == Some(LogEnd::UnknownType) {
+        return Ok(old_total.map(|total| {
+            vec![LogRecord::ModifyHeader {
+                old_total: total,
+                new_total: total,
+            }]
+        }));
     }
-    let new_total = masked_total(&records, old_total, mask, library)?;
-    retained_records(records, old_total, new_total, mask, library).map(Some)
+    let new_total = masked_total(&walk.records, old_total, mask, library)?;
+    retained_records(walk.records, old_total.zip(new_total), mask, library)
 }
 
 /// The mask of `mask_out_phrase_index_logger`, over the token's slot bits.
@@ -1862,53 +1868,53 @@ impl TokenMask {
     }
 }
 
-/// A log's records and how its walk ended.
-type LogWalk<'a> = (Vec<LogRecord<&'a [u8]>>, Option<LogEnd>);
+enum ReadHeader {
+    MissingTotals,
+    Total(u32),
+}
 
-/// `_peek_header`'s walk: every record up to the log's end or a payload past
-/// it, and how the walk ended.
+struct LogWalk<'a> {
+    records: Vec<LogRecord<&'a [u8]>>,
+    header: Option<ReadHeader>,
+    end: Option<LogEnd>,
+}
+
+/// `_peek_header`'s walk: each record up to the log's end or a payload past it.
 ///
 /// # Errors
-///
-/// [`JournalFault::HeaderToken`] for a header record with a non-null token.
+/// [`JournalFault::HeaderToken`] for a header with a non-null token, then
+/// [`JournalFault::MultipleHeaders`] when more than one header was read.
 fn read_log(payload: &[u8], library: u8) -> Result<LogWalk<'_>, JournalFault> {
     let mut records = Vec::new();
+    let mut header = None;
+    let mut multiple = false;
     let mut walk = log_records(payload);
     for record in walk.by_ref() {
-        match record {
-            Ok(record) => records.push(record),
+        let next_header = match record {
+            Ok(LogRecord::ModifyHeader { old_total, .. }) => ReadHeader::Total(old_total),
+            Err(LogFault::MissingHeaderTotals) => ReadHeader::MissingTotals,
+            Ok(record) => {
+                records.push(record);
+                continue;
+            }
             Err(LogFault::HeaderToken(token)) => {
                 return Err(JournalFault::HeaderToken { library, token });
             }
             Err(LogFault::OverRead) => break,
-        }
+        };
+        multiple |= header.replace(next_header).is_some();
     }
-    Ok((records, walk.end()))
-}
-
-/// The old total of the log's one header; `None` when it has no header.
-///
-/// # Errors
-///
-/// [`JournalFault::MultipleHeaders`] for more than one header.
-fn sole_header(records: &[LogRecord<&[u8]>], library: u8) -> Result<Option<u32>, JournalFault> {
-    let mut headers = records.iter().filter_map(|record| {
-        if let LogRecord::ModifyHeader { old_total, .. } = record {
-            Some(*old_total)
-        } else {
-            None
-        }
-    });
-    let Some(old_total) = headers.next() else {
-        return Ok(None);
-    };
-    if headers.next().is_some() {
+    if multiple {
         return Err(JournalFault::MultipleHeaders { library });
     }
-    Ok(Some(old_total))
+    Ok(LogWalk {
+        records,
+        header,
+        end: walk.end(),
+    })
 }
 
-/// `_compute_new_header`: the old total moved by every record the mask keeps.
+/// `_compute_new_header`: check each kept record and update any decoded total.
 ///
 /// # Errors
 ///
@@ -1916,10 +1922,10 @@ fn sole_header(records: &[LogRecord<&[u8]>], library: u8) -> Result<Option<u32>,
 /// bytes, in record order.
 fn masked_total(
     records: &[LogRecord<&[u8]>],
-    old_total: u32,
+    old_total: Option<u32>,
     mask: TokenMask,
     library: u8,
-) -> Result<u32, JournalFault> {
+) -> Result<Option<u32>, JournalFault> {
     let unigram = |item: &[u8], token: u32| {
         if item.len() < 6 {
             Err(JournalFault::ShortMaskedItem { library, token })
@@ -1931,18 +1937,21 @@ fn masked_total(
     for record in records {
         match *record {
             LogRecord::Add { token, new_item } if mask.keeps(token) => {
-                new_total = new_total.wrapping_add(unigram(new_item, token)?);
+                let count = unigram(new_item, token)?;
+                new_total = new_total.map(|total| total.wrapping_add(count));
             }
             LogRecord::Remove { token, old_item } if mask.keeps(token) => {
-                new_total = new_total.wrapping_sub(unigram(old_item, token)?);
+                let count = unigram(old_item, token)?;
+                new_total = new_total.map(|total| total.wrapping_sub(count));
             }
             LogRecord::Modify {
                 token,
                 old_item,
                 new_item,
             } if mask.keeps(token) => {
-                new_total = new_total.wrapping_sub(unigram(old_item, token)?);
-                new_total = new_total.wrapping_add(unigram(new_item, token)?);
+                let old = unigram(old_item, token)?;
+                let new = unigram(new_item, token)?;
+                new_total = new_total.map(|total| total.wrapping_sub(old).wrapping_add(new));
             }
             LogRecord::Add { .. }
             | LogRecord::Remove { .. }
@@ -1953,8 +1962,8 @@ fn masked_total(
     Ok(new_total)
 }
 
-/// `_mask_out_records`: the new logger's records, the header first and then
-/// each kept MODIFY record.
+/// `_mask_out_records`: check kept record types and build a new log when
+/// the original header had totals.
 ///
 /// # Errors
 ///
@@ -1962,21 +1971,26 @@ fn masked_total(
 /// in record order.
 fn retained_records(
     records: Vec<LogRecord<&[u8]>>,
-    old_total: u32,
-    new_total: u32,
+    totals: Option<(u32, u32)>,
     mask: TokenMask,
     library: u8,
-) -> Result<Vec<LogRecord<&[u8]>>, JournalFault> {
-    let mut masked = vec![LogRecord::ModifyHeader {
-        old_total,
-        new_total,
-    }];
+) -> Result<Option<Vec<LogRecord<&[u8]>>>, JournalFault> {
+    let mut masked = totals.map(|(old_total, new_total)| {
+        vec![LogRecord::ModifyHeader {
+            old_total,
+            new_total,
+        }]
+    });
     for record in records {
         match record {
             LogRecord::Add { token, .. } | LogRecord::Remove { token, .. } if mask.keeps(token) => {
                 return Err(JournalFault::SurvivingRecord { library, token });
             }
-            LogRecord::Modify { token, .. } if mask.keeps(token) => masked.push(record),
+            LogRecord::Modify { token, .. } if mask.keeps(token) => {
+                if let Some(masked) = &mut masked {
+                    masked.push(record);
+                }
+            }
             LogRecord::Add { .. }
             | LogRecord::Remove { .. }
             | LogRecord::Modify { .. }

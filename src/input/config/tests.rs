@@ -20,11 +20,8 @@ fn the_system_reader_follows_the_scanner() {
     assert_eq!(reader.binary_format_version(), Scanned::Assigned(7));
     assert_eq!(reader.model_data_version(), Scanned::Assigned(14));
     assert_eq!(reader.lambda_parameter(), Scanned::Assigned(0.5));
-    assert_eq!(reader.str(), None);
-    assert_eq!(reader.source_table_format(), Scanned::Assigned(()));
-    assert_eq!(reader.str(), Some(c"pinyin"));
-    assert_eq!(reader.database_format(), Scanned::Assigned(()));
-    assert_eq!(reader.str(), Some(c"BerkeleyDB"));
+    assert_eq!(reader.source_table_format(), Scanned::Assigned(c"pinyin"));
+    assert_eq!(reader.database_format(), Scanned::Assigned(c"BerkeleyDB"));
     assert!(!reader.eof());
     // Six words, across the line break.
     assert_eq!(
@@ -44,12 +41,11 @@ fn the_system_reader_follows_the_scanner() {
 }
 
 #[test]
-fn a_missing_directive_leaves_the_shared_buffer_as_it_was() {
+fn a_missing_directive_does_not_supply_the_previous_word() {
     let (_dir, name) = file(b"source table format:zhuyin\nlambda parameter:1\n");
     let mut reader = SystemTableInfoReader::open(&name).expect("open");
-    assert_eq!(reader.source_table_format(), Scanned::Assigned(()));
+    assert_eq!(reader.source_table_format(), Scanned::Assigned(c"zhuyin"));
     assert_eq!(reader.database_format(), Scanned::Unassigned);
-    assert_eq!(reader.str(), Some(c"zhuyin"));
 }
 
 #[test]
@@ -59,8 +55,13 @@ fn words_are_cut_at_255_bytes_and_read_as_c_strings() {
     bytes.extend_from_slice(b"\ndatabase format:Tkrzw\0junk\n");
     let (_dir, name) = file(&bytes);
     let mut reader = SystemTableInfoReader::open(&name).expect("open");
-    assert_eq!(reader.source_table_format(), Scanned::Assigned(()));
-    assert_eq!(reader.str().map(CStr::count_bytes), Some(255));
+    assert_eq!(
+        reader
+            .source_table_format()
+            .assigned()
+            .map(CStr::count_bytes),
+        Some(255)
+    );
     // The 45 bytes left over do not match the next directive.
     assert_eq!(reader.database_format(), Scanned::Unassigned);
 }
@@ -72,7 +73,6 @@ fn the_user_reader_reports_end_of_input() {
     assert_eq!(reader.binary_format_version(), Scanned::Assigned(7));
     assert_eq!(reader.model_data_version(), Scanned::Assigned(14));
     assert_eq!(reader.database_format(), Scanned::Eof);
-    assert_eq!(reader.str(), None);
     assert_eq!(reader.open_counter(), Scanned::Eof);
     reader.finish();
 }
@@ -81,8 +81,7 @@ fn the_user_reader_reports_end_of_input() {
 fn a_nul_ends_the_token_strcmp_sees() {
     let (_dir, name) = file(b"database format:BerkeleyDB\0junk\nopen counter:3\n");
     let mut reader = UserTableInfoReader::open(&name).expect("open");
-    assert_eq!(reader.database_format(), Scanned::Assigned(()));
-    assert_eq!(reader.str(), Some(c"BerkeleyDB"));
+    assert_eq!(reader.database_format(), Scanned::Assigned(c"BerkeleyDB"));
     assert_eq!(reader.open_counter(), Scanned::Assigned(3));
 }
 
@@ -115,8 +114,7 @@ fn the_writer_prints_the_four_lines() {
     let mut reader = UserTableInfoReader::open(&name).expect("reopen saved file");
     assert_eq!(reader.binary_format_version(), Scanned::Assigned(-1));
     assert_eq!(reader.model_data_version(), Scanned::Assigned(14));
-    assert_eq!(reader.database_format(), Scanned::Assigned(()));
-    assert_eq!(reader.str(), Some(c"KyotoCabinet"));
+    assert_eq!(reader.database_format(), Scanned::Assigned(c"KyotoCabinet"));
     assert_eq!(reader.open_counter(), Scanned::Assigned(3));
     reader.finish();
     let missing = crate::input::c_path(&dir.path().join("absent/user.conf")).expect("c path");

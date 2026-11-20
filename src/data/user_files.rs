@@ -381,19 +381,13 @@ impl UserTableInfo {
             .model_data_version()
             .assigned()
             .ok_or(UserConfError::Line("model data version"))?;
-        // `if (EOF != num) format = to_table_database_format_type(str);`
-        // (`:352-354`): a directive that did not match leaves `str` as it
-        // was, never written, and the mapping reads it all the same.
         let database_format = match input.database_format() {
             Scanned::Eof => None,
-            Scanned::Assigned(()) | Scanned::Unassigned => Some(
-                input
-                    .str()
-                    .and_then(|token| {
-                        UPSTREAM_DB_FORMATS
-                            .into_iter()
-                            .find(|known| known.as_bytes() == token.to_bytes())
-                    })
+            Scanned::Unassigned => return Err(UserConfError::UnknownDatabaseFormat),
+            Scanned::Assigned(token) => Some(
+                UPSTREAM_DB_FORMATS
+                    .into_iter()
+                    .find(|known| known.as_bytes() == token.to_bytes())
                     .ok_or(UserConfError::UnknownDatabaseFormat)?
                     .to_owned(),
             ),
@@ -614,18 +608,16 @@ impl LogRecord<&[u8]> {
     }
 }
 
-/// Why a [`LogReader`] walk ends at a record instead of answering it.
-///
-/// `PhraseIndexLogger::next_record` (074a2219
-/// `src/storage/phrase_index_logger.h:158-215`) answers `false` only for an
-/// unknown `LOG_TYPE`, and the walk then simply ends; these are the two
-/// records it does not answer at all.
+/// Why a [`LogReader`] could not decode a record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LogFault {
     /// A `MODIFY_HEADER` record whose token is not `null_token`: the pin's
     /// `assert(token == null_token)` (`phrase_index_logger.h:202`) aborts
     /// while reading it.
     HeaderToken(u32),
+    /// A complete header record whose bounded runs lack a whole total.
+    /// The walk can continue at the next record.
+    MissingHeaderTotals,
     /// A payload whose declared length runs past the logger's end: the pin's
     /// `set_content` copies that many bytes from past its chunk, an
     /// over-read with no defined result (class (b)). The walk stops here.
@@ -644,6 +636,8 @@ pub(crate) enum LogEnd {
     /// leaves set (`:141-144`), so every later walk of the same logger
     /// reads nothing (`:128-129`).
     UnknownType,
+    /// The last record is missing a required fixed field.
+    Truncated,
     /// [`LogFault::OverRead`].
     OverRead,
 }
@@ -655,6 +649,9 @@ impl std::fmt::Display for LogFault {
                 f,
                 "phrase index logger: MODIFY_HEADER record carries token {token:#010x}"
             ),
+            Self::MissingHeaderTotals => {
+                f.write_str("phrase index logger: header totals are missing")
+            }
             Self::OverRead => write!(f, "phrase index logger: a payload runs past the log"),
         }
     }
@@ -667,21 +664,17 @@ impl std::error::Error for LogFault {}
 /// `src/storage/phrase_index_logger.h:127-215`).
 ///
 /// * The walk goes on while the offset is inside the log.
-/// * Each fixed field (`LOG_TYPE`, token, `guint16` lengths) is read with
-///   `MemoryChunk::get_content`, which reads nothing past the end and leaves
-///   the field at its initial value (`memory_chunk.h:372-377`): the type at
-///   `LOG_INVALID_RECORD`, the token at `null_token`, a length at 0. The
-///   offset moves past the field either way.
-/// * An unknown type sets `m_error`: the walk ends.
-/// * A payload of length 0 is empty wherever it starts; a longer one that
-///   ends past the log is [`LogFault::OverRead`].
+/// * A missing or unknown type ends the walk.
+/// * A record must contain its token and length fields. A missing fixed
+///   field ends the walk at that record.
+/// * A payload whose declared length exceeds the rest of the log is
+///   [`LogFault::OverRead`].
 /// * A `MODIFY_HEADER` with a non-null token is [`LogFault::HeaderToken`],
-///   before its length is read. Its totals are the first four bytes of each
-///   run; a run shorter than four bytes reads as 0, as `merge`'s and
-///   `_peek_header`'s `get_content` into a zeroed `guint32` does
-///   (`phrase_index.cpp:503-514`, `:721-746`).
+///   before its length is read. Its totals occupy the first four bytes of
+///   each run (`phrase_index.cpp:503-514`, `:721-746`). A complete frame
+///   with shorter runs still counts as one header.
 ///
-/// After a fault the walk yields nothing more.
+/// The walk continues after [`LogFault::MissingHeaderTotals`].
 #[derive(Clone, Debug)]
 pub(crate) struct LogReader<'a> {
     bytes: &'a [u8],
@@ -690,8 +683,8 @@ pub(crate) struct LogReader<'a> {
     end: Option<LogEnd>,
 }
 
-/// Walk a logger's records as borrowed byte slices, the pin's way
-/// ([`LogReader`]). Payloads keep their raw sizes, trailing bytes included.
+/// Walk a logger's records as borrowed byte slices ([`LogReader`]).
+/// Payloads keep their raw sizes, trailing bytes included.
 #[must_use]
 pub(crate) fn log_records(bytes: &[u8]) -> LogReader<'_> {
     LogReader {
@@ -723,70 +716,90 @@ impl<'a> Iterator for LogReader<'a> {
             self.end = Some(LogEnd::Complete);
             return None;
         }
-        let step = self.step();
-        match step {
-            Some(Ok((record, next))) => {
+        match self.step() {
+            Ok((record, next)) => {
                 self.offset = next;
-                Some(Ok(record))
+                Some(record.ok_or(LogFault::MissingHeaderTotals))
             }
-            Some(Err(fault)) => {
+            Err(LogStop::Fault(fault)) => {
                 self.done = true;
                 if fault == LogFault::OverRead {
                     self.end = Some(LogEnd::OverRead);
                 }
                 Some(Err(fault))
             }
-            None => {
+            Err(LogStop::End(end)) => {
                 self.done = true;
-                self.end = Some(LogEnd::UnknownType);
+                self.end = Some(end);
                 None
             }
         }
     }
 }
 
-/// One `next_record` call: the record and the offset after it, a fault, or
-/// `None` where the pin's walk ends.
-type Step<'a> = Option<Result<(LogRecord<&'a [u8]>, usize), LogFault>>;
+enum LogStop {
+    End(LogEnd),
+    Fault(LogFault),
+}
+
+type ReadStep<'a> = Result<(Option<LogRecord<&'a [u8]>>, usize), LogStop>;
 
 impl<'a> LogReader<'a> {
-    fn step(&self) -> Step<'a> {
-        let bytes = self.bytes;
-        let u32_at = |at: usize| {
-            bytes
-                .get(at..at.checked_add(4)?)
-                .and_then(|word| word.try_into().ok())
-                .map(u32::from_le_bytes)
-        };
-        let u16_at = |at: usize| {
-            bytes
-                .get(at..at.saturating_add(2))
-                .and_then(|word| word.try_into().ok())
-                .map_or(0, u16::from_le_bytes)
-        };
-        let take = |at: usize, len: u16| -> Result<&'a [u8], LogFault> {
-            if len == 0 {
-                return Ok(&[]);
-            }
-            bytes
-                .get(at..at.saturating_add(usize::from(len)))
-                .ok_or(LogFault::OverRead)
-        };
+    fn u32_field(bytes: &[u8]) -> Option<u32> {
+        bytes.first_chunk().copied().map(u32::from_le_bytes)
+    }
+
+    fn length_at(&self, at: usize) -> Result<usize, LogStop> {
+        self.bytes
+            .get(at..)
+            .and_then(<[u8]>::first_chunk)
+            .copied()
+            .map(u16::from_le_bytes)
+            .map(usize::from)
+            .ok_or(LogStop::End(LogEnd::Truncated))
+    }
+
+    fn payload_at(&self, at: usize, len: usize) -> Result<&'a [u8], LogStop> {
+        self.bytes
+            .get(at..at.saturating_add(len))
+            .ok_or(LogStop::Fault(LogFault::OverRead))
+    }
+
+    fn header_step(&self, token: u32, mut offset: usize) -> ReadStep<'a> {
+        if token != 0 {
+            return Err(LogStop::Fault(LogFault::HeaderToken(token)));
+        }
+        let len = self.length_at(offset)?;
+        offset += 2;
+        let old_run = self.payload_at(offset, len)?;
+        offset += len;
+        let new_run = self.payload_at(offset, len)?;
+        offset += len;
+        let record =
+            Self::u32_field(old_run)
+                .zip(Self::u32_field(new_run))
+                .map(|(old_total, new_total)| LogRecord::ModifyHeader {
+                    old_total,
+                    new_total,
+                });
+        Ok((record, offset))
+    }
+
+    fn step(&self) -> ReadStep<'a> {
         let mut offset = self.offset;
-        // `LOG_INVALID_RECORD` when the type is not there: `m_error`.
-        let log_type = u32_at(offset)?;
+        let log_type = Self::u32_field(&self.bytes[offset..])
+            .filter(|tag| matches!(tag, 1..=4))
+            .ok_or(LogStop::End(LogEnd::UnknownType))?;
         offset += LOG_TYPE_SIZE;
-        let token = u32_at(offset).unwrap_or(0);
+        let token =
+            Self::u32_field(&self.bytes[offset..]).ok_or(LogStop::End(LogEnd::Truncated))?;
         offset += 4;
         let record = match log_type {
             1 | 2 => {
-                let len = u16_at(offset);
+                let len = self.length_at(offset)?;
                 offset += 2;
-                let payload = match take(offset, len) {
-                    Ok(payload) => payload,
-                    Err(fault) => return Some(Err(fault)),
-                };
-                offset += usize::from(len);
+                let payload = self.payload_at(offset, len)?;
+                offset += len;
                 if log_type == 1 {
                     LogRecord::Add {
                         token,
@@ -800,54 +813,23 @@ impl<'a> LogReader<'a> {
                 }
             }
             3 => {
-                let old_len = u16_at(offset);
-                let new_len = u16_at(offset + 2);
+                let old_len = self.length_at(offset)?;
+                let new_len = self.length_at(offset + 2)?;
                 offset += 4;
-                let old_item = match take(offset, old_len) {
-                    Ok(payload) => payload,
-                    Err(fault) => return Some(Err(fault)),
-                };
-                offset += usize::from(old_len);
-                let new_item = match take(offset, new_len) {
-                    Ok(payload) => payload,
-                    Err(fault) => return Some(Err(fault)),
-                };
-                offset += usize::from(new_len);
+                let old_item = self.payload_at(offset, old_len)?;
+                offset += old_len;
+                let new_item = self.payload_at(offset, new_len)?;
+                offset += new_len;
                 LogRecord::Modify {
                     token,
                     old_item,
                     new_item,
                 }
             }
-            4 => {
-                if token != 0 {
-                    return Some(Err(LogFault::HeaderToken(token)));
-                }
-                let len = u16_at(offset);
-                offset += 2;
-                let old_run = match take(offset, len) {
-                    Ok(payload) => payload,
-                    Err(fault) => return Some(Err(fault)),
-                };
-                offset += usize::from(len);
-                let new_run = match take(offset, len) {
-                    Ok(payload) => payload,
-                    Err(fault) => return Some(Err(fault)),
-                };
-                offset += usize::from(len);
-                let total = |run: &[u8]| {
-                    run.get(..4)
-                        .and_then(|word| word.try_into().ok())
-                        .map_or(0, u32::from_le_bytes)
-                };
-                LogRecord::ModifyHeader {
-                    old_total: total(old_run),
-                    new_total: total(new_run),
-                }
-            }
-            _ => return None,
+            4 => return self.header_step(token, offset),
+            _ => return Err(LogStop::End(LogEnd::UnknownType)),
         };
-        Some(Ok((record, offset)))
+        Ok((Some(record), offset))
     }
 }
 
