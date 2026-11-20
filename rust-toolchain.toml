@@ -1,4 +1,4 @@
 [toolchain]
 # Exact on purpose (#1074): this file cannot express a minimum. Compiler output, clippy and rustfmt depend on the Rust version.
-channel = "1.100.0"
+channel = "1.98.1"
 components = ["clippy", "rustfmt"]

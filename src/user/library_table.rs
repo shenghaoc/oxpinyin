@@ -312,6 +312,7 @@ impl LibrarySet {
 
     /// The libraries of the set, in ascending order.
     #[cfg(test)]
+    #[must_use]
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = u8> + use<'_> {
         LIBRARIES
             .into_iter()
