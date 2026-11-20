@@ -400,47 +400,28 @@ fn an_unknown_or_missing_type_ends_the_walk_after_the_records_before_it() {
     assert_eq!(owned(&short_head), vec![Ok(add_record)]);
 }
 
+// POLICY-ACCEPTED: a missing field does not supply a default value.
 #[test]
-fn a_field_past_the_end_reads_as_its_initial_value() {
-    // A type without its token: `null_token`, then a length of 0.
-    assert_eq!(
-        owned(&1_u32.to_le_bytes()),
-        vec![Ok(LogRecord::Add {
-            token: 0,
-            new_item: vec![],
-        })]
-    );
-    assert_eq!(
-        owned(&record(2, 5, &[3])),
-        vec![Ok(LogRecord::Remove {
-            token: 5,
-            old_item: vec![],
-        })]
-    );
-    // MODIFY reads the new length after a failed old one.
-    assert_eq!(
-        owned(&record(3, 5, &[])),
-        vec![Ok(LogRecord::Modify {
-            token: 5,
-            old_item: vec![],
-            new_item: vec![],
-        })]
-    );
-    // A header without a length, or with runs shorter than a total.
-    assert_eq!(
-        owned(&record(4, 0, &[])),
-        vec![Ok(LogRecord::ModifyHeader {
-            old_total: 0,
-            new_total: 0,
-        })]
-    );
-    assert_eq!(
-        owned(&record(4, 0, &[3, 0, 1, 2, 3, 4, 5, 6])),
-        vec![Ok(LogRecord::ModifyHeader {
-            old_total: 0,
-            new_total: 0,
-        })]
-    );
+fn incomplete_records_stop_after_the_last_complete_record() {
+    let add = record(1, 7, &[6, 0, 0, 0, 1, 0, 0, 0]);
+    for tail in [
+        1_u32.to_le_bytes().to_vec(),
+        record(2, 5, &[3]),
+        record(3, 5, &[]),
+        record(4, 0, &[]),
+    ] {
+        let bytes = [add.as_slice(), &tail].concat();
+        let mut records = log_records(&bytes);
+        assert_eq!(
+            records.next(),
+            Some(Ok(LogRecord::Add {
+                token: 7,
+                new_item: &[0_u8, 0, 1, 0, 0, 0][..],
+            }))
+        );
+        assert!(records.next().is_none());
+        assert_eq!(records.end(), Some(LogEnd::Truncated));
+    }
 }
 
 #[test]
@@ -501,20 +482,8 @@ fn a_header_token_faults_where_the_header_is_read() {
             Err(LogFault::HeaderToken(1)),
         ]
     );
-    // A token cut short reads as `null_token`: no assert.
-    assert_eq!(
-        owned(
-            &4_u32
-                .to_le_bytes()
-                .into_iter()
-                .chain([1, 0, 0])
-                .collect::<Vec<_>>()
-        ),
-        vec![Ok(LogRecord::ModifyHeader {
-            old_total: 0,
-            new_total: 0,
-        })]
-    );
+    // A partial token refuses the record before it can reach the assertion.
+    assert!(owned(&[4_u32.to_le_bytes().as_slice(), &[1, 0, 0]].concat()).is_empty());
     assert_eq!(
         owned(&record(4, 0x0100_0001, &[])),
         vec![Err(LogFault::HeaderToken(0x0100_0001))]

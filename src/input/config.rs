@@ -48,27 +48,11 @@ impl<T> Scanned<T> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct OpenFailed;
 
-/// A `char str[256]` buffer as `strcmp` reads it: `None` until a `%255s`
-/// has written it, which is when the pin's buffer is still uninitialised.
-#[derive(Clone)]
-struct Word {
-    bytes: [u8; WORD_SIZE],
-    written: bool,
-}
-
-impl Word {
-    const fn new() -> Self {
-        Self {
-            bytes: [0; WORD_SIZE],
-            written: false,
-        }
-    }
-
-    fn as_c_str(&self) -> Option<&CStr> {
-        if !self.written {
-            return None;
-        }
-        CStr::from_bytes_until_nul(&self.bytes).ok()
+fn scanned_word(count: c_int, bytes: &[u8; WORD_SIZE]) -> Scanned<&CStr> {
+    match count {
+        1 => CStr::from_bytes_until_nul(bytes).map_or(Scanned::Unassigned, Scanned::Assigned),
+        count if count < 0 => Scanned::Eof,
+        _ => Scanned::Unassigned,
     }
 }
 
@@ -76,10 +60,8 @@ impl Word {
 pub(crate) struct SystemTableInfoReader {
     stream: Stream,
     locale: SavedNumeric,
-    /// `char str[256]` (`:227`), shared by the two format directives.
-    str: Word,
-    /// `tableinfo`, `dictstr`, `tablefile`, `sysfile`, `userfile` and
-    /// `filetype` (`:252-253`), which keep their bytes across rows.
+    word: [u8; WORD_SIZE],
+    /// Storage for the current six-word row.
     row: [[u8; WORD_SIZE]; 6],
 }
 
@@ -102,7 +84,7 @@ impl SystemTableInfoReader {
         Ok(Self {
             stream,
             locale,
-            str: Word::new(),
+            word: [0; WORD_SIZE],
             row: [[0; WORD_SIZE]; 6],
         })
     }
@@ -129,24 +111,15 @@ impl SystemTableInfoReader {
     }
 
     /// `fscanf(input, "source table format:%255s\n", str)` (`:228`).
-    pub(crate) fn source_table_format(&mut self) -> Scanned<()> {
-        let count = self.stream.scan_source_table_format(&mut self.str.bytes);
-        self.str.written |= count == 1;
-        Scanned::from_count(count, ())
+    pub(crate) fn source_table_format(&mut self) -> Scanned<&CStr> {
+        let count = self.stream.scan_source_table_format(&mut self.word);
+        scanned_word(count, &self.word)
     }
 
     /// `fscanf(input, "database format:%255s\n", str)` (`:232`).
-    pub(crate) fn database_format(&mut self) -> Scanned<()> {
-        let count = self.stream.scan_database_format(&mut self.str.bytes);
-        self.str.written |= count == 1;
-        Scanned::from_count(count, ())
-    }
-
-    /// `str` as the following `strcmp` reads it: the last token either
-    /// format directive wrote, or `None` while it holds no value.
-    #[must_use]
-    pub(crate) fn str(&self) -> Option<&CStr> {
-        self.str.as_c_str()
+    pub(crate) fn database_format(&mut self) -> Scanned<&CStr> {
+        let count = self.stream.scan_database_format(&mut self.word);
+        scanned_word(count, &self.word)
     }
 
     /// `feof(input)`, the row loop's condition (`:254`).
@@ -176,8 +149,7 @@ impl SystemTableInfoReader {
 pub(crate) struct UserTableInfoReader {
     stream: Stream,
     locale: SavedNumeric,
-    /// `char str[256]` (`:351`).
-    str: Word,
+    word: [u8; WORD_SIZE],
 }
 
 impl UserTableInfoReader {
@@ -199,7 +171,7 @@ impl UserTableInfoReader {
         Ok(Self {
             stream,
             locale,
-            str: Word::new(),
+            word: [0; WORD_SIZE],
         })
     }
 
@@ -218,17 +190,9 @@ impl UserTableInfoReader {
     }
 
     /// `fscanf(input, "database format:%255s\n", str)` (`:352`).
-    pub(crate) fn database_format(&mut self) -> Scanned<()> {
-        let count = self.stream.scan_database_format(&mut self.str.bytes);
-        self.str.written |= count == 1;
-        Scanned::from_count(count, ())
-    }
-
-    /// `str` as `to_table_database_format_type` reads it (`:353-354`), or
-    /// `None` while the buffer holds no value.
-    #[must_use]
-    pub(crate) fn str(&self) -> Option<&CStr> {
-        self.str.as_c_str()
+    pub(crate) fn database_format(&mut self) -> Scanned<&CStr> {
+        let count = self.stream.scan_database_format(&mut self.word);
+        scanned_word(count, &self.word)
     }
 
     /// `fscanf(input, "open counter:%d\n", &counter)` (`:357`).

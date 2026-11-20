@@ -1673,6 +1673,70 @@ fn a_header_token_the_merge_reaches_is_the_load_fault() {
 }
 
 #[test]
+fn bounded_short_header_runs_keep_later_journal_faults_reachable() {
+    let full = encode_log_records(&[LogRecord::<Vec<u8>>::ModifyHeader {
+        old_total: 150,
+        new_total: 0,
+    }])
+    .expect("header");
+    let kept_add = encode_log_records(&[LogRecord::Add {
+        token: 5,
+        new_item: vec![0; 6],
+    }])
+    .expect("add");
+    for width in 0_u16..=3 {
+        let mut short = 4_u32.to_le_bytes().to_vec();
+        short.extend_from_slice(&0_u32.to_le_bytes());
+        short.extend_from_slice(&width.to_le_bytes());
+        short.extend_from_slice(&vec![0xff; 2 * usize::from(width)]);
+        assert_eq!(masked_log(&short, 0x0FFF_FFFF, 0x0100_0009, 1), Ok(None));
+        assert_eq!(
+            masked_log(
+                &[short.as_slice(), kept_add.as_slice()].concat(),
+                0x0FFF_FFFF,
+                0x0100_0009,
+                1,
+            )
+            .err(),
+            Some(JournalFault::SurvivingRecord {
+                library: 1,
+                token: 5
+            }),
+        );
+
+        let non_null = header_with_token(0x0100_0001);
+        let short_then_fault = [short.as_slice(), non_null.as_slice()].concat();
+        let loaded = load_with_log("short-header-stops-nonzero-total", &short_then_fault);
+        assert_eq!(loaded.journal_fault, None, "width {width}");
+        assert_eq!(
+            masked_log(&short_then_fault, 0x0FFF_FFFF, 0x0100_0009, 1).err(),
+            Some(JournalFault::HeaderToken {
+                library: 1,
+                token: 0x0100_0001,
+            }),
+            "width {width}"
+        );
+
+        let mut payload = [full.as_slice(), short.as_slice()].concat();
+        assert_eq!(
+            masked_log(&payload, 0x0FFF_FFFF, 0x0100_0009, 1).err(),
+            Some(JournalFault::MultipleHeaders { library: 1 }),
+            "width {width}"
+        );
+        payload.extend_from_slice(&non_null);
+        let loaded = load_with_log("short-header-before-fault", &payload);
+        assert_eq!(
+            loaded.journal_fault,
+            Some(JournalFault::HeaderToken {
+                library: 1,
+                token: 0x0100_0001,
+            }),
+            "width {width}"
+        );
+    }
+}
+
+#[test]
 fn a_header_token_after_a_mismatch_is_never_read() {
     // `merge` returns at the mismatched REMOVE (`phrase_index.cpp:468-471`)
     // before `next_record` reads the bad header: the load completes with
