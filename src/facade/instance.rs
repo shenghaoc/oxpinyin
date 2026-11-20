@@ -832,6 +832,18 @@ pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, Traini
     }
 }
 
+/// Returns the plain or prefixed sentence guess. On a lookup error, apply
+/// the facade's diagnostic or abort, then return false if control returns.
+pub fn guess_result(result: Result<bool, EngineError>, name: &str, log: impl FnOnce(&str)) -> bool {
+    match result {
+        Ok(found) => found,
+        Err(error) => {
+            refuse_lookup_gram(name, &error, log);
+            false
+        }
+    }
+}
+
 /// The lookup faults of a predecessor's bigram, system or user. A value too short for
 /// its total is the pin's assert in `get_total_freq`; a Kyoto Cabinet read
 /// that fails after its size check also aborts. A read past the value logs
