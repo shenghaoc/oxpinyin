@@ -39,57 +39,21 @@ pub struct KcStore {
     db: Db,
 }
 
-/// A system file's object whose open failed, kept until facade
-/// finalization as the pin keeps it.
-pub(crate) struct KcUnopenedHandle {
-    db: Db,
-}
-
-/// The pin's system attach (`chewing_large_table2_kyotodb.cpp:77-90`,
-/// `phrase_large_table3_kyotodb.cpp:92-105`, `punct_table_kyotodb.cpp:
-/// 52-65`, `ngram_kyotodb.cpp:110-120` at 074a2219), `ATTACH_READONLY`, or
-/// with `read_only` false the utilities' `ATTACH_READWRITE | ATTACH_CREATE`
-/// (`kyotodb_utils.h:32-45`). Whether the open
-/// succeeds or not, the object's teardown is the owner's `reset()`:
-/// `synchronize()`, `close()`, then `delete` (`chewing_large_table2_kyotodb.
-/// cpp:65-74`, `phrase_large_table3_kyotodb.cpp:76-88`,
-/// `punct_table_kyotodb.cpp:37-49`, `ngram_kyotodb.cpp:43-50`).
+/// Attaches a system table with the pin's native open mode
+/// (`chewing_large_table2_kyotodb.cpp:77-90`,
+/// `phrase_large_table3_kyotodb.cpp:92-105`, `punct_table_kyotodb.cpp:52-65`,
+/// `ngram_kyotodb.cpp:110-120` at 074a2219). A successful attachment
+/// synchronizes before closing.
 pub(crate) fn open_system(
     path: &Path,
     hash: bool,
     read_only: bool,
-) -> Result<Result<KcStore, KcUnopenedHandle>, StoreError> {
+) -> Result<Option<KcStore>, StoreError> {
     let kind = if hash { DbType::Hash } else { DbType::Tree };
-    let (db, opened) = Db::open_retained(path, kind, read_only, !read_only)?;
-    let db = db.with_reset_sync();
-    Ok(if opened {
-        Ok(KcStore { db })
-    } else {
-        Err(KcUnopenedHandle { db })
-    })
-}
-
-impl KcUnopenedHandle {
-    pub(crate) fn read(&self, key: &[u8]) {
-        // Every failed system read ends at check: no body get or cursor
-        // follows (ngram_kyotodb.cpp:131-134 at 074a2219).
-        let _ = self.db.check(key);
-    }
-
-    /// `Bigram::store`'s `m_db->set(...)` (`ngram_kyotodb.cpp:145-153`),
-    /// which the unopened object refuses with `INVALID`; that refusal is
-    /// the answer.
-    pub(crate) fn write(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.db.set(key, value)
-    }
-
-    /// `Bigram::get_all_items`' `iterate` (`ngram_kyotodb.cpp:186-196`):
-    /// the unopened object refuses it, the pin ignores the answer and
-    /// returns true, and no key is collected.
-    pub(crate) fn walk(&self) -> Result<(), StoreError> {
-        let _ = self.db.raw_keys(&mut Vec::new());
-        Ok(())
-    }
+    let (db, opened) = Db::open_native(path, kind, read_only, !read_only)?;
+    Ok(opened.then(|| KcStore {
+        db: db.with_reset_sync(),
+    }))
 }
 
 impl KcStore {
@@ -359,10 +323,10 @@ impl WriteStore for KcStore {
 
     /// `FlexibleBigram::attach` (`flexible_ngram_kyotodb.h:129-180` at
     /// 074a2219): a `HashDB` opened without `OCREATE`, and with
-    /// `ATTACH_CREATE` opened again with it. A failed open without CREATE
-    /// deletes the object with no `close` (`:145-150`); a failed retry
-    /// keeps it (`:154-155`), and every later call answers `INVALID`. The retry's
-    /// signature `set` is ignored (`:157-162`).
+    /// `ATTACH_CREATE` opened again with it. After a failed CREATE retry,
+    /// the pin's key walk succeeds with no entries because it ignores the
+    /// `iterate` result (`:154-155,262-272`). The retry's signature `set`
+    /// is ignored (`:157-162`).
     ///
     /// The retry is a second `open` of the same object with the pin's
     /// mode, `OREADER | OWRITER | OCREATE`, so it reads the state the
@@ -383,11 +347,10 @@ impl WriteStore for KcStore {
             return Ok(HashAttach::Opened(Self { db }));
         }
         if mode != AttachMode::ReadWriteCreate {
-            db.delete_unopened();
             return Ok(HashAttach::Closed);
         }
         if !db.open_mode(path, flags | ffi::OCREATE)? {
-            return Ok(HashAttach::Unopened(Self { db }));
+            return Ok(HashAttach::EmptyWalk);
         }
         let (key, value) = signature;
         let _ = db.set(key, value);
@@ -612,7 +575,7 @@ impl crate::store::UserBigramDb for KcUserBigramDb {
         // its bucket allocation throws `std::bad_alloc` (`kcutil.cc:165`),
         // which no pin frame catches, so the process ends. A refused open is
         // that impossible case, and it ends here too.
-        let (db, opened) = Db::open_retained(Path::new("-"), DbType::Stash, false, true)?;
+        let (db, opened) = Db::open_native(Path::new("-"), DbType::Stash, false, true)?;
         if !opened {
             std::process::abort();
         }

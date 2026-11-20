@@ -402,7 +402,7 @@ mod failed_attachment_fini {
     use std::path::PathBuf;
 
     use crate::facade::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
-
+    use crate::model::Dictionary as _;
     use crate::user::UserConfLaw;
 
     fn fixture_dir() -> PathBuf {
@@ -421,8 +421,8 @@ mod failed_attachment_fini {
             .expect("temp dir");
         for entry in std::fs::read_dir(fixture_dir()).expect("w3 fixture") {
             let entry = entry.expect("w3 entry");
-            // Everything but the main pinyin index (`SystemDbm::PinyinIndex`).
-            if entry.file_name().as_os_str() != std::ffi::OsStr::new("pinyin_index.bin") {
+            let name = entry.file_name();
+            if name != "pinyin_index.bin" && name != "phrase_index.bin" {
                 std::fs::copy(entry.path(), dir.path().join(entry.file_name())).expect("copy");
             }
         }
@@ -438,10 +438,14 @@ mod failed_attachment_fini {
             let runtime = &context.runtime;
             assert!(runtime.pinyin_attachment_failed());
             assert!(!runtime.attachments_finished());
+            assert!(!runtime.dict().phrase_span_continues(&[u32::from('你')]));
         }
         // Public context fini, with the instance still alive.
         context.finish();
         assert!(context.runtime.attachments_finished());
+        let dict = context.runtime.dict();
+        assert!(dict.phrase_span_searches_are_observable());
+        assert!(!dict.phrase_span_continues(&[u32::from('你')]));
         // A second fini is inert.
         context.finish();
         assert!(context.runtime.attachments_finished());

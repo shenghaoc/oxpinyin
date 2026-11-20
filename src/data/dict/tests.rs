@@ -1,4 +1,4 @@
-use super::{AddonDictionary, TableConf};
+use super::AddonDictionary;
 
 // pinyin.cpp:477-494 reaches the NULL system filename at :284-290.
 #[test]
@@ -11,21 +11,6 @@ fn addon_without_chunk_reports_null_chunk_name() {
         addon.load_reporting(4, Path::new("unused")),
         Err(LibraryError::Row(RowFault::NullChunkName))
     ));
-}
-
-#[test]
-fn missing_addon_files_leave_the_retained_failed_objects_not_none() {
-    // `AddonDictionary::attach_with` keeps both addon tables with their
-    // failed native objects, the pin's `FacadeChewingTable2::load` and
-    // `FacadePhraseTable3::load` on `pinyin.cpp:421,429`; a table that
-    // is `None` would skip the pin's later calls on them.
-    let dir = tempfile::tempdir().expect("scratch directory");
-    let mut addon = AddonDictionary::attach_with(dir.path(), &TableConf::stock()).unwrap();
-    assert!(addon.pinyin_attachment_failed());
-    assert!(addon.phrase_attachment_failed());
-    assert!(!addon.attachments_finished());
-    addon.finish_attachments();
-    assert!(addon.attachments_finished());
 }
 
 mod system_dictionary {

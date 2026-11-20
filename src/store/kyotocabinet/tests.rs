@@ -31,55 +31,12 @@ const OWRITER: u32 = 2;
 const OCREATE: u32 = 4;
 
 #[test]
-fn retained_failed_system_attachments_synchronize_before_close_once() {
-    use super::ffi::{NativeCall, take_native_calls};
-    use crate::store::SystemAttachment;
-
-    // Audit each pin class, rather than inferring one from another:
-    // chewing_large_table2_kyotodb.cpp:65-73 (main/addon pinyin),
-    // phrase_large_table3_kyotodb.cpp:76-86 (main/addon phrase),
-    // ngram_kyotodb.cpp:43-48 (HashDB), punct_table_kyotodb.cpp:37-47.
-    for (table, hash) in [
-        ("system-pinyin", false),
-        ("system-phrase", false),
-        ("system-bigram", true),
-        ("addon-pinyin", false),
-        ("addon-phrase", false),
-        ("punctuation", false),
-    ] {
-        let missing = Temp::new(table, "missing");
-        let SystemAttachment::Unopened(db) = SystemAttachment::open(&missing.0, hash).unwrap()
-        else {
-            panic!("missing {table} unexpectedly opened");
-        };
-        let opened = take_native_calls();
-        let &[(handle, NativeCall::Open(_, OREADER))] = opened.as_slice() else {
-            panic!("{table}: one read-only open, got {opened:?}");
-        };
-        db.finish();
-        assert_eq!(
-            take_native_calls(),
-            [
-                (handle, NativeCall::Synchronize(false)),
-                (handle, NativeCall::Close),
-                (handle, NativeCall::Delete),
-            ],
-            "{table}: native calls on the same retained object"
-        );
-        db.finish();
-        drop(db);
-        assert!(take_native_calls().is_empty(), "{table}");
-    }
-}
-
-#[test]
 fn opened_system_attachments_synchronize_before_close() {
     use super::ffi::{NativeCall, take_native_calls};
     use crate::store::SystemAttachment;
 
-    // The successful attach has the same owner `reset()` as the failed
-    // one: synchronize, close, delete (ngram_kyotodb.cpp:43-50,
-    // chewing_large_table2_kyotodb.cpp:65-74).
+    // The owner synchronizes before closing a successfully opened file
+    // (ngram_kyotodb.cpp:43-50, chewing_large_table2_kyotodb.cpp:65-74).
     for hash in [false, true] {
         let file = Temp::new(&format!("opened-system-{hash}"), "db");
         if hash {
@@ -106,64 +63,39 @@ fn opened_system_attachments_synchronize_before_close() {
 }
 
 #[test]
-fn a_failed_bigram_attach_keeps_its_hashdb_until_reset() {
+fn a_failed_bigram_attach_attempts_the_open_and_releases_the_object() {
     use super::ffi::{NativeCall, OCREATE, OREADER, OWRITER, take_native_calls};
     use crate::store::SystemAttachment;
     use std::os::unix::ffi::OsStrExt as _;
 
-    // `Bigram::attach` makes one `open` on a new `HashDB`, with no
-    // CREATE retry and no signature check, and keeps the object when
-    // the open fails (ngram_kyotodb.cpp:110-120). `load`, `store` and
-    // `get_all_items` then reach it: `check`, `set`, and an `iterate`
-    // with no `count` before it (:124-153, :186-196). `reset()`
-    // synchronizes, closes and deletes it (:43-50).
     let dir = Temp::new("failed-bigram", "missing");
     let path = dir.0.join("bigram.db");
     for read_only in [true, false] {
         take_native_calls();
-        let SystemAttachment::Unopened(db) =
-            SystemAttachment::attach_bigram(&path, read_only).unwrap()
-        else {
-            panic!("read only: {read_only}: a missing directory opened");
-        };
-        let opened = take_native_calls();
-        let handle = opened.first().expect("native open").0;
+        assert!(matches!(
+            SystemAttachment::attach_bigram(&path, read_only).unwrap(),
+            SystemAttachment::Unopened
+        ));
+        // POLICY-ACCEPTED: the failed attachment is released before return.
+        let calls = take_native_calls();
+        let handle = calls.first().expect("native open").0;
         let mode = if read_only {
             OREADER
         } else {
             OREADER | OWRITER | OCREATE
         };
         assert_eq!(
-            opened,
-            [(
-                handle,
-                NativeCall::Open(path.as_os_str().as_bytes().to_vec(), mode)
-            )],
-            "read only: {read_only}: the object outlives the attach"
+            calls,
+            [
+                (
+                    handle,
+                    NativeCall::Open(path.as_os_str().as_bytes().to_vec(), mode)
+                ),
+                (handle, NativeCall::Delete),
+            ],
+            "read only: {read_only}"
         );
-        db.read(b"tkn\0");
-        // The utilities write only through the read-write attach. The
-        // refused `set` is `store`'s false; the refused `iterate` is
-        // ignored and `get_all_items` answers true.
-        if !read_only {
-            assert!(db.write(b"tkn\0", b"gram").is_err());
-        }
-        db.walk().expect("get_all_items answers true");
-        db.finish();
-        let mut expected = vec![(handle, NativeCall::Check)];
-        if !read_only {
-            expected.push((handle, NativeCall::Set));
-        }
-        expected.extend([
-            (handle, NativeCall::Iterate),
-            (handle, NativeCall::Synchronize(false)),
-            (handle, NativeCall::Close),
-            (handle, NativeCall::Delete),
-        ]);
-        assert_eq!(take_native_calls(), expected, "read only: {read_only}");
-        drop(db);
-        assert!(take_native_calls().is_empty(), "read only: {read_only}");
-        assert!(!path.exists(), "no file was created");
+        assert!(!path.exists());
     }
 }
 
@@ -235,22 +167,21 @@ fn a_malformed_user_index_snapshot_keeps_its_valid_prefix() {
 }
 
 #[test]
-fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_deletes_without_close() {
+fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_releases_it() {
     use super::ffi::{NativeCall as Call, take_native_calls};
     use crate::store::{AttachMode, HashAttach};
 
     // `flexible_ngram_kyotodb.h:143-155`: one `new HashDB`, then
     // `open(mode)` and, with ATTACH_CREATE, `open(mode | OCREATE)` on
-    // the same object; without CREATE, `delete` and no `close`.
+    // the same object. POLICY-ACCEPTED: both failed paths release the object.
     let dir = Temp::new("retry-dir", "missing");
     let path = dir.0.join("model.db");
     let bytes = path.as_os_str().as_encoded_bytes().to_vec();
     take_native_calls();
-    let HashAttach::Unopened(store) =
-        KcStore::attach_hash(&path, AttachMode::ReadWriteCreate, (b"k", b"v")).unwrap()
-    else {
-        panic!("a missing directory opened");
-    };
+    assert!(matches!(
+        KcStore::attach_hash(&path, AttachMode::ReadWriteCreate, (b"k", b"v")).unwrap(),
+        HashAttach::EmptyWalk
+    ));
     let calls = take_native_calls();
     let handle = calls.first().expect("native open").0;
     assert_eq!(
@@ -261,9 +192,9 @@ fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_deletes_without_clos
                 handle,
                 Call::Open(bytes.clone(), OREADER | OWRITER | OCREATE)
             ),
+            (handle, Call::Delete),
         ]
     );
-    drop(store);
 
     take_native_calls();
     let HashAttach::Closed =
@@ -439,33 +370,6 @@ fn assert_scans_match(store: &KcStore, model: &BTreeMap<Vec<u8>, Vec<u8>>) {
                 .collect::<Vec<_>>()
         );
     }
-}
-
-#[test]
-fn a_failed_suggestion_makes_only_the_check_call() {
-    use super::ffi::{NativeCall, take_native_calls};
-    use crate::store::SystemAttachment;
-
-    // `ChewingLargeTable2::search_suggestion` on a tree whose open
-    // failed: its first call is `m_db->check(akbuf, aksiz)` and the
-    // `-1` answer returns before any cursor is made
-    // (chewing_large_table2_kyotodb.cpp:539-544 at 074a2219), so no
-    // `jump`, `step` or `get` follows. After the owner's `reset()` the
-    // object is gone and the call reaches nothing.
-    let dir = Temp::new("failed-suggestion", "missing");
-    let path = dir.0.join("pinyin_index.bin");
-    take_native_calls();
-    let SystemAttachment::Unopened(db) = SystemAttachment::open(&path, false).unwrap() else {
-        panic!("a path in a missing directory opened");
-    };
-    let handle = take_native_calls().first().expect("native open").0;
-    db.suggest(&[1, 0, 2, 0]);
-    assert_eq!(take_native_calls(), [(handle, NativeCall::Check)]);
-    db.finish();
-    take_native_calls();
-    db.suggest(&[1, 0, 2, 0]);
-    db.read(&[1, 0, 2, 0]);
-    assert!(take_native_calls().is_empty(), "a finished object is inert");
 }
 
 #[test]

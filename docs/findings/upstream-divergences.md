@@ -244,7 +244,7 @@ An entry holds nothing else.
 ### Berkeley DB handles whose open failed (policy row 113)
 
 - **Pin:** keeps a Berkeley DB handle whose `DB->open` failed and calls it again, so libdb prints `BDB1565 DB-><method>: method not permitted before handle's open method` ([policy row 113](compatibility-policy.md#bdb-failed-handles)).
-- **oxpinyin:** On Berkeley DB, an open that fails closes its handle (`BdbUnopenedHandle`, `src/store/bdb/mod.rs`), so no later call reaches libdb and no `BDB1565` line is written. The frozen cases show it for `estimate_k_mixture_model`, `export_k_mixture_model`, `validate_k_mixture_model`, `prune_k_mixture_model`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate` and `export_interpolation`.
+- **oxpinyin:** On Berkeley DB, an open that fails closes its handle (`src/store/bdb/mod.rs`), so no later call reaches libdb and no `BDB1565` line is written. The frozen cases show it for `estimate_k_mixture_model`, `export_k_mixture_model`, `validate_k_mixture_model`, `prune_k_mixture_model`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate` and `export_interpolation`.
 - **Decision:** accepted under the external API misuse ruling: Berkeley DB requires `DB->close` after a failed open.
 - **Tests:** the Berkeley DB arm of each frozen case that cites this entry or policy row 113: `kmm_estimate_existing_empty`, `kmm_estimate_no_models`, `kmm_export_absent_file`, `kmm_export_existing_empty`, `kmm_validate_existing_empty`, `kmm_validate_missing_file`, `kmm_prune_existing_empty` (`utils/tests/it/kmm_tools.rs`); `estimate_interpolation_missing_bigram_file`, `estimate_interpolation_missing_deleted_bigram`, `eval_correction_rate_missing_bigram_file`, `gen_deleted_ngram_{empty_stdin,missing_bigram_file,ordinary,too_many_arguments}`, `gen_ngram_{empty_stdin,missing_bigram_file,ordinary,skip_pi_gram,too_many_arguments}` (`utils/tests/it/training.rs`); `exp_missing_bigram` (`utils/tests/it/storage_tools.rs`).
 
@@ -263,6 +263,13 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b), for 12-, 20-, 24-, 28- and 36-byte records. The other sizes reproduce the pin.
 - **Rejected:** reporting a miss for the entire row loses complete records.
 - **Tests:** `user_index::tests::a_misaligned_row_answers_its_whole_records` (`oxpinyin`).
+
+### Native database objects after a failed open (policy row 157)
+
+- **Pin:** system lookups and utilities can call a native object whose open failed (`src/pinyin.cpp:357,369,396,421,429,440`; `src/storage/ngram_kyotodb.cpp:43–50,110–153,186–196`; `src/storage/ngram_tkrzwdb.cpp:40–46,86–133,160–172`).
+- **oxpinyin:** drops failed handles and represents the attachment as unavailable. Lookups miss, utility walks collect no keys and writes refuse where they previously refused. Successful files keep their sync and close order, and the Kyoto Cabinet CREATE retry uses the same object. An ignored walk failure after that retry still gives a successful empty result. In-memory tkrzw stores drop without a file close (`tkrzw_dbm_tiny.cc:256–260`, `tkrzw_dbm_baby.cc:394–398`).
+- **Decision:** accepted under the language-artefact rule. Object lifetime after a failed open is an implementation detail.
+- **Tests:** `a_failed_bigram_attach_attempts_the_open_and_releases_the_object`, `a_create_retry_reopens_the_same_hashdb_and_a_failed_open_releases_it`, `a_failed_create_retry_preserves_the_backend_walk_result`, `a_system_tree_synchronizes_before_close_and_a_hash_does_not`.
 
 ## Accepted divergences — utilities
 

@@ -104,33 +104,12 @@
 //!
 //! # Object lifetime
 //!
-//! A [`Db`] is destroyed the way the pin's `reset()` destroys its member:
-//! an explicit `Close()`, whose status is ignored, then `delete`
-//! (`ngram_tkrzwdb.cpp:40-46`; the other owners synchronize soft first,
-//! `chewing_large_table2_tkrzwdb.cpp:63-72`, which [`Db::synchronize`]
-//! makes explicitly where the pin's owner does). The `Close` reaches a
-//! never-opened object too and answers `PRECONDITION_ERROR` there
-//! (`tkrzw_dbm_hash.cc:384-388`, `tkrzw_dbm_tree.cc:511-515`,
-//! `tkrzw_dbm_baby.cc:394-398`, `tkrzw_dbm_tiny.cc:256-260`), as the
-//! pin's does; the concrete destructors close only an object their own
-//! state says is open (`tkrzw_dbm_hash.cc:248-254`,
-//! `tkrzw_dbm_tree.cc:382-388`, `tkrzw_dbm_baby.cc:359-366`,
-//! `tkrzw_dbm_tiny.cc:220-228`), so the explicit `Close` is the only one.
-//! The pin's stack temporaries (`HashDBM tmp_db`) are closed explicitly
-//! only when their `Open` succeeded; a [`Db`] that stands in for one
-//! receives the same `Close` on both paths, which on the failed path is
-//! the inert `PRECONDITION_ERROR` call above.
-//!
-//! A failed `Open` leaves the object exactly as the library leaves it, for
-//! the owner to keep or drop. Every owner but `FlexibleBigram` keeps it
-//! (`chewing_large_table2_tkrzwdb.cpp:87-88`, `ngram_tkrzwdb.cpp:96-98`,
-//! `punct_table_tkrzwdb.cpp:70-72`); `FlexibleBigram` deletes it
-//! (`flexible_ngram_tkrzwdb.h:147-159`). Which Rust owner keeps a failed
-//! object is the owner's decision, made where the pin's owner makes it; the
-//! store constructors in this module drop it, as they always did, and the
-//! facade's system attachments keep it ([`open_system`], #1516). The
-//! test `a_failed_open_retains_the_concrete_object_whose_calls_answer_as_the_pins`
-//! proves the retained object is the native one.
+//! A file opened by a [`Db`] is closed on drop. System tree attachments
+//! synchronize before closing
+//! (`chewing_large_table2_tkrzwdb.cpp:63-72`); system bigram attachments
+//! close without synchronizing (`ngram_tkrzwdb.cpp:40-46`). An unsuccessful
+//! open has no file to close. BabyDBM and TinyDBM can also hold records
+//! entirely in memory, without a file.
 //!
 //! # Platform and the library build
 //!
@@ -187,10 +166,6 @@ const STATUS_SUCCESS: i32 = 0;
 /// reported as [`StoreError::Io`] so callers can branch on I/O failures the
 /// way they do for the other backends.
 const STATUS_SYSTEM_ERROR: i32 = 2;
-/// `Status::PRECONDITION_ERROR` — what a file class answers before a
-/// successful `Open` (`tkrzw_dbm_hash.cc:400-401`).
-#[cfg(test)]
-const STATUS_PRECONDITION_ERROR: i32 = 4;
 /// `Status::NOT_FOUND_ERROR` — how the ordered walk signals that the
 /// records ran out, which ends a scan successfully rather than failing it,
 /// and how `Get` and `Remove` answer an absent key.
@@ -298,8 +273,8 @@ pub(crate) enum Class {
 }
 
 /// One native database object, the pin's `DBM* m_db`: a concrete class
-/// allocated by [`Db::new`], opened — or not — by [`Db::open`], destroyed
-/// by `Close` then `delete` when dropped.
+/// allocated by [`Db::new`] and opened by [`Db::open`]. Drop closes any
+/// open file before destroying the object.
 ///
 /// # Safety claims (ruling point 1)
 ///
@@ -324,6 +299,7 @@ pub(crate) enum Class {
 ///   assigned, never retained.
 pub(crate) struct Db {
     dbm: UniquePtr<ffi::DBM>,
+    file_open: bool,
     /// Whether the owner's `reset()` calls `Synchronize(false)` before
     /// `Close`. Set only for a successfully opened system `TreeDBM`
     /// ([`open_system`]); every other holder closes without it, as its
@@ -344,6 +320,7 @@ impl Db {
         };
         Self {
             dbm,
+            file_open: false,
             sync_before_close: false,
         }
     }
@@ -364,43 +341,14 @@ impl Db {
         options: i32,
     ) -> Result<ffi::NativeStatus, StoreError> {
         validate_path(path)?;
-        Ok(ffi::open(
+        let status = ffi::open(
             self.dbm.pin_mut(),
             path.as_os_str().as_encoded_bytes(),
             writable,
             options,
-        ))
-    }
-
-    /// `delete m_db` with no `Close` (`flexible_ngram_tkrzwdb.h:148-158`):
-    /// the virtual destructor runs now, and `Drop` finds a null owner.
-    pub(crate) fn delete(&mut self) {
-        self.dbm = UniquePtr::null();
-    }
-
-    /// Whether the native object is still owned: always, except after
-    /// [`Self::delete`].
-    #[cfg(test)]
-    pub(crate) fn is_retained(&self) -> bool {
-        !self.dbm.is_null()
-    }
-
-    /// `DBM::IsOpen()`: the library's own answer, which the owner never
-    /// needs — it knows what `open` returned — and the retention test
-    /// checks.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "observed by the failed-open retention test")
-    )]
-    pub(crate) fn is_open(&self) -> bool {
-        ffi::is_open(&self.dbm)
-    }
-
-    /// `m_db->Close()` ahead of `Drop`'s own, for the test that observes
-    /// the status the pin's `reset()` ignores.
-    #[cfg(test)]
-    fn close(&mut self) -> ffi::NativeStatus {
-        ffi::close(self.dbm.pin_mut())
+        );
+        self.file_open |= status.code == STATUS_SUCCESS;
+        Ok(status)
     }
 
     /// `m_db->Get(key, &value)` (`ngram_tkrzwdb.cpp:111`), then the copy
@@ -510,11 +458,7 @@ thread_local! {
 
 impl Drop for Db {
     fn drop(&mut self) {
-        // `m_db->Close(); delete m_db;` (`ngram_tkrzwdb.cpp:42-43`), the
-        // status ignored as the pin ignores it. `UniquePtr` runs the
-        // virtual destructor afterwards. The null guard is for an object
-        // that `Db::delete` already destroyed.
-        if !self.dbm.is_null() {
+        if self.file_open {
             if self.sync_before_close {
                 self.reset_synchronize();
             }
@@ -628,8 +572,7 @@ fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
 /// attach`, `chewing_large_table2_tkrzwdb.cpp:75-89`; `PhraseLargeTable3::
 /// attach`, `phrase_large_table3_tkrzwdb.cpp:65-80`; `PunctTable::attach`,
 /// `punct_table_tkrzwdb.cpp:58-73`; `Bigram::attach`, `ngram_tkrzwdb.cpp:
-/// 86-99`). On success the store; on failure the object the pin keeps,
-/// which answers the facade's later calls.
+/// 86-99`). Returns no store when the native open fails.
 ///
 /// # Errors
 ///
@@ -638,7 +581,7 @@ pub(crate) fn open_system(
     path: &Path,
     hash: bool,
     read_only: bool,
-) -> Result<Result<TkrzwStore, TkrzwUnopenedHandle>, StoreError> {
+) -> Result<Option<TkrzwStore>, StoreError> {
     let class = if hash { Class::Hash } else { Class::Tree };
     let mut db = Db::new(class);
     let options = if read_only {
@@ -652,68 +595,10 @@ pub(crate) fn open_system(
         // bigram's `HashDBM` is closed with no explicit sync
         // (`ngram_tkrzwdb.cpp:36-45`).
         db.sync_before_close = class == Class::Tree;
-        Ok(TkrzwStore { db, read_only })
+        Some(TkrzwStore { db, read_only })
     } else {
-        Err(TkrzwUnopenedHandle { db, class })
+        None
     })
-}
-
-/// A system table's `TreeDBM` or `HashDBM` whose `Open` failed, kept as
-/// the pin keeps it: every later call reaches the real object, which
-/// answers `PRECONDITION_ERROR` (`tkrzw_dbm_hash.cc:400-401`,
-/// `tkrzw_dbm_tree.cc:563-564`), and reset makes the owner's calls on it.
-pub(crate) struct TkrzwUnopenedHandle {
-    db: Db,
-    class: Class,
-}
-
-impl TkrzwUnopenedHandle {
-    /// The pin's failed point read, `m_db->Get(key, &value)`, whose status
-    /// each owner then reads as a miss: `ChewingLargeTable2::search_internal`
-    /// (`chewing_large_table2_tkrzwdb.cpp:146-149`), `PhraseLargeTable3::
-    /// search` (`phrase_large_table3_tkrzwdb.cpp:136-139`), `Bigram::load`
-    /// (`ngram_tkrzwdb.cpp:111-114`) and `PunctTable::load_entry`
-    /// (`punct_table_tkrzwdb.cpp:124-130`). tkrzw writes nothing to stderr.
-    pub(crate) fn read(&self, key: &[u8]) {
-        let mut value = Vec::new();
-        let _ = self.db.get(key, &mut value);
-    }
-
-    /// The failed suggestion's first call, `m_db->Get(query_key, nullptr)`,
-    /// after which the pin returns without an iterator
-    /// (`chewing_large_table2_tkrzwdb.cpp:511-512`,
-    /// `phrase_large_table3_tkrzwdb.cpp:166-167`).
-    pub(crate) fn suggest(&self, key: &[u8]) {
-        let _ = self.db.check(key);
-    }
-
-    /// `Bigram::store`'s `m_db->Set(key, value)` (`ngram_tkrzwdb.cpp:
-    /// 124-133`), which the unopened object refuses; that status is the
-    /// answer.
-    pub(crate) fn write(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.db.set(key, value)
-    }
-
-    /// `Bigram::get_all_items`' `m_db->ProcessEach(&processor, false)`
-    /// (`ngram_tkrzwdb.cpp:160-172`), which the unopened object refuses
-    /// with no key collected; the pin returns that status.
-    pub(crate) fn walk(&self) -> Result<(), StoreError> {
-        self.db.keys(&mut Vec::new())
-    }
-}
-
-impl Drop for TkrzwUnopenedHandle {
-    fn drop(&mut self) {
-        // The owner's `reset()`: the three `TreeDBM` owners synchronize
-        // before closing (`chewing_large_table2_tkrzwdb.cpp:65-67`,
-        // `phrase_large_table3_tkrzwdb.cpp:52-54`, `punct_table_tkrzwdb.cpp:
-        // 45-47`); `Bigram` closes and deletes (`ngram_tkrzwdb.cpp:42-43`).
-        // Every status is ignored, as the pin ignores it; `Db::drop` then
-        // makes the `Close` and the delete.
-        if self.class == Class::Tree {
-            self.db.reset_synchronize();
-        }
-    }
 }
 
 // ── engine-level operations ───────────────────────────────────────
@@ -916,7 +801,6 @@ impl WriteStore for TkrzwStore {
         if mode != AttachMode::ReadWriteCreate
             || db.open(path, writable, OPEN_DEFAULT)?.code != STATUS_SUCCESS
         {
-            db.delete();
             return Ok(HashAttach::Closed);
         }
         let (key, value) = signature;

@@ -1,18 +1,3 @@
-#[test]
-fn a_missing_file_leaves_the_retained_failed_object_not_an_empty_table() {
-    // `PunctTable::attach` allocates the TreeDBM and returns the failed
-    // Open's answer with the object still owned (`punct_table_tkrzwdb.cpp:
-    // 70-72`, `punct_table_kyotodb.cpp:37-47`, BDB `db_create` then
-    // `open`); the facade ignores the answer (`pinyin.cpp:440`) and
-    // later calls that object. An empty table would call nothing.
-    let dir = tempfile::tempdir().expect("scratch directory");
-    let mut table = super::PunctTable::attach(&dir.path().join("punct.bin")).unwrap();
-    assert!(!table.is_open());
-    assert!(!table.attachment_finished());
-    table.finish_attachment();
-    assert!(table.attachment_finished());
-}
-
 use super::*;
 
 use crate::data::memory_dbm::MemoryDbm;

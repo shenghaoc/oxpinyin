@@ -162,15 +162,10 @@ const TEST: &str = "store::bdb::tests::a_failed_system_attachment_makes_no_call_
 #[test]
 fn a_failed_system_attachment_makes_no_call_on_its_handle() {
     if let Some(path) = std::env::var_os(CHILD) {
-        let SystemAttachment::Unopened(db) =
-            SystemAttachment::open(Path::new(&path), false).expect("attach")
-        else {
-            panic!("a missing file opened");
-        };
-        db.read(&[0; 8]);
-        db.suggest(&[0; 8]);
-        db.finish();
-        assert!(db.is_finished());
+        assert!(matches!(
+            SystemAttachment::open(Path::new(&path), false).expect("attach"),
+            SystemAttachment::Unopened
+        ));
         return;
     }
     let missing = std::env::temp_dir().join(format!(

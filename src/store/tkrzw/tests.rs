@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use super::{
-    Class, Db, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_NOT_FOUND_ERROR, STATUS_PRECONDITION_ERROR,
-    STATUS_SUCCESS, TkrzwUserBigramDb, copy_tkrzwdb, open_hash, open_hash_create, open_system,
+    Class, Db, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_SUCCESS, TkrzwUserBigramDb, copy_tkrzwdb,
+    open_hash, open_hash_create, open_system,
 };
-use crate::store::{StoreError, UserBigramDb, WriteStore, WriteTxn};
+use crate::store::{UserBigramDb, WriteStore, WriteTxn};
 
 /// `num_records` as the header on disk holds it, eight big-endian bytes
 /// at 24 (`META_OFFSET_NUM_RECORDS`); only `Synchronize` and `Close`
@@ -43,194 +43,15 @@ fn sorted_keys(db: &TkrzwUserBigramDb) -> Vec<Option<[u8; 4]>> {
     keys
 }
 
-/// The tkrzw status code a backend error carries.
-fn backend_code(error: &StoreError) -> Option<i32> {
-    match error {
-        StoreError::Backend(error) => error.code(),
-        StoreError::Io(_)
-        | StoreError::ReadOnly
-        | StoreError::InvalidInput(_)
-        | StoreError::ReadAfterCheck
-        | StoreError::ShortArrayHeader
-        | StoreError::FatalCopy => None,
-    }
-}
-
 #[test]
-fn a_failed_open_retains_the_concrete_object_whose_calls_answer_as_the_pins() {
-    // `m_db = new TreeDBM; return m_db->Open(...).IsOK();`
-    // (`chewing_large_table2_tkrzwdb.cpp:87-88`,
-    // `phrase_large_table3_tkrzwdb.cpp:77-79`, `punct_table_tkrzwdb.cpp:
-    // 70-72`) and `m_db = new HashDBM; return m_db->Open(...).IsOK();`
-    // (`ngram_tkrzwdb.cpp:96-98`): a failed attach returns false with
-    // the allocated object still owned, and the pin's later calls reach
-    // it. A missing file under `OPEN_NO_CREATE` fails in the file
-    // layer with `ENOENT`, which `GetErrnoStatus` classifies as
-    // `NOT_FOUND_ERROR` (`tkrzw_file_mmap.cc:110-177`,
-    // `tkrzw_lib_common.cc:247-278`); every later record call answers
-    // `PRECONDITION_ERROR` "not opened database" (`tkrzw_dbm_hash.cc:
-    // 400-401`, `tkrzw_dbm_tree.cc:563-564`; the iterator's `First`
-    // and `Jump` likewise, `tkrzw_dbm_tree.cc:2142-2176`), and so do
-    // the owner's `Synchronize` and `Close` at reset
-    // (`tkrzw_dbm_tree.cc:919-924`, `:511-515`).
-    let dir = TempDir::new("failed-open");
-    for class in [Class::Tree, Class::Hash] {
-        let path = dir.0.join(format!("{class:?}-missing"));
-        let mut db = Db::new(class);
-        let status = db.open(&path, false, OPEN_NO_CREATE).unwrap();
-        assert_eq!(status.code, STATUS_NOT_FOUND_ERROR, "{class:?}");
-        assert!(
-            db.is_retained(),
-            "{class:?}: the native object survives its failed Open"
-        );
-        assert!(!db.is_open(), "{class:?}");
-        assert!(!path.exists(), "{class:?}: OPEN_NO_CREATE created nothing");
-
-        let mut value = Vec::new();
-        let get = db.get(b"key", &mut value).unwrap_err();
-        assert_eq!(
-            backend_code(&get),
-            Some(STATUS_PRECONDITION_ERROR),
-            "{class:?}: {get}"
-        );
-        let check = db.check(b"key").unwrap_err();
-        assert_eq!(
-            backend_code(&check),
-            Some(STATUS_PRECONDITION_ERROR),
-            "{class:?}"
-        );
-        let mut cursor = db.cursor().unwrap();
-        assert_eq!(cursor.first().code, STATUS_PRECONDITION_ERROR, "{class:?}");
-        assert_eq!(
-            cursor.jump(b"key").code,
-            STATUS_PRECONDITION_ERROR,
-            "{class:?}"
-        );
-        drop(cursor);
-        let keys = db.keys(&mut Vec::new()).unwrap_err();
-        assert_eq!(
-            backend_code(&keys),
-            Some(STATUS_PRECONDITION_ERROR),
-            "{class:?}"
-        );
-        let sync = db.synchronize(false).unwrap_err();
-        assert_eq!(
-            backend_code(&sync),
-            Some(STATUS_PRECONDITION_ERROR),
-            "{class:?}"
-        );
-        // The object is still the native one, and a later successful
-        // `Open` of the same object works: the pin re-attaches through
-        // `reset()` and a new allocation, but the library's own state
-        // machine is what retention preserves.
-        assert!(db.is_retained(), "{class:?}");
-        let status = db.open(&path, true, OPEN_DEFAULT).unwrap();
-        assert_eq!(
-            status.code,
-            STATUS_SUCCESS,
-            "{class:?}: {}",
-            super::message_text(&status)
-        );
-        assert!(db.is_open(), "{class:?}");
-        db.set(b"key", b"value").unwrap();
-        assert!(db.get(b"key", &mut value).unwrap());
-        assert_eq!(value, b"value");
-    }
-}
-
-#[test]
-fn a_failed_system_attach_keeps_the_object_and_its_later_calls_are_inert() {
-    // `pinyin_init` ignores every table's attach answer and later calls
-    // the same object (pinyin.cpp:357,369,396,440 at 074a2219): on
-    // tkrzw the retained TreeDBM or HashDBM answers PRECONDITION_ERROR,
-    // which each owner reads as a miss, and reset synchronizes (Tree
-    // owners), closes and deletes it.
-    let dir = TempDir::new("system-attach");
-    for hash in [false, true] {
-        let handle = match open_system(&dir.0.join("missing"), hash, true).unwrap() {
-            Err(handle) => handle,
-            Ok(_) => panic!("a missing file opened (hash: {hash})"),
-        };
-        assert!(handle.db.is_retained());
-        assert!(!handle.db.is_open());
-        handle.read(b"key");
-        handle.suggest(b"key");
-        drop(handle);
-        assert!(!dir.0.join("missing").exists(), "no file was created");
-    }
-    // The same call opens a present file.
-    let path = dir.0.join("present.db");
-    {
-        let store = open_hash_create(&path).unwrap();
-        store.db.set(b"k", b"v").unwrap();
-        store.db.synchronize(false).unwrap();
-    }
-    let mut value = Vec::new();
-    match open_system(&path, true, true).unwrap() {
-        Ok(store) => assert!(store.db.get(b"k", &mut value).unwrap()),
-        Err(_) => panic!("a present file did not open"),
-    }
-}
-
-#[test]
-fn a_failed_bigram_attach_keeps_its_hashdbm_until_reset() {
-    use crate::store::SystemAttachment;
-
-    // `Bigram::attach` makes one `Open` on a new `HashDBM`, with no
-    // CREATE retry and no signature check, and keeps the object when
-    // the open fails (ngram_tkrzwdb.cpp:86-99). `load`, `store` and
-    // `get_all_items` reach it (`Get`, `Set`, `ProcessEach`: :102-133,
-    // :160-172), and `reset()` closes and deletes it with no
-    // `Synchronize` (:40-46).
-    let dir = TempDir::new("failed-bigram");
-    let path = dir.0.join("missing").join("bigram.db");
-    for read_only in [true, false] {
-        let handle = match open_system(&path, true, read_only).unwrap() {
-            Err(handle) => handle,
-            Ok(_) => panic!("read only: {read_only}: a missing directory opened"),
-        };
-        assert!(handle.db.is_retained(), "read only: {read_only}");
-        assert!(!handle.db.is_open(), "read only: {read_only}");
-        handle.read(b"tkn\0");
-        // `store` and `get_all_items` return the refused statuses.
-        assert!(handle.write(b"tkn\0", b"gram").is_err());
-        assert!(handle.walk().is_err());
-        let before = reset_syncs();
-        drop(handle);
-        assert_eq!(reset_syncs(), before, "read only: {read_only}");
-
-        let SystemAttachment::Unopened(db) =
-            SystemAttachment::attach_bigram(&path, read_only).unwrap()
-        else {
-            panic!("read only: {read_only}: a missing directory opened");
-        };
-        assert!(!db.is_finished(), "read only: {read_only}");
-        db.finish();
-        assert!(!path.exists(), "no file was created");
-    }
-}
-
-#[test]
-fn a_never_opened_memory_class_is_usable_and_its_reset_calls_are_inert() {
-    // `m_db = new BabyDBM;` / `new TinyDBM;` with no `Open`: records
-    // are stored (`chewing_large_table2_tkrzwdb.cpp:104`,
-    // `ngram_tkrzwdb.cpp:58`), `Synchronize(false)` returns SUCCESS
-    // without file I/O and `Close` answers PRECONDITION_ERROR
-    // (`tkrzw_dbm_baby.cc:583-596`, `:394-398`; `tkrzw_dbm_tiny.cc:
-    // 455-468`, `:256-260`), both ignored by the pin's `reset()`.
+fn an_in_memory_class_stores_rows_without_a_file() {
     for class in [Class::Baby, Class::Tiny] {
-        let mut db = Db::new(class);
-        assert!(!db.is_open(), "{class:?}");
+        let db = Db::new(class);
         db.set(b"k", b"v").unwrap();
         let mut value = Vec::new();
         assert!(db.get(b"k", &mut value).unwrap(), "{class:?}");
         assert_eq!(value, b"v");
         assert_eq!(db.count().unwrap(), 1);
-        db.synchronize(false).unwrap();
-        let close = db.close();
-        assert_eq!(close.code, STATUS_PRECONDITION_ERROR, "{class:?}");
-        // The record survives the inert close.
-        assert!(db.get(b"k", &mut value).unwrap(), "{class:?}");
     }
 }
 
@@ -538,15 +359,15 @@ fn a_system_tree_synchronizes_before_close_and_a_hash_does_not() {
     open_hash_create(&hash).unwrap();
 
     let before = reset_syncs();
-    drop(open_system(&tree, false, true).unwrap().ok().unwrap());
+    drop(open_system(&tree, false, true).unwrap().unwrap());
     assert_eq!(reset_syncs(), before + 1);
-    drop(open_system(&hash, true, true).unwrap().ok().unwrap());
+    drop(open_system(&hash, true, true).unwrap().unwrap());
     assert_eq!(reset_syncs(), before + 1);
-    drop(
+    // POLICY-ACCEPTED: a failed attachment has no owner reset.
+    assert!(
         open_system(&dir.0.join("missing.bin"), false, true)
             .unwrap()
-            .err()
-            .unwrap(),
+            .is_none()
     );
-    assert_eq!(reset_syncs(), before + 2);
+    assert_eq!(reset_syncs(), before + 1);
 }

@@ -80,7 +80,6 @@ pub(super) mod ffi {
 
         fn open(dbm: Pin<&mut DBM>, path: &[u8], writable: bool, options: i32) -> NativeStatus;
         fn close(dbm: Pin<&mut DBM>) -> NativeStatus;
-        fn is_open(dbm: &DBM) -> bool;
 
         fn get(dbm: &DBM, key: &[u8], value: Pin<&mut CxxString>) -> NativeStatus;
         fn check(dbm: &DBM, key: &[u8]) -> NativeStatus;
