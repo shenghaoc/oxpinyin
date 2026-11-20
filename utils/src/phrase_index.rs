@@ -19,7 +19,7 @@ use crate::k_mixture_model::phrase::PhraseIndex;
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::LibraryError;
-use oxpinyin::data::table_info::{FileName, TableConf};
+use oxpinyin::data::table_info::{FileName, TableConf, TableConfError};
 use oxpinyin::input::tool::{self, k_mixture_model as edge};
 
 /// One loaded phrase index.
@@ -41,12 +41,19 @@ impl PhraseIndex for SystemPhraseIndex {
 }
 
 /// `SystemTableInfo2::load(SYSTEM_TABLE_INFO)` (`import:275`,
-/// `export:128`, `gen:330`): the cwd-relative `table.conf`, or the pin's
-/// `load table.conf failed.` and `ENOENT`.
+/// `export:128`, `gen:330`): the cwd-relative `table.conf`.
+///
+/// # Aborts
+///
+/// Aborts on every [`TableConfError::Abort`] site, as the pin's
+/// `table_info.cpp` does (`:119-175`, `:276` via `:229-286`). Missing-file
+/// and malformed-header refusals keep the `load table.conf failed.` and
+/// `ENOENT` path.
 #[must_use]
 pub fn load_table_conf() -> TableConf {
     match TableConf::load(c"table.conf") {
         Ok(conf) => conf,
+        Err(TableConfError::Abort(_)) => tool::abort(),
         Err(_) => {
             edge::report_table_conf_load_failed();
             tool::exit(tool::ENOENT);
