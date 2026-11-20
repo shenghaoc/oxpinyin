@@ -293,7 +293,7 @@ impl<'a> LiveSystemItems<'a> {
         {
             return Lookup::Found(found);
         }
-        if store.live_item_past_buffer(token) {
+        if store.live_item_is_incomplete(token) {
             return Lookup::Absent;
         }
         match (
@@ -310,9 +310,9 @@ impl<'a> LiveSystemItems<'a> {
     /// [`Self::read`] for the token getters. `get_phrase_item` checks only
     /// the offset and the two header bytes (074a2219 `phrase_index.cpp:180-205`)
     /// and each getter reads its own field, so the item is read field by
-    /// field ([`PhraseItemView::fields`]): its unigram, text and in-buffer
-    /// readings stay readable when a later reading passes the end of the
-    /// buffer (compatibility policy row 130). A journal-written item row 107
+    /// field ([`PhraseItemView::fields`]): its unigram, text and readings
+    /// inside the record stay readable when a later reading is incomplete
+    /// (compatibility policy row 130). A journal-written item row 107
     /// rejected still answers no item. Consumers: `effective_unigram`,
     /// `token_phrase`, `token_nth_pronunciation`.
     pub(crate) fn read_fields<R>(
@@ -373,7 +373,7 @@ impl<'a> LiveSystemItems<'a> {
         if store.system_item_removed(token) {
             return Lookup::Absent;
         }
-        if store.live_item_past_buffer(token) {
+        if store.live_item_is_incomplete(token) {
             return Lookup::Absent;
         }
         self.libraries

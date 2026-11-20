@@ -122,22 +122,6 @@ impl UserStore {
         self.library_total_of(&offsets, &phrases, library)
     }
 
-    /// `FacadePhraseIndex::add_phrase_item` for an item of `unigram` added to
-    /// `library` (`phrase_index.h:669`): the facade total takes it, and a
-    /// system library's total takes it too when the item's unigram was kept.
-    fn take_item_in(&self, library: u8, unigram: u32, accepted: bool) {
-        let mut items = self.inner.system_items.borrow_mut();
-        match self.originals.get(&library) {
-            Some(original) if accepted => {
-                let total = items
-                    .library_total(library, Some(original))
-                    .unwrap_or(original.total);
-                items.set_library_total(library, total.wrapping_add(unigram));
-            }
-            _ => items.add_facade_extra(u64::from(unigram)),
-        }
-    }
-
     /// `FacadePhraseIndex::remove_phrase_item` (`phrase_index.h:691`): the
     /// facade and the library's totals lose the item's unigram.
     fn take_item_out(&self, library: u8, unigram: u32) {
@@ -217,10 +201,8 @@ impl UserStore {
     /// (074a2219 pinyin.cpp:2547-2558).
     ///
     /// `pinyin.cpp:2541-2545` takes `get_range`'s end as the token with no
-    /// overflow check and no reserved-id bump; `FacadePhraseIndex::get_range`
-    /// masks the end into the nibble (`phrase_index.cpp:620`), so a full
-    /// library wraps to slot 0, whose offset word `add_phrase_item`
-    /// overwrites (`phrase_index.cpp:208-217`; register row 119).
+    /// overflow check and no reserved-id bump. A full library wraps to slot
+    /// 0 (register row 119).
     pub(super) fn arena_promote(
         &mut self,
         token: PhraseToken,
@@ -257,9 +239,7 @@ impl UserStore {
             if items.lacks_sub_index(library, original) {
                 return Err(UserStoreError::InvalidPhrase);
             }
-            if items.add_item(original, token, &bytes) {
-                self.inner.has_removed_system_items.set(true);
-            }
+            items.add_item(original, token, &bytes);
             drop(items);
             self.inner.has_system_items.set(true);
         } else {
@@ -271,7 +251,10 @@ impl UserStore {
                 .ok_or(UserStoreError::InvalidPhrase)?
                 .add(token & PHRASE_MASK, &bytes)
                 .map_err(UserStoreError::Persistence)?;
-            self.take_item_in(library, unigram, false);
+            self.inner
+                .system_items
+                .borrow_mut()
+                .add_facade_extra(u64::from(unigram));
         }
         phrases
             .phrase_table
@@ -332,9 +315,6 @@ impl UserStore {
             delta,
         ) {
             self.inner.has_system_items.set(true);
-            // A trained count may overlap another item's header; the live
-            // per-token check decides whether that item is still readable.
-            self.inner.has_removed_system_items.set(true);
         }
         drop(items);
         self.mark_committed_write(true);
@@ -443,7 +423,10 @@ impl UserStore {
             .ok_or(UserStoreError::InvalidPhrase)?
             .add(token & PHRASE_MASK, &bytes)
             .map_err(UserStoreError::Persistence)?;
-        self.take_item_in(library, increment, accepted);
+        self.inner
+            .system_items
+            .borrow_mut()
+            .add_facade_extra(u64::from(increment));
         {
             phrases
                 .phrase_table
@@ -496,13 +479,10 @@ impl UserStore {
         if let Some(token) = existing {
             let merged = merged_live_item(&items, original, token, words, &packed, delta)?;
             items.remove_item(original, token);
-            let overwrote = items.add_item(original, token, &merged);
+            items.add_item(original, token, &merged);
             drop(items);
             drop(phrases);
             self.inner.has_system_items.set(true);
-            if overwrote {
-                self.inner.has_removed_system_items.set(true);
-            }
             self.mark_committed_write(true);
             return Ok(token);
         }
@@ -514,9 +494,7 @@ impl UserStore {
             unigram: 0,
             prons: vec![(packed.clone(), delta)],
         })?;
-        if items.add_item(original, token, &bytes) {
-            self.inner.has_removed_system_items.set(true);
-        }
+        items.add_item(original, token, &bytes);
         let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
         let outcome = items
             .add_unigram(Some(original), token, increment)

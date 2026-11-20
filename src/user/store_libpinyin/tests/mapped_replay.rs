@@ -167,13 +167,10 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     );
 }
 
-/// B starts inside A's pronunciation area. A same-header MODIFY changes B's
-/// header and count; B's enlarged extent stays inside the content buffer
-/// (row 107's defined in-buffer overlap). The pin writes through A and saves
-/// both slots, then stops at B's already-applied comparison on reopen:
-/// `phrase_index.cpp:180-205,403-434,487-508` at 074a2219.
+/// POLICY-ACCEPTED (row 107). A truncated record cannot be used as a
+/// MODIFY comparison or change its neighbour's saved value.
 #[test]
-fn internally_overlapping_slots_survive_same_header_modify_and_reopen() {
+fn a_truncated_system_record_cannot_modify_the_next_record() {
     let mut old = vec![1, 2];
     old.extend_from_slice(&100_u32.to_le_bytes());
     old.extend_from_slice(&0x4f60_u32.to_le_bytes());
@@ -209,14 +206,14 @@ fn internally_overlapping_slots_survive_same_header_modify_and_reopen() {
     )
     .expect("write overlapping chunk");
     let mut store = profile.open();
-    assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
-    assert_eq!(store.system_unigram(LIBRARY | 2), Some(77));
-    assert_eq!(store.live_pronunciation_count(LIBRARY | 2), Some(1));
+    assert_eq!(store.system_unigram(LIBRARY | 1), None);
+    assert_eq!(store.system_unigram(LIBRARY | 2), Some(50));
+    assert_eq!(store.live_pronunciation_count(LIBRARY | 2), Some(0));
     store.mark_modified();
     store.save_reporting().expect("save");
     drop(store);
     let reopened = profile.open();
-    assert_eq!(reopened.system_unigram(LIBRARY | 1), Some(100));
-    assert_eq!(reopened.system_unigram(LIBRARY | 2), Some(77));
-    assert_eq!(reopened.live_pronunciation_count(LIBRARY | 2), Some(1));
+    assert_eq!(reopened.system_unigram(LIBRARY | 1), None);
+    assert_eq!(reopened.system_unigram(LIBRARY | 2), Some(50));
+    assert_eq!(reopened.live_pronunciation_count(LIBRARY | 2), Some(0));
 }

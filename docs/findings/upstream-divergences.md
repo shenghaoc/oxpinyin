@@ -149,11 +149,10 @@ An entry holds nothing else.
 
 ### Shipped item with a reading past the content end (policy row 130, class (b))
 
-- **Pin:** `SubPhraseIndex::get_phrase_item` sets the item length from the header without checking the content end (`src/storage/phrase_index.cpp:180-205`). The nth pronunciation getter copies the reading from that view (`:33-44`; `src/pinyin.cpp:2801-2818`; `src/zhuyin.cpp:1793-1810`). A reading past the allocation is undefined.
-- **oxpinyin:** the getters return the available header fields, text and complete readings. The nth getter returns false for a reading past the content end.
-- **Decision:** accepted, class (b), for the out-of-bounds read. Reads within the content reproduce the pin.
-- **Rejected:** refusing the entire item in the getters also hides fields the pin reads within bounds.
-- **Tests:** `phrase_library::tests::a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields` (`oxpinyin`) and `dict::tests::an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array` (`oxpinyin-capi`).
+- **Pin:** the nth getter copies a reading out of the header-derived view (`src/storage/phrase_index.cpp:33–44,180–205`; `src/pinyin.cpp:2801–2818`; `src/zhuyin.cpp:1793–1810`). A reading past the allocation is undefined.
+- **oxpinyin:** the getters return the available header fields, text and complete readings inside the selected record. The nth getter returns false for an unavailable reading.
+- **Decision:** accepted, class (b), for an out-of-bounds read. The record boundary also applies when later records are present.
+- **Tests:** `a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields` and `an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array`.
 
 ## Accepted divergences — store and data files
 
@@ -185,12 +184,12 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b) (row 80); rows 78 and 83 read the rows and λ as the pin does, and row 79 reproduces the pin.
 - **Tests:** `table_info::tests::header_misses_are_the_ordinary_false_or_the_uninitialised_read` (header parsing), `oxpinyin::facade::context::tests::native_files::{pinyin,zhuyin}_table_conf_919_short_row_merged` (row handling), `unreadable_candidates::{a_sole_unreadable_after_cursor_row_has_a_null_string,two_unreadable_rows_are_omitted,a_sole_unreadable_row_survives_the_user_table_fallback,zero_total_aborts_after_cursor}` in both C facades and `unreadable_candidates::choosing_a_sole_unreadable_row_reports_the_span_and_clears_the_constraint` in `oxpinyin-capi` (candidate rows).
 
-### A system journal record names an absent token or leaves an over-long item header (policy row 107)
+### Journal operations use their own item (policy row 107)
 
-- **Pin:** in `SubPhraseIndex::merge` (`src/storage/phrase_index.cpp:439-517`, from `src/pinyin.cpp:276`), a REMOVE of an absent token dereferences the NULL item (`src/storage/phrase_index.cpp:460-475`, `:219-234`), and a growing MODIFY of an absent token asserts through the same NULL (`:477-501`, at `:489`): SIGSEGV. A MODIFY or ADD payload is not checked against its header, so a later `get_phrase_item` (`:180-206`) can read past the content buffer.
-- **oxpinyin:** the absent-token REMOVE is a no-op; the growing stale MODIFY stops the replay with the earlier records applied; a stored header that names a read past the content buffer makes that item unreadable to every getter, with the other changes kept. A payload past the log's end reverts the whole replay.
-- **Decision:** accepted, class (b), by maintainer ruling: a NULL dereference and an over-read have no safe reproduction.
-- **Tests:** `an_over_read_item_answers_no_item_and_the_records_around_it_stay`, `a_mismatch_before_an_over_read_keeps_the_records_before_the_stop`, `rollback_restores_the_buffer_for_every_kind_of_mutation`.
+- **Pin:** `SubPhraseIndex::merge` compares the view left by an earlier read when an absent token leaves the item untouched, and can write through that stale view (`src/storage/phrase_index.cpp:439–517`, `src/storage/phrase_index.h:646–652`); absent REMOVE can dereference NULL.
+- **oxpinyin:** an absent MODIFY stops at that record. An absent REMOVE is a no-op. Ordered replay compares only the addressed item's old bytes. The matching prefix is kept, except on a truncated journal payload, which rolls the replay back.
+- **Decision:** accepted under the language-artefact rule for stale views and as class (b) for the NULL dereference.
+- **Tests:** `an_absent_modify_stops_with_the_previous_item_intact`, `an_incomplete_modify_cannot_borrow_bytes_from_other_records`, `rollback_restores_the_buffer_for_every_kind_of_mutation`.
 
 ### Bigram export iterator reads past a partial user-gram item (policy row 98, class (b))
 
@@ -220,12 +219,12 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b): a dereference of an item the sub-index no longer owns.
 - **Tests:** `reloading_a_system_library_drops_the_unsaved_session` (store reload and saved readings).
 
-### A wrapped phrase-content item extends past the content (policy row 111)
+### Phrase reads and writes stay inside their record (policy rows 107, 111 and 130)
 
-- **Pin:** `SubPhraseIndex::get_phrase_item` builds a header-derived view without checking its extent (`src/storage/phrase_index.cpp:180-206`); after the content offset wraps, a read can pass the content end (compaction at `:624-675`, `src/pinyin.cpp:655-659`).
-- **oxpinyin:** `UserLibrary::item` and the replay buffer answer a read inside the content with the following bytes and answer no item past the content end; `append_offset` reproduces the wrap modulo 2^32, and compaction runs at the pin's points only.
-- **Decision:** accepted, class (b): the read past the content is unsafe.
-- **Tests:** `a_read_crossing_the_item_end_returns_the_next_bytes_and_one_past_the_content_is_none` (`src/user/user_library.rs`).
+- **Pin:** `SubPhraseIndex` uses header-derived item extents and narrowed content offsets (`src/storage/phrase_index.cpp:150–236,439–517,624–675`). Item views can cross into later records, retain prior payload bytes, overlap after offset wrap, or write through shared backing storage (`src/include/memory_chunk.h:102–130,372–390`).
+- **oxpinyin:** reads stop at the next indexed item or the end of content. Journal payloads stand alone. Each write changes only its addressed slot, even when two loaded offsets were equal. Partial last-item getters still return the fields present in that record.
+- **Decision:** accepted under the language-artefact rule. Reads that would leave the allocation retain the class (b) outcome.
+- **Tests:** `count_checks_both_header_bytes_within_the_record`, `a_read_crossing_the_item_boundary_answers_no_item`, `a_truncated_system_record_cannot_modify_the_next_record`, `aliased_offsets_keep_independent_values_through_save_and_reopen`, `a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields`.
 
 ### An oversized user chunk or journal bulk save (policy row 112)
 

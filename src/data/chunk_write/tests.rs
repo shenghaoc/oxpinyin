@@ -195,7 +195,7 @@ fn phrase_item_codec_round_trips_and_matches_the_entry_area() {
 }
 
 #[test]
-fn phrase_validation_matches_boundaries_and_permissive_values() {
+fn phrase_view_matches_decoder_boundaries_and_permissive_values() {
     for length in [0_u8, 1, 2, 255] {
         for prons in [0_u8, 1, 2, 255] {
             let text_end = 6 + 4 * usize::from(length);
@@ -220,14 +220,12 @@ fn phrase_validation_matches_boundaries_and_permissive_values() {
             cuts.dedup();
             for cut in cuts {
                 assert_eq!(
-                    validate_phrase_item(&bytes[..cut]).map_err(|error| error.to_string()),
-                    decode_phrase_item(&bytes[..cut])
-                        .map(|_| ())
-                        .map_err(|error| error.to_string()),
+                    crate::data::phrase_library::PhraseItemView::from_bytes(&bytes[..cut])
+                        .is_some(),
+                    decode_phrase_item(&bytes[..cut]).is_ok(),
                     "length={length}, prons={prons}, cut={cut}"
                 );
             }
-            assert!(validate_phrase_item(&bytes).is_ok());
             assert!(decode_phrase_item(&bytes).is_ok());
         }
     }

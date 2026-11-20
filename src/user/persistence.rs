@@ -1615,7 +1615,7 @@ fn read_log_payload(
 /// retained buffer, its total, and an override without an item for each
 /// slot that answers none.
 fn record_merge(
-    merge: Merge<'_, '_>,
+    merge: Merge,
     loaded: &mut Loaded,
     replayed: &mut crate::user::LibraryTable<ReplayedLibrary>,
     nibble: u8,
@@ -1675,10 +1675,8 @@ fn replay_log(
     let payload = bytes.as_slice();
     // The pin emits local slots, but its reader masks high bits even
     // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
-    // `SubPhraseIndex::merge` over the records, in the pin's own terms:
-    // bytes compared as bytes, payloads kept whole, the first failure the
-    // end (`phrase_index.cpp:439-517`). Session opens retain the byte
-    // views.
+    // Compare each old payload as wire bytes and stop at the first mismatch.
+    // A replacement uses only its own record's bytes.
     // A masked logger with no header is empty. Decide that before
     // taking ownership so rollback remains exclusive to payload over-read.
     let masked = if let Some((mask, value)) = mask {
@@ -1756,7 +1754,7 @@ enum MergeEnd {
 /// `add_phrase_item` does (`memory_chunk.h:390`), each only where the walk
 /// reaches it.
 fn merge_log<'a, I>(
-    merge: &mut Merge<'_, 'a>,
+    merge: &mut Merge,
     records: impl Fn() -> I,
     library: u8,
     skipped: &mut Option<&mut Vec<String>>,

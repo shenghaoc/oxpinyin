@@ -211,17 +211,6 @@ impl PendingMapping {
 
 /// One owned writable private mapping. No raw pointer or descriptor escapes;
 /// drop releases the entire mapped range through memmap2 on every platform.
-///
-/// A reader excludes a writer for as long as the read view is used:
-///
-/// ```compile_fail
-/// use oxpinyin::input::chunk::Mapping;
-/// fn overlapping_views(mapping: &mut Mapping) {
-///     let before = mapping.as_slice();
-///     mapping.as_mut_slice()[0] = 1;
-///     assert_eq!(before[0], 1);
-/// }
-/// ```
 pub(crate) struct Mapping(memmap2::MmapMut);
 
 impl Mapping {
@@ -229,11 +218,6 @@ impl Mapping {
     #[must_use]
     pub(crate) fn as_slice(&self) -> &[u8] {
         &self.0
-    }
-
-    /// Borrow this mapping exclusively for an in-place write.
-    pub(crate) fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.0
     }
 }
 

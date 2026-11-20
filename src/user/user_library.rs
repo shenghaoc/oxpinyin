@@ -1,5 +1,8 @@
 //! Owned session sub-index: packed item bodies and independent index membership.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+
 use crate::data::chunk_write::sub_phrase_index_sections;
 use crate::data::phrase_library::PhraseItemView;
 
@@ -10,13 +13,10 @@ use crate::user::user_phrase_table::UserPhraseTable;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserLibrary {
     total: u32,
-    slots: Slots,
+    slots: BTreeMap<u32, Range<usize>>,
     content: Vec<u8>,
+    shared_starts: BTreeSet<usize>,
 }
-
-/// `table_offset_t` is `guint32` (`novel_types.h:128` at 074a2219), so a
-/// content offset is the content size modulo 2^32.
-const OFFSET_MODULUS: u64 = 1 << 32;
 
 /// `MemoryChunk::ensure_has_space` narrows a growth to `int`
 /// (`memory_chunk.h:95-98`): a bulk copy that grows a fresh chunk by 2^31
@@ -25,37 +25,27 @@ const COPY_LIMIT: u64 = 1 << 31;
 
 #[cfg(test)]
 thread_local! {
-    static TEST_LIMITS: std::cell::Cell<Option<(u64, u64)>> = const { std::cell::Cell::new(None) };
-}
-
-/// The modulus of a content offset: 2^32, or a test's small stand-in, so a
-/// test reaches the wrap without gigabytes. One code path serves both.
-pub(crate) fn offset_modulus() -> u64 {
-    #[cfg(test)]
-    if let Some((modulus, _)) = TEST_LIMITS.with(std::cell::Cell::get) {
-        return modulus;
-    }
-    OFFSET_MODULUS
+    static TEST_LIMITS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
 /// The growth at which a fresh chunk's bulk copy is unsafe in the pin.
 pub(crate) fn copy_limit() -> u64 {
     #[cfg(test)]
-    if let Some((_, limit)) = TEST_LIMITS.with(std::cell::Cell::get) {
+    if let Some(limit) = TEST_LIMITS.with(std::cell::Cell::get) {
         return limit;
     }
     COPY_LIMIT
 }
 
-/// Test-only: replace the offset modulus and the copy limit on this thread
+/// Test-only: replace the copy limit on this thread
 /// until the guard drops.
 #[cfg(test)]
 pub(crate) struct TestLimits;
 
 #[cfg(test)]
 impl TestLimits {
-    pub(crate) fn set(modulus: u64, copy_limit: u64) -> Self {
-        TEST_LIMITS.with(|limits| limits.set(Some((modulus, copy_limit))));
+    pub(crate) fn set(copy_limit: u64) -> Self {
+        TEST_LIMITS.with(|limits| limits.set(Some(copy_limit)));
         Self
     }
 }
@@ -67,18 +57,8 @@ impl Drop for TestLimits {
     }
 }
 
-/// `add_phrase_item`'s `table_offset_t offset = m_phrase_content.size()`
-/// (`phrase_index.cpp:208-210`): the size modulo 2^32, and 8 for zero.
-pub(crate) fn append_offset(content_len: usize) -> u32 {
-    match (content_len as u64 % offset_modulus()) as u32 {
-        0 => 8,
-        offset => offset,
-    }
-}
-
 struct Replacement {
     slot: u32,
-    offset: u32,
     length: usize,
     unigram: u32,
     /// Whether the item the slot names leaves the total first:
@@ -152,39 +132,6 @@ impl SessionPhrases {
     }
 }
 
-/// One offset word per slot. Zero marks an empty slot
-/// (phrase_index.cpp:180–193, 208–217 and 230–232 at 074a2219).
-#[derive(Clone, Debug, Default)]
-struct Slots(Vec<u32>);
-
-impl Slots {
-    fn set(&mut self, slot: u32, offset: u32) {
-        let slot = slot as usize;
-        if offset != 0 && slot >= self.0.len() {
-            self.0.resize(slot + 1, 0);
-        }
-        if let Some(value) = self.0.get_mut(slot) {
-            *value = offset;
-        }
-    }
-
-    fn offset(&self, slot: u32) -> Option<u32> {
-        self.0
-            .get(slot as usize)
-            .copied()
-            .filter(|offset| *offset != 0)
-    }
-
-    fn entries(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
-        self.0
-            .iter()
-            .copied()
-            .enumerate()
-            .filter(|(_, offset)| *offset != 0)
-            .map(|(slot, offset)| (slot as u32, offset))
-    }
-}
-
 impl UserLibrary {
     pub(crate) fn empty_with_total(total: u32) -> Self {
         Self {
@@ -195,10 +142,8 @@ impl UserLibrary {
 
     pub(crate) fn token_end(&self) -> u32 {
         self.slots
-            .0
-            .iter()
-            .rposition(|offset| *offset != 0)
-            .map_or(1, |last| (last as u32).saturating_add(1))
+            .last_key_value()
+            .map_or(1, |(&last, _)| last.saturating_add(1))
     }
 
     /// Replace one body: the pin's remove and add (`pinyin.cpp:563-605`).
@@ -216,9 +161,9 @@ impl UserLibrary {
     /// onto a live slot this way (register row 119).
     ///
     /// Only a malformed body or a slot past `PHRASE_MASK` refuses, before
-    /// anything changes; the offset wraps. Both callers pass a slot masked
+    /// anything changes. Both callers pass a slot masked
     /// by `PHRASE_MASK` and the bytes `encode_phrase_item` made, which
-    /// `validate_phrase_item` accepts, so neither refusal reaches them.
+    /// `PhraseItemView::from_bytes` accepts, so neither refusal reaches them.
     pub(crate) fn add(&mut self, slot: u32, bytes: &[u8]) -> Result<(), String> {
         let mut change = self.replacement(slot, bytes)?;
         change.removes_old = false;
@@ -231,44 +176,34 @@ impl UserLibrary {
             return Err("user phrase slot exceeds PHRASE_MASK".into());
         }
         let view = PhraseItemView::from_bytes(bytes).ok_or("invalid user phrase body")?;
-        Ok(self.placement(slot, view))
+        Ok(Self::replacement_for(slot, view))
     }
 
-    /// Where `add_phrase_item` writes `view`: at the content size narrowed
-    /// to `table_offset_t`, which is 8 for zero (`phrase_index.cpp:208-217`).
-    fn placement(&self, slot: u32, view: PhraseItemView<'_>) -> Replacement {
+    fn replacement_for(slot: u32, view: PhraseItemView<'_>) -> Replacement {
         Replacement {
             slot,
-            offset: append_offset(self.content.len()),
             length: view.as_bytes().len(),
             unigram: view.unigram(),
             removes_old: true,
         }
     }
 
-    /// `remove_phrase_item` then `add_phrase_item` (`phrase_index.cpp:
-    /// 208-234`). The write is `set_content` at the wrapped offset: over
-    /// earlier bytes without growing the size, or past the end as an append.
-    /// Nothing else is adjusted for the bytes it overwrites.
+    /// Append the new body and assign that extent to the slot.
     fn apply_replacement(&mut self, change: Replacement, bytes: &[u8]) {
         let slot = change.slot;
         let bytes = &bytes[..change.length];
         if change.removes_old
             && let Some(unigram) = self.item(slot).map(|item| item.unigram())
         {
-            self.slots.set(slot, 0);
+            self.slots.remove(&slot);
             self.total = self.total.wrapping_sub(unigram);
         }
         if self.content.len() < 8 {
             self.content.resize(8, 0);
         }
-        let start = change.offset as usize;
-        let end = start + bytes.len();
-        if end > self.content.len() {
-            self.content.resize(end, 0);
-        }
-        self.content[start..end].copy_from_slice(bytes);
-        self.slots.set(slot, change.offset);
+        let start = self.content.len();
+        self.content.extend_from_slice(bytes);
+        self.slots.insert(slot, start..self.content.len());
         self.total = self.total.wrapping_add(change.unigram);
     }
 
@@ -276,7 +211,7 @@ impl UserLibrary {
         let Some(unigram) = self.item(slot).map(|item| item.unigram()) else {
             return false;
         };
-        self.slots.set(slot, 0);
+        self.slots.remove(&slot);
         self.total = self.total.wrapping_sub(unigram);
         true
     }
@@ -311,11 +246,10 @@ impl UserLibrary {
             return false;
         };
         let unigram = item.unigram().wrapping_add(delta);
-        let Some(offset) = self.slots.offset(slot) else {
+        let Some(start) = self.editable_start(slot) else {
             return false;
         };
-        self.content[offset as usize + 2..offset as usize + 6]
-            .copy_from_slice(&unigram.to_le_bytes());
+        self.content[start + 2..start + 6].copy_from_slice(&unigram.to_le_bytes());
         self.total = self.total.wrapping_add(delta);
         true
     }
@@ -325,8 +259,8 @@ impl UserLibrary {
     /// body out and zeroes the slot, `add_pronunciation` edits the copy, and
     /// `add_phrase_item` stores the copy at the content's end and points
     /// the slot at it (`phrase_index.cpp:56-93`, `:208-235`). The old bytes
-    /// stay as they were, for any other slot that names them, and the item
-    /// is added back even when the count is refused.
+    /// stay until compaction, and the item is added back even when the count
+    /// is refused.
     pub(crate) fn add_reading(
         &mut self,
         slot: u32,
@@ -389,13 +323,13 @@ impl UserLibrary {
         readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
         delta: u32,
     ) {
-        let Some(offset) = self.slots.offset(slot) else {
-            return;
-        };
         let Some(item) = self.item(slot) else { return };
         let length = item.phrase_length();
         let count = item.n_pronunciations();
-        let start = offset as usize + 6 + 4 * length;
+        let Some(start) = self.editable_start(slot) else {
+            return;
+        };
+        let start = start + 6 + 4 * length;
         for query in readings {
             if query.len() != length {
                 continue;
@@ -430,8 +364,7 @@ impl UserLibrary {
 
     /// `SubPhraseIndex::compact` (`phrase_index.cpp:624-675`): a fresh
     /// sub-index takes every readable slot of the range in slot order
-    /// through the same add, so its content can wrap in turn and its total
-    /// is the sum of the items copied. The range begins at slot 1
+    /// through the same add, rebuilding the total from the items copied. The range begins at slot 1
     /// (`get_range`, `:624-645`), so an item at the reserved slot 0 is not
     /// copied. The pin does this only at end-import, save and mask-out.
     pub(crate) fn compact(&mut self) {
@@ -442,7 +375,7 @@ impl UserLibrary {
         let mut compacted = Self::default();
         for (slot, item) in self.items().filter(|&(slot, _)| slot != 0) {
             let bytes = item.as_bytes();
-            let change = compacted.placement(slot, item);
+            let change = Self::replacement_for(slot, item);
             compacted.apply_replacement(change, bytes);
         }
         compacted
@@ -455,28 +388,52 @@ impl UserLibrary {
         Self::load_payload(payload)
     }
 
-    /// Load the sections and stored total. The pin reads individual offsets
-    /// and headers only in `get_phrase_item` (074a2219
-    /// `phrase_index.cpp:180-205,335-362`).
+    /// Load each slot with an extent bounded by the next distinct offset.
     pub(crate) fn load_payload(payload: &[u8]) -> Result<Self, String> {
         let (total, offsets, content) =
             sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
-        let entries = offsets
+        let offsets: Vec<_> = offsets
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|b| u32::from_le_bytes(*b));
-        let slots = Slots(entries.collect());
+            .enumerate()
+            .filter_map(|(slot, bytes)| {
+                let start = u32::from_le_bytes(*bytes) as usize;
+                (start != 0).then_some((slot as u32, start))
+            })
+            .collect();
+        let mut starts: Vec<_> = offsets.iter().map(|&(_, start)| start).collect();
+        starts.sort_unstable();
+        let shared_starts = starts
+            .windows(2)
+            .filter_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
+            .collect();
+        starts.dedup();
+
+        let content_len = content.len();
+        let slots = offsets
+            .into_iter()
+            .filter_map(|(slot, start)| {
+                let index = starts.binary_search(&start).ok()?;
+                let end = starts
+                    .get(index + 1)
+                    .copied()
+                    .unwrap_or(content_len)
+                    .min(content_len);
+                Some((slot, start.min(end)..end))
+            })
+            .collect();
         Ok(Self {
             total,
             slots,
             content: content.to_vec(),
+            shared_starts,
         })
     }
 
     pub(crate) fn pronunciation_count(&self, slot: u32) -> Option<u32> {
-        let offset = self.slots.offset(slot)? as usize;
-        self.content.get(offset..)?.get(1).copied().map(u32::from)
+        let range = self.slots.get(&slot)?.clone();
+        self.content.get(range)?.get(1).copied().map(u32::from)
     }
 
     pub(crate) const fn total(&self) -> u32 {
@@ -490,18 +447,35 @@ impl UserLibrary {
 
     /// Whether no slot names an item: the pin's emptied sub-index.
     pub(crate) fn is_empty(&self) -> bool {
-        self.slots.entries().next().is_none()
+        self.slots.is_empty()
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
-        let offset = self.slots.offset(slot)?;
-        PhraseItemView::from_bytes(self.content.get(offset as usize..)?)
+        let range = self.slots.get(&slot)?.clone();
+        PhraseItemView::from_bytes(self.content.get(range)?)
+    }
+
+    /// Slots with duplicate on-disk offsets read the same original body.
+    /// Copy a body before changing one slot so the other slots keep it.
+    fn editable_start(&mut self, slot: u32) -> Option<usize> {
+        let start = self.slots.get(&slot)?.start;
+        if !self.shared_starts.contains(&start) {
+            return Some(start);
+        }
+        let length = self.item(slot)?.as_bytes().len();
+        let copy = self.content.len();
+        self.content.extend_from_within(start..start + length);
+        self.slots.insert(slot, copy..self.content.len());
+        Some(copy)
     }
 
     pub(crate) fn items(&self) -> impl Iterator<Item = (u32, PhraseItemView<'_>)> + '_ {
-        self.slots
-            .entries()
-            .filter_map(|(slot, _)| Some((slot, self.item(slot)?)))
+        self.slots.iter().filter_map(|(&slot, range)| {
+            Some((
+                slot,
+                PhraseItemView::from_bytes(self.content.get(range.clone())?)?,
+            ))
+        })
     }
 
     /// The size of the content a compaction would leave: the first eight

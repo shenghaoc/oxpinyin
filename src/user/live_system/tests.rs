@@ -57,7 +57,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
     .unwrap();
     let store =
         crate::user::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
-    assert!(store.live_item_past_buffer(0x0100_0001));
+    assert!(store.live_item_is_incomplete(0x0100_0001));
     let unloaded = Cell::new(0);
     let live = LiveSystemItems::new(&shipped, &store, &unloaded);
     assert_eq!(
