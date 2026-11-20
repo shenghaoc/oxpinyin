@@ -143,40 +143,6 @@ impl SystemItems {
         }
     }
 
-    /// `FacadePhraseIndex::compact`'s copy of system library `nibble` gives
-    /// every slot its own body (074a2219 `phrase_index.cpp:208-217`,
-    /// `:648-675`): slots of a chunk with overlapping bodies stop sharing
-    /// bytes ([`ReplayedLibrary::unshare_bodies`]). A library with no live
-    /// buffer gets one only when its chunk holds such slots, found by one
-    /// sort of its readable item intervals.
-    pub(crate) fn unshare_bodies(&mut self, nibble: u8, original: SystemLibraryRef<'_>) {
-        if !self.replayed.contains_key(&nibble) {
-            let Some(mapped) = original.mapped else {
-                return;
-            };
-            let mut intervals: Vec<(usize, usize)> = (1..original.range_end)
-                .filter_map(|slot| {
-                    let offset = mapped.slot_offset_word(slot)? as usize;
-                    let len = mapped.item_at_slot(slot as usize)?.as_bytes().len();
-                    Some((offset, offset.checked_add(len)?))
-                })
-                .collect();
-            intervals.sort_unstable();
-            let mut furthest_end = 0;
-            if !intervals.into_iter().any(|(offset, end)| {
-                let overlaps = offset < furthest_end;
-                furthest_end = furthest_end.max(end);
-                overlaps
-            }) {
-                return;
-            }
-        }
-        let token = crate::phrase_index_make_token(nibble, 0);
-        if let Some(library) = library_of(&mut self.replayed, &mut self.totals, token, original) {
-            library.unshare_bodies();
-        }
-    }
-
     /// The live sub-index of system library `nibble` for a save's diff: its
     /// buffer, or the shipped chunk where no write has made one.
     pub(crate) fn live_library<'a>(
@@ -219,9 +185,10 @@ impl SystemItems {
         original: SystemLibraryRef<'_>,
         token: PhraseToken,
         payload: &[u8],
-    ) -> bool {
-        library_of(&mut self.replayed, &mut self.totals, token, original)
-            .is_some_and(|library| library.add_item(token & 0x00ff_ffff, payload))
+    ) {
+        if let Some(library) = library_of(&mut self.replayed, &mut self.totals, token, original) {
+            library.add_item(token & 0x00ff_ffff, payload);
+        }
     }
 
     /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.
@@ -313,10 +280,10 @@ impl SystemItems {
             .pronunciation_count(token & 0x00ff_ffff)
     }
 
-    pub(crate) fn live_item_past_buffer(&self, token: PhraseToken) -> bool {
+    pub(crate) fn live_item_is_incomplete(&self, token: PhraseToken) -> bool {
         self.replayed
             .get(&crate::phrase_index_library_index(token))
-            .is_some_and(|library| library.item_past_buffer(token & 0x00ff_ffff))
+            .is_some_and(|library| library.item_is_incomplete(token & 0x00ff_ffff))
     }
 
     /// Trains `token`'s readings in place in its library's live buffer, which

@@ -199,12 +199,12 @@ pub struct PhraseItemView<'a> {
 }
 
 impl<'a> PhraseItemView<'a> {
-    /// Read a complete item from its wire bytes, ignoring trailing bytes as
-    /// `get_phrase_item` does. Refuse a truncated header, text or reading.
+    /// Read a complete item from its wire bytes. Refuse a truncated header, text or reading.
     #[must_use]
     pub fn from_bytes(bytes: &'a [u8]) -> Option<Self> {
-        crate::data::chunk_write::validate_phrase_item(bytes).ok()?;
-        let view = Self { bytes };
+        let view = Self {
+            bytes: bytes.get(..ITEM_HEADER_SIZE)?,
+        };
         Some(Self {
             bytes: bytes.get(..view.total_size()?)?,
         })
@@ -423,6 +423,7 @@ pub(crate) struct PhraseContent {
     mapping: crate::input::chunk::Mapping,
     offsets: Range<usize>,
     area: Range<usize>,
+    bounds: ItemBounds,
 }
 
 impl PhraseContent {
@@ -432,15 +433,67 @@ impl PhraseContent {
         &self.mapping.as_slice()[self.area.clone()]
     }
 
-    /// Borrow the content for an in-place journal write.
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.mapping.as_mut_slice()[self.area.clone()]
-    }
-
     /// Borrow the offset array: little-endian `u32` slots, in stored order.
     #[must_use]
     pub fn offsets(&self) -> &[u8] {
         &self.mapping.as_slice()[self.offsets.clone()]
+    }
+
+    pub(crate) fn slot_offset(&self, slot: u32) -> Option<u32> {
+        u32_at(self.offsets(), (slot as usize).checked_mul(4)?).filter(|&offset| offset != 0)
+    }
+
+    pub(crate) fn item_fields(&self, slot: u32) -> Option<&[u8]> {
+        let offset = self.slot_offset(slot)?;
+        self.bounds
+            .record(self.offsets(), self.as_slice(), slot as usize, offset)
+            .filter(|record| record.len() >= 2)
+    }
+}
+
+/// End of each indexed record in physical order. Build it on first item access,
+/// keeping subsequent lookups constant time and allowing out-of-order slots.
+#[derive(Default)]
+struct ItemBounds(std::cell::OnceCell<Box<[u32]>>);
+
+impl ItemBounds {
+    fn record<'a>(
+        &self,
+        offsets: &[u8],
+        content: &'a [u8],
+        slot: usize,
+        start: u32,
+    ) -> Option<&'a [u8]> {
+        if start == 0 || start as usize >= content.len() {
+            return None;
+        }
+        let ends = self
+            .0
+            .get_or_init(|| Self::record_ends(offsets, content.len()));
+        content.get(start as usize..*ends.get(slot)? as usize)
+    }
+
+    fn record_ends(offsets: &[u8], content_len: usize) -> Box<[u32]> {
+        let offsets = offsets.as_chunks::<4>().0;
+        let mut ends = vec![0; offsets.len()];
+        let mut physical: Vec<_> = offsets
+            .iter()
+            .map(|word| u32::from_le_bytes(*word))
+            .enumerate()
+            .filter(|&(_, start)| start != 0 && (start as usize) < content_len)
+            .collect();
+        physical.sort_unstable_by_key(|&(_, start)| start);
+        let mut next_start = content_len as u32;
+        for group in physical
+            .chunk_by(|&(_, left), &(_, right)| left == right)
+            .rev()
+        {
+            for &(slot, _) in group {
+                ends[slot] = next_start;
+            }
+            next_start = group[0].1;
+        }
+        ends.into_boxed_slice()
     }
 }
 
@@ -472,6 +525,7 @@ pub struct PhraseLibrary {
     offsets: Range<usize>,
     /// The entry area, `[index_two, index_three)` in payload bytes.
     content: Range<usize>,
+    bounds: ItemBounds,
     /// True for the empty sub-index the pin leaves behind when its
     /// `SubPhraseIndex::load` refused the layout; the save path re-checks
     /// such a library exactly as the pin re-maps it.
@@ -596,6 +650,7 @@ impl PhraseLibrary {
             total_freq,
             offsets: 0..0,
             content: 0..0,
+            bounds: ItemBounds::default(),
             layout_failed: true,
             item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
@@ -661,6 +716,7 @@ impl PhraseLibrary {
             // before the final separator (`phrase_index.cpp:356-359`).
             offsets: index_one..index_two - 1,
             content: index_two..index_three - 1,
+            bounds: ItemBounds::default(),
             layout_failed: false,
             item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
@@ -733,68 +789,33 @@ impl PhraseLibrary {
         self.item_at_slot((token & PHRASE_MASK) as usize)
     }
 
-    /// Read the count byte after the pin's offset and header checks.
-    /// The pin does not read the item body here (074a2219
-    /// `phrase_index.cpp:180-205`, `phrase_index.h:112-115`).
+    /// Read the count byte when the record contains both leading header bytes.
     #[must_use]
     pub(crate) fn pronunciation_count(&self, token: u32) -> Option<u32> {
-        let offset = self.slot_offset((token & PHRASE_MASK) as usize)? as usize;
-        if offset == 0 {
-            return None;
-        }
-        let content = self.payload().get(self.content.clone())?;
-        content.get(offset)?;
-        content.get(offset.checked_add(1)?).copied().map(u32::from)
+        self.item_bytes((token & PHRASE_MASK) as usize)?
+            .get(1)
+            .copied()
+            .map(u32::from)
     }
 
-    /// The item behind `token` as the pin's token getters see it.
-    /// `SubPhraseIndex::get_phrase_item` checks the offset and the two
-    /// header bytes, then sets the item's chunk to the header-derived length
-    /// with no bound against the content (074a2219 `phrase_index.cpp:180-205`).
-    /// So the unigram, the text and each reading are read wherever their own
-    /// bytes lie inside the content, even when a later reading does not.
-    /// This view ends at the content end; each field read checks its own
-    /// bounds. A header that passes the content end answers `None`, and so
-    /// does a field past it, a read the pin leaves undefined (compatibility
-    /// policy row 130). Whole-item consumers use [`Self::item`].
+    /// The item's readable fields. Each field must fit in the indexed record.
+    /// Whole-item consumers use [`Self::item`].
     #[must_use]
     pub(crate) fn item_fields(&self, token: u32) -> Option<PhraseItemView<'_>> {
-        let offset = self.slot_offset((token & PHRASE_MASK) as usize)? as usize;
-        if offset == 0 {
-            return None;
-        }
-        let content = self.payload().get(self.content.clone())?;
-        PhraseItemView::fields(content.get(offset..)?)
+        PhraseItemView::fields(self.item_bytes((token & PHRASE_MASK) as usize)?)
     }
 
     /// The item behind a raw library-local slot.
     #[must_use]
     pub(crate) fn item_at_slot(&self, slot: usize) -> Option<PhraseItemView<'_>> {
-        let offset = self.slot_offset(slot)? as usize;
-        if offset == 0 {
-            return None;
-        }
-        let content = self.payload().get(self.content.clone())?;
-        // Offsets are 0-based into the entry area; the first item sits
-        // at `FIRST_ITEM_OFFSET` (`SubPhraseIndex::add_phrase_item`
-        // reserves those bytes so 0 stays the "no item" sentinel).
-        let item_bytes = content.get(offset..)?;
-        let item = PhraseItemView { bytes: item_bytes };
-        let total = item.total_size()?;
-        if offset.checked_add(total)? > content.len() {
-            return None;
-        }
-        Some(PhraseItemView {
-            bytes: content.get(offset..offset + total)?,
-        })
+        PhraseItemView::from_bytes(self.item_bytes(slot)?)
     }
 
-    /// The entry area — `SubPhraseIndex::m_phrase_content` as loaded, the
-    /// bytes the pin's item offsets address (`SubPhraseIndex::load`'s
-    /// `[index_two, index_three)` sub-chunk, `phrase_index.cpp:301-330`).
-    #[must_use]
-    pub(crate) fn item_area(&self) -> &[u8] {
-        &self.payload()[self.content.clone()]
+    pub(crate) fn item_bytes(&self, slot: usize) -> Option<&[u8]> {
+        let offset = self.slot_offset(slot)?;
+        let content = self.payload().get(self.content.clone())?;
+        self.bounds
+            .record(self.offset_array(), content, slot, offset)
     }
 
     /// The offset array: little-endian `u32` slots, `SubPhraseIndex`'s
@@ -830,6 +851,7 @@ impl PhraseLibrary {
                 ..(self.payload.start + self.offsets.end),
             area: (self.payload.start + self.content.start)
                 ..(self.payload.start + self.content.end),
+            bounds: std::mem::take(&mut self.bounds),
         })
     }
 
@@ -837,13 +859,6 @@ impl PhraseLibrary {
     #[must_use]
     pub const fn is_detached(&self) -> bool {
         self.detached_range_end.is_some()
-    }
-
-    /// The offset word of `slot` in the loaded offset array: `0` where the
-    /// slot holds no item, `None` outside the array.
-    #[must_use]
-    pub(crate) fn slot_offset_word(&self, slot: u32) -> Option<u32> {
-        self.slot_offset(slot as usize)
     }
 
     /// Every `(slot, item)` pair with a resident item, slot order — a

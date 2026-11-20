@@ -1297,8 +1297,6 @@ impl UserStore {
                 if current != original.total {
                     rebased.push((library, current));
                 }
-                // The compacted sub-index holds one body per slot.
-                items.unshare_bodies(library, original);
             }
         }
         for (library, total) in rebased {
@@ -2543,11 +2541,11 @@ impl UserStore {
             .live_pronunciation_count(token)
     }
 
-    pub(crate) fn live_item_past_buffer(&self, token: PhraseToken) -> bool {
+    pub(crate) fn live_item_is_incomplete(&self, token: PhraseToken) -> bool {
         self.inner
             .system_items
             .borrow()
-            .live_item_past_buffer(token)
+            .live_item_is_incomplete(token)
     }
 
     /// One past the highest token a `USER_FILE` library holds: the pin's
@@ -2637,7 +2635,7 @@ impl UserStore {
         let bytes = crate::data::chunk_write::encode_phrase_item(&item)
             .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
         let removed = items.remove_item(original, token).is_some();
-        let _ = items.add_item(original, token, &bytes);
+        items.add_item(original, token, &bytes);
         if !removed {
             let library = phrase_index_library_index(token);
             let total = items

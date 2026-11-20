@@ -56,10 +56,10 @@ fn mapping_header_size_and_read_failure_follow_pin() {
 }
 
 #[test]
-fn count_checks_offset_and_two_header_bytes_only() {
+fn count_checks_both_header_bytes_within_the_record() {
     let mut payload = Vec::new();
-    let content = [vec![0; 8], vec![255, 17]].concat();
-    let offsets = [0_u32, 8, 9, 10, 0];
+    let content = [vec![0; 8], vec![255, 17, 255, 29]].concat();
+    let offsets = [0_u32, 8, 9, 10, 12];
     let index_two = 17 + offsets.len() as u32 * 4 + 1;
     for value in [0, 17, index_two, index_two + content.len() as u32 + 1] {
         payload.extend_from_slice(&value.to_le_bytes());
@@ -79,9 +79,9 @@ fn count_checks_offset_and_two_header_bytes_only() {
     )
     .expect("write");
     let library = PhraseLibrary::open(&path).expect("open");
-    assert_eq!(library.pronunciation_count(1), Some(17));
-    assert!(library.item(1).is_none(), "the body is truncated");
-    for token in [0, 2, 3, 4, 5, u32::MAX] {
+    assert_eq!(library.pronunciation_count(3), Some(29));
+    assert!(library.item(3).is_none(), "the body is truncated");
+    for token in [0, 1, 2, 4, 5, u32::MAX] {
         assert_eq!(library.pronunciation_count(token), None, "token {token}");
     }
 }

@@ -25,9 +25,7 @@
 // requires the item offsets to fit their output fields.
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::{
-    CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
-};
+use crate::data::chunk_format::{CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR};
 
 /// A malformed [`ChunkItem`] or slot sequence.
 #[derive(Debug)]
@@ -215,58 +213,6 @@ pub fn encode_phrase_item(item: &ChunkItem) -> Result<Vec<u8>, ChunkWriteError> 
         bytes.extend_from_slice(&freq.to_le_bytes());
     }
     Ok(bytes)
-}
-
-/// A structural rejection from `validate_phrase_item`, without allocation.
-/// Its diagnostic matches the corresponding [`ChunkWriteError`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PhraseItemValidationError(&'static str);
-
-impl std::fmt::Display for PhraseItemValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "chunk write error: {}", self.0)
-    }
-}
-
-impl std::error::Error for PhraseItemValidationError {}
-
-/// Check exactly the byte extents [`decode_phrase_item`] reads, without
-/// allocating or constructing a typed item. Trailing bytes and arbitrary
-/// text/key/frequency values are accepted, just as by the decoder.
-///
-/// # Errors
-/// Reports the decoder's first missing header field, truncated text,
-/// truncated pronunciation keys, or truncated pronunciation frequency.
-pub(crate) fn validate_phrase_item(bytes: &[u8]) -> Result<(), PhraseItemValidationError> {
-    let length = usize::from(*bytes.first().ok_or(PhraseItemValidationError(
-        "phrase item: no phrase length byte",
-    ))?);
-    let prons = usize::from(*bytes.get(1).ok_or(PhraseItemValidationError(
-        "phrase item: no pronunciation count byte",
-    ))?);
-    if bytes.len() < ITEM_HEADER_SIZE {
-        return Err(PhraseItemValidationError("phrase item: no unigram"));
-    }
-    let text_end = ITEM_HEADER_SIZE + 4 * length;
-    if bytes.len() < text_end {
-        return Err(PhraseItemValidationError(
-            "phrase item: phrase text truncated",
-        ));
-    }
-    let keys = CHEWING_KEY_SIZE * length;
-    let row = keys + 4;
-    let remaining = bytes.len() - text_end;
-    // Both counts are u8, so these products fit even on 32-bit targets.
-    if remaining < prons * row {
-        // Earlier complete rows cannot fail. Locate the first incomplete
-        // row without decoding every pronunciation before it.
-        return Err(PhraseItemValidationError(if remaining % row < keys {
-            "phrase item: pronunciation keys truncated"
-        } else {
-            "phrase item: pronunciation freq truncated"
-        }));
-    }
-    Ok(())
 }
 
 /// Decodes one `PhraseItem` wire form — the inverse of

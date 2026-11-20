@@ -113,7 +113,7 @@ fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
         let content = 8 + 2 * 16;
         let before = profile_snapshot(&dir);
         {
-            let _limits = TestLimits::set(1 << 32, content);
+            let _limits = TestLimits::set(content);
             let result = store.save_reporting();
             assert!(
                 matches!(result, Err(UserStoreError::SaveTooLarge)),
@@ -157,7 +157,7 @@ fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
         // Under the limit the same session saves.
         assert!(store.remove_user_phrase(first).unwrap());
         {
-            let _limits = TestLimits::set(1 << 32, content);
+            let _limits = TestLimits::set(content);
             store.mark_modified();
             store.save_reporting().unwrap();
         }
@@ -204,7 +204,7 @@ fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
         let (dir, mut store) = trained("save-limit-log", law);
         let marker = profile_snapshot(&dir).get("user.conf").cloned();
         {
-            let _limits = TestLimits::set(1 << 32, journal);
+            let _limits = TestLimits::set(journal);
             let result = store.save_reporting();
             assert!(
                 matches!(result, Err(UserStoreError::SaveTooLarge)),
@@ -218,7 +218,7 @@ fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
             "no marker was written"
         );
         {
-            let _limits = TestLimits::set(1 << 32, journal + 1);
+            let _limits = TestLimits::set(journal + 1);
             store.save_reporting().unwrap();
         }
         assert!(!store.is_modified());
@@ -262,7 +262,7 @@ fn the_actual_baseline_decides_the_journal_threshold() {
     );
 
     let (dir, mut store) = trained("save-limit-baseline", UserConfLaw::Pinyin);
-    let _limits = TestLimits::set(1 << 32, against_original);
+    let _limits = TestLimits::set(against_original);
     store
         .save_reporting_with_baseline(&[], |nibble, _| match nibble {
             1 => SaveBaseline::Changed(live()),
@@ -696,7 +696,7 @@ fn header_only_count_survives_session_transfer() {
     let dir = tempdir("header-only-count");
     let path = dir.join("count.bin");
     let content = [vec![0; 8], vec![255, 17]].concat();
-    let offsets = [0_u32, 8, 9, 10, 0];
+    let offsets = [0_u32, 8, 10, 0];
     let index_two = 17 + offsets.len() as u32 * 4 + 1;
     let mut payload = Vec::new();
     for value in [0, 17, index_two, index_two + content.len() as u32 + 1] {
@@ -1018,192 +1018,6 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped chunk");
-}
-
-#[test]
-fn overlapping_training_is_saved_with_live_unigram_and_compacted_total() {
-    use crate::data::chunk_write::encode_phrase_item;
-    use crate::data::user_files::LogRecord;
-    let items = three_items();
-    let old = encode_phrase_item(&items[0]).expect("item");
-    let mut new = old.clone();
-    new[0] = 2;
-    new[1] = 2;
-    let payload = crate::data::user_files::encode_log_records(&[LogRecord::Modify {
-        token: 1,
-        old_item: old,
-        new_item: new,
-    }])
-    .expect("log");
-    for prior_add in [false, true] {
-        let (dir, mut store) = open_with_payload(
-            if prior_add {
-                "overlap-before-add"
-            } else {
-                "overlap-only"
-            },
-            three_item_originals(),
-            &payload,
-        );
-        let first = crate::phrase_index_make_token(1, 1);
-        let second = crate::phrase_index_make_token(1, 2);
-        let reading = {
-            let unloaded = std::cell::Cell::new(0);
-            let live = crate::user::LiveSystemItems::new(
-                store.originals().phrase_libraries(),
-                &store,
-                &unloaded,
-            );
-            live.read(first, |item| {
-                item.pronunciation(0)
-                    .expect("reading")
-                    .keys
-                    .iter()
-                    .map(ChewingKey::from_packed)
-                    .collect::<Vec<_>>()
-            })
-            .found()
-            .expect("item")
-        };
-        if prior_add {
-            assert!(store.add_system_unigram_frequency(second, 2));
-        }
-        let total = crate::user::test_session::library_total(&store, 1);
-        let facade = 180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32);
-        store
-            .train_pronunciations(first, std::iter::once(reading), 7)
-            .expect("train");
-        let expected = if prior_add { 59 } else { 57 };
-        assert_eq!(store.system_unigram(second), Some(expected));
-        assert_eq!(
-            Some(crate::user::test_session::library_total(&store, 1)),
-            Some(total)
-        );
-        assert_eq!(
-            180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32),
-            facade
-        );
-        store.mark_modified();
-        store.save_reporting().expect("save");
-        assert_eq!(store.system_unigram(second), Some(expected));
-        assert_eq!(
-            Some(crate::user::test_session::library_total(&store, 1)),
-            Some(total + 7)
-        );
-        assert_eq!(
-            180_u32.wrapping_add(store.unigram_total_over(|_| true) as u32),
-            facade
-        );
-        drop(store);
-        let reopened = crate::user::test_session::open(
-            &dir,
-            three_item_originals(),
-            versions(),
-            UserConfLaw::Pinyin,
-        )
-        .expect("reopen");
-        assert_eq!(reopened.system_unigram(second), Some(expected));
-        assert_eq!(
-            Some(crate::user::test_session::library_total(&reopened, 1)),
-            Some(total + 7)
-        );
-        drop(reopened);
-        std::fs::remove_dir_all(dir).expect("cleanup");
-    }
-}
-
-#[test]
-fn overlapping_training_that_invalidates_another_item_saves_its_absence() {
-    use crate::data::chunk_write::{build_chunk, encode_phrase_item};
-    use crate::data::user_files::LogRecord;
-    let items = three_items();
-    let pairs: Vec<_> = items
-        .iter()
-        .cloned()
-        .zip(1_u32..)
-        .map(|(item, slot)| (slot, item))
-        .collect();
-    let file = build_chunk(&pairs).expect("chunk");
-    let mut payload = file[8..].to_vec();
-    let word =
-        |bytes: &[u8], at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("word"));
-    let index = word(&payload, 4) as usize;
-    let content = word(&payload, 8) as usize;
-    let second_offset = word(&payload, index + 2 * 4) as usize;
-    let third_offset = word(&payload, index + 3 * 4);
-    let end = word(&payload, 12);
-    payload.splice(content + second_offset..content + second_offset, [0, 0]);
-    payload[12..16].copy_from_slice(&(end + 2).to_le_bytes());
-    payload[index + 2 * 4..index + 3 * 4]
-        .copy_from_slice(&((second_offset as u32) + 2).to_le_bytes());
-    payload[index + 3 * 4..index + 4 * 4].copy_from_slice(&(third_offset + 2).to_le_bytes());
-    let system_dir = tempdir("overlap-header-system");
-    let path = system_dir.join("gb_char.bin");
-    std::fs::write(
-        &path,
-        crate::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
-    )
-    .expect("system chunk");
-    let originals = || -> SystemOriginals {
-        let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).expect("library");
-        crate::user::LibraryTable::from([(1_u8, SystemLibrary::from_library(mapped))]).into()
-    };
-    let old = encode_phrase_item(&items[0]).expect("old");
-    let mut new = old.clone();
-    new[0] = 2;
-    new[1] = 2;
-    let log = crate::data::user_files::encode_log_records(&[LogRecord::Modify {
-        token: 1,
-        old_item: old,
-        new_item: new,
-    }])
-    .expect("log");
-    let (dir, mut store) = open_with_payload("overlap-header-profile", originals(), &log);
-    let first = crate::phrase_index_make_token(1, 1);
-    let second = crate::phrase_index_make_token(1, 2);
-    let reading = {
-        let unloaded = std::cell::Cell::new(0);
-        let live = crate::user::LiveSystemItems::new(
-            store.originals().phrase_libraries(),
-            &store,
-            &unloaded,
-        );
-        live.read(first, |item| {
-            item.pronunciation(0)
-                .expect("reading")
-                .keys
-                .iter()
-                .map(ChewingKey::from_packed)
-                .collect::<Vec<_>>()
-        })
-        .found()
-        .expect("item")
-    };
-    assert_eq!(store.system_unigram(second), Some(50));
-    let total = Some(crate::user::test_session::library_total(&store, 1));
-    store
-        .train_pronunciations(first, std::iter::once(reading), 7)
-        .expect("train");
-    assert_eq!(store.system_unigram(second), None);
-    assert!(store.system_item_removed(second));
-    assert_eq!(
-        Some(crate::user::test_session::library_total(&store, 1)),
-        total
-    );
-    store.mark_modified();
-    store.save_reporting().expect("save");
-    assert_eq!(
-        Some(crate::user::test_session::library_total(&store, 1)),
-        Some(130)
-    );
-    drop(store);
-    let reopened =
-        crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .expect("reopen");
-    assert_eq!(reopened.system_unigram(second), None);
-    drop(reopened);
-    std::fs::remove_dir_all(dir).expect("cleanup");
-    std::fs::remove_dir_all(system_dir).expect("cleanup system");
 }
 
 #[test]
@@ -2955,18 +2769,10 @@ fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
 }
 
-/// Two loaded slots sharing one offset (a crafted chunk; both builders
-/// emit distinct offsets). A unigram added through the first slot is
-/// read through the second, as the pin's shared `m_phrase_content`
-/// shows it (074a2219 `phrase_index.cpp:150-178`, `:180-205`); the
-/// save diffs the file on disk again and emits a MODIFY for each slot
-/// (`:392-437`); the reload applies the first MODIFY in place and stops
-/// at the second's mismatch (`:487-493`, ignored at `pinyin.cpp:276`),
-/// dropping every later record. The second slot's baseline is captured
-/// after the first slot's write, which only the store's internal
-/// `unigram_delta` sees.
+/// POLICY-ACCEPTED. Two slots sharing a file offset keep independent
+/// values. Only the named slots are saved and both changes reopen.
 #[test]
-fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
+fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
     use crate::data::chunk_format::chunk_checksum;
     use crate::data::chunk_write::build_chunk;
     use crate::data::phrase_library::PhraseLibrary;
@@ -3018,28 +2824,25 @@ fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
             (Some(100), Some(100), Some(70))
         );
         assert!(store.add_system_unigram_frequency(a, 5));
-        // Live reads: the second slot shows the first slot's write.
         assert_eq!(
             (
                 store.system_unigram(a),
                 store.system_unigram(b),
                 store.system_unigram(c)
             ),
-            (Some(105), Some(105), Some(70))
+            (Some(105), Some(100), Some(70))
         );
         assert!(store.add_system_unigram_frequency(c, 7));
         assert_eq!(store.system_unigram(c), Some(77));
         store.mark_modified();
         store.save_reporting().expect("save");
     }
-    // Save output: the diff against the file on disk emits one MODIFY per
-    // slot, the aliased pair with identical bytes, then slot 3
-    // (`phrase_index.cpp:392-437`).
+    // The saved diff records both changed slots in order.
     let payload = load_chunk_payload(&dir.join("gb_char.dbin")).expect("journal");
     let records: Vec<LogRecord<Vec<u8>>> = log_records(&payload)
         .map(|record| record.expect("record").into_owned())
         .collect();
-    assert_eq!(records.len(), 4, "{records:?}");
+    assert_eq!(records.len(), 3, "{records:?}");
     let LogRecord::ModifyHeader {
         old_total,
         new_total,
@@ -3047,10 +2850,8 @@ fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
     else {
         panic!("{:?}", records[0]);
     };
-    // The pin compacts before it writes (`pinyin.cpp:1139-1141`), so the
-    // header's new total is the live items summed slot by slot, with the
-    // aliased pair counted twice: 105 + 105 + 77.
-    assert_eq!((*old_total, *new_total), (220, 287));
+    // The header sums all live slots: 105 + 100 + 77.
+    assert_eq!((*old_total, *new_total), (220, 282));
     let modify = |record: &LogRecord<Vec<u8>>| match record {
         LogRecord::Modify {
             token,
@@ -3062,16 +2863,12 @@ fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
         | LogRecord::ModifyHeader { .. }) => panic!("{other:?}"),
     };
     let (token_a, old_a, new_a) = modify(&records[1]);
-    let (token_b, old_b, new_b) = modify(&records[2]);
-    let (token_c, old_c, new_c) = modify(&records[3]);
-    assert_eq!((token_a, token_b, token_c), (1, 2, 3));
-    assert_eq!((old_a.clone(), new_a.clone()), (old_b, new_b));
+    let (token_c, old_c, new_c) = modify(&records[2]);
+    assert_eq!((token_a, token_c), (1, 3));
     assert_eq!(u32::from_le_bytes(old_a[2..6].try_into().unwrap()), 100);
     assert_eq!(u32::from_le_bytes(new_a[2..6].try_into().unwrap()), 105);
     assert_eq!(u32::from_le_bytes(old_c[2..6].try_into().unwrap()), 70);
     assert_eq!(u32::from_le_bytes(new_c[2..6].try_into().unwrap()), 77);
-    // Reload prefix: the header and slot 1 apply, slot 2's old item no
-    // longer matches the shared bytes, and slot 3's record is dropped.
     let store = crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
         .expect("reopen");
     assert_eq!(
@@ -3080,7 +2877,7 @@ fn aliased_offset_slots_share_live_reads_and_the_reload_prefix() {
             store.system_unigram(b),
             store.system_unigram(c)
         ),
-        (Some(105), Some(105), Some(70))
+        (Some(105), Some(100), Some(77))
     );
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
@@ -3488,119 +3285,6 @@ fn a_zhuyin_open_after_a_pinyin_open_keeps_libzhuyins_law() {
 mod mapped_replay;
 mod replayed_readings;
 mod unloaded;
-
-/// `FacadePhraseIndex::compact` copies every readable item of a system
-/// sub-index into a fresh one, and `add_phrase_item` stores each at its own
-/// offset (`phrase_index.cpp:208-217`, `:648-675` at 074a2219). Slots 1 and
-/// 2 of `gb_char.bin` name one body. After the compaction at the end of an
-/// import (`pinyin.cpp:655-660`), an increment of token 1's unigram
-/// (`phrase_index.cpp:150-178`) leaves token 2's as it was.
-#[test]
-fn import_end_compaction_gives_aliased_system_slots_their_own_body() {
-    use crate::data::chunk_format::build_memory_chunk;
-    use crate::user::native_fixture::{TempUserDir, system_dir};
-
-    let scratch = tempfile::tempdir().expect("scratch");
-    let system = crate::user::native_fixture::items_system(
-        &system_dir(),
-        scratch.path(),
-        &[(&[0x7532], &[0x1081], 100), (&[0x4e59], &[0x1084], 100)],
-        1000,
-    );
-    // Point slot 2 at slot 1's body.
-    let chunk = system.join("gb_char.bin");
-    let mut payload = std::fs::read(&chunk).expect("gb_char.bin")[8..].to_vec();
-    let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
-    let slot_one = offsets_start as usize + 4;
-    payload.copy_within(slot_one..slot_one + 4, slot_one + 4);
-    std::fs::write(&chunk, build_memory_chunk(&payload).expect("frame")).expect("gb_char.bin");
-
-    let user = TempUserDir::new("system-aliased-slots");
-    let mut store =
-        crate::user::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
-    assert_eq!(
-        crate::user::test_session::native_unigram(&store, 0x0100_0002),
-        Some(100)
-    );
-    store.compact_libraries();
-    assert!(store.add_unigram_outcome(0x0100_0001, 5).is_accepted());
-    assert_eq!(
-        crate::user::test_session::native_unigram(&store, 0x0100_0001),
-        Some(105)
-    );
-    assert_eq!(
-        crate::user::test_session::native_unigram(&store, 0x0100_0002),
-        Some(100)
-    );
-}
-
-/// Compaction copies each readable item independently (`phrase_index.cpp:648-675`
-/// at 074a2219), including bodies at distinct offsets that overlap. Adding 256
-/// to the first unigram changes the second's low byte only before compaction.
-#[test]
-fn import_end_compaction_gives_overlapping_system_slots_their_own_body() {
-    use crate::data::chunk_format::build_memory_chunk;
-    use crate::user::native_fixture::{TempUserDir, system_dir};
-
-    for write_before_compaction in [false, true] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let system = crate::user::native_fixture::items_system(
-            &system_dir(),
-            scratch.path(),
-            &[(&[0x7532], &[0x1081], 100), (&[0x4e59], &[0x1084], 100)],
-            1000,
-        );
-        let chunk = system.join("gb_char.bin");
-        let mut payload = std::fs::read(&chunk).expect("gb_char.bin")[8..].to_vec();
-        let offsets_start =
-            u32::from_le_bytes(payload[4..8].try_into().expect("offset header")) as usize;
-        let content_start =
-            u32::from_le_bytes(payload[8..12].try_into().expect("content header")) as usize;
-        let slot_one = offsets_start + 4;
-        let offset =
-            u32::from_le_bytes(payload[slot_one..slot_one + 4].try_into().expect("slot 1"));
-        payload[slot_one + 4..slot_one + 8].copy_from_slice(&(offset + 1).to_le_bytes());
-        let body = content_start + offset as usize;
-        // The first item has one character and one reading (16 bytes).
-        // The second starts one byte later, with one character and no readings
-        // (10 bytes). Both unigrams start at zero and both bodies are readable.
-        payload[body..body + 16].fill(0);
-        payload[body..body + 2].copy_from_slice(&[1, 1]);
-        std::fs::write(&chunk, build_memory_chunk(&payload).expect("frame")).expect("gb_char.bin");
-
-        let user = TempUserDir::new("system-overlapping-slots");
-        let mut store =
-            crate::user::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
-        assert_eq!(
-            crate::user::test_session::native_unigram(&store, 0x0100_0001),
-            Some(0)
-        );
-        assert_eq!(
-            crate::user::test_session::native_unigram(&store, 0x0100_0002),
-            Some(0)
-        );
-        let (first, second) = if write_before_compaction {
-            assert!(store.add_unigram_outcome(0x0100_0001, 256).is_accepted());
-            assert_eq!(
-                crate::user::test_session::native_unigram(&store, 0x0100_0002),
-                Some(1)
-            );
-            (256, 1)
-        } else {
-            (0, 0)
-        };
-        store.compact_libraries();
-        assert!(store.add_unigram_outcome(0x0100_0001, 256).is_accepted());
-        assert_eq!(
-            crate::user::test_session::native_unigram(&store, 0x0100_0001),
-            Some(first + 256)
-        );
-        assert_eq!(
-            crate::user::test_session::native_unigram(&store, 0x0100_0002),
-            Some(second)
-        );
-    }
-}
 
 /// An import of a reading its phrase already holds removes the item, edits
 /// a copy and adds the copy back at the content's end

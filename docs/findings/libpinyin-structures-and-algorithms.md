@@ -595,7 +595,7 @@ relative to the repository root.
 | SingleGram header and record stride | 4-byte minimum header, 8-byte item stride | `storage/ngram.cpp:37-38,48-70`, `include/novel_types.h:105-108` | `src/single_gram.rs:20-23`, `src/user/store.rs:1454-1467` |
 | Journal ADD item header and mask-out header count | ADD needs at least 6 bytes. Mask-out needs one journal header and asserts on a second | `storage/phrase_index.h:56,124-126`, `storage/phrase_index.cpp:457,721-747` | `src/user/replay.rs:911-917`, `src/user/persistence.rs:1931-1942` |
 | Phrase-item length and pronunciation count | Both fields are 8-bit unsigned. The 256th distinct pronunciation wraps the count to zero | `storage/phrase_index.h:100-114`, `storage/phrase_index.cpp:56-91,195-204` | `src/user/user_library.rs:372`, `src/user/store.rs:327-330,365` |
-| Phrase-content offset and signed bulk growth | Offsets wrap modulo 2³². A fresh bulk copy reaches the unsafe growth boundary at 2³¹ bytes | `include/novel_types.h:128`, `storage/phrase_index.cpp:208-217,365-390`, `storage/phrase_index_logger.h:115-117`, `include/memory_chunk.h:95-98,290-296` | `src/user/user_library.rs:19-24,73,520`, `src/user/persistence.rs:2353`. Compatibility policy rows 111–112 cover these boundaries |
+| Phrase-content offset and signed bulk growth | At the pin offsets wrap modulo 2³². A fresh bulk copy reaches the unsafe growth boundary at 2³¹ bytes | `include/novel_types.h:128`, `storage/phrase_index.cpp:208-217,365-390`, `storage/phrase_index_logger.h:115-117`, `include/memory_chunk.h:95-98,290-296` | Runtime offsets keep their width and stored offsets are checked. `src/user/user_library.rs`, `src/user/persistence.rs`. Compatibility policy rows 111–112 cover these boundaries |
 | Journal record payload length | The 16-bit field wraps modulo 65536 | `storage/phrase_index_logger.h:248-293` | The encoder refuses a payload above 65535 bytes. `src/data/user_files.rs:886-926`. [Accepted language artefact](upstream-divergences.md#oversized-journal-record-payloads-policy-row-123) |
 | Interpolation and K-mixture estimation | Initial λ 0.6, convergence delta 0.001 | `utils/training/estimate_interpolation.cpp:34-35` and `utils/training/estimate_k_mixture_model.cpp:40-41` from the repository root | `utils/src/training/estimate_interpolation.rs:31-34`, `utils/src/k_mixture_model/estimate.rs:28-30` |
 | K-mixture generation defaults | Maximum occurrences 20, maximum increase rate 3.0 | `utils/training/gen_k_mixture_model.cpp:50-51` from the repository root | `utils/src/k_mixture_model/generate.rs:34-36` |
@@ -843,22 +843,18 @@ library 5: pinyin unloads only GBK (`src/pinyin.cpp:464-475`), so it checks
 compaction, save and reopen without a successful unload. The zhuyin case
 does unload and reload USER_FILE: only TSI is refused (`src/zhuyin.cpp:378-390`).
 
-For n live items occupying B bytes, encoding visits each word/key once,
-O(B) time and output space, with at most one item's temporary encoded body;
-an offset lookup is O(1). For S offset words, the dense array occupies O(S)
-space and a scan takes O(S) time. Saving validated views copies B bytes
-directly, as the pin does, with no additional per-item allocation.
+For n occupied slots, the arena keeps one byte extent per slot in a
+sorted map. Slot lookup and mutation cost O(log n), while iteration is
+linear in the occupied slots. With S stored offset words and B content
+bytes, loading scans the S words, sorts the occupied offsets to establish
+record boundaries, and copies the content once. Two slots with the same
+original offset get independent bodies when either is first edited.
 
-**Equivalence: argued.** `UserLibrary::store`
-(`src/user/user_library.rs:527-576`) writes the pin's header
-offsets (`index_two = 18 + P`, `index_three = 19 + P + C`), eight zero
-bytes and then contiguous bodies from offset 8, as `add_phrase_item` does
-(`phrase_index.cpp:208-217`), and the wrapping total. Its slot count,
-`token_end` (`src/user/user_library.rs:196-202`), is the pin's highest copied token plus one,
-because every arena slot holds a validated view. The two could part only
-past a wrapped `table_offset_t`, at 4 GiB of content; row 112 refuses a
-copy from 2^31 bytes. Store makes a length pass and a copy pass, O(S + B)
-time and an exact O(S + B) allocation.
+`UserLibrary::store` preserves the file's header offsets, eight zero bytes
+at the start of nonempty content, ordered bodies, and 32-bit total.
+It makes a length pass and a copy pass, with O(S + B) saving work and
+output space. The output offset field is checked. Row 112 still refuses
+a bulk copy from 2³¹ bytes.
 
 ### Zhuyin index representation
 

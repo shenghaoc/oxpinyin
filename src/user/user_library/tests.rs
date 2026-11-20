@@ -191,36 +191,6 @@ fn fill(library: &mut UserLibrary, unigrams: &[u32]) {
     }
 }
 
-/// #1514 ruling 1 (`phrase_index.cpp:208-217`): once the size passes the
-/// modulus the next add lands at the size modulo it, over earlier bytes,
-/// and the size stays. The slot stores the wrapped offset and the total
-/// takes only the added unigram.
-#[test]
-fn an_add_past_the_boundary_overwrites_earlier_bytes_and_aliases_slots() {
-    let _limits = TestLimits::set(64, 1 << 31);
-    let mut library = UserLibrary::default();
-    fill(&mut library, &[1, 2, 3, 4]);
-    // 8 + 4 * 16 = 72: past 64, nothing wrapped yet.
-    assert_eq!(library.content.len(), 72);
-    assert_eq!(library.slots.offset(4), Some(56));
-    assert_eq!(library.total(), 10);
-    library.replace(5, &small(50)).unwrap();
-    // 72 mod 64 = 8: over slot 1's item, size unchanged.
-    assert_eq!(library.content.len(), 72);
-    assert_eq!(library.slots.offset(5), Some(8));
-    assert_eq!(library.slots.offset(1), Some(8), "slot 1 keeps its offset");
-    assert_eq!(library.item(1).unwrap().unigram(), 50, "and reads slot 5's");
-    assert_eq!(library.item(1).unwrap().as_bytes(), small(50));
-    // The total takes +50 and loses nothing for slot 1's changed bytes.
-    assert_eq!(library.total(), 60);
-    assert_eq!(library.item(2).unwrap().unigram(), 2);
-    // The same size gives the same offset again: no advancing ring.
-    library.replace(6, &small(60)).unwrap();
-    assert_eq!(library.slots.offset(6), Some(8));
-    assert_eq!(library.item(5).unwrap().unigram(), 60);
-    assert_eq!(library.content.len(), 72);
-}
-
 /// A wrapped allocation lands on a live slot (register row 119):
 /// `add_phrase_item` alone moves the offset word and adds the new
 /// unigram, and the overwritten item's unigram stays in `m_total_freq`
@@ -238,90 +208,24 @@ fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
     assert_eq!(library.total(), 36, "a replace removes first");
 }
 
-/// Zero narrows to 8, as an empty content does.
+/// POLICY-ACCEPTED: reading a slot cannot consume the next item's bytes.
 #[test]
-fn a_size_that_is_a_multiple_of_the_modulus_adds_at_eight() {
-    let _limits = TestLimits::set(56, 1 << 31);
-    let mut library = UserLibrary::default();
-    fill(&mut library, &[1, 2, 3]);
-    assert_eq!(library.content.len(), 56);
-    library.replace(4, &small(40)).unwrap();
-    assert_eq!(library.slots.offset(4), Some(8));
-    assert_eq!(library.content.len(), 56);
-    assert_eq!(append_offset(0), 8);
-}
-
-/// Remove and modify act on the bytes now stored (`phrase_index.cpp:
-/// 219-234`): the unigram taken out is the overwritten item's.
-#[test]
-fn remove_and_modify_of_an_overwritten_item_use_its_current_bytes() {
-    let _limits = TestLimits::set(64, 1 << 31);
-    let mut library = UserLibrary::default();
-    fill(&mut library, &[1, 2, 3, 4]);
-    library.replace(5, &small(50)).unwrap();
-    assert_eq!(library.total(), 60);
-    // Slot 1 reads slot 5's item: removing it subtracts 50, not 1.
-    assert!(library.remove(1));
-    assert_eq!(library.total(), 10);
-    assert!(library.item(1).is_none());
-    assert_eq!(library.item(5).unwrap().unigram(), 50, "slot 5 stays live");
-    // Modify slot 5: remove its 50, add 70 at the same wrapped offset.
-    library.replace(5, &small(70)).unwrap();
-    assert_eq!(library.total(), 30);
-    assert_eq!(library.slots.offset(5), Some(8));
-    assert_eq!(library.item(5).unwrap().unigram(), 70);
-}
-
-/// Ruling 2 (row 111): a header-derived length that crosses the item's
-/// original end but stays inside the content returns the following
-/// bytes; one that passes the content end answers no item.
-#[test]
-fn a_read_crossing_the_item_end_returns_the_next_bytes_and_one_past_the_content_is_none() {
+fn a_read_crossing_the_item_boundary_answers_no_item() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2]);
-    let offset = library.slots.offset(1).unwrap() as usize;
-    // Two readings: 6 + 4 + 2 * 6 = 22 bytes, six of them slot 2's.
-    library.content[offset + 1] = 2;
-    let view = library.item(1).unwrap();
-    assert_eq!(view.as_bytes().len(), 22);
-    assert_eq!(&view.as_bytes()[16..], &small(2)[..6]);
-    // 255 readings reach past the content end.
-    library.content[offset + 1] = 255;
+    let start = library.slots.get(&1).unwrap().start;
+    library.content[start + 1] = 2;
     assert!(library.item(1).is_none());
-    assert_eq!(library.item(2).unwrap().unigram(), 2, "others are kept");
-}
-
-/// Ruling 3: the arena grows with every replacement and compacts only
-/// when asked, in slot order, with a total rebuilt from the items copied.
-#[test]
-fn compaction_runs_only_when_asked_and_wraps_like_any_add() {
-    let _limits = TestLimits::set(64, 1 << 31);
-    let mut library = UserLibrary::default();
-    for _ in 0..20 {
-        library.replace(1, &small(1)).unwrap();
-    }
-    assert!(library.content.len() >= 64, "no dead-over-live trigger");
-    fill(&mut library, &[1, 2, 3, 4, 5]);
-    let read: Vec<_> = library
-        .items()
-        .map(|(slot, item)| (slot, item.unigram()))
-        .collect();
-    library.compact();
-    // Four items reach 72 bytes; the fifth wraps to 8 and the size stays.
-    assert_eq!(library.content.len(), 72);
-    assert_eq!(library.slots.offset(5), Some(8));
-    assert_eq!(library.item(1).unwrap().unigram(), read[4].1);
-    // The total is the sum of the items read from the source, wrapped
-    // or not, and not the sum of what the compacted copy now reads.
-    let sum = read.iter().fold(0_u32, |sum, &(_, unigram)| sum + unigram);
-    assert_eq!(library.total(), sum);
+    library.content[start + 1] = 255;
+    assert!(library.item(1).is_none());
+    assert_eq!(library.item(2).unwrap().unigram(), 2);
 }
 
 /// Row 112: the save copies the compacted content into a fresh chunk;
 /// from the limit on, the copy is unsafe.
 #[test]
 fn the_store_copy_threshold_follows_the_compacted_content() {
-    let _limits = TestLimits::set(1 << 32, 8 + 16 * 3);
+    let _limits = TestLimits::set(8 + 16 * 3);
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2]);
     assert!(!library.store_copy_is_unsafe());
@@ -333,31 +237,6 @@ fn the_store_copy_threshold_follows_the_compacted_content() {
     assert!(library.remove(3));
     assert!(!library.store_copy_is_unsafe());
     assert!(!UserLibrary::default().store_copy_is_unsafe());
-}
-
-/// Corruption by an overwrite is defined and survives a compaction, a
-/// save and a reload as independent copies of the bytes now read.
-#[test]
-fn a_wrapped_state_survives_compaction_store_and_reload() {
-    let mut library = UserLibrary::default();
-    {
-        let _limits = TestLimits::set(64, 1 << 31);
-        fill(&mut library, &[1, 2, 3, 4]);
-        library.replace(5, &small(50)).unwrap();
-    }
-    // The modulus is back to 2^32: the compaction does not wrap again.
-    library.compact();
-    assert_eq!(library.content.len(), 8 + 5 * 16);
-    assert_eq!(library.total(), 50 + 2 + 3 + 4 + 50);
-    assert_ne!(library.slots.offset(1), library.slots.offset(5));
-    let saved = library.store().unwrap();
-    let loaded = UserLibrary::load(&saved).unwrap();
-    let read: Vec<_> = loaded
-        .items()
-        .map(|(slot, item)| (slot, item.unigram()))
-        .collect();
-    assert_eq!(read, [(1, 50), (2, 2), (3, 3), (4, 4), (5, 50)]);
-    assert_eq!(loaded.store().unwrap(), saved);
 }
 
 /// Mask-out removes slots and leaves the compaction to the pin's point.
