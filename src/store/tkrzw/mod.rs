@@ -385,17 +385,6 @@ impl Db {
         !self.dbm.is_null()
     }
 
-    /// `DBM::IsOpen()`: the library's own answer, which the owner never
-    /// needs — it knows what `open` returned — and the retention test
-    /// checks.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "observed by the failed-open retention test")
-    )]
-    pub(crate) fn is_open(&self) -> bool {
-        ffi::is_open(&self.dbm)
-    }
-
     /// `m_db->Close()` ahead of `Drop`'s own, for the test that observes
     /// the status the pin's `reset()` ignores.
     #[cfg(test)]

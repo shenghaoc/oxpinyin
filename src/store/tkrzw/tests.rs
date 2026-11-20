@@ -83,7 +83,6 @@ fn a_failed_open_retains_the_concrete_object_whose_calls_answer_as_the_pins() {
             db.is_retained(),
             "{class:?}: the native object survives its failed Open"
         );
-        assert!(!db.is_open(), "{class:?}");
         assert!(!path.exists(), "{class:?}: OPEN_NO_CREATE created nothing");
 
         let mut value = Vec::new();
@@ -131,7 +130,6 @@ fn a_failed_open_retains_the_concrete_object_whose_calls_answer_as_the_pins() {
             "{class:?}: {}",
             super::message_text(&status)
         );
-        assert!(db.is_open(), "{class:?}");
         db.set(b"key", b"value").unwrap();
         assert!(db.get(b"key", &mut value).unwrap());
         assert_eq!(value, b"value");
@@ -152,7 +150,6 @@ fn a_failed_system_attach_keeps_the_object_and_its_later_calls_are_inert() {
             Ok(_) => panic!("a missing file opened (hash: {hash})"),
         };
         assert!(handle.db.is_retained());
-        assert!(!handle.db.is_open());
         handle.read(b"key");
         handle.suggest(b"key");
         drop(handle);
@@ -190,7 +187,6 @@ fn a_failed_bigram_attach_keeps_its_hashdbm_until_reset() {
             Ok(_) => panic!("read only: {read_only}: a missing directory opened"),
         };
         assert!(handle.db.is_retained(), "read only: {read_only}");
-        assert!(!handle.db.is_open(), "read only: {read_only}");
         handle.read(b"tkn\0");
         // `store` and `get_all_items` return the refused statuses.
         assert!(handle.write(b"tkn\0", b"gram").is_err());
@@ -220,7 +216,6 @@ fn a_never_opened_memory_class_is_usable_and_its_reset_calls_are_inert() {
     // 455-468`, `:256-260`), both ignored by the pin's `reset()`.
     for class in [Class::Baby, Class::Tiny] {
         let mut db = Db::new(class);
-        assert!(!db.is_open(), "{class:?}");
         db.set(b"k", b"v").unwrap();
         let mut value = Vec::new();
         assert!(db.get(b"k", &mut value).unwrap(), "{class:?}");

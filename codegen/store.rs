@@ -421,7 +421,6 @@ mod bdb {
             .allowlist_type("DBT")
             .allowlist_type("DBTYPE")
             .allowlist_var("DB_.*")
-            .allowlist_var("DB_VERSION_.*")
             .layout_tests(false)
             .derive_debug(false)
             .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
