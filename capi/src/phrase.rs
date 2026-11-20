@@ -13,6 +13,7 @@
 
 use std::os::raw::c_char;
 
+use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PhraseTokenT, PinyinInstance};
 
@@ -114,20 +115,9 @@ pub unsafe extern "C" fn pinyin_get_n_phrase(
     instance: *mut PinyinInstance,
     num: *mut GUint,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     let count = inst.core.phrase_count();
-    if !num.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *num = GUint::try_from(count).unwrap_or(GUint::MAX);
-        }
-    }
+    write_if_nonnull!(num, GUint::try_from(count).unwrap_or(GUint::MAX));
     true
 }
 
@@ -154,27 +144,11 @@ pub unsafe extern "C" fn pinyin_get_phrase_token(
     index: GUint,
     token: *mut PhraseTokenT,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
-    if !token.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *token = oxpinyin::NULL_TOKEN;
-        }
-    }
+    let inst = borrow_or_return!(instance, instance_ref, false);
+    write_if_nonnull!(token, oxpinyin::NULL_TOKEN);
     let Some(value) = inst.core.phrase_token(index as usize) else {
         return false;
     };
-    if !token.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *token = value;
-        }
-    }
+    write_if_nonnull!(token, value);
     true
 }

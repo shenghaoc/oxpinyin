@@ -12,6 +12,7 @@ use std::os::raw::c_int;
 
 use oxpinyin::engine::CandidateKind;
 
+use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
 use crate::types::{GChar, GUint, LookupCandidate, ZhuyinInstance, lookup_candidate_type_t};
 
@@ -35,19 +36,11 @@ pub unsafe extern "C" fn zhuyin_get_n_candidate(
     instance: *mut ZhuyinInstance,
     num: *mut GUint,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
-    if !num.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *num = GUint::try_from(inst.state.candidates.len()).unwrap_or(GUint::MAX);
-        }
-    }
+    let inst = borrow_or_return!(instance, instance_ref, false);
+    write_if_nonnull!(
+        num,
+        GUint::try_from(inst.state.candidates.len()).unwrap_or(GUint::MAX)
+    );
     true
 }
 
@@ -76,29 +69,13 @@ pub unsafe extern "C" fn zhuyin_get_candidate(
     index: GUint,
     candidate: *mut *mut LookupCandidate,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = borrow_or_return!(instance, instance_ref, false);
     let idx = index as usize;
     if let Some(cand) = inst.state.candidates.get(idx) {
-        if !candidate.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *candidate = candidate_ptr(cand);
-            }
-        }
+        write_if_nonnull!(candidate, candidate_ptr(cand));
         true
     } else {
-        if !candidate.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *candidate = std::ptr::null_mut();
-            }
-        }
+        write_if_nonnull!(candidate, std::ptr::null_mut());
         false
     }
 }
@@ -131,20 +108,9 @@ pub unsafe extern "C" fn zhuyin_get_candidate_type(
     candidate: *mut LookupCandidate,
     candidate_type: *mut lookup_candidate_type_t,
 ) -> bool {
-    if candidate.is_null() {
-        return false;
-    }
-
-    // SAFETY: `candidate` is non-null and was produced by
-    // `zhuyin_get_candidate`.
-    let cand = unsafe { candidate_ref(candidate) };
+    let cand = borrow_or_return!(candidate, candidate_ref, false);
     let ctype = cand.candidate_type;
-    if !candidate_type.is_null() {
-        // SAFETY: Null-checked above.
-        unsafe {
-            *candidate_type = ctype;
-        }
-    }
+    write_if_nonnull!(candidate_type, ctype);
     true
 }
 
@@ -175,20 +141,8 @@ pub unsafe extern "C" fn zhuyin_get_candidate_string(
     candidate: *mut LookupCandidate,
     utf8_str: *mut *const GChar,
 ) -> bool {
-    if candidate.is_null() {
-        return false;
-    }
-
-    // SAFETY: `candidate` is non-null and was produced by
-    // `zhuyin_get_candidate`.
-    let cand = unsafe { candidate_ref(candidate) };
-    if !utf8_str.is_null() {
-        // SAFETY: Null-checked above. Pointer borrows into the instance's
-        // packed candidate text, valid until candidates are rebuilt.
-        unsafe {
-            *utf8_str = cand.text_ptr;
-        }
-    }
+    let cand = borrow_or_return!(candidate, candidate_ref, false);
+    write_if_nonnull!(utf8_str, cand.text_ptr);
     true
 }
 
@@ -303,13 +257,7 @@ pub unsafe extern "C" fn zhuyin_clear_constraint(
     instance: *mut ZhuyinInstance,
     offset: usize,
 ) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     inst.core.clear_abi_constraint(offset, false)
 }
 

@@ -3,6 +3,7 @@
 
 use std::ptr;
 
+use crate::ffi::borrow_or_return;
 use crate::state::{CapiInstance, box_instance, context_ref, instance_mut};
 use crate::types::{ZhuyinContext, ZhuyinInstance};
 
@@ -79,13 +80,7 @@ pub unsafe extern "C" fn zhuyin_free_instance(instance: *mut ZhuyinInstance) {
 /// applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zhuyin_reset(instance: *mut ZhuyinInstance) -> bool {
-    if instance.is_null() {
-        return false;
-    }
-
-    // SAFETY: `instance` is non-null and was produced by
-    // `zhuyin_alloc_instance`.
-    let mut inst = unsafe { instance_mut(instance) };
+    let mut inst = borrow_or_return!(instance, instance_mut, false);
     inst.core.full_reset();
     inst.state.candidates.clear();
     true

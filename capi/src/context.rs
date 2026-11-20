@@ -3,6 +3,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
+use crate::ffi::borrow_or_return;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::PinyinContext;
 
@@ -169,13 +170,7 @@ pub unsafe extern "C" fn pinyin_fini(context: *mut PinyinContext) {
 /// applies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pinyin_save(context: *mut PinyinContext) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`;
-    // the unique borrow lasts only for the save call.
-    let ctx = unsafe { context_mut(context) };
+    let ctx = borrow_or_return!(context, context_mut, false);
     // Past both guards the save's `mark_version` writes user.conf through
     // `UserTableInfo::save`, which resets LC_NUMERIC to "C"
     // (`table_info.cpp:378`; register row 39); the two early returns do
