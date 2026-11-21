@@ -17,7 +17,7 @@ def require_local_measurement(env):
 def run(operation, argv=None, env=None, *, pin_comparison=False):
     """Run the operation under the shared cancellation and failure handlers.
 
-    A pin comparison runs with the vcpkg overlay tkrzw first, so that the pin and the
+    A Linux pin comparison runs with the vcpkg overlay tkrzw first, so that the pin and the
     subject load one libtkrzw and are certified against it.
     """
     environment = dict(os.environ if env is None else env)

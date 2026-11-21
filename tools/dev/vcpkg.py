@@ -1,6 +1,6 @@
-"""vcpkg for development and for the CI jobs; the overlay port alone owns the tkrzw pin.
+"""Linux and Windows vcpkg tooling; the overlay port owns their tkrzw pin.
 
-Development: `install` puts the overlay port into an explicit or managed
+Linux development: `install` puts the overlay port into an explicit or managed
 checkout, and `environment` selects that install for compilation, execution
 and certification.
 
@@ -25,14 +25,14 @@ from types import SimpleNamespace
 from tools import cachedir
 
 ROOT = Path(__file__).resolve().parents[2]
-# Match the vcpkg revision verified by the macOS migration.
+# Revision used for managed Linux development checkouts.
 REVISION = '2ec0f1747d8186a5c9babe276e2ad57cd2b12d2a'
 
 
 def triplet():
     """Select the native overlay triplet before touching an install."""
-    if platform.system() == 'Darwin':
-        return 'arm64-osx-oxpinyin'
+    if platform.system() != 'Linux':
+        raise ValueError('native vcpkg tkrzw is supported on Linux only')
     architecture = platform.machine().lower()
     targets = {'x86_64': 'x64', 'amd64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}
     if architecture not in targets:
@@ -166,16 +166,16 @@ def binary_cache(env, triplet, packages='', *, capture, which=shutil.which, os_r
     """The environment and step outputs that select the binary cache for TRIPLET.
 
     The key changes with the checkout revision and with the toolchain. On a
-    hosted Windows or macOS runner the image names the toolchain. A Linux key
-    names the compiler and the distribution release instead. A macOS or Linux
-    key also names the checkout path, which the installed libtkrzw and
-    tkrzw.pc record, so an archive built under another root is not reused.
+    hosted Windows runner the image names the toolchain. A Linux key names
+    the compiler, distribution release and checkout path, which tkrzw.pc records.
     PACKAGES, the space-separated specs a job installs, adds a `packages`
     output for the workflow to append: a different request is a different
     cache entry.
     Paths are published with forward slashes; the Windows steps run in bash.
     """
     linux = 'linux' in triplet
+    if not linux and 'windows' not in triplet:
+        raise ValueError(f'no vcpkg cache rule for triplet {triplet}')
     for name in ('RUNNER_TEMP',) if linux else ('ImageOS', 'ImageVersion', 'RUNNER_TEMP'):
         if not env.get(name):
             raise ValueError(f'runner variable {name} is unset')
@@ -191,8 +191,6 @@ def binary_cache(env, triplet, packages='', *, capture, which=shutil.which, os_r
         key = f'{prefix}{name}-{hashlib.sha256(identity).hexdigest()[:16]}'
     else:
         prefix = f"vcpkg-bin-{env['ImageOS']}-{triplet}-"
-        if 'osx' in triplet:
-            prefix += hashlib.sha256(root.as_posix().encode()).hexdigest()[:16] + '-'
         key = f"{prefix}{name}-{env['ImageOS']}-{env['ImageVersion']}"
     outputs = {'dir': directory, 'prefix': prefix, 'key': key,
                'installed': (root / 'installed' / triplet).as_posix()}
@@ -218,6 +216,8 @@ def runner_install(env, triplet, packages='', *, run, root=ROOT):
     PACKAGES defaults to tkrzw alone. The result names the environment
     variables to publish and the directories to put on PATH.
     """
+    if 'windows' not in triplet and 'linux' not in triplet:
+        raise ValueError(f'no install rule for triplet {triplet}')
     if not env.get('VCPKG_ROOT'):
         raise ValueError('VCPKG_ROOT is unset; run cache-key first')
     vcpkg = Path(env['VCPKG_ROOT'])
@@ -234,16 +234,9 @@ def runner_install(env, triplet, packages='', *, run, root=ROOT):
             env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
         return dict(environment={'PKG_CONFIG': pkg_config.as_posix(), 'PKG_CONFIG_PATH': own},
                     path=[(installed / 'bin').as_posix()])
-    if 'osx' not in triplet and 'linux' not in triplet:
-        raise ValueError(f'no install rule for triplet {triplet}')
     # The installed library must answer pkg-config by itself.
     run(['pkg-config', '--modversion', '--cflags', '--libs', 'tkrzw'], env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
     tools = [(installed / 'tools/tkrzw/bin').as_posix()]
-    if 'osx' in triplet:
-        # It must also name its own path: the binaries load it with no rpath.
-        run(['otool', '-D', installed / 'lib/libtkrzw.dylib'], env=env, cwd=root)
-        inherited = os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else ''
-        return dict(environment={'PKG_CONFIG_PATH': own + inherited}, path=tools)
     # Linux: the selection a developer's environment makes, certified against this prefix.
     selected = installed_environment(env, installed)
     return dict(environment={name: selected[name] for name in

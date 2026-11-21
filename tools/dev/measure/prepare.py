@@ -4,7 +4,8 @@
 callgrind-differential and system-import-profile read: oracle builds only the
 selected pin cells with tools/oracle/build.py; callgrind also builds the profiling
 and shipping arms over the pin's data. Every input is working data under the
-`measure` entry of the cache root, and every build uses the vcpkg overlay tkrzw.
+`measure` entry of the cache root. Linux pin preparation uses the vcpkg overlay
+tkrzw; macOS native revision builds use the host installation.
 """
 import argparse
 import contextlib
@@ -154,7 +155,7 @@ def prepare(argv, env):
         emit(f'{backend}: pin prefix {prefix}')
     if args.mode == 'oracle':
         return 0
-    # Build and certify the subject against the same overlay as the pin.
+    # Build and certify the Linux subject against the same overlay as the pin.
     env = vcpkg.environment(env)
     stages = {}
     for name, debug in (('tkrzw', True), ('nodebug', False)):
@@ -203,16 +204,20 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
         triplet, installed = vcpkg.triplet(), vcpkg.prefix(env)
         # Compilation, the loader and the libtkrzw certification all read the overlay install.
         env = vcpkg.environment(env)
-    else:
+    elif windows:
         if not env.get('VCPKG_ROOT'):
             raise ValueError('native measurement requires VCPKG_ROOT; see the setup runbook')
-        triplet = 'x64-windows' if windows else 'arm64-osx-oxpinyin'
+        triplet = 'x64-windows'
         installed = Path(env['VCPKG_ROOT']).resolve() / 'installed' / triplet
+    else:
+        from ..provision import homebrew_tkrzw_prefix
+        installed = homebrew_tkrzw_prefix(env)
     pkgconfig = installed / 'lib/pkgconfig'
     if not (pkgconfig / 'tkrzw.pc').is_file():
-        raise ValueError(f'install tkrzw:{triplet} from the repository overlay before measuring')
-    env = {**env, 'PKG_CONFIG_PATH': str(pkgconfig) +
-           (os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else '')}
+        raise ValueError(f'missing tkrzw.pc in {pkgconfig}')
+    if linux or windows:
+        env = {**env, 'PKG_CONFIG_PATH': str(pkgconfig) +
+               (os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else '')}
     if windows:
         from tools.dev.check import msvc_environment
         env = msvc_environment(env)
@@ -270,7 +275,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
                                    'RUSTFLAGS': build_env.get('RUSTFLAGS', ''),
                                    'OXPINYIN_DSYM': build_env.get('OXPINYIN_DSYM', ''),
                                    'toolchain': build_env.get('RUSTUP_TOOLCHAIN', ''),
-                                   'PKG_CONFIG_PATH': build_env['PKG_CONFIG_PATH']})
+                                   'PKG_CONFIG_PATH': build_env.get('PKG_CONFIG_PATH', '')})
     finally:
         bench.run(['git', 'worktree', 'remove', '--force', source])
 

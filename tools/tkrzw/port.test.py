@@ -16,7 +16,9 @@ VERSION = json.loads((ROOT / "vcpkg-overlays/tkrzw/vcpkg.json").read_text())["ve
 class PortTests(unittest.TestCase):
     def test_linux_is_supported(self):
         port = ROOT / 'vcpkg-overlays/tkrzw'
-        self.assertIn('linux', json.loads((port / 'vcpkg.json').read_text())['supports'])
+        supported = json.loads((port / 'vcpkg.json').read_text())['supports']
+        self.assertIn('linux', supported)
+        self.assertNotIn('osx', supported)
 
     def script(self, prefix):
         """A script that runs the portfile over PREFIX with vcpkg's functions
@@ -61,9 +63,7 @@ include("{(ROOT / 'vcpkg-overlays/tkrzw/portfile.cmake').as_posix()}")
                             self.assertEqual(header.read_text(), original)
 
     def test_unix_runs_upstream_configure_and_fixes_the_installed_files(self):
-        for host, linkage, options, archive in ((host, linkage, options, archive)
-                for host in ('OSX', 'LINUX')
-                for linkage, options, archive in (('dynamic', ';OPTIONS', False), ('static', ';OPTIONS;--disable-shared', True))):
+        for linkage, options, archive in (('dynamic', ';OPTIONS', False), ('static', ';OPTIONS;--disable-shared', True)):
             with self.subTest(linkage=linkage), tempfile.TemporaryDirectory() as directory:
                 prefix = Path(directory)
                 for name in ('include/tkrzw_lib_common.h', 'lib/libtkrzw.a', 'lib/pkgconfig/tkrzw.pc'):
@@ -72,7 +72,7 @@ include("{(ROOT / 'vcpkg-overlays/tkrzw/portfile.cmake').as_posix()}")
                 (prefix / 'lib/libtkrzw.a').write_bytes(b'archive')
                 (prefix / 'lib/pkgconfig/tkrzw.pc').write_text('Libs: -L${libdir} -ltkrzw -lstdc++ -lpthread\n')
                 result = subprocess.run(
-                    ['cmake', f'-DVCPKG_TARGET_IS_{host}=ON', f'-DVCPKG_LIBRARY_LINKAGE={linkage}', '-P', str(self.script(prefix))],
+                    ['cmake', '-DVCPKG_TARGET_IS_LINUX=ON', f'-DVCPKG_LIBRARY_LINKAGE={linkage}', '-P', str(self.script(prefix))],
                     capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 calls = (prefix / 'calls').read_text().splitlines()
@@ -83,8 +83,7 @@ include("{(ROOT / 'vcpkg-overlays/tkrzw/portfile.cmake').as_posix()}")
                 self.assertEqual(calls[1], f'vcpkg_make_configure SOURCE_PATH;{prefix.as_posix()};COPY_SOURCE;'
                                            f'DEFAULT_OPTIONS_EXCLUDE;^--(enable|disable)-(shared|static)$' + options)
                 self.assertEqual((prefix / 'lib/libtkrzw.a').exists(), archive)
-                cxx = '-lc++' if host == 'OSX' else '-lstdc++'
-                self.assertEqual((prefix / 'lib/pkgconfig/tkrzw.pc').read_text(), f'Libs: -L${{libdir}} -ltkrzw {cxx} -lpthread\n')
+                self.assertEqual((prefix / 'lib/pkgconfig/tkrzw.pc').read_text(), 'Libs: -L${libdir} -ltkrzw -lstdc++ -lpthread\n')
 
     if sys.platform == 'win32':
         def test_installed_metadata_preserves_spaced_prefix(self):

@@ -623,6 +623,11 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
 
         def darwin_fakes(self):
             self.fake('uname', "print('Darwin')")
+            for module, flags in (('tkrzw', '-L/tkrzw/lib -ltkrzw'),
+                                  ('liblz4', '-L/lz4/lib -llz4'),
+                                  ('libzstd', '-L/zstd/lib -lzstd')):
+                (self.work / 'system-pc' / (module + '.pc')).write_text(
+                    f'Name: {module}\nDescription: fixture\nVersion: 1\nLibs: {flags}\nCflags:\n')
             self.fake('sw_vers', "import sys; assert sys.argv[1:] == ['-productVersion']; print('26.4')")
             self.env.pop('MACOSX_DEPLOYMENT_TARGET', None)
             self.env['CHECKOUT'] = str(self.root)
@@ -691,6 +696,40 @@ else:
                     self.assertNotIn('oxpinyin_', exports)
                     self.assertFalse((self.work / 'strip-calls').exists())
                     self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
+
+        def test_macos_tkrzw_relink_uses_compression_pkg_config_paths(self):
+            self.darwin_fakes()
+            self.fake('pkg-config', r'''import sys
+if sys.argv[1:] == ['--libs', 'tkrzw', 'liblz4', 'libzstd']:
+    print('-L/tkrzw/lib -ltkrzw -L/lz4/lib -llz4 -L/zstd/lib -lzstd')
+elif sys.argv[1:] == ['--libs', 'glib-2.0', 'gobject-2.0']:
+    print('-lglib-2.0 -lgobject-2.0')
+else:
+    sys.exit(1)
+''')
+            result, stage = self.install(env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
+                                              'FIXTURE_HOST': 'aarch64-apple-darwin'})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls, _ = json.loads((self.work / 'link-calls').read_text())
+            flags = ['-L/tkrzw/lib', '-ltkrzw', '-L/lz4/lib', '-llz4', '-L/zstd/lib', '-lzstd']
+            self.assertEqual([word for word in calls if word in flags], flags)
+            shutil.rmtree(stage)
+
+        def test_macos_tkrzw_relink_modules_follow_cargo_metadata(self):
+            manifest = self.root / 'Cargo.toml'
+            original = manifest.read_text()
+            before = 'libzstd = { version = "0", feature = "tkrzw" }'
+            self.assertIn(before, original)
+            manifest.write_text(original.replace(before, 'fixturezstd = { version = "0", feature = "tkrzw" }'))
+            calls = []
+
+            def capture(arguments):
+                calls.append(arguments)
+                return packaging.pool.Completed(0, b'-ltkrzw', b'')
+
+            tools = SimpleNamespace(root=self.root, capture=capture)
+            self.assertEqual(packaging.backend_flags('tkrzw', tools, '-lc++', 'darwin'), ['-ltkrzw'])
+            self.assertEqual(calls, [['pkg-config', '--libs', 'tkrzw', 'liblz4', 'fixturezstd']])
 
         def test_macos_build_targets_the_build_machine_unless_the_environment_names_one(self):
             self.darwin_fakes()

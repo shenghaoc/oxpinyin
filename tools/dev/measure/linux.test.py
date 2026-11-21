@@ -193,7 +193,7 @@ class LinuxPreparation(PreparationFixture, unittest.TestCase):
              mock.patch.object(identity, 'library_backend', return_value='tkrzw') as backend:
             env = dict(VCPKG_ROOT=directory, RUSTFLAGS='bad', CARGO_PROFILE_RELEASE_DEBUG='2', OXPINYIN_DSYM='1')
             installed = Path(directory).resolve() / 'installed/x64-linux-oxpinyin'
-            with self.assertRaisesRegex(ValueError, 'tkrzw:x64-linux-oxpinyin'):
+            with self.assertRaisesRegex(ValueError, 'missing tkrzw.pc in .*installed/x64-linux-oxpinyin/lib/pkgconfig'):
                 prepare.native_build('a' * 40, Path(directory) / 'none', env, linux=True, symbols=False)
             install.assert_not_called()
             (installed / 'lib/pkgconfig').mkdir(parents=True)

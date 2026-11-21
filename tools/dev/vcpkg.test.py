@@ -15,7 +15,6 @@ sys.path.insert(0, str(ROOT))
 from tools.dev import vcpkg
 
 WINDOWS = 'x64-windows'
-MACOS = 'arm64-osx-oxpinyin'
 LINUX = 'x64-linux-oxpinyin'
 PACKAGES = 'glib:x64-windows pkgconf:x64-windows tkrzw:x64-windows'
 
@@ -76,39 +75,14 @@ class RunnerCheckout(unittest.TestCase):
         self.assertNotEqual(other['outputs']['packages'], selected['outputs']['packages'])
         self.assertNotIn('packages', vcpkg.binary_cache(self.env, WINDOWS, capture=git(0, b'abc123\n'))['outputs'])
 
-    def test_macos_key_also_names_the_checkout_path(self):
-        env = {**self.env, 'ImageOS': 'macos26'}
-        selected = vcpkg.binary_cache(env, MACOS, capture=git(0, b'abc123\n'))
-        root = hashlib.sha256(self.root.as_posix().encode()).hexdigest()[:16]
-        self.assertEqual(selected['outputs'], {
-            'dir': (self.root.parent / 'tmp/vcpkg-binary-cache').as_posix(),
-            'prefix': f'vcpkg-bin-macos26-{MACOS}-{root}-',
-            'key': f'vcpkg-bin-macos26-{MACOS}-{root}-abc123-macos26-20261111.1',
-            'installed': (self.root / 'installed' / MACOS).as_posix()})
-        other = self.root.parent / 'other'
-        self.root.rename(other)
-        moved = vcpkg.binary_cache({**env, 'VCPKG_INSTALLATION_ROOT': str(other)}, MACOS, capture=git(0, b'abc123\n'))
-        self.assertNotEqual(moved['outputs']['prefix'], selected['outputs']['prefix'])
-
-    def test_macos_install_uses_the_overlays_and_checks_the_installed_library(self):
+    def test_non_vcpkg_platform_has_no_cache_or_install_rule(self):
         calls = []
-        env = {'VCPKG_ROOT': str(self.root), 'PKG_CONFIG_PATH': '/opt/homebrew/lib/pkgconfig'}
-        result = vcpkg.runner_install(env, MACOS,
-                                      run=lambda command, **options: calls.append((list(map(str, command)), options)))
-        installed = self.root / 'installed' / MACOS
-        own = (installed / 'lib/pkgconfig').as_posix()
-        self.assertEqual(result, {
-            'environment': {'PKG_CONFIG_PATH': own + os.pathsep + '/opt/homebrew/lib/pkgconfig'},
-            'path': [(installed / 'tools/tkrzw/bin').as_posix()]})
-        self.assertEqual([command for command, _ in calls], [
-            [str(self.program), 'install', f'tkrzw:{MACOS}', f'--overlay-ports={ROOT / "vcpkg-overlays"}',
-             f'--overlay-triplets={ROOT / "triplets"}'],
-            ['pkg-config', '--modversion', '--cflags', '--libs', 'tkrzw'],
-            ['otool', '-D', str(installed / 'lib/libtkrzw.dylib')]])
-        self.assertEqual(calls[1][1]['env']['PKG_CONFIG_PATH'], own)
-        self.assertEqual(vcpkg.runner_install({'VCPKG_ROOT': str(self.root)}, MACOS,
-                                              run=lambda command, **options: None)['environment'],
-                         {'PKG_CONFIG_PATH': own})
+        with self.assertRaisesRegex(ValueError, 'no vcpkg cache rule'):
+            vcpkg.binary_cache(self.env, 'arm64-osx-oxpinyin', capture=git(0, b'abc123\n'))
+        with self.assertRaisesRegex(ValueError, 'no install rule'):
+            vcpkg.runner_install({'VCPKG_ROOT': str(self.root)}, 'arm64-osx-oxpinyin',
+                                 run=lambda command, **options: calls.append(command))
+        self.assertEqual(calls, [])
 
     def test_linux_key_names_the_toolchain_release_and_checkout_not_the_runner_image(self):
         release = self.root.parent / 'os-release'
@@ -181,7 +155,7 @@ class RunnerCheckout(unittest.TestCase):
         calls.clear()
         with self.assertRaisesRegex(ValueError, 'no install rule'):
             vcpkg.runner_install(env, 'riscv64-plan9', run=lambda command, **options: calls.append(command))
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 0)
 
     def test_commands_publish_to_the_runner_files(self):
         files = {name: self.root.parent / name for name in ('GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH')}
@@ -214,6 +188,11 @@ class RunnerCheckout(unittest.TestCase):
 
 
 class EnvironmentTests(unittest.TestCase):
+    def setUp(self):
+        patch = mock.patch.object(vcpkg.platform, 'system', return_value='Linux')
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_explicit_checkout_wins_and_replaces_stale_certification(self):
         with tempfile.TemporaryDirectory() as directory:
             env = dict(VCPKG_ROOT=directory, OXPINYIN_CACHE='/unused', PATH='/host/bin',
@@ -231,6 +210,11 @@ class EnvironmentTests(unittest.TestCase):
 
 
 class InstallTests(unittest.TestCase):
+    def setUp(self):
+        patch = mock.patch.object(vcpkg.platform, 'system', return_value='Linux')
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_native_linux_triplet_selection_and_unsupported_host(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(vcpkg.platform, 'system', return_value='Linux'):
             env = {'OXPINYIN_CACHE': directory}
@@ -244,6 +228,11 @@ class InstallTests(unittest.TestCase):
                 vcpkg.install(env, ROOT, jobs=1)
             run.assert_not_called()
             self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_native_non_linux_host_is_refused(self):
+        with mock.patch.object(vcpkg.platform, 'system', return_value='Darwin'), \
+                self.assertRaisesRegex(ValueError, 'Linux only'):
+            vcpkg.triplet()
 
     def test_interrupted_checkout_is_not_published_and_retry_succeeds(self):
         with tempfile.TemporaryDirectory() as directory:

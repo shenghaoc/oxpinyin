@@ -58,12 +58,12 @@ sudo apt-get install -y build-essential git curl ca-certificates pkg-config zip 
 sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config zip unzip cmake ninja-build glib2-devel
 ```
 
-tkrzw comes from the repository's vcpkg overlay port on Linux, macOS and
-Windows. GLib stays on the system package manager (Homebrew on macOS).
-Windows also uses vcpkg for GLib because it has no system package route.
+The [Linux](#linux), [macOS](#macos) and [Windows](#windows) sections name each
+platform's tkrzw installation. GLib stays on the system package manager
+(Homebrew on macOS). Windows also uses vcpkg for GLib because it has no system package route.
 Install [vcpkg](https://learn.microsoft.com/vcpkg/get_started/get-started),
-run `bootstrap-vcpkg.bat` on Windows or `bootstrap-vcpkg.sh` on Linux and
-macOS, and set `VCPKG_ROOT` to that checkout.
+run `bootstrap-vcpkg.bat` on Windows or `bootstrap-vcpkg.sh` on Linux, and
+set `VCPKG_ROOT` to that checkout.
 On Linux x86_64, run from the repository root:
 
 ```bash
@@ -426,37 +426,23 @@ macOS setup uses Terminal, Git, Apple's
 Tools are absent, run `xcode-select --install` and complete the system dialog.
 
 ```bash
-brew install glib pkgconf
+brew install glib pkgconf tkrzw
 mkdir -p ~/src
 cd ~/src
 git clone https://github.com/shenghaoc/oxpinyin.git
 cd oxpinyin
 ```
 
-The vcpkg route for tkrzw supports Apple silicon only; there is no Intel
-triplet. tkrzw comes from the repository's vcpkg overlay port, which builds the pinned
-upstream revision with upstream's own configure script and Makefile. Clone
-[vcpkg](https://learn.microsoft.com/vcpkg/get_started/get-started) and run its
-`bootstrap-vcpkg.sh`. Export `VCPKG_ROOT` as that checkout, here and in your
-shell profile; the `just` recipes read it. Then, from the repository root:
+On macOS, use Homebrew's tkrzw. `pkg-config tkrzw` selects its headers and
+library. Homebrew's `tkrzw.pc` names lz4 and zstd without their library search
+paths; the build also probes `liblz4.pc` and `libzstd.pc` through `system-deps`.
+No `VCPKG_ROOT`, `PKG_CONFIG_PATH`, `LIBRARY_PATH` or dyld override is needed.
+The nightly macOS job installs `tkrzw` with Homebrew; Homebrew installs its
+compression dependencies. Check the installed modules with:
 
 ```bash
-export VCPKG_ROOT=<your vcpkg checkout>
-"$VCPKG_ROOT/vcpkg" install tkrzw:arm64-osx-oxpinyin --overlay-ports=vcpkg-overlays --overlay-triplets=triplets
-export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/arm64-osx-oxpinyin/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-export PATH="$VCPKG_ROOT/installed/arm64-osx-oxpinyin/tools/tkrzw/bin:$PATH"
-pkg-config --modversion tkrzw
+pkg-config --modversion tkrzw liblz4 libzstd
 ```
-
-`triplets/arm64-osx-oxpinyin.cmake` is vcpkg's `arm64-osx-dynamic` triplet with
-two settings. It builds the release variant only. It also leaves the install
-name of `libtkrzw` as upstream's build records it, the absolute path in
-`$VCPKG_ROOT/installed/arm64-osx-oxpinyin/lib`, so every binary linked against
-it loads it with no rpath and no `DYLD_LIBRARY_PATH`. The vcpkg
-checkout therefore stays where it is; a moved checkout needs the port reinstalled. The triplet makes
-`VCPKG_ROOT` part of the package's identity, so an install from a new root
-builds from source and never restores the library of another root from
-vcpkg's binary cache.
 
 Get uv as [Installing uv and cargo-c](#installing-uv-and-cargo-c) describes, then
 run `brew install just`.
@@ -471,12 +457,11 @@ export CARGO_TARGET_DIR=target/tkrzw
 just check
 ```
 
-pkg-config finds the vcpkg install of tkrzw through the `PKG_CONFIG_PATH`
-export above. This is a real storage link/run check; a `cargo check` alone
-does not run the tests. In a fresh Bash terminal, go back to the checkout,
-source the Cargo environment, and repeat the exports and the check.
+The `cargo nextest` command is a real storage link/run check; a `cargo check`
+alone does not run the tests. In a fresh terminal, go back to the checkout,
+source the Cargo environment, and repeat the check.
 
-The nightly macOS CI job installs tkrzw the same way and runs
+The nightly macOS CI job runs
 `cargo nextest run --locked --workspace`. Berkeley DB is a non-default
 backend. To use it:
 
@@ -488,8 +473,7 @@ backend. To use it:
 
 The target and user-data directories of each backend stay separate.
 
-The backend sanitizer gates run natively on macOS. The recipes select Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and the vcpkg install of
-tkrzw under `VCPKG_ROOT`. They use the one
+The backend sanitizer gates run natively on macOS. The recipes select Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. They use the one
 nightly that `fuzz/rust-toolchain.toml` names, with `rust-src`, and no Linux
 `setarch`. In `fuzz/`, rustup installs the toolchain that the file names:
 
