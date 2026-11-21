@@ -60,8 +60,9 @@ impl ContextCore {
     /// The add calls of `_add_phrase` for a planned [`ImportPlan::Add`]:
     /// `false` for a system library that is not visible, otherwise the add
     /// into that system library (with the phrase table's same-library
-    /// token, if any) or into the `USER_FILE` library. Adds commit at once;
-    /// there is no rollback.
+    /// token, if any) or into the `USER_FILE` library. Each add commits at once.
+    /// An absent count uses the default phrase count. Counts above `u32::MAX`
+    /// use `u32::MAX`.
     pub fn commit_import(
         &mut self,
         index: u8,

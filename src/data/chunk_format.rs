@@ -85,7 +85,7 @@ pub fn chunk_checksum(payload: &[u8]) -> u32 {
 /// shared framing policy for borrowed payloads. The owned variant below
 /// applies the same header and overflow policy without a second buffer.
 ///
-/// Returns `None` when the payload exceeds the header's `u32` length field.
+/// The payload length must fit in `u32`.
 #[must_use]
 pub fn build_memory_chunk(payload: &[u8]) -> Option<Vec<u8>> {
     let length = u32::try_from(payload.len()).ok()?;
@@ -99,7 +99,7 @@ pub fn build_memory_chunk(payload: &[u8]) -> Option<Vec<u8>> {
 /// Frames an owned payload in place. Reserve eight additional bytes when
 /// constructing the payload to avoid a second allocation for the header.
 ///
-/// Returns `None` when the payload exceeds the header's `u32` length field.
+/// The payload length must fit in `u32`.
 pub(crate) fn build_memory_chunk_owned(mut payload: Vec<u8>) -> Option<Vec<u8>> {
     let length = u32::try_from(payload.len()).ok()?;
     let checksum = chunk_checksum(&payload);

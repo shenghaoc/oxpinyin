@@ -656,10 +656,7 @@ where
     /// and a tkrzw `ProcessEach`, each in its library's order. A failed
     /// Kyoto Cabinet CREATE retry answers an empty walk.
     ///
-    /// # Aborts
-    ///
-    /// On Berkeley DB, a failed walk on an opened handle prints `training db error, exit!`
-    /// to standard error and terminates the process with status 5.
+    /// On Berkeley DB, cursor creation must succeed before the walk.
     #[must_use]
     pub fn get_all_items(&self) -> Option<Vec<u32>> {
         if self.empty_walk {
@@ -770,9 +767,9 @@ fn decode_value<H: FixedRecord, I: FixedRecord>(
     Ok((header, items))
 }
 
-/// The pin's unrecoverable `get_all_items` cursor failure
-/// (`flexible_ngram_bdb.h:279-286`): the message with no trailing newline,
-/// then `exit(EIO)`.
+// The pin reports an unrecoverable DB_NEXT failure here
+// (flexible_ngram_bdb.h:279-286).
+/// Writes the training database error without a newline and exits with `EIO`.
 fn training_db_error() -> ! {
     use std::io::Write as _;
     std::io::stderr()

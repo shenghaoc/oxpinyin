@@ -836,12 +836,14 @@ pub fn guess_result(result: Result<bool, EngineError>, name: &str, log: impl FnO
 // A failed Kyoto Cabinet body read after its size check asserts at ngram_kyotodb.cpp:131–139.
 /// Handles a lookup failure at the C boundary. A read past the end of a predecessor’s
 /// stored bigram value, from the system or the user gram, logs one warning and returns
-/// `true`. Any other error returns `false`.
+/// `true`. Returns `false` for other recoverable errors.
 ///
 /// # Aborts
 ///
-/// Terminates when called with [`EngineError::ReadAfterCheck`] (a Kyoto Cabinet bigram
-/// read that fails after its size check).
+/// Terminates when called with [`EngineError::ReadAfterCheck`], a Kyoto Cabinet
+/// bigram read that fails after its size check. The engine aborts at the lookup
+/// site for a toned incomplete key or when the lookup needs to read a total
+/// from a predecessor value too short to hold it.
 pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str)) -> bool {
     let message = match error {
         EngineError::ReadAfterCheck => {

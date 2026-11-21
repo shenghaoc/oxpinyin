@@ -265,10 +265,8 @@ impl DoublePinyinParser {
         self
     }
 
-    /// Selects a scheme. Returns `false` and keeps the current scheme for
-    /// `Customized`, mirroring upstream's lack of a compiled table there
-    /// (`src/storage/pinyin_parser2.cpp:610-612`) without the abort.
-    /// A successful switch clears the suppressed-fallback flag.
+    /// Selects a compiled scheme. `Customized` returns `false` and leaves
+    /// the parser unchanged. A successful switch clears the suppressed-fallback flag.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_scheme(&mut self, scheme: DoublePinyinScheme) -> bool {
         if scheme == DoublePinyinScheme::Customized {
@@ -936,18 +934,14 @@ impl ZhuyinParser {
         }
     }
 
-    /// A parser for a specific scheme.
+    /// A parser for a specific scheme. Standard Dvorak produces an empty batch parse.
     #[must_use]
     pub const fn with_scheme(scheme: ZhuyinScheme) -> Self {
         Self { scheme }
     }
 
-    /// Selects a scheme. The Simple keyboards (STANDARD, IBM, GINYIEH,
-    /// ETEN) switch tables the way upstream's `set_scheme` does
-    /// (`src/storage/zhuyin_parser2.cpp:271-300`) and the Discrete
-    /// keyboards (HSU, ETEN26, `HSU_DVORAK`) the way theirs does
-    /// (`:474-490`) — both minus upstream's aborts; everything else
-    /// reports `false` and keeps the current scheme.
+    /// Selects a supported keyboard. A scheme without a keyboard mapping
+    /// returns `false` and leaves the current scheme unchanged.
     #[cfg(test)]
     fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {
         if scheme.keyboard().is_none() {

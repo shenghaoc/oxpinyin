@@ -1432,7 +1432,8 @@ impl UserStore {
         Ok(seed)
     }
 
-    /// Add a user phrase under [`crate::USER_DICTIONARY`] (`_add_phrase`, §3.2).
+    /// Adds a user phrase under [`crate::USER_DICTIONARY`] with the count rules
+    /// of [`Self::add_phrase_in`].
     ///
     /// # Errors
     ///
@@ -1460,7 +1461,9 @@ impl UserStore {
         crate::user::UserLookup::session(&self.inner.libpinyin.phrases, &self.inner.system_items)
     }
 
-    /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
+    /// Adds a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
+    /// An absent count uses `DEFAULT_PHRASE_COUNT`. Counts above `u32::MAX`
+    /// use `u32::MAX`.
     ///
     /// # Errors
     ///
@@ -2525,6 +2528,8 @@ impl UserStore {
     /// `original_token` comes from the combined system/user phrase-table
     /// search, restricted to this library, including prior imported items.
     /// Packed original readings are retained verbatim, including their order.
+    /// An absent count uses `DEFAULT_PHRASE_COUNT`. Counts above `u32::MAX`
+    /// use `u32::MAX`.
     ///
     /// # Errors
     /// Returns an error for invalid input, unavailable originals, or store failure.

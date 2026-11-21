@@ -14,7 +14,9 @@ pub struct Key {
 }
 
 impl Key {
-    /// The existing parsers' canonical key and tone, with their raw span.
+    /// Resolves the syllable's display spelling to a `ChewingKey`, applies
+    /// `tone`, and keeps `span`. A matrix key without a spelling row becomes
+    /// the zero key before the tone is applied.
     #[must_use]
     #[expect(
         clippy::expect_used,

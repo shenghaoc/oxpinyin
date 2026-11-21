@@ -10,11 +10,9 @@ use std::borrow::Cow;
 
 use crate::PhraseText;
 
-/// The bytes the pin hands to C for `text`.
-///
-/// A scalar text borrows its NUL-free bytes; a stored-word
-/// text encodes its outward words with `g_unichar_to_utf8`'s historical
-/// widths. The result has no interior zero.
+/// Borrows the NUL-free bytes of scalar text. For stored text, encodes each
+/// word before the first zero with `g_unichar_to_utf8`'s historical widths,
+/// independently of the declared count.
 #[must_use]
 #[inline]
 pub fn phrase_text_bytes(text: &PhraseText) -> Cow<'_, [u8]> {

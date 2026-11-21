@@ -69,7 +69,8 @@ impl Lookup {
             .key_exists(keys)
             .unwrap_or_else(|_| crate::input::tool::abort())
     }
-    /// Existing n-best lookup with no user overlay.
+    /// Runs n-best lookup with no user overlay. Returns an empty result when
+    /// the lookup was opened with bigrams disabled.
     ///
     /// # Errors
     /// Returns decoder/model errors.
@@ -86,7 +87,8 @@ impl Lookup {
             &model.read_all(&self.libraries),
         )
     }
-    /// Existing phrase span decoder with no user overlay.
+    /// Runs phrase segmentation with no user overlay. Returns an empty result
+    /// when the lookup was opened with bigrams disabled.
     ///
     /// # Errors
     /// Returns decoder/model errors.

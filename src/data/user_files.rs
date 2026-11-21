@@ -406,14 +406,11 @@ impl UserTableInfo {
         Self::load(path)
     }
 
-    /// `UserTableInfo::save(filename)` (`table_info.cpp:377-397`): `false`
-    /// only when `fopen(filename, "w")` failed, after the pin's
-    /// `write %s failed.` line. The writes themselves are not checked, as
-    /// the pin does not check them.
-    ///
-    /// A marker without a database format never reaches a save at the pin
-    /// (`make_conform` copies the system's first); here it writes nothing
-    /// and answers `false`.
+    // UserTableInfo::save, table_info.cpp:377-397.
+    /// Writes the four marker lines. Returns `false` before opening the file
+    /// if the database-format string is absent or contains NUL.
+    /// Returns `false` if opening fails, after a diagnostic.
+    /// Individual write results are ignored.
     #[must_use]
     pub fn save(&self, filename: &(impl crate::input::FileName + ?Sized)) -> bool {
         let Some(database_format) = self
