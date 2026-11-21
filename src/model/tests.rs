@@ -1,9 +1,10 @@
-use crate::phrase_index_library_index;
+use crate::vocab::phrase_index_library_index;
 use std::collections::BTreeMap;
 
 use super::{PhraseIndexRanges, TrellisPathMemo, sort_tokens_by_library};
 use crate::fixture_doubles::{FixtureDictionary, FixtureError, FixtureLanguageModel};
-use crate::{SyllableKey, model::PhraseList};
+use crate::model::PhraseList;
+use crate::vocab::SyllableKey;
 
 /// `add_index` files a token under `PHRASE_INDEX_LIBRARY_INDEX(token)`
 /// and keeps its whole value (`phrase_large_table3.cpp:42`,
@@ -245,7 +246,8 @@ fn a_range_ending_at_the_last_token_searches_nothing_as_the_pin_does() {
 /// the fault surfaces at the first read that meets it.
 #[test]
 fn a_merge_the_pin_cannot_read_answers_its_fault() {
-    use crate::{GramFault, model::MergedGram};
+    use crate::model::MergedGram;
+    use crate::single_gram::GramFault;
     let system = {
         let mut value = 4_u32.to_le_bytes().to_vec();
         value.extend_from_slice(&2_u32.to_le_bytes());
@@ -365,7 +367,7 @@ fn lookup_preserves_the_captured_candidate_order() {
     let entries = dictionary.lookup(&keys("ni")).expect("lookup cannot fail");
     let texts: Vec<&str> = entries
         .iter()
-        .filter_map(crate::PhraseEntry::text_str)
+        .filter_map(crate::vocab::PhraseEntry::text_str)
         .collect();
     assert_eq!(
         texts,

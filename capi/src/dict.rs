@@ -1,26 +1,20 @@
-//! The dictionary-introspection surface: token lookups, per-token
-//! reads, the unigram-frequency write, and the phrase-library
-//! load/unload pair — Tier C of the 79/79 target.
+//! Dictionary token lookup, phrase and pronunciation reads, and unigram updates.
 //!
-//! Upstream these run against `FacadePhraseIndex`/`PhraseItem`
-//! (`pinyin.cpp:2648-2665, 2774-2843`, `phrase_index.h:607-636`). The
-//! reads dispatch by library nibble across oxpinyin's seams (system
-//! monolith, loaded addons, user store). Unigram writes update live
-//! phrase items without arming the save-dirty gate. A subsequent armed
-//! save can serialize the updated item counts.
+//! Phrase-library loading is in [`crate::config`]. The token operations use
+//! `FacadePhraseIndex` and `PhraseItem` (`pinyin.cpp:2648-2665, 2774-2843`,
+//! `phrase_index.h:607-636`). Reads select the library by its token nibble.
+//! Unigram writes update live phrase items without arming the save-dirty gate.
+//! A later save that is already armed can serialize the updated counts.
 //!
-//! The `GArray`-taking symbols (`pinyin_lookup_tokens`,
-//! `pinyin_token_get_nth_pronunciation`) delegate to glib itself —
-//! `g_array_append_vals` grows the array and updates its private
-//! `_GRealArray` metadata (`alloc`, `element_size`, `clear_func`) in
-//! lockstep with the public `data`/`len`. Hand-`realloc`ing the buffer
-//! and bumping `len` (an earlier revision's shortcut) left those private
-//! fields stale, so a downstream `g_array_append_val` from the same
-//! consumer would `g_realloc` from the wrong `alloc` and either truncate
-//! the appended payload or trip `g_array_maybe_expand`'s SIGFPE. Linking
-//! glib is free at the target: every box that runs a libpinyin consumer
-//! already has `libglib-2.0.so.0` resident (upstream `libpinyin.so.15`
-//! records it in `DT_NEEDED`).
+//! [`pinyin_lookup_tokens`] and [`pinyin_token_get_nth_pronunciation`] call
+//! GLib for their `GArray` writes. `g_array_append_vals` grows the array and
+//! updates its private `_GRealArray` metadata (`alloc`, `element_size`, and
+//! `clear_func`) with the public `data` and `len`. Changing only the public
+//! buffer would leave those fields stale: a later `g_array_append_val` could
+//! use the wrong allocation size, truncate the payload, or raise SIGFPE in
+//! `g_array_maybe_expand`. The C caller retains the GLib ownership contract.
+//! GLib is already loaded by libpinyin consumers: upstream `libpinyin.so.15`
+//! records `libglib-2.0.so.0` in `DT_NEEDED`.
 
 use oxpinyin::marshal::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
@@ -80,16 +74,17 @@ pub unsafe extern "C" fn pinyin_lookup_tokens(
     let reduce_asserts = tokens.len() > 4;
     // `reduce_tokens` clears the caller's array before appending
     // (`phrase_large_table3.h:81`) — an empty result clears too.
-    let null_append_count = tokenarray.is_null().then(|| {
-        // Count the pin's prepared arrays before GLib can call a log handler.
-        (0..oxpinyin::PHRASE_INDEX_LIBRARY_COUNT)
-            .filter(|&library| {
-                inst.core
-                    .dict
-                    .phrase_table_token_enabled(oxpinyin::phrase_index_make_token(library, 0))
-            })
-            .count()
-    });
+    let null_append_count =
+        tokenarray.is_null().then(|| {
+            // Count the pin's prepared arrays before GLib can call a log handler.
+            (0..oxpinyin::vocab::PHRASE_INDEX_LIBRARY_COUNT)
+                .filter(|&library| {
+                    inst.core.dict.phrase_table_token_enabled(
+                        oxpinyin::vocab::phrase_index_make_token(library, 0),
+                    )
+                })
+                .count()
+        });
     // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
     // 2.84.4 garray.c:595,762 checks NULL, logs a critical, and returns
     // before accessing the array or data (including a zero-length append).

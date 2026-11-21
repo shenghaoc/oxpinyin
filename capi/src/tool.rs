@@ -1,5 +1,5 @@
-//! Safe ownership adapters for the pin's nonshipping C-API test drivers.
-//! Every operation calls the existing C facade, including its failure paths.
+//! Safe ownership adapters for the pin's nonshipping C-API test drivers, using the C facade
+//! for every operation, including failure paths.
 
 #![expect(
     clippy::undocumented_unsafe_blocks,
@@ -9,7 +9,7 @@
 use std::ffi::CStr;
 use std::ptr;
 
-use crate::{GChar, PinyinContext, PinyinInstance};
+use crate::types::{GChar, PinyinContext, PinyinInstance};
 
 /// A GLib-owned string returned by the C API, including its null result.
 pub struct Text(*mut GChar);
@@ -46,7 +46,7 @@ impl Driver {
     /// then allocate the instance (test_pinyin.cpp:35-43 and its peers).
     #[must_use]
     pub fn new(system: &CStr, user: &CStr, options: Option<u32>) -> Self {
-        let context = unsafe { crate::pinyin_init(system.as_ptr(), user.as_ptr()) };
+        let context = unsafe { crate::context::pinyin_init(system.as_ptr(), user.as_ptr()) };
         if let Some(options) = options {
             unsafe { crate::config::pinyin_set_options(context, options) };
         }
@@ -158,7 +158,7 @@ impl Driver {
 
     /// Save the same context while its instance remains live.
     pub fn save(&mut self) {
-        unsafe { crate::pinyin_save(self.context) };
+        unsafe { crate::context::pinyin_save(self.context) };
     }
 }
 
@@ -168,7 +168,7 @@ impl Drop for Driver {
         // test_chewing.cpp:66-70. These calls preserve the pin's order.
         unsafe { crate::instance::pinyin_free_instance(self.instance) };
         unsafe { crate::config::pinyin_mask_out(self.context, 0, 0) };
-        unsafe { crate::pinyin_save(self.context) };
-        unsafe { crate::pinyin_fini(self.context) };
+        unsafe { crate::context::pinyin_save(self.context) };
+        unsafe { crate::context::pinyin_fini(self.context) };
     }
 }

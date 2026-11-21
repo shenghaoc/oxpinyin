@@ -7,7 +7,7 @@
 
 use core::slice;
 
-use crate::{PhraseText, PhraseToken};
+use crate::vocab::{PhraseText, PhraseToken};
 
 // The comparator subtracts the stored frequency fields, pinyin.cpp:1678–1709. The
 // compatibility policy uses stable descending numeric frequency for a cyclic group.

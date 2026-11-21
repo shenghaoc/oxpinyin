@@ -13,7 +13,7 @@ use oxpinyin::single_gram::{checked_get_freq, get_total_freq};
 use oxpinyin::store::StoreError;
 
 use crate::segment::phrase::PhraseSearch;
-use oxpinyin::{NULL_TOKEN, SENTENCE_START};
+use oxpinyin::vocab::{NULL_TOKEN, SENTENCE_START};
 
 /// One `lookup_value_t` (`lookup.h:36-53`).
 #[derive(Clone, Copy, Debug)]

@@ -1,6 +1,12 @@
-//! Configuration symbols: options, schemes, phrase library loading.
+//! Context options, parser schemes, and phrase libraries.
+//!
+//! Set options with [`zhuyin_set_options`] and select parser schemes with
+//! [`zhuyin_set_chewing_scheme`] or [`zhuyin_set_full_pinyin_scheme`].
+//! Load or unload phrase libraries with [`zhuyin_load_phrase_library`] and
+//! [`zhuyin_unload_phrase_library`]. [`zhuyin_mask_out`] removes matching
+//! user data.
 
-use oxpinyin::{PHRASE_INDEX_LIBRARY_COUNT, TSI_DICTIONARY};
+use oxpinyin::vocab::{PHRASE_INDEX_LIBRARY_COUNT, TSI_DICTIONARY};
 use std::os::raw::c_int;
 
 use crate::ffi::borrow_or_return;

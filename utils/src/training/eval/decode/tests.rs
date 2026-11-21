@@ -1,7 +1,7 @@
 use super::super::counts::Counts;
 use super::super::fixture_doubles::FixtureDictionary;
 use super::{EvalLanguageModel, PhraseSource, correction_rate};
-use oxpinyin::{PhraseToken, SyllableKey};
+use oxpinyin::vocab::{PhraseToken, SyllableKey};
 use std::collections::BTreeMap;
 
 // The hand-computable homophone fixture in eval/tests.rs exercises the

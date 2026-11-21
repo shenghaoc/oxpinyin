@@ -1,11 +1,9 @@
-//! Single-key parsing and the `ChewingKey` display getters.
+//! Single-key parsing and phonetic-key text.
 //!
-//! The single-key parsers are pure probes of (live options, one string).
-//! The display getters read the key a caller hands them through the packed
-//! ABI word. `zhuyin_get_pinyin_string` dispatches on the context's
-//! full-pinyin scheme (Hanyu / Luoma / `SecondaryZhuyin`) — the zhuyin-facade
-//! distinction the pinyin facade's `pinyin_get_pinyin_string` does not make
-//! (`zhuyin.cpp:1743-1766`).
+//! [`zhuyin_parse_full_pinyin`] and [`zhuyin_parse_chewing`] parse one key
+//! with the instance's current options. [`zhuyin_get_zhuyin_string`] renders
+//! a key as zhuyin. [`zhuyin_get_pinyin_string`] uses the context's full-pinyin
+//! scheme: Hanyu, Luoma, or secondary zhuyin (`zhuyin.cpp:1743-1766`).
 
 use std::os::raw::c_char;
 use std::ptr;
@@ -142,7 +140,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
     // aligned and writable, and a non-NULL key is valid for reads. Access must not conflict
     // with live borrows.
-    unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::zhuyin_text) }
+    unsafe { display_string_getter(key, utf8_str, oxpinyin::parser::ChewingKey::zhuyin_text) }
 }
 
 // zhuyin.cpp:1743-1766.
@@ -179,7 +177,7 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
     }
     // The scheme lives in the context's shared live options, read through the
     // instance; pass it into the closure so the shared getter can dispatch.
-    let render = |core: oxpinyin::ChewingKey| {
+    let render = |core: oxpinyin::parser::ChewingKey| {
         // SAFETY: Handles guarantees the NULL-checked instance is live.
         // Serial calls excludes mutation; no other view is held while
         // this closure reads the scheme.
@@ -189,9 +187,11 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
             .full_scheme
             .get();
         match oxpinyin::facade::full_scheme(scheme) {
-            Some(oxpinyin::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
-            Some(oxpinyin::FullPinyinScheme::SecondaryZhuyin) => core.secondary_zhuyin_text(),
-            Some(oxpinyin::FullPinyinScheme::Hanyu) | None => core.pinyin_text(),
+            Some(oxpinyin::parser::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
+            Some(oxpinyin::parser::FullPinyinScheme::SecondaryZhuyin) => {
+                core.secondary_zhuyin_text()
+            }
+            Some(oxpinyin::parser::FullPinyinScheme::Hanyu) | None => core.pinyin_text(),
         }
     };
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
@@ -212,7 +212,7 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
 unsafe fn display_string_getter(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin::ChewingKey) -> oxpinyin::KeyText,
+    render: impl FnOnce(oxpinyin::parser::ChewingKey) -> oxpinyin::parser::KeyText,
 ) -> bool {
     // Guard both pointers before the first output write (row 41).
     if key.is_null() || utf8_str.is_null() {

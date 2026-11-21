@@ -87,7 +87,7 @@ compile_error!(
 
 use crate::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
 
-use crate::{PHRASE_MASK, PhraseText};
+use crate::vocab::{PHRASE_MASK, PhraseText};
 
 // SubPhraseIndex::load returns false at phrase_index.cpp:354–356. Its callers retain the
 // empty sub-index. The g_return_val_if_fail critical is omitted

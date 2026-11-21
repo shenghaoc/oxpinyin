@@ -21,7 +21,8 @@ use crate::test_support::{TempUserDir, assert_aborts, cstr, open};
 
 use crate::types::PinyinInstance;
 
-use oxpinyin::{OptionBits, PhraseText};
+use oxpinyin::OptionBits;
+use oxpinyin::vocab::PhraseText;
 
 /// With the facade total wrapped to zero, the candidate guess aborts in
 /// the scorer.
@@ -165,7 +166,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         let store = ctx.core.user_store_mut();
         for (previous, next) in [
-            (oxpinyin::SENTENCE_START, hao),
+            (oxpinyin::vocab::SENTENCE_START, hao),
             (short, hao),
             (long, number),
         ] {
@@ -299,7 +300,10 @@ fn corrupt_start_gram_system(scratch: &std::path::Path, value: Vec<u8>) -> std::
     );
     craft_hash(
         &system.join("bigram.db"),
-        &[(oxpinyin::SENTENCE_START.to_le_bytes().to_vec(), value)],
+        &[(
+            oxpinyin::vocab::SENTENCE_START.to_le_bytes().to_vec(),
+            value,
+        )],
     );
     system
 }
@@ -319,7 +323,7 @@ fn a_short_system_gram_merged_with_a_user_gram_aborts_the_segment() {
             crate::test_support::plant_bigram(
                 &user.path,
                 vec![(
-                    oxpinyin::SENTENCE_START.to_le_bytes().to_vec(),
+                    oxpinyin::vocab::SENTENCE_START.to_le_bytes().to_vec(),
                     crate::test_support::gram_bytes(1, &[(0x0100_0001, 1)]),
                 )],
             );

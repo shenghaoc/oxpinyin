@@ -27,10 +27,11 @@
 //! probabilities, and the live `eval_correction_rate` gate showed the
 //! difference (0.52 vs 0.88 on a 25-sentence corpus).
 
-use oxpinyin::{MAX_PHRASE_LENGTH, NULL_TOKEN, SENTENCE_START};
+use oxpinyin::vocab::{MAX_PHRASE_LENGTH, NULL_TOKEN, SENTENCE_START};
 use rustc_hash::FxHashMap;
 
-use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
+use oxpinyin::model::PhraseList;
+use oxpinyin::vocab::{PhraseEntry, PhraseToken, SyllableKey};
 
 use super::model::EvalLanguageModel;
 

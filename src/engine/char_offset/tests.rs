@@ -1,6 +1,7 @@
 use super::{matrix_columns, remember_walk};
 use crate::engine::{MatrixKey, parse_time_keys};
-use crate::{DoublePinyinParser, OptionBits, graph::SegmentGraph};
+use crate::parser::DoublePinyinParser;
+use crate::{OptionBits, graph::SegmentGraph};
 
 fn full_matrix(input: &str, options: OptionBits) -> Vec<MatrixKey> {
     let graph = SegmentGraph::build_with_options(input.as_bytes(), options).unwrap();

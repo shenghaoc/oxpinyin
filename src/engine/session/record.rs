@@ -9,7 +9,8 @@
 //! of truth, and [`SelectionRecord::rebuild_from_constraints`] re-derives
 //! all three from it.
 //!
-use crate::{PhraseText, PhraseTextConcat, PhraseToken};
+use crate::ucs4::PhraseTextConcat;
+use crate::vocab::{PhraseText, PhraseToken};
 
 /// The user's selections in this composition.
 #[derive(Clone, Debug, Default)]

@@ -23,7 +23,7 @@
 use std::ops::Range;
 
 use crate::engine::error::EngineError;
-use crate::{PhraseText, PhraseToken};
+use crate::vocab::{PhraseText, PhraseToken};
 
 /// One constraint cell (`trellis_constraint_t`,
 /// `phonetic_lookup.h:121-137`).

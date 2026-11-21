@@ -174,7 +174,7 @@ impl PhraseText {
 /// Unicode scalar values. Each component ends at its own first zero. When the result uses
 /// stored words, its combined declared length is capped at `u32::MAX`.
 #[derive(Default)]
-pub struct PhraseTextConcat {
+pub(crate) struct PhraseTextConcat {
     scalar: CompactString,
     words: Option<Vec<u32>>,
     length: usize,

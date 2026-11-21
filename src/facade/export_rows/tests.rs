@@ -2,7 +2,8 @@ use super::{
     BigramExportWalk, BigramProbeFault, BigramStep, ExportedBigramRow, GramLoadFault, RenderedItem,
     SENTENCE_START,
 };
-use crate::{PhraseText, PhraseTextConcat};
+use crate::ucs4::PhraseTextConcat;
+use crate::vocab::PhraseText;
 use std::collections::HashMap;
 
 /// The pair the walk holds, concatenated as the pin's `m_phrase` is
@@ -300,8 +301,9 @@ fn a_pair_with_a_key_outside_the_table_faults_where_the_walk_loads_it() {
 }
 
 use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor};
+use crate::parser::ChewingKey;
 use crate::user::{KEY_TONE_SHIFT, MAX_KEY_TONE, UserConfLaw, toned_key};
-use crate::{ChewingKey, SyllableKey, USER_DICTIONARY};
+use crate::vocab::{SyllableKey, USER_DICTIONARY};
 
 /// A transient context over the committed mini tables of whichever
 /// backend this build carries (a NULL user directory: imports work, the
@@ -570,7 +572,7 @@ fn the_re_probe_reads_a_reading_imported_under_the_next_system_token() {
         .add_system_phrase_in(
             1,
             Some(next),
-            &crate::PhraseText::from(text.as_str().unwrap()),
+            &crate::vocab::PhraseText::from(text.as_str().unwrap()),
             &keys,
             Some(5),
         )

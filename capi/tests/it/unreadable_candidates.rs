@@ -6,11 +6,14 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use oxpinyin_capi::{
-    pinyin_alloc_instance, pinyin_fini, pinyin_free_instance, pinyin_get_candidate,
-    pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_guess_candidates, pinyin_init,
-    pinyin_parse_more_full_pinyins, pinyin_unload_phrase_library,
+use oxpinyin_capi::candidates::{
+    pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
 };
+use oxpinyin_capi::config::pinyin_unload_phrase_library;
+use oxpinyin_capi::context::{pinyin_fini, pinyin_init};
+use oxpinyin_capi::instance::{pinyin_alloc_instance, pinyin_free_instance};
+use oxpinyin_capi::parse::pinyin_parse_more_full_pinyins;
+use oxpinyin_capi::sentence::pinyin_guess_candidates;
 
 use std::ffi::CString;
 
@@ -20,8 +23,8 @@ use std::ptr;
 mod chunk_fixture;
 
 mod fixture {
-    use oxpinyin::ChewingKey;
     use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
+    use oxpinyin::parser::ChewingKey;
     use oxpinyin::store::{DefaultStore, WriteStore, WriteTxn};
     use std::{fs, path::Path};
 
@@ -153,7 +156,11 @@ fn check_row(case: fixture::Case, sort: u32) {
         assert!(unsafe { pinyin_get_candidate(instance, 0, &raw mut row) });
         let mut row_type = std::mem::MaybeUninit::uninit();
         assert!(unsafe {
-            oxpinyin_capi::pinyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
+            oxpinyin_capi::candidates::pinyin_get_candidate_type(
+                instance,
+                row,
+                row_type.as_mut_ptr(),
+            )
         });
         // SAFETY: a successful getter writes the type of the live row.
         let row_type = unsafe { row_type.assume_init() };

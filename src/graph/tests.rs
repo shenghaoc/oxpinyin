@@ -1,5 +1,7 @@
 use super::{Edge, EdgeKind, ExactSegment, SegmentGraph};
-use crate::{Completeness, OptionBits, SyllableKey};
+use crate::OptionBits;
+use crate::parser::Completeness;
+use crate::vocab::SyllableKey;
 
 fn edge_kind_wire(kind: EdgeKind) -> &'static str {
     match kind {

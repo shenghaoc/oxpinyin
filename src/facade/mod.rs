@@ -1,6 +1,6 @@
-//! Shared context, instance, candidate and cursor operations for the pinyin and Zhuyin C
+//! Shared context, instance, candidate, and cursor operations for the pinyin and Zhuyin C
 //! facades. Both use [`crate::runtime`] and the same libpinyin pin. Each facade chooses
-//! its own option forwarding, cursor behavior and profile-marker policy.
+//! its own option forwarding, cursor behavior, and profile-marker policy.
 //!
 //! Starting a parse clears the stored parse mode and original keys. Constraints and
 //! sentence rows have their own lifetimes. The C crates own the ABI handle types and

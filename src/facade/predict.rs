@@ -2,14 +2,14 @@
 //! `guess_sentence_with_prefix`, and the merged suggestion rows
 //! `_compute_predicted_prefix_candidates` ranks.
 
-use crate::PhraseText;
 use crate::runtime::RuntimeDict;
 use crate::user::UserStore;
+use crate::vocab::PhraseText;
 
 // _compute_prefixes, pinyin.cpp:1389–1422. reduce_tokens checks each suffix separately,
 // phrase_large_table3.h:95.
 /// Resolves suffixes of the prefix's outward UCS-4 words to enabled phrase tokens.
-/// Suffixes are visited shortest first up to [`crate::MAX_PHRASE_LENGTH`]. A failed
+/// Suffixes are visited shortest first up to [`crate::vocab::MAX_PHRASE_LENGTH`]. A failed
 /// system read contributes no system tokens for that suffix. The user table is still
 /// consulted.
 ///
@@ -27,7 +27,7 @@ pub fn compute_prefixes(
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
     let user_lookup = user.lookup();
-    let max = prefix.len().min(crate::MAX_PHRASE_LENGTH);
+    let max = prefix.len().min(crate::vocab::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
         let suffix = &prefix[prefix.len() - length..];

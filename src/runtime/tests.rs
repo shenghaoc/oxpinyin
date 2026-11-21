@@ -32,7 +32,7 @@ fn runtime_visibility_preserves_user_library_save_state() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = Runtime::open_with_law(&system_dir(), Some(dir.path()), law).unwrap();
-        let library = crate::USER_DICTIONARY;
+        let library = crate::vocab::USER_DICTIONARY;
         let chunk = dir.path().join("user.bin");
         let ni = SyllableKey::from_text("ni").unwrap();
         let keys = [crate::user::toned_key(ni.index(), 3).unwrap()];
@@ -343,7 +343,7 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
         .unwrap();
     let payload = crate::data::user_files::encode_log_records(&[
         crate::data::user_files::LogRecord::Remove {
-            token: token & crate::PHRASE_MASK,
+            token: token & crate::vocab::PHRASE_MASK,
             old_item,
         },
     ])
@@ -471,7 +471,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
 
     let token = runtime
         .user_store_mut()
-        .add_phrase(&crate::PhraseText::from(phrase), &keys, None)
+        .add_phrase(&crate::vocab::PhraseText::from(phrase), &keys, None)
         .unwrap();
     assert_eq!(runtime.dict().tokens_for_text(phrase), [token]);
     let syllables = [
@@ -493,7 +493,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
     assert_eq!(
         runtime
             .user_store_mut()
-            .add_phrase(&crate::PhraseText::from(phrase), &keys, Some(5))
+            .add_phrase(&crate::vocab::PhraseText::from(phrase), &keys, Some(5))
             .unwrap(),
         token
     );
@@ -505,7 +505,7 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
 
     let imported = runtime
         .user_store_mut()
-        .add_phrase_in(7, &crate::PhraseText::from(phrase), &keys, Some(5))
+        .add_phrase_in(7, &crate::vocab::PhraseText::from(phrase), &keys, Some(5))
         .unwrap();
     assert_eq!(runtime.dict().tokens_for_text(phrase), [imported]);
     runtime
@@ -679,13 +679,13 @@ mod backend_files {
     //! which is integration territory (components together, real files, no
     //! private access).
 
-    use crate::SENTENCE_START;
     use crate::engine::{Selection, SelectionTarget, SessionSettings};
     use crate::runtime::{OpenError, Runtime, TableConfError};
     use crate::user::{FIRST_USER_TOKEN, PinyinKey};
+    use crate::vocab::SENTENCE_START;
     use crate::{
-        SyllableKey,
         model::{Dictionary, LanguageModel},
+        vocab::SyllableKey,
     };
     use std::path::Path;
 
@@ -762,13 +762,13 @@ mod backend_files {
             vec![0xd800, 0x110000],
             vec![0x8000_0000],
         ] {
-            let text = crate::PhraseText::from_stored_parts(words.clone(), words.len());
+            let text = crate::vocab::PhraseText::from_stored_parts(words.clone(), words.len());
             let token = runtime
                 .user_store_mut()
                 .add_phrase(&text, &vec![keys[0]; words.len()], Some(0))
                 .expect("stored user words");
             let actual = runtime.dict().token_text(token);
-            let expected = crate::PhraseText::from_words(words);
+            let expected = crate::vocab::PhraseText::from_words(words);
             assert_eq!(actual, expected);
             if let (Some(actual), Some(expected)) = (actual, expected) {
                 assert_eq!(actual.phrase_length(), expected.phrase_length());
@@ -835,7 +835,7 @@ mod backend_files {
             assert_eq!(
                 user_packed(&runtime, nth),
                 Some(vec![
-                    crate::ChewingKey::from_pinyin("ni")
+                    crate::parser::ChewingKey::from_pinyin("ni")
                         .unwrap()
                         .with_tone(tone)
                         .to_packed()
@@ -1062,7 +1062,7 @@ mod backend_files {
 
         let token = runtime
             .user_store_mut()
-            .add_phrase(&crate::PhraseText::from(phrase), &keys, None)
+            .add_phrase(&crate::vocab::PhraseText::from(phrase), &keys, None)
             .expect("learn it");
 
         // Dictionary seam: the merged lookup returns the learned phrase.
@@ -1769,7 +1769,7 @@ mod backend_files {
             .collect();
         let phrase = "你鎄";
         store
-            .add_phrase(&crate::PhraseText::from(phrase), &keys, None)
+            .add_phrase(&crate::vocab::PhraseText::from(phrase), &keys, None)
             .expect("learn it");
         store.mark_modified();
         store.save_reporting().expect("save");
@@ -1837,8 +1837,8 @@ mod pin_data {
     use super::contract_data;
 
     use crate::{
-        SyllableKey,
         model::{Dictionary, LanguageModel},
+        vocab::SyllableKey,
     };
 
     use crate::engine::SessionSettings;
@@ -2258,7 +2258,7 @@ fn native_session(runtime: &Runtime, options: OptionBits) -> crate::engine::Sess
 }
 fn native_keys(reading: &str) -> Vec<crate::user::PinyinKey> {
     if !reading.is_ascii() {
-        return crate::parse_zhuyin_direct(reading, OptionBits::USE_TONE)
+        return crate::parser::parse_zhuyin_direct(reading, OptionBits::USE_TONE)
             .into_iter()
             .map(|(key, tone)| crate::user::toned_key(key.index(), tone).unwrap())
             .collect();
@@ -2279,7 +2279,7 @@ fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
             .dict()
             .tokens_for_text(text)
             .into_iter()
-            .find(|token| crate::phrase_index_library_index(*token) == library);
+            .find(|token| crate::vocab::phrase_index_library_index(*token) == library);
         let keys = native_keys(reading);
         let store = runtime.user_store_mut();
         if store.is_system_library(library) {
@@ -2624,7 +2624,7 @@ fn a_failed_pinyin_table_read_is_a_miss() {
     let row: Vec<_> = ["ni", "hao"]
         .into_iter()
         .flat_map(|text| {
-            crate::ChewingKey::from_pinyin(text)
+            crate::parser::ChewingKey::from_pinyin(text)
                 .unwrap()
                 .to_packed()
                 .to_le_bytes()
@@ -2648,7 +2648,9 @@ fn a_failed_pinyin_table_read_is_a_miss() {
 fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
     let user = TempUserDir::new("candidate-read-miss");
     let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-    let key = crate::ChewingKey::from_pinyin("ni").unwrap().to_packed();
+    let key = crate::parser::ChewingKey::from_pinyin("ni")
+        .unwrap()
+        .to_packed();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("nihao").unwrap();
     let before = normal_texts(&runtime, &mut state);
@@ -2668,7 +2670,7 @@ fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
 fn addon_candidate_continuation_uses_its_row_read() {
     use native_fixture::{AddonItem, addon_system};
     let packed = |text| {
-        crate::ChewingKey::from_pinyin(text)
+        crate::parser::ChewingKey::from_pinyin(text)
             .expect("complete key")
             .to_packed()
     };
@@ -2719,7 +2721,7 @@ fn addon_candidate_continuation_uses_its_row_read() {
 
 fn native_chewing(runtime: &Runtime, state: &mut crate::engine::SessionState, input: &str) {
     let options = OptionBits::USE_TONE | OptionBits::FORCE_TONE;
-    let parsed = crate::ZhuyinParser::with_scheme(crate::ZhuyinScheme::Standard)
+    let parsed = crate::parser::ZhuyinParser::with_scheme(crate::parser::ZhuyinScheme::Standard)
         .parse_with_options(input.as_bytes(), options);
     assert_eq!(parsed.consumed(), input.len());
     let segments: Vec<_> = parsed
@@ -3211,7 +3213,9 @@ fn a_journal_removed_item_adds_no_candidate() {
         .as_chunks::<2>()
         .0
         .iter()
-        .map(|bytes| crate::ChewingKey::from_packed(u16::from_le_bytes(*bytes)).pinyin_string())
+        .map(|bytes| {
+            crate::parser::ChewingKey::from_packed(u16::from_le_bytes(*bytes)).pinyin_string()
+        })
         .collect();
     drop(runtime);
     native_fixture::write_user_conf(&user.path, &contract_data::contract_data_dir());
@@ -3544,7 +3548,7 @@ fn a_raw_user_key_predicts_its_live_item() {
 #[test]
 fn rows_of_a_never_loaded_library_are_filtered() {
     let user = TempUserDir::new("never-loaded-library");
-    let token = crate::phrase_index_make_token(15, 1);
+    let token = crate::vocab::phrase_index_make_token(15, 1);
     let value = token.to_le_bytes().to_vec();
     native_fixture::craft_user_index(
         &user.path.join("user_phrase_index.bin"),
@@ -3596,7 +3600,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
         .map(|&token| {
             let text = dict.token_text(token).unwrap();
             (
-                crate::phrase_index_library_index(token),
+                crate::vocab::phrase_index_library_index(token),
                 ucs4_bytes(text.as_str().unwrap()),
                 text,
             )

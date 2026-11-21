@@ -1,7 +1,7 @@
 use super::*;
-use crate::SyllableKey;
 use crate::facade::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
 use crate::user::{UserConfLaw, toned_key};
+use crate::vocab::SyllableKey;
 
 /// 074a2219 pinyin.cpp:1413-1415 and :2389-2395 search the current
 /// phrase table on every prefix/prediction call, including after import.
@@ -67,7 +67,11 @@ mod native {
         let mut instance = native_instance(&context, UserConfLaw::Zhuyin);
         let [short, long, hao, number] =
             ["好", "你好", "好", "号"].map(|text| tokens(&context, text)[0]);
-        for (previous, next) in [(crate::SENTENCE_START, hao), (short, hao), (long, number)] {
+        for (previous, next) in [
+            (crate::vocab::SENTENCE_START, hao),
+            (short, hao),
+            (long, number),
+        ] {
             context
                 .user_store_mut()
                 .set_bigram_count(previous, next, 1_000_000)

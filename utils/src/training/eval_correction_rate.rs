@@ -23,15 +23,16 @@ use oxpinyin::data::phrase_library::{LibraryError, RowFault};
 use oxpinyin::data::{DictError, PhraseLibraries, PinyinIndexTable};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::LineReader;
-use oxpinyin::{ChewingKey, PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
+use oxpinyin::model::PhraseList;
+use oxpinyin::parser::ChewingKey;
+use oxpinyin::vocab::{
+    NULL_TOKEN, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, PhraseEntry, PhraseToken, SyllableKey,
+    phrase_index_library_index, phrase_index_make_token,
+};
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{all_tokens, load_gram, load_table_conf, parse_segmented_line};
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
-use oxpinyin::{
-    NULL_TOKEN, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_library_index,
-    phrase_index_make_token,
-};
 
 /// The evaluation corpus name (`eval_correction_rate.cpp:133`).
 const EVALS_TEXT: &std::ffi::CStr = c"evals2.text";

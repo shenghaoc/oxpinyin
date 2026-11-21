@@ -98,10 +98,8 @@ fn missing_system_dir_carries_the_runtime_error() {
 
 #[test]
 fn init_warning_keeps_dictionary_and_model_details() {
-    use crate::data::DictError;
-    use crate::data::LmError;
-    use crate::data::TableError;
     use crate::data::phrase_library::LibraryError;
+    use crate::data::{DictError, LmError, TableError};
     use crate::store::StoreError;
 
     let cases = [
@@ -144,13 +142,13 @@ fn init_warning_keeps_dictionary_and_model_details() {
 use super::RemapStep;
 use super::SaveOutcome;
 #[cfg(unix)]
-use crate::ChewingKey;
-#[cfg(unix)]
 use crate::data::phrase_library::PhraseLibrary;
 #[cfg(unix)]
 use crate::data::phrase_library::{ChunkItem, build_chunk};
+#[cfg(unix)]
+use crate::parser::ChewingKey;
 use crate::user::toned_key;
-use crate::{PhraseText, SyllableKey};
+use crate::vocab::{PhraseText, SyllableKey};
 
 const GB: u8 = 1;
 const GBK: u8 = 2;
@@ -166,7 +164,7 @@ fn open(user: &Path) -> ContextCore {
 
 /// The first token of `library` and its text.
 fn first_item(ctx: &ContextCore, library: u8) -> (u32, PhraseText) {
-    let token = crate::phrase_index_make_token(library, 1);
+    let token = crate::vocab::phrase_index_make_token(library, 1);
     let dict = ctx.runtime.dict();
     let text = dict.token_text(token).expect("text");
     (token, PhraseText::from(text.as_str().expect("scalar text")))
@@ -1622,7 +1620,9 @@ mod native {
         use crate::data::phrase_library::{ChunkItem, build_chunk};
         let system = TempSystemDir::new("oversized-journal-record");
         let user = TempUserDir::new("oversized-journal-record");
-        let ni = crate::ChewingKey::from_pinyin("ni").unwrap().to_packed();
+        let ni = crate::parser::ChewingKey::from_pinyin("ni")
+            .unwrap()
+            .to_packed();
         let chunk = build_chunk(&[(
             1,
             ChunkItem {
@@ -1663,7 +1663,9 @@ mod native {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
             let system = TempSystemDir::new("oversized-journal-second-library");
             let user = TempUserDir::new("oversized-journal-second-library");
-            let ni = crate::ChewingKey::from_pinyin("ni").unwrap().to_packed();
+            let ni = crate::parser::ChewingKey::from_pinyin("ni")
+                .unwrap()
+                .to_packed();
             let chunk = build_chunk(&[(
                 1,
                 ChunkItem {

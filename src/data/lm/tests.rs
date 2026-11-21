@@ -603,8 +603,11 @@ mod language_model {
         else {
             panic!("a present empty value is a row");
         };
-        assert_eq!(gram.total(), Err(crate::GramFault::Short));
-        assert_eq!(gram.get_freq(HAO), Err(crate::GramFault::OverRead));
+        assert_eq!(gram.total(), Err(crate::single_gram::GramFault::Short));
+        assert_eq!(
+            gram.get_freq(HAO),
+            Err(crate::single_gram::GramFault::OverRead)
+        );
         let Err(error) = lm.nbest_step_costs(&prev, &HAO) else {
             panic!("the pair path refuses a present empty value");
         };

@@ -7,11 +7,11 @@
 //! This module names those constants and the value types the store records;
 //! it does not talk to the store.
 
-use crate::{
+use crate::vocab::{
     PHRASE_MASK, SyllableKey, USER_DICTIONARY, phrase_index_library_index, phrase_index_make_token,
 };
 
-use crate::PhraseToken;
+use crate::vocab::PhraseToken;
 
 /// `count` used when the caller passes "default" (`pinyin.cpp:521`; §3.2).
 pub const DEFAULT_PHRASE_COUNT: u64 = 5;
@@ -25,7 +25,7 @@ pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
 // (phrase_index.cpp:56–91). Import reads tone under USE_TONE (pinyin.cpp:630).
 /// A pronunciation key with a syllable identifier or tagged phonetic fields in the low 13
 /// bits and the tone in the upper three. [`toned_key`] constructs this representation.
-/// Use [`crate::ChewingKey`] for the packed C key.
+/// Use [`crate::parser::ChewingKey`] for the packed C key.
 pub type PinyinKey = u16;
 
 /// Bit position of the tone inside a [`PinyinKey`].
@@ -72,12 +72,12 @@ pub fn toned_key(syllable: usize, tone: u8) -> Option<PinyinKey> {
 /// row, or the packed fields of a key with no row. `None` when the id names
 /// no key, or the packed fields are zero or outside the table dimensions.
 #[must_use]
-pub(crate) fn key_chewing(key: PinyinKey) -> Option<crate::ChewingKey> {
+pub(crate) fn key_chewing(key: PinyinKey) -> Option<crate::parser::ChewingKey> {
     let bits = key & KEY_SYLLABLE_MASK;
     let fields = if bits & KEY_PACKED_TAG == 0 {
         SyllableKey::from_index(usize::from(bits))?.chewing_key()
     } else {
-        let packed = crate::ChewingKey::from_packed(bits & KEY_PACKED_FIELDS);
+        let packed = crate::parser::ChewingKey::from_packed(bits & KEY_PACKED_FIELDS);
         if bits & KEY_PACKED_FIELDS == 0 || !packed.elements_in_dims() {
             return None;
         }
@@ -229,8 +229,8 @@ impl UserPhrase {
 
     /// Text for lookup consumers, with the stored length and outward prefix.
     #[must_use]
-    pub fn phrase_text(&self) -> Option<crate::PhraseText> {
-        crate::PhraseText::from_stored_words(self.text.iter().copied().map(Some))
+    pub fn phrase_text(&self) -> Option<crate::vocab::PhraseText> {
+        crate::vocab::PhraseText::from_stored_words(self.text.iter().copied().map(Some))
     }
 
     /// Pronunciations in insertion order — `add_pronunciation` appends

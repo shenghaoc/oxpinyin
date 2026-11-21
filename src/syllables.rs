@@ -7,7 +7,7 @@ include!("table_data/syllable_inventory.rs");
 /// Complete full-pinyin syllables in pinned upstream numeric-ID order.
 #[cfg(test)]
 #[must_use]
-pub fn full_pinyin_syllables()
+pub(crate) fn full_pinyin_syllables()
 -> impl ExactSizeIterator<Item = &'static str> + DoubleEndedIterator + Clone {
     crate::string_tables::full_pinyin_syllables()
         .entries()
@@ -16,7 +16,7 @@ pub fn full_pinyin_syllables()
 
 /// A complete full-pinyin spelling by its frozen numeric ID.
 #[must_use]
-pub fn full_pinyin_syllable(index: usize) -> Option<&'static str> {
+pub(crate) fn full_pinyin_syllable(index: usize) -> Option<&'static str> {
     crate::string_tables::full_pinyin_syllables().field(index, 0)
 }
 
@@ -25,7 +25,7 @@ include!(concat!(env!("OUT_DIR"), "/syllable_maps.rs"));
 /// A canonical complete syllable spelling, whether it is in the frozen
 /// untuned inventory or an option-only correction target.
 #[must_use]
-pub fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
+fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
     FULL_PINYIN_SYLLABLE_MAP
         .get(text)
         .and_then(|&index| full_pinyin_syllable(index as usize))
@@ -37,9 +37,9 @@ pub fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
 }
 
 /// Returns the canonical spelling of an enabled correction or parser ambiguity alias.
-/// [`crate::fuzzy_chewing_alternatives`] supplies matrix-level substitutions.
+/// [`crate::vocab::fuzzy_chewing_alternatives`] supplies matrix-level substitutions.
 #[must_use]
-pub fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
+pub(crate) fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
     // Most parser option words enable neither spelling corrections nor
     // the two parser-table ambiguity aliases. Avoid their suffix scans;
     // matrix-only fuzzy bits do not admit a spelling alias here.

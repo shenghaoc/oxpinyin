@@ -11,7 +11,7 @@
 
 use std::ffi::CStr;
 
-use crate::PhraseText;
+use crate::vocab::PhraseText;
 
 /// A byte sequence outside the converter's accepted set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

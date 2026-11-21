@@ -1,5 +1,5 @@
-//! Assembles the system dictionary, language model, user storage and engine sessions.
-//! Opening a [`Runtime`] reads the system configuration, handles the profile and loads
+//! Assembles the system dictionary, language model, user storage, and engine sessions.
+//! Opening a [`Runtime`] reads the system configuration, handles the profile, and loads
 //! the configured phrase libraries. Without a user directory, the runtime owns transient
 //! user storage.
 //!
@@ -9,7 +9,7 @@
 // pinyin_init, pinyin.cpp:331–396 and zhuyin_init, zhuyin.cpp:279–334.
 mod sentence_facts;
 
-use crate::{PHRASE_INDEX_LIBRARY_COUNT, phrase_index_library_index};
+use crate::vocab::{PHRASE_INDEX_LIBRARY_COUNT, phrase_index_library_index};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
@@ -27,11 +27,11 @@ use crate::user::{
     UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
 };
 use crate::{
-    PhraseEntry, PhraseText, PhraseToken, SyllableKey,
     model::{
         Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseIndexRanges, PhraseItemRead,
         TrellisItem, TrellisPathMemo, UserCountDelta,
     },
+    vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey},
 };
 
 /// Orders the system and user phrase-table suggestion tokens the way
@@ -219,7 +219,7 @@ pub struct TokenPronunciation {
 }
 
 /// The pin's query keys for `syllables`.
-fn chewing_query(syllables: &[SyllableKey]) -> Vec<crate::ChewingKey> {
+fn chewing_query(syllables: &[SyllableKey]) -> Vec<crate::parser::ChewingKey> {
     syllables.iter().map(|key| key.chewing_key()).collect()
 }
 
@@ -311,7 +311,7 @@ impl<'a> RuntimeDict<'a> {
 
     /// The query's toned keys: each syllable's key with the tone at its
     /// index, `0` past the end of `tones`.
-    fn trellis_query(syllables: &[SyllableKey], tones: &[u8]) -> Vec<crate::ChewingKey> {
+    fn trellis_query(syllables: &[SyllableKey], tones: &[u8]) -> Vec<crate::parser::ChewingKey> {
         syllables
             .iter()
             .enumerate()
@@ -328,7 +328,11 @@ impl<'a> RuntimeDict<'a> {
     }
 
     /// The user table's `convert` call of [`Self::trellis_ranges`].
-    fn user_trellis_ranges(&self, query: &[crate::ChewingKey], ranges: &mut PhraseIndexRanges<()>) {
+    fn user_trellis_ranges(
+        &self,
+        query: &[crate::parser::ChewingKey],
+        ranges: &mut PhraseIndexRanges<()>,
+    ) {
         let tokens = self.user_lookup().search_toned(query);
         ranges.convert(
             tokens
@@ -340,7 +344,11 @@ impl<'a> RuntimeDict<'a> {
 
     /// `(matched, total)` of `token`'s effective system item over `query`,
     /// the wrapping `guint32` sums of `phrase_index.h:136-163`.
-    fn effective_possibility(&self, query: &[crate::ChewingKey], token: u32) -> Option<(u32, u32)> {
+    fn effective_possibility(
+        &self,
+        query: &[crate::parser::ChewingKey],
+        token: u32,
+    ) -> Option<(u32, u32)> {
         self.live_items()
             .read(token, |item| {
                 if item.origin() != ItemOrigin::Overlay {
@@ -355,7 +363,7 @@ impl<'a> RuntimeDict<'a> {
 
     fn item_possibility(
         item: crate::user::SystemItem<'_>,
-        query: &[crate::ChewingKey],
+        query: &[crate::parser::ChewingKey],
     ) -> (u32, u32) {
         let mut total = 0_u32;
         let mut matched = 0_u32;
@@ -363,7 +371,7 @@ impl<'a> RuntimeDict<'a> {
             total = total.wrapping_add(reading.frequency);
             if query.len() == reading.keys.len()
                 && query.iter().zip(reading.keys.iter()).all(|(q, bits)| {
-                    let s = crate::ChewingKey::from_packed(bits);
+                    let s = crate::parser::ChewingKey::from_packed(bits);
                     q.initial == s.initial
                         && ((q.middle == s.middle && q.final_ == s.final_)
                             || (q.middle == 0 && q.final_ == 0)
@@ -652,7 +660,7 @@ impl<'a> RuntimeDict<'a> {
     pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
         // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
         // (074a2219 novel_types.h:42-44).
-        let token = token & (crate::PHRASE_INDEX_LIBRARY_MASK | crate::PHRASE_MASK);
+        let token = token & (crate::vocab::PHRASE_INDEX_LIBRARY_MASK | crate::vocab::PHRASE_MASK);
         if self.is_system_library(phrase_index_library_index(token)) {
             return self.live_items().pronunciation_count(token).found();
         }
@@ -805,7 +813,7 @@ pub struct PathPricing {
     /// The user table's lookup of the path.
     user: Vec<PhraseEntry>,
     /// The path's toned keys ([`RuntimeDict::trellis_query`]).
-    keys: Vec<crate::ChewingKey>,
+    keys: Vec<crate::parser::ChewingKey>,
 }
 
 /// One token as the ordinary lookup prices it.
@@ -1239,7 +1247,9 @@ pub(crate) fn training_step_check(
 ) -> Result<(), EngineError> {
     user.check_training_step_with(
         check,
-        history.last().map_or(crate::SENTENCE_START, |token| *token),
+        history
+            .last()
+            .map_or(crate::vocab::SENTENCE_START, |token| *token),
         *token,
     )
     .map_err(|_| EngineError::UserModel)
@@ -1799,7 +1809,7 @@ impl Runtime {
     pub fn add_unigram_outcome(&mut self, token: u32, delta: u64) -> UnigramAdd {
         // PHRASE_INDEX_LIBRARY_INDEX and PHRASE_MASK ignore the tag nibble
         // (074a2219 novel_types.h:41-44, phrase_index.cpp:154).
-        let token = token & (crate::PHRASE_INDEX_LIBRARY_MASK | crate::PHRASE_MASK);
+        let token = token & (crate::vocab::PHRASE_INDEX_LIBRARY_MASK | crate::vocab::PHRASE_MASK);
         if !self
             .dict()
             .library_visible(u32::from(phrase_index_library_index(token)))

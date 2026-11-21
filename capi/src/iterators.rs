@@ -1,6 +1,6 @@
-//! Import and export iterator symbols.
+//! Iterators for importing phrase pronunciations and exporting phrases and bigrams.
 //!
-//! Export (`docs/findings/user-store.md` §9): `pinyin_begin_get_phrases` and
+//! [User-store export](https://github.com/shenghaoc/oxpinyin/blob/main/docs/findings/user-store.md#9-value-comparison-surface): `pinyin_begin_get_phrases` and
 //! the bigram quartet. Import: `pinyin_begin_add_phrases` /
 //! `pinyin_iterator_add_phrase` / `pinyin_end_add_phrases`.
 
@@ -57,7 +57,7 @@ impl BigramHandle {
         let Some((first, second)) = self.walk.pair() else {
             return;
         };
-        let encode = |text: &oxpinyin::PhraseText| {
+        let encode = |text: &oxpinyin::vocab::PhraseText| {
             let bytes = phrase_text_bytes(text);
             malloc_cstr_with(bytes.len(), |out| {
                 out.copy_from_slice(&bytes);
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn pinyin_iterator_add_phrase(
 }
 
 /// What [`pinyin_iterator_add_phrase`] does with one pair before it writes.
-pub(crate) use oxpinyin::facade::ImportPlan;
+use oxpinyin::facade::ImportPlan;
 
 /// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
@@ -267,44 +267,6 @@ unsafe fn plan_import(
     };
     // The facade checks the phrase/key lengths, then plans the add.
     core.plan_import(index, phrase, keys)
-}
-
-/// Whether [`pinyin_iterator_add_phrase`] of this pair reaches one of the
-/// pin's asserts ([`ImportPlan::Abort`]). Reads only. For the in-tree fuzz
-/// harness, which skips such a call: not in `pinyin.h`, a Rust function
-/// compiled only with `fuzz-api` and never into the shipped artifact.
-///
-/// # Safety
-///
-/// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase` and `pinyin`
-/// are strings. The serial-calls rule applies.
-#[cfg(feature = "fuzz-api")]
-#[must_use]
-pub unsafe fn oxpinyin_import_aborts(
-    iter: *mut ImportIterator,
-    phrase: *const c_char,
-    pinyin: *const c_char,
-) -> bool {
-    let handle = borrow_or_return!(
-        iter.cast::<ImportHandle>(),
-        backing_ref,
-        false,
-        phrase,
-        pinyin
-    );
-    let Some(owner) = handle.owner.as_ref() else {
-        return false;
-    };
-    {
-        // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
-        let context = unsafe { owner_ref(owner) };
-        matches!(
-            // SAFETY: This fuzz API guarantees Strings: both pointers name live
-            // NUL-terminated strings, unchanged for this call.
-            unsafe { plan_import(&context.core, handle.index, phrase, pinyin) },
-            ImportPlan::Abort
-        )
-    }
 }
 
 /// `FullPinyinParser2::parse` under `PINYIN_CORRECT_ALL | USE_TONE`
@@ -723,3 +685,45 @@ pub unsafe extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIt
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "fuzz-api")]
+pub(crate) mod fuzz_checks {
+    use super::*;
+
+    /// Whether [`pinyin_iterator_add_phrase`] of this pair reaches one of the
+    /// pin's asserts ([`oxpinyin::facade::ImportPlan::Abort`]). Reads only. For the in-tree fuzz
+    /// harness, which skips such a call: not in `pinyin.h`, a Rust function
+    /// compiled only with `fuzz-api` and never into the shipped artifact.
+    ///
+    /// # Safety
+    ///
+    /// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase` and `pinyin`
+    /// are strings. The serial-calls rule applies.
+    #[must_use]
+    pub unsafe fn oxpinyin_import_aborts(
+        iter: *mut ImportIterator,
+        phrase: *const c_char,
+        pinyin: *const c_char,
+    ) -> bool {
+        let handle = borrow_or_return!(
+            iter.cast::<ImportHandle>(),
+            backing_ref,
+            false,
+            phrase,
+            pinyin
+        );
+        let Some(owner) = handle.owner.as_ref() else {
+            return false;
+        };
+        {
+            // SAFETY: the iterator retains the allocation; the C caller excludes concurrent mutation.
+            let context = unsafe { owner_ref(owner) };
+            matches!(
+                // SAFETY: This fuzz API guarantees Strings: both pointers name live
+                // NUL-terminated strings, unchanged for this call.
+                unsafe { plan_import(&context.core, handle.index, phrase, pinyin) },
+                ImportPlan::Abort
+            )
+        }
+    }
+}

@@ -39,13 +39,13 @@ impl FullPinyinIndex {
 
 /// Luoma input spellings and canonical pinyin, in pinned byte order.
 #[must_use]
-pub const fn luoma_pinyin_index() -> FullPinyinIndex {
+pub(crate) const fn luoma_pinyin_index() -> FullPinyinIndex {
     FullPinyinIndex(crate::string_tables::luoma_pinyin_index())
 }
 
 /// Secondary-zhuyin input spellings and canonical pinyin, in pinned byte order.
 #[must_use]
-pub const fn secondary_zhuyin_index() -> FullPinyinIndex {
+pub(crate) const fn secondary_zhuyin_index() -> FullPinyinIndex {
     FullPinyinIndex(crate::string_tables::secondary_zhuyin_index())
 }
 
@@ -97,6 +97,15 @@ impl FullPinyinIndexKey {
 /// index. Within the native parser's representable input range, the longest reachable
 /// prefix wins, followed by the fewest keys and the first equal choice. Apostrophes
 /// consume bytes without producing a key. A key's span includes its tone digit.
+///
+/// The parser considers up to seven bytes from each position, stopping at the next
+/// apostrophe. Its final tie breaker is distance, which is always zero for these
+/// indexes. Keeping the first equal step selects the earliest start and thus the
+/// longest spelling at that step (`pinyin_parser2.cpp:222-381`).
+///
+/// Under the complete option word, `FORCE_TONE` requires a tone only when
+/// `USE_TONE` is also set (pin 074a2219 `pinyin_parser2.cpp:176-190`). Other
+/// option bits do not gate these rows. A rejected key ends the parsed prefix.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FullPinyinIndexParse {
     keys: Vec<FullPinyinIndexKey>,
@@ -181,25 +190,11 @@ fn parse_one_index_key(
     })
 }
 
-/// `FullPinyinParser2::parse` + `final_step` over an index
-/// (`pinyin_parser2.cpp:222-381`): the pinned dynamic program.
-///
-/// Apostrophes hop between segments consuming one byte and no key; every
-/// other position extends up to `max_full_pinyin_length = 7` bytes ahead
-/// (stopping at the next apostrophe); steps relax by longest covered
-/// input first, then fewest keys, then least distance (always zero
-/// here), with the first equal value kept — which makes the earliest
-/// start, i.e. the longest spelling, win ties. The result backtracks
-/// the longest covered prefix from the beginning of the input.
-///
-/// The parse runs under the complete option word.
-/// `FORCE_TONE` requires a tone only when `USE_TONE` is also set, matching
-/// pin 074a2219 `pinyin_parser2.cpp:176-190`. Other option bits do not
-/// gate these plain index rows.
-///
-/// The parser has no error cases: a rejected key ends the parsed prefix.
+/// Parses an alternate spelling index with the selection rules of
+/// [`FullPinyinIndexParse`] (`FullPinyinParser2::parse` and `final_step`,
+/// `pinyin_parser2.cpp:222-381`).
 #[must_use]
-pub fn parse_full_pinyin_index_with_options(
+pub(crate) fn parse_full_pinyin_index_with_options(
     input: &[u8],
     options: crate::OptionBits,
     index: FullPinyinIndex,

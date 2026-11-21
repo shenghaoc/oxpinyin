@@ -1,11 +1,11 @@
-//! Configuration symbols: options, schemes, phrase library loading.
+//! Context options, input schemes, phrase library loading, and token masking.
 
 use std::os::raw::c_int;
 
 use crate::ffi::borrow_or_return;
 use crate::state::context_mut;
 use crate::types::{PinyinContext, PinyinOptionT};
-use oxpinyin::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
+use oxpinyin::vocab::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
 
 // pinyin.cpp:1299-1306.
 /// Set pinyin options on the context.
@@ -97,11 +97,11 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    let scheme = match oxpinyin::DoublePinyinScheme::try_from(scheme) {
+    let scheme = match oxpinyin::parser::DoublePinyinScheme::try_from(scheme) {
         // CUSTOMIZED (30): register row 5a, `pinyin_parser2.cpp:611`
         // `abort()`. The `m_fallback_table = NULL` before it (`:580`) is
         // in memory only.
-        Ok(oxpinyin::DoublePinyinScheme::Customized) => std::process::abort(),
+        Ok(oxpinyin::parser::DoublePinyinScheme::Customized) => std::process::abort(),
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn pinyin_unload_phrase_library(
 /// predecessor removes its whole gram (`pinyin.cpp:1224-1295`,
 /// `ngram_kyotodb.cpp:199`, `phrase_index.cpp:689`). In the pin, applying
 /// the mask leaves `m_modified` as it was. The pin sets that flag in
-/// [`crate::pinyin_train`] and [`crate::pinyin_end_add_phrases`].
+/// [`crate::candidates::pinyin_train`] and [`crate::iterators::pinyin_end_add_phrases`].
 ///
 /// Returns `false` for a null context or a store failure.
 ///

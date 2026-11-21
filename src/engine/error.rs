@@ -102,10 +102,10 @@ pub enum EngineError {
 ///
 /// Terminates where the pin's assert fires: the first initial-only key
 /// carries a tone.
-pub(crate) fn abort_toned_incomplete(keys: &[crate::SyllableKey], tones: &[u8]) {
+pub(crate) fn abort_toned_incomplete(keys: &[crate::vocab::SyllableKey], tones: &[u8]) {
     let first = keys
         .iter()
-        .position(|key| key.completeness() == crate::Completeness::Partial);
+        .position(|key| key.completeness() == crate::parser::Completeness::Partial);
     if let Some(index) = first
         && tones.get(index).is_some_and(|tone| *tone != 0)
     {
@@ -114,21 +114,21 @@ pub(crate) fn abort_toned_incomplete(keys: &[crate::SyllableKey], tones: &[u8]) 
 }
 
 impl EngineError {
-    /// The lookup refusal for a [`crate::GramFault`] met on a merged row.
+    /// The lookup refusal for a [`crate::single_gram::GramFault`] met on a merged row.
     ///
     /// # Aborts
     ///
-    /// Terminates on [`crate::GramFault::Short`] — a stored system or user
+    /// Terminates on [`crate::single_gram::GramFault::Short`] — a stored system or user
     /// bigram value shorter than its `guint32` total, whose total
     /// `merge_single_gram` (`ngram.cpp:303-304`), `SingleGram::search`
     /// (`:165`), `get_total_freq` (`:49`) or the `DYNAMIC_ADJUST` term
     /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
     /// `memory_chunk.h:390`.
     #[must_use]
-    pub fn lookup_gram(fault: crate::GramFault) -> Self {
+    pub fn lookup_gram(fault: crate::single_gram::GramFault) -> Self {
         match fault {
-            crate::GramFault::Short => std::process::abort(),
-            crate::GramFault::OverRead => Self::UnsafeLookupPredecessor,
+            crate::single_gram::GramFault::Short => std::process::abort(),
+            crate::single_gram::GramFault::OverRead => Self::UnsafeLookupPredecessor,
         }
     }
 

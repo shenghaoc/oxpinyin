@@ -10,10 +10,11 @@
 //! `zhuyin_index` with its shuffle and incomplete flag gating — lives in
 //! [`crate::zhuyin_map`].
 
-use crate::SyllableKey;
+use crate::chewing_key::CHEWING_ZERO_TONE;
 use crate::options::OptionBits;
+use crate::parser::ChewingKey;
+use crate::vocab::SyllableKey;
 use crate::zhuyin_map::VALID_ZHUYIN_TONES;
-use crate::{CHEWING_ZERO_TONE, ChewingKey};
 
 /// One parsed double-pinyin key: a full-pinyin [`SyllableKey`] and its byte
 /// span in the original two-key (or one-key incomplete) input, with the tone
@@ -93,9 +94,9 @@ pub enum FullPinyinScheme {
 
 impl FullPinyinScheme {
     /// Returns the exact spelling index for Luoma or secondary Zhuyin. Hanyu uses
-    /// [`crate::FullPinyinParser`] and has no alternate index.
+    /// [`crate::parser::FullPinyinParser`] and has no alternate index.
     #[must_use]
-    pub const fn index(self) -> Option<crate::FullPinyinIndex> {
+    pub const fn index(self) -> Option<crate::parser::FullPinyinIndex> {
         match self {
             Self::Luoma => Some(crate::full_pinyin_index::luoma_pinyin_index()),
             Self::SecondaryZhuyin => Some(crate::full_pinyin_index::secondary_zhuyin_index()),

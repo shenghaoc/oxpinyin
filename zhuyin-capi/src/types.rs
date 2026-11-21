@@ -1,4 +1,4 @@
-//! Opaque handle types and C-ABI enums matching `zhuyin.h`.
+//! Handles, keys, candidate types, and scalar aliases for `zhuyin.h`.
 
 use std::os::raw::{c_char, c_uint};
 
@@ -26,7 +26,7 @@ pub struct LookupCandidate;
 /// Byte-identical to the pinyin facade's `ChewingKey` (upstream declares one
 /// `_ChewingKey` shared by both facades, `zhuyin.h:21`). The representation is
 /// upstream's packed 16-bit word; the renderers decode it through
-/// [`oxpinyin::ChewingKey`].
+/// [`oxpinyin::parser::ChewingKey`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChewingKey {
@@ -46,7 +46,7 @@ impl ChewingKey {
 
     /// Packs the core elements into the ABI word.
     #[must_use]
-    pub(crate) const fn from_core(key: oxpinyin::ChewingKey) -> Self {
+    pub(crate) const fn from_core(key: oxpinyin::parser::ChewingKey) -> Self {
         Self {
             packed: key.to_packed(),
         }
@@ -54,8 +54,8 @@ impl ChewingKey {
 
     /// Decodes the word for the renderers.
     #[must_use]
-    pub(crate) const fn to_core(self) -> oxpinyin::ChewingKey {
-        oxpinyin::ChewingKey::from_packed(self.packed)
+    pub(crate) const fn to_core(self) -> oxpinyin::parser::ChewingKey {
+        oxpinyin::parser::ChewingKey::from_packed(self.packed)
     }
 }
 
@@ -78,6 +78,7 @@ const _: () = {
 /// Opaque import iterator.
 pub struct ImportIterator;
 
+/// GLib array passed to dictionary and pronunciation functions.
 pub use glib_sys::GArray;
 
 // ── Enums ────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ pub use glib_sys::GArray;
 /// `lookup_candidate_type_t` from `zhuyin.h:41-45`.
 ///
 /// **This is NOT the pinyin facade's `lookup_candidate_type_t`.** The zhuyin
-/// header defines only four enumerators, and they collision with the pinyin
+/// header defines only four enumerators, and they collide with the pinyin
 /// eight at discriminants 3 and 4:
 ///
 /// | value | zhuyin (`zhuyin.h:41-45`) | pinyin (`pinyin.h`) |

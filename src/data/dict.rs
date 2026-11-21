@@ -19,14 +19,15 @@
 //! surviving token through its library — a token whose library is not
 //! loaded is invisible, upstream's `NULL == head` skip.
 
-use crate::phrase_index_library_index;
+use crate::vocab::phrase_index_library_index;
 use std::fmt;
 use std::path::Path;
 
 use crate::store::{DefaultStore, RawReadStore};
 use crate::{
-    ChewingKey, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
     model::{Dictionary, PhraseIndexRanges, PhraseItemRead, TokenPhrase, TrellisItem},
+    parser::ChewingKey,
+    vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey},
 };
 
 #[cfg(test)]
@@ -993,7 +994,7 @@ pub struct AddonDictionary {
 
 fn addon_rows(conf: &TableConf) -> Vec<TableRow> {
     (0..=u8::MAX)
-        .take(usize::from(crate::PHRASE_INDEX_LIBRARY_COUNT))
+        .take(usize::from(crate::vocab::PHRASE_INDEX_LIBRARY_COUNT))
         .map(|index| {
             conf.addon_row(index)
                 .cloned()

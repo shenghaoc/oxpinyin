@@ -7,11 +7,12 @@ fn check(value: bool) {
         tool::abort();
     }
 }
+use oxpinyin::OptionBits;
 use oxpinyin::engine::tool::{parse_full, physical_matrix, prepare_lookup};
 use oxpinyin::input::tool::lookup_tests as output;
+use oxpinyin::parser::ChewingKey;
 use oxpinyin::runtime::tool::Lookup;
 use oxpinyin::tool::Key;
-use oxpinyin::{ChewingKey, OptionBits};
 
 fn load(data: &Path, phonetic: bool, bigram: bool) -> Lookup {
     let conf = conf(data);

@@ -12,8 +12,9 @@
 //! `reset_system_library` and calls the store as the C ABI does.
 
 use super::mapped_replay::{LIBRARY, Profile, header};
+use crate::parser::ChewingKey;
 use crate::user::store::{UserStore, UserStoreError};
-use crate::{ChewingKey, SENTENCE_START};
+use crate::vocab::SENTENCE_START;
 
 /// A store whose library 1 holds the shipped chunk's four items, and which has
 /// unloaded it.

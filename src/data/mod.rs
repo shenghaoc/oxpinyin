@@ -1,4 +1,4 @@
-//! Reads the system dictionary, phrase libraries, bigram model and punctuation tables.
+//! Reads the system dictionary, phrase libraries, bigram model, and punctuation tables.
 //! Configuration selects the system libraries. Opening them maps and checks their phrase
 //! chunks. Successor and index lookups read individual DBM rows. Extension searches can
 //! walk a key range.

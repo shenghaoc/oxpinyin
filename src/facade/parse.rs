@@ -1,11 +1,13 @@
 //! The batch-parse seams and one-key probes over the core parsers.
 
+use crate::OptionBits;
+use crate::full_pinyin_index::parse_full_pinyin_index_with_options;
 use crate::graph::ExactSegment;
-use crate::{
+use crate::parser::{
     ChewingKey, DoublePinyinKey, DoublePinyinParser, DoublePinyinScheme, FullPinyinParser,
-    FullPinyinScheme, OptionBits, SyllableKey, ZhuyinKey, ZhuyinParser, ZhuyinScheme,
-    parse_full_pinyin_index_with_options,
+    FullPinyinScheme, ZhuyinKey, ZhuyinParser, ZhuyinScheme,
 };
+use crate::vocab::SyllableKey;
 
 use crate::facade::instance::{InstanceState, InstanceView};
 
@@ -125,14 +127,14 @@ pub fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
 fn parse_one_scheme_key(
     options: OptionBits,
     input: &[u8],
-    index: crate::FullPinyinIndex,
+    index: crate::parser::FullPinyinIndex,
 ) -> Option<ChewingKey> {
     if input.contains(&b'\'') {
         return None;
     }
     let use_tone = options.contains(OptionBits::USE_TONE);
     let force_tone = options.contains(OptionBits::FORCE_TONE);
-    let mut tone = crate::CHEWING_ZERO_TONE;
+    let mut tone = crate::chewing_key::CHEWING_ZERO_TONE;
     let mut spelling = input;
     if use_tone {
         if let Some((&last, rest)) = input.split_last()
@@ -141,7 +143,7 @@ fn parse_one_scheme_key(
             tone = last - b'0';
             spelling = rest;
         }
-        if force_tone && tone == crate::CHEWING_ZERO_TONE {
+        if force_tone && tone == crate::chewing_key::CHEWING_ZERO_TONE {
             return None;
         }
     }

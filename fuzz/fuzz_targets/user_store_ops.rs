@@ -30,7 +30,7 @@ use oxpinyin::user::{
     FIRST_USER_TOKEN, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw, UserStore,
     UserStoreError,
 };
-use oxpinyin::{
+use oxpinyin::vocab::{
     NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, SyllableKey, USER_DICTIONARY,
     phrase_index_library_index, phrase_index_make_token,
 };
@@ -278,7 +278,7 @@ fn run(data: &[u8]) {
                     .collect();
                 if text.chars().count() == keys.len() && !text.is_empty() {
                     let refusable = holds_foreign_token(&store, &text);
-                    match store.add_phrase(&oxpinyin::PhraseText::from(&text), &keys, None) {
+                    match store.add_phrase(&oxpinyin::vocab::PhraseText::from(&text), &keys, None) {
                         Ok(token) => added.push(token),
                         Err(UserStoreError::InvalidPhrase) if refusable => {}
                         Err(err) => panic!("valid add: {err:?}"),
@@ -302,7 +302,11 @@ fn run(data: &[u8]) {
                 let over_limit: String = std::iter::repeat('词').take(16).collect();
                 let keys16: Vec<PinyinKey> = (0..16).map(|index| key_for(index)).collect();
                 assert!(matches!(
-                    store.add_phrase(&oxpinyin::PhraseText::from(&over_limit), &keys16, None),
+                    store.add_phrase(
+                        &oxpinyin::vocab::PhraseText::from(&over_limit),
+                        &keys16,
+                        None
+                    ),
                     Err(UserStoreError::InvalidPhrase)
                 ));
                 assert!(matches!(

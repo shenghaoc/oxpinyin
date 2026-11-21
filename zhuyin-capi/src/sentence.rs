@@ -1,9 +1,11 @@
-//! Sentence guessing, retrieval, and the cursor candidate-construction
-//! family (`zhuyin_guess_candidates_before_cursor` / `after_cursor`).
+//! Sentence guessing, text retrieval, and candidate generation.
 //!
-//! The candidate-built symbols accumulate into the instance's snapshot; the
-//! offset-mapping helpers translate between the original zhuyin input
-//! coordinates and the session's `'`-joined full-pinyin buffer.
+//! [`zhuyin_guess_sentence`] and [`zhuyin_guess_sentence_with_prefix`]
+//! decode the parsed input. [`zhuyin_get_sentence`] retrieves sentence text,
+//! and [`zhuyin_get_character_offset`] maps a cursor to a character offset.
+//! [`zhuyin_guess_candidates_before_cursor`] and
+//! [`zhuyin_guess_candidates_after_cursor`] build candidate lists.
+//! Inspect and select their rows through [`crate::candidates`].
 
 use std::os::raw::c_char;
 
@@ -172,7 +174,7 @@ pub unsafe extern "C" fn zhuyin_get_sentence(
 /// borrows, including the phrase inputs. Its contents need not be
 /// initialized.
 unsafe fn write_owned_sentence(
-    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::PhraseText>>>,
+    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::vocab::PhraseText>>>,
     sentence: *mut *mut c_char,
 ) -> bool {
     write_if_nonnull!(sentence, crate::ffi::sentence_text(phrases));
@@ -325,7 +327,7 @@ fn candidate_guess_answer(result: Result<bool, CandidateGuessRefusal>) -> bool {
 /// Whether the facade's `guint32` unigram total is zero: the loaded
 /// libraries' sum, the user store's deltas and the accepted
 /// `zhuyin_token_add_unigram_frequency` deltas, wrapped.
-pub(crate) fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
+fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     inst.core.lm.amplified_total() == 0
 }
 

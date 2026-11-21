@@ -23,7 +23,7 @@ use oxpinyin::data::{FileType, PhoneticType, TableConf, TableRow};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OptionValue;
 use oxpinyin::input::tool::storage::TableFile;
-use oxpinyin::{PHRASE_MASK, phrase_index_library_index};
+use oxpinyin::vocab::{PHRASE_MASK, phrase_index_library_index};
 
 use crate::storage::Tree;
 use crate::storage::items_of;
@@ -155,7 +155,7 @@ pub fn load_chewing(table: Option<&Tree>, file: &mut TableFile, phonetic: Phonet
 
 /// `ChewingLargeTable2::add_index` (`:179-198`): both key spaces, then
 /// `add_index_internal`'s prefix fill.
-fn add_index(table: Option<&Tree>, keys: &[oxpinyin::ChewingKey], token: u32) {
+fn add_index(table: Option<&Tree>, keys: &[oxpinyin::parser::ChewingKey], token: u32) {
     let incomplete = encode_incomplete_key(keys);
     add_index_space(table, &incomplete, keys, token);
     let complete = encode_complete_key(keys);
@@ -164,14 +164,19 @@ fn add_index(table: Option<&Tree>, keys: &[oxpinyin::ChewingKey], token: u32) {
 
 /// `ChewingLargeTable2::add_index_internal` (`chewing_large_table2_bdb.cpp:290-358`,
 /// `chewing_large_table2_tkrzwdb.cpp:260-313`).
-fn add_index_space(table: Option<&Tree>, key: &[u8], keys: &[oxpinyin::ChewingKey], token: u32) {
+fn add_index_space(
+    table: Option<&Tree>,
+    key: &[u8],
+    keys: &[oxpinyin::parser::ChewingKey],
+    token: u32,
+) {
     let Some(table) = table else {
         // `assert(NULL != m_db)`.
         tool::abort();
     };
     // `add_index_internal(phrase_length, ...)`'s switch has cases 1..=16
     // and `abort()` elsewhere.
-    if keys.is_empty() || keys.len() > oxpinyin::MAX_PHRASE_LENGTH {
+    if keys.is_empty() || keys.len() > oxpinyin::vocab::MAX_PHRASE_LENGTH {
         tool::abort();
     }
     let phrase_length = key.len() / 2;
@@ -340,7 +345,12 @@ fn fresh_item() -> ChunkItem {
 
 /// `PhraseItem::add_pronunciation` (`src/storage/phrase_index.cpp:56-93`);
 /// `freq` is `input.freq` narrowed to the `guint32` delta.
-fn add_pronunciation(item: &mut ChunkItem, keys: &[oxpinyin::ChewingKey], token: u32, freq: usize) {
+fn add_pronunciation(
+    item: &mut ChunkItem,
+    keys: &[oxpinyin::parser::ChewingKey],
+    token: u32,
+    freq: usize,
+) {
     let _ = token;
     // The pin parses `size_t freq` and passes it to
     // `PhraseItem::add_pronunciation(..., guint32 delta)`

@@ -26,7 +26,7 @@ use std::ffi::CStr;
 use std::ffi::c_char;
 use std::ops::{Deref, DerefMut};
 
-use crate::PhraseText;
+use crate::vocab::PhraseText;
 
 /// A byte offset and byte length identifying a string in its owning snapshot, excluding
 /// the terminator. Use the span with the snapshot that interned it.

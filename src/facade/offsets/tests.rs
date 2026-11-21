@@ -1,4 +1,5 @@
-use crate::{DoublePinyinParser, DoublePinyinScheme, OptionBits, ZhuyinParser, ZhuyinScheme};
+use crate::OptionBits;
+use crate::parser::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser, ZhuyinScheme};
 
 use super::*;
 

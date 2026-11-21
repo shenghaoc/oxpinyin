@@ -98,13 +98,13 @@ impl SessionPhrases {
 
     pub(crate) fn item(&self, token: u32) -> Option<PhraseItemView<'_>> {
         self.libraries
-            .get(&crate::phrase_index_library_index(token))?
-            .item(token & crate::PHRASE_MASK)
+            .get(&crate::vocab::phrase_index_library_index(token))?
+            .item(token & crate::vocab::PHRASE_MASK)
     }
 
     pub(crate) fn item_mut(&mut self, token: u32) -> Option<&mut UserLibrary> {
         self.libraries
-            .get_mut(&crate::phrase_index_library_index(token))
+            .get_mut(&crate::vocab::phrase_index_library_index(token))
     }
 
     pub(crate) fn phrase(&self, token: u32, item: PhraseItemView<'_>) -> crate::user::UserPhrase {
@@ -176,7 +176,7 @@ impl UserLibrary {
     }
 
     fn replacement(&self, slot: u32, bytes: &[u8]) -> Option<Replacement> {
-        if slot > crate::PHRASE_MASK {
+        if slot > crate::vocab::PHRASE_MASK {
             return None;
         }
         let view = PhraseItemView::from_bytes(bytes)?;
@@ -321,7 +321,7 @@ impl UserLibrary {
     pub(crate) fn train(
         &mut self,
         slot: u32,
-        readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
+        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
         delta: u32,
     ) {
         let Some(item) = self.item(slot) else { return };
@@ -528,7 +528,7 @@ impl UserLibrary {
         // holds the wrapped sum of the items a compaction copied.
         let mut total = 0_u32;
         for (slot, view) in self.items() {
-            if slot > crate::PHRASE_MASK {
+            if slot > crate::vocab::PHRASE_MASK {
                 return None;
             }
             let offset = u32::try_from(payload.len() - index_two as usize).ok()?;

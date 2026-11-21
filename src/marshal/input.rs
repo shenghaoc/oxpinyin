@@ -8,7 +8,7 @@
 
 use std::ffi::CStr;
 
-use crate::PhraseText;
+use crate::vocab::PhraseText;
 
 /// Decode the canonical historical encodings accepted by `g_utf8_to_ucs4`.
 ///
@@ -49,7 +49,7 @@ pub fn parser_prefix(input: Option<&CStr>) -> String {
 }
 
 // ZhuyinDirectParser2::parse, storage/zhuyin_parser2.cpp:914–959.
-/// Prepares input for [`crate::parse_zhuyin_direct`]. Valid UTF-8 passes through in full.
+/// Prepares input for [`crate::parser::parse_zhuyin_direct`]. Valid UTF-8 passes through in full.
 /// On malformed UTF-8, the result ends just after the last ASCII space or apostrophe
 /// before the bad byte, or is empty when there is no such separator.
 #[must_use]

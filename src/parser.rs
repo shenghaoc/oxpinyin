@@ -1,6 +1,21 @@
-//! Full-pinyin single-key parsing.
+//! Phonetic keys and parsers for full pinyin, double pinyin, and Zhuyin.
+//!
+//! [`ChewingKey`] holds the shared packed key fields and display spellings.
+//! [`FullPinyinParser`] parses one full-pinyin key. The scheme parsers return
+//! keys with byte spans and the consumed input prefix.
+//! [`FullPinyinScheme`] selects the spelling index; [`FullPinyinIndexParse`]
+//! describes the alternate-index parse and its selection rules.
 
-use crate::{CHEWING_ZERO_TONE, ChewingKey, OptionBits, SyllableKey};
+pub use crate::chewing_key::{ChewingKey, KeyText};
+pub use crate::full_pinyin_index::{FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse};
+pub use crate::scheme::{
+    DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
+    ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,
+};
+
+use crate::OptionBits;
+use crate::chewing_key::CHEWING_ZERO_TONE;
+use crate::vocab::SyllableKey;
 
 /// Whether a key is a complete syllable or an incomplete initial.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -53,7 +68,7 @@ impl FullPinyinParser {
         // an index row flagged `PINYIN_INCOMPLETE` — an initial-only
         // spelling — answers `false` unless the option word carries the
         // bit (issue #547: `b`, `zh`, `m` under 0x0 or 0x20).
-        if syllable.completeness() == crate::Completeness::Partial
+        if syllable.completeness() == crate::parser::Completeness::Partial
             && !options.contains(OptionBits::PINYIN_INCOMPLETE)
         {
             return None;

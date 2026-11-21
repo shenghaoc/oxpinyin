@@ -15,9 +15,9 @@
 
 use std::path::Path;
 
-use crate::PhraseText;
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::store::{DefaultStore, RawReadStore};
+use crate::vocab::PhraseText;
 
 use crate::data::DictError;
 #[cfg(any(test, feature = "test-hooks"))]

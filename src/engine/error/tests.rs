@@ -1,7 +1,7 @@
 use super::{EngineError, abort_toned_incomplete};
 
-fn key(text: &str) -> crate::SyllableKey {
-    crate::SyllableKey::from_text(text).expect("key")
+fn key(text: &str) -> crate::vocab::SyllableKey {
+    crate::vocab::SyllableKey::from_text(text).expect("key")
 }
 
 /// `contains_incomplete_pinyin` returns at the first initial-only key
@@ -40,7 +40,7 @@ fn a_toned_initial_only_key_behind_a_complete_key_aborts() {
 #[test]
 fn an_over_read_gram_fault_keeps_its_refusal() {
     assert_eq!(
-        EngineError::lookup_gram(crate::GramFault::OverRead),
+        EngineError::lookup_gram(crate::single_gram::GramFault::OverRead),
         EngineError::UnsafeLookupPredecessor
     );
 }
@@ -54,7 +54,7 @@ fn a_short_gram_fault_aborts_at_the_shared_mapping() {
     crate::store::death_test::assert_aborts(
         "engine::error::tests::a_short_gram_fault_aborts_at_the_shared_mapping",
         || {
-            let _ = EngineError::lookup_gram(crate::GramFault::Short);
+            let _ = EngineError::lookup_gram(crate::single_gram::GramFault::Short);
         },
     );
 }

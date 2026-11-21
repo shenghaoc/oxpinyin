@@ -1,9 +1,10 @@
 //! The full-pinyin parser result before scan-matrix transformations.
 
 use crate::{
-    OptionBits, SyllableKey,
+    OptionBits,
     graph::{Edge, SegmentGraph},
     tool::{Key, Parse},
+    vocab::SyllableKey,
 };
 
 /// Reuse the C API's graph, fewest-key selection and trailing-apostrophe
@@ -45,7 +46,8 @@ fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
 /// A nonempty parse also requires a representable column count of `consumed + 1`.
 #[must_use]
 pub fn physical_matrix(parsed: &Parse, options: OptionBits) -> Vec<Vec<Key>> {
-    use crate::{ChewingKey, SyllableKey};
+    use crate::parser::ChewingKey;
+    use crate::vocab::SyllableKey;
     if parsed.keys.is_empty() {
         return Vec::new();
     }
@@ -91,7 +93,7 @@ pub struct LookupRow {
     /// Phrase-start column and token, in result-vector order.
     pub tokens: Vec<(usize, u32)>,
     /// Concatenated phrase text, retaining raw UCS-4 words.
-    pub text: crate::PhraseText,
+    pub text: crate::vocab::PhraseText,
     /// Bytes the row spans: the bound of the decode, the pin's
     /// `MatchResult` length less its terminal column.
     pub span: usize,
@@ -118,7 +120,7 @@ impl PreparedLookup {
         };
         (0..columns).flat_map(|position| {
             let zero = self.matrix.zeros[position].then(|| Key {
-                key: crate::ChewingKey::default(),
+                key: crate::parser::ChewingKey::default(),
                 span: position..position + 1,
             });
             let keys = self
@@ -211,7 +213,7 @@ pub fn phrase_lookup<D, L>(
     words: &[u32],
     dictionary: &D,
     model: &L,
-) -> Result<Vec<crate::PhraseToken>, crate::engine::EngineError>
+) -> Result<Vec<crate::vocab::PhraseToken>, crate::engine::EngineError>
 where
     D: crate::model::Dictionary<Syllable = SyllableKey>,
     L: crate::model::LanguageModel,

@@ -1,6 +1,6 @@
 use super::{Cell, ConstraintStore, PhraseSpan};
 
-fn token(value: u32) -> crate::PhraseToken {
+fn token(value: u32) -> crate::vocab::PhraseToken {
     value
 }
 

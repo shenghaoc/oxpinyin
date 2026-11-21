@@ -1,5 +1,7 @@
-//! Phrase prediction: prefixes → user-bigram successors → prefix suggestions,
-//! then punctuation prepended from the Option A punct table.
+//! Prediction candidates from user-bigram successors and prefix suggestions.
+//!
+//! [`crate::sentence::pinyin_guess_predicted_candidates_with_punctuations`]
+//! prepends punctuation rows. Read and select the results through [`crate::candidates`].
 //!
 //! Reproduces `pinyin_guess_predicted_candidates` (`pinyin.cpp:2411-2451`)
 //! and the punctuation prefix of
@@ -10,8 +12,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
 use std::os::raw::c_char;
 
+use oxpinyin::single_gram;
 use oxpinyin::user::UserStore;
-use oxpinyin::{PhraseText, PhraseToken, single_gram};
+use oxpinyin::vocab::{PhraseText, PhraseToken};
 
 use crate::ffi::borrow_or_return;
 use crate::state::{CapiCandidate, SharedDict, instance_mut};
@@ -168,7 +171,7 @@ fn sort_predicted(items: &mut [Predicted]) {
 /// the defined part and the stable no-prefix outcome, by pointer identity;
 /// the punctuation entry reaches the same call first (`:2459`), register
 /// entry "Aliased prediction prefix use-after-free".
-pub fn clear_borrowed_prefix(
+pub(crate) fn clear_borrowed_prefix(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     prefix: *const c_char,
 ) -> bool {

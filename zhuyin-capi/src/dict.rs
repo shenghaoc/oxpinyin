@@ -1,5 +1,8 @@
-//! The dictionary-introspection surface: token lookups, per-token reads,
-//! the unigram-frequency write.
+//! Phrase-token lookup, pronunciations, and unigram frequencies.
+//!
+//! [`zhuyin_lookup_tokens`] finds tokens for phrase text. The token getters
+//! read phrase text, pronunciation keys, and unigram frequency.
+//! [`zhuyin_token_add_unigram_frequency`] changes a token's frequency.
 
 use oxpinyin::marshal::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
@@ -53,16 +56,17 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
     // answering. The abort below follows the clear and the appends, so a
     // NULL array's GLib criticals come first, as at the pin.
     let reduce_asserts = tokens.len() > 4;
-    let null_append_count = tokenarray.is_null().then(|| {
-        // Count the pin's prepared arrays before GLib can call a log handler.
-        (0..oxpinyin::PHRASE_INDEX_LIBRARY_COUNT)
-            .filter(|&library| {
-                inst.core
-                    .dict
-                    .phrase_table_token_enabled(oxpinyin::phrase_index_make_token(library, 0))
-            })
-            .count()
-    });
+    let null_append_count =
+        tokenarray.is_null().then(|| {
+            // Count the pin's prepared arrays before GLib can call a log handler.
+            (0..oxpinyin::vocab::PHRASE_INDEX_LIBRARY_COUNT)
+                .filter(|&library| {
+                    inst.core.dict.phrase_table_token_enabled(
+                        oxpinyin::vocab::phrase_index_make_token(library, 0),
+                    )
+                })
+                .count()
+        });
     // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
     // 2.84.4 garray.c:595,762 checks NULL, logs a critical, and returns
     // before accessing the array or data (including a zero-length append).

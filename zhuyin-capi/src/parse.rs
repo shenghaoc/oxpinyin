@@ -1,5 +1,9 @@
-//! Parsing symbols: full pinyin, chewing (bopomofo), and the shared
-//! batch-parse shell.
+//! Full-pinyin and chewing input parsing.
+//!
+//! [`zhuyin_parse_more_full_pinyins`] and [`zhuyin_parse_more_chewings`]
+//! parse input into the instance. [`zhuyin_get_parsed_input_length`] reports
+//! the consumed input length. [`zhuyin_in_chewing_keyboard`] returns the
+//! symbols assigned to a chewing keyboard key.
 
 use std::os::raw::c_char;
 

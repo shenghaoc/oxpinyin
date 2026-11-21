@@ -29,7 +29,7 @@
 //! `source table format:` line leaves the pin comparing an uninitialised
 //! buffer (`:228-229`): [`TableConfError::UninitialisedSourceFormat`].
 
-use crate::PHRASE_INDEX_LIBRARY_COUNT;
+use crate::vocab::PHRASE_INDEX_LIBRARY_COUNT;
 use std::ffi::{CStr, OsStr, OsString};
 use std::path::Path;
 

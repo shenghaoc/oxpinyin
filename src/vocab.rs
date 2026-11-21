@@ -1,20 +1,21 @@
-//! Syllable keys, phrase tokens and dictionary entries shared by the engine and its
-//! models.
+//! Syllable keys, phrase tokens, and dictionary entries shared by the engine and its
+//! models. [`PhraseText`] retains phrase text as UTF-8 or stored UCS-4 words.
 
 use core::fmt;
 
 use crate::options::OptionBits;
+use crate::parser::{ChewingKey, Completeness};
 use crate::syllables::{
-    FULL_PINYIN_SYLLABLE_MAP, INCOMPLETE_PINYIN_KEY_MAP, OPTION_ONLY_COMPLETE_SYLLABLE_MAP,
-    ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
-};
-use crate::{ChewingKey, PhraseText};
-use crate::{
-    Completeness, FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
+    FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
     OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllable,
     option_alias_canonical,
 };
+use crate::syllables::{
+    FULL_PINYIN_SYLLABLE_MAP, INCOMPLETE_PINYIN_KEY_MAP, OPTION_ONLY_COMPLETE_SYLLABLE_MAP,
+    ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
+};
+pub use crate::ucs4::{OutwardWords, PhraseText};
 
 /// Number of dense table keys. Packed matrix alternatives are outside this inventory.
 pub(crate) const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
@@ -210,7 +211,8 @@ impl SyllableKey {
 /// The original key is omitted. Final substitutions apply to the original and to each
 /// admitted initial alternative, even when the resulting final has no spelling row.
 #[must_use]
-pub fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+#[cfg(any(test, feature = "tools"))]
+fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let initials = fuzzy_chewing_initials(key, options);
     let mut out = initials.clone();
     for source in std::iter::once(key).chain(initials) {

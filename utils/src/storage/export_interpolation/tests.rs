@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use oxpinyin::data::phrase_library::ChunkItem;
-use oxpinyin::phrase_index_make_token;
+use oxpinyin::vocab::phrase_index_make_token;
 
 use super::walked_items;
 use crate::storage::Library;

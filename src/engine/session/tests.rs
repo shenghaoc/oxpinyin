@@ -9,8 +9,8 @@ fn full_parsed_len_reflects_the_exact_chain() {
     let mut session = session();
     let segments: Vec<crate::graph::ExactSegment> = {
         use crate::graph::ExactSegment;
-        let ni = crate::SyllableKey::from_text("ni").expect("ni");
-        let hao = crate::SyllableKey::from_text("hao").expect("hao");
+        let ni = crate::vocab::SyllableKey::from_text("ni").expect("ni");
+        let hao = crate::vocab::SyllableKey::from_text("hao").expect("hao");
         vec![
             ExactSegment::new(0, 2, ni, 0),
             ExactSegment::new(3, 6, hao, 0),
@@ -34,8 +34,8 @@ fn full_parsed_len_reflects_the_exact_chain() {
 }
 
 use crate::{
-    PhraseEntry, PhraseToken, SyllableKey,
     model::{Dictionary, LanguageModel, NbestStepCosts, PhraseList, UserModel},
+    vocab::{PhraseEntry, PhraseToken, SyllableKey},
 };
 
 use super::{Selection, SelectionTarget, Session};
@@ -408,7 +408,7 @@ impl PhraseList for Flaky {
         self.inner.suggest_extension_tokens(syllables)
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<crate::PhraseText> {
+    fn phrase_text_for_token(&self, token: u32) -> Option<crate::vocab::PhraseText> {
         PhraseList::phrase_text_for_token(&self.inner, token)
     }
 }
@@ -428,7 +428,7 @@ impl PhraseList for UnloadedToken {
         self.inner.lookup(syllables)
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<crate::PhraseText> {
+    fn phrase_text_for_token(&self, token: u32) -> Option<crate::vocab::PhraseText> {
         PhraseList::phrase_text_for_token(&self.inner, token)
     }
 
@@ -466,7 +466,7 @@ fn an_unreadable_prefix_is_not_the_predecessor() {
     );
     assert_eq!(
         predecessor(2, &[2]),
-        crate::SENTENCE_START,
+        crate::vocab::SENTENCE_START,
         "no readable prefix"
     );
 }
@@ -909,7 +909,7 @@ fn training_refuses_a_stale_forced_token() {
 fn a_stored_phrase_trains_with_its_stored_length() {
     use crate::engine::constraint::PhraseSpan;
 
-    struct Readings(Vec<Vec<crate::ChewingKey>>);
+    struct Readings(Vec<Vec<crate::parser::ChewingKey>>);
     impl UserModel for Readings {
         type Error = EngineError;
 
@@ -925,14 +925,14 @@ fn a_stored_phrase_trains_with_its_stored_length() {
             &mut self,
             _history: &[PhraseToken],
             _token: &PhraseToken,
-            readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
+            readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
         ) -> Result<(), Self::Error> {
             self.0.extend(readings);
             Ok(())
         }
     }
 
-    let text = crate::PhraseText::from_words([0x4F60, 0]).expect("stored words");
+    let text = crate::vocab::PhraseText::from_words([0x4F60, 0]).expect("stored words");
     assert_eq!((text.phrase_length(), text.outward_words().count()), (2, 1));
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("parse");
@@ -976,14 +976,14 @@ fn a_stored_phrase_trains_with_its_stored_length() {
 fn a_chosen_phrase_keeps_its_text_through_the_record() {
     let cases = [
         (
-            crate::PhraseText::from_words([0x4F60, 0xD800]).expect("stored words"),
+            crate::vocab::PhraseText::from_words([0x4F60, 0xD800]).expect("stored words"),
             vec![0x4F60, 0xD800],
         ),
         (
-            crate::PhraseText::from_words([0x4F60, 0, 0x597D]).expect("stored words"),
+            crate::vocab::PhraseText::from_words([0x4F60, 0, 0x597D]).expect("stored words"),
             vec![0x4F60],
         ),
-        (crate::PhraseText::from("你\0好"), vec![0x4F60]),
+        (crate::vocab::PhraseText::from("你\0好"), vec![0x4F60]),
     ];
     for (text, outward) in cases {
         let mut session = trellis_session();
@@ -1301,7 +1301,7 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
     let short = MergedGram::merge(None, Some(vec![0, 0])).expect("a user gram");
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(set, Some(&short), 42),
-        Err(crate::GramFault::Short)
+        Err(crate::single_gram::GramFault::Short)
     );
     let mut tailed_value = MergedGram::new(4, vec![(7, 4)]).to_bytes();
     tailed_value.push(1);
@@ -1312,7 +1312,7 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
     );
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(set, Some(&tailed), 42),
-        Err(crate::GramFault::OverRead)
+        Err(crate::single_gram::GramFault::OverRead)
     );
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(clear, Some(&short), 42),
@@ -1512,7 +1512,7 @@ fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
     let no_row = dynamic_adjust_run(2, true, None);
     assert_eq!(
         no_row.asked_about,
-        crate::SENTENCE_START,
+        crate::vocab::SENTENCE_START,
         "offset 0 asks about sentence_start, exactly as `_get_previous_token` answers"
     );
     assert_eq!(
@@ -2957,7 +2957,7 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     assert_eq!(runs.len(), 1, "one forcing: {runs:?}");
     assert_eq!(
         (runs[0].0, runs[0].1, &runs[0].3),
-        (2, 5, &crate::PhraseText::from("好")),
+        (2, 5, &crate::vocab::PhraseText::from("好")),
         "the constraint is the row's own span, not [0, offset)"
     );
     assert_eq!(
@@ -3264,7 +3264,7 @@ fn choosing_behind_the_composition_moves_the_record_back() {
     assert_eq!(runs.len(), 1, "你好 was overlapped and cleared: {runs:?}");
     assert_eq!(
         (runs[0].0, runs[0].1, &runs[0].3),
-        (0, 2, &crate::PhraseText::from("你"))
+        (0, 2, &crate::vocab::PhraseText::from("你"))
     );
     assert_eq!(session.selected_text(), "你");
     assert_eq!(&session.raw_input()[session.composition_offset()..], "hao");
@@ -3588,8 +3588,18 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
         },
     );
     let segments = [
-        ExactSegment::new(0, 2, crate::SyllableKey::from_text("ni").expect("ni"), 0),
-        ExactSegment::new(2, 4, crate::SyllableKey::from_text("hao").expect("hao"), 0),
+        ExactSegment::new(
+            0,
+            2,
+            crate::vocab::SyllableKey::from_text("ni").expect("ni"),
+            0,
+        ),
+        ExactSegment::new(
+            2,
+            4,
+            crate::vocab::SyllableKey::from_text("hao").expect("hao"),
+            0,
+        ),
     ];
     session.replace_raw_exact("nihk", &segments).expect("parse");
     assert!(session.input.parsed.retained.matrix.zeros[4]);
@@ -3895,11 +3905,11 @@ impl PhraseList for ItemDictionary {
 /// 中华人民 and 种花人民 as one item: `zhong1 hua2 ren2 min2` (frequency 50)
 /// and `zhong3 hua1 ren2 min2` (frequency 1).
 fn wide_abbreviation_item() -> crate::model::PronunciationRows {
-    let reading = |spellings: [(&str, u8); 4]| -> Vec<crate::ChewingKey> {
+    let reading = |spellings: [(&str, u8); 4]| -> Vec<crate::parser::ChewingKey> {
         spellings
             .into_iter()
             .map(|(spelling, tone)| {
-                crate::ChewingKey::from_pinyin(spelling)
+                crate::parser::ChewingKey::from_pinyin(spelling)
                     .expect("a pinyin spelling")
                     .with_tone(tone)
             })
@@ -3973,7 +3983,7 @@ fn a_forcing_over_a_wide_abbreviation_survives_the_replacement_reconcile() {
 #[test]
 fn a_forcing_the_stored_pronunciations_do_not_spell_is_dropped() {
     let chao = |tone| {
-        crate::ChewingKey::from_pinyin("chao")
+        crate::parser::ChewingKey::from_pinyin("chao")
             .expect("chao")
             .with_tone(tone)
     };
@@ -4089,7 +4099,7 @@ pub(super) fn select_row<D, L>(
     index: usize,
 ) -> Result<Selection, EngineError>
 where
-    D: crate::model::Dictionary<Syllable = crate::SyllableKey>,
+    D: crate::model::Dictionary<Syllable = crate::vocab::SyllableKey>,
     L: crate::model::LanguageModel,
 {
     session.refresh_candidates()?;
@@ -4135,7 +4145,8 @@ fn longer_unigram_ties_follow_library_order_before_matrix_path_order() {
 
 #[test]
 fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
-    use crate::{ChewingKey, OptionBits};
+    use crate::OptionBits;
+    use crate::parser::ChewingKey;
     // phonetic_key_matrix.h:92-100 appends without collapse. Initials
     // read the original column; finals read the grown column (:226-310).
     let options =
@@ -4185,7 +4196,8 @@ fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
 
 #[test]
 fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
-    use crate::{ChewingKey, OptionBits};
+    use crate::OptionBits;
+    use crate::parser::ChewingKey;
     // Finals append without get_table_index (:287-306). shun -> shung has
     // no syllable row, but its packed key and source span still exist.
     let shun = SyllableKey::from_text("shun").unwrap();
@@ -4229,7 +4241,7 @@ fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
 
 #[test]
 fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
-    use crate::ChewingKey;
+    use crate::parser::ChewingKey;
     // compute_pronunciation_possibility (:534-600) sums every path's
     // matched/total ratio (phrase_index.h:136-163), then validate clears
     // only strictly below FLT_EPSILON (phonetic_lookup.cpp:159-163).
@@ -4466,7 +4478,8 @@ pub(super) mod session_lifecycle {
 /// The F-D replay fixture session and the session-level replay tests; the
 /// scenarios themselves are in `selection/tests.rs`.
 pub(super) mod session_replay {
-    use crate::{SyllableKey, model::PhraseList};
+    use crate::model::PhraseList;
+    use crate::vocab::SyllableKey;
 
     use crate::engine::Session;
     use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};

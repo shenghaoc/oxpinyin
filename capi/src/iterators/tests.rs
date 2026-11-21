@@ -18,7 +18,7 @@ use crate::iterators::{
 use crate::test_support::{TempUserDir, cstr, open};
 
 #[cfg(unix)]
-use oxpinyin::USER_DICTIONARY;
+use oxpinyin::vocab::USER_DICTIONARY;
 
 use std::ptr;
 
@@ -40,7 +40,7 @@ unsafe fn export_an_unspellable_reading(page: *mut u8) {
         let ctx = unsafe { crate::state::context_mut(context) };
         let store = ctx.core.user_store_mut();
         let syllable = |text: &str| {
-            oxpinyin::SyllableKey::from_text(text)
+            oxpinyin::vocab::SyllableKey::from_text(text)
                 .expect("syllable")
                 .index()
         };

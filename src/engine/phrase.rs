@@ -29,13 +29,13 @@ use rustc_hash::FxHashMap;
 
 use crate::engine::error::EngineError;
 use crate::{
-    PhraseToken, SyllableKey,
     model::{Dictionary, LanguageModel, NbestStepCosts, NbestStepRow, NbestSuccessors},
+    vocab::{PhraseToken, SyllableKey},
 };
 
 /// The span cap: upstream `MAX_PHRASE_LENGTH` (16, `oxpinyin`'s
 /// ported value).
-use crate::{MAX_PHRASE_LENGTH, SENTENCE_START};
+use crate::vocab::{MAX_PHRASE_LENGTH, SENTENCE_START};
 
 /// One DP node: the best known way to cover `chars[..token_span_end]`
 /// ending with `token` over `[last_step, token_span_end)`.

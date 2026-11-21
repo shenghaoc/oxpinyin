@@ -18,7 +18,27 @@ use super::*;
     unused_imports,
     reason = "used by the module tests, redundant in the verification tests"
 )]
-use oxpinyin_capi::*;
+use oxpinyin_capi::{
+    candidates::{
+        pinyin_get_candidate, pinyin_get_candidate_nbest_index, pinyin_get_candidate_string,
+        pinyin_get_candidate_type, pinyin_get_n_candidate, pinyin_is_user_candidate, pinyin_train,
+    },
+    context::{pinyin_fini, pinyin_init, pinyin_save},
+    dict::{pinyin_lookup_tokens, pinyin_token_get_unigram_frequency},
+    instance::{pinyin_alloc_instance, pinyin_free_instance},
+    iterators::{
+        pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
+        pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase,
+        pinyin_iterator_has_next_phrase,
+    },
+    parse::pinyin_parse_more_full_pinyins,
+    predict::pinyin_guess_predicted_candidates,
+    sentence::{pinyin_guess_candidates, pinyin_guess_sentence},
+    types::{
+        ChewingKey, ExportIterator, GArray, GChar, LookupCandidate, PinyinContext, PinyinInstance,
+        lookup_candidate_type_t,
+    },
+};
 
 use std::ffi::{CString, c_uint};
 
@@ -662,7 +682,7 @@ pub(crate) unsafe fn take_exported_row(
 
 /// The packed key of `spelling` at `tone`, as an addon item stores it.
 pub(crate) fn packed_key(spelling: &str, tone: u8) -> u16 {
-    oxpinyin::ChewingKey::from_pinyin(spelling)
+    oxpinyin::parser::ChewingKey::from_pinyin(spelling)
         .expect("frozen syllable")
         .with_tone(tone)
         .to_packed()

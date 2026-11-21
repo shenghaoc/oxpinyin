@@ -29,7 +29,7 @@ use crate::test_support::{
 
 use crate::types::LookupCandidate;
 
-use oxpinyin::SENTENCE_START;
+use oxpinyin::vocab::SENTENCE_START;
 
 use rstest::rstest;
 

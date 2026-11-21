@@ -166,15 +166,13 @@ fn system_import_changes_the_first_match_and_guards_its_prefix() {
 mod session {
     use super::super::*;
     use super::next_user_token;
-    use crate::SENTENCE_START;
-    use crate::SyllableKey;
     use crate::data::phrase_library::{ChunkItem, encode_phrase_item};
     use crate::data::user_files::{SystemVersions, UserFileLayout};
     use crate::user::FIRST_USER_TOKEN;
     use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
-    use crate::{
+    use crate::vocab::{
         ADDON_DICTIONARY, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK,
-        USER_DICTIONARY, phrase_index_make_token,
+        SENTENCE_START, SyllableKey, USER_DICTIONARY, phrase_index_make_token,
     };
     use std::collections::BTreeMap;
 
@@ -480,8 +478,8 @@ mod session {
             .add_phrase_in(NETWORK_DICTIONARY, &"词".into(), &[key("ci")], Some(5))
             .unwrap();
         assert_ne!(user, net);
-        assert_eq!(crate::phrase_index_library_index(user), 7);
-        assert_eq!(crate::phrase_index_library_index(net), 6);
+        assert_eq!(crate::vocab::phrase_index_library_index(user), 7);
+        assert_eq!(crate::vocab::phrase_index_library_index(net), 6);
         assert_eq!(store.export_phrases_in(USER_DICTIONARY).len(), 1);
         assert_eq!(store.export_phrases_in(6).len(), 1);
         assert_eq!(next_user_token(&store), user + 1);
@@ -604,7 +602,7 @@ mod session {
         ));
         assert!(matches!(
             store.add_phrase(
-                &crate::PhraseText::from(&"啊".repeat(16)),
+                &crate::vocab::PhraseText::from(&"啊".repeat(16)),
                 &[key("a"); 16],
                 None
             ),
@@ -1310,7 +1308,7 @@ mod backend_files {
 
     use std::path::Path;
 
-    use crate::SyllableKey;
+    use crate::vocab::SyllableKey;
 
     use crate::data::user_files::{SystemVersions, UserFileLayout};
 
@@ -1318,7 +1316,7 @@ mod backend_files {
         FIRST_USER_TOKEN, SystemOriginals, UserConfLaw, UserPhrase, UserStore, UserStoreError,
         toned_key,
     };
-    use crate::{PhraseToken, SENTENCE_START};
+    use crate::vocab::{PhraseToken, SENTENCE_START};
 
     fn versions() -> SystemVersions {
         SystemVersions::for_this_build(7, 14)
@@ -1359,7 +1357,11 @@ mod backend_files {
     /// the seed arithmetic is read on, bare.
     fn bare_token(store: &mut UserStore, text: &str, reading: &str) -> PhraseToken {
         store
-            .add_phrase(&crate::PhraseText::from(text), &keys(reading), Some(0))
+            .add_phrase(
+                &crate::vocab::PhraseText::from(text),
+                &keys(reading),
+                Some(0),
+            )
             .unwrap()
     }
 
@@ -1539,7 +1541,7 @@ mod backend_files {
             let mut store = session_in(dir.path());
             assert!(store.token_for_phrase(&text).unwrap().is_none());
             let token = store
-                .add_phrase(&crate::PhraseText::from(&text), &reading, None)
+                .add_phrase(&crate::vocab::PhraseText::from(&text), &reading, None)
                 .unwrap();
             assert_eq!(store.token_for_phrase(&text).unwrap(), Some(token));
             store.mark_modified();
@@ -1585,17 +1587,17 @@ mod backend_files {
         let zhong = keys("zhong");
         let chong = keys("chong");
         let token = store
-            .add_phrase(&crate::PhraseText::from(text), &zhong, Some(7))
+            .add_phrase(&crate::vocab::PhraseText::from(text), &zhong, Some(7))
             .unwrap();
         store
-            .add_phrase(&crate::PhraseText::from(text), &chong, Some(9))
+            .add_phrase(&crate::vocab::PhraseText::from(text), &chong, Some(9))
             .unwrap();
 
         let phrase: UserPhrase = store.phrase(token).expect("stored");
         assert_eq!(phrase.pronunciations().len(), 2, "both readings stored");
 
         store
-            .add_phrase(&crate::PhraseText::from(text), &zhong, Some(3))
+            .add_phrase(&crate::vocab::PhraseText::from(text), &zhong, Some(3))
             .unwrap();
         let phrase = store.phrase(token).expect("stored");
         let zhong_count = phrase
@@ -1633,7 +1635,7 @@ mod backend_files {
         // both index spaces name the same key.
         let reading = [key("d")];
         let token = store
-            .add_phrase(&crate::PhraseText::from("词"), &reading, Some(50))
+            .add_phrase(&crate::vocab::PhraseText::from("词"), &reading, Some(50))
             .unwrap();
         let phrase = store.phrase(token).expect("stored");
         assert!(
@@ -1725,13 +1727,17 @@ mod backend_files {
 
         let ok: String = "测".repeat(15);
         let token = store
-            .add_phrase(&crate::PhraseText::from(&ok), &[key("ce"); 15], None)
+            .add_phrase(&crate::vocab::PhraseText::from(&ok), &[key("ce"); 15], None)
             .unwrap();
         assert!(store.phrase(token).is_some());
 
         let too_long: String = "测".repeat(16);
         assert!(matches!(
-            store.add_phrase(&crate::PhraseText::from(&too_long), &[key("ce"); 16], None),
+            store.add_phrase(
+                &crate::vocab::PhraseText::from(&too_long),
+                &[key("ce"); 16],
+                None
+            ),
             Err(UserStoreError::InvalidPhrase)
         ));
     }

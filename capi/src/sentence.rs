@@ -1,4 +1,8 @@
-//! Sentence guessing and retrieval.
+//! Sentence decoding, result text, and candidates for parsed input.
+//!
+//! [`pinyin_guess_candidates`] builds the list. [`crate::candidates`] reads,
+//! selects, and trains its rows. [`crate::predict`] builds prediction lists;
+//! [`pinyin_guess_predicted_candidates_with_punctuations`] adds punctuation.
 
 use std::os::raw::c_char;
 
@@ -216,7 +220,7 @@ pub unsafe extern "C" fn pinyin_get_sentence(
 /// borrows, including the phrase inputs. Its contents need not be
 /// initialized.
 unsafe fn write_owned_sentence(
-    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::PhraseText>>>,
+    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::vocab::PhraseText>>>,
     sentence: *mut *mut c_char,
 ) -> bool {
     write_if_nonnull!(sentence, crate::ffi::sentence_text(phrases));
@@ -301,7 +305,7 @@ pub(crate) struct GuessFrame {
     pub(crate) sentence_rows_only: bool,
     /// The facade total is zero and the lookup searches: ranking a searched
     /// row aborts.
-    pub(crate) abort_on_rank: bool,
+    abort_on_rank: bool,
 }
 
 impl GuessFrame {
@@ -425,7 +429,7 @@ fn lookup_window(
 ///
 /// The normalized caller offset selects the lookup window for this call.
 /// The composition offset stays fixed during the lookup. Pass the original
-/// `offset` to [`crate::pinyin_choose_candidate`] to select a row from this
+/// `offset` to [`crate::candidates::pinyin_choose_candidate`] to select a row from this
 /// lookup.
 ///
 /// When [`SORT_WITHOUT_SENTENCE_CANDIDATE`](oxpinyin::engine::SORT_WITHOUT_SENTENCE_CANDIDATE)

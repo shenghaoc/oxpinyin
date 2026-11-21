@@ -39,7 +39,7 @@ use crate::test_support::system_dir;
 
 use crate::types::PinyinInstance;
 
-use oxpinyin::SENTENCE_START;
+use oxpinyin::vocab::SENTENCE_START;
 
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use std::path::Path;

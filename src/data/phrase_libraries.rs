@@ -13,12 +13,13 @@
 //! on demand by `pinyin_load_addon_phrase_library`).
 
 use crate::data::phrase_library::CHEWING_KEY_SIZE;
-use crate::phrase_index_library_index;
+use crate::vocab::phrase_index_library_index;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    ChewingKey, PhraseText,
     model::{TokenPhrase, TrellisItem},
+    parser::ChewingKey,
+    vocab::PhraseText,
 };
 
 use crate::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary};
@@ -296,7 +297,7 @@ impl PhraseLibraries {
 
     // PHRASE_INDEX_LIBRARY_INDEX, novel_types.h:44 and phrase_index.h:647.
     /// Returns the loaded library selected by bits 24 through 27 of `token`. See
-    /// [`crate::phrase_index_library_index`].
+    /// [`crate::vocab::phrase_index_library_index`].
     #[must_use]
     pub fn library(&self, token: u32) -> Option<&PhraseLibrary> {
         self.by_nibble

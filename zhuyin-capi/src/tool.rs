@@ -44,7 +44,7 @@ impl Driver {
     /// Initialize the supplied directories and allocate an instance (:35-38).
     #[must_use]
     pub fn new(system: &CStr, user: &CStr) -> Self {
-        let context = unsafe { crate::zhuyin_init(system.as_ptr(), user.as_ptr()) };
+        let context = unsafe { crate::context::zhuyin_init(system.as_ptr(), user.as_ptr()) };
         let instance = unsafe { crate::instance::zhuyin_alloc_instance(context) };
         Self { context, instance }
     }
@@ -52,21 +52,21 @@ impl Driver {
     /// Parse chewing input and guess the sentence (:45-47).
     pub fn parse_guess(&mut self, input: &CStr) {
         unsafe { crate::parse::zhuyin_parse_more_chewings(self.instance, input.as_ptr()) };
-        unsafe { crate::zhuyin_guess_sentence(self.instance) };
+        unsafe { crate::sentence::zhuyin_guess_sentence(self.instance) };
     }
 
     /// Allocate the guessed sentence (:49-50).
     pub fn sentence(&mut self) -> Text {
         let mut text = ptr::null_mut();
-        unsafe { crate::zhuyin_get_sentence(self.instance, &mut text) };
+        unsafe { crate::sentence::zhuyin_get_sentence(self.instance, &mut text) };
         Text(text)
     }
 
     /// Train, reset and save in the driver's order (:55-57).
     pub fn train_reset_save(&mut self) {
-        unsafe { crate::zhuyin_train(self.instance) };
+        unsafe { crate::candidates::zhuyin_train(self.instance) };
         unsafe { crate::instance::zhuyin_reset(self.instance) };
-        unsafe { crate::zhuyin_save(self.context) };
+        unsafe { crate::context::zhuyin_save(self.context) };
     }
 }
 
@@ -75,7 +75,7 @@ impl Drop for Driver {
         // tests/test_zhuyin.cpp:60-64 at 074a2219.
         unsafe { crate::instance::zhuyin_free_instance(self.instance) };
         unsafe { crate::config::zhuyin_mask_out(self.context, 0, 0) };
-        unsafe { crate::zhuyin_save(self.context) };
-        unsafe { crate::zhuyin_fini(self.context) };
+        unsafe { crate::context::zhuyin_save(self.context) };
+        unsafe { crate::context::zhuyin_fini(self.context) };
     }
 }

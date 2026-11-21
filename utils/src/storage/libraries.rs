@@ -19,7 +19,7 @@ use oxpinyin::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary
 use oxpinyin::data::{FileType, TableConf};
 
 use oxpinyin::input::tool;
-use oxpinyin::{PHRASE_MASK, phrase_index_library_index};
+use oxpinyin::vocab::{PHRASE_MASK, phrase_index_library_index};
 
 use crate::storage::name_c_string;
 use crate::utils_helper::{

@@ -1,11 +1,12 @@
 use super::{NbestRow, NbestShape, Trellis, Value, nbest_sentences};
-use crate::PhraseEntry;
 use crate::engine::session::ScanKey;
 use crate::engine::session::matrix::ScanMatrix;
 use crate::graph::SegmentGraph;
+use crate::vocab::PhraseEntry;
 use crate::{
-    OptionBits, PhraseText, PhraseToken, SyllableKey,
+    OptionBits,
     model::{LanguageModel, NbestStepCosts, PhraseList},
+    vocab::{PhraseText, PhraseToken, SyllableKey},
 };
 use std::cell::RefCell;
 

@@ -1,5 +1,8 @@
-//! Instance lifecycle: `zhuyin_alloc_instance`, `zhuyin_free_instance`,
-//! `zhuyin_reset`.
+//! Instance allocation, reset, and destruction.
+//!
+//! [`zhuyin_alloc_instance`] creates an instance for a context.
+//! [`zhuyin_reset`] clears its composition. [`zhuyin_free_instance`] ends
+//! the instance's lifetime.
 
 use std::ptr;
 

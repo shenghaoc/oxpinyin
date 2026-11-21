@@ -5,9 +5,10 @@
 //! types cross this boundary.
 
 use crate::marshal::phrase_text_bytes;
+use crate::parser::ChewingKey;
 use crate::runtime::{PhraseItemView, RuntimeDict};
 use crate::user::{MAX_KEY_TONE, SystemItem, UserPronunciation, UserStore};
-use crate::{ChewingKey, NULL_TOKEN, PhraseText, SENTENCE_START};
+use crate::vocab::{NULL_TOKEN, PhraseText, SENTENCE_START};
 
 use std::collections::VecDeque;
 
@@ -487,7 +488,7 @@ impl ContextCore {
         // made a token with `PHRASE_INDEX_MAKE_TOKEN` (`:619`).
         cursor
             .read(self)
-            .probe_from(crate::phrase_index_make_token(index, 1));
+            .probe_from(crate::vocab::phrase_index_make_token(index, 1));
         cursor
     }
 
@@ -597,7 +598,7 @@ impl ExportSource<'_> {
         // (074a2219 pinyin.cpp:812-815, phrase_index.h:647).
         let is_system = self
             .user
-            .is_system_library(crate::phrase_index_library_index(token));
+            .is_system_library(crate::vocab::phrase_index_library_index(token));
         if is_system {
             return self
                 .dict
