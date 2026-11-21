@@ -607,9 +607,7 @@ mod language_model {
         let Err(error) = lm.nbest_step_costs(&prev, &HAO) else {
             panic!("the pair path refuses a present empty value");
         };
-        assert!(
-            matches!(error, crate::data::lm::LmError::Parse(ref text) if text.contains("empty value"))
-        );
+        assert!(matches!(error, crate::data::lm::LmError::Parse));
     }
 
     /// A stored system row enters the merge as stored, and both the merged

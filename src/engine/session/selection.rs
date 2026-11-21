@@ -107,16 +107,13 @@ impl TrainingPlan<'_> {
     ///
     /// # Errors
     /// User-model errors retain the observations before the failure.
-    pub(crate) fn observe<U: UserModel>(self, user: &mut U) -> Result<bool, EngineError>
-    where
-        U::Error: Display,
-    {
+    pub(crate) fn observe<U: UserModel>(self, user: &mut U) -> Result<bool, EngineError> {
         let row = &self.state.sentence.rows[usize::from(self.index)];
         if row.spans.is_empty() {
             let history = self.state.record.history();
             for (index, token) in history.iter().enumerate() {
                 user.observe(&history[..index], token)
-                    .map_err(|error| EngineError::UserModel(error.to_string()))?;
+                    .map_err(|_| EngineError::UserModel)?;
             }
         } else if let Some((parsed, ends)) = self.spans {
             let mut context = Vec::with_capacity(row.spans.len());
@@ -130,7 +127,7 @@ impl TrainingPlan<'_> {
                         span.text.phrase_length(),
                     );
                     user.observe_with_keys(&context, &span.token, readings)
-                        .map_err(|error| EngineError::UserModel(error.to_string()))?;
+                        .map_err(|_| EngineError::UserModel)?;
                 }
                 context.push(span.token);
             }
@@ -142,9 +139,7 @@ impl TrainingPlan<'_> {
 impl<'s, D, L> Session<D, L, &'s SessionState>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// The retained matrix, borrowed for the composition state's own
     /// lifetime so a plan can keep it.
@@ -198,9 +193,7 @@ where
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// The common tail of [`Session::select_target`].
     pub(super) fn selection_outcome(&self) -> Selection {
@@ -391,9 +384,7 @@ where
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     // pinyin_choose_candidate dispatches on m_begin, m_end, m_token and m_nbest_index
     // (pinyin.cpp:2515–2520,2577–2590; zhuyin.cpp:1646–1666). diff_result requires each
@@ -404,7 +395,7 @@ where
     /// # Errors
     ///
     /// Propagates constraint validation and refresh errors. A tokenless choice behind the
-    /// composition yields [`EngineError::SelectionAnchorBeforeComposition`].
+    /// composition yields [`EngineError::Failure`].
     ///
     /// # Aborts
     ///
@@ -748,7 +739,7 @@ where
     /// ([`Session::rebuild_selection_from_constraints`]), so the
     /// composition offset moves back to the end of the forced prefix. A
     /// row with no token has nothing to force; it keeps the old refusal
-    /// ([`EngineError::SelectionAnchorBeforeComposition`]).
+    /// ([`EngineError::Failure`]).
     fn select_behind(
         &mut self,
         start: usize,
@@ -757,10 +748,7 @@ where
         text: PhraseText,
     ) -> Result<Selection, EngineError> {
         let Some(token) = token else {
-            return Err(EngineError::SelectionAnchorBeforeComposition {
-                anchor: start,
-                composition: self.record.consumed(),
-            });
+            return Err(EngineError::Failure);
         };
         let state = self.state.borrow_mut();
         state.constraints.resize(state.input.len() + 1);

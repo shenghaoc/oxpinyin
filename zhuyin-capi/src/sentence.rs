@@ -372,22 +372,16 @@ fn lookup_window(
         // The engine terminates where the pin's toned-initial and
         // short-total asserts fire during the guess; the Kyoto Cabinet
         // read that fails after its size check still arrives here.
-        Err(oxpinyin::engine::EngineError::ReadAfterCheck { .. }) => std::process::abort(),
+        Err(oxpinyin::engine::EngineError::ReadAfterCheck) => std::process::abort(),
         Err(
             error @ (oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin::engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin::engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin::engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin::engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin::engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin::engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin::engine::EngineError::UnsafeLookupPredecessor { .. }
-            | oxpinyin::engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin::engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin::engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin::engine::EngineError::UserModel(_)
-            | oxpinyin::engine::EngineError::Graph(_)
-            | oxpinyin::engine::EngineError::Scoring(_)),
+            | oxpinyin::engine::EngineError::Failure
+            | oxpinyin::engine::EngineError::ZeroKeyOffsetCheck
+            | oxpinyin::engine::EngineError::PinAssert
+            | oxpinyin::engine::EngineError::UnsafeTrainingPredecessor
+            | oxpinyin::engine::EngineError::TrainingAbort
+            | oxpinyin::engine::EngineError::UnsafeLookupPredecessor
+            | oxpinyin::engine::EngineError::UserModel),
         ) => {
             inst.state.candidates.clear();
             return Err(CandidateGuessRefusal::Lookup(error));

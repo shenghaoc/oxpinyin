@@ -595,19 +595,15 @@ pub struct UserStore {
     pub(crate) originals: crate::user::persistence::SystemOriginals,
 }
 
-/// Which pin abort or read-past a training step's store check met, with
-/// the predecessor whose gram the step loads.
+/// Which pin abort or read-past a training step's store check met.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrainingFault {
-    /// The gram is too short for its total (`memory_chunk.h:390`).
-    ShortValue(PhraseToken),
+    /// The gram is too short for its total, `set_freq` misses an item, or
+    /// the failed container refuses a store (`memory_chunk.h:390`,
+    /// `phonetic_lookup.h:903-904`).
+    Abort,
     /// The gram has a partial item tail (register row 100).
-    PartialTail(PhraseToken),
-    /// `set_freq` misses the item `insert_freq` added (`phonetic_lookup.h:903`).
-    SetFreqMiss(PhraseToken),
-    /// The step's `store` meets the failed user bigram container
-    /// (`phonetic_lookup.h:904`).
-    FailedUserBigramStore(PhraseToken),
+    PartialTail,
 }
 
 /// One training call's replay: the grams its checked steps left, and the
@@ -853,7 +849,7 @@ impl UserStore {
         // `check_result` dies at this first trained step
         // (`phonetic_lookup.h:876-904`).
         if self.user_bigram_failed() {
-            check.fault = Some(TrainingFault::FailedUserBigramStore(prev));
+            check.fault = Some(TrainingFault::Abort);
             return Err(UserStoreError::FailedUserBigramStore);
         }
         let row = match check.grams.get(&prev) {
@@ -862,11 +858,11 @@ impl UserStore {
         };
         if let Some(gram) = row.as_deref() {
             if gram.len() < single_gram::TOTAL_LEN {
-                check.fault = Some(TrainingFault::ShortValue(prev));
+                check.fault = Some(TrainingFault::Abort);
                 return Err(UserStoreError::ShortUserBigramValue);
             }
             if single_gram::has_partial_tail(gram) {
-                check.fault = Some(TrainingFault::PartialTail(prev));
+                check.fault = Some(TrainingFault::PartialTail);
                 return Err(UserStoreError::PartialUserBigramTail);
             }
         }
@@ -876,7 +872,7 @@ impl UserStore {
                 Ok(())
             }
             Err(UserStoreError::TrainingSetFreqMiss) => {
-                check.fault = Some(TrainingFault::SetFreqMiss(prev));
+                check.fault = Some(TrainingFault::Abort);
                 Err(UserStoreError::TrainingSetFreqMiss)
             }
             Err(

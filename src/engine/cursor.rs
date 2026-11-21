@@ -259,7 +259,7 @@ fn check<S: KeySpans + ?Sized>(columns: &Columns<'_, S>, offset: usize) -> Resul
             .get(offset - 1)
             .is_some_and(|column| column.lone_zero())
     {
-        return Err(EngineError::ZeroKeyOffsetCheck { offset });
+        return Err(EngineError::ZeroKeyOffsetCheck);
     }
     Ok(())
 }

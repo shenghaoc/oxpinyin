@@ -94,7 +94,7 @@ It agrees with the pin on all 1,788 records that the fixture carries.
 
 An input builds a graph whatever its bytes are.
 Junk, malformed UTF-8, an empty input and a 4,096-byte run of `!` all produce a graph, possibly with no edges.
-The only refusal is `GraphError::InputTooLong` beyond `MAX_GRAPH_POSITION` (`u32::MAX - 1` bytes), where the `u32` positions of an edge end.
+The parsed graph refuses input beyond `MAX_GRAPH_POSITION` (`u32::MAX - 1` bytes), where the `u32` positions of an edge end.
 No pin rule or product rule sets a lower limit ([The full-pinyin parse's 16-bit steps](upstream-divergences.md#the-full-pinyin-parses-16-bit-steps)).
 
 ## Apostrophes

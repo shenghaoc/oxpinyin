@@ -1068,7 +1068,7 @@ fn expand_with_row(
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
     use crate::model::MergedGram;
 
-    let unsafe_read = EngineError::UnsafeLookupPredecessor { token: 11 };
+    let unsafe_read = EngineError::UnsafeLookupPredecessor;
     let alone = || MergedGram::merge(None, Some(vec![0, 0]));
     assert_eq!(expand_with_row(alone(), Some(1)), Err(unsafe_read.clone()));
     let tailed = || MergedGram::merge(None, Some(gram_value(3, &[(1, 3)], &[9])));

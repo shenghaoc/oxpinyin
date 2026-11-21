@@ -17,7 +17,6 @@ use std::cell::{OnceCell, RefCell};
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 
-use crate::scoring::ScoringError;
 use crate::{
     ChewingKey, PhraseText, PhraseToken, SyllableKey,
     model::{
@@ -445,7 +444,6 @@ impl Trellis {
     ) -> Result<Option<&'cache TokenPhrase>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
-        D::Error: core::fmt::Display,
     {
         let slot = match cache.entry(token) {
             std::collections::hash_map::Entry::Occupied(slot) => {
@@ -462,9 +460,7 @@ impl Trellis {
                 ) {
                     (Some(keys), Some(tones)) => dictionary
                         .trellis_text_with_facts(keys, tones, token, &mut facts.borrow_mut())
-                        .map_err(|error| {
-                            EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                        })?,
+                        .map_err(|_| EngineError::Failure)?,
                     _ => None,
                 }
             }
@@ -491,7 +487,6 @@ impl Trellis {
     ) -> Result<Option<PhraseText>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
-        D::Error: core::fmt::Display,
     {
         let mut text = crate::PhraseTextConcat::new();
         let mut converted = false;
@@ -645,7 +640,6 @@ struct Pricing<'a, D: Dictionary> {
 impl<'a, D> Pricing<'a, D>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     /// What the dictionary prices of `token` on path `id`, through the
     /// path's memo. Every path id is one [`SpanRanges::push_path`]
@@ -664,7 +658,7 @@ where
         };
         self.dictionary
             .trellis_item_with_facts(keys, tones, token, memo, &mut self.facts.borrow_mut())
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))
+            .map_err(|_| EngineError::Failure)
     }
 
     /// `slot`'s entry for `token`; `None` when the dictionary reads no
@@ -800,9 +794,7 @@ pub fn nbest_sentences<D, L>(
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     nbest_sentences_generation(
         GenerationInput {
@@ -829,9 +821,7 @@ pub(super) fn nbest_sentences_generation<D, L>(
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     // The sentence path's single-seed law: the constrained decode seeds
     // the virtual start; the free walk seeds the history's last token.
@@ -856,9 +846,7 @@ pub(super) fn nbest_sentences_with_seeds_generation<D, L>(
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     let GenerationInput {
         matrix,
@@ -951,9 +939,7 @@ fn expand_forced_span<D, L>(
 ) -> Result<(), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     let mut found = SpanRanges::default();
     env.generation
@@ -990,7 +976,6 @@ fn nbest_rows<D>(
 ) -> Result<Vec<NbestRow>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     let span = bound;
     let mut rows = Vec::new();
@@ -1101,7 +1086,6 @@ impl GenerationView<'_> {
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
-        D::Error: core::fmt::Display,
     {
         let Some(column) = self.columns.get(start) else {
             return Ok(false);
@@ -1136,7 +1120,6 @@ impl GenerationView<'_> {
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
-        D::Error: core::fmt::Display,
     {
         let mut continued = false;
         if start > end {
@@ -1159,9 +1142,7 @@ impl GenerationView<'_> {
                     &mut path.ranges,
                     &mut path.value,
                 )
-                .map_err(|error| {
-                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                })?;
+                .map_err(|_| EngineError::Failure)?;
             let id = into.push_path(&path.keys, &path.tones);
             // Drains the scratch, keeping its capacity for the next path.
             into.ranges
@@ -1224,9 +1205,7 @@ fn widen_free_span<D, L>(
 ) -> Result<(), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
     let mut end = position + 1;
@@ -1302,10 +1281,8 @@ impl<'a> ConstraintSpelling<'a> {
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
-        D::Error: core::fmt::Display,
     {
-        let dictionary_error =
-            |error: D::Error| EngineError::Scoring(ScoringError::Dictionary(error.to_string()));
+        let dictionary_error = |_: D::Error| EngineError::Failure;
         let PhraseItemRead::Item(rows) = dictionary
             .phrase_item_pronunciations(token)
             .map_err(dictionary_error)?
@@ -1390,9 +1367,7 @@ fn expand_entries<D, L>(
 ) -> Result<(), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     // #lizard forgives(cyclomatic_complexity): the predecessor loop (row load,
     // fault check, forced or ranged selection) and the unigram pass after it
@@ -1425,17 +1400,17 @@ where
         let row = &mut loaded;
         let traversal = match model
             .nbest_successors_in_row(&prev, row)
-            .map_err(|error| EngineError::row_read(model, prev, &error))?
+            .map_err(|error| EngineError::row_read(model, &error))?
         {
             None => false,
             Some(NbestSuccessors::Miss) => true,
             Some(NbestSuccessors::Row(gram)) => {
                 if let Some(fault) = gram.fault() {
-                    return Err(EngineError::lookup_gram(prev, fault));
+                    return Err(EngineError::lookup_gram(fault));
                 }
                 match one_step {
-                    Some(token) => select_forced(pricing, gram, prev, token, &mut selected)?,
-                    None => select_ranged(pricing, gram, prev, &mut items, &mut selected)?,
+                    Some(token) => select_forced(pricing, gram, token, &mut selected)?,
+                    None => select_ranged(pricing, gram, &mut items, &mut selected)?,
                 }
                 true
             }
@@ -1489,9 +1464,7 @@ fn expand_span_entries<D, L>(
 ) -> Result<(), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     for (token, slot) in pricing.ranges.walk_tokens() {
         let Some(entry) = pricing.price(slot, token)?.filter(|entry| eligible(entry)) else {
@@ -1530,15 +1503,13 @@ fn eligible(entry: &SpanEntry) -> bool {
 fn select_forced<'a, D>(
     pricing: &Pricing<'a, D>,
     gram: &MergedGram,
-    prev: u32,
     token: u32,
     selected: &mut Vec<Selected<'a>>,
 ) -> Result<(), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
-    let refuse = |fault| EngineError::lookup_gram(prev, fault);
+    let refuse = EngineError::lookup_gram;
     let Some(freq) = gram.get_freq(token).map_err(refuse)? else {
         return Ok(());
     };
@@ -1562,15 +1533,13 @@ where
 fn select_ranged<'a, D>(
     pricing: &Pricing<'a, D>,
     gram: &MergedGram,
-    prev: u32,
     items: &mut Vec<(u32, u32)>,
     selected: &mut Vec<Selected<'a>>,
 ) -> Result<(), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
-    let refuse = |fault| EngineError::lookup_gram(prev, fault);
+    let refuse = EngineError::lookup_gram;
     let entries = pricing.ranges;
     for range in entries.iter() {
         items.clear();
@@ -1630,10 +1599,7 @@ fn expand_one<L: LanguageModel>(
     row: &mut crate::model::NbestStepRow,
     trellis: &mut Trellis,
     branch: Branch,
-) -> Result<(), EngineError>
-where
-    L::Error: core::fmt::Display,
-{
+) -> Result<(), EngineError> {
     let StepCtx {
         paths,
         span,
@@ -1652,7 +1618,7 @@ where
             row,
             &mut facts.borrow_mut(),
         )
-        .map_err(|error| EngineError::row_read(model, prev, &error))?;
+        .map_err(|error| EngineError::row_read(model, &error))?;
     let pronunciation = entry.pronunciation;
     let probability = match branch {
         Branch::Bigram(_) => step.blended.map(|s| s * f64::from(pronunciation)),

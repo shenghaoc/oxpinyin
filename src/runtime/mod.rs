@@ -1202,7 +1202,7 @@ impl Dictionary for RuntimeDict<'_> {
         if let Some(rows) = self
             .user
             .item_pronunciations(value)
-            .map_err(|error| DictError::Parse(error.to_string()))?
+            .map_err(|_| DictError::Parse)?
         {
             return Ok(PhraseItemRead::Item(rows));
         }
@@ -1250,32 +1250,19 @@ pub(crate) fn training_step_check(
         history.last().map_or(crate::SENTENCE_START, |token| *token),
         *token,
     )
-    .map_err(|error| EngineError::UserModel(error.to_string()))
+    .map_err(|_| EngineError::UserModel)
 }
 
 /// The engine error a failed per-step store check stands for: the typed
-/// fault the [`crate::user::TrainingCheck`] recorded, or the rendered
-/// backend failure when it recorded none. `Runtime::train_session` and
+/// fault the [`crate::user::TrainingCheck`] recorded, or a user-model
+/// failure when it recorded none. `Runtime::train_session` and
 /// the fuzz probe classify the same way, so the probe answers `true`
 /// exactly where `training_answer` makes the C facade terminate.
-pub(crate) fn training_check_error(
-    fault: Option<crate::user::TrainingFault>,
-    error: String,
-) -> EngineError {
+pub(crate) fn training_check_error(fault: Option<crate::user::TrainingFault>) -> EngineError {
     match fault {
-        Some(crate::user::TrainingFault::ShortValue(token)) => {
-            EngineError::ShortTrainingPredecessor { token }
-        }
-        Some(crate::user::TrainingFault::PartialTail(token)) => {
-            EngineError::UnsafeTrainingPredecessor { token }
-        }
-        Some(crate::user::TrainingFault::SetFreqMiss(token)) => {
-            EngineError::TrainingSetFreqMiss { token }
-        }
-        Some(crate::user::TrainingFault::FailedUserBigramStore(token)) => {
-            EngineError::FailedUserBigramStore { token }
-        }
-        None => EngineError::UserModel(error),
+        Some(crate::user::TrainingFault::Abort) => EngineError::TrainingAbort,
+        Some(crate::user::TrainingFault::PartialTail) => EngineError::UnsafeTrainingPredecessor,
+        None => EngineError::UserModel,
     }
 }
 
@@ -1288,7 +1275,7 @@ impl RuntimeLm<'_> {
         let mut delta = self
             .user
             .count_delta(prev, token)
-            .map_err(|error| LmError::User(error.to_string()))?;
+            .map_err(|_| LmError::User)?;
         delta.unigram_total_delta = self
             .user
             .unigram_total_over(|nibble| self.inner.is_visible(nibble));
@@ -1782,33 +1769,23 @@ impl Runtime {
             Ok(Some(plan)) => plan.observe(user),
             Ok(None) => Ok(false),
             Err(crate::engine::TrainingPrepFault::PinAbort) => std::process::abort(),
-            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel(error))) => {
-                Err(training_check_error(check.fault(), error))
+            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel)) => {
+                Err(training_check_error(check.fault()))
             }
             Err(crate::engine::TrainingPrepFault::Engine(
                 error @ (EngineError::LookupOffsetOutOfRange { .. }
-                | EngineError::LookupOffsetInsideCharacter { .. }
-                | EngineError::SelectionAnchorBeforeComposition { .. }
-                | EngineError::ZeroKeyOffsetCheck { .. }
-                | EngineError::MatrixColumnAssert { .. }
-                | EngineError::UnsafeTrainingPredecessor { .. }
-                | EngineError::ShortTrainingPredecessor { .. }
-                | EngineError::UnsafeLookupPredecessor { .. }
-                | EngineError::ReadAfterCheck { .. }
-                | EngineError::TrainingSetFreqMiss { .. }
-                | EngineError::FailedUserBigramStore { .. }
-                | EngineError::ReduceTokensCount { .. }
-                | EngineError::Graph(_)
-                | EngineError::Scoring(_)),
+                | EngineError::Failure
+                | EngineError::ZeroKeyOffsetCheck
+                | EngineError::PinAssert
+                | EngineError::UnsafeTrainingPredecessor
+                | EngineError::TrainingAbort
+                | EngineError::UnsafeLookupPredecessor
+                | EngineError::ReadAfterCheck),
             )) => Err(error),
         };
         if !matches!(
             &result,
-            Ok(false)
-                | Err(EngineError::UnsafeTrainingPredecessor { .. }
-                    | EngineError::ShortTrainingPredecessor { .. }
-                    | EngineError::TrainingSetFreqMiss { .. }
-                    | EngineError::FailedUserBigramStore { .. })
+            Ok(false) | Err(EngineError::UnsafeTrainingPredecessor | EngineError::TrainingAbort)
         ) {
             user.mark_modified();
         }

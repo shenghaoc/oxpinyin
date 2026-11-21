@@ -63,26 +63,19 @@ impl CursorFault {
     #[must_use]
     pub fn of(error: &EngineError, law: CursorLaw) -> Self {
         match error {
-            EngineError::LookupOffsetOutOfRange { .. } | EngineError::ZeroKeyOffsetCheck { .. } => {
+            EngineError::LookupOffsetOutOfRange { .. } | EngineError::ZeroKeyOffsetCheck => {
                 Self::PinAssert
             }
-            EngineError::MatrixColumnAssert { .. } | EngineError::ReduceTokensCount { .. } => {
-                match law {
-                    CursorLaw::CharacterOffset => Self::PinAssert,
-                    CursorLaw::CheckOffset => Self::Unreadable,
-                }
-            }
-            EngineError::LookupOffsetInsideCharacter { .. }
-            | EngineError::SelectionAnchorBeforeComposition { .. }
-            | EngineError::UnsafeTrainingPredecessor { .. }
-            | EngineError::ShortTrainingPredecessor { .. }
-            | EngineError::UnsafeLookupPredecessor { .. }
-            | EngineError::ReadAfterCheck { .. }
-            | EngineError::TrainingSetFreqMiss { .. }
-            | EngineError::FailedUserBigramStore { .. }
-            | EngineError::UserModel(_)
-            | EngineError::Graph(_)
-            | EngineError::Scoring(_) => Self::Unreadable,
+            EngineError::PinAssert => match law {
+                CursorLaw::CharacterOffset => Self::PinAssert,
+                CursorLaw::CheckOffset => Self::Unreadable,
+            },
+            EngineError::Failure
+            | EngineError::UnsafeTrainingPredecessor
+            | EngineError::TrainingAbort
+            | EngineError::UnsafeLookupPredecessor
+            | EngineError::ReadAfterCheck
+            | EngineError::UserModel => Self::Unreadable,
         }
     }
 }
@@ -574,7 +567,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
             return Ok(None);
         }
         if zhuyin && offset > 0 && columns.packs_zero(offset - 1) {
-            return Err(EngineError::ZeroKeyOffsetCheck { offset });
+            return Err(EngineError::ZeroKeyOffsetCheck);
         }
         let Some(mut item) = columns.get(offset) else {
             return Ok(None);
@@ -614,7 +607,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         crate::engine::check_lookup_offset_range(self.parsed_len, offset)?;
         if zhuyin {
             if offset > 0 && columns.packs_zero(offset - 1) {
-                return Err(EngineError::ZeroKeyOffsetCheck { offset });
+                return Err(EngineError::ZeroKeyOffsetCheck);
             }
             return Ok(offset);
         }
@@ -657,7 +650,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
                 self.validate_lookup_offset(len)
                     .map_err(|_| CursorFault::Unreadable)
             }
-            Err(EngineError::ZeroKeyOffsetCheck { .. }) if !zhuyin => Err(CursorFault::Unreadable),
+            Err(EngineError::ZeroKeyOffsetCheck) if !zhuyin => Err(CursorFault::Unreadable),
             Err(error) => Err(CursorFault::of(&error, CursorLaw::CheckOffset)),
         }
     }
@@ -673,7 +666,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         let columns = self.abi_columns();
         crate::engine::check_lookup_offset_range(self.parsed_len, offset)?;
         if offset > 0 && columns.packs_zero(offset - 1) {
-            return Err(EngineError::ZeroKeyOffsetCheck { offset });
+            return Err(EngineError::ZeroKeyOffsetCheck);
         }
         let mut left = offset.saturating_sub(1);
         while left > 0 && columns.get(left).is_none_or(|item| item.2 != offset) {
@@ -681,7 +674,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         }
         // The pin normalizes offset, not left. Validate the unnormalized left.
         if left > 0 && columns.packs_zero(left - 1) {
-            return Err(EngineError::ZeroKeyOffsetCheck { offset: left });
+            return Err(EngineError::ZeroKeyOffsetCheck);
         }
         Ok(left)
     }

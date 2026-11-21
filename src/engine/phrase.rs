@@ -111,13 +111,12 @@ fn step_costs<L>(
 ) -> Result<NbestStepCosts, EngineError>
 where
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
-    let lm = |error: L::Error| EngineError::row_read(model, prev, &error);
+    let lm = |error: L::Error| EngineError::row_read(model, &error);
     let item = match model.nbest_successors_in_row(&prev, row).map_err(lm)? {
         None | Some(NbestSuccessors::Miss) => None,
         Some(NbestSuccessors::Row(gram)) => {
-            let refuse = |fault| EngineError::lookup_gram(prev, fault);
+            let refuse = EngineError::lookup_gram;
             if let Some(fault) = gram.fault() {
                 return Err(refuse(fault));
             }
@@ -147,9 +146,7 @@ pub fn phrase_segment<D, L>(
 ) -> Result<(bool, Vec<PhraseToken>), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     let words: Vec<u32> = sentence.chars().map(u32::from).collect();
     phrase_segment_ucs4(dictionary, model, &words)
@@ -169,9 +166,7 @@ pub(crate) fn phrase_segment_ucs4<D, L>(
 ) -> Result<(bool, Vec<PhraseToken>), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     segment(
         model,
@@ -195,7 +190,6 @@ fn segment<L, F>(
 ) -> Result<(bool, Vec<PhraseToken>), EngineError>
 where
     L: LanguageModel,
-    L::Error: core::fmt::Display,
     F: FnMut(usize, usize) -> (Vec<PhraseToken>, bool),
 {
     let null = 0;
@@ -256,7 +250,6 @@ fn relax_span<L>(
 ) -> Result<(), EngineError>
 where
     L: LanguageModel,
-    L::Error: core::fmt::Display,
 {
     let mut unigrams = Vec::new();
     for node in predecessors {

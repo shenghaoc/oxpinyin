@@ -107,7 +107,7 @@ fn full_aux_text(
 ) -> Option<AuxText> {
     let parsed = &raw[..parsed_len.min(raw.len())];
     let cursor = cursor.min(parsed.len());
-    let graph = SegmentGraph::build_with_options(parsed.as_bytes(), options).ok()?;
+    let graph = SegmentGraph::build_with_options(parsed.as_bytes(), options)?;
     let keys = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     if keys.first()?.syllable_start() != 0 {
         // A leading separator leaves the first column empty. The pin's

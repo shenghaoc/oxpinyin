@@ -1,4 +1,4 @@
-use super::{Edge, EdgeKind, ExactSegment, GraphError, SegmentGraph};
+use super::{Edge, EdgeKind, ExactSegment, SegmentGraph};
 use crate::{Completeness, OptionBits, SyllableKey};
 
 fn edge_kind_wire(kind: EdgeKind) -> &'static str {
@@ -510,17 +510,17 @@ fn exact_graph_rejects_bad_segments() {
                 ExactSegment::new(2, 3, bie, 0)
             ]
         ),
-        Err(GraphError::ExactSegmentsInvalid)
+        None
     );
     // Out of bounds.
     assert_eq!(
         SegmentGraph::build_exact(b"bie", &[ExactSegment::new(0, 9, bie, 0)]),
-        Err(GraphError::ExactSegmentsInvalid)
+        None
     );
     // Empty span.
     assert_eq!(
         SegmentGraph::build_exact(b"bie", &[ExactSegment::new(2, 2, bie, 0)]),
-        Err(GraphError::ExactSegmentsInvalid)
+        None
     );
 }
 
@@ -538,12 +538,12 @@ fn exact_graph_rejects_non_apostrophe_gaps() {
                 ExactSegment::new(3, 6, hao, 0)
             ]
         ),
-        Err(GraphError::ExactSegmentsInvalid)
+        None
     );
     // Leading junk is equally refused.
     assert_eq!(
         SegmentGraph::build_exact(b"xni", &[ExactSegment::new(1, 3, ni, 0)]),
-        Err(GraphError::ExactSegmentsInvalid)
+        None
     );
     // A separator run between spans still rides, as in the parsed graph.
     let graph = SegmentGraph::build_exact(

@@ -116,15 +116,10 @@ impl<D: ChewingDbm> BigramTable<D> {
             // A present but empty value is malformed: a stored bigram
             // always carries at least its header. Report the corruption
             // rather than masking it as a clean miss.
-            return Err(DictError::Parse(format!(
-                "bigram entry for token {prev_token:#010x} has an empty value"
-            )));
+            return Err(DictError::Parse);
         }
         if value.len() < 4 || !(value.len() - 4).is_multiple_of(8) {
-            return Err(DictError::Parse(format!(
-                "bigram value length {} is not 4 + 8n",
-                value.len()
-            )));
+            return Err(DictError::Parse);
         }
         Ok(Some(value))
     }

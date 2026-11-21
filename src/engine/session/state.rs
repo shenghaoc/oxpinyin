@@ -5,9 +5,7 @@ use super::*;
 impl<D, L> Session<D, L>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Opens a session over the supplied backends.
     ///
@@ -45,9 +43,7 @@ where
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Whether `text` extends the bytes the selection record was built
     /// over (`raw[..consumed]`) — the continuity retaining the record
@@ -194,9 +190,7 @@ where
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Replaces the retained prefixes after a sentence or prediction guess.
     /// This can change the candidate ranking at offset zero.

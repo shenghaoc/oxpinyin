@@ -114,7 +114,7 @@ pub struct Table {
 /// the import iterator parses (`pinyin.cpp:629-637`).
 fn parse_keys(pinyin: &[u8]) -> Vec<ChewingKey> {
     let options = OptionBits::PINYIN_CORRECT_ALL | OptionBits::USE_TONE;
-    let Ok(graph) = SegmentGraph::build_with_options(pinyin, options) else {
+    let Some(graph) = SegmentGraph::build_with_options(pinyin, options) else {
         return Vec::new();
     };
     graph

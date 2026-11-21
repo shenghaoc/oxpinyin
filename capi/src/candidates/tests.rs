@@ -453,9 +453,7 @@ fn a_store_into_the_failed_user_bigram_aborts_training() {
     let stderr = crate::test_support::assert_aborts(
         "candidates::tests::a_store_into_the_failed_user_bigram_aborts_training",
         || {
-            super::train_answer(Err(oxpinyin::engine::EngineError::FailedUserBigramStore {
-                token: 0x0100_0001,
-            }));
+            super::train_answer(Err(oxpinyin::engine::EngineError::TrainingAbort));
         },
     );
     // No Rust panic text or other line: the pin writes none here but

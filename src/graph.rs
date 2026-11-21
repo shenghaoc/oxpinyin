@@ -11,8 +11,6 @@
 //! structure is trivially `Clone`, has no lifetime, and its ordering is a
 //! function of the input alone.
 
-use core::fmt;
-
 use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
 
 /// Largest input whose byte positions fit an [`Edge`].
@@ -30,22 +28,6 @@ pub const MAX_GRAPH_POSITION: usize = u32::MAX as usize - 1;
 /// input; past it the vector doubles as edges are emitted, so the peak
 /// stays within about twice the edges the input actually produces.
 const INITIAL_EDGE_CAPACITY: usize = 4_096;
-
-/// Why a graph could not be built.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GraphError {
-    /// The input is longer than [`MAX_GRAPH_POSITION`], so its positions do
-    /// not fit an [`Edge`].
-    InputTooLong {
-        /// Length that was offered.
-        len: usize,
-        /// Largest length accepted.
-        limit: usize,
-    },
-    /// The supplied byte spans were empty, unordered, overlapping or outside the input, or a
-    /// gap contained a byte other than an apostrophe.
-    ExactSegmentsInvalid,
-}
 
 /// A pre-parsed syllable, its tone and the byte span of its text. A separating apostrophe
 /// run belongs to the following graph edge and is excluded from this span.
@@ -89,24 +71,6 @@ impl ExactSegment {
         self.tone
     }
 }
-
-impl fmt::Display for GraphError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InputTooLong { len, limit } => {
-                write!(
-                    formatter,
-                    "input of {len} bytes exceeds the {limit}-byte limit"
-                )
-            }
-            Self::ExactSegmentsInvalid => {
-                formatter.write_str("exact segments are not a walk over the input")
-            }
-        }
-    }
-}
-
-impl std::error::Error for GraphError {}
 
 /// Classifies a match as a complete syllable, a shorter segmentation alternative or an
 /// initial.
@@ -210,16 +174,12 @@ impl SegmentGraph {
     /// edges. [`Self::fewest_keys`] filters them when selecting a path. Matrix-level fuzzy
     /// alternatives are added by the engine.
     ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::InputTooLong`] if the input exceeds [`MAX_GRAPH_POSITION`].
+    /// Returns `None` if the input exceeds [`MAX_GRAPH_POSITION`].
     /// Unrecognized bytes can leave the graph with no reachable keys.
-    pub fn build_with_options(input: &[u8], options: OptionBits) -> Result<Self, GraphError> {
+    #[must_use]
+    pub fn build_with_options(input: &[u8], options: OptionBits) -> Option<Self> {
         if input.len() > MAX_GRAPH_POSITION {
-            return Err(GraphError::InputTooLong {
-                len: input.len(),
-                limit: MAX_GRAPH_POSITION,
-            });
+            return None;
         }
 
         let node_count = input.len() + 1;
@@ -263,7 +223,7 @@ impl SegmentGraph {
             }
         }
 
-        Ok(Self {
+        Some(Self {
             input_len: input.len(),
             edges,
             starts,
@@ -289,17 +249,11 @@ impl SegmentGraph {
     /// (`from` = the previous segment's end), matching the parsed graph's
     /// `crosses_separator` convention.
     ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::InputTooLong`] beyond [`MAX_GRAPH_POSITION`] and
-    /// [`GraphError::ExactSegmentsInvalid`] for out-of-order, overlapping,
-    /// out-of-bounds, or empty spans.
-    pub(crate) fn build_exact(input: &[u8], segments: &[ExactSegment]) -> Result<Self, GraphError> {
+    /// Returns `None` beyond [`MAX_GRAPH_POSITION`] or for out-of-order,
+    /// overlapping, out-of-bounds or empty spans, or non-apostrophe gaps.
+    pub(crate) fn build_exact(input: &[u8], segments: &[ExactSegment]) -> Option<Self> {
         if input.len() > MAX_GRAPH_POSITION {
-            return Err(GraphError::InputTooLong {
-                len: input.len(),
-                limit: MAX_GRAPH_POSITION,
-            });
+            return None;
         }
 
         let mut edges: Vec<Edge> = Vec::with_capacity(segments.len());
@@ -312,7 +266,7 @@ impl SegmentGraph {
                     .iter()
                     .all(|byte| *byte == b'\'')
             {
-                return Err(GraphError::ExactSegmentsInvalid);
+                return None;
             }
             let from = if index == 0 { 0 } else { previous_end };
             let (Ok(from), Ok(to), Ok(start)) = (
@@ -320,7 +274,7 @@ impl SegmentGraph {
                 u32::try_from(segment.end),
                 u32::try_from(segment.start),
             ) else {
-                return Err(GraphError::ExactSegmentsInvalid);
+                return None;
             };
             edges.push(Edge {
                 from,
@@ -354,7 +308,7 @@ impl SegmentGraph {
             }
         }
 
-        Ok(Self {
+        Some(Self {
             input_len: input.len(),
             edges,
             starts,

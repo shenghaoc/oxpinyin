@@ -153,29 +153,26 @@ fn row_read_names_only_the_checked_read_failure() {
     // segmentation, the n-best predecessor rows and the guess's
     // `DYNAMIC_ADJUST` row.
     assert_eq!(
-        EngineError::row_read(&CheckedModel, 7, &"read after check"),
-        EngineError::ReadAfterCheck { token: 7 }
+        EngineError::row_read(&CheckedModel, &"read after check"),
+        EngineError::ReadAfterCheck
     );
     struct Unchecked;
     impl LanguageModel for Unchecked {
         type Error = &'static str;
     }
     assert!(matches!(
-        EngineError::row_read(&Unchecked, 7, &"closed"),
-        EngineError::Scoring(_)
+        EngineError::row_read(&Unchecked, &"closed"),
+        EngineError::Failure
     ));
 }
 
 #[test]
 fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
-    use crate::SENTENCE_START;
     use crate::engine::error::EngineError;
     let dictionary = Dict::parse(&[("你", 3)]);
     assert_eq!(
         phrase_segment(&dictionary, &CheckedModel, "你").unwrap_err(),
-        EngineError::ReadAfterCheck {
-            token: SENTENCE_START
-        }
+        EngineError::ReadAfterCheck
     );
 }
 
@@ -209,11 +206,7 @@ fn prefix_faults_follow_spans_before_predecessors() {
     let dictionary = Dict::parse(&[("a", 3), ("a", 4), ("b", 5), ("bc", 6)]);
     let model = Ordered(std::cell::RefCell::default());
     let error = phrase_segment(&dictionary, &model, "abc").unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("first span's second predecessor")
-    );
+    assert_eq!(error, crate::engine::EngineError::Failure);
     assert_eq!(*model.0.borrow(), [(1, 3), (1, 4), (3, 5), (4, 5)]);
 }
 
@@ -311,7 +304,6 @@ impl LanguageModel for Rows {
 /// sentence the search never reaches a predecessor row for stays quiet.
 #[test]
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
-    use crate::SENTENCE_START;
     use crate::engine::error::EngineError;
     use crate::model::MergedGram;
     let dictionary = Dict::parse(&[("你", 3)]);
@@ -325,9 +317,7 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
     };
     assert_eq!(
         phrase_segment(&dictionary, &short_alone, "你").unwrap_err(),
-        EngineError::UnsafeLookupPredecessor {
-            token: SENTENCE_START
-        }
+        EngineError::UnsafeLookupPredecessor
     );
     let whole = Rows {
         row: MergedGram::merge(Some(segment_system_gram()), None).unwrap(),

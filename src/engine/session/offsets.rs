@@ -5,9 +5,7 @@ use super::*;
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Normalizes a caller lookup offset back to the first byte of the
     /// physical apostrophe separator run before it, as in the
@@ -138,7 +136,7 @@ where
     ///
     /// [`EngineError::LookupOffsetOutOfRange`],
     /// [`EngineError::ZeroKeyOffsetCheck`] and
-    /// [`EngineError::MatrixColumnAssert`] where the pin asserts; the
+    /// [`EngineError::PinAssert`] where the pin asserts; the
     /// dictionary's backend failure.
     pub(crate) fn character_offset_with_walk(
         &self,
@@ -199,8 +197,6 @@ where
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
 }
