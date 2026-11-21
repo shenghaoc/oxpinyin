@@ -42,19 +42,12 @@ KEY_PREFIX = 'ship-sizes-v1-'
 # Inputs that can change a library byte: they key the cached base result. The
 # same set CI_INPUTS["ship"] gates the job on, less the report-only paths.
 INPUTS = ('src', 'codegen', 'build.rs', 'capi', 'zhuyin-capi', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
-          'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt',
-          'vcpkg-overlays', 'triplets')
+          'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt')
 
 PACKAGES = ('binutils', 'gcc', 'g++', 'libc6', 'libglib2.0-dev')
-# Distribution packages each backend's build needs, beside the common set above.
-# Only bdb runs bindgen, which needs libclang. kyotocabinet and tkrzw use cxx.
-# tkrzw comes from the repository's vcpkg overlay port, never from the
-# distribution: Ubuntu's libtkrzw is defective (docs/findings/tkrzw-distro-compat.md).
-BACKEND_PACKAGES = {
-    'bdb': ('libdb-dev', 'libclang-dev'),
-    'kyotocabinet': ('libkyotocabinet-dev',),
-    'tkrzw': (),
-}
+# The distribution package the Linux cell's build needs beside the common set
+# above: Kyoto Cabinet's, whose cxx bridge compiles with g++ and needs no libclang.
+BACKEND_PACKAGES = ('libkyotocabinet-dev',)
 
 
 class Failure(Exception):
@@ -83,12 +76,12 @@ def first_line(argv: Sequence[str], root: Path) -> str:
 
 
 def reference_cell(root: Path = ROOT):
-    """The reference cell, from the one place that defines its default."""
-    return cell.Settings.read({}, root)
+    """The cell of the size build: the one Linux cell (LOCAL_CELL in tools/dev/cell.py)."""
+    return cell.Settings.read({'PINYIN_ORACLE_DBM': cell.LOCAL_CELL}, root)
 
 
 def backend_packages(root: Path = ROOT) -> tuple[str, ...]:
-    return BACKEND_PACKAGES[reference_cell(root).feature]
+    return BACKEND_PACKAGES
 
 
 def environment(root: Path = ROOT) -> dict[str, str]:
@@ -100,19 +93,8 @@ def environment(root: Path = ROOT) -> dict[str, str]:
     facts = {'backend': reference_cell(root).feature, 'rustc': rustc, 'cc': first_line(['cc', '--version'], root),
              'strip': first_line(['strip', '--version'], root),
              'cargo-c': first_line(['cargo', 'cinstall', '--version'], root)}
-    if reference_cell(root).feature == 'tkrzw':
-        # Both revisions link this install, whose build can change at the same version.
-        try:
-            prefix = run(['pkg-config', '--variable=prefix', 'tkrzw'], cwd=root).strip()
-        except (Failure, OSError) as error:
-            raise Failure(f'could not locate installed tkrzw with pkg-config: {error}') from error
-        if not prefix:
-            raise Failure('pkg-config returned no prefix for installed tkrzw')
-        record = Path(prefix) / 'share/tkrzw/vcpkg_abi_info.txt'
-        try:
-            facts['tkrzw-abi'] = hashlib.sha256(record.read_bytes()).hexdigest()
-        except OSError as error:
-            raise Failure(f'could not read installed tkrzw ABI record {record}: {error}') from error
+    # The backend's own package version is among the dpkg facts below: both
+    # revisions link that one build of libkyotocabinet.
     if shutil.which('dpkg-query'):
         for package in (*PACKAGES, *backend_packages(root)):
             facts['dpkg:' + package] = first_line(['dpkg-query', '-W', '-f', '${Version}', package], root)

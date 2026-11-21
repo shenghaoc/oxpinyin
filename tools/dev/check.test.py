@@ -92,6 +92,19 @@ esac
                 rc = check.run('bdb', out=out, err=err)
             return child_calls, rc, out.getvalue(), err.getvalue()
 
+        def test_no_backend_checks_the_hosts_cell(self):
+            # tools/dev/cell.py: an omitted backend is the host's cell, Kyoto Cabinet on Linux.
+            from tools.dev import cell
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(native.slot, 'run_command', return_value=0), \
+                    mock.patch.object(check.platform, 'system', return_value='Linux'), \
+                    mock.patch.object(check.platform, 'machine', return_value='x86_64'), \
+                    mock.patch.object(cell.platform, 'system', return_value='Linux'):
+                check.run(None, out=out, err=err)
+            text = out.getvalue() + err.getvalue()
+            self.assertIn('kyotocabinet', text)
+            self.assertNotIn('tkrzw', text)
+
         def test_child_output_reaches_stdout_and_child_errors_reach_stderr(self):
             calls, rc, actual, err = self.exercise()
             self.assertEqual(rc, 0)

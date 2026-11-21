@@ -122,7 +122,8 @@ This follows libpinyin's `--with-dbm` model.
 Runtime dispatch and fallback are not added.
 
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
-Development and CI use the platform's tkrzw source described in [setup](runbooks/setup.md).
+macOS and Windows development and CI use the platform's tkrzw source described in [setup](runbooks/setup.md).
+Linux runs no tkrzw code: every Linux build, CI included, uses Kyoto Cabinet from Ubuntu's packages ([Linux setup](runbooks/setup.md#linux), [verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions)).
 Debian release packages and oracle/reference images retain Debian's library.
 The peer matrix remains on Linux.
 

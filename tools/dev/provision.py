@@ -34,7 +34,6 @@ from tools import cachedir
 from tools.oracle import image as images
 from tools.oracle.image import digest_file, runtime_command
 from tools.tkrzw import runtime
-from . import vcpkg
 
 CELLS = backend_cell.CELLS
 # The first line of every environment file this module writes. A file without it, such as
@@ -131,19 +130,21 @@ def homebrew_tkrzw_prefix(environment):
 
 
 def probe_host(*, env=None, root=ROOT, out=None):
-    """Certify the selected host tkrzw by its utility's actual loader."""
+    """Certify Homebrew's tkrzw on macOS by its utility's actual loader.
+
+    Answer the certified library path, or '' when the host has no tkrzw to certify: a refused
+    loader, a missing utility, or a Linux host, which runs no tkrzw code
+    (docs/runbooks/setup.md#linux)."""
     environment = dict(os.environ if env is None else env)
     try:
-        if platform.system() == 'Darwin':
-            installed = homebrew_tkrzw_prefix(environment)
-            child = dict(environment, OXPINYIN_TKRZW_PREFIX=str(installed))
-            child.pop('OXPINYIN_TKRZW_LIBRARY', None)
-            child.pop('OXPINYIN_TKRZW_PREFIXES', None)
-            utility = installed / 'bin/tkrzw_dbm_util'
-        else:
-            installed = vcpkg.prefix(environment)
-            child = vcpkg.environment(environment)
-            utility = installed / 'tools/tkrzw/bin/tkrzw_dbm_util'
+        host = platform.system()
+        if host != 'Darwin':
+            raise ValueError(f'no host tkrzw on {host}: macOS certifies Homebrew tkrzw, Linux uses Kyoto Cabinet')
+        installed = homebrew_tkrzw_prefix(environment)
+        child = dict(environment, OXPINYIN_TKRZW_PREFIX=str(installed))
+        child.pop('OXPINYIN_TKRZW_LIBRARY', None)
+        child.pop('OXPINYIN_TKRZW_PREFIXES', None)
+        utility = installed / 'bin/tkrzw_dbm_util'
         if not utility.is_file():
             raise ValueError(f'missing tkrzw utility: {utility}')
         library = runtime.check('tkrzw', 'host check', 'subject', utility, env=child, cwd=root)
@@ -166,8 +167,11 @@ class Provision:
         # The provisioning cache; the property resolves it on first use, so a run that
         # needs no cache does not need OXPINYIN_CACHE.
         self._cache = None
-        self.cells = list(CELLS)
         self.host = platform.system()
+        # A Linux host provisions the one Linux cell by default (tools/dev/cell.py). `--cells` names
+        # others for a pin capture: their prefixes are built and checked in the Debian deps image,
+        # and the Linux environment file still holds the Linux cell alone (oracle_env).
+        self.cells = [backend_cell.LOCAL_CELL] if self.host == 'Linux' else list(CELLS)
         if self.host == 'Linux':
             try:
                 self.jobs = text(['nproc'], env=self.env, check=False, stderr=False) or '2'
@@ -178,8 +182,6 @@ class Provision:
         self.pull, self.python_only, self.dev_tools = True, False, False
         self.platform = ''
         self.started = time.monotonic()
-        self.tkrzw_local = False
-        self.tkrzw_host_library = ''
         self.ctr = ''
         self.ready = False
         self.custom_ca = False
@@ -188,7 +190,7 @@ class Provision:
 
     @property
     def minimal(self):
-        """--python-only and --dev-tools both skip the Rust and Valgrind checks and tkrzw."""
+        """--python-only and --dev-tools both skip the Rust, Valgrind and backend checks."""
         return self.python_only or self.dev_tools
 
     @property
@@ -214,10 +216,6 @@ class Provision:
     @property
     def oracle_root(self):
         return self.cache / 'oracle'
-
-    @property
-    def tkrzw_prefix(self):
-        return homebrew_tkrzw_prefix(self.env) if self.host == 'Darwin' else vcpkg.prefix(self.env)
 
     @property
     def env_file(self):
@@ -524,51 +522,26 @@ class Provision:
         previous = read_env(path)
         if path.is_file() and not previous:
             self.log(f'{path}: not written by this provisioner; regenerated with the cells of this run')
-        kept_prefix, kept_local, kept_library = '', False, ''
         for cell in CELLS:
             prefix = previous.get(f'OXPINYIN_ORACLE_PREFIX_{cell.upper()}', '')
             if cell in prefixes or not prefix:
                 continue
-            if not self.libs_ok(cell, prefix):
+            if cell != backend_cell.LOCAL_CELL:
+                self.log(f'{cell}: removed from environment file; {cell} is no Linux cell')
+            elif not self.libs_ok(cell, prefix):
                 self.log(f'{cell}: removed from environment file; current pin/recipe or recorded library bytes failed validation')
             elif not self.data_ok(cell, prefix):
                 self.log(f'{cell}: removed from environment file; data manifest check failed')
             else:
                 prefixes[cell] = prefix
                 env_cells.append(cell)
-                if cell == 'tkrzw':
-                    kept_prefix = previous.get('OXPINYIN_TKRZW_PREFIX', '')
-                    kept_local = bool(kept_prefix) and 'PKG_CONFIG_PATH' in previous
-                    kept_library = previous.get('OXPINYIN_TKRZW_LIBRARY', '')
-        if len(env_cells) == 1:
-            default = env_cells[0]
-        else:
-            preferred = backend_cell.default_cell()
-            default = preferred if preferred in env_cells else env_cells[0]
-        runtime_prefix = str(self.tkrzw_prefix) if self.tkrzw_local else ''
-        local_prefix = runtime_prefix
-        library = self.tkrzw_host_library
-        if not runtime_prefix and not library and kept_local:
-            runtime_prefix = local_prefix = kept_prefix
-        if runtime_prefix:
-            obj = Path(runtime_prefix) / 'lib/libtkrzw.so.1'
-            library = str(obj.resolve()) if obj.exists() else ''
-        elif not library:
-            library = kept_library
+        if not env_cells:
+            self.die('no verified Linux cell for the environment file; run just provision-oracle')
+        # The Linux cell is the default (docs/runbooks/setup.md#linux).
+        default = backend_cell.LOCAL_CELL
         lines = [ENV_HEADER,
                  'export PINYIN_MODEL_DIR=' + quote(self.model_cache / 'extracted'),
                  'export PATH=' + quote(self.uv_dir) + ':"$PATH"']
-        if library:
-            lines.append('export OXPINYIN_TKRZW_LIBRARY=' + quote(library))
-        if runtime_prefix:
-            lines += ['export OXPINYIN_TKRZW_PREFIX=' + quote(runtime_prefix),
-                      'export OXPINYIN_TKRZW_PREFIXES=' + quote(runtime_prefix) + '"${OXPINYIN_TKRZW_PREFIXES:+:$OXPINYIN_TKRZW_PREFIXES}"']
-        if local_prefix:
-            lines += ['export PKG_CONFIG_PATH=' + quote(local_prefix + '/lib/pkgconfig') + '"${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"',
-                      'export LD_LIBRARY_PATH=' + quote(local_prefix + '/lib') + '"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
-                      'export PATH=' + quote(local_prefix + '/tools/tkrzw/bin') + ':"$PATH"']
-        elif library:
-            lines.append('export LD_LIBRARY_PATH=' + quote(Path(library).parent) + '"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"')
         for cell in env_cells:
             lines += [f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}=' + quote(prefixes[cell]),
                       f'export OXPINYIN_ORACLE_DATA_{cell.upper()}=' + quote(prefixes[cell] + '/lib/libpinyin/data')]
@@ -835,38 +808,28 @@ class Provision:
         finally:
             archive.unlink(missing_ok=True)
 
-    def install_tkrzw(self):
-        """Install tkrzw through the vcpkg overlay and certify its utility (native, Linux)."""
-        try:
-            vcpkg.install(self.env, self.root, jobs=self.jobs)
-            self.certify_tkrzw(('subject',))
-        except (ValueError, runtime.RuntimeRefused) as error:
-            self.die(str(error))
-        self.log(f'tkrzw: certified vcpkg install at {self.tkrzw_prefix}')
+    def kyotocabinet_ready(self):
+        """Require Kyoto Cabinet's development package, the Linux local cell (docs/runbooks/setup.md#linux)."""
+        def found():
+            return text(['pkg-config', '--modversion', 'kyotocabinet'], env=self.env, check=False, stderr=False)
+        version = found()
+        if not version:
+            package = 'libkyotocabinet-dev'
+            if os.geteuid() != 0 or not self.which('apt-get'):
+                self.die(f'Kyoto Cabinet development files are missing (pkg-config kyotocabinet); '
+                         f'run as root: apt-get install -y {package}')
+            self.log(f'installing {package} from the distribution archive')
+            if not self.apt([package]) or not found():
+                self.die(f'could not install {package} with apt-get')
+            version = found()
+        self.log(f'kyotocabinet: {version} from the distribution')
 
-    def certify_tkrzw(self, sides=('subject', 'pin')):
-        """Require each of SIDES' binaries to load the selected host libtkrzw."""
-        try:
-            if self.host == 'Darwin':
-                if sides != ('subject',):
-                    raise ValueError('macOS certifies the host tkrzw utility only')
-                self.tkrzw_host_library = probe_host(env=self.env, root=self.root)
-                if not self.tkrzw_host_library:
-                    raise ValueError('Homebrew tkrzw did not pass the host check')
-                self.tkrzw_local = True
-                return
-            prefix = self.tkrzw_prefix
-            child = vcpkg.environment(self.env)
-            binaries = {'subject': prefix / 'tools/tkrzw/bin/tkrzw_dbm_util',
-                        'pin': self.oracle_root / 'tkrzw/lib/libpinyin.so'}
-            if not binaries['subject'].is_file():
-                raise ValueError(f'missing vcpkg utility: {binaries["subject"]}; run just provision')
-            for side in sides:
-                if runtime.check('tkrzw', 'provision', side, binaries[side], env=child, cwd=self.root) is None:
-                    raise ValueError(f'{side} binary does not load libtkrzw: {binaries[side]}')
-        except (ValueError, runtime.RuntimeRefused) as error:
-            self.die(str(error))
-        self.tkrzw_local = True
+    def certify_homebrew_tkrzw(self):
+        """macOS: require Homebrew's tkrzw, certified by the library its utility loads."""
+        library = probe_host(env=self.env, root=self.root)
+        if not library:
+            self.die('Homebrew tkrzw did not pass the host check')
+        self.log(f'tkrzw: certified Homebrew install; its utility loads {library}')
 
     def refuse_overrides(self):
         """Refuse interpreter-selection settings before any other work.
@@ -894,12 +857,11 @@ class Provision:
         print('Verified managed CPython', identity['version'], 'GIL build:', identity['executable'], flush=True)
         if not self.minimal:
             if self.linux:
-                self.install_tkrzw()
+                self.kyotocabinet_ready()
             elif self.host == 'Darwin':
-                self.certify_tkrzw(('subject',))
-                self.log(f'tkrzw: certified Homebrew install at {self.tkrzw_prefix}')
+                self.certify_homebrew_tkrzw()
             else:
-                self.log(f'tkrzw: no vcpkg overlay install on {self.host}; the oracle runs only in containers here')
+                self.log(f'{self.host}: no native backend step; the oracle runs only in containers here')
         self.report_ext4()
         if self.minimal:
             self.log('stopping after the development tools (--dev-tools)' if self.dev_tools
@@ -978,7 +940,7 @@ class Provision:
             return 0
         self.model_cache = images.model_cache(self.env).resolve()
         self.cells = []
-        for cell in CELLS:
+        for cell in (backend_cell.LOCAL_CELL,):
             prefix = self.oracle_root / cell
             if not prefix.is_dir():
                 continue
@@ -988,9 +950,6 @@ class Provision:
                 self.log(f'{cell}: left out of the environment file; {prefix} failed validation')
         if not self.cells:
             self.die(f'no verified oracle cell in {self.oracle_root}; run just provision-oracle')
-        if 'tkrzw' in self.cells:
-            self.certify_tkrzw()
-            self.log(f'tkrzw: the pin library loads the vcpkg install at {self.tkrzw_prefix}')
         for cell in self.cells:
             prefix = self.oracle_root / cell
             for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):

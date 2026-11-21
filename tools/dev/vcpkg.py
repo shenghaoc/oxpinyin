@@ -1,52 +1,25 @@
-"""Linux and Windows vcpkg tooling; the overlay port owns their tkrzw pin.
+"""vcpkg for the Windows CI job; the overlay port owns its tkrzw pin.
 
-Linux development: `install` puts the overlay port into an explicit or managed
-checkout, and `environment` selects that install for compilation, execution
-and certification.
+`cache-key` finds the runner image's checkout, names its revision and publishes
+the binary cache location and key. `install` installs the requested packages
+with the repository overlay and publishes where pkg-config, the loader and PATH
+find them. `cache-report` prints what the cache restore matched. A workflow
+keeps only the cache restore and save actions between these commands.
 
-CI: `cache-key` finds the runner image's checkout, names its revision and
-publishes the binary cache location and key. `install` installs the requested
-packages with the repository overlay and publishes where pkg-config, the loader
-and PATH find them. `cache-report` prints what the cache restore matched. A
-workflow keeps only the cache restore and save actions between these commands.
+Linux uses no vcpkg: every Linux build takes Kyoto Cabinet from Ubuntu's
+packages (docs/runbooks/setup.md#linux). macOS uses Homebrew's tkrzw
+(docs/runbooks/setup.md#macos).
 """
 import argparse
-import errno
 import hashlib
 import os
-import platform
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 from types import SimpleNamespace
 
-from tools import cachedir
-
 ROOT = Path(__file__).resolve().parents[2]
-# Revision used for managed Linux development checkouts.
-REVISION = '2ec0f1747d8186a5c9babe276e2ad57cd2b12d2a'
-
-
-def triplet():
-    """Select the native overlay triplet before touching an install."""
-    if platform.system() != 'Linux':
-        raise ValueError('native vcpkg tkrzw is supported on Linux only')
-    architecture = platform.machine().lower()
-    targets = {'x86_64': 'x64', 'amd64': 'x64', 'aarch64': 'arm64', 'arm64': 'arm64'}
-    if architecture not in targets:
-        raise ValueError(f'unsupported Linux architecture for tkrzw: {architecture}; expected x86_64 or arm64')
-    return f'{targets[architecture]}-linux-oxpinyin'
-
-
-def checkout(env):
-    """Use an explicit checkout, or keep one outside Git worktrees in the cache."""
-    return Path(env['VCPKG_ROOT']).resolve() if env.get('VCPKG_ROOT') else (cachedir.root(env) / 'vcpkg').resolve()
-
-
-def prefix(env):
-    return checkout(env) / 'installed' / triplet()
 
 
 def executable(root):
@@ -58,83 +31,8 @@ def executable(root):
 
 
 def overlay_options(root):
-    """The repository's overlay ports and triplets, for every vcpkg command."""
-    return [f'--overlay-ports={root / "vcpkg-overlays"}', f'--overlay-triplets={root / "triplets"}']
-
-
-def installed_environment(env, installed):
-    """Put the install at INSTALLED first for compilation, execution and certification."""
-    child = dict(env, OXPINYIN_TKRZW_PREFIX=str(installed))
-    # A previously sourced environment must not certify a different install.
-    child.pop('OXPINYIN_TKRZW_LIBRARY', None)
-    child.pop('OXPINYIN_TKRZW_PREFIXES', None)
-    for name, path in (('PKG_CONFIG_PATH', installed / 'lib/pkgconfig'),
-                       ('LD_LIBRARY_PATH', installed / 'lib'),
-                       ('PATH', installed / 'tools/tkrzw/bin')):
-        child[name] = str(path) + (os.pathsep + env[name] if env.get(name) else '')
-    return child
-
-
-def environment(env):
-    """Put one overlay install first for compilation, execution and certification."""
-    return installed_environment(env, prefix(env))
-
-
-def pin_build_environment(env, backend):
-    """Select the overlay for a tkrzw pin build, including its compiler search paths."""
-    if backend != 'tkrzw':
-        return dict(env)
-    child = environment(env)
-    installed = Path(child['OXPINYIN_TKRZW_PREFIX'])
-    # The pin does not use TKRZW_CFLAGS and configure links a bare -ltkrzw.
-    for name, directory in (('CPATH', installed / 'include'), ('LIBRARY_PATH', installed / 'lib')):
-        child[name] = str(directory) + (os.pathsep + env[name] if env.get(name) else '')
-    return child
-
-
-def fetch_checkout(destination, env, *, run, cwd):
-    """Fetch vcpkg at REVISION into DESTINATION and bootstrap it there."""
-    # The checkout below detaches HEAD, so the branch name is never used; it is
-    # named so that git does not fall back to its default and print a hint.
-    run(['git', 'init', '--initial-branch=main', str(destination)], env=env, cwd=cwd)
-    run(['git', 'fetch', '--depth=1', 'https://github.com/microsoft/vcpkg.git', REVISION], env=env, cwd=destination)
-    run(['git', 'checkout', '--detach', 'FETCH_HEAD'], env=env, cwd=destination)
-    run(['bash', str(destination / 'bootstrap-vcpkg.sh'), '-disableMetrics'],
-        env=dict(env, VCPKG_ROOT=str(destination)), cwd=destination)
-
-
-def install(env, root, *, jobs):
-    """Install using vcpkg's ABI-checked binary cache, without a second source builder."""
-    from .process import run
-    target = triplet()
-    vcpkg = checkout(env)
-    if env.get('VCPKG_ROOT'):
-        # The caller owns the checkout; only vcpkg may update its packages.
-        if executable(vcpkg) is None:
-            raise ValueError(f'VCPKG_ROOT needs a bootstrapped vcpkg checkout: {vcpkg}')
-    elif not vcpkg.exists():
-        vcpkg.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix='.vcpkg-', dir=vcpkg.parent) as directory:
-            staged = Path(directory) / 'checkout'
-            fetch_checkout(staged, env, run=run, cwd=root)
-            try:
-                staged.rename(vcpkg)
-            except OSError as error:
-                if error.errno not in (errno.EEXIST, errno.ENOTEMPTY) or executable(vcpkg) is None:
-                    raise
-    program = executable(vcpkg)
-    if program is None:
-        raise ValueError(f'incomplete managed vcpkg checkout: {vcpkg}; remove it and retry')
-    cache = cachedir.root(env) / 'vcpkg-binary-cache'
-    cache.mkdir(parents=True, exist_ok=True)
-    child = dict(env, VCPKG_ROOT=str(vcpkg), VCPKG_MAX_CONCURRENCY=str(jobs),
-                 VCPKG_BINARY_SOURCES=env.get('VCPKG_BINARY_SOURCES', f'clear;files,{cache},readwrite'))
-    options = ['--classic', *overlay_options(root)]
-    run([program, 'install', f'tkrzw:{target}', *options],
-        env=child, cwd=root, heavy=True)
-    # Classic install leaves an installed older version untouched; upgrade replaces it.
-    run([program, 'upgrade', f'tkrzw:{target}', '--no-dry-run', *options],
-        env=child, cwd=root, heavy=True)
+    """The repository's overlay ports, for every vcpkg command."""
+    return [f'--overlay-ports={root / "vcpkg-overlays"}']
 
 
 def runner_checkout(env, *, which=shutil.which):
@@ -162,38 +60,26 @@ def revision(root, *, capture):
     return 'baseline-' + baseline
 
 
-def binary_cache(env, triplet, packages='', *, capture, which=shutil.which, os_release=Path('/etc/os-release')):
+def binary_cache(env, triplet, packages='', *, capture, which=shutil.which):
     """The environment and step outputs that select the binary cache for TRIPLET.
 
-    The key changes with the checkout revision and with the toolchain. On a
-    hosted Windows runner the image names the toolchain. A Linux key names
-    the compiler, distribution release and checkout path, which tkrzw.pc records.
-    PACKAGES, the space-separated specs a job installs, adds a `packages`
-    output for the workflow to append: a different request is a different
-    cache entry.
+    The key changes with the checkout revision and with the toolchain, which
+    the hosted Windows runner image names. PACKAGES, the space-separated specs
+    a job installs, adds a `packages` output for the workflow to append: a
+    different request is a different cache entry.
     Paths are published with forward slashes; the Windows steps run in bash.
     """
-    linux = 'linux' in triplet
-    if not linux and 'windows' not in triplet:
+    if 'windows' not in triplet:
         raise ValueError(f'no vcpkg cache rule for triplet {triplet}')
-    for name in ('RUNNER_TEMP',) if linux else ('ImageOS', 'ImageVersion', 'RUNNER_TEMP'):
+    for name in ('ImageOS', 'ImageVersion', 'RUNNER_TEMP'):
         if not env.get(name):
             raise ValueError(f'runner variable {name} is unset')
     root = runner_checkout(env, which=which)
     directory = (Path(env['RUNNER_TEMP']) / 'vcpkg-binary-cache').as_posix()
     name = revision(root, capture=capture)
-    if linux:
-        compiler = capture(['c++', '--version'])
-        if compiler.status:
-            raise ValueError('cannot identify the C++ compiler: c++ --version failed')
-        identity = compiler.stdout + os_release.read_bytes() + (root.as_posix() + '\n').encode()
-        prefix = f'vcpkg-bin-Linux-{triplet}-'
-        key = f'{prefix}{name}-{hashlib.sha256(identity).hexdigest()[:16]}'
-    else:
-        prefix = f"vcpkg-bin-{env['ImageOS']}-{triplet}-"
-        key = f"{prefix}{name}-{env['ImageOS']}-{env['ImageVersion']}"
-    outputs = {'dir': directory, 'prefix': prefix, 'key': key,
-               'installed': (root / 'installed' / triplet).as_posix()}
+    prefix = f"vcpkg-bin-{env['ImageOS']}-{triplet}-"
+    key = f"{prefix}{name}-{env['ImageOS']}-{env['ImageVersion']}"
+    outputs = {'dir': directory, 'prefix': prefix, 'key': key}
     if packages.split():
         outputs['packages'] = hashlib.sha256(packages.encode()).hexdigest()[:16]
     return dict(
@@ -216,7 +102,7 @@ def runner_install(env, triplet, packages='', *, run, root=ROOT):
     PACKAGES defaults to tkrzw alone. The result names the environment
     variables to publish and the directories to put on PATH.
     """
-    if 'windows' not in triplet and 'linux' not in triplet:
+    if 'windows' not in triplet:
         raise ValueError(f'no install rule for triplet {triplet}')
     if not env.get('VCPKG_ROOT'):
         raise ValueError('VCPKG_ROOT is unset; run cache-key first')
@@ -227,20 +113,12 @@ def runner_install(env, triplet, packages='', *, run, root=ROOT):
     run([program, 'install', *(packages.split() or [f'tkrzw:{triplet}']), *overlay_options(root)], env=env, cwd=root)
     installed = vcpkg / 'installed' / triplet
     own = (installed / 'lib/pkgconfig').as_posix()
-    if 'windows' in triplet:
-        # vcpkg's own pkgconf answers for the installed tree; the DLLs load from its bin.
-        pkg_config = installed / 'tools/pkgconf/pkgconf.exe'
-        run([pkg_config, '--modversion', '--cflags', '--libs', 'glib-2.0', 'tkrzw'],
-            env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
-        return dict(environment={'PKG_CONFIG': pkg_config.as_posix(), 'PKG_CONFIG_PATH': own},
-                    path=[(installed / 'bin').as_posix()])
-    # The installed library must answer pkg-config by itself.
-    run(['pkg-config', '--modversion', '--cflags', '--libs', 'tkrzw'], env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
-    tools = [(installed / 'tools/tkrzw/bin').as_posix()]
-    # Linux: the selection a developer's environment makes, certified against this prefix.
-    selected = installed_environment(env, installed)
-    return dict(environment={name: selected[name] for name in
-                             ('PKG_CONFIG_PATH', 'LD_LIBRARY_PATH', 'OXPINYIN_TKRZW_PREFIX')}, path=tools)
+    # vcpkg's own pkgconf answers for the installed tree; the DLLs load from its bin.
+    pkg_config = installed / 'tools/pkgconf/pkgconf.exe'
+    run([pkg_config, '--modversion', '--cflags', '--libs', 'glib-2.0', 'tkrzw'],
+        env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
+    return dict(environment={'PKG_CONFIG': pkg_config.as_posix(), 'PKG_CONFIG_PATH': own},
+                path=[(installed / 'bin').as_posix()])
 
 
 def _run(command, *, env=None, cwd=None):

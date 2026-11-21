@@ -390,7 +390,7 @@ The `shipping-sizes` job in `.github/workflows/ci.yml` produces them; [verificat
 
 **When the job runs.**
 It runs on a pull request or a push to main when a file that can change a shipping library changes.
-Those files are the twelve crates in the dependency graph of `oxpinyin-capi` and `oxzhuyin-capi`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, the packaging tooling, and the vcpkg overlay port and triplets that provide tkrzw.
+Those files are the twelve crates in the dependency graph of `oxpinyin-capi` and `oxzhuyin-capi`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/` and the packaging tooling.
 The job also runs when its own files change.
 `tools/dev/ship_sizes.py` holds the path list.
 The job is skipped in other cases, for example a documentation-only change.
@@ -399,7 +399,7 @@ Tree reuse does not skip the job: a reused tree proves the tests, not the sizes 
 
 **What it builds.**
 For the PR head and for its base, the job exports the commit with `git archive`.
-It builds each facade with `just packaging install` and the release recipe on the [default backend](runbooks/backends.md), without extra features.
+It builds each facade with `just packaging install` and the release recipe on the Linux cell, Kyoto Cabinet (`LOCAL_CELL` in `tools/dev/cell.py`), without extra features.
 It copies `libpinyin.so.15.0.0` and `libzhuyin.so.15.0.0`, strips each copy with `strip --strip-unneeded`, and counts its bytes.
 It then checks that the stripped library exports exactly the symbols of its version script, `libpinyin.ver` (79) or `libzhuyin.ver` (52), and no `oxpinyin_*` symbol.
 It writes a table to the job summary: base bytes, PR bytes, difference and ratio for each library.
@@ -416,7 +416,7 @@ A second full build on every PR is the largest cost, so the base result is cache
 The cache key is `ship-sizes-v1-` plus a hash of two things:
 
 - the Git tree ids of every input that can change a library byte;
-- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the reference backend's packages (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`), and for tkrzw the SHA-256 of the overlay install's vcpkg ABI record (`share/tkrzw/vcpkg_abi_info.txt` under the prefix that pkg-config reports), which changes when the build changes at the same version.
+- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the Linux cell's package (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`: `libkyotocabinet-dev`, so a package update changes the key).
 
 The key names no commit.
 Every main commit with the same inputs shares one result.
@@ -429,7 +429,7 @@ A stale base can never match: a changed input or toolchain changes the key.
 
 **Reproduce the table locally.**
 The recipe is Linux-only.
-It runs on Linux, on committed work, with tkrzw from the vcpkg overlay port:
+It runs on Linux, on committed work, on the Linux cell, Kyoto Cabinet ([verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions)):
 
 ```bash
 just packaging sizes run --base origin/main

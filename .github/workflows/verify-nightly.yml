@@ -71,18 +71,19 @@ jobs:
       FUZZ_GUARD_SECONDS: 420
       AFL_NO_UI: 1
     steps:
-      # The fuzz targets build the default tkrzw backend, which uses cxx;
-      # only the bdb feature runs bindgen, so no libclang.
+      # tools/dev/fuzz.py builds each target with the host's cell: Kyoto
+      # Cabinet on Linux (tools/dev/cell.py), whose cxx bridge compiles with
+      # the image's g++: libkyotocabinet-dev from apt, no libclang.
       - name: Install build dependencies (apt)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libc6-dev libglib2.0-dev util-linux
+          sudo apt-get install -y --no-install-recommends libc6-dev libkyotocabinet-dev libglib2.0-dev util-linux
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/bootstrap
         with:
-          # The tkrzw action runs on the managed CPython.
+          # The fuzz recipes run on the managed CPython.
           uv: 'true'
           # The fuzz recipes (just fuzz-setup, just fuzz).
           just: 'true'
@@ -92,8 +93,6 @@ jobs:
           # no step names the nightly.
           rust-toolchain: 'true'
           rust-toolchain-dir: fuzz
-      - name: Install tkrzw (vcpkg overlay and binary cache)
-        uses: ./.github/actions/tkrzw
       # The AFL++ LLVM plugins load into the nightly's rustc, so they build
       # against an LLVM of the same major version (llvm-config-<major>).
       # Ubuntu's own archive carries it: fuzz/rust-toolchain.toml pins a
@@ -126,17 +125,18 @@ jobs:
           restore-keys: |
             fuzz-corpus-
       - name: Seed corpora
-        # The five MemoryChunk files of the tkrzw cell and the committed
+        # The five MemoryChunk files of the Kyoto Cabinet cell (byte-identical
+        # across the cells, fixtures/w3/README.md) and the committed
         # capi-commands command streams, named one by one: a seed that
         # goes missing fails the step rather than silently shrinking the
         # corpus.
         run: |
           seeds=(
-            fixtures/w3/tkt/gb_char.bin
-            fixtures/w3/tkt/gbk_char.bin
-            fixtures/w3/tkt/opengram.bin
-            fixtures/w3/tkt/merged.bin
-            fixtures/w3/tkt/art.bin
+            fixtures/w3/kct/gb_char.bin
+            fixtures/w3/kct/gbk_char.bin
+            fixtures/w3/kct/opengram.bin
+            fixtures/w3/kct/merged.bin
+            fixtures/w3/kct/art.bin
           )
           capi_seeds=(
             fuzz/seeds/capi-commands/choose
@@ -171,7 +171,7 @@ jobs:
           # so its seed is a payload: art.bin, which holds four items, without
           # its 8-byte header.
           mkdir -p fuzz/corpus/phrase-library
-          tail -c +9 fixtures/w3/tkt/art.bin > fuzz/corpus/phrase-library/art.payload
+          tail -c +9 fixtures/w3/kct/art.bin > fuzz/corpus/phrase-library/art.payload
           # capi-commands: one stream per operation that no mutation of an
           # empty corpus reaches soon (fuzz/fuzz_targets/capi_commands.rs
           # gives the byte layout). just fuzz also copies fuzz/seeds/<target>;
@@ -181,7 +181,7 @@ jobs:
           # table-conf: libc scans the header, so no coverage feedback leads a
           # mutation to a valid one. A real file starts the target past it.
           mkdir -p fuzz/corpus/table-conf
-          cp fixtures/w3/tkt/table.conf fuzz/corpus/table-conf/
+          cp fixtures/w3/kct/table.conf fuzz/corpus/table-conf/
       - name: Soak each target
         # Every target runs even if an earlier one fails; the accumulated
         # status is the step's exit code. just fuzz builds the target with

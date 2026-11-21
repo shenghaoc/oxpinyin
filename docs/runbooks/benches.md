@@ -27,10 +27,11 @@ macOS and Windows keep the native `just measure` paths.
 The oracle is never built or run on GitHub Actions; the recipes and the preparation refuse to run there.
 
 Prepare the host as the [setup runbook](setup.md) states: `just doctor` checks Valgrind and cargo-c,
-and `just provision` installs the vcpkg overlay tkrzw.
+and `just provision` checks Kyoto Cabinet's development package.
+Linux measurements run on the local cell, Kyoto Cabinet from the distribution
+([Linux setup](setup.md#linux)): it is reproducible, which the exact-count controls need.
 The pin's build needs the host packages that [`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json)
-lists as `common`, and `bdb` or `kc` for those cells. The tkrzw cell takes libtkrzw from the overlay, not from
-the distribution. Then prepare the inputs:
+lists as `common` and `kc`. kc is the one Linux measurement cell. Then prepare the inputs:
 
 ```sh
 OXPINYIN_CACHE="$(just cache-root)" uv run --managed-python python -X utf8 -m tools.dev.measure.prepare callgrind
@@ -43,7 +44,7 @@ These rules apply:
 - Builds match the host operating system and architecture.
   The [procedure-specific rules](verification.md#procedure-specific-rules) state the reference platform, the arm64 capture and the emulation ban.
 - Every prepared input lives under the `measure` entry of the cache root (`just cache-root`):
-  the pin prefixes in `pinyin-oracle/<cell>`, the subject stages in `oxpinyin-tkrzw` and `oxpinyin-nodebug`,
+  the pin prefixes in `pinyin-oracle/<cell>`, the subject stages in `oxpinyin-kc` and `oxpinyin-nodebug`,
   their Cargo target directories in `target`, and the `bisect` driver in `tmp`.
 - Recipe outputs default to `results/<recipe>/` under that entry. Explicit
   output overrides stay supported.
@@ -54,22 +55,21 @@ These rules apply:
   Preparation reuses a prefix only when its `versions.txt` equals this host's inventory, so that the pin
   and the subject share one base, and rebuilds changed or damaged inputs.
   The pin is linked as its recipe links it, with no RPATH or RUNPATH. `build.py` replaces `LD_LIBRARY_PATH`
-  with the prefix's own library directories while it generates the data, so for the tkrzw cell's data build
-  only, the prefix's `lib` directory holds a symbolic link to the overlay's `libtkrzw.so.1`.
-  Preparation removes the link afterwards, also after a failed build.
+  with the prefix's own library directories while it generates the data; the distribution's
+  libkyotocabinet is on the default loader path, so the prefix holds no library of its own.
 - `--cells` is valid only with `oracle` preparation.
 
 Preparation lives in `tools/dev/measure/prepare.py`.
-`callgrind` selects the profiled and shipping Tkrzw arms, and
-`oracle --cells tkrzw` selects pin data only. Model data stays local.
-The pin, the subject and the recipes use the vcpkg overlay libtkrzw, and both arms load it
-([sound tkrzw library](verification.md#9-sound-tkrzw-library)).
+`callgrind` selects the profiled and shipping Kyoto Cabinet arms, and
+`oracle --cells kc` selects pin data only. Model data stays local.
+The pin, the subject and the recipes use the distribution's libkyotocabinet; no arm loads a libtkrzw,
+and the [runtime check](verification.md#9-sound-tkrzw-library) still refuses one that does.
 Additional base or PR revisions are built on the same host as well,
 with separate Cargo target directories. The existing recipe options are set to
 the resulting paths.
 
 Pin-versus-subject numbers are comparable only within one session on one host.
-The host's compiler, C library and libtkrzw build both arms, and the recipes record them in `environment.txt`.
+The host's compiler, C library and libkyotocabinet build both arms, and the recipes record them in `environment.txt`.
 
 ## Shipping measurement inputs
 
@@ -105,17 +105,17 @@ plain shipping arm for wall-clock timing.
 To check preparation natively, without a pin run or profile collection:
 
 ```bash
-env RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" CARGO_TARGET_DIR=target/tkrzw \
-  cargo cinstall -v --locked --release -p oxpinyin-capi \
-  --destdir=target/callgrind-tkrzw/profile --prefix=/usr
-env CARGO_TARGET_DIR=target/tkrzw \
-  cargo cinstall -v --locked --release -p oxpinyin-capi \
-  --destdir=target/callgrind-tkrzw/control --prefix=/usr
-just measure-callgrind-control target/callgrind-tkrzw/profile target/callgrind-tkrzw/control
+env RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" CARGO_TARGET_DIR=target/kc \
+  cargo cinstall -v --locked --release -p oxpinyin-capi --no-default-features --features kyotocabinet \
+  --destdir=target/callgrind-kc/profile --prefix=/usr
+env CARGO_TARGET_DIR=target/kc \
+  cargo cinstall -v --locked --release -p oxpinyin-capi --no-default-features --features kyotocabinet \
+  --destdir=target/callgrind-kc/control --prefix=/usr
+just measure-callgrind-control target/callgrind-kc/profile target/callgrind-kc/control
 ```
 
 These commands run from a shell that has no Cargo profile or RUSTFLAGS overrides already exported.
-For BDB, `bdb` replaces `tkrzw` in the feature and output paths. Both
+For BDB, `bdb` replaces `kyotocabinet` in the feature and `kc` in the output paths. Both
 comparisons must pass. These builds should be case (a), identical `.text`.
 This check needs no runtime data and no oracle build. The verbose build
 output records the order of the compiler flags. `readelf --debug-dump=info`
@@ -159,11 +159,11 @@ and the sound-tkrzw runtime. It runs the harness build and
 all collections serially; no other work overlaps them.
 
 ```bash
-just measure-callgrind-differential --workload sentence --cell tkrzw \
+just measure-callgrind-differential --workload sentence --cell kc \
   --main "$MAIN_PROFILE_SO" --pr "$PR_PROFILE_SO" --pin "$PIN_SO" \
   --main-shipping "$MAIN_SHIPPING_SO" --pr-shipping "$PR_SHIPPING_SO" \
   --system-dir "$DATA" --out "$WORK/sentence"
-just measure-callgrind-differential --workload typing-sequence --cell tkrzw \
+just measure-callgrind-differential --workload typing-sequence --cell kc \
   --main "$MAIN_PROFILE_SO" --pr "$PR_PROFILE_SO" --pin "$PIN_SO" \
   --main-shipping "$MAIN_SHIPPING_SO" --pr-shipping "$PR_SHIPPING_SO" \
   --system-dir "$DATA" --out "$WORK/typing-sequence"
@@ -569,10 +569,13 @@ The 180-second budget excludes preparation. Local JSON reports remain after the 
 `just measure compare` runs on Linux x86_64 and arm64 with the existing Linux
 tooling: the dlopen `bisect --perf` driver, its `PERF_HW` counter, the
 Callgrind anchor and the `smaps_rollup` reader. It adds no second measurement
-system. tkrzw is the vcpkg overlay install of [Linux setup](setup.md#linux)
-for every arm; `tools/tkrzw/runtime.py` certifies each launch against it.
+system. Every arm is the Linux local cell, Kyoto Cabinet from the distribution
+([Linux setup](setup.md#linux)); `tools/tkrzw/runtime.py` still checks each launch.
 Each distinct SHA builds once through the packaging install procedure: locked
-release, Cargo's default backend and no added flags.
+release, `--no-default-features --features kyotocabinet` and no other flags.
+Without `--data`, the arms read the Kyoto Cabinet pin data that `prepare oracle` wrote
+under the cache root (`host_cell` in `tools/dev/cell.py`); Debian's `libpinyin-data`
+package, the macOS and Windows default, is tkrzw data.
 This is the plain shipping library, the arm that Linux times. A′ is staged as
 on macOS. Each sample is one fresh process, pinned to the first allowed CPU,
 with the staged library's directory first on the loader path.

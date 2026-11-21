@@ -17,18 +17,15 @@ def require_local_measurement(env):
 def run(operation, argv=None, env=None, *, pin_comparison=False):
     """Run the operation under the shared cancellation and failure handlers.
 
-    A Linux pin comparison runs with the vcpkg overlay tkrzw first, so that the pin and the
-    subject load one libtkrzw and are certified against it.
+    A pin comparison is local work (require_local_measurement). On Linux it runs on the local
+    cell, Kyoto Cabinet from the distribution; tools/tkrzw/runtime.py still certifies every launch.
     """
     environment = dict(os.environ if env is None else env)
 
     def execute():
-        arguments = environment
         if pin_comparison:
-            from .. import vcpkg
             require_local_measurement(environment)
-            arguments = vcpkg.environment(environment)
-        return operation(list(sys.argv[1:] if argv is None else argv), arguments)
+        return operation(list(sys.argv[1:] if argv is None else argv), environment)
 
     status = runners.guarded(execute)
     sys.stdout.flush()
@@ -371,9 +368,8 @@ def native(argv, env):
             bench.fail('Linux profiles with --template Callgrind or Massif and no --instrument', 2)
         if args.cycles < 2:
             bench.fail('Linux measures the steady cycles after the first; --cycles must be at least 2', 2)
-        from .. import vcpkg
-        # The overlay tkrzw for every arm; tools/tkrzw/runtime.py certifies each launch against it.
-        run_env = vcpkg.environment(env)
+        # Every arm is the local cell's build; tools/tkrzw/runtime.py still certifies each launch.
+        run_env = dict(env)
     elif args.template in VALGRIND_TEMPLATES:
         bench.fail('Callgrind and Massif profiles run on Linux', 2)
     if not windows and not linux and (sys.platform != 'darwin' or platform.machine() != 'arm64'):
@@ -400,6 +396,20 @@ def native(argv, env):
         return done.stdout.decode().strip()
     revisions = {label: resolve(rev) for label, rev in
                  ({'A': args.base, 'B': args.head} if args.mode == 'compare' else {'A': args.revision}).items()}
+    if args.data:
+        data = Path(args.data)
+    elif linux:
+        # The Linux arms are the host cell's build, so they read system data in that cell's
+        # format: the pin data that `prepare oracle` wrote (docs/runbooks/benches.md). Debian's
+        # libpinyin-data package, the macOS and Windows default, is tkrzw data. Checked before
+        # any revision or driver build.
+        from ..cell import host_cell
+        data = prepare.pin_prefix(env, host_cell()) / prepare.DATA_SUBDIRECTORY
+        if not (data / 'table.conf').is_file():
+            raise ValueError(f'no prepared {host_cell()} pin data at {data}; run '
+                             '`python -m tools.dev.measure.prepare oracle` first')
+    else:
+        data = contract_data.fetch(contract_data.default_cache(env))
     runs = cachedir.root(env) / 'measure/runs'
     runs.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix=args.mode + '-', dir=runs))
@@ -425,7 +435,6 @@ def native(argv, env):
             # The control's second label: A's bytes again, staged as B is.
             staged[CONTROL] = stage_arm(artifacts / PREFIXES[CONTROL], arms['A'], driver, digest, windows=windows)
         arms = staged
-        data = args.data or contract_data.fetch(contract_data.default_cache(env))
         if linux:
             # The staged prefix name is also the worker's PERF_BACKEND label.
             for label, arm in arms.items():

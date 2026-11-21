@@ -184,35 +184,33 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(status, 126)
         self.assertIn("cargo: [Errno 13] Permission denied: 'cargo'\n", err)
 
-    def test_tkrzw_checks_every_binary_and_uses_setarch_on_linux(self):
-        tools = FakeTools(host_library='/fixture/host/libtkrzw.so.1')
-        with mock.patch.object(test_runner.platform, 'system', return_value='Linux'), \
-                mock.patch.object(test_runner.platform, 'machine', return_value='x86_64'):
-            status, out, err = run('tkrzw', tools=tools,
-                                   environment=self.environment(
-                                       OXPINYIN_TKRZW_LIBRARY='/fixture/verified/libtkrzw.so.1'))
+    def test_tkrzw_checks_every_binary_against_the_homebrew_library(self):
+        # The tkrzw gate is a macOS gate: Linux runs no tkrzw code.
+        tools = FakeTools(host_library='/fixture/host/libtkrzw.dylib')
+        with mock.patch.object(test_runner.platform, 'system', return_value='Darwin'), \
+                mock.patch.object(test_runner.platform, 'machine', return_value='arm64'):
+            status, out, err = run('tkrzw', tools=tools, environment=self.environment())
         self.assertEqual((status, err), (0, ''), out)
         build = next(call[0] for call in tools.calls if '--no-run' in call[0])
-        self.assertEqual(build[:6], ['setarch', 'x86_64', '-R', 'cargo', f'+{NIGHTLY}', 'test'])
+        self.assertEqual(build[:3], ['cargo', f'+{NIGHTLY}', 'test'])
         test = next(call[0] for call in tools.calls
-                    if call[0][3:7] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run']
+                    if call[0][:4] == ['cargo', f'+{NIGHTLY}', 'nextest', 'run']
                     and 'oxpinyin' in call[0])
-        self.assertEqual(test[7:], [*build[6:-2], '-E', 'test(/^store::/)'])
+        self.assertEqual(test[4:], [*build[3:-2], '-E', 'test(/^store::/)'])
         self.assertEqual(tools.checks, [(Path('/fixture/test-binary'), 'subject')])
         self.assertIn('libtkrzw: 1 test binaries resolve it to ' + str(Path('/fixture/libtkrzw.so.1')), out)
         lifetime, environment = next(call for call in tools.calls if 'test(outlives_context)' in call[0])
-        self.assertEqual(lifetime[:7], ['setarch', 'x86_64', '-R', 'cargo', f'+{NIGHTLY}',
-                                        'nextest', 'run'])
+        self.assertEqual(lifetime[:4], ['cargo', f'+{NIGHTLY}', 'nextest', 'run'])
         self.assertIn('oxpinyin-capi', lifetime)
         self.assertIn('oxzhuyin-capi', lifetime)
         self.assertEqual(lifetime[-3:], ['--lib', '-E', 'test(outlives_context)'])
         self.assertIn('-Zsanitizer=address', environment['RUSTFLAGS'])
+        self.assertEqual(environment['OXPINYIN_TKRZW_LIBRARY'], '/fixture/host/libtkrzw.dylib')
 
     def test_every_gate_runs_its_tests_under_nextest(self):
         cases = (('bdb', 'address', 'Darwin', {'SYSTEM_DEPS_BDB_INCLUDE': '/include'}),
                  ('kc', 'thread', 'Darwin', {}),
-                 ('tkrzw', 'address', 'Linux',
-                  {'OXPINYIN_TKRZW_LIBRARY': '/fixture/verified/libtkrzw.so.1'}))
+                 ('tkrzw', 'address', 'Darwin', {}))
         for backend, sanitizer, host, values in cases:
             with self.subTest(backend=backend):
                 tools = FakeTools(host_library='/fixture/host/libtkrzw.so.1')
@@ -229,16 +227,39 @@ class BackendTests(unittest.TestCase):
                 self.assertTrue(any(command[2:4] == ['nextest', 'run'] for command in cargo))
 
     def test_tkrzw_reports_a_missing_verified_runtime(self):
-        for host, guidance in (('Darwin', 'Install tkrzw with Homebrew.'),
-                               ('Linux', 'Install the overlay port and set VCPKG_ROOT')):
-            with self.subTest(host=host):
-                tools = FakeTools()
-                with mock.patch.object(test_runner.platform, 'system', return_value=host):
-                    status, _, err = run('tkrzw', host=host, tools=tools,
-                                         environment=self.environment())
-                self.assertEqual(status, 1)
-                self.assertIn('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', err)
-                self.assertIn(guidance, err)
+        tools = FakeTools()
+        with mock.patch.object(test_runner.platform, 'system', return_value='Darwin'):
+            status, _, err = run('tkrzw', host='Darwin', tools=tools, environment=self.environment())
+        self.assertEqual(status, 1)
+        self.assertIn('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', err)
+        self.assertIn('Install tkrzw with Homebrew.', err)
+
+    def test_no_backend_selects_the_hosts_cell(self):
+        from tools.dev import cell
+        for host, selected in (('Linux', 'kc'), ('Darwin', 'tkrzw')):
+            with self.subTest(host=host), mock.patch.object(cell.platform, 'system', return_value=host):
+                status, out, err = run('--check', '', host=host)
+                self.assertEqual((status, err), (0, ''), out)
+                self.assertIn(f'sanitize: check backend={selected} ', out)
+                # A named backend stays as named.
+                status, out, _ = run('--check', 'bdb', host=host)
+                self.assertEqual(status, 0)
+                self.assertIn('sanitize: check backend=bdb ', out)
+
+    def test_tkrzw_is_no_linux_gate(self):
+        # Linux runs no tkrzw code (tools/dev/cell.py): the gate is refused, and `all` means the Linux cell.
+        tools = FakeTools(host_library='/fixture/host/libtkrzw.so.1')
+        with mock.patch.object(test_runner.platform, 'system', return_value='Linux'), \
+                mock.patch.object(test_runner.platform, 'machine', return_value='x86_64'):
+            status, out, err = run('tkrzw', host='Linux', tools=tools,
+                                   environment=self.environment(OXPINYIN_TKRZW_LIBRARY='/fixture/libtkrzw.so.1'))
+            self.assertEqual(status, 1)
+            self.assertIn('sanitize: tkrzw is no Linux cell: Linux uses Kyoto Cabinet', err)
+            self.assertEqual(tools.calls, [])
+            status, out, err = run('all', host='Linux', tools=tools, environment=self.environment())
+        self.assertEqual((status, err), (0, ''), out)
+        self.assertEqual([line for line in out.splitlines() if line.startswith('=== sanitize ')],
+                         ['=== sanitize kc ==='])
 
     def test_macos_tkrzw_ignores_peer_link_search_paths(self):
         tools = FakeTools(host_library='/fixture/host/libtkrzw.dylib')

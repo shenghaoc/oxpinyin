@@ -38,7 +38,7 @@ if __name__ == '__main__' and __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools import cachedir
-from tools.dev import cell, model, vcpkg
+from tools.dev import cell, model
 from tools.dev.process import ROOT, capture, fail, run, text
 from tools.dev.runners import Finished, guarded
 from tools.oracle.build import fields, recipe_hash
@@ -795,7 +795,8 @@ def check_reproducible(argv, *, root=ROOT):
     from tools.dev.measure.recipes import require_local_measurement
     require_local_measurement(os.environ)
     parser = argparse.ArgumentParser(prog='check-reproducible')
-    parser.add_argument('--cells', nargs='+', choices=cell.CELLS, default=list(cell.CELLS))
+    # The one Linux cell (tools/dev/cell.py): the check runs on a Linux host.
+    parser.add_argument('--cells', nargs='+', choices=(cell.LOCAL_CELL,), default=[cell.LOCAL_CELL])
     parser.add_argument('--work-dir', type=Path, required=True)
     parser.add_argument('--jobs', default='2')
     args = parser.parse_args(argv)
@@ -809,7 +810,7 @@ def check_reproducible(argv, *, root=ROOT):
         for directory in directories:
             if directory.exists():
                 fail(f'reproducibility work directory already exists: {directory}')
-        env = vcpkg.pin_build_environment(os.environ, backend)
+        env = dict(os.environ)
         try:
             for directory in directories:
                 run([sys.executable, Path(root) / 'tools/oracle/build.py', '--libs-only', '--enable-libzhuyin',

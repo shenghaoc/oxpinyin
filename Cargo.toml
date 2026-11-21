@@ -93,6 +93,9 @@ version = "0"
 # (maintainer decision 2026-10-30 UTC: maintained upstream), which is what
 # "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
+# Linux runs no tkrzw code (decision 2026-11-21): every Linux build, CI included,
+# selects kyotocabinet (LOCAL_CELL in tools/dev/cell.py;
+# docs/runbooks/setup.md#linux).
 default = ["tkrzw"]
 # Nonshipping tool calls; never enabled by the C libraries.
 tools = []

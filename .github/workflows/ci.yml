@@ -51,31 +51,36 @@ concurrency:
 
 # Jobs after the gate:
 #   rust — rustfmt, cargo-deny, Clippy, the fuzz-target compile, the Lizard
-#          complexity limit and the workspace tests on Linux under the default
-#          tkrzw backend; the macOS and Windows runs are in verify-nightly.yml
+#          complexity limit and the workspace tests on Linux under Kyoto
+#          Cabinet, the one Linux cell; the default tkrzw backend runs on
+#          macOS and Windows in verify-nightly.yml
 #   harness — the ruff F check and the Python harness tests of tools/, when
 #             tools/ or a file its tests read changed
 #   shipping-sizes — the stripped shipping-library sizes
-#   store — Clippy, rustdoc and the workspace tests under bdb, then under
-#           kyotocabinet; then the bdb, kyotocabinet and tkrzw store suites
-#           under the sanitizers
+#   store — Clippy, rustdoc and the workspace tests under bdb; then the bdb
+#           and kyotocabinet store suites under the sanitizers
 # Fuzz execution stays nightly.
 #
 # The store backends. Kyoto Cabinet, tkrzw and Berkeley DB are equal
 # implementations behind the store's trait surface. Exactly one is compiled per
 # build: two `compile_error!` guards in `src/store/mod.rs` enforce it. So
 # cross-peer equivalence is proven by running the same test suite through
-# separate builds, one per peer. tkrzw is the workspace default, so `rust`
-# runs its workspace suite. Each sanitizer run goes through the sanitizer
-# service in tools/dev/test_runner.py, which `just sanitize` also uses, on the
-# date-pinned nightly that fuzz/rust-toolchain.toml names: tkrzw and Berkeley
-# DB under ASan, Kyoto Cabinet under ASan + LeakSanitizer. On a BerkeleyDB
-# distro the system bigram.db is BDB and every session opens it through that
-# FFI, so the instrumentation is load-bearing, not precautionary.
+# separate builds, one per peer. tkrzw is the workspace default, but Ubuntu's
+# libtkrzw is defective at run time (docs/findings/tkrzw-distro-compat.md), so
+# Linux runs no tkrzw code: every Linux job uses the one Linux cell, Kyoto
+# Cabinet from Ubuntu's packages (LOCAL_CELL in tools/dev/cell.py;
+# docs/runbooks/verification.md, section 10), selected with the backend flag.
+# The tkrzw suite runs on macOS and Windows in verify-nightly.yml. Each
+# sanitizer run goes through the sanitizer service in tools/dev/test_runner.py,
+# which `just sanitize` also uses, on the date-pinned nightly that
+# fuzz/rust-toolchain.toml names: Berkeley DB under ASan, Kyoto Cabinet under
+# ASan + LeakSanitizer. On a BerkeleyDB distro the system bigram.db is BDB and
+# every session opens it through that FFI, so the instrumentation is
+# load-bearing, not precautionary.
 #
-# libtkrzw comes from the vcpkg overlay through .github/actions/tkrzw, with a
-# binary cache and PKG_CONFIG_PATH discovery. libdb and libkyotocabinet come
-# from Ubuntu's apt.
+# Every backend package comes from Ubuntu's apt: libkyotocabinet-dev, and
+# libdb-dev for the store job. bindgen (the bdb feature) loads the runner
+# image's libclang.
 #
 # The pin-built oracle and the model20 archive are deliberately NOT CI
 # concerns: provisioning them (just fetch-model, tools/oracle/build.py) is a
@@ -122,14 +127,19 @@ jobs:
           GATE_FLAGS: ${{ toJSON(steps.gate.outputs) }}
         run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree evidence
 
-  # The default-backend Rust lane: every check that reads the workspace under
-  # tkrzw. On a reused tree a push to main still compiles here to refresh the
+  # The Linux Rust lane: every check that reads the workspace, under the Linux
+  # cell. On a reused tree a push to main still compiles here to refresh the
   # main Rust cache.
   rust:
     needs: changes
     if: needs.changes.outputs.rust == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: *ubuntu
     timeout-minutes: 120
+    env:
+      # The Linux cell (LOCAL_CELL in tools/dev/cell.py) for the cell-based
+      # gates (just cpp-smoke, just abi); the Cargo steps below select the same
+      # backend with their flags.
+      PINYIN_ORACLE_DBM: kc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -139,21 +149,21 @@ jobs:
           rust-toolchain: 'true'
           rust-cache: 'true'
           rust-cache-key: rust-job
-          # Every run: the tkrzw action and the cache refresh run on reuse too.
+          # Every run: the cache refresh runs on reuse too.
           uv: 'true'
           just: ${{ needs.changes.outputs.reuse != 'true' }}
           cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
           cargo-deny: ${{ needs.changes.outputs.reuse != 'true' }}
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
-        # The tkrzw action installs the overlay port with vcpkg and
-        # points pkg-config at it. The tkrzw cxx bridge compiles with g++.
-        # The runner image ships gcc, g++, make and pkg-config, so apt adds
-        # only GLib. Only the bdb feature runs bindgen, which needs libclang; this job
-        # builds the default tkrzw backend, so it installs no libclang.
+        # libkyotocabinet-dev: the library the kyotocabinet backend links and
+        # the headers its cxx bridge compiles against with g++. The runner
+        # image ships gcc, g++, make and pkg-config, so apt adds only GLib and
+        # Kyoto Cabinet. Only the bdb feature runs bindgen; this lane needs
+        # no libclang.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libglib2.0-dev
+          sudo apt-get install -y --no-install-recommends libglib2.0-dev libkyotocabinet-dev
       - run: cargo fmt --all --check
         if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
@@ -181,36 +191,36 @@ jobs:
       # pin-built libpinyin, which CI does not have.
       - run: uv run --managed-python python -X utf8 -m tools.dev.packaging check-pc-version
         if: needs.changes.outputs.reuse != 'true'
-      # Before Clippy and the cache refresh, which build against it.
-      - name: Install tkrzw (vcpkg overlay and binary cache)
-        uses: ./.github/actions/tkrzw
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      # `--features kyotocabinet` at `--workspace` scope enables the peer on
+      # every member that declares it (the store job's comment gives the mechanism).
+      - run: cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings
         if: needs.changes.outputs.reuse != 'true'
       # Run on every selected rust job, including the main cache refresh.
       # The directory selects the nightly in fuzz/rust-toolchain.toml.
-      # No AFL++, corpus, sanitizer run or model data is needed.
+      # No AFL++, corpus, sanitizer run or model data is needed. The fuzz
+      # crate forwards the backend features; the soak selects the same one.
       - name: Install the fuzz toolchain
         working-directory: fuzz
         run: rustup toolchain install
       - name: Compile all fuzz targets
         working-directory: fuzz
-        run: cargo check --locked --bins
+        run: cargo check --locked --bins --no-default-features --features kyotocabinet
       # Complexity limit: the recipe states it; pyproject.toml and uv.lock
       # name the Lizard release.
       - name: Lizard complexity limit
         if: needs.changes.outputs.reuse != 'true'
         run: just complexity
-      # Default-backend rustdoc, warnings denied; the peers' rustdoc runs in
-      # the `store` job.
-      - name: Rustdoc for the default backend
+      # Kyoto Cabinet rustdoc, warnings denied; Berkeley DB's runs in the
+      # `store` job and tkrzw's on the nightly macOS and Windows jobs.
+      - name: Rustdoc (kyotocabinet)
         if: needs.changes.outputs.reuse != 'true'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps --workspace
-      - name: Provide the pinned system data
-        if: needs.changes.outputs.reuse != 'true'
-        uses: ./.github/actions/contract-data
-      - run: cargo nextest run --locked --profile ci --status-level skip --workspace
+        run: cargo doc --locked --no-deps --workspace --no-default-features --features kyotocabinet
+      # The full-data contract tests (the `pin_data` modules, which read the
+      # pinned libpinyin-data package) are tkrzw-only, so this lane fetches no
+      # contract data; the nightly macOS job runs them.
+      - run: cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features kyotocabinet
         if: needs.changes.outputs.reuse != 'true'
       - name: Build Cargo packages from their archives
         if: needs.changes.outputs.reuse != 'true'
@@ -246,8 +256,10 @@ jobs:
           done <<< "$packages"
 
           cd "$scratch"
+          # Every published package declares the kyotocabinet feature, the Linux cell.
           while read -r name version; do
             cargo "+$toolchain" --config "$scratch/archives.toml" build --offline \
+              --no-default-features --features kyotocabinet \
               --target-dir "$target" --manifest-path "$name-$version/Cargo.toml"
           done <<< "$packages"
       - name: C++ pinyin.h smoke gate
@@ -315,7 +327,7 @@ jobs:
 
   # Stripped shipping-library sizes (constitution section 2). Builds both
   # facades with the release recipe (`just packaging install`) on the
-  # reference cell, strips them, checks their exports and writes the
+  # Linux cell, strips them, checks their exports and writes the
   # base / PR table to the job summary. A failed build, install or export
   # check fails the job; a size increase does not.
   #
@@ -357,9 +369,9 @@ jobs:
           just: 'true'
       - run: rustup show active-toolchain
       # cargo-c is the distribution's own package, as in release-packages.yml.
-      # The backend packages follow the reference cell (tools/dev/cell.py);
-      # tkrzw, the reference cell, needs none: it comes from the overlay below.
-      # Only the bdb feature runs bindgen, so the build needs no libclang.
+      # The backend packages are the Linux cell's (BACKEND_PACKAGES in
+      # tools/dev/ship_sizes.py): libkyotocabinet-dev. Only the bdb feature
+      # runs bindgen, so the build needs no libclang.
       - name: Install build dependencies (apt)
         run: |
           set -euo pipefail
@@ -367,9 +379,7 @@ jobs:
           read -r -a backend_pkgs <<< "$backend"
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libglib2.0-dev cargo-c "${backend_pkgs[@]}"
-      # Before the key: the toolchain fingerprint reads the installed tkrzw.
-      - name: Install tkrzw (vcpkg overlay and binary cache)
-        uses: ./.github/actions/tkrzw
+      # After apt: the toolchain fingerprint reads the backend packages' versions.
       - name: Compute the base recipe key
         id: key
         run: |
@@ -402,13 +412,14 @@ jobs:
           path: .ship-sizes
           key: ${{ steps.key.outputs.key }}
 
-  # The peer backends and the store sanitizers, in one job under the store
-  # gate. First each peer, Berkeley DB then Kyoto Cabinet: Clippy over all
-  # workspace targets, rustdoc and the workspace tests under exactly that
-  # peer. Then the store suite of bdb, Kyoto Cabinet and tkrzw under the
-  # sanitizers. tkrzw is the workspace default, so `rust` runs its workspace
-  # tests; its sanitizer run is here so that it runs under the store gate
-  # alone, and no step of `rust` depends on a path flag.
+  # The Berkeley DB peer and the store sanitizers, in one job under the
+  # store gate. First Berkeley DB: Clippy over all workspace targets, rustdoc
+  # and the workspace tests under exactly that peer. Then the store suite of
+  # bdb and Kyoto Cabinet under the sanitizers. `rust` runs the Kyoto Cabinet
+  # workspace tests on every change that selects this job, so they are not
+  # repeated here. No Linux job runs tkrzw code
+  # (docs/runbooks/verification.md, section 10), so tkrzw has no sanitizer
+  # run; the nightly macOS and Windows jobs run its tests uninstrumented.
   #
   # The backend is exercised through the whole workspace: a backend that
   # "passes" only in the store's own unit tests and never reaches the decode
@@ -434,7 +445,7 @@ jobs:
   # nextest runs the suite with the `ci` profile of .config/nextest.toml, so
   # the store-backend test group applies.
   #
-  # The two stable peer builds share the job's target directory and its Rust
+  # The stable peer build shares the job's target directory and its Rust
   # cache. The sanitizer builds use the nightly from fuzz/rust-toolchain.toml
   # and their own target directory under the runner's temporary directory, so
   # no sanitizer-flavoured artifact enters the cache.
@@ -456,7 +467,7 @@ jobs:
           # The tests and the sanitizer service run nextest; a reuse run skips both.
           cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
       - name: Install build dependencies (apt)
-        # Both peers' packages, once. libdb-dev resolves to libdb5.3-dev, the
+        # Both backends' packages, once. libdb-dev resolves to libdb5.3-dev, the
         # system libdb the bdb backend links and whose db.h bindgen reads.
         # bindgen loads libclang at run time (its `runtime` feature): the
         # runner image's Clang packages ship /usr/lib/llvm-*/lib/libclang-*.so.1
@@ -483,23 +494,6 @@ jobs:
           set -euo pipefail
           start=$EPOCHSECONDS
           cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features bdb
-          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
-
-      - name: Clippy (kyotocabinet)
-        if: needs.changes.outputs.reuse != 'true'
-        run: cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings
-      - name: Rustdoc (kyotocabinet)
-        if: needs.changes.outputs.reuse != 'true'
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --no-deps --workspace --no-default-features --features kyotocabinet
-      - name: Test the workspace (kyotocabinet)
-        if: needs.changes.outputs.reuse != 'true'
-        id: test-kyotocabinet
-        run: |
-          set -euo pipefail
-          start=$EPOCHSECONDS
-          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features kyotocabinet
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       # The sanitizer runs go through the sanitizer service in
@@ -538,41 +532,13 @@ jobs:
           start=$EPOCHSECONDS
           uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
-      # After the peer builds: the action puts the overlay install first on
-      # PKG_CONFIG_PATH and LD_LIBRARY_PATH for every later step. The sanitizer
-      # service certifies each binary against the install that
-      # OXPINYIN_TKRZW_PREFIX names.
-      - name: Install tkrzw (vcpkg overlay and binary cache)
-        if: needs.changes.outputs.reuse != 'true'
-        uses: ./.github/actions/tkrzw
-      # The tkrzw backend crosses into C++ through a cxx bridge: borrowed byte
-      # slices become std::string_view for one call, iterator reads land in
-      # std::string out-parameters, and a RecordProcessor subclass in the
-      # adapter (src/store/tkrzw/adapter.cc) walks keys. The live hazards are a
-      # borrow outliving its call and a C++ exception crossing the noexcept
-      # shim, so the feature's own test surface runs under ASan. The store's
-      # build script passes -fsanitize=address -fno-omit-frame-pointer to the
-      # adapter and cxx's generated glue when CARGO_CFG_SANITIZE names address,
-      # so both sides of the bridge are instrumented.
-      - name: Sanitizers (tkrzw)
-        if: needs.changes.outputs.reuse != 'true'
-        id: sanitize-tkrzw
-        env:
-          CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
-        run: |
-          set -euo pipefail
-          start=$EPOCHSECONDS
-          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' tkrzw
-          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
       - name: Report
         if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
         env:
           JOB_STATUS: ${{ job.status }}
           TEST_BDB: ${{ steps.test-bdb.outcome }} ${{ steps.test-bdb.outputs.elapsed }}
-          TEST_KYOTOCABINET: ${{ steps.test-kyotocabinet.outcome }} ${{ steps.test-kyotocabinet.outputs.elapsed }}
           SANITIZE_BDB: ${{ steps.sanitize-bdb.outcome }} ${{ steps.sanitize-bdb.outputs.elapsed }}
           SANITIZE_KYOTOCABINET: ${{ steps.sanitize-kyotocabinet.outcome }} ${{ steps.sanitize-kyotocabinet.outputs.elapsed }}
-          SANITIZE_TKRZW: ${{ steps.sanitize-tkrzw.outcome }} ${{ steps.sanitize-tkrzw.outputs.elapsed }}
         run: |
           row() {
             read -r outcome elapsed <<< "$2"
@@ -586,10 +552,8 @@ jobs:
             echo "| Phase | Outcome | Wall clock |"
             echo "|---|---|---:|"
             row 'bdb workspace tests' "$TEST_BDB"
-            row 'kyotocabinet workspace tests' "$TEST_KYOTOCABINET"
             row 'bdb sanitizers (address)' "$SANITIZE_BDB"
             row 'kyotocabinet sanitizers (address, leak)' "$SANITIZE_KYOTOCABINET"
-            row 'tkrzw sanitizers (address)' "$SANITIZE_TKRZW"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'

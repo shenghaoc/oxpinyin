@@ -10,6 +10,8 @@ stated once in `tools_rule`, decides which installation `run` accepts, and
 against the LLVM of the fuzz nightly. `run` builds one target with
 AddressSanitizer and the plugins, runs afl-fuzz in a new run directory and
 fails on any finding (docs/testing/upstream-test-coverage.md#fuzz-harness).
+Each target builds the host's cell (`backend_flags`): Kyoto Cabinet on Linux,
+the one host that fuzzes (tools/dev/cell.py).
 """
 
 if __name__ == '__main__':
@@ -306,6 +308,12 @@ def setup(environ):
     return 0
 
 
+def backend_flags():
+    """The Cargo feature flags of the host's cell (tools/dev/cell.py)."""
+    from .cell import CELL_TO_BACKEND, feature_flags, host_cell
+    return feature_flags(CELL_TO_BACKEND[host_cell()])
+
+
 def _tee(command, environ, log):
     """Run COMMAND with its output on standard output and in LOG; return its exit status.
 
@@ -333,6 +341,7 @@ def run(target, args, environ):
     require_linux()
     found = tools_rule(environ)
     refuse_options(args)
+    features = backend_flags()
     version = read_tool_versions()['CARGO_AFL_VERSION']
     afl_version = found.split('AFL++ version ', 1)[1].split(' ', 1)[0]
     rustc = rustc_facts(environ)
@@ -353,7 +362,7 @@ def run(target, args, environ):
                # the crates and link its ASan runtime; cargo-afl appends its own flags.
                # --target keeps build scripts and proc macros out of the sanitizer.
                RUSTFLAGS=' '.join(filter(None, ('-Zsanitizer=address', environ.get('RUSTFLAGS')))))
-    build = ['cargo', 'afl', 'build', '--release', '--locked', '--target', host]
+    build = ['cargo', 'afl', 'build', '--release', '--locked', '--target', host, *features]
     _call([*build, '--target-dir', str(target_dir), '--bin', target], dict(env, AFLRS_NO_CMPLOG='1'),
           f'{target}: cargo afl build')
     binary = target_dir / host / 'release' / target

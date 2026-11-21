@@ -70,17 +70,17 @@ def floor_tool(directory, name, root, answer=None):
 
 
 class EntrypointFixtureTests(unittest.TestCase):
-    def test_copied_tree_imports_provision_without_the_tkrzw_pin(self):
+    def test_copied_tree_imports_provision(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             copy_entrypoint_tree(root)
             result = subprocess.run(
                 [sys.executable, '-I', '-X', 'utf8', '-c',
                  'import sys; sys.path.insert(0, sys.argv[1]); '
-                 'from tools.dev.provision import vcpkg; print(callable(vcpkg.install))', str(root)],
+                 'from tools.dev import provision; print(provision.ENV_HEADER)', str(root)],
                 cwd=root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), 'True')
+            self.assertEqual(result.stdout.strip(), provision.ENV_HEADER)
 
 
 class CargoToolTests(unittest.TestCase):
@@ -342,8 +342,8 @@ if sys.platform.startswith('linux'):
             self.service.pin = self.work / 'pin'
             self.service.pin.write_bytes((ROOT / 'tools/oracle/oracle-pin.txt').read_bytes())
             self.service.platform = 'linux/amd64'
-            self.service.cells = ['bdb', 'kc', 'tkrzw']
-            self.service.tkrzw_local = True
+            # The one Linux cell (tools/dev/cell.py); the bdb and tkrzw fixtures below never reach the file.
+            self.service.cells = ['kc']
             self.service.log = lambda value: print(value, file=sys.stderr)
             for cell in provision.CELLS:
                 self.fixture(cell)
@@ -386,23 +386,30 @@ if sys.platform.startswith('linux'):
                                   env=dict(self.env, PINYIN_ORACLE_DBM=cell), capture_output=True)
 
         def test_the_environment_file_sources_under_sh(self):
-            self.service.tkrzw_host_library = ''
             self.write()
             text = self.service.env_file.read_text()
             self.assertTrue(text.startswith(provision.ENV_HEADER + '\n'))
             self.assertNotIn("$'", text)
-            for cell in provision.CELLS:
-                with self.subTest(cell=cell):
-                    done = self.source(cell)
-                    self.assertEqual(done.returncode, 0, done.stderr.decode())
-                    fields = done.stdout.split(b'\0')
-                    self.assertEqual(fields[0], str(self.service.oracle_root / cell).encode())
-                    self.assertEqual(fields[1], str(self.service.oracle_root / cell / 'lib/libpinyin/data').encode())
-                    self.assertTrue(fields[4].startswith(self.service.uv_dir.encode()) or
-                                    fields[4].startswith(str(self.service.tkrzw_prefix).encode()), fields[4])
-            done = self.source('other')
-            self.assertEqual(done.returncode, 1)
-            self.assertEqual(done.stderr, b'cell other was not provisioned by this environment file\n')
+            # No tkrzw runtime selection: Linux runs no tkrzw code.
+            self.assertNotIn('TKRZW', text)
+            self.assertNotIn('PKG_CONFIG_PATH', text)
+            self.assertNotIn('LD_LIBRARY_PATH', text)
+            done = self.source('kc')
+            self.assertEqual(done.returncode, 0, done.stderr.decode())
+            fields = done.stdout.split(b'\0')
+            self.assertEqual(fields[0], str(self.service.oracle_root / 'kc').encode())
+            self.assertEqual(fields[1], str(self.service.oracle_root / 'kc/lib/libpinyin/data').encode())
+            self.assertEqual(fields[2:4], [b'', b''])
+            self.assertTrue(fields[4].startswith(self.service.uv_dir.encode()), fields[4])
+            for cell in ('bdb', 'tkrzw', 'other'):
+                done = self.source(cell)
+                self.assertEqual(done.returncode, 1)
+                self.assertEqual(done.stderr, f'cell {cell} was not provisioned by this environment file\n'.encode())
+            # The default cell is the Linux cell, kc.
+            command = '. "$1" || exit; printf "%s" "$PINYIN_ORACLE_DBM"'
+            done = subprocess.run([shutil.which('sh'), '-c', command, 'fixture', str(self.service.env_file)],
+                                  env=self.env, capture_output=True)
+            self.assertEqual(done.stdout, b'kc')
 
         def test_without_an_override_the_file_is_written_and_read_in_the_cache_root(self):
             del self.service.env['OXPINYIN_ORACLE_ENV']
@@ -414,18 +421,17 @@ if sys.platform.startswith('linux'):
             self.assertFalse((self.work / 'oracle.env').exists())
             self.assertEqual(sorted(entry.name for entry in root.iterdir()), ['oracle.env'])
             values = provision.read_env(path)
-            for cell in provision.CELLS:
-                prefix = str(self.service.oracle_root / cell)
-                self.assertEqual(values[f'OXPINYIN_ORACLE_PREFIX_{cell.upper()}'], prefix)
-                done = self.source(cell)
-                self.assertEqual(done.returncode, 0, done.stderr.decode())
-                self.assertEqual(done.stdout.split(b'\0')[0], prefix.encode())
-            # The next run reads the file at the same path: it keeps the cells it does not provision.
-            self.service.cells = ['bdb']
+            prefix = str(self.service.oracle_root / 'kc')
+            self.assertEqual(values['OXPINYIN_ORACLE_PREFIX_KC'], prefix)
+            done = self.source('kc')
+            self.assertEqual(done.returncode, 0, done.stderr.decode())
+            self.assertEqual(done.stdout.split(b'\0')[0], prefix.encode())
+            # The next run reads the file at the same path: it keeps the cell it does not provision.
+            self.service.cells = []
             self.write()
             self.assertEqual(provision.read_env(path).keys() & {
                 'OXPINYIN_ORACLE_PREFIX_BDB', 'OXPINYIN_ORACLE_PREFIX_KC', 'OXPINYIN_ORACLE_PREFIX_TKRZW'},
-                {'OXPINYIN_ORACLE_PREFIX_BDB', 'OXPINYIN_ORACLE_PREFIX_KC', 'OXPINYIN_ORACLE_PREFIX_TKRZW'})
+                {'OXPINYIN_ORACLE_PREFIX_KC'})
             self.assertEqual(self.source('kc').returncode, 0)
 
         def test_a_file_from_the_retired_shell_setup_is_regenerated_not_parsed(self):
@@ -476,33 +482,36 @@ if sys.platform.startswith('linux'):
             self.write()
             return [self.source(cell) for cell in provision.CELLS]
 
-        def test_writer_retains_cells_runtime_quotes_and_another_cache(self):
+        def test_writer_retains_the_linux_cell_quotes_and_another_cache(self):
             self.write_and_source()
-            self.service.cells = ['bdb']
-            self.service.tkrzw_local = False
-            self.write_and_source()
+            # An earlier file's bdb and tkrzw entries are dropped: kc is the one Linux cell.
+            with self.service.env_file.open('a') as stream:
+                for cell in ('bdb', 'tkrzw'):
+                    stream.write(f"export OXPINYIN_ORACLE_PREFIX_{cell.upper()}="
+                                 f"{provision.quote(self.service.oracle_root / cell)}\n")
+            self.service.cells = []
+            log = self.write()
+            for cell in ('bdb', 'tkrzw'):
+                self.assertIn(f'{cell}: removed from environment file; {cell} is no Linux cell', log)
+            self.assertNotIn('BDB', self.service.env_file.read_text())
+            self.assertNotIn('TKRZW', self.service.env_file.read_text())
+            # A run from another cache that provisions nothing keeps the verified kc cell of the old one.
             old_root = self.service.oracle_root
             self.service.cache = self.work / 'another cache'
             (self.service.oracle_root).mkdir(parents=True)
-            shutil.copytree(old_root / 'bdb', self.service.oracle_root / 'bdb')
             results = self.write_and_source()
-            self.assertIn(str(self.service.oracle_root / 'bdb').encode(), results[0].stdout)
             self.assertIn(str(old_root / 'kc').encode(), results[1].stdout)
-            self.assertIn(str(self.service.tkrzw_prefix).encode(), results[2].stdout)
-            for cell, name in (('kc', 'lib/libpinyin.so'), ('kc', 'lib/libzhuyin.so'),
-                               ('tkrzw', 'oracle-data.sha256'), ('kc', 'lib/libpinyin/data/table.conf'),
-                               ('kc', 'lib/libpinyin/data/bigram.db')):
-                path = old_root / cell / name
+            self.assertEqual([done.returncode for done in results], [1, 0, 1])
+            # A damaged retained cell is dropped, and with no cell left the writer refuses.
+            for name in ('lib/libpinyin.so', 'lib/libzhuyin.so', 'oracle-data.sha256',
+                         'lib/libpinyin/data/table.conf', 'lib/libpinyin/data/bigram.db'):
+                path = old_root / 'kc' / name
                 original = path.read_bytes()
                 path.write_bytes(original + b'bad\n')
-                results = self.write_and_source()
-                self.assertEqual(results[provision.CELLS.index(cell)].returncode, 1)
+                with contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished):
+                    self.service.write_oracle_env()
+                self.assertIn('no verified Linux cell for the environment file', error.getvalue())
                 path.write_bytes(original)
-                self.service.cache = old_root.parent
-                self.service.cells = list(provision.CELLS)
-                self.write_and_source()
-                self.service.cache = self.work / 'another cache'
-                self.service.cells = ['bdb']
 
         def test_never_provisioned_cell_and_atomic_failed_publication(self):
             self.service.cells = ['bdb']
@@ -559,29 +568,14 @@ if sys.platform.startswith('linux'):
                 self.service.proxy_ca(stack)
                 self.assertFalse(self.service.custom_ca)
 
-        def test_overlay_probe_certifies_the_configured_install_and_refuses_other_libraries(self):
-            installed = self.service.tkrzw_prefix
-            utility = installed / 'tools/tkrzw/bin/tkrzw_dbm_util'
-            utility.parent.mkdir(parents=True)
-            utility.touch()
-            (installed / 'lib').mkdir()
-            library = installed / 'lib/libtkrzw.so.1'
-            library.touch()
-            env = dict(self.env, OXPINYIN_TKRZW_LIBRARY='/stale/libtkrzw.so.1')
-            resolved = ['libtkrzw.so.1 => ' + str(library) + ' (0x1234)',
-                        'libtkrzw.so.1 => /wrong/libtkrzw.so.1 (0x1234)',
-                        'libtkrzw.so.1 => not found']
-            for index, output in enumerate(resolved):
-                done = subprocess.CompletedProcess([], 0, output)
-                with mock.patch.object(provision.runtime, 'resolve', return_value=('Linux', done, [
-                        str(library) if index == 0 else '/wrong/libtkrzw.so.1' if index == 1 else 'not found'])), \
-                        contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
-                    answer = provision.probe_host(env=env)
-                self.assertEqual(answer, str(library) if index == 0 else '')
-            utility.unlink()
-            with contextlib.redirect_stderr(io.StringIO()) as diagnostic:
-                self.assertEqual(provision.probe_host(env=env), '')
-            self.assertIn('missing tkrzw utility', diagnostic.getvalue())
+        def test_a_linux_host_has_no_tkrzw_to_certify(self):
+            # probe_host certifies Homebrew tkrzw on macOS only; Linux runs no tkrzw code.
+            with mock.patch.object(provision.runtime, 'check') as check, \
+                    contextlib.redirect_stderr(io.StringIO()) as diagnostic:
+                self.assertEqual(provision.probe_host(env=self.env), '')
+            check.assert_not_called()
+            self.assertIn('no host tkrzw on Linux: macOS certifies Homebrew tkrzw, Linux uses Kyoto Cabinet',
+                          diagnostic.getvalue())
 
         def test_uncertified_host_names_the_outcome_and_keeps_status_one(self):
             with mock.patch.object(provision, 'probe_host', return_value=''):
@@ -632,6 +626,9 @@ elif name=='rustup': sys.exit(int(os.environ.get('FAKE_RUST','0')))
 elif name=='valgrind':
     if os.environ.get('FAKE_VALGRIND_MISSING'): sys.exit(1)
     print('valgrind-'+os.environ.get('FAKE_VALGRIND','3.25.1'))
+elif name=='pkg-config':
+    if a!=['--modversion','kyotocabinet'] or os.environ.get('FAKE_KC_MISSING'): sys.exit(1)
+    print('1.2.80')
 elif name=='podman':
     if a==['--version']: print('podman (synthetic)')
     elif a==['info'] and os.environ.get('FAKE_RUNTIME_READY'): pass
@@ -656,20 +653,19 @@ elif name in ('curl','apt-get','sudo'):
     with open(os.environ['CALLS'],'a') as f: f.write(name+' '+ ' '.join(a)+'\\n')
     sys.exit(97)
     '''
-            for name in ('uv', 'rustup', 'valgrind', 'podman', 'wslc', 'container', 'findmnt', 'curl', 'apt-get', 'sudo'):
+            for name in ('uv', 'rustup', 'valgrind', 'pkg-config', 'podman', 'wslc', 'container', 'findmnt', 'curl',
+                         'apt-get', 'sudo'):
                 test_support.python_tool(self.bin, name, program)
             self.env = dict(PATH=str(self.bin) + ':' + os.defpath, HOME=str(self.work), LC_ALL='C', TMPDIR=str(self.work),
                             UV_CACHE_DIR=str(self.work / 'uv-cache'), OXPINYIN_CACHE=str(self.work / 'cache'),
                             OXPINYIN_ORACLE_ENV=str(self.work / 'oracle.env'), OXPINYIN_CCR_DIR=str(self.work / 'ccr'),
                             OXPINYIN_SYSTEM_CA_BUNDLES=str(self.work / 'no-system-ca'), OXPINYIN_CONTAINER='podman',
-                            CALLS=str(self.calls),
-                            # Native provisioning stops at the tkrzw install: no vcpkg checkout is here.
-                            VCPKG_ROOT=str(self.work / 'no-vcpkg'))
+                            CALLS=str(self.calls))
             # The cargo tools the provisioner keeps, each at its floor, so it installs nothing.
             for name in FAKE_ANSWERS:
                 floor_tool(self.bin, name, self.root)
-            # Keep host executables isolated; cargo and dump utilities never execute.
-            (self.bin / 'db5.3_dump').symlink_to('/bin/true')
+            # Keep host executables isolated; cargo and the dump utility never execute.
+            (self.bin / 'kchashmgr').symlink_to('/bin/true')
             cargo = self.bin / 'cargo'
             cargo.write_text('#!/bin/sh\nexit 0\n')
             cargo.chmod(0o755)
@@ -713,7 +709,7 @@ elif name in ('curl','apt-get','sudo'):
             # PYTHONHOME is refused too, but a wrong one stops the interpreter before any check.
             for name in ('UV_PYTHON', 'PYTHONPATH', 'UV_PYTHON_PREFERENCE'):
                 self.env[name] = str(self.work / 'override')
-                for args in (['--python-only'], [], ['oracle', '--cells', 'bdb'], ['oracle-env'], ['--unknown']):
+                for args in (['--python-only'], [], ['oracle', '--cells', 'kc'], ['oracle-env'], ['--unknown']):
                     with self.subTest(name=name, args=args):
                         self.calls.unlink(missing_ok=True)
                         done = self.check_entry(args, 1)
@@ -728,21 +724,32 @@ elif name in ('curl','apt-get','sudo'):
             self.env.pop('FAKE_PYTHON_FAILURE')
 
         def test_valgrind_minimum_and_install_retry(self):
-            # Past the Valgrind check, native provisioning reaches the tkrzw install, which stops here.
-            vcpkg = f'FAIL: VCPKG_ROOT needs a bootstrapped vcpkg checkout: {self.work / "no-vcpkg"}'.encode()
+            # Past the Valgrind check, native provisioning finds Kyoto Cabinet and finishes.
             for version in ('3.22.0', '3.27.1', '3.22.0.GIT', '3.21.0'):
                 with self.subTest(version=version):
                     self.env['FAKE_VALGRIND'] = version
-                    result = self.check_entry([], 1)
                     if version == '3.21.0':
+                        result = self.check_entry([], 1)
                         self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
                     else:
-                        self.assertIn(vcpkg, result.stderr)
+                        result = self.check_entry([], 0)
+                        self.assertIn(b'kyotocabinet: 1.2.80 from the distribution', result.stderr)
+                        self.assertIn(b'native provisioning done', result.stderr)
             self.env.pop('FAKE_VALGRIND')
             self.env['FAKE_VALGRIND_MISSING'] = '1'
             result = self.check_entry([], 1)
             self.assertIn(b'FAIL: could not install valgrind with apt-get', result.stderr)
             self.env.pop('FAKE_VALGRIND_MISSING')
+
+        def test_kyoto_cabinet_development_files_are_required(self):
+            # The Linux local cell (docs/runbooks/setup.md#linux): an ordinary account is told the package.
+            self.env['FAKE_KC_MISSING'] = '1'
+            result = self.check_entry([], 1)
+            # Root tries the fake apt-get, which refuses; an ordinary account is told the command.
+            self.assertIn(b'FAIL: could not install libkyotocabinet-dev with apt-get' if os.geteuid() == 0 else
+                          b'FAIL: Kyoto Cabinet development files are missing (pkg-config kyotocabinet); '
+                          b'run as root: apt-get install -y libkyotocabinet-dev', result.stderr)
+            self.env.pop('FAKE_KC_MISSING')
 
         def test_native_prerequisite_failures_and_python_only_scope(self):
             (self.bin / 'cargo').unlink()
@@ -755,8 +762,8 @@ elif name in ('curl','apt-get','sudo'):
                 last = self.check_entry([], 1).stderr.decode().splitlines()[-1]
             self.assertEqual(last, f'FAIL: Rust toolchain {channel} is not installed; run: rustup toolchain '
                                    f'install {channel} --component clippy --component rustfmt')
-            # Native provisioning starts no container: no runtime command ran on the way to the vcpkg stop.
-            self.assertNotIn(b'podman', self.check_entry([], 1).stderr)
+            # Native provisioning starts no container: no runtime command runs.
+            self.assertNotIn(b'podman', self.check_entry([], 0).stderr)
             model = ('FAIL: model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net '
                      'redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)')
             # Each oracle prerequisite stops the run with its own refusal, and no private CA copy is left (check_entry).
@@ -769,7 +776,7 @@ elif name in ('curl','apt-get','sudo'):
                     # A present CA bundle is accepted: the run goes on to the model refusal.
                     ({'OXPINYIN_PROXY_CA': str(self.work / 'fake-ca')}, model)):
                 with self.subTest(settings=settings), mock.patch.dict(self.env, settings):
-                    last = self.check_entry(['oracle', '--cells', 'bdb'], 1).stderr.decode().splitlines()[-1]
+                    last = self.check_entry(['oracle', '--cells', 'kc'], 1).stderr.decode().splitlines()[-1]
                     self.assertTrue(last.startswith(refusal), last)
             # The Python-only scope reads no filesystem type.
             self.env['FAKE_EXT4'] = 'unknown'
@@ -813,13 +820,13 @@ elif name in ('curl','apt-get','sudo'):
             for runtime in ('wslc', 'container'):
                 with self.subTest(runtime=runtime):
                     self.env['OXPINYIN_CONTAINER'] = runtime
-                    current = self.check_entry(['oracle', '--cells', 'bdb'], 1)
+                    current = self.check_entry(['oracle', '--cells', 'kc'], 1)
                     self.assertNotIn(b'not supported', current.stderr)
                     self.assertIn(f'FAIL: {runtime} info failed; there is no daemon to start for it'.encode(), current.stderr)
 
         def test_cached_full_setup_preserves_result_order_files_and_selection(self):
             cache = provision.images.provision_cache(self.env, self.root)
-            for cell in ('bdb', 'kc'):
+            for cell in ('kc',):
                 prefix = cache / 'oracle' / cell
                 data = prefix / 'lib/libpinyin/data'
                 data.mkdir(parents=True)
@@ -834,14 +841,13 @@ elif name in ('curl','apt-get','sudo'):
                 (prefix / 'oracle-data-unstable.sha256').write_text(digest_file(data / 'bigram.db') + '  lib/libpinyin/data/bigram.db\n')
                 record_prefix(prefix, cell, self.root)
             self.env['FAKE_RUNTIME_READY'] = '1'
-            (self.bin / 'kchashmgr').symlink_to('/bin/true')
-            current = self.check_entry(['oracle', '--cells', 'kc bdb'], 0)
+            current = self.check_entry(['oracle', '--cells', 'kc'], 0)
             rows = [line for line in current.stdout.decode().splitlines() if 'data manifest OK' in line]
-            self.assertEqual([line.split()[0] for line in rows], ['kc', 'bdb'])
+            self.assertEqual([line.split()[0] for line in rows], ['kc'])
             # The container step writes no environment file; oracle-env, its one writer, does.
             self.assertFalse(Path(self.env['OXPINYIN_ORACLE_ENV']).exists())
             self.check_entry(['oracle-env'], 0)
-            for cell in ('bdb', 'kc'):
+            for cell in ('kc',):
                 source = subprocess.run(['sh', '-c', '. "$1"; printf "%s" "$PINYIN_ORACLE_PREFIX"',
                                          'fixture', self.env['OXPINYIN_ORACLE_ENV']],
                                         env=dict(self.env, PINYIN_ORACLE_DBM=cell), capture_output=True)
@@ -852,9 +858,9 @@ elif name in ('curl','apt-get','sudo'):
 
         def test_the_environment_file_needs_a_verified_cell(self):
             cache = provision.images.provision_cache(self.env, self.root)
-            (cache / 'oracle/bdb/lib').mkdir(parents=True)
+            (cache / 'oracle/kc/lib').mkdir(parents=True)
             done = self.check_entry(['oracle-env'], 1)
-            self.assertIn(b'bdb: left out of the environment file', done.stderr)
+            self.assertIn(b'kc: left out of the environment file', done.stderr)
             self.assertEqual(done.stderr.decode().splitlines()[-1],
                              f'FAIL: no verified oracle cell in {cache / "oracle"}; run just provision-oracle')
             self.assertFalse(Path(self.env['OXPINYIN_ORACLE_ENV']).exists())
@@ -871,12 +877,12 @@ elif name in ('curl','apt-get','sudo'):
         def test_cold_no_pull_unrecorded_library_is_rejected(self):
             self.verified_model()
             self.env.update(FAKE_POOL='1', FAKE_RUNTIME_READY='1')
-            done = self.run_entry(['oracle', '--cells', 'bdb', '--no-pull', '--jobs', '1'])
+            done = self.run_entry(['oracle', '--cells', 'kc', '--no-pull', '--jobs', '1'])
             self.assertEqual(done.returncode, 1, done.stderr.decode())
             self.assertIn(b'stale pin/recipe or damaged build provenance', done.stderr)
             cache = provision.images.provision_cache(self.env, self.root)
             for library in ('libpinyin', 'libzhuyin'):
-                self.assertTrue((cache / 'oracle/bdb/lib' / (library + '.so')).is_file())
+                self.assertTrue((cache / 'oracle/kc/lib' / (library + '.so')).is_file())
 
         def test_cancellation_reaps_fake_child_and_cleans_private_ca(self):
             # Supply a fake verified model extraction, so cancellation reaches info.
@@ -891,7 +897,7 @@ elif name in ('curl','apt-get','sudo'):
                 else:
                     self.env.pop('OXPINYIN_PROXY_CA', None)
                 ready.unlink(missing_ok=True)
-                child = subprocess.Popen([*PROVISION_COMMAND, 'oracle', '--cells', 'bdb'], executable=self.bin / 'uv',
+                child = subprocess.Popen([*PROVISION_COMMAND, 'oracle', '--cells', 'kc'], executable=self.bin / 'uv',
                                          cwd=self.root, env=self.env,
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
                 self.addCleanup(lambda: child.poll() is not None or os.killpg(child.pid, signal.SIGKILL))
@@ -913,9 +919,6 @@ class RuntimeProvisionTests(unittest.TestCase):
         patcher = mock.patch.object(provision.images, 'host_system', return_value='Darwin')
         patcher.start()
         self.addCleanup(patcher.stop)
-        triplet = mock.patch.object(provision.vcpkg, 'triplet', return_value='arm64-linux-oxpinyin')
-        triplet.start()
-        self.addCleanup(triplet.stop)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.work = Path(directory.name)
@@ -1138,52 +1141,25 @@ class RuntimeProvisionTests(unittest.TestCase):
                 with mock.patch.object(provision.Provision, check + '_ok', return_value=True):
                     self.assertEqual(provision.main(['prefix-check', check, 'tkrzw', '/p', '/pin']), 0)
 
-    def test_a_tkrzw_loader_failure_preserves_the_vcpkg_install(self):
+    def test_kyoto_cabinet_is_found_or_installed_by_root(self):
         service = self.service('podman')
-        utility = service.tkrzw_prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
-        utility.parent.mkdir(parents=True)
-        utility.write_text('kept')
-        with (mock.patch.object(provision.vcpkg, 'install'),
-              mock.patch.object(provision.runtime, 'check', side_effect=provision.runtime.RuntimeRefused('loader failed')),
+        with mock.patch.object(provision, 'text', return_value='1.2.80'):
+            service.kyotocabinet_ready()
+        self.assertIn(['log', 'kyotocabinet: 1.2.80 from the distribution'], self.calls)
+        with (mock.patch.object(provision, 'text', return_value=''), mock.patch.object(service, 'apt') as apt,
+              mock.patch.object(provision.os, 'geteuid', return_value=1000),
               contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
-            service.install_tkrzw()
-        self.assertIn('loader failed', error.getvalue())
-        self.assertEqual(utility.read_text(), 'kept')
-
-    def test_native_provisioning_certifies_only_the_vcpkg_utility(self):
-        service = self.service('podman')
-        utility = service.tkrzw_prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
-        utility.parent.mkdir(parents=True)
-        utility.write_text('utility')
-        with (mock.patch.object(provision.vcpkg, 'install') as install,
-              mock.patch.object(provision.runtime, 'check', return_value=Path('/verified/libtkrzw.so.1')) as check):
-            service.install_tkrzw()
-        install.assert_called_once()
-        self.assertEqual([call.args[2:4] for call in check.call_args_list], [('subject', utility)])
-        self.assertTrue(service.tkrzw_local)
-
-    def test_each_tkrzw_binary_must_load_the_library(self):
-        for missing, results in (('subject', [None]), ('pin', [Path('/verified/libtkrzw.so.1'), None])):
-            with self.subTest(missing=missing):
-                service = self.service('podman')
-                utility = service.tkrzw_prefix / 'tools/tkrzw/bin/tkrzw_dbm_util'
-                utility.parent.mkdir(parents=True, exist_ok=True)
-                utility.write_text('utility')
-                with (mock.patch.object(provision.runtime, 'check', side_effect=results) as check,
-                      contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
-                    service.certify_tkrzw()
-                self.assertIn(f'{missing} binary does not load libtkrzw', error.getvalue())
-                self.assertEqual(check.call_count, len(results))
-                self.assertFalse(service.tkrzw_local)
-
-    def test_the_environment_file_step_needs_the_native_tkrzw_install(self):
-        service = self.service('podman')
-        with (mock.patch.object(provision.runtime, 'check') as check,
-              contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
-            service.certify_tkrzw()
-        self.assertIn('missing vcpkg utility', error.getvalue())
-        self.assertIn('run just provision', error.getvalue())
-        check.assert_not_called()
+            service.kyotocabinet_ready()
+        apt.assert_not_called()
+        self.assertIn('run as root: apt-get install -y libkyotocabinet-dev', error.getvalue())
+        answers = iter(['', '1.2.80', '1.2.80'])
+        with (mock.patch.object(provision, 'text', side_effect=lambda *a, **k: next(answers)),
+              mock.patch.object(service, 'apt', return_value=True) as apt,
+              mock.patch.object(service, 'which', return_value='/usr/bin/apt-get'),
+              mock.patch.object(provision.os, 'geteuid', return_value=0)):
+            service.kyotocabinet_ready()
+        apt.assert_called_once_with(['libkyotocabinet-dev'])
+        self.assertIn(['log', 'installing libkyotocabinet-dev from the distribution archive'], self.calls)
 
     def test_valgrind_ext4_and_dump_utilities_off_linux(self):
         for host in ('Darwin', 'Windows'):
@@ -1221,11 +1197,24 @@ class RuntimeProvisionTests(unittest.TestCase):
     def test_provision_and_provision_oracle_use_the_keyed_entries_of_one_root(self):
         env = {'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')}
         service = provision.Provision(root=ROOT, env=env)
-        service.host = 'Linux'
         self.assertEqual(service.cache, provision.images.provision_cache(env))
-        with mock.patch.object(provision.vcpkg.platform, 'system', return_value='Linux'):
-            self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
         self.assertEqual(provision.images.model_cache(env), provision.model.default_cache(env))
+
+    def test_a_linux_host_provisions_the_linux_cell_by_default(self):
+        # tools/dev/cell.py: a Linux host provisions kc unless a pin capture names the others,
+        # which are built and checked in the Debian deps image (docs/runbooks/pin-captures.md).
+        self.assertEqual(provision.Provision(root=ROOT, env={'PATH': ''}).cells,
+                         ['kc'] if platform.system() == 'Linux' else ['bdb', 'kc', 'tkrzw'])
+        linux = self.service('podman')
+        linux.options([], oracle=True)
+        self.assertEqual(linux.cells, ['tkrzw'], 'the service fixture names its own cells')
+        linux = provision.Provision(root=ROOT, env={'PATH': ''})
+        linux.host = 'Linux'
+        linux.options(['--cells', 'bdb kc tkrzw'], oracle=True)
+        self.assertEqual(linux.cells, ['bdb', 'kc', 'tkrzw'])
+        darwin = self.service('docker', 'Darwin')
+        darwin.options(['--cells', 'bdb kc tkrzw'], oracle=True)
+        self.assertEqual(darwin.cells, ['bdb', 'kc', 'tkrzw'])
 
     if sys.platform == 'darwin':
         def test_macos_probe_uses_homebrew_pkg_config_and_exact_loader(self):
@@ -1279,7 +1268,7 @@ class RuntimeProvisionTests(unittest.TestCase):
                                                       'GITHUB_ACTIONS': 'true'})
         with (mock.patch.object(service, 'proxy_ca') as proxy_ca, contextlib.redirect_stderr(io.StringIO()) as error,
               self.assertRaises(Finished) as raised):
-            service.oracle_setup(['--cells', 'tkrzw'])
+            service.oracle_setup(['--cells', 'kc'])
         self.assertEqual(raised.exception.status, 2)
         self.assertIn('provision-oracle is local-only', error.getvalue())
         proxy_ca.assert_not_called()
@@ -1297,7 +1286,7 @@ class RuntimeProvisionTests(unittest.TestCase):
                                   ('ARM64', 'linux/arm64')):
             with self.subTest(machine=machine), mock.patch.object(provision.platform, 'machine', return_value=machine):
                 service = self.service('docker')
-                service.options(['--cells', 'tkrzw'], oracle=True)
+                service.options(['--cells', 'kc'], oracle=True)
                 self.assertEqual(service.platform, expected)
         with (mock.patch.object(provision.platform, 'machine', return_value='riscv64'),
               contextlib.redirect_stderr(io.StringIO()), self.assertRaises(Finished) as raised):

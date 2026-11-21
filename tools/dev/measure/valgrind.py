@@ -22,6 +22,7 @@ import sys
 from collections.abc import Mapping, Sequence
 
 from .. import pool, slot
+from ..cell import LOCAL_CELL
 from ..runners import Finished, emit, write
 from . import bench, identity, instructions, prepare, reports
 from .bench import Arm, Bench, fail, setting
@@ -51,13 +52,13 @@ def lines_of(path: Path, pattern: str, *, ignore_case: bool = False) -> list[str
 
 def roots(env: Mapping[str, str]) -> dict:
     """Where `prepare callgrind` stages the three libraries the differential uses."""
-    return dict(lp=prepare.pin_prefix(env, 'tkrzw'), ox=prepare.subject_stage(env, 'tkrzw'),
+    return dict(lp=prepare.pin_prefix(env, LOCAL_CELL), ox=prepare.subject_stage(env, LOCAL_CELL),
                 nodebug=prepare.subject_stage(env, 'nodebug'))
 
 
 def data_dir(env: Mapping[str, str]) -> Path:
-    """The prepared tkrzw pin's data directory, which every arm of the differential reads."""
-    return prepare.pin_prefix(env, 'tkrzw') / prepare.DATA_SUBDIRECTORY
+    """The prepared local-cell pin's data directory, which every arm of the differential reads."""
+    return prepare.pin_prefix(env, LOCAL_CELL) / prepare.DATA_SUBDIRECTORY
 
 
 def libraries(env: Mapping[str, str]) -> dict:
@@ -91,7 +92,7 @@ def environment_table(artifacts: Sequence[Path], pin: Path, data: Path, run=None
              f'valgrind: {identity.first_output_line(["valgrind", "--version"], run=run)}',
              f'perf_event_paranoid: {identity.perf_event_paranoid()}',
              f'libpinyin_pkgversion: {identity.pc_version(pin / "lib/pkgconfig/libpinyin.pc")}',
-             f'libtkrzw: {identity.package_version("tkrzw", run=run)}']
+             f'libkyotocabinet: {identity.package_version("kyotocabinet", run=run)}']
     # `stat -c%s` on the path as found: for a symlink, the size of the link and not of its target.
     lines += [f'artifact: {identity.sha256(path)}  {path} {os.lstat(path).st_size} bytes' for path in artifacts]
     lines.append(f'data_dir: {data}')
@@ -239,8 +240,9 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     lp, ox, nodebug = (found[key] for key in ('lp', 'ox', 'nodebug'))
     data = data_dir(env)
     harness = prepare.harness_path(env)
-    worker = Bench(label, env, harness, cpu, cell='tkrzw', required=True)
-    arms = {'lp': Arm('libpinyin-tkrzw', lp, data, lp.parent), 'ox': Arm('oxpinyin-tkrzw', ox, data, ox.parent),
+    worker = Bench(label, env, harness, cpu, cell=LOCAL_CELL, required=True)
+    arms = {'lp': Arm(f'libpinyin-{LOCAL_CELL}', lp, data, lp.parent),
+            'ox': Arm(f'oxpinyin-{LOCAL_CELL}', ox, data, ox.parent),
             'nodebug': Arm('oxpinyin-nodebug', nodebug, data, nodebug.parent)}
     for key, arm in arms.items():
         worker.standalone('pin' if key == 'lp' else 'subject', arm)
@@ -249,7 +251,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     # 0. environment
     metadata_run = partial(bench.capture, env=env)
     bench.tee(out / 'environment.txt',
-              environment_table([lp, ox, nodebug], prepare.pin_prefix(env, 'tkrzw'), data, run=metadata_run))
+              environment_table([lp, ox, nodebug], prepare.pin_prefix(env, LOCAL_CELL), data, run=metadata_run))
 
     # 1. collection anchors
     code, text = anchors_table(harness)

@@ -38,6 +38,25 @@ class ReplTests(unittest.TestCase):
             self.assertEqual((fixture / 'table.conf').read_bytes(), b'original')
             self.assertFalse(copies[0].exists())
 
+    def test_no_backend_builds_the_hosts_cell(self):
+        from tools.dev import cell
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / 'fixtures' / 'w3' / 'kct').mkdir(parents=True)
+            features = []
+
+            def run(command, **kwargs):
+                if command[0] == 'cargo':
+                    features.append(command[command.index('--features') + 1])
+                    kwargs['stdout'].write(json.dumps({'reason': 'compiler-artifact', 'target': {'name': 'oxpinyin-repl'}, 'executable': '/t/oxpinyin-repl'}) + '\n')
+                    return 0
+                return 0
+
+            with patch.object(repl, 'ROOT', root), patch.object(repl.slot, 'run_command', side_effect=run), \
+                    patch.object(cell.platform, 'system', return_value='Linux'):
+                self.assertEqual(repl.main(['parser2', '--parser', 'zhuyin']), 0)
+            self.assertEqual(features, ['kyotocabinet'])
+
     def test_table_modes_stage_authored_text_without_mutating_w3(self):
         for mode in ('phrase_table', 'chewing_table'):
             with self.subTest(mode=mode):
@@ -54,7 +73,7 @@ class ReplTests(unittest.TestCase):
                         (repl.ROOT / 'fixtures/w3/tkt/table.conf').read_bytes())
                     return 0
                 with patch.object(repl.slot, 'run_command', side_effect=run):
-                    self.assertEqual(repl.main([mode]), 0)
+                    self.assertEqual(repl.main([mode, '--backend', 'tkrzw']), 0)
 
     def test_failed_build_does_not_start_session(self):
         with patch.object(repl.slot, 'run_command', return_value=4) as run:

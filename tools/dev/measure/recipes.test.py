@@ -44,15 +44,12 @@ class RecipeTests(unittest.TestCase):
         self.assertIn('pin comparisons are local-only', err)
         operation.assert_not_called()
 
-    def test_a_local_pin_comparison_runs_with_the_vcpkg_tkrzw_first(self):
-        from tools.dev import vcpkg
+    def test_a_local_pin_comparison_runs_in_the_callers_environment(self):
+        # The local cell comes from the distribution: no overlay selection enters the environment.
         operation = mock.Mock(return_value=0)
-        selected = {'OXPINYIN_TKRZW_PREFIX': '/cache/vcpkg/installed/x'}
-        with mock.patch.object(vcpkg, 'environment', return_value=selected) as environment, \
-             contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(recipes.run(operation, ['a'], {'OXPINYIN_CACHE': '/cache'}, pin_comparison=True), 0)
-        environment.assert_called_once_with({'OXPINYIN_CACHE': '/cache'})
-        operation.assert_called_once_with(['a'], selected)
+        operation.assert_called_once_with(['a'], {'OXPINYIN_CACHE': '/cache'})
 
 
 class NativeCompareTests(unittest.TestCase):

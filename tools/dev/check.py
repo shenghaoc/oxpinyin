@@ -103,12 +103,14 @@ def missing_tool(tools):
 def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
     """Check native prerequisites, then build and run the selected backend tests.
 
-    Use the Cargo default and include the C API tests on Linux. Print tool
-    and backend diagnostics; return 2 for an unknown backend, 1 for missing
-    tools or launch errors, or the failing child status. The optional env is
-    used only for the supervised Cargo child.
+    With no backend named, use the host's cell (tools/dev/cell.py host_cell):
+    Kyoto Cabinet on Linux, the Cargo default elsewhere. Include the C API
+    tests on Linux. Print tool and backend diagnostics; return 2 for an
+    unknown backend, 1 for missing tools or launch errors, or the failing
+    child status. The optional env is used only for the supervised Cargo
+    child.
     """
-    backend = backend or cell.declared_default()
+    backend = backend or cell.CELL_TO_BACKEND[cell.host_cell()]
     if backend not in cell.BACKENDS:
         print(USAGE, file=err, flush=True)
         return 2
