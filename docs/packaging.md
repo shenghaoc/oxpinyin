@@ -333,7 +333,7 @@ No symbol in a version script is feature-gated.
 On Windows, `just abi` checks the allocation registers against the headers and version scripts.
 On Linux and macOS, setting `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` selects the two files for the export check.
 On Linux the sanitizer job runs the gate against the development cdylibs by default. It checks their exported names.
-When neither library has an override, the macOS gate stages both in a temporary directory using `just packaging install --prefix=/usr/local`, `--release --locked` and the cell's backend features.
+On macOS, the gate stages each library without an override in a temporary directory using `just packaging install --prefix=/usr/local`, `--release --locked` and the cell's backend features.
 It checks the relinked `lib<name>.15.0.0.dylib`. The nightly `test-macos` job runs this check.
 The packaging and ABI tests in `tools/dev/packaging.test.py` and `tools/dev/abi.test.py` cover identity preservation, failure atomicity and leak detection.
 

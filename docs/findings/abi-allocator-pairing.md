@@ -131,9 +131,9 @@ diagnostic for a missing free or an invalid free.
 - **The GArray surface.** The caller owns these arrays, and glib's own
   allocator is on both sides. The gate creates and frees those arrays but
   has nothing to prove about their pairing.
-- **Allocation the C side makes on the library's behalf.** Everything that
-  the backend library allocates internally is, by construction, outside
-  this gate's per-call window, because the warm pass absorbs it.
+- **Warm-up allocations.** LeakSanitizer ignores allocations made on the
+  test thread while leak detection is disabled. It can report unreachable
+  allocations from the backend as well as the facade during the measured lifecycle.
 - **Platform coverage.** The checked allocation lifecycle runs on Linux.
   The macOS gate checks the registers and the shipped libraries' exports.
 

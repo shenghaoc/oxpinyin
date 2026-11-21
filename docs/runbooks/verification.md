@@ -292,7 +292,7 @@ These rules govern the CI gates. This section is the only place that states them
 3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under its path gate.
    The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
-5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust`, `harness` and `shipping-sizes`. In the same file, `STORE_GATE_ARGUMENTS` adds the ABI inputs to the backend selection for `store`.
+5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust`, `harness` and `shipping-sizes`. In the same file, `STORE_GATE_ARGUMENTS` adds the ABI inputs and job infrastructure to the backend selection for `store`.
    A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.
    The generated Rust tables are such files.
    Within a job, no step depends on the changed paths, so a job's success always means the same checks.
