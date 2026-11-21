@@ -170,10 +170,9 @@ fn build_model(
 /// One test (`do_one_test`, `eval_correction_rate.cpp:84-130`): `true` when
 /// the decoded sentence equals the source sentence.
 ///
-/// The pin's `assert(1 == results.size())` and its `check_result` /
-/// `get_nth_pronunciation` assertions are the decode port's errors; each
-/// aborts here after the pin's preceding work, as do a failed `strcmp` of
-/// two decoded sentences (the port keeps them as strings).
+/// Failure to build or read a single decode aborts after the preceding
+/// work. A completed guess that differs from the source prints both
+/// sentences and counts as a mismatch.
 fn do_one_test(
     dictionary: &EvalDictionary<'_>,
     model: &EvalLanguageModel,
@@ -181,9 +180,9 @@ fn do_one_test(
     tokens: &[u32],
 ) -> bool {
     let sentence: Vec<PhraseToken> = tokens.to_vec();
-    let report = match correction_rate(dictionary, model, source, std::slice::from_ref(&sentence)) {
-        Ok(report) => report,
-        Err(_) => tool::abort(),
+    let Some(report) = correction_rate(dictionary, model, source, std::slice::from_ref(&sentence))
+    else {
+        tool::abort()
     };
     match report.mismatches.first() {
         None => true,

@@ -93,8 +93,8 @@ impl Gram {
 pub(crate) fn load_gram(bigram: Option<&Hash>, token: u32) -> Option<Gram> {
     let value = bigram?.get(&encode_token_key(token))?;
     match decode_single_gram(&value) {
-        Ok((total, records)) => Some(Gram { total, records }),
-        Err(_) => tool::abort(),
+        Some((total, records)) => Some(Gram { total, records }),
+        None => tool::abort(),
     }
 }
 

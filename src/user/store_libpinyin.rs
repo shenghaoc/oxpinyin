@@ -136,9 +136,9 @@ impl From<PersistenceError> for UserStoreError {
         match error {
             PersistenceError::SystemRemapFailed => UserStoreError::SaveRemapFailed,
             PersistenceError::SaveTooLarge => UserStoreError::SaveTooLarge,
-            other @ (PersistenceError::Io(_)
-            | PersistenceError::Store(_)
-            | PersistenceError::Codec(_)) => UserStoreError::Persistence(other.to_string()),
+            PersistenceError::Io(_) | PersistenceError::Store(_) | PersistenceError::Codec => {
+                UserStoreError::Persistence
+            }
         }
     }
 }
@@ -281,9 +281,9 @@ impl UserStore {
         // refused; one the pin cannot create ends the process in the
         // backend, and a Berkeley DB one whose open failed is the pin's
         // failed container.
-        let bigram_db = load_user_bigram(target.dir.as_deref()).map_err(|error| {
+        let bigram_db = load_user_bigram(target.dir.as_deref()).map_err(|_| {
             fini.abandon();
-            UserStoreError::SessionSeed(error.to_string())
+            UserStoreError::SessionSeed
         })?;
         let has_user_data = holds_user_data(&target, &replayed);
 
@@ -602,7 +602,7 @@ pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreE
         }
         for (slot, view) in library.items() {
             let item = crate::data::chunk_write::decode_phrase_item(view.as_bytes())
-                .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+                .ok_or(UserStoreError::Persistence)?;
             if let Some(overrides) = state.system_overrides.get_or_default(nibble) {
                 overrides.insert(slot, Some(item));
             }

@@ -49,7 +49,7 @@ impl Library {
             .iter()
             .map(|(slot, item)| (*slot, item.clone()))
             .collect();
-        let mut file = build_chunk(&items).unwrap_or_else(|_| tool::abort());
+        let mut file = build_chunk(&items).unwrap_or_else(|| tool::abort());
         // `SubPhraseIndex::store` writes the resident `m_total_freq`, which
         // equals the item sum for every compacted chunk; keep the stored
         // value if a foreign chunk's header disagrees.

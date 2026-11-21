@@ -495,7 +495,7 @@ impl ReplayedLibrary {
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
-        decode_phrase_item(self.complete_item(slot)?).ok()
+        decode_phrase_item(self.complete_item(slot)?)
     }
 
     /// Whether a slot holds an incomplete item.

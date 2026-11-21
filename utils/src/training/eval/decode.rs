@@ -32,7 +32,6 @@ use rustc_hash::FxHashMap;
 
 use oxpinyin::{PhraseEntry, PhraseToken, SyllableKey, model::PhraseList};
 
-use super::error::EvalError;
 use super::model::EvalLanguageModel;
 
 /// Beam width per step (`phonetic_lookup.h:37`, `nbeam`).
@@ -65,9 +64,7 @@ pub struct EvalReport {
 /// Evaluates the correction rate over `sentences`, decoding each with the
 /// dictionary and the evaluation model.
 ///
-/// # Errors
-///
-/// Returns [`EvalError`] when a token has no pronunciation
+/// Returns `None` when a token has no pronunciation
 /// (`get_possible_pinyin` would abort) or no text, when a key chain has no
 /// phrase cover (upstream asserts exactly one best match), or when a decode
 /// backend fails.
@@ -76,10 +73,9 @@ pub fn correction_rate<D, P>(
     model: &EvalLanguageModel,
     phrases: &P,
     sentences: &[Vec<PhraseToken>],
-) -> Result<EvalReport, EvalError>
+) -> Option<EvalReport>
 where
     D: PhraseList<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     P: PhraseSource,
 {
     let mut tested = 0;
@@ -108,7 +104,7 @@ where
     } else {
         passed as f64 / tested as f64
     };
-    Ok(EvalReport {
+    Some(EvalReport {
         tested,
         passed,
         rate,
@@ -120,30 +116,24 @@ where
 fn sentence_keys<P: PhraseSource>(
     phrases: &P,
     sentence: &[PhraseToken],
-) -> Result<Vec<SyllableKey>, EvalError> {
+) -> Option<Vec<SyllableKey>> {
     let mut keys = Vec::new();
     for &token in sentence {
-        let token_keys = phrases
-            .best_keys(token)
-            .ok_or(EvalError::NoPronunciation { token })?;
-        keys.extend(token_keys);
+        keys.extend(phrases.best_keys(token)?);
     }
-    Ok(keys)
+    Some(keys)
 }
 
 /// The text of a token sequence (`convert_to_utf8`). A token without text
 /// is an error, never silently dropped: an incomplete expected sentence
 /// would make the comparison — and the reported rate — wrong.
-fn sentence_text<P: PhraseSource>(
-    phrases: &P,
-    sentence: &[PhraseToken],
-) -> Result<String, EvalError> {
+fn sentence_text<P: PhraseSource>(phrases: &P, sentence: &[PhraseToken]) -> Option<String> {
     let mut text = String::new();
     for &token in sentence {
-        let phrase = phrases.text(token).ok_or(EvalError::NoText { token })?;
+        let phrase = phrases.text(token)?;
         text.push_str(&phrase);
     }
-    Ok(text)
+    Some(text)
 }
 
 /// One `trellis_value_t` (`phonetic_lookup.h:44-63`): `m_handles[0]` is
@@ -204,13 +194,12 @@ fn get_nbest_match<D>(
     dictionary: &D,
     model: &EvalLanguageModel,
     keys: &[SyllableKey],
-) -> Result<Vec<PhraseToken>, EvalError>
+) -> Option<Vec<PhraseToken>>
 where
     D: PhraseList<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     if keys.is_empty() {
-        return Ok(Vec::new());
+        return Some(Vec::new());
     }
     let nstep = keys.len() + 1;
     let mut steps = vec![Step::default(); nstep];
@@ -244,64 +233,45 @@ where
                 search_unigram2(&mut steps, i, m, &topresults[0], &entries, &ctx);
             }
             // SEARCH_CONTINUED: stop once no stored phrase extends the span.
-            let continued =
-                dictionary
-                    .phrase_prefix_exists(span)
-                    .map_err(|error| EvalError::Backend {
-                        detail: error.to_string(),
-                    })?;
+            let continued = dictionary.phrase_prefix_exists(span).ok()?;
             if !continued {
                 break;
             }
         }
     }
 
-    extract_result(&steps, keys.len())
+    extract_result(&steps)
 }
 
 /// `search_matrix` for one key span: the phrases the span spells exactly, in
 /// token order, each priced with its pronunciation possibility.
-fn priced_entries<D>(dictionary: &D, span: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EvalError>
+fn priced_entries<D>(dictionary: &D, span: &[SyllableKey]) -> Option<Vec<PhraseEntry>>
 where
     D: PhraseList<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
-    let mut entries = dictionary
-        .lookup(span)
-        .map_err(|error| EvalError::Backend {
-            detail: error.to_string(),
-        })?;
+    let mut entries = dictionary.lookup(span).ok()?;
     // Library-then-token order (`prepare_ranges` walk): token ascending, so
     // ties resolve as the pin's do.
     entries.sort_by_key(|entry| entry.token());
     // The search carries tokens only; each step prices its item
     // (`compute_pronunciation_possibility`, `phonetic_lookup.h:646-656`).
     for entry in &mut entries {
-        let item = dictionary
-            .trellis_item(span, &[], entry.token())
-            .map_err(|error| EvalError::Backend {
-                detail: error.to_string(),
-            })?;
+        let item = dictionary.trellis_item(span, &[], entry.token()).ok()?;
         if let Some((matched, total)) = item.and_then(|item| item.pronunciation) {
             entry.set_pronunciation_possibility(matched, total);
         }
     }
-    Ok(entries)
+    Some(entries)
 }
 
-/// `get_tails` and `extract_result` over the steps of `keys` keys: the tokens
-/// of the path that ends at the last step's best node.
-fn extract_result(steps: &[Step], keys: usize) -> Result<Vec<PhraseToken>, EvalError> {
+/// The token path ending at the last step's best node (`get_tails` and `extract_result`).
+fn extract_result(steps: &[Step]) -> Option<Vec<PhraseToken>> {
     let nstep = steps.len();
     // get_tails: the best node of the last step (nbest = 1), then
     // extract_result backtracks it. No tail means no phrase cover: upstream
     // `assert(1 == results.size())`s, so it is a data error here, not a
     // failed correction.
-    let tail = steps[nstep - 1]
-        .top_results(1)
-        .first()
-        .copied()
-        .ok_or(EvalError::Undecodable { keys })?;
+    let tail = *steps.last()?.top_results(1).first()?;
     let mut result = vec![NULL_TOKEN; nstep];
     let mut cursor = tail;
     loop {
@@ -310,15 +280,14 @@ fn extract_result(steps: &[Step], keys: usize) -> Result<Vec<PhraseToken>, EvalE
             break;
         };
         result[index] = cursor.token;
-        let Some(previous) = steps.get(index).and_then(|step| step.get(cursor.prev)) else {
-            return Err(EvalError::Undecodable { keys });
-        };
-        cursor = *previous;
+        cursor = *steps.get(index)?.get(cursor.prev)?;
     }
-    Ok(result
-        .into_iter()
-        .filter(|&token| token != NULL_TOKEN)
-        .collect())
+    Some(
+        result
+            .into_iter()
+            .filter(|&token| token != NULL_TOKEN)
+            .collect(),
+    )
 }
 
 /// `search_unigram2` (`phonetic_lookup.h:540-576`): expand from the top

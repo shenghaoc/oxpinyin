@@ -8,7 +8,7 @@ use crate::user::replay::UnigramAdd;
 use crate::user::user_library::{SessionPhrases, UserLibrary};
 
 fn encoded(item: &ChunkItem) -> Result<Vec<u8>, UserStoreError> {
-    encode_phrase_item(item).map_err(|error| UserStoreError::Persistence(error.to_string()))
+    encode_phrase_item(item).ok_or(UserStoreError::Persistence)
 }
 
 fn packed(keys: &[PinyinKey]) -> Result<Vec<u16>, UserStoreError> {
@@ -32,13 +32,13 @@ fn existing_phrase_token(
 ) -> Result<Option<PhraseToken>, UserStoreError> {
     table
         .check_add(words)
-        .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+        .map_err(|_| UserStoreError::Persistence)?;
     if let Some(token) = selected {
         return Ok(token);
     }
     let tokens: Vec<_> = table
         .tokens(&phrase_table::key_ucs4(words))
-        .map_err(|error| UserStoreError::Persistence(error.to_string()))?
+        .map_err(|_| UserStoreError::Persistence)?
         .into_iter()
         .filter(|token| phrase_index_library_index(*token) == library)
         .collect();
@@ -85,7 +85,7 @@ fn merged_live_item(
         })
         .flatten()
         .ok_or(UserStoreError::InvalidPhrase)?
-        .map_err(UserStoreError::Persistence)
+        .ok_or(UserStoreError::Persistence)
 }
 
 impl UserStore {
@@ -226,7 +226,7 @@ impl UserStore {
         phrases
             .phrase_table
             .check_add(&words)
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            .map_err(|_| UserStoreError::Persistence)?;
         // `add_phrase_item` selects the sub-index with
         // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`phrase_index.h:664`).
         let library = phrase_index_library_index(token);
@@ -252,7 +252,7 @@ impl UserStore {
                 .arena(library, retained)
                 .ok_or(UserStoreError::InvalidPhrase)?
                 .add(token & PHRASE_MASK, &bytes)
-                .map_err(UserStoreError::Persistence)?;
+                .ok_or(UserStoreError::Persistence)?;
             self.inner
                 .system_items
                 .borrow_mut()
@@ -261,7 +261,7 @@ impl UserStore {
         phrases
             .phrase_table
             .add(&words, token)
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            .map_err(|_| UserStoreError::Persistence)?;
         for reading in view.pronunciations() {
             let keys: Vec<crate::ChewingKey> = reading
                 .keys
@@ -395,7 +395,7 @@ impl UserStore {
                 .get_or_default(library)
                 .ok_or(UserStoreError::InvalidPhrase)?
                 .add_reading(token & PHRASE_MASK, &packed, delta)
-                .map_err(UserStoreError::Persistence)?;
+                .ok_or(UserStoreError::Persistence)?;
             drop(phrases);
             self.mark_committed_write(true);
             return Ok(token);
@@ -425,7 +425,7 @@ impl UserStore {
             .arena(library, retained)
             .ok_or(UserStoreError::InvalidPhrase)?
             .add(token & PHRASE_MASK, &bytes)
-            .map_err(UserStoreError::Persistence)?;
+            .ok_or(UserStoreError::Persistence)?;
         self.inner
             .system_items
             .borrow_mut()
@@ -434,7 +434,7 @@ impl UserStore {
             phrases
                 .phrase_table
                 .add(words, token)
-                .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+                .map_err(|_| UserStoreError::Persistence)?;
             let chewing: Vec<crate::ChewingKey> = packed
                 .iter()
                 .copied()
@@ -509,7 +509,7 @@ impl UserStore {
         phrases
             .phrase_table
             .add(words, token)
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            .map_err(|_| UserStoreError::Persistence)?;
         let chewing: Vec<crate::ChewingKey> = packed
             .iter()
             .copied()
@@ -596,13 +596,12 @@ impl UserStore {
         let Some(view) = phrases.item(token) else {
             return Ok(false);
         };
-        let item = decode_phrase_item(view.as_bytes())
-            .map_err(|e| UserStoreError::Persistence(e.to_string()))?;
+        let item = decode_phrase_item(view.as_bytes()).ok_or(UserStoreError::Persistence)?;
         // The phrase-table assertion precedes the reading removals.
         let phrase_tokens = phrases
             .phrase_table
             .tokens(&phrase_table::key_ucs4(&item.phrase))
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            .map_err(|_| UserStoreError::Persistence)?;
         if !phrase_tokens.contains(&token) {
             return Ok(false);
         }
@@ -623,7 +622,7 @@ impl UserStore {
         phrases
             .phrase_table
             .remove(&item.phrase, token)
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            .map_err(|_| UserStoreError::Persistence)?;
         for (packed, _) in &item.prons {
             let keys: Vec<crate::ChewingKey> = packed
                 .iter()

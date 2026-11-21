@@ -69,7 +69,7 @@ fn persisted_empty_user_item_survives_load_compact_and_store() {
     assert_eq!(truncated.token_end(), 4);
     assert_eq!(truncated.pronunciation_count(3), Some(2));
     assert!(truncated.item(3).is_none());
-    assert!(library.replace(4, &body[..body.len() - 1]).is_err());
+    assert!(library.replace(4, &body[..body.len() - 1]).is_none());
     assert_eq!(library.store().unwrap(), saved);
 }
 

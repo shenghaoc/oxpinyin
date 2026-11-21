@@ -44,19 +44,19 @@ fn a_partial_phrase_table_record_is_refused_before_any_change() {
     let before = snapshot(&store);
     let added = store.add_phrase_in(crate::USER_DICTIONARY, &"他".into(), &keys("ta"), Some(5));
     assert!(
-        matches!(added, Err(UserStoreError::Persistence(_))),
+        matches!(added, Err(UserStoreError::Persistence)),
         "{added:?}"
     );
     assert_eq!(snapshot(&store), before);
     let promoted = crate::user::test_session::promote(&mut store, "他", &[(keys("ta"), 5)], 5);
     assert!(
-        matches!(promoted, Err(UserStoreError::Persistence(_))),
+        matches!(promoted, Err(UserStoreError::Persistence)),
         "{promoted:?}"
     );
     assert_eq!(snapshot(&store), before);
     let masked = store.mask_out(0xffff_ffff, 0x0700_0001);
     assert!(
-        matches!(masked, Err(UserStoreError::Persistence(_))),
+        matches!(masked, Err(UserStoreError::Persistence)),
         "{masked:?}"
     );
     assert_eq!(snapshot(&store), before);

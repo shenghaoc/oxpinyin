@@ -386,7 +386,7 @@ fn save_chunks(
                     .iter()
                     .map(|(slot, item)| (*slot, item.clone()))
                     .collect();
-                oxpinyin::data::chunk_write::build_chunk(&items).unwrap_or_else(|_| tool::abort())
+                oxpinyin::data::chunk_write::build_chunk(&items).unwrap_or_else(|| tool::abort())
             }
             // The pin stores an empty `MemoryChunk` when the library never
             // loaded: the eight-byte zero header.

@@ -150,10 +150,10 @@ impl UserLibrary {
     }
 
     /// Replace one body: the pin's remove and add (`pinyin.cpp:563-605`).
-    pub(crate) fn replace(&mut self, slot: u32, bytes: &[u8]) -> Result<(), String> {
+    pub(crate) fn replace(&mut self, slot: u32, bytes: &[u8]) -> Option<()> {
         let change = self.replacement(slot, bytes)?;
         self.apply_replacement(change, bytes);
-        Ok(())
+        Some(())
     }
 
     /// `add_phrase_item` alone, as `_add_phrase`'s new-phrase branch
@@ -167,19 +167,19 @@ impl UserLibrary {
     /// anything changes. Both callers pass a slot masked
     /// by `PHRASE_MASK` and the bytes `encode_phrase_item` made, which
     /// `PhraseItemView::from_bytes` accepts, so neither refusal reaches them.
-    pub(crate) fn add(&mut self, slot: u32, bytes: &[u8]) -> Result<(), String> {
+    pub(crate) fn add(&mut self, slot: u32, bytes: &[u8]) -> Option<()> {
         let mut change = self.replacement(slot, bytes)?;
         change.removes_old = false;
         self.apply_replacement(change, bytes);
-        Ok(())
+        Some(())
     }
 
-    fn replacement(&self, slot: u32, bytes: &[u8]) -> Result<Replacement, String> {
+    fn replacement(&self, slot: u32, bytes: &[u8]) -> Option<Replacement> {
         if slot > crate::PHRASE_MASK {
-            return Err("user phrase slot exceeds PHRASE_MASK".into());
+            return None;
         }
-        let view = PhraseItemView::from_bytes(bytes).ok_or("invalid user phrase body")?;
-        Ok(Self::replacement_for(slot, view))
+        let view = PhraseItemView::from_bytes(bytes)?;
+        Some(Self::replacement_for(slot, view))
     }
 
     fn replacement_for(slot: u32, view: PhraseItemView<'_>) -> Replacement {
@@ -264,13 +264,8 @@ impl UserLibrary {
     /// the slot at it (`phrase_index.cpp:56-93`, `:208-235`). The old bytes
     /// stay until compaction, and the item is added back even when the count
     /// is refused.
-    pub(crate) fn add_reading(
-        &mut self,
-        slot: u32,
-        keys: &[u16],
-        delta: u32,
-    ) -> Result<(), String> {
-        let item = self.item(slot).ok_or("missing user phrase")?;
+    pub(crate) fn add_reading(&mut self, slot: u32, keys: &[u16], delta: u32) -> Option<()> {
+        let item = self.item(slot)?;
         let bytes = Self::merged_reading(item, keys, delta)?;
         self.replace(slot, &bytes)
     }
@@ -282,9 +277,9 @@ impl UserLibrary {
         item: PhraseItemView<'_>,
         keys: &[u16],
         delta: u32,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Option<Vec<u8>> {
         if item.phrase_length() != keys.len() {
-            return Err("user phrase reading length differs".into());
+            return None;
         }
         let mut bytes = item.as_bytes().to_vec();
         let mut total = 0_u32;
@@ -305,7 +300,7 @@ impl UserLibrary {
                     bytes[position..position + 4]
                         .copy_from_slice(&reading.freq.wrapping_add(delta).to_le_bytes());
                 }
-                return Ok(bytes);
+                return Some(bytes);
             }
         }
         bytes[1] = bytes[1].wrapping_add(1);
@@ -319,7 +314,7 @@ impl UserLibrary {
             }
             bytes.extend_from_slice(&delta.to_le_bytes());
         }
-        Ok(bytes)
+        Some(bytes)
     }
 
     pub(crate) fn train(
@@ -387,16 +382,13 @@ impl UserLibrary {
     }
 
     #[cfg(test)]
-    pub(crate) fn load(file: &[u8]) -> Result<Self, String> {
-        let payload =
-            crate::data::user_files::read_chunk_payload(file).map_err(|e| e.to_string())?;
-        Self::load_payload(payload)
+    pub(crate) fn load(file: &[u8]) -> Option<Self> {
+        Self::load_payload(crate::data::user_files::read_chunk_payload(file)?)
     }
 
     /// Load each slot with an extent bounded by the next distinct offset.
-    pub(crate) fn load_payload(payload: &[u8]) -> Result<Self, String> {
-        let (total, offsets, content) =
-            sub_phrase_index_sections(payload).map_err(|e| e.to_string())?;
+    pub(crate) fn load_payload(payload: &[u8]) -> Option<Self> {
+        let (total, offsets, content) = sub_phrase_index_sections(payload)?;
         let offsets: Vec<_> = offsets
             .as_chunks::<4>()
             .0
@@ -428,7 +420,7 @@ impl UserLibrary {
                 Some((slot, start.min(end)..end))
             })
             .collect();
-        Ok(Self {
+        Some(Self {
             total,
             slots,
             content: content.to_vec(),
@@ -504,24 +496,21 @@ impl UserLibrary {
     /// phrase_index.cpp:365-390): total, three offsets, then the offset
     /// array and packed bodies, with `#` separators. Copy bodies directly
     /// into the output; no decoded phrases or temporary content arena.
-    pub(crate) fn store(&self) -> Result<Vec<u8>, String> {
+    pub(crate) fn store(&self) -> Option<Vec<u8>> {
         let slots = if self.is_empty() {
             0
         } else {
             self.token_end() as usize
         };
-        let index_two = (INDEX_ONE + 1)
-            .checked_add(u32::try_from(slots * 4).map_err(|e| e.to_string())?)
-            .ok_or("offset array too large")?;
+        let index_two = (INDEX_ONE + 1).checked_add(u32::try_from(slots * 4).ok()?)?;
         let content_len = if self.is_empty() {
             0
         } else {
             self.compacted_content_len()
         };
         let index_three = index_two
-            .checked_add(u32::try_from(content_len).map_err(|e| e.to_string())?)
-            .and_then(|end| end.checked_add(1))
-            .ok_or("arena too large")?;
+            .checked_add(u32::try_from(content_len).ok()?)
+            .and_then(|end| end.checked_add(1))?;
         let mut payload = Vec::with_capacity(index_three as usize + CHUNK_HEADER_SIZE);
         payload.resize(index_two as usize, 0);
         payload[4..8].copy_from_slice(&INDEX_ONE.to_le_bytes());
@@ -539,12 +528,9 @@ impl UserLibrary {
         let mut total = 0_u32;
         for (slot, view) in self.items() {
             if slot > crate::PHRASE_MASK {
-                return Err(format!(
-                    "chunk write error: chunk slot {slot:#010x} exceeds PHRASE_MASK"
-                ));
+                return None;
             }
-            let offset =
-                u32::try_from(payload.len() - index_two as usize).map_err(|e| e.to_string())?;
+            let offset = u32::try_from(payload.len() - index_two as usize).ok()?;
             let at = INDEX_ONE as usize + slot as usize * 4;
             payload[at..at + 4].copy_from_slice(&offset.to_le_bytes());
             payload.extend_from_slice(view.as_bytes());
@@ -552,7 +538,7 @@ impl UserLibrary {
         }
         payload[..4].copy_from_slice(&total.to_le_bytes());
         payload.push(SEPARATOR);
-        crate::data::chunk_format::build_memory_chunk_owned(payload).map_err(|e| e.to_string())
+        crate::data::chunk_format::build_memory_chunk_owned(payload)
     }
 }
 

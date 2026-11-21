@@ -25,14 +25,14 @@ fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
         UserStoreError::Io(_)
         | UserStoreError::Store(_)
         | UserStoreError::InvalidPhrase
-        | UserStoreError::Persistence(_)
+        | UserStoreError::Persistence
         | UserStoreError::SaveRemapFailed
         | UserStoreError::SaveTooLarge
         | UserStoreError::UnigramTotalOverflow
         | UserStoreError::LibraryLoop(_)
         | UserStoreError::TrainingSetFreqMiss
         | UserStoreError::UserReadingRemoval
-        | UserStoreError::SessionSeed(_)
+        | UserStoreError::SessionSeed
         | UserStoreError::FailedUserBigramStore => MaskOutOutcome::Done(false),
     }
 }
@@ -474,7 +474,7 @@ impl ContextCore {
                 UserStoreError::Io(_)
                 | UserStoreError::Store(_)
                 | UserStoreError::InvalidPhrase
-                | UserStoreError::Persistence(_)
+                | UserStoreError::Persistence
                 | UserStoreError::UnigramTotalOverflow
                 | UserStoreError::OverlongIndexKey
                 | UserStoreError::NonTokenUserBigramKey
@@ -484,7 +484,7 @@ impl ContextCore {
                 | UserStoreError::LibraryLoop(_)
                 | UserStoreError::TrainingSetFreqMiss
                 | UserStoreError::UserReadingRemoval
-                | UserStoreError::SessionSeed(_)
+                | UserStoreError::SessionSeed
                 | UserStoreError::FailedUserBigramStore,
             ) => return SaveOutcome::NotSaved,
         };

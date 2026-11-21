@@ -14,10 +14,10 @@ fn round_trips_and_matches_the_layout() {
 
 #[test]
 fn rejects_short_and_unaligned_blobs() {
-    assert!(decode_single_gram(&[]).is_err());
-    assert!(decode_single_gram(&[0; 3]).is_err());
+    assert!(decode_single_gram(&[]).is_none());
+    assert!(decode_single_gram(&[0; 3]).is_none());
     // A 5-byte blob: total present, one stray byte.
-    assert!(decode_single_gram(&[0, 0, 0, 0, 0]).is_err());
+    assert!(decode_single_gram(&[0, 0, 0, 0, 0]).is_none());
     // The empty gram — a bare total — is valid.
     assert_eq!(
         decode_single_gram(&[7, 0, 0, 0]).expect("decode"),

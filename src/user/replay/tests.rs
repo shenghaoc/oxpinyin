@@ -71,7 +71,7 @@ fn add_candidates_preserve_sparse_additions() {
         assert_eq!(expected, added, "{name}");
         assert_eq!(actual, expected, "{name}");
         for &slot in added {
-            assert_eq!(view.item(slot), decode_phrase_item(&one()).ok(), "{name}");
+            assert_eq!(view.item(slot), decode_phrase_item(&one()), "{name}");
         }
     }
 }

@@ -119,7 +119,7 @@ fn a_user_session_fault_aborts_the_init() {
         || {
             let error =
                 oxpinyin::facade::OpenFailure::Runtime(oxpinyin::runtime::OpenError::UserSession(
-                    oxpinyin::user::UserStoreError::SessionSeed("injected".into()),
+                    oxpinyin::user::UserStoreError::SessionSeed,
                 ));
             super::refuse_init(&error, std::path::Path::new("system"));
         },
