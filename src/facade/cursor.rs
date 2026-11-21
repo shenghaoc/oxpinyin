@@ -72,20 +72,14 @@ impl CursorFault {
                     CursorLaw::CheckOffset => Self::Unreadable,
                 }
             }
-            EngineError::CandidateIndexOutOfRange { .. }
-            | EngineError::LookupOffsetInsideCharacter { .. }
+            EngineError::LookupOffsetInsideCharacter { .. }
             | EngineError::SelectionAnchorBeforeComposition { .. }
-            | EngineError::StaleTrainingConstraint { .. }
             | EngineError::UnsafeTrainingPredecessor { .. }
             | EngineError::ShortTrainingPredecessor { .. }
-            | EngineError::ShortLookupPredecessor { .. }
             | EngineError::UnsafeLookupPredecessor { .. }
             | EngineError::ReadAfterCheck { .. }
             | EngineError::TrainingSetFreqMiss { .. }
             | EngineError::FailedUserBigramStore { .. }
-            | EngineError::StaleTrainingSpan { .. }
-            | EngineError::OverlongUserIndexKey { .. }
-            | EngineError::TonedIncompleteKey
             | EngineError::UserModel(_)
             | EngineError::Graph(_)
             | EngineError::Scoring(_) => Self::Unreadable,

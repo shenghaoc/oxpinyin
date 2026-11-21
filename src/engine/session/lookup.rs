@@ -90,8 +90,12 @@ where
     ///
     /// Returns [`EngineError`] when the whole-composition suggestion walk
     /// or a model read fails — the surfaces [`Session::longer_candidate`]
-    /// reads — and, when `gate_overlong` is set, the over-long user index
-    /// key the pin's suggestion walk aborts on.
+    /// reads.
+    ///
+    /// # Aborts
+    ///
+    /// With `gate_overlong` set, where the pin's suggestion walk dies
+    /// (see [`Session::longer_candidate`]).
     fn prepend_longer_row(
         &self,
         out: &mut Vec<Candidate>,
@@ -122,9 +126,12 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when the dictionary walk or a model read
-    /// fails — the same surfaces the window scan reads — and, when
-    /// `gate_overlong` is set, the over-long user index key the pin's
-    /// suggestion walk aborts on.
+    /// fails — the same surfaces the window scan reads.
+    ///
+    /// # Aborts
+    ///
+    /// With `gate_overlong` set, on the toned incomplete key and the
+    /// over-long user index key the pin's suggestion walk dies on.
     pub(super) fn longer_candidate(
         &self,
         gate_overlong: bool,
@@ -198,9 +205,15 @@ where
     ///
     /// # Errors
     ///
-    /// The dictionary walk's or a model read's failure; with
-    /// `gate_overlong`, the toned incomplete key and the over-long user
-    /// index key that the pin's suggestion walk dies on.
+    /// The dictionary walk's or a model read's failure.
+    ///
+    /// # Aborts
+    ///
+    /// With `gate_overlong`, where the pin's suggestion walk dies: a toned
+    /// first initial-only key on a searched path
+    /// (`abort_toned_incomplete`), or a user index key past
+    /// `MAX_PHRASE_LENGTH` syllables that extends a path
+    /// (`chewing_large_table2_bdb.cpp:282` at 074a2219).
     fn longer_winner(
         &self,
         paths: &[SuggestionPath],
@@ -214,18 +227,19 @@ where
             // tkrzw `:504`; `pinyin_phrase3.h:152`). Only the explicit guess
             // runs the pin's prepend; a refresh keeps searching the path.
             if gate_overlong {
-                EngineError::check_toned_incomplete(keys, tones)?;
+                crate::engine::abort_toned_incomplete(keys, tones);
             }
             // The pin's `search_suggestion` gate: the walk reaches a user
             // index key past `MAX_PHRASE_LENGTH` syllables that extends this
             // path and `switch`'s `default: abort()` dies
-            // (`chewing_large_table2_bdb.cpp:282`). The pin reaches it only
-            // inside `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`),
-            // called from `pinyin_guess_candidates`; a parse or another
-            // non-guess operation refreshes the cached list without that
-            // prepend. So answer an error on an explicit guess, and skip
-            // the path rather than building a LONGER row from a corrupt
-            // index on any other refresh.
+            // (`chewing_large_table2_bdb.cpp:282`; kc `:269`, tkrzw `:252`).
+            // The pin reaches it only inside `_prepend_longer_candidates`
+            // (`pinyin.cpp:2292-2293`), called from
+            // `pinyin_guess_candidates`; a parse or another non-guess
+            // operation refreshes the cached list without that prepend. So
+            // die on an explicit guess, and skip the path rather than
+            // building a LONGER row from a corrupt index on any other
+            // refresh.
             let tokens = self
                 .dictionary
                 .checked_extension_tokens(keys.as_slice())
@@ -234,9 +248,7 @@ where
                 })?;
             let Some(tokens) = tokens else {
                 if gate_overlong {
-                    return Err(EngineError::OverlongUserIndexKey {
-                        syllables: keys.len(),
-                    });
+                    std::process::abort();
                 }
                 continue;
             };
@@ -690,7 +702,7 @@ where
         // it reads anything (`chewing_large_table2.cpp:166-167`,
         // `pinyin_phrase3.h:152`); only the explicit guess is the pin's.
         if *explicit {
-            EngineError::check_toned_incomplete(path, tones)?;
+            crate::engine::abort_toned_incomplete(path, tones);
         }
         // One search per table answers the rows and `SEARCH_CONTINUED`
         // (`search_matrix`, `pinyin.cpp:2231-2256` at 074a2219). A typed

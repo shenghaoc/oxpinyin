@@ -507,9 +507,9 @@ struct ScanScratch<'a> {
     row: &'a mut Vec<u8>,
     window_addon: &'a mut Vec<Candidate>,
     /// An explicit guess: the scan is the pin's `pinyin_guess_candidates`
-    /// search, so its table searches assert where the pin's do
-    /// ([`EngineError::TonedIncompleteKey`]); an eager refresh, which the
-    /// pin never runs, does not.
+    /// search, so its table searches die where the pin's assert
+    /// (`abort_toned_incomplete`); an eager refresh, which the pin never
+    /// runs, does not.
     explicit: bool,
 }
 

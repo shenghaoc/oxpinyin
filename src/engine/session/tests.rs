@@ -40,7 +40,7 @@ use crate::{
 
 use super::{Selection, SelectionTarget, Session};
 use crate::engine::SessionSettings;
-use crate::engine::error::{EngineError, TrainingSpanFault};
+use crate::engine::error::{EngineError, TrainingPrepFault};
 use crate::fixture_doubles::{
     FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
 };
@@ -563,12 +563,13 @@ fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
 }
 
 /// Trains row `index` through the production path: prepare the checked
-/// plan, then observe it.
+/// plan, then observe it. `Runtime::train_session` terminates on
+/// [`TrainingPrepFault::PinAbort`]; the tests read the fault itself.
 fn train_prepared<D, L, U>(
     session: &Session<D, L>,
     index: u8,
     user: &mut U,
-) -> Result<bool, EngineError>
+) -> Result<bool, TrainingPrepFault>
 where
     D: Dictionary<Syllable = SyllableKey> + Clone,
     D::Error: std::fmt::Display,
@@ -581,7 +582,7 @@ where
     let Some(plan) = view.prepare_training(index, &mut |_, _| Ok(()))? else {
         return Ok(false);
     };
-    plan.observe(user)
+    Ok(plan.observe(user)?)
 }
 
 /// Selects the candidate carrying `token` after typing `text` (the
@@ -651,8 +652,8 @@ fn training_without_results_does_not_observe_selection_history() {
 /// A re-parse that shortened the input under the last sentence lookup
 /// leaves the store (`constraints->length() - 1`) past the current matrix.
 /// The pin's walk then asserts `end < matrix->size()`
-/// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the engine returns
-/// the corresponding fault and the C adapters abort (row 82).
+/// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the preparation
+/// answers the pin-abort fault and production terminates on it (row 82).
 #[test]
 fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
     let mut session = trellis_session();
@@ -666,13 +667,7 @@ fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
         observed: Vec::new(),
     };
     let error = train_prepared(&session, 0, &mut recorder).expect_err("the stale span refuses");
-    assert_eq!(
-        error,
-        EngineError::StaleTrainingSpan {
-            position: 2,
-            fault: TrainingSpanFault::PastMatrixEnd,
-        }
-    );
+    assert_eq!(error, TrainingPrepFault::PinAbort);
 }
 
 /// The `'ni` twin: the leading apostrophe leaves column 0 empty, so the
@@ -692,13 +687,7 @@ fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
         observed: Vec::new(),
     };
     let error = train_prepared(&session, 0, &mut recorder).expect_err("the empty column refuses");
-    assert_eq!(
-        error,
-        EngineError::StaleTrainingSpan {
-            position: 0,
-            fault: TrainingSpanFault::EmptyStartColumn,
-        }
-    );
+    assert_eq!(error, TrainingPrepFault::PinAbort);
 }
 
 /// A stale span that starts on an internal separator column — a zero key,
@@ -779,8 +768,8 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
 
 /// The stale end can still land on an empty column: after a re-parse to
 /// `ni'hao` the pin passes `:663` (the apostrophe column holds a zero key)
-/// and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses
-/// with [`TrainingSpanFault::EndEmptyColumn`].
+/// and aborts at `:664` (`get_column_size(end) > 0`). The preparation
+/// answers the pin-abort fault.
 #[test]
 fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
     let mut session = trellis_session();
@@ -793,20 +782,16 @@ fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
     };
     let error =
         train_prepared(&session, 0, &mut recorder).expect_err("the empty end column refuses");
-    assert_eq!(
-        error,
-        EngineError::StaleTrainingSpan {
-            position: 2,
-            fault: TrainingSpanFault::EndEmptyColumn,
-        }
-    );
+    assert_eq!(error, TrainingPrepFault::PinAbort);
 }
 
-/// 074a2219 `train_result3` walks the spans in order: an earlier span's
-/// `increase_pronunciation_possibility` bounds assert
-/// (`storage/phonetic_key_matrix.cpp:661`) is reached before a later
-/// span's forced-token assert (`phonetic_lookup.h:868`), so the earlier
-/// fault is the one the facade must name.
+/// 074a2219 `train_result3` walks the spans in order, and within a span
+/// checks the forced token, then the step's store operations, then the
+/// span bounds (`phonetic_lookup.h:868`, `:876-909`, `:925`): an earlier
+/// span's bounds assert (`storage/phonetic_key_matrix.cpp:661`) is
+/// reached after that span's own store check and before a later span's
+/// forced-token assert, so the walk stops with exactly one store check
+/// run.
 #[test]
 fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
     use crate::engine::constraint::PhraseSpan;
@@ -835,18 +820,48 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
         keys: 2,
         span: 2,
     }];
-    let mut recorder = Recorder {
-        observed: Vec::new(),
+    let view = session.read(session.dictionary.clone(), session.model.clone());
+    let mut checked = 0_usize;
+    let Err(error) = view.prepare_training(0, &mut |_, _| {
+        checked += 1;
+        Ok(())
+    }) else {
+        panic!("the earlier bounds fault wins");
     };
-    let error =
-        train_prepared(&session, 0, &mut recorder).expect_err("the earlier bounds fault wins");
+    assert_eq!(error, TrainingPrepFault::PinAbort);
     assert_eq!(
-        error,
-        EngineError::StaleTrainingSpan {
-            position: 0,
-            fault: TrainingSpanFault::PastMatrixEnd,
-        }
+        checked, 1,
+        "the earlier span's store check runs before its bounds fault, \
+         and the later span's forced token is never compared"
     );
+}
+
+/// The preparation runs each span's store check before its bounds, so an
+/// earlier span's failing store operation answers the engine fault before
+/// a later span's pin fault is reached (`phonetic_lookup.h:876-909`
+/// before `:925`): the fuzz probe answers `false` there, where the same
+/// state under a passing check answers the pin abort. Both runs read the
+/// same state: the preparation observes nothing.
+#[test]
+fn an_earlier_store_check_failure_precedes_a_later_pin_fault() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("initial parse");
+    assert!(session.guess_sentence().expect("guess"));
+    select_row(&mut session, 1).expect("choose 你");
+    // The shortening re-parse leaves the second span past the matrix; the
+    // first span still fits.
+    session.replace_raw("ni").expect("shrink");
+    let view = session.read(session.dictionary.clone(), session.model.clone());
+    let Err(fault) = view.prepare_training(0, &mut |_, _| {
+        Err(EngineError::UserModel("short value".to_owned()))
+    }) else {
+        panic!("the first span's store check fails");
+    };
+    assert!(matches!(fault, TrainingPrepFault::Engine(_)));
+    let Err(fault) = view.prepare_training(0, &mut |_, _| Ok(())) else {
+        panic!("the stale span refuses");
+    };
+    assert_eq!(fault, TrainingPrepFault::PinAbort);
 }
 
 /// A stale forced token at position 2 refuses after a valid forced span.
@@ -865,12 +880,12 @@ fn training_refuses_a_stale_forced_token_at_a_later_span() {
         observed: Vec::new(),
     };
     let error = train_prepared(&session, 0, &mut recorder).expect_err("the later forcing refuses");
-    assert_eq!(error, EngineError::StaleTrainingConstraint { position: 2 });
+    assert_eq!(error, TrainingPrepFault::PinAbort);
 }
 
 /// A forced phrase at position 0 whose token differs from the decoded
 /// row's reaches the pin's consistency assert (`phonetic_lookup.h:868`):
-/// the engine answers a stale constraint at that position.
+/// the preparation answers the pin-abort fault.
 #[test]
 fn training_refuses_a_stale_forced_token() {
     let mut session = trellis_session();
@@ -882,7 +897,7 @@ fn training_refuses_a_stale_forced_token() {
         observed: Vec::new(),
     };
     let error = train_prepared(&session, 0, &mut recorder).expect_err("the stale forcing refuses");
-    assert_eq!(error, EngineError::StaleTrainingConstraint { position: 0 });
+    assert_eq!(error, TrainingPrepFault::PinAbort);
 }
 
 /// A stored phrase trains as long as its stored length, the
@@ -1038,7 +1053,11 @@ fn train_reports_a_failing_user_model() {
     // model reports an `EngineError::UserModel`, so the wrap doubles the
     // prefix — the point is that the failure surfaces, not that the text
     // is pretty.
-    let error = train_prepared(&session, 0, &mut Failing).expect_err("the model fails");
+    let TrainingPrepFault::Engine(error) =
+        train_prepared(&session, 0, &mut Failing).expect_err("the model fails")
+    else {
+        panic!("a user-model failure is an engine fault, not a pin abort");
+    };
     assert_eq!(
         error.to_string(),
         "user model error: user model error: closed"

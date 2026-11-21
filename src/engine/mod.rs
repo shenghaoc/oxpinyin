@@ -23,7 +23,8 @@ pub use cursor::{
     KeySpans, MatrixKey, MatrixKeys, left_word_offset_over_spans, lookup_offset_over_spans,
     right_word_offset_over_spans,
 };
-pub use error::{EngineError, TrainingSpanFault};
+pub use error::EngineError;
+pub(crate) use error::{TrainingPrepFault, abort_toned_incomplete};
 pub use nbest::NbestShape;
 pub use session::{
     BEFORE_CURSOR_ANCHOR, CandidateRanking, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection,

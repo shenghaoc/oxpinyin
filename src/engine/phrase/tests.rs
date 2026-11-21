@@ -307,29 +307,17 @@ impl LanguageModel for Rows {
 
 /// N2 refusals 1 and 4 on `phrase_segment`'s merge and `get_freq`
 /// (`phrase_lookup.cpp:272-290`): the sentence-start predecessor's row
-/// refuses where the pin asserts or reads past it, and a whole row
-/// segments.
+/// refuses where the pin reads past it, and a whole row segments. A
+/// sentence the search never reaches a predecessor row for stays quiet.
 #[test]
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
     use crate::SENTENCE_START;
     use crate::engine::error::EngineError;
     use crate::model::MergedGram;
     let dictionary = Dict::parse(&[("你", 3)]);
-    let system = || {
-        let mut value = 1_u32.to_le_bytes().to_vec();
-        value.extend_from_slice(&3_u32.to_le_bytes());
-        value.extend_from_slice(&1_u32.to_le_bytes());
-        value
-    };
     let short_merge = Rows {
-        row: MergedGram::merge(Some(system()), Some(vec![0, 0])).unwrap(),
+        row: MergedGram::merge(Some(segment_system_gram()), Some(vec![0, 0])).unwrap(),
     };
-    assert_eq!(
-        phrase_segment(&dictionary, &short_merge, "你").unwrap_err(),
-        EngineError::ShortLookupPredecessor {
-            token: SENTENCE_START
-        }
-    );
     assert!(phrase_segment(&dictionary, &short_merge, "").is_ok());
     assert!(phrase_segment(&dictionary, &short_merge, "无").is_ok());
     let short_alone = Rows {
@@ -342,11 +330,39 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
         }
     );
     let whole = Rows {
-        row: MergedGram::merge(Some(system()), None).unwrap(),
+        row: MergedGram::merge(Some(segment_system_gram()), None).unwrap(),
     };
     let (matched, result) = phrase_segment(&dictionary, &whole, "你").unwrap();
     assert!(matched);
     assert_eq!(result[0], 3);
+}
+
+/// A one-item system gram (total 1, token 3 with count 1) for the
+/// segment's sentence-start predecessor row.
+fn segment_system_gram() -> Vec<u8> {
+    let mut value = 1_u32.to_le_bytes().to_vec();
+    value.extend_from_slice(&3_u32.to_le_bytes());
+    value.extend_from_slice(&1_u32.to_le_bytes());
+    value
+}
+
+/// N2 refusal 1: the predecessor's merge asserts on a short user value
+/// beside the system gram (`merge_single_gram` reads both totals first,
+/// `ngram.cpp:303-304` through `memory_chunk.h:390`), and the segment
+/// dies in the engine.
+#[test]
+fn a_short_merge_aborts_the_segment() {
+    crate::store::death_test::assert_aborts(
+        "engine::phrase::tests::a_short_merge_aborts_the_segment",
+        || {
+            let dictionary = Dict::parse(&[("你", 3)]);
+            let short_merge = Rows {
+                row: crate::model::MergedGram::merge(Some(segment_system_gram()), Some(vec![0, 0]))
+                    .unwrap(),
+            };
+            let _ = phrase_segment(&dictionary, &short_merge, "你");
+        },
+    );
 }
 #[test]
 fn ieee_relax_and_best_keep_first_on_ties_and_nan() {

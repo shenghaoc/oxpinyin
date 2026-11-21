@@ -1151,7 +1151,7 @@ impl GenerationView<'_> {
             }
             // `search_matrix_recur`'s leaf searches the table, which asserts
             // on a toned first initial-only key (`pinyin_phrase3.h:152`).
-            EngineError::check_toned_incomplete(&path.keys, &path.tones)?;
+            crate::engine::abort_toned_incomplete(&path.keys, &path.tones);
             let hit = dictionary
                 .trellis_ranges_continued(
                     &path.keys,

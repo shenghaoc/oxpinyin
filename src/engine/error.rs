@@ -5,23 +5,31 @@ use core::fmt;
 use crate::graph::GraphError;
 use crate::scoring::ScoringError;
 
-/// Which `increase_pronunciation_possibility` precondition a stale
-/// training span violates (`storage/phonetic_key_matrix.cpp` at the pin).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrainingSpanFault {
-    /// `assert(end < matrix->size())` — the span's end sits past the
-    /// current matrix (`phonetic_key_matrix.cpp:661`).
-    PastMatrixEnd,
-    /// `assert(matrix->get_column_size(start) > 0)` — the span starts on
-    /// a column the current matrix leaves empty (`:663`). An internal
-    /// separator between keys is filled with a zero key (not empty), so it
-    /// is accepted; only a genuine gap (a leading separator run) trips this.
-    EmptyStartColumn,
-    /// `assert(matrix->get_column_size(end) > 0)` — the span ends on a
-    /// column the current matrix leaves empty (`:664`). The internal
-    /// apostrophe can leave the start column non-empty (a zero key) while
-    /// the stale end still lands on an empty column.
-    EndEmptyColumn,
+/// Why the shared training preparation stopped
+/// ([`crate::engine::Session::prepare_training`]).
+///
+/// The preparation is read-only and shared by production training and the
+/// fuzz probe, so it answers the pin's own training aborts as a typed
+/// signal: production terminates on it, the probe answers `true`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TrainingPrepFault {
+    /// The pin's own training abort: the index past nonempty results
+    /// (`pinyin.cpp:2684` at 074a2219), a forced phrase whose token
+    /// differs from the decoded result's (`phonetic_lookup.h:868`), or a
+    /// span outside the current matrix — past its end, or starting or
+    /// ending on an empty column (`storage/phonetic_key_matrix.cpp:661`,
+    /// `:663`, `:664`).
+    PinAbort,
+    /// The per-step store check's or a backend's failure. Production
+    /// propagates it; the probe answers the C facade's classification of
+    /// it — `true` only for a store fault the facade terminates on.
+    Engine(EngineError),
+}
+
+impl From<EngineError> for TrainingPrepFault {
+    fn from(error: EngineError) -> Self {
+        Self::Engine(error)
+    }
 }
 
 /// Anything a session can fail at.
@@ -32,14 +40,6 @@ pub enum TrainingSpanFault {
 /// its public surface.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum EngineError {
-    /// A candidate index was out of range, most likely a stale one.
-    #[error("candidate index {index} is out of range 0..{len}")]
-    CandidateIndexOutOfRange {
-        /// The index the caller asked for.
-        index: usize,
-        /// How many candidates the list actually holds.
-        len: usize,
-    },
     /// A lookup offset lay beyond the raw input's one-past-end position —
     /// upstream reads its matrix out of bounds there, so the range has no
     /// pinned behaviour and the engine refuses it.
@@ -105,16 +105,6 @@ pub enum EngineError {
         /// The column position the walk stepped to.
         offset: usize,
     },
-    /// A training walk met a user-forced phrase whose token differs from the
-    /// token the decoded result holds there — the constraints changed after
-    /// the last sentence lookup. The pin's `train_result3` asserts it
-    /// (`assert(token == constraint->m_token)`, `phonetic_lookup.h:868` at
-    /// the pin); the engine answers an error, before observing anything.
-    #[error("the forced phrase at {position} differs from the decoded result's")]
-    StaleTrainingConstraint {
-        /// The matrix position of the forced phrase.
-        position: usize,
-    },
     /// A training step would load a predecessor whose stored user-bigram
     /// value has a partial item tail. The pin's `insert_freq`
     /// (`ngram.cpp:178`, loop `:190`), `get_freq` (`:231`, loop `:241`) and `set_freq`
@@ -133,18 +123,6 @@ pub enum EngineError {
     /// answers an error, before observing anything.
     #[error("the predecessor {token:#010x} has a user-bigram value shorter than its total")]
     ShortTrainingPredecessor {
-        /// The predecessor token whose gram is too short for a total.
-        token: u32,
-    },
-    /// A lookup merged or read a predecessor's bigram where the pin
-    /// asserts: a stored system or user bigram value shorter than its
-    /// `guint32` total, whose total `merge_single_gram` (`ngram.cpp:303-304`),
-    /// `SingleGram::search` (`:165`) or the `DYNAMIC_ADJUST` term
-    /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
-    /// `memory_chunk.h:390` (register row 85). The engine answers an error
-    /// instead of the abort.
-    #[error("the predecessor {token:#010x} has a bigram value shorter than its total")]
-    ShortLookupPredecessor {
         /// The predecessor token whose gram is too short for a total.
         token: u32,
     },
@@ -189,44 +167,6 @@ pub enum EngineError {
         /// The predecessor token whose gram the step trains.
         token: u32,
     },
-    /// A training span met a matrix position the pin's
-    /// `increase_pronunciation_possibility` asserts on: the decoded
-    /// result no longer fits the current matrix because a re-parse
-    /// shortened the input after the last sentence lookup. The pin aborts
-    /// (`assert(end < matrix->size())`, `storage/phonetic_key_matrix.cpp:661`;
-    /// `assert(matrix->get_column_size(start) > 0)`, `:663`;
-    /// `assert(matrix->get_column_size(end) > 0)`, `:664` at the pin);
-    /// the engine answers an error instead, before observing anything.
-    #[error("the training span at {position} leaves the current matrix ({fault:?})")]
-    StaleTrainingSpan {
-        /// The matrix position of the offending phrase.
-        position: usize,
-        /// Which precondition the span violates.
-        fault: TrainingSpanFault,
-    },
-    /// The longer-candidate walk met a pinyin index key (the user's or the
-    /// system's) past `MAX_PHRASE_LENGTH` syllables that extends the
-    /// current prefix — the pin's `ChewingLargeTable2::search_suggestion`,
-    /// over either table, reaches the key
-    /// through its `DB_SET`/`DB_NEXT` walk and its `switch`'s
-    /// `default: abort()` dies (`storage/chewing_large_table2_bdb.cpp:282`
-    /// at the pin); the engine answers an error, on which the C adapters
-    /// abort (register row 84).
-    #[error(
-        "a pinyin index key past MAX_PHRASE_LENGTH syllables extends the \
-         {syllables}-syllable prefix"
-    )]
-    OverlongUserIndexKey {
-        /// The prefix path length the walk was on when it reached the key.
-        syllables: usize,
-    },
-    /// A phrase-table search over a key path whose first initial-only key
-    /// carries a tone: `contains_incomplete_pinyin` asserts
-    /// `CHEWING_ZERO_TONE == key.m_tone` on the first initial-only key
-    /// (`storage/pinyin_phrase3.h:146-156` at 074a2219), at the top of every
-    /// table search and suggestion search that holds it.
-    #[error("a searched key path's first initial-only key carries a tone")]
-    TonedIncompleteKey,
     /// A character's one-character phrase-table search held more than four
     /// tokens. `_pre_compute_tokens` reduces it through `get_first_token`
     /// (`pinyin.cpp:3117`, `zhuyin.cpp:2080`), whose validating
@@ -248,36 +188,43 @@ pub enum EngineError {
     Scoring(#[from] ScoringError),
 }
 
-impl EngineError {
-    /// [`Self::TonedIncompleteKey`] where the pin's table search over
-    /// `keys` (with their typed `tones`) asserts: the first initial-only
-    /// key, if any, carries a tone (`contains_incomplete_pinyin` returns at
-    /// the first one, `pinyin_phrase3.h:148-154`).
-    ///
-    /// # Errors
-    ///
-    /// [`Self::TonedIncompleteKey`] on that path.
-    pub(crate) fn check_toned_incomplete(
-        keys: &[crate::SyllableKey],
-        tones: &[u8],
-    ) -> Result<(), Self> {
-        let first = keys
-            .iter()
-            .position(|key| key.completeness() == crate::Completeness::Partial);
-        match first {
-            Some(index) if tones.get(index).is_some_and(|tone| *tone != 0) => {
-                Err(Self::TonedIncompleteKey)
-            }
-            _ => Ok(()),
-        }
+/// The pin's table-search assert over `keys` (with their typed `tones`):
+/// the first initial-only key, if any, must carry no tone
+/// (`contains_incomplete_pinyin` returns at the first one,
+/// `pinyin_phrase3.h:148-154`; the search asserts
+/// `CHEWING_ZERO_TONE == key.m_tone`, `:152` at 074a2219).
+///
+/// # Aborts
+///
+/// Terminates where the pin's assert fires: the first initial-only key
+/// carries a tone.
+pub(crate) fn abort_toned_incomplete(keys: &[crate::SyllableKey], tones: &[u8]) {
+    let first = keys
+        .iter()
+        .position(|key| key.completeness() == crate::Completeness::Partial);
+    if let Some(index) = first
+        && tones.get(index).is_some_and(|tone| *tone != 0)
+    {
+        std::process::abort();
     }
+}
 
+impl EngineError {
     /// The lookup refusal for a [`crate::GramFault`] met on
     /// `token`'s merged row.
+    ///
+    /// # Aborts
+    ///
+    /// Terminates on [`crate::GramFault::Short`] — a stored system or user
+    /// bigram value shorter than its `guint32` total, whose total
+    /// `merge_single_gram` (`ngram.cpp:303-304`), `SingleGram::search`
+    /// (`:165`), `get_total_freq` (`:49`) or the `DYNAMIC_ADJUST` term
+    /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
+    /// `memory_chunk.h:390` (register row 85).
     #[must_use]
-    pub const fn lookup_gram(token: u32, fault: crate::GramFault) -> Self {
+    pub fn lookup_gram(token: u32, fault: crate::GramFault) -> Self {
         match fault {
-            crate::GramFault::Short => Self::ShortLookupPredecessor { token },
+            crate::GramFault::Short => std::process::abort(),
             crate::GramFault::OverRead => Self::UnsafeLookupPredecessor { token },
         }
     }

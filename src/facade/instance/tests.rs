@@ -451,6 +451,133 @@ mod native {
         );
         assert_eq!(context.user_store().bigram_count(t1, t2).unwrap(), 0);
     }
+
+    /// Chooses a normal phrase row of the offset-0 window and re-guesses,
+    /// so the decoded row carries the forced token at its span.
+    fn choose_a_phrase_and_reguess(context: &ContextCore, instance: &mut InstanceCore) {
+        let text = native_window(context, instance, 0)
+            .iter()
+            .find(|row| row.kind() == CandidateKind::Phrase && row.token().is_some())
+            .expect("a phrase row")
+            .text()
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let row = published(context, instance, 0, &text);
+        assert_ne!(choose(context, instance, &row), Selection::Refused);
+        assert!(guess(context, instance));
+    }
+
+    /// The fuzz probe answers the pin's own training aborts without
+    /// running them: an index past the nonempty results
+    /// (`pinyin.cpp:2684`) and a stale span after a shortening re-parse
+    /// (`storage/phonetic_key_matrix.cpp:661`) answer `true` where
+    /// `Runtime::train_session` dies. A context without a user directory
+    /// answers `false` from the same gate `pinyin_train` runs first.
+    #[test]
+    fn the_training_probe_answers_the_pins_own_aborts() {
+        let user = TempUserDir::new("train-probe-true");
+        let context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
+        assert!(guess(&context, &mut instance));
+        assert!(instance.read(&context.runtime).train_aborts(9));
+        assert!(!instance.read(&context.runtime).train_aborts(0));
+        // A choose, then a shortening re-parse: the surviving store
+        // outlives the matrix and the span walk leaves it.
+        choose_a_phrase_and_reguess(&context, &mut instance);
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("ni"), 2);
+        assert!(instance.read(&context.runtime).train_aborts(0));
+
+        let (fixture, mut no_user) = pinyin_instance();
+        assert_eq!(no_user.bind(&fixture.runtime).parse_full_more("nihao"), 5);
+        assert!(guess(&fixture, &mut no_user));
+        assert!(!no_user.read(&fixture.runtime).train_aborts(9));
+    }
+
+    /// A store fault that production training dies on answers the probe
+    /// `true`, so the fuzz harness never calls `pinyin_train` into a
+    /// known abort: the crafted set-freq miss is classified
+    /// `TrainingRefusal::Abort`, exactly as `pinyin_train` classifies it.
+    #[test]
+    fn a_store_fault_that_production_dies_on_answers_the_probe_true() {
+        let user = TempUserDir::new("train-probe-store-abort");
+        // A sentence-start user gram with whole items whose tokens
+        // straddle every real phrase token: the trained step's `get_freq`
+        // misses, `insert_freq` appends the forced token, and `set_freq`'s
+        // second `lower_bound` stops on a high token before the appended
+        // item — the pin's `check_result` dies (`phonetic_lookup.h:903`,
+        // register row 113). Lookups survive the unsorted row (whole
+        // items, no partial tail), so the guesses succeed and only
+        // training's store check meets the fault.
+        let gram = |tokens: &[u32]| {
+            let mut value = 0_u32.to_le_bytes().to_vec();
+            for &token in tokens {
+                value.extend_from_slice(&token.to_le_bytes());
+                value.extend_from_slice(&0_u32.to_le_bytes());
+            }
+            value
+        };
+        let (lo, hi) = (2_u32, 0xFFFF_FFF0_u32);
+        plant_bigram(
+            &user.path,
+            vec![(
+                crate::SENTENCE_START.to_le_bytes().to_vec(),
+                gram(&[lo, hi, lo, hi, lo]),
+            )],
+        );
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
+        assert!(guess(&context, &mut instance));
+        choose_a_phrase_and_reguess(&context, &mut instance);
+        assert!(instance.read(&context.runtime).train_aborts(0));
+        let result = context.train(&instance, 0);
+        assert!(
+            matches!(
+                &result,
+                Err(crate::engine::EngineError::TrainingSetFreqMiss { .. })
+            ),
+            "{result:?}"
+        );
+        // The classification the probe shares: the C adapters terminate.
+        assert_eq!(
+            crate::facade::training_answer(result),
+            Err(crate::facade::TrainingRefusal::Abort)
+        );
+    }
+
+    /// The probe runs the whole shared preparation and nothing more: it
+    /// never observes the plan and never marks the store modified, and
+    /// production training over the same state still observes.
+    #[test]
+    fn the_training_probe_observes_nothing_and_leaves_the_store_clean() {
+        let user = TempUserDir::new("train-probe-pure");
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let mut instance = context.alloc_instance();
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
+        assert!(guess(&context, &mut instance));
+        choose_a_phrase_and_reguess(&context, &mut instance);
+        let modified = context.user_store().is_modified();
+        assert!(!instance.read(&context.runtime).train_aborts(0));
+        assert_eq!(context.user_store().is_modified(), modified);
+        assert!(
+            context
+                .user_store()
+                .bigram_successors(crate::SENTENCE_START)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(context.train(&instance, 0).unwrap());
+        assert!(context.user_store().is_modified());
+        assert!(
+            !context
+                .user_store()
+                .bigram_successors(crate::SENTENCE_START)
+                .unwrap()
+                .is_empty()
+        );
+    }
 }
 
 #[cfg(feature = "tkrzw")]
