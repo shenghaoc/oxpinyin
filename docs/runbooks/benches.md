@@ -525,12 +525,14 @@ main-against-main validation is not a performance claim.
 
 `just measure compare` also runs on Windows x64 with MSVC and `VCPKG_ROOT`
 set as in setup.md. Both arms use that checkout's `installed/x64-windows`
-pkg-config metadata and runtime DLLs. Each distinct SHA builds once with
+pkg-config metadata and GLib DLL, and the repository's static tkrzw
+(`just tkrzw`) from the cache root, first on `PKG_CONFIG_PATH`.
+Each distinct SHA builds once with
 `cargo build --locked --release -p oxpinyin-capi`, default features and no
 added linker or debug flags. The artifact is `oxpinyin_capi.dll`, not a packaged
-libpinyin DLL. A′ is staged as on macOS. A run fails unless the imported ABI function's owning
+libpinyin DLL; tkrzw is inside it. A′ is staged as on macOS. A run fails unless the imported ABI function's owning
 module is the arm's DLL and both arms load the same dependency files: every module outside the
-Windows system directory, such as tkrzw and GLib, plus the C runtime.
+Windows system directory, which is GLib, plus the C runtime.
 
 QPC elapsed seconds, the QueryProcessCycleTime delta and GetProcessTimes
 user+kernel seconds bracket the same typing loop as macOS, excluding

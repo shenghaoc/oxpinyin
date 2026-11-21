@@ -222,7 +222,7 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 ## 9. Sound tkrzw library
 
 The tkrzw cell, the reference cell, runs only against a sound libtkrzw.
-macOS uses Homebrew's tkrzw and Windows the repository's vcpkg overlay port ([setup](setup.md)).
+macOS uses Homebrew's tkrzw and Windows the repository's static build, `just tkrzw` ([setup](setup.md)).
 Linux runs no tkrzw code: every Linux build uses Kyoto Cabinet
 ([section 10](#10-ci-merge-conditions), [Linux setup](setup.md#linux)), and a Linux host
 provisions no tkrzw oracle cell. Debian release packaging and oracle/reference images retain
@@ -285,7 +285,7 @@ These rules govern the CI gates. This section is the only place that states them
 2. **Linux CI runs the one Linux cell: Kyoto Cabinet, from Ubuntu's packages.**
    tkrzw stays the Cargo default, and every Linux job selects Kyoto Cabinet with the backend flag instead: the `rust` lane (clippy, rustdoc, nextest, the archive build and the fuzz check), the cell gates, `shipping-sizes`, whose size table is therefore the Kyoto Cabinet libraries', and the nightly fuzz soak.
    `LOCAL_CELL` in `tools/dev/cell.py` names the cell once for CI and the local tooling; [Linux setup](setup.md#linux) states the companion rule for the local tooling.
-   Decided 2026-11-21, amending the 2026-10-30 ruling that the general test jobs on every OS use tkrzw: Ubuntu's libtkrzw is defective at run time ([finding](../findings/tkrzw-distro-compat.md)), so Linux runs no tkrzw code and the vcpkg overlay is no longer used on Linux; Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
+   Decided 2026-11-21, amending the 2026-10-30 ruling that the general test jobs on every OS use tkrzw: Ubuntu's libtkrzw is defective at run time ([finding](../findings/tkrzw-distro-compat.md)), so Linux runs no tkrzw code; Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
    The `store` job tests Berkeley DB, and the Berkeley DB and Kyoto Cabinet sanitizers, only when their KV code changes; [rule 2](#2-backend-selection) decides that by path, not by judgement.
    tkrzw's tests, including the full-data contract tests, which are tkrzw-only, run on the nightly macOS and Windows jobs and never in Linux CI; tkrzw's sanitizer run has no CI job.
 3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under its path gate.

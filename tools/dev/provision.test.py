@@ -484,15 +484,13 @@ if sys.platform.startswith('linux'):
 
         def test_writer_retains_the_linux_cell_quotes_and_another_cache(self):
             self.write_and_source()
-            # An earlier file's bdb and tkrzw entries are dropped: kc is the one Linux cell.
+            # An earlier file's bdb and tkrzw entries are not carried forward: kc is the one Linux cell.
             with self.service.env_file.open('a') as stream:
                 for cell in ('bdb', 'tkrzw'):
                     stream.write(f"export OXPINYIN_ORACLE_PREFIX_{cell.upper()}="
                                  f"{provision.quote(self.service.oracle_root / cell)}\n")
             self.service.cells = []
-            log = self.write()
-            for cell in ('bdb', 'tkrzw'):
-                self.assertIn(f'{cell}: removed from environment file; {cell} is no Linux cell', log)
+            self.assertNotIn('removed from environment file', self.write())
             self.assertNotIn('BDB', self.service.env_file.read_text())
             self.assertNotIn('TKRZW', self.service.env_file.read_text())
             # A run from another cache that provisions nothing keeps the verified kc cell of the old one.
@@ -1147,7 +1145,7 @@ class RuntimeProvisionTests(unittest.TestCase):
             service.kyotocabinet_ready()
         self.assertIn(['log', 'kyotocabinet: 1.2.80 from the distribution'], self.calls)
         with (mock.patch.object(provision, 'text', return_value=''), mock.patch.object(service, 'apt') as apt,
-              mock.patch.object(provision.os, 'geteuid', return_value=1000),
+              mock.patch.object(provision.os, 'geteuid', create=True, return_value=1000),
               contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(Finished)):
             service.kyotocabinet_ready()
         apt.assert_not_called()
@@ -1156,7 +1154,7 @@ class RuntimeProvisionTests(unittest.TestCase):
         with (mock.patch.object(provision, 'text', side_effect=lambda *a, **k: next(answers)),
               mock.patch.object(service, 'apt', return_value=True) as apt,
               mock.patch.object(service, 'which', return_value='/usr/bin/apt-get'),
-              mock.patch.object(provision.os, 'geteuid', return_value=0)):
+              mock.patch.object(provision.os, 'geteuid', create=True, return_value=0)):
             service.kyotocabinet_ready()
         apt.assert_called_once_with(['libkyotocabinet-dev'])
         self.assertIn(['log', 'installing libkyotocabinet-dev from the distribution archive'], self.calls)

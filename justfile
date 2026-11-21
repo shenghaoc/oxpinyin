@@ -56,6 +56,17 @@ provision *args:
 provision *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.provision @forwarded; exit $LASTEXITCODE
 
+# Build the pinned tkrzw as a static library into the cache root (tools/tkrzw/windows.py).
+# Windows only: the other platforms use their packaged library (docs/runbooks/setup.md).
+[unix]
+tkrzw *args:
+    @echo "tkrzw is built by this recipe on Windows only; other platforms use their packaged library (docs/runbooks/setup.md)."
+    @exit 1
+
+[windows]
+tkrzw *args:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.tkrzw.windows @forwarded; exit $LASTEXITCODE
+
 # Fetch, verify and extract the pinned model20 archive into the cache root.
 [unix]
 fetch-model *args:

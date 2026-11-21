@@ -29,8 +29,7 @@ The **linker** joins compiled code into executables and native libraries.
 ## Linux
 
 **The Linux rule.** Linux runs no tkrzw code: Ubuntu packages no sound libtkrzw
-([finding](../findings/tkrzw-distro-compat.md)), and the vcpkg overlay port is
-not used on Linux. Decided 2026-11-21, amending the 2026-10-30 ruling that the
+([finding](../findings/tkrzw-distro-compat.md)). Decided 2026-11-21, amending the 2026-10-30 ruling that the
 general test jobs on every OS use tkrzw. Every Linux build that runs a backend
 uses Kyoto Cabinet from the distribution's packages, `LOCAL_CELL` in
 `tools/dev/cell.py`: Linux CI ([verification rule 10.2](verification.md#10-ci-merge-conditions)),
@@ -69,13 +68,13 @@ distribution targets:
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config zip unzip cmake ninja-build libglib2.0-dev \
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config libglib2.0-dev \
   libkyotocabinet-dev kyotocabinet-utils
 ```
 
 ```bash
 # Systems using dnf:
-sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config zip unzip cmake ninja-build glib2-devel \
+sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config glib2-devel \
   kyotocabinet-devel kyotocabinet
 ```
 
@@ -569,37 +568,44 @@ environment and toolchain; no project-specific IDE is required.
 workspace on the [default backend](backends.md). It also runs the tools Python
 harness (`just test-tools`).
 
-- Windows installs the repository's tkrzw overlay port and GLib through vcpkg.
-  The overlay reads the same pinned revision as the Linux build recipe.
-  CMake exports functions and vtables; patched public data declarations export
-  from the DLL and import in consumers. The release library uses the dynamic CRT
-  (`/MD`), matching oxpinyin's C++ bridge and vcpkg's `x64-windows` triplet.
-- The DLL is in `installed/x64-windows/bin`, the import library and pkg-config
-  metadata in `lib` and `lib/pkgconfig`, and public headers in `include`.
+- GLib and pkgconf come from vcpkg. Nothing packages tkrzw for Windows, so
+  the repository builds it: `just tkrzw` (`tools/tkrzw/windows.py`) fetches the pinned
+  revision (`tools/tkrzw/pin.json`) and builds the library target of upstream's
+  `VCMakefile` through nmake. It overrides one flag: the DLL C runtime (`/MD`)
+  in place of upstream's static one, matching the Rust MSVC targets and
+  oxpinyin's C++ bridge. The result is a static `tkrzw.lib`; no tkrzw DLL exists.
+- The install is `include`, `lib\tkrzw.lib` and `lib\pkgconfig\tkrzw.pc` under
+  the cache root's `tkrzw-<revision>` entry ([cache directory](#cache-directory)),
+  or under `--prefix`. The archive is linked into every binary, so no tkrzw
+  directory goes on PATH.
 - `$env:VCPKG_ROOT` names the vcpkg checkout. The commands below run from
-  the repository root; `--overlay-ports` selects the repository port.
+  the repository root in a Developer PowerShell; the tkrzw build also finds
+  MSVC by itself through vswhere.
 
-The job also installs the vcpkg `glib` port, which it finds through the same
-`PKG_CONFIG` and `PKG_CONFIG_PATH`. It therefore builds and tests
+The job finds GLib and tkrzw through vcpkg's `pkgconf` and one
+`PKG_CONFIG_PATH`. It therefore builds and tests
 the full workspace, including `oxpinyin-utils`, KMM
 and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
 Text expectations use the newline of the host.
 The `test-windows` job in `verify-nightly.yml` excludes no crate. The Linux FFI feature of the oracle is
 not selected, so those tests do not establish native Windows oracle behavior.
 
-A full local build or `just test` needs the same vcpkg ports as the
-CI job. The core library requires GLib. From Developer PowerShell, run:
+A full local build or `just test` needs the same libraries as the CI job.
+The core library requires GLib. Run:
 
 ```powershell
-& "$env:VCPKG_ROOT\vcpkg.exe" install tkrzw:x64-windows pkgconf:x64-windows glib:x64-windows --overlay-ports=vcpkg-overlays
+& "$env:VCPKG_ROOT\vcpkg.exe" install pkgconf:x64-windows glib:x64-windows
 $installed = "$env:VCPKG_ROOT\installed\x64-windows"
+just tkrzw
 $env:PKG_CONFIG = "$installed\tools\pkgconf\pkgconf.exe"
-$env:PKG_CONFIG_PATH = "$installed\lib\pkgconfig"
+$env:PKG_CONFIG_PATH = "<the PKG_CONFIG_PATH entry just tkrzw printed>;$installed\lib\pkgconfig"
 $env:PATH = "$installed\bin;$env:PATH"
 & $env:PKG_CONFIG --modversion glib-2.0 tkrzw
 ```
 
-The `bin` directories put the GLib and tkrzw DLLs on the path of the test binaries.
+`just tkrzw` ends by printing the `PKG_CONFIG_PATH` entry of its install,
+and reuses a complete install on the next run. vcpkg's `bin` puts the GLib
+DLLs on the path of the test binaries; tkrzw needs no path entry.
 
 Windows is a supported native target; the frozen oracle does not define which
 native operating systems oxpinyin can support. To dispatch the nightly Windows
@@ -674,7 +680,7 @@ The name of each entry carries its pin, so a new pin gets a new entry:
 
 - `contract-data/<version>`: the pinned libpinyin-data package.
 - `model20-<digest>`: the model20 archive and its extraction.
-- `vcpkg/` and `vcpkg-binary-cache/`: the overlay checkout and binary cache of `just provision`, unless `VCPKG_ROOT` selects an existing checkout.
+- `tkrzw-<revision>`: the static tkrzw of `just tkrzw` ([native Windows](#native-windows)).
 - `pin-<commit>`: the provisioning cache, with the pin prefixes and their build trees.
 
 `oracle.env`, the [environment file](cloud.md#the-environment-file) of `just provision-oracle`,

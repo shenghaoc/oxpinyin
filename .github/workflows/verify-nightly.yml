@@ -269,7 +269,8 @@ jobs:
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace --release --no-default-features --features kyotocabinet
 
   # The full Windows workspace: clippy and the tests over the workspace,
-  # built with MSVC and tkrzw and GLib from vcpkg. It runs every night and on
+  # built with MSVC, GLib and pkgconf from vcpkg and the repository's static
+  # tkrzw (tools/tkrzw/windows.py). It runs every night and on
   # manual dispatch; section 10 makes it best-effort and never a PR merge
   # condition (docs/runbooks/verification.md). Not skipped by windows_only;
   # skipped by macos_only.
@@ -290,7 +291,7 @@ jobs:
       # The package specs (port[features]:triplet) passed to `vcpkg install`,
       # space-separated. The binary cache key hashes this value, so adding a
       # port or feature here gives the cache a new key.
-      VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows tkrzw:x64-windows
+      VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -314,9 +315,9 @@ jobs:
       # cache actions stay here. The vcpkg revision is the runner image's own
       # checkout, read once in the key step. The cache key changes whenever an input to the
       # ABI hashes can: that revision (ports and baseline), the triplet, the
-      # runner image (compiler and SDK), the requested package specs
-      # (VCPKG_PACKAGES), and any vcpkg manifest, configuration, overlay or
-      # triplet file in this repository. The restore-keys fall
+      # runner image (compiler and SDK) and the requested package specs
+      # (VCPKG_PACKAGES). This job installs no repository port, so no
+      # overlay or triplet file is hashed. The restore-keys fall
       # back to the newest entry for the same revision and image, then for
       # the same image OS and triplet; vcpkg's own hash check decides what in
       # it is reusable.
@@ -336,7 +337,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.vcpkg-cache-key.outputs.dir }}
-          key: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}-manifest-${{ hashFiles('vcpkg-overlays/**', 'triplets/**') || 'none' }}
+          key: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}
           restore-keys: |
             ${{ steps.vcpkg-cache-key.outputs.key }}-
             ${{ steps.vcpkg-cache-key.outputs.prefix }}
@@ -345,7 +346,7 @@ jobs:
           REQUESTED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
           MATCHED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-matched-key }}
         run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg cache-report
-      - name: Install tkrzw and GLib (vcpkg)
+      - name: Install GLib and pkgconf (vcpkg)
         run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg install --triplet x64-windows --packages "$VCPKG_PACKAGES"
       - name: Save the vcpkg binary cache
         if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
@@ -353,6 +354,14 @@ jobs:
         with:
           path: ${{ steps.vcpkg-cache-key.outputs.dir }}
           key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
+      # Nothing packages tkrzw for Windows. The repository builds the pinned
+      # revision (tools/tkrzw/pin.json) as a static library with
+      # upstream's VCMakefile through nmake and the DLL C runtime, and puts
+      # its pkg-config directory first on PKG_CONFIG_PATH. The archive is
+      # linked into every binary, so nothing of it goes on PATH. The build is
+      # one serial nmake run of the library target, so it is not cached.
+      - name: Build tkrzw (static)
+        run: just tkrzw --prefix "$RUNNER_TEMP/tkrzw" --github-env
       # The default backend, over the whole workspace. Clippy runs first, so
       # a lint in Windows-only code fails here rather than nowhere.
       - name: Clippy (Windows)

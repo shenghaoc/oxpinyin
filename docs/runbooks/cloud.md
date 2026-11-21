@@ -72,8 +72,8 @@ Workspace tests in a cloud session run on the Linux local cell, Kyoto Cabinet fr
 the distribution ([Linux setup](setup.md#linux)): `cargo nextest run --workspace
 --no-default-features --features kyotocabinet`. `just provision` checks its
 development package ([step 3b](#what-it-does)). The Debian packages
-`build-essential curl zip unzip tar gzip ca-certificates git pkg-config cmake
-ninja-build libkyotocabinet-dev kyotocabinet-utils` must be installed first. GLib stays on the system.
+`build-essential curl tar gzip ca-certificates git pkg-config libkyotocabinet-dev
+kyotocabinet-utils` must be installed first. GLib stays on the system.
 
 **Native provisioning.** From the repository root, run these two commands. They are the
 same in sh, zsh and pwsh:
@@ -171,8 +171,8 @@ A cell that fails
 either check is removed, with one diagnostic that names the cell and the check.
 The file contains the verified retained cells and the verified cells of this cache, also
 when they use different cache directories. The cell is the one Linux cell, kc
-([Linux setup](setup.md#linux)): a Linux host provisions no other cell, and an earlier file's
-bdb or tkrzw entry is dropped. Setup publishes the complete file with an atomic rename.
+([Linux setup](setup.md#linux)): a Linux host provisions no other cell, and the file names
+no other. Setup publishes the complete file with an atomic rename.
 
 The file exports:
 
@@ -228,9 +228,10 @@ keep their environment-only shell check and do not receive `tools.dev`.
 On Linux no object resolves `libtkrzw`: the host runs Kyoto Cabinet only
 ([Linux setup](setup.md#linux)), the environment file names no tkrzw runtime, and the
 check refuses any arm that resolves one. The runtimes it certifies are the macOS Homebrew
-install (`OXPINYIN_TKRZW_PREFIX`, set by the host probe), the Windows vcpkg install, and the
-library the Debian containers name in `OXPINYIN_TKRZW_LIBRARY` (release staging and the pin
-capture image). When `OXPINYIN_TKRZW_LIBRARY` is unset, the check takes the library under
+install (`OXPINYIN_TKRZW_PREFIX`, set by the host probe) and the library the Debian containers
+name in `OXPINYIN_TKRZW_LIBRARY` (release staging and the pin capture image). Windows links
+tkrzw statically ([native Windows](setup.md#native-windows)) and resolves no libtkrzw at run
+time. When `OXPINYIN_TKRZW_LIBRARY` is unset, the check takes the library under
 `OXPINYIN_TKRZW_PREFIX`, or else under the first entry of `OXPINYIN_TKRZW_PREFIXES`.
 No implicit home cache or arbitrary system prefix is
 trusted. Alternate caches are selected through their generated environment files.

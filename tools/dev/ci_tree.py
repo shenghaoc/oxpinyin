@@ -78,8 +78,6 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 
 # Every job reads its workflow, the actions, the toolchain and the tool configuration.
 # pyproject.toml is the uv project that every `uv run` of repository Python enters.
-# No Linux job reads the vcpkg overlay or the triplets: they serve the nightly
-# macOS and Windows jobs, and the harness tests the port's files.
 SHARED = (".github/workflows/ci.yml", ".github/actions", "rust-toolchain.toml", ".cargo",
           "justfile", "uv.toml", ".python-version", "pyproject.toml")
 
@@ -144,7 +142,7 @@ CI_INPUTS = {
     # examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
     # of the `changes` job, not an input here.
-    "harness": Inputs((*SHARED, "uv.lock", "vcpkg-overlays",
+    "harness": Inputs((*SHARED, "uv.lock",
                        "tools", "Cargo.toml", "Cargo.lock",
                        *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
                        "fuzz/tool-versions.env"),

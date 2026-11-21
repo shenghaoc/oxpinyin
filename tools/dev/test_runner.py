@@ -101,6 +101,8 @@ HARNESS_DEPENDENCIES = {
     'tools/dev/measure/reports.py': ('tools/dev/measure/bench.test.py', 'tools/dev/measure/valgrind.test.py'),
     'tools/dev/measure/fake_world.py': ('tools/dev/measure/valgrind.test.py',),
     'tools/dev/measure/prepare.py': ('tools/dev/measure/prepare.test.py',),
+    # The Windows tkrzw build and the measurement arm that links it.
+    'tools/tkrzw/windows.py': ('tools/tkrzw/windows.test.py', 'tools/dev/measure/prepare.test.py'),
     # The oracle pin, image tag and runtime services; the importers of the shared process helpers.
     'tools/oracle/image.py': ('tools/oracle/image.test.py', 'tools/dev/provision.test.py',
                               'tools/dev/process.test.py'),

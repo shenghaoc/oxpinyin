@@ -585,12 +585,8 @@ class GateTests(unittest.TestCase):
 
     def test_paths_select_the_jobs_that_read_them(self):
         cases = {
-            # The overlay port serves the nightly macOS and Windows jobs; the harness tests its files.
-            'vcpkg-overlays/tkrzw/pin.json': {'harness'},
-            'vcpkg-overlays/tkrzw/vcpkg.json': {'harness'},
-            'vcpkg-overlays/tkrzw/portfile.cmake': {'harness'},
-            'vcpkg-overlays/tkrzw/CMakeLists.txt': {'harness'},
-            'vcpkg-overlays/tkrzw/usage': {'harness'},
+            # The Windows tkrzw pin is a tools/ file: the Rust lanes import tools.dev, the harness tests it.
+            'tools/tkrzw/pin.json': {'rust', 'harness'},
             'docs/note.md': set(),
             'docs/findings/compatibility-policy.md': set(),
             'AGENTS.md': set(),
@@ -644,8 +640,6 @@ class GateTests(unittest.TestCase):
             # the harness.
             'uv.lock': {'rust', 'harness'},
             'justfile': {'rust', 'harness', 'ship'},
-            # No Linux job reads a triplet.
-            'triplets/arm64-osx-oxpinyin.cmake': set(),
             '.github/actions/bootstrap/action.yml': {'rust', 'harness', 'ship'},
             '.github/workflows/ci.yml': {'rust', 'harness', 'ship'},
             'scripts/new.sh': set(),
