@@ -24,6 +24,8 @@ from tools.dev.measure.fake_world import Stream, World
 
 NM = ('0000000000001130 t bisect_perf_cold_unit\n0000000000001140 t bisect_perf_steady_unit\n'
       '0000000000001150 T main\n')
+NEUTRALITY_FAILURE = ('FAIL: .text bytes differ — neutrality unproven. '
+                      'Diff the objdump -d output of the two libraries by hand.\n')
 
 
 class ControlTests(World):
@@ -40,9 +42,9 @@ class ControlTests(World):
     def test_dwarf_is_checked_and_the_neutrality_failure_propagates(self):
         with mock.patch.object(valgrind.bench, 'capture', return_value=pool.Completed(
                 0, b'  Compilation Unit @ offset 0:\n', b'')) as readelf, mock.patch(
-                'tools.dev.measure.neutrality.compare', return_value=(1, 'FAIL (c)\n')) as compare:
+                'tools.dev.measure.neutrality.compare', return_value=(1, NEUTRALITY_FAILURE)) as compare:
             status, out, err = self.control()
-        self.assertEqual((status, out, err), (1, 'profiled DWARF compilation units: 1\nFAIL (c)\n', ''))
+        self.assertEqual((status, out, err), (1, 'profiled DWARF compilation units: 1\n' + NEUTRALITY_FAILURE, ''))
         readelf.assert_called_once_with(['readelf', '--debug-dump=info', self.profile / 'libpinyin.so'], env={})
         compare.assert_called_once_with(self.profile / 'libpinyin.so', self.shipping / 'libpinyin.so')
         for stage in (self.profile, self.shipping):
@@ -66,20 +68,61 @@ class ControlTests(World):
 
 
 class TableTests(World):
-    def nm(self, text):
-        return lambda command: pool.Completed(0, text.encode(), b'')
+    def nm(self, text, status=0):
+        return lambda command: pool.Completed(status, text.encode(), b'')
 
     def test_distinct_anchors_pass_and_name_the_toggle(self):
-        code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(NM))
+        output = NM.replace('1140 t', '1140 T')
+        code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(output))
         self.assertEqual(code, 0)
         self.assertEqual(text, '=== collection anchors ===\n0000000000001130 t bisect_perf_cold_unit\n'
-                               '0000000000001140 t bisect_perf_steady_unit\n'
+                               '0000000000001140 T bisect_perf_steady_unit\n'
                                'PASS: distinct addresses, so the client requests in bisect_perf_steady_unit\n'
                                '      exclude process init and the cold cycle\n')
 
-    def test_no_anchor_symbol_at_all_ends_the_group_after_its_header(self):
-        self.assertEqual(valgrind.anchors_table(Path('bisect'), run=self.nm('0 T main\n')),
-                         (1, '=== collection anchors ===\n'))
+    def test_failed_nm_rejects_output_with_distinct_anchors(self):
+        code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(NM, status=7))
+        self.assertEqual(code, 7)
+        self.assertIn('FAIL: nm exited with status 7\n', text)
+
+    def test_missing_anchor_fails_and_names_the_symbol(self):
+        for output, missing in (
+            (NM.replace('bisect_perf_steady_unit', 'bisect_perf_steady_unit.clone'), 'bisect_perf_steady_unit'),
+            (NM.replace('0000000000001130 t bisect_perf_cold_unit\n', ''), 'bisect_perf_cold_unit'),
+            ('0 T main\n', 'bisect_perf_cold_unit'),
+        ):
+            with self.subTest(output=output):
+                code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(output))
+                self.assertEqual(code, 1)
+                self.assertIn(f'FAIL: missing anchor symbol {missing}\n', text)
+
+    def test_duplicate_anchor_fails_and_names_the_symbol(self):
+        for address in ('0000000000001130', '0000000000001160'):
+            with self.subTest(address=address):
+                output = NM + f'{address} t bisect_perf_cold_unit\n'
+                code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(output))
+                self.assertEqual(code, 1)
+                self.assertIn('FAIL: duplicate anchor symbol bisect_perf_cold_unit\n', text)
+
+    def test_non_text_anchor_fails_and_names_the_symbol(self):
+        for fields in ('0000000000001140 D', '                  U'):
+            with self.subTest(fields=fields):
+                output = NM.replace('0000000000001140 t', fields)
+                code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(output))
+                self.assertEqual(code, 1)
+                self.assertIn('FAIL: anchor symbol bisect_perf_steady_unit is not a function definition\n', text)
+
+    def test_invalid_anchor_address_fails_and_names_the_symbol(self):
+        output = NM.replace('0000000000001140', 'not-hex')
+        code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(output))
+        self.assertEqual(code, 1)
+        self.assertIn('FAIL: anchor symbol bisect_perf_steady_unit is not a function definition\n', text)
+
+    def test_numerically_equal_addresses_fail_with_different_padding(self):
+        output = NM.replace('0000000000001140', '1130')
+        code, text = valgrind.anchors_table(Path('bisect'), run=self.nm(output))
+        self.assertEqual(code, 1)
+        self.assertIn('FAIL: anchors folded to one address', text)
 
 
 class LibrariesTests(World):
@@ -197,7 +240,7 @@ class DifferentialTests(World):
         self.enterContext(mock.patch.object(valgrind, 'libraries', lambda env: dict(self.libs)))
         self.enterContext(mock.patch.object(valgrind, 'data_dir', lambda env: self.root / 'data'))
         self.nm_output = NM
-        self.neutral = (0, 'PASS (a): identical .text\n')
+        self.neutral = (0, 'PASS: identical .text bytes\n')
         fake = types.SimpleNamespace(compare=lambda first, second: self.neutral)
         self.enterContext(mock.patch.dict(sys.modules, {'tools.dev.measure.neutrality': fake}))
         self.enterContext(mock.patch('tools.dev.measure.neutrality', fake, create=True))
@@ -251,7 +294,7 @@ class DifferentialTests(World):
                      'cg.libpinyin-kc.r1.stdout', 'cg.oxpinyin-kc.r2.stderr', 'hw-instructions.jsonl', 'hw-instructions.md',
                      'hw.err', 'speed.jsonl', 'speed.err', 'timing.md'):
             self.assertTrue((self.out / name).exists(), name)
-        self.assertEqual((self.out / 'debuginfo-neutrality.txt').read_text(), '=== debug-info neutrality ===\nPASS (a): identical .text\n')
+        self.assertEqual((self.out / 'debuginfo-neutrality.txt').read_text(), '=== debug-info neutrality ===\nPASS: identical .text bytes\n')
         self.assertEqual((self.out / 'timing.md').read_text(), 'REPORT perf-ci.py\n')
         self.assertTrue(out.rstrip().endswith('timing.md'))
 
@@ -303,10 +346,10 @@ class DifferentialTests(World):
         self.assertEqual(self.workers_of(), [])
 
     def test_different_code_stops_the_run_before_any_profile(self):
-        self.neutral = (1, 'FAIL (c): instruction multiset differs\n')
+        self.neutral = (1, NEUTRALITY_FAILURE)
         status, out, _ = self.execute(valgrind.callgrind_differential, [], self.env)
         self.assertEqual(status, 1)
-        self.assertIn('FAIL (c)', out)
+        self.assertIn(NEUTRALITY_FAILURE, out)
         self.assertFalse((self.out / 'malloc-interception.txt').exists())
         self.assertEqual(self.workers_of(), [])
 

@@ -1,5 +1,3 @@
-use proptest::prelude::*;
-
 use super::ChewingKey;
 use crate::chewing_key_data::reference::CONTENT_TABLE;
 use crate::chewing_key_data::{
@@ -188,29 +186,29 @@ fn matches_with_tones_follows_the_three_upstream_comparisons() {
 //   renderers and round-trips the packed form (bit 15, the zero padding
 //   bit, drops — matching `_ChewingKey`'s declaration, which has no
 //   field there);
-// - property: every hand-crafted element quadruple (the unpacked values
-//   a caller could build in Rust) also renders totally, and
-//   `from_packed(to_packed(key))` is the identity on the masked fields.
+// - every combination of in-range fields and the overflow boundaries of
+//   each field render totally and round-trip as their masked values.
 //
 // The frozen-table cross-validation (every `content_table` row resolving
 // to its own index through `chewing_key_table`) is `tables_cross_validate`
 // above; these tests pin the no-panic contract on inputs the tables were
 // never meant to see.
 
+fn render_key(key: ChewingKey) {
+    let _ = key.pinyin_string();
+    let _ = key.shengmu_string();
+    let _ = key.yunmu_string();
+    let _ = key.zhuyin_string();
+    let _ = key.luoma_pinyin_text().to_string();
+    let _ = key.secondary_zhuyin_text().to_string();
+}
+
 /// Every renderer must terminate and return for any key — the module's
 /// out-of-dims rule. Exhaustive over the packed space the C ABI carries.
 #[test]
 fn every_packed_pattern_renders_totally() {
     for bits in 0_u16..=u16::MAX {
-        let key = ChewingKey::from_packed(bits);
-        // Six display surfaces; the bindings keep the results alive so
-        // the calls cannot be optimized away.
-        let _ = key.pinyin_string();
-        let _ = key.shengmu_string();
-        let _ = key.yunmu_string();
-        let _ = key.zhuyin_string();
-        let _ = key.luoma_pinyin_text().to_string();
-        let _ = key.secondary_zhuyin_text().to_string();
+        render_key(ChewingKey::from_packed(bits));
     }
 }
 
@@ -233,45 +231,67 @@ fn every_packed_pattern_round_trips_the_packed_form() {
     }
 }
 
-/// Hand-crafted element quadruples (not reachable from the packed form
-/// when a field exceeds its bitfield width) render totally and mask
-/// back into the packed form consistently.
-#[test]
-fn arbitrary_element_quadruples_render_totally() {
-    proptest!(|(initial in 0_u8.., middle in 0_u8.., final_ in 0_u8.., tone in 0_u8..)| {
-        let key = ChewingKey::new(initial, middle, final_, tone);
-        let _ = key.pinyin_string();
-        let _ = key.shengmu_string();
-        let _ = key.yunmu_string();
-        let _ = key.zhuyin_string();
-        let _ = key.luoma_pinyin_text().to_string();
-        let _ = key.secondary_zhuyin_text().to_string();
+// _ChewingKey field widths in chewing_key.h:41–48.
+const INITIAL_MASK: u8 = 0x1f;
+const MIDDLE_MASK: u8 = 0x3;
+const FINAL_MASK: u8 = 0x1f;
+const TONE_MASK: u8 = 0x7;
 
-        // Masking law: the packed form truncates each element to its
-        // bitfield width (initial 5 bits, middle 2, final 5, tone 3) and
-        // unpacking the result reproduces exactly the truncated key.
-        let packed = key.to_packed();
-        let round = ChewingKey::from_packed(packed);
-        prop_assert_eq!(round.initial, initial & 0x1f);
-        prop_assert_eq!(round.middle, middle & 0x3);
-        prop_assert_eq!(round.final_, final_ & 0x1f);
-        prop_assert_eq!(round.tone, tone & 0x7);
-        prop_assert_eq!(round.to_packed(), packed);
-    });
+fn check_element_quadruple(initial: u8, middle: u8, final_: u8, tone: u8) {
+    let key = ChewingKey::new(initial, middle, final_, tone);
+    render_key(key);
+    let packed = key.to_packed();
+    let round = ChewingKey::from_packed(packed);
+    let masked = ChewingKey {
+        initial: initial & INITIAL_MASK,
+        middle: middle & MIDDLE_MASK,
+        final_: final_ & FINAL_MASK,
+        tone: tone & TONE_MASK,
+    };
+    assert_eq!(round, masked, "{key:?}");
+    assert_eq!(round.to_packed(), packed, "{key:?}");
 }
 
-/// The zero key is the fixed point of the packed form, and tone
-/// variation never changes the spelling columns — the renderers append
-/// the tone to a *frozen* base (`chewing_key.cpp:47-121`).
+/// Cover every in-range field combination and each field's first overflow
+/// value and largest input.
+#[test]
+fn element_quadruples_render_totally_and_pack_as_masked_fields() {
+    for initial in 0..=INITIAL_MASK {
+        for middle in 0..=MIDDLE_MASK {
+            for final_ in 0..=FINAL_MASK {
+                for tone in 0..=TONE_MASK {
+                    check_element_quadruple(initial, middle, final_, tone);
+                }
+            }
+        }
+    }
+
+    // Keep bit zero clear in adjacent fields so a bit spill changes the result.
+    for (initial, middle, final_, tone) in [
+        (INITIAL_MASK + 1, 2, 2, 2),
+        (u8::MAX, 2, 2, 2),
+        (2, MIDDLE_MASK + 1, 2, 2),
+        (2, u8::MAX, 2, 2),
+        (2, 2, FINAL_MASK + 1, 2),
+        (2, 2, u8::MAX, 2),
+        (2, 2, 2, TONE_MASK + 1),
+        (2, 2, 2, u8::MAX),
+    ] {
+        check_element_quadruple(initial, middle, final_, tone);
+    }
+}
+
+/// Tone variation preserves the spelling columns for every packed key
+/// (`chewing_key.cpp:47–121`).
 #[test]
 fn tone_variation_never_moves_the_base_spelling() {
-    proptest!(|(bits in 0_u16..)| {
+    for bits in 0_u16..=u16::MAX {
         let key = ChewingKey::from_packed(bits);
-        for tone in 0_u8..=7 {
+        for tone in 0..=TONE_MASK {
             let toned = key.with_tone(tone);
-            prop_assert_eq!(toned.pinyin_spelling(), key.pinyin_spelling());
-            prop_assert_eq!(toned.shengmu_string(), key.shengmu_string());
-            prop_assert_eq!(toned.yunmu_string(), key.yunmu_string());
+            assert_eq!(toned.pinyin_spelling(), key.pinyin_spelling(), "{toned:?}");
+            assert_eq!(toned.shengmu_string(), key.shengmu_string(), "{toned:?}");
+            assert_eq!(toned.yunmu_string(), key.yunmu_string(), "{toned:?}");
         }
-    });
+    }
 }

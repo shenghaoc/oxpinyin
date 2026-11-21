@@ -102,20 +102,38 @@ def environment_table(artifacts: Sequence[Path], pin: Path, data: Path, run=None
 def anchors_table(harness: Path, run=None) -> tuple[int, str]:
     """Stage 1: the two collection anchors are distinct symbols, or the cold cycle would be collected.
 
-    Return the table and the status the group ended with.
+    Return the status and the collection-anchor table.
     """
     lines = ['=== collection anchors ===']
     done = (run or bench.capture)(['nm', harness])
     write(done.stderr, error=True)
-    symbols = [line.split() for line in done.stdout.decode(errors='replace').split('\n')]
-    shown = [line for line in done.stdout.decode(errors='replace').split('\n')
-             if re.search('bisect_perf_(cold|steady)_unit', line)]
-    if not shown:
-        return 1, '\n'.join(lines) + '\n'
-    lines += shown
-    address = {name: row[0] for row in symbols if len(row) >= 3
-               for name in ('bisect_perf_cold_unit', ANCHOR) if row[2] == name}
-    if address.get('bisect_perf_cold_unit') == address.get(ANCHOR):
+    if done.status:
+        lines.append(f'FAIL: nm exited with status {done.status}')
+        return done.status, '\n'.join(lines) + '\n'
+
+    anchors = {'bisect_perf_cold_unit': [], ANCHOR: []}
+    for line in done.stdout.decode(errors='replace').splitlines():
+        row = line.split()
+        if row and row[-1] in anchors:
+            anchors[row[-1]].append(row)
+            lines.append(line)
+
+    addresses = []
+    for name, rows in anchors.items():
+        if not rows:
+            lines.append(f'FAIL: missing anchor symbol {name}')
+            return 1, '\n'.join(lines) + '\n'
+        if len(rows) != 1:
+            lines.append(f'FAIL: duplicate anchor symbol {name}')
+            return 1, '\n'.join(lines) + '\n'
+        match rows[0]:
+            case [value, 'T' | 't', _] if re.fullmatch(r'[0-9a-fA-F]+', value):
+                addresses.append(int(value, 16))
+            case _:
+                lines.append(f'FAIL: anchor symbol {name} is not a function definition')
+                return 1, '\n'.join(lines) + '\n'
+
+    if addresses[0] == addresses[1]:
         lines.append('FAIL: anchors folded to one address; the cold cycle would be collected')
         return 1, '\n'.join(lines) + '\n'
     lines += [f'PASS: distinct addresses, so the client requests in {ANCHOR}',
@@ -259,10 +277,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     if code:
         raise Finished(code)
 
-    # 2. debug-info neutrality: the profiled artifact carries debug info and the timed one does not, so
-    # the two must be the same code. Three outcomes, and only the last is fatal: identical .text; the
-    # same instruction multiset at other addresses (Ir is unaffected, the simulated cache and branch
-    # figures are layout-sensitive); a different multiset, which is different code.
+    # 2. Debug-info neutrality requires identical .text bytes in the profiled and timed libraries.
     from . import neutrality
     code, report = neutrality.compare(ox, nodebug)
     bench.tee(out / 'debuginfo-neutrality.txt', '=== debug-info neutrality ===\n' + report)

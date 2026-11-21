@@ -73,21 +73,16 @@ same pattern.
 ## The mechanism — a wrapper generates and installs the `.pc`
 
 cargo-c **cannot produce** `pkgdatadir`, `database_format`,
-`libpinyinincludedir` or `libpinyin_binary_version`. This is a fixed limit
-of cargo-c (cargo-c 0.10.24):
+`libpinyinincludedir` or `libpinyin_binary_version`.
 
-- `build.rs:358`: the `PkgConfigCApiConfig` struct has exactly seven
+- In `build.rs`, the `PkgConfigCApiConfig` struct has exactly seven
   fields (`name`, `filename`, `description`, `version`, `requires`,
   `requires_private`, `strip_include_path_components`) and no
   custom-variable map. The parser is lenient, so it silently ignores extra
   keys, `generate` included.
-- No install prefix reaches build scripts. The crate's only `set_var`
-  calls are `CARGO_C_CARGO` (`config.rs:11`) and `INLINE_C_RS_CFLAGS`
-  (`build.rs:1402`). A build script cannot know `--prefix`.
-- `install.rs:216-220` always installs cargo-c's own `.pc` into
-  `<libdir>/pkgconfig`, and does so first. `install.rs:233-236` installs
-  build-generated data assets under `datadir`, never in the pkg-config
-  directory.
+- No install prefix reaches build scripts.
+- `install.rs` installs cargo-c's own `.pc` into `<libdir>/pkgconfig`
+  and build-generated data assets under `datadir`.
 
 **Why it matters.** fcitx-libpinyin reads three of these at cmake
 configure time (`CMakeLists.txt:12-14`):
@@ -124,9 +119,7 @@ name.
 
 The wrapper is the **supported installation path**. A plain
 `cargo capi install` leaves cargo-c's incomplete `.pc`, without the four
-variables. Any install that a consumer will configure against uses the
-wrapper. `Cargo.toml` carries `generate = false` to state intent. The
-current cargo-c ignores it, so the wrapper overwrites the file.
+variables. The wrapper installs the complete file for consumers.
 
 **`database_format`.** `oxpinyin`'s build script selects the
 library's token once from its backend feature, as the pin's

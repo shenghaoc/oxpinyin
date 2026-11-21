@@ -21,9 +21,9 @@ keywords = ["libpinyin", "pinyin", "chinese", "input-method", "ffi"]
 
 # Supported C ABI (Linux); soname/versioning freezes with the first public release.
 [lib]
-# cdylib is the ABI; rlib lets the fuzz targets and Rust tests call the same symbols
-# in-process; staticlib is required by cargo-c and shipped alongside the .so.
-crate-type = ["cdylib", "staticlib", "rlib"]
+# Plain Cargo builds produce the C ABI cdylib and the rlib for fuzz targets and Rust tests.
+# cargo-c selects its own crate types.
+crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [features]
@@ -104,13 +104,8 @@ filename = "libpinyin"
 description = "Library to deal with pinyin"
 version = "2.11.92"
 requires = "glib-2.0"
-# Intent: do not let cargo-c own the .pc — the complete file (with pkgdatadir,
-# database_format, libpinyinincludedir, libpinyin_binary_version) is generated
-# and placed by `just packaging install`. cargo-c has no
-# such key and silently ignores this, so it still writes an incomplete
-# libpinyin.pc that the wrapper OVERWRITES; the flag is kept for intent and for
-# a future cargo-c that honours it. See docs/findings/installed-naming.md.
-generate = false
+# `just packaging install` owns the complete .pc and overwrites cargo-c's file.
+# See docs/findings/installed-naming.md.
 
 [package.metadata.capi.library]
 # The INSTALLED artifact is the drop-in replacement: `libpinyin.so.15`, which

@@ -27,11 +27,10 @@ from tools.dev import abi, packaging, test_support
 DRIVER = '''import os, sys
 from pathlib import Path
 from tools.dev import packaging
+packaging.LOAD_CHILD = os.environ.get('FIXTURE_LOAD_CHILD', 'pass')
 class FixtureTools(packaging.Tools):
     def heavy(self, argv, **options):
         self.run(argv, **options)
-    def load(self, path, symbol):
-        return os.environ.get('FIXTURE_LOAD', '')
 sys.exit(packaging.main(sys.argv[2:], tools=FixtureTools(root=Path(sys.argv[1]))))
 '''
 # A fake cargo's answer to `cargo metadata --no-deps`: the flat layout of the checkout fixture.
@@ -69,18 +68,19 @@ qualified.mkdir(parents=True, exist_ok=True)
 (qualified/(library+'.a')).write_bytes(b'static archive')
 lib=Path(value('--destdir')+value('--libdir'))
 lib.mkdir(parents=True,exist_ok=True)
-(lib/(library+'.so.15.0.0')).write_bytes(b'installed library')
-(lib/(library+'.15.0.0.dylib')).write_bytes(b'installed dylib')
 (lib/(library+'.a')).write_bytes(b'static archive')
-for suffix,target in [('.so.15',library+'.so.15.0.0'),('.so',library+'.so.15')]:
-    path=lib/(library+suffix)
-    if path.is_symlink():path.unlink()
-    path.symlink_to(target)
-if triple.endswith('-apple-darwin'):
-    for suffix in ('.dylib','.15.dylib'):
+if value('--library-type')!='staticlib':
+    if triple.endswith('-apple-darwin'):
+        full=library+'.15.0.0.dylib'
+        suffixes=('.dylib','.15.dylib')
+    else:
+        full=library+'.so.15.0.0'
+        suffixes=('.so','.so.15')
+    (lib/full).write_bytes(b'installed dylib')
+    for suffix in suffixes:
         path=lib/(library+suffix)
-        if path.is_symlink():path.unlink()
-        path.symlink_to(library+'.15.0.0.dylib')
+        path.unlink(missing_ok=True)
+        path.symlink_to(full)
 inc=Path(value('--destdir')+value('--includedir'))/'libpinyin-2.11.92'
 inc.mkdir(parents=True,exist_ok=True)
 for name in ['novel_types.h','pinyin_custom2.h', 'zhuyin_custom2.h' if library=='libzhuyin' else 'pinyin.h', 'zhuyin.h' if library=='libzhuyin' else 'pinyin.h']:
@@ -590,12 +590,17 @@ if lines:sys.stdout.buffer.write(separator.join(sorted(lines,key=key))+separator
             self.assertEqual(self.invoke('install',args).returncode,2)
 
         def test_each_facade_installs_separately_and_metadata_is_relocatable(self):
+            self.stage_fakes()
             for library in packaging.LIBRARIES:
                 with self.subTest(library=library):
                     result, stage = self.install(library)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     files = tree(stage)
                     self.assertIn('usr/lib/' + library + '.a', files)
+                    full = library + '.so.15.0.0'
+                    self.assertEqual(files['usr/lib/' + full], ('file', library.encode()))
+                    for suffix in ('.so', '.so.15'):
+                        self.assertEqual(files['usr/lib/' + library + suffix], ('link', full))
                     other = 'libzhuyin' if library == 'libpinyin' else 'libpinyin'
                     self.assertNotIn('usr/lib/' + other + '.a', files)
                     pc = (stage / 'usr/lib/pkgconfig' / (library + '.pc')).read_bytes()
@@ -779,21 +784,27 @@ Path(args[args.index('-o')+1]).mkdir()
                     self.assertEqual((stage/'usr/lib/libpinyin.15.0.0.dylib').read_bytes(), b'installed dylib')
                     self.assertEqual(list((stage/'usr/lib').glob('*.relink.*')), [])
 
-        def test_macos_install_fails_when_the_dylib_does_not_load(self):
+        def test_macos_install_reports_a_failed_load_child(self):
             self.darwin_fakes()
-            result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(self.work / 'stage')],
-                                 env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
-                                      'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD': 'fixture load failure'})
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(b'does not load', result.stderr)
-            self.assertIn(b'fixture load failure', result.stderr)
+            for diagnostic in ('', 'fixture load failure'):
+                with self.subTest(diagnostic=diagnostic):
+                    child = f'import os; os.write(2, {diagnostic.encode()!r}); os._exit(17)'
+                    result, stage = self.install(env={'CARGO_BUILD_TARGET': 'aarch64-apple-darwin',
+                        'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD_CHILD': child})
+                    self.assertNotEqual(result.returncode, 0)
+                    dylib = os.fsencode(stage / 'usr/lib/libpinyin.15.0.0.dylib')
+                    self.assertIn(dylib + b' does not load', result.stderr)
+                    self.assertIn(b'status 17', result.stderr)
+                    if diagnostic:
+                        self.assertIn(diagnostic.encode(), result.stderr)
+                    self.assertNotIn(b'loaded ' + dylib, result.stdout)
 
         def test_macos_install_skips_the_load_check_for_a_non_native_target(self):
             self.darwin_fakes()
             stage = self.work / 'stage'
             result = self.invoke('install', ['libpinyin', '--prefix=/usr', '--destdir=' + str(stage)],
                                  env={'CARGO_BUILD_TARGET': 'x86_64-apple-darwin',
-                                      'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD': 'fixture load failure'})
+                                      'FIXTURE_HOST': 'aarch64-apple-darwin', 'FIXTURE_LOAD_CHILD': 'raise SystemExit(17)'})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(b'load check skipped: target x86_64-apple-darwin is not the running architecture '
                           b'(aarch64-apple-darwin)', result.stdout + result.stderr)
@@ -911,7 +922,7 @@ Path(args[args.index('-o')+1]).mkdir()
                 for suffix in ('.a', '.so.15.0.0'):
                     (lib / (library + suffix)).write_bytes(b'payload')
                 (lib / (library + '.so.15')).symlink_to(library + '.so.15.0.0')
-                (lib / (library + '.so')).symlink_to(library + '.so.15')
+                (lib / (library + '.so')).symlink_to(library + '.so.15.0.0')
                 (lib / 'pkgconfig' / (library + '.pc')).write_bytes(b'metadata')
             (inc / 'header.h').write_bytes(b'header')
             return stage
@@ -1101,6 +1112,37 @@ if os.environ.get('EXTRA_EXPORT'): print('00000002 T leak@@LIBPINYIN')
                     self.assertIn('-lstdc++', args)
                     self.assertEqual(list(self.work.glob('*.relink.*')), [])
 
+        def test_linux_install_publishes_shared_library_and_links_after_relink(self):
+            self.stage_fakes()
+            stage = self.work / 'stage'
+            lib = stage / 'usr/lib custom'
+            arguments = ['libpinyin', '--prefix=/usr', '--libdir=/usr/lib custom', '--destdir=' + str(stage)]
+            result = self.invoke('install', arguments, env={'LINK_EXIT': '7'})
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertTrue((lib / 'libpinyin.a').is_file())
+            self.assertEqual(list(lib.glob('libpinyin.so*')), [])
+
+            for _ in range(2):
+                result = self.invoke('install', arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for suffix in ('.so', '.so.15'):
+                    self.assertEqual((lib / ('libpinyin' + suffix)).readlink(), Path('libpinyin.so.15.0.0'))
+
+        def test_linux_install_keeps_shared_library_and_links_in_libdir(self):
+            self.stage_fakes()
+            stage = self.work / 'stage'
+            libdir = stage / 'usr/lib64'
+            pcdir = stage / 'usr/share/pkgconfig'
+            arguments = ['install', 'libpinyin', '--prefix=/usr', '--libdir=/usr/lib64', '--destdir=' + str(stage)]
+            tools = packaging.Tools(env=self.env, root=self.root)
+            with mock.patch.object(packaging.Layout, 'pcdir', property(lambda _: pcdir)):
+                self.assertEqual(packaging.main(arguments, tools=tools), 0)
+            self.assertEqual(set(tree(pcdir.parent)), {'pkgconfig/libpinyin.pc'})
+            full = 'libpinyin.so.15.0.0'
+            self.assertEqual((libdir / full).read_bytes(), b'libpinyin')
+            for suffix in ('.so', '.so.15'):
+                self.assertEqual((libdir / ('libpinyin' + suffix)).readlink(), Path(full))
+
         def test_relink_cancellation_status_original_file_and_cleanup(self):
             self.fake('uname', "print('Linux')")
             archive, ver, dest = [self.work / name for name in ('library.a','library.ver','libpinyin.so.15.0.0')]
@@ -1143,13 +1185,14 @@ else:
 """)
 
             self.fake('cargo-cinstall','pass')
-            self.fake('cc', r"""import sys
+            self.fake('cc', r"""import os,sys
 from pathlib import Path
 args=sys.argv[1:]
 out=Path(args[args.index('-o')+1])
 if '-shared' in args:
     library=next(word for word in args if word.startswith('-Wl,-soname,')).split(',')[-1].split('.so')[0]
     out.write_text(library)
+    sys.exit(int(os.environ.get('LINK_EXIT','0')))
 else:
     name='zhuyin' if 'zhuyin' in args[0] else 'pinyin'
     out.write_text('#!/bin/sh\necho '+name+'=fixture\n')

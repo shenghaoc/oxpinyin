@@ -108,9 +108,9 @@ The source tree keeps the oxpinyin names.
 `docs/findings/installed-naming.md` holds the full rationale and the measured gates.
 In short:
 
-- `[lib] crate-type = ["cdylib", "staticlib", "rlib"]`.
-  cargo-c requires `staticlib`: it builds the `.a` beside the `.so`.
-  `rlib` stays so that the fuzz targets and Rust tests can use the crate in-process.
+- `[lib] crate-type = ["cdylib", "rlib"]`.
+  Plain Cargo builds produce the C ABI cdylib and an rlib that fuzz targets and Rust tests can use in-process.
+  cargo-c chooses its own crate types.
 - `[features] capi = []`.
   cargo-c identifies the crate to package by the presence of a `capi` feature; without it, cargo-c skips the crate.
 - `[package.metadata.capi.header] generation = false`, `subdirectory = "libpinyin-2.11.92"`.
@@ -315,7 +315,7 @@ rustc always gives a cdylib its own anonymous version script, and a second, name
 GNU ld rejects the pair.
 rust-lld accepts the definitions but does not reassign the symbols, which gives the third shape.
 So the cargo-built cdylib has no version script and has the first shape.
-On Linux, `just packaging install` relinks the installed object from the staticlib with `-Wl,-soname` and the crate's `.ver` script, which gives the second shape ([Export gate](#export-gate)).
+On Linux, the [packaging relink](#export-gate) gives the shipped library the second shape.
 `libzhuyin.so.15` uses `LIBZHUYIN` and its 52 symbols the same way.
 
 **Symbol scope.** The shipped library exports every symbol in its `.ver` script and nothing else.
@@ -340,13 +340,17 @@ Its Rust runtime defines `#[export_name]` symbols (`cxxbridge1$slice$*`, `cxxbri
 rustc lists every such upstream symbol as a C-level export of a `cdylib`, so without a countermeasure the cargo-built cdylibs export the whole runtime.
 The `pinyin_*` and `zhuyin_*` symbols come from the capi crates' own object files; the cxx symbols come from dependency archives, the rlibs.
 
-On Linux, both capi build scripts pass `-Wl,--exclude-libs,ALL` to the cdylib link when the tkrzw or kyotocabinet feature is on.
+For plain Cargo builds of the Linux cdylibs, both capi build scripts set the SONAME.
+With the `tkrzw` or `kyotocabinet` feature enabled, they also pass `-Wl,--exclude-libs,ALL`.
 GNU ld then gives hidden visibility to every symbol defined in an archive: the rlibs and the static library of the bridge.
 rustc's anonymous version script cannot override that visibility, and the capi crates' own symbols are not affected.
-`just packaging install` relinks the installed shared object from the staticlib under the crate's `.ver` script (`just packaging relink-versioned`), with `-Wl,-z,defs`.
+When cargo-c enables `capi`, the build scripts emit no cdylib link arguments.
+
+On Linux, `just packaging install` requests only the staticlib from cargo-c.
+It relinks the shared object from that archive with the crate's `.ver` script and `-Wl,-z,defs` (`just packaging relink-versioned`).
 The shipped library therefore carries the pin's symbol versioning, and the script's `local: *` excludes every other symbol.
-Before it replaces the installed file, the relink verifies the export set and the version tag of every export against the `.ver` list, in both directions.
-It keeps the same file name, so cargo-c's symlinks keep resolving.
+The relink verifies the exact export set and each export's version tag against the `.ver` list before installing the shared object.
+The wrapper then creates `lib<name>.so` and `lib<name>.so.15` as symlinks to `lib<name>.so.15.0.0`.
 
 On macOS, the Apple linker rejects `--exclude-libs`, cannot combine nonempty exported and unexported lists, and takes the union of two exported lists.
 A second list on rustc's cdylib link would therefore add exports, not restrict them.
@@ -370,7 +374,7 @@ The compiler and linker control function layout. oxpinyin does not keep function
 Source, dependency and toolchain changes need no policy regeneration.
 The project adds no PGO, BOLT, linker call-graph sorting or other layout system.
 
-Linux keeps the versioned relink described in [Export gate](#export-gate), including the version script and `-Wl,-z,defs`.
+Linux uses the [versioned relink](#export-gate).
 macOS uses the export-controlled relink described in [Export gate](#export-gate); `just packaging install` then loads the replaced file with `dlopen` and looks up `pinyin_init` or `zhuyin_init`, and fails if either step fails.
 On macOS, install with `--prefix=/usr/local` or another non-system prefix. A `/usr` prefix gives the dylibs `/usr/lib` install names, which macOS reserves for its shared cache; the link then fails with "Shared cache eligible dylib cannot link to ineligible dylib" against a library outside the shared cache, such as Homebrew's tkrzw.
 A target whose architecture differs from the running process's (`--target x86_64-apple-darwin` on Apple silicon) is not loaded: the install prints one line saying the load check was skipped.

@@ -1,5 +1,3 @@
-use proptest::prelude::*;
-
 use super::{
     GramFault, checked_get_freq, checked_search, get_freq, get_length, get_total_freq, insert_freq,
     item_freq, item_offset, item_token, lower_bound, mask_out, merge_single_gram, new_gram,
@@ -19,51 +17,87 @@ fn items(bytes: &[u8]) -> Vec<(u32, u32)> {
     retrieve_all(bytes).collect()
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+const SORTED_ROW: &[(u32, u32)] = &[(3, 4), (7, 2), (7, 9), (11, 5)];
+const PARTIAL_RECORD: [u8; 7] = [4, 0, 0, 0, 17, 0, 0];
+const LONG_ROW_LEN: u32 = 128;
 
-    #[test]
-    fn partitioned_records_find_the_first_not_less(
-        total in any::<u32>(),
-        mut row in prop::collection::vec(
-            (prop_oneof![0_u32..16, any::<u32>()], any::<u32>()), 0..128),
-        begin in any::<u32>(),
-        end in any::<u32>(),
-        tail in any::<[u8; 7]>(),
-    ) {
-        row.sort_by_key(|&(token, _)| token);
-        let first = row.iter().position(|&(token, _)| token >= begin).unwrap_or(row.len());
-        for tail_len in 0..=tail.len() {
-            let mut bytes = gram(total, &row);
-            bytes.extend_from_slice(&tail[..tail_len]);
-            prop_assert_eq!(lower_bound(&bytes, begin), first);
-            let expected: Vec<_> = row[first..].iter().copied()
-                .take_while(|&(token, _)| token < end).collect();
-            let mut out = vec![(u32::MAX, 17)];
-            let status = checked_search(&bytes, begin, end, &mut out);
-            let reached_tail = first + expected.len() == row.len() && tail_len != 0;
-            prop_assert_eq!(status, if reached_tail { Err(GramFault::OverRead) } else { Ok(()) });
-            prop_assert_eq!(&out[1..], &expected);
-            prop_assert_eq!(out[0], (u32::MAX, 17));
-        }
+/// The token of one record in [`long_sorted_row`]. The first and the
+/// last record each hold a token of their own. The records between
+/// them form runs of three duplicate tokens.
+const fn long_row_token(index: u32) -> u32 {
+    index.div_ceil(3) * 2
+}
+
+fn long_sorted_row() -> Vec<(u32, u32)> {
+    (0..LONG_ROW_LEN)
+        .map(|index| (long_row_token(index), index))
+        .collect()
+}
+
+#[rstest::rstest]
+#[case::empty(&[], 0, 1)]
+#[case::below_all(SORTED_ROW, 0, u32::MAX)]
+#[case::equal_first(SORTED_ROW, 3, 7)]
+#[case::between_tokens(SORTED_ROW, 4, 8)]
+#[case::equal_duplicate(SORTED_ROW, 7, 11)]
+#[case::above_all(SORTED_ROW, 12, 13)]
+#[case::maximum(&[(0, 12), (u32::MAX, u32::MAX)], u32::MAX, u32::MAX)]
+#[case::inverted_range(SORTED_ROW, 7, 3)]
+#[case::long_start(&long_sorted_row(), long_row_token(0), long_row_token(1) + 1)]
+#[case::long_duplicate_run(&long_sorted_row(), long_row_token(64), long_row_token(64) + 1)]
+#[case::long_last(&long_sorted_row(), long_row_token(LONG_ROW_LEN - 1), u32::MAX)]
+fn partitioned_records_find_the_first_not_less(
+    #[case] row: &[(u32, u32)],
+    #[case] begin: u32,
+    #[case] end: u32,
+) {
+    let first = row
+        .iter()
+        .position(|&(token, _)| token >= begin)
+        .unwrap_or(row.len());
+    let expected: Vec<_> = row[first..]
+        .iter()
+        .copied()
+        .take_while(|&(token, _)| token < end)
+        .collect();
+    for tail_len in 0..=PARTIAL_RECORD.len() {
+        let mut bytes = gram(u32::MAX, row);
+        bytes.extend_from_slice(&PARTIAL_RECORD[..tail_len]);
+        assert_eq!(lower_bound(&bytes, begin), first, "tail length {tail_len}");
+        let mut out = vec![(u32::MAX, 17)];
+        let status = checked_search(&bytes, begin, end, &mut out);
+        let reached_tail = first + expected.len() == row.len() && tail_len != 0;
+        let expected_status = if reached_tail {
+            Err(GramFault::OverRead)
+        } else {
+            Ok(())
+        };
+        assert_eq!(status, expected_status, "tail length {tail_len}");
+        assert_eq!(&out[1..], &expected, "tail length {tail_len}");
+        assert_eq!(out[0], (u32::MAX, 17), "tail length {tail_len}");
     }
+}
 
-    #[test]
-    fn unpartitioned_records_use_std_without_cleaning(
-        total in any::<u32>(),
-        row in prop::collection::vec((any::<u32>(), any::<u32>()), 0..128),
-        probe in any::<u32>(),
-        tail in any::<[u8; 7]>(),
-    ) {
-        let mut bytes = gram(total, &row);
-        bytes.extend_from_slice(&tail);
+/// The probes are below, equal to, between and above the tokens of the
+/// first row. The second row holds both token endpoints, so no probe
+/// is below or above it: its probes are equal to or between its tokens.
+#[rstest::rstest]
+#[case::out_of_order(&[(9, 4), (3, 6), (7, 2)])]
+#[case::duplicates_and_endpoints(&[(u32::MAX, 1), (0, u32::MAX), (9, 0), (0, 13)])]
+fn unpartitioned_records_use_std_without_cleaning(
+    #[case] row: &[(u32, u32)],
+    #[values(0, 9, 5, u32::MAX)] probe: u32,
+) {
+    for tail_len in 0..=PARTIAL_RECORD.len() {
+        let mut bytes = gram(19, row);
+        bytes.extend_from_slice(&PARTIAL_RECORD[..tail_len]);
         let before = bytes.clone();
         // Unpartitioned input has no promised search position. It must
         // still answer an in-bounds position without changing storage.
         let first = lower_bound(&bytes, probe);
-        prop_assert!(first <= row.len());
-        prop_assert_eq!(retrieve_all(&bytes).collect::<Vec<_>>(), row);
-        prop_assert_eq!(bytes, before);
+        assert!(first <= row.len(), "tail length {tail_len}");
+        assert_eq!(items(&bytes), row, "tail length {tail_len}");
+        assert_eq!(bytes, before, "tail length {tail_len}");
     }
 }
 

@@ -127,7 +127,7 @@ Portability acceptance uses the platform-free frozen goldens F-A–F-D.
 The applicable test kinds are:
 
 - Curated goldens.
-- Property tests with `proptest` for totality and determinism.
+- Deterministic tests for totality and invariants, with exhaustive inputs or boundary cases.
 - Fuzz tests with AFL++ (`just fuzz`), from W1.
 - Hard-kill crash-path tests on all operating systems.
 - Differentials against frozen captures of pinned libpinyin.
