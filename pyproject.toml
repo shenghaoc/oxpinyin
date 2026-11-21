@@ -7,5 +7,5 @@ dependencies = [
 ]
 
 [dependency-groups]
-complexity = ["lizard>=1.26.0"]
+complexity = ["lizard>=1.26.1"]
 lint = ["ruff>=0.17.3"]
