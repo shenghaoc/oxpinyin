@@ -80,16 +80,30 @@ class LinuxExportGateTests(unittest.TestCase):
 
 
 class DarwinExportGateTests(unittest.TestCase):
-    def gate(self, nm_extra='', trie_extra=''):
+    def gate(self, nm_extra='', trie_extra='', overrides=True):
         import os
         with tempfile.TemporaryDirectory() as scratch:
             paths = [Path(scratch) / name for name in ('pinyin.dylib', 'zhuyin.dylib')]
-            for path in paths:
-                path.touch()
-            settings = abi.Settings.read(dict(os.environ, OXPINYIN_CAPI_SO=str(paths[0]),
-                                              OXPINYIN_ZHUYIN_SO=str(paths[1])))
+            environment = {key: value for key, value in os.environ.items()
+                           if key not in ('OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO')}
+            environment['PINYIN_ORACLE_DBM'] = 'tkrzw'
+            if overrides:
+                for path in paths:
+                    path.touch()
+                environment.update(OXPINYIN_CAPI_SO=str(paths[0]), OXPINYIN_ZHUYIN_SO=str(paths[1]))
+            settings = abi.Settings.read(environment)
+            self.installs = []
+
+            def staged(arguments, tools):
+                self.installs.append(arguments)
+                self.assertEqual(tools.env.get('PINYIN_ORACLE_DBM'), 'tkrzw')
+                lib = Path(arguments[2].removeprefix('--destdir=')) / 'usr/local/lib'
+                lib.mkdir(parents=True, exist_ok=True)
+                (lib / (arguments[0] + '.15.0.0.dylib')).touch()
+                return 0
+
             def inspect(argv, **options):
-                crate, name = ('oxpinyin-capi', 'libpinyin') if argv[-1] == str(paths[0]) else ('oxzhuyin-capi', 'libzhuyin')
+                name = 'libzhuyin' if 'zhuyin' in Path(argv[-1]).name else 'libpinyin'
                 _, names = version_exports(crate_dir(settings.root, name.removeprefix('lib')) / (name + '.ver'))
                 if argv[0] == 'nm':
                     output = ''.join('10 T _' + symbol + '\n' for symbol in names) + nm_extra
@@ -98,6 +112,7 @@ class DarwinExportGateTests(unittest.TestCase):
                 return SimpleNamespace(returncode=0, stdout=output, stderr='')
             output = io.StringIO()
             with fixture_metadata(), patch.object(abi.subprocess, 'run', side_effect=inspect), \
+                 patch.object(abi, 'install', side_effect=staged), \
                  contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
                 result = abi.check_exports(settings, HostFacts('Darwin'))
             return result, output.getvalue()
@@ -117,6 +132,34 @@ class DarwinExportGateTests(unittest.TestCase):
         self.assertEqual(status, 1, output)
         self.assertIn('nm and export trie differ', output)
         self.assertIn('LEAKED non-ABI export: dependency_function', output)
+
+    def test_overrides_check_the_given_files_without_staging(self):
+        status, output = self.gate()
+        self.assertEqual(status, 0, output)
+        self.assertEqual(self.installs, [])
+        self.assertIn('pinyin.dylib against capi/libpinyin.ver', output)
+
+    def test_without_overrides_the_gate_stages_and_checks_the_shipped_relink(self):
+        status, output = self.gate(overrides=False)
+        self.assertEqual(status, 0, output)
+        self.assertIn('PASS:', output)
+        self.assertEqual([arguments[0] for arguments in self.installs], ['libpinyin', 'libzhuyin'])
+        for arguments in self.installs:
+            self.assertEqual(arguments[1], '--prefix=/usr/local')
+            self.assertTrue(arguments[2].startswith('--destdir='))
+            self.assertEqual(arguments[3:], ['--', '--release', '--locked', '--no-default-features', '--features', 'tkrzw'])
+        stage = self.installs[0][2].removeprefix('--destdir=')
+        self.assertEqual(self.installs[1][2].removeprefix('--destdir='), stage)
+        self.assertIn(f'{stage}/usr/local/lib/libpinyin.15.0.0.dylib against capi/libpinyin.ver', output)
+        self.assertIn(f'{stage}/usr/local/lib/libzhuyin.15.0.0.dylib against zhuyin-capi/libzhuyin.ver', output)
+        self.assertFalse(Path(stage).exists(), 'the stage is temporary')
+
+    def test_a_failed_staging_fails_the_gate_with_its_status(self):
+        with patch.object(abi, 'install', side_effect=abi.Finished(7)), \
+             self.assertRaises(abi.CellError) as raised:
+            abi.shipped_library(abi.Settings.read({'PINYIN_ORACLE_DBM': 'tkrzw'}), 'libpinyin', Path('/stage'))
+        self.assertEqual(raised.exception.status, 7)
+        self.assertIn('staging libpinyin', str(raised.exception))
 
 
 class AllocationFailureGateTests(unittest.TestCase):

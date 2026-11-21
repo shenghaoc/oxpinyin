@@ -420,14 +420,10 @@ jobs:
         run: |
           brew install tkrzw
           pkg-config --modversion tkrzw liblz4 libzstd
+      # On macOS the gate stages both release libraries with `just packaging
+      # install` and checks the relinked files (docs/packaging.md#export-gate).
       - name: Check shipped macOS library exports
-        run: |
-          stage="$RUNNER_TEMP/macos-shipped"
-          just packaging install libpinyin --prefix=/usr/local --destdir="$stage" -- --release --locked
-          just packaging install libzhuyin --prefix=/usr/local --destdir="$stage" -- --release --locked
-          OXPINYIN_CAPI_SO="$stage/usr/local/lib/libpinyin.15.0.0.dylib" \
-          OXPINYIN_ZHUYIN_SO="$stage/usr/local/lib/libzhuyin.15.0.0.dylib" \
-            just abi exports
+        run: just abi exports
       # Clippy over the lane's own feature set, so a lint in
       # macOS-only code fails here rather than nowhere.
       - name: Clippy (macOS)

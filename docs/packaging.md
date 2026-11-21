@@ -328,45 +328,41 @@ Shipping recipes do not enable it; no build exports a test hook.
 It proves that the set of exported `pinyin_*` / `zhuyin_*` symbols is exactly the pin's version script, with nothing missing and nothing extra.
 The version scripts are `capi/libpinyin.ver` (79) and `zhuyin-capi/libzhuyin.ver` (52), both checked in verbatim from the pin.
 It also proves that no other symbol leaks.
-
-The PR `rust` job checks the development build when its path gate selects it.
-The nightly macOS job also checks the installed release artifacts.
-
 No symbol in a version script is feature-gated.
 
-On Linux, `just packaging install` relinks the installed shared object from the staticlib under the crate's `.ver` script (`just packaging relink-versioned`), with `-Wl,-z,defs`.
-The shipped library therefore carries the pin's symbol versioning.
-Before it replaces the installed file, the relink verifies the export set and the version tag of every export against the `.ver` list, in both directions.
-It keeps the same file name, so cargo-c's symlinks keep resolving.
-`just abi exports` compares the cdylib that cargo builds (names, not versions); that is the gate for the development artifact.
-
-On macOS, `just packaging install` also relinks from the cargo-c staticlib (`relink_darwin` in `tools/dev/packaging.py`).
-The Apple linker rejects `--exclude-libs`, cannot combine nonempty exported and unexported lists, and takes the union of two exported lists.
-A second list on rustc's cdylib link would therefore add exports, not restrict them.
-The relink uses one `-exported_symbols_list`, derived from the `.ver` globals with a `_` prefix on each name.
-The restriction therefore holds for every archive symbol, including the transitive `#[export_name]` symbols.
-The replacement keeps cargo-c's install name, compatibility and current versions, architecture and deployment target.
-The macOS build targets the macOS version of the machine that builds it.
-`just packaging install` sets `MACOSX_DEPLOYMENT_TARGET` from `sw_vers -productVersion` for cargo-c, unless the environment already sets it, and the relink keeps the deployment target that cargo-c's dylib records.
-
-Before the atomic replacement, both `nm -gU` and the export trie (`dyld_info -exports`) must equal the `.ver` set.
-`nm -gU` covers all external defined types, including data, absolute and weak symbols.
-The installed native dylib must then load and resolve its entry point.
-The nightly `test-macos` job provisions cargo-c, stages both release libraries and runs `just abi exports`, with `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` set to those installed files.
-Without overrides, that command checks Cargo development artifacts.
+With `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` set, the gate checks those two files.
+Without them, on Linux it checks the development build, the cdylib that cargo builds (names, not versions); the PR `rust` job runs that check when its path gate selects it.
+Without them, on macOS it checks what ships: it stages each library with `just packaging install --prefix=/usr/local` into a temporary directory, with `--release --locked` and the cell's backend features, and checks the relinked `lib<name>.15.0.0.dylib`; the nightly `test-macos` job runs that command.
 The packaging and ABI tests in `tools/dev/packaging.test.py` and `tools/dev/abi.test.py` cover identity preservation, failure atomicity and leak detection.
 
 The cxx bridges of the tkrzw and Kyoto Cabinet backends link the `cxx` crate.
-Its Rust runtime defines `#[export_name]` symbols (`cxxbridge1$slice$*`, `cxxbridge1$string$*`, `cxxbridge1$exception`, ...).
+Its Rust runtime defines `#[export_name]` symbols (`cxxbridge1$slice$*`, `cxxbridge1$string$*`, `cxxbridge1$exception`, ...), and each bridge defines its own (`oxpinyin$tkrzw$cxxbridge1$*`).
 rustc lists every such upstream symbol as a C-level export of a `cdylib`, so without a countermeasure the cargo-built cdylibs export the whole runtime.
-Both relinks above exclude these symbols from the shipped libraries: the Linux version script's `local: *` and the macOS `-exported_symbols_list`.
+The `pinyin_*` and `zhuyin_*` symbols come from the capi crates' own object files; the cxx symbols come from dependency archives, the rlibs.
 
-For the development cdylibs that the gate checks, both capi build scripts pass `-Wl,--exclude-libs,ALL` to the Linux cdylib link when the tkrzw or kyotocabinet feature is on.
+On Linux, both capi build scripts pass `-Wl,--exclude-libs,ALL` to the cdylib link when the tkrzw or kyotocabinet feature is on.
 GNU ld then gives hidden visibility to every symbol defined in an archive: the rlibs and the static library of the bridge.
-rustc's anonymous version script cannot override that visibility.
-The `pinyin_*` and `zhuyin_*` symbols come from the capi crates' own object files and are not affected.
-No such flag exists on macOS, where the development cdylibs carry the extra symbols.
-On macOS, `just abi exports` runs against the relinked installed files, as the nightly job does.
+rustc's anonymous version script cannot override that visibility, and the capi crates' own symbols are not affected.
+`just packaging install` relinks the installed shared object from the staticlib under the crate's `.ver` script (`just packaging relink-versioned`), with `-Wl,-z,defs`.
+The shipped library therefore carries the pin's symbol versioning, and the script's `local: *` excludes every other symbol.
+Before it replaces the installed file, the relink verifies the export set and the version tag of every export against the `.ver` list, in both directions.
+It keeps the same file name, so cargo-c's symlinks keep resolving.
+
+On macOS, the Apple linker rejects `--exclude-libs`, cannot combine nonempty exported and unexported lists, and takes the union of two exported lists.
+A second list on rustc's cdylib link would therefore add exports, not restrict them.
+`-load_hidden <archive>` gives every symbol of an archive hidden visibility, even one that an exported list names, but only when it precedes or replaces the archive's plain path, and rustc places `-C link-arg` arguments after the rlibs, so a build script cannot use it.
+The cargo-built cdylibs therefore carry the cxx symbols on macOS, and the gate does not check them.
+The gate reuses the packaging relink rather than a second link path.
+The rejected alternative, a development link of the cargo artifacts with rustc's export list, the capi crate's rlib force-loaded and its staticlib `-load_hidden`, would catch an undeclared export of the capi crate on macOS as `--exclude-libs` does on Linux, but it is a macOS-only link recipe beside `relink_darwin`; the Linux development gate covers that check.
+
+`just packaging install` relinks the installed macOS dylib from the cargo-c staticlib (`relink_darwin` in `tools/dev/packaging.py`) under one `-exported_symbols_list`, derived from the `.ver` globals with a `_` prefix on each name.
+The restriction holds for every archive symbol, including the transitive `#[export_name]` symbols.
+Before the atomic replacement, both `nm -gU` and the export trie (`dyld_info -exports`) must equal the `.ver` set.
+`nm -gU` covers all external defined types, including data, absolute and weak symbols.
+The replacement keeps cargo-c's install name, compatibility and current versions, architecture and deployment target.
+The macOS build targets the macOS version of the machine that builds it.
+`just packaging install` sets `MACOSX_DEPLOYMENT_TARGET` from `sw_vers -productVersion` for cargo-c, unless the environment already sets it, and the relink keeps the deployment target that cargo-c's dylib records.
+The installed native dylib must then load and resolve its entry point.
 
 ## Function layout
 
