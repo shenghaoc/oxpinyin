@@ -1,22 +1,22 @@
-//! Pinyin key access and cursor/offset navigation.
+//! Access to parsed keys, rendering of their spellings, and movement between input offsets.
 //!
-//! The cursor → lookup-offset normalization and the word-level
-//! left/right moves port the pin's matrix laws
+//! Cursor normalization and word-level left and right moves follow the
+//! pin's key-matrix rules
 //! (`pinyin.cpp:3008-3095` at the pin) over the engine's positional
-//! data — `oxpinyin::engine::lookup_offset_over_spans` and the
-//! `*_word_offset_over_spans` pair. Where the pin's `_check_offset` aborts
+//! data, using `oxpinyin::engine::lookup_offset_over_spans` and the
+//! `*_word_offset_over_spans` functions. Where the pin's `_check_offset` aborts
 //! (`pinyin.cpp:2175`), the left and right moves abort too;
 //! `pinyin_get_pinyin_offset` aborts only over an empty matrix with a parsed
 //! length above 0 and a cursor of 1 or more; a cursor of 0, or a parsed length
 //! of 0, answers `true` with offset 0. `pinyin_get_right_pinyin_offset` aborts
 //! on an empty matrix.
 //!
-//! Parse-mode dispatch mirrors `CapiInstance::validate_lookup_offset`:
-//! plain full pinyin runs the law over the session's own buffer; LUOMA /
+//! Input-scheme handling follows [`oxpinyin::facade::InstanceView::validate_lookup_offset`]:
+//! plain full pinyin applies the rule over the session's own buffer; LUOMA /
 //! `SECONDARY_ZHUYIN` run it over the stored original input with the index
 //! parse's key spans (the pinned index parse consumes `'` as the same
 //! separator); double pinyin and the zhuyin keyboards hold no zero-key
-//! columns, so the law steps their parse's key spans only.
+//! columns, so the rule steps their parse's key spans only.
 
 use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -225,7 +225,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_string(
     // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
     // parameters: a non-NULL output is aligned and writable without conflicting with live
     // borrows.
-    unsafe { render_key(key, utf8_str, oxpinyin::ChewingKey::pinyin_text) }
+    unsafe { render_key(key, utf8_str, oxpinyin::parser::ChewingKey::pinyin_text) }
 }
 
 // eim.cpp:512-515.
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn pinyin_get_zhuyin_string(
     // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
     // parameters: a non-NULL output is aligned and writable without conflicting with live
     // borrows.
-    unsafe { render_key(key, utf8_str, oxpinyin::ChewingKey::zhuyin_text) }
+    unsafe { render_key(key, utf8_str, oxpinyin::parser::ChewingKey::zhuyin_text) }
 }
 
 // eim.cpp:478-479.
@@ -311,7 +311,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_strings(
 /// renderers assert the tone (`:40`, `:75`, `:92`, `:105`): a key packed from
 /// caller memory with a field outside them aborts the process, as the pin
 /// does.
-fn abort_on_elements_outside_dims(key: oxpinyin::ChewingKey) {
+fn abort_on_elements_outside_dims(key: oxpinyin::parser::ChewingKey) {
     if !key.elements_in_dims() {
         std::process::abort();
     }
@@ -319,7 +319,7 @@ fn abort_on_elements_outside_dims(key: oxpinyin::ChewingKey) {
 
 /// The tone half of [`abort_on_elements_outside_dims`], asserted after the
 /// `get_table_index` guard by every renderer that prints a tone.
-fn abort_on_tone_outside_dims(key: oxpinyin::ChewingKey) {
+fn abort_on_tone_outside_dims(key: oxpinyin::parser::ChewingKey) {
     if !key.tone_in_dims() {
         std::process::abort();
     }
@@ -336,7 +336,7 @@ fn abort_on_tone_outside_dims(key: oxpinyin::ChewingKey) {
 unsafe fn render_key(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl Fn(oxpinyin::ChewingKey) -> oxpinyin::KeyText,
+    render: impl Fn(oxpinyin::parser::ChewingKey) -> oxpinyin::parser::KeyText,
 ) -> bool {
     // The pin never reads `instance` (`pinyin.cpp:2707-2727`).
     if key.is_null() {

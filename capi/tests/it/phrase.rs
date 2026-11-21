@@ -1,7 +1,7 @@
 //! The phrase-result surface (`src/phrase.rs`): `pinyin_phrase_segment`
 //! and its two getters, plus the plain predicted-candidate variant and
 //! the prefix-seeded sentence guess — driven black-box through the
-//! re-exported symbols against the `fixtures/w3` mini tables.
+//! C functions against the `fixtures/w3` mini tables.
 
 #![expect(
     clippy::undocumented_unsafe_blocks,
@@ -14,16 +14,25 @@ use crate::support::take;
 
 use crate::support::{PinyinInstance, TempUserDir, cstr, open};
 
-use oxpinyin_capi::{
-    GArray, LookupCandidate, PinyinContext, lookup_candidate_type_t, pinyin_choose_candidate,
-    pinyin_fini, pinyin_free_instance, pinyin_get_candidate, pinyin_get_candidate_type,
-    pinyin_get_n_candidate, pinyin_get_n_phrase, pinyin_get_phrase_token, pinyin_guess_candidates,
-    pinyin_guess_predicted_candidates, pinyin_guess_predicted_candidates_with_punctuations,
-    pinyin_load_phrase_library, pinyin_lookup_tokens, pinyin_parse_more_full_pinyins,
-    pinyin_phrase_segment, pinyin_token_add_unigram_frequency, pinyin_token_get_n_pronunciation,
-    pinyin_token_get_nth_pronunciation, pinyin_token_get_phrase,
-    pinyin_token_get_unigram_frequency, pinyin_train, pinyin_unload_phrase_library,
+use oxpinyin_capi::candidates::{
+    pinyin_choose_candidate, pinyin_get_candidate, pinyin_get_candidate_type,
+    pinyin_get_n_candidate, pinyin_train,
 };
+use oxpinyin_capi::config::{pinyin_load_phrase_library, pinyin_unload_phrase_library};
+use oxpinyin_capi::context::pinyin_fini;
+use oxpinyin_capi::dict::{
+    pinyin_lookup_tokens, pinyin_token_add_unigram_frequency, pinyin_token_get_n_pronunciation,
+    pinyin_token_get_nth_pronunciation, pinyin_token_get_phrase,
+    pinyin_token_get_unigram_frequency,
+};
+use oxpinyin_capi::instance::pinyin_free_instance;
+use oxpinyin_capi::parse::pinyin_parse_more_full_pinyins;
+use oxpinyin_capi::phrase::{pinyin_get_n_phrase, pinyin_get_phrase_token, pinyin_phrase_segment};
+use oxpinyin_capi::predict::pinyin_guess_predicted_candidates;
+use oxpinyin_capi::sentence::{
+    pinyin_guess_candidates, pinyin_guess_predicted_candidates_with_punctuations,
+};
+use oxpinyin_capi::types::{GArray, LookupCandidate, PinyinContext, lookup_candidate_type_t};
 
 use std::ffi::CString;
 
@@ -63,7 +72,7 @@ fn n_phrase(fixture: &Fixture) -> u32 {
 }
 
 fn phrase_token(fixture: &Fixture, index: u32) -> Option<u32> {
-    let mut token: oxpinyin_capi::PhraseTokenT = 0;
+    let mut token: oxpinyin_capi::types::PhraseTokenT = 0;
     if unsafe { pinyin_get_phrase_token(fixture.instance, index, &raw mut token) } {
         Some(token)
     } else {
@@ -161,7 +170,7 @@ fn segment_two_adjacent_phrases() {
     let _ = nihao;
 
     // Out-of-range: false with the out-param zeroed.
-    let mut token: oxpinyin_capi::PhraseTokenT = 0xBEEF;
+    let mut token: oxpinyin_capi::types::PhraseTokenT = 0xBEEF;
     assert!(!unsafe { pinyin_get_phrase_token(fixture.instance, 4, &raw mut token) });
     assert_eq!(token, 0, "zeroed before the bounds check");
 }
@@ -185,7 +194,7 @@ fn plain_predicted_candidates_match_the_with_punctuations_body() {
     let mut candidate: *mut LookupCandidate = std::ptr::null_mut();
     assert!(unsafe { pinyin_get_candidate(fixture.instance, 0, &raw mut candidate) });
     assert!(unsafe { pinyin_choose_candidate(fixture.instance, 0, candidate) } > 0);
-    assert!(unsafe { oxpinyin_capi::pinyin_guess_sentence(fixture.instance) });
+    assert!(unsafe { oxpinyin_capi::sentence::pinyin_guess_sentence(fixture.instance) });
     assert!(unsafe { pinyin_train(fixture.instance, 0) });
 
     let mut num: u32 = 0;
@@ -263,7 +272,7 @@ fn token_get_phrase_round_trips() {
     let token = array.elements()[0];
 
     let mut len: u32 = 0;
-    let mut rendered: *mut oxpinyin_capi::GChar = std::ptr::null_mut();
+    let mut rendered: *mut oxpinyin_capi::types::GChar = std::ptr::null_mut();
     assert!(unsafe {
         pinyin_token_get_phrase(fixture.instance, token, &raw mut len, &raw mut rendered)
     });
@@ -286,7 +295,7 @@ fn token_get_phrase_round_trips() {
 
     let unknown = 0x09FF_FFFF;
     len = 0xBEEF;
-    let sentinel = std::ptr::dangling_mut::<oxpinyin_capi::GChar>();
+    let sentinel = std::ptr::dangling_mut::<oxpinyin_capi::types::GChar>();
     rendered = sentinel;
     assert!(!unsafe {
         pinyin_token_get_phrase(fixture.instance, unknown, &raw mut len, &raw mut rendered)
@@ -387,7 +396,7 @@ fn token_unigram_read_and_live_item_write() {
 
 #[test]
 fn token_unigram_distinguishes_zero_user_item_from_absent() {
-    use oxpinyin_capi::{
+    use oxpinyin_capi::iterators::{
         pinyin_begin_add_phrases, pinyin_end_add_phrases, pinyin_iterator_add_phrase,
     };
 

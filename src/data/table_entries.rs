@@ -7,7 +7,7 @@
 #[cfg(test)]
 use std::collections::BTreeMap;
 
-use crate::ChewingKey;
+use crate::parser::ChewingKey;
 
 #[cfg(test)]
 use crate::data::phrase_library::CHEWING_KEY_SIZE;

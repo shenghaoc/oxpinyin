@@ -141,19 +141,31 @@ use std::path::Path;
 use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
 
-use oxpinyin_capi::fuzz_api::{
-    ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
-    oxpinyin_choose_aborts, oxpinyin_import_aborts, oxpinyin_train_aborts, pinyin_alloc_instance,
-    pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_choose_candidate,
-    pinyin_clear_constraint, pinyin_end_add_phrases, pinyin_end_get_phrases, pinyin_fini,
-    pinyin_free_instance, pinyin_get_candidate, pinyin_get_candidate_string,
-    pinyin_get_n_candidate, pinyin_get_parsed_input_length, pinyin_get_sentence,
-    pinyin_guess_sentence, pinyin_init, pinyin_iterator_add_phrase,
-    pinyin_iterator_get_next_phrase, pinyin_iterator_has_next_phrase,
-    pinyin_parse_more_full_pinyins, pinyin_reset, pinyin_set_double_pinyin_scheme, pinyin_train,
+use oxpinyin_capi::candidates::{
+    pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate,
+    pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_train,
 };
-// The crate root exports every C function; `fuzz_api` lists only a part.
-use oxpinyin_capi::{GUint, pinyin_guess_candidates, pinyin_parse_more_double_pinyins};
+use oxpinyin_capi::config::pinyin_set_double_pinyin_scheme;
+use oxpinyin_capi::context::{pinyin_fini, pinyin_init};
+use oxpinyin_capi::fuzz_api::{
+    oxpinyin_choose_aborts, oxpinyin_import_aborts, oxpinyin_train_aborts,
+};
+use oxpinyin_capi::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
+use oxpinyin_capi::iterators::{
+    pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
+    pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase,
+    pinyin_iterator_has_next_phrase,
+};
+use oxpinyin_capi::parse::{
+    pinyin_get_parsed_input_length, pinyin_parse_more_double_pinyins,
+    pinyin_parse_more_full_pinyins,
+};
+use oxpinyin_capi::sentence::{
+    pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence,
+};
+use oxpinyin_capi::types::{
+    ExportIterator, GChar, GUint, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
+};
 use tempfile::TempDir;
 
 // SAFETY: re-declaring libc `free` to release strings the ABI hands to the

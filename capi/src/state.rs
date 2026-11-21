@@ -2,7 +2,7 @@
 //!
 //! `CapiContext` lives behind `pinyin_context_t *` and `CapiInstance`
 //! behind `pinyin_instance_t *`. The opaque `#[repr(C)]` types in
-//! [`crate::types`] exist only for the generated C header.
+//! [`crate::types`] represent the opaque handles declared in `pinyin.h`.
 //!
 //! The orchestration half of both structs — the runtime assembly, the
 //! user store, the live option/scheme word, the parse-mode state machine,
@@ -18,13 +18,13 @@ use std::{
     rc::Rc,
 };
 
-use oxpinyin::{OptionBits, PHRASE_INDEX_LIBRARY_COUNT, PhraseToken};
+use oxpinyin::OptionBits;
+use oxpinyin::vocab::{PHRASE_INDEX_LIBRARY_COUNT, PhraseToken};
 
-pub use oxpinyin::facade::ExportedBigramRow;
-pub use oxpinyin::facade::InstanceCore;
+pub(crate) use oxpinyin::facade::InstanceCore;
 use oxpinyin::facade::{CandidateSnapshot, SnapshotRow, TextSpan};
 use oxpinyin::facade::{ContextCore, OpenFailure};
-pub use oxpinyin::runtime::RuntimeDict as SharedDict;
+pub(crate) use oxpinyin::runtime::RuntimeDict as SharedDict;
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
@@ -34,7 +34,7 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 ///
 /// Owns the runtime and its storage. Context, instances and iterators share
 /// this allocation; every operation borrows it under the C serialization contract.
-pub struct CapiContext {
+pub(crate) struct CapiContext {
     /// The shared orchestration half: assembly, user store, layered
     /// configuration, and the live option/scheme word.
     pub(crate) core: ContextCore,
@@ -157,7 +157,7 @@ impl CapiContext {
 /// A choose reads only the row's scalars and works on the choosing
 /// instance, whichever instance published the row, as the pin does
 /// (`pinyin.cpp:2501-2588`).
-pub struct CapiCandidate {
+pub(crate) struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: TextSpan,
     /// The pointer `pinyin_get_candidate_string` answers: the row's string
@@ -237,7 +237,7 @@ impl SnapshotRow for CapiCandidate {
 }
 
 /// State behind `pinyin_instance_t *`.
-pub struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwner> {
+pub(crate) struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwner> {
     /// Retains the sole runtime allocation after the public context is finalised.
     pub(crate) owner: O,
     /// The owning context's C handle, returned by `pinyin_get_context`
@@ -253,7 +253,7 @@ pub struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwne
 }
 
 /// ABI presentation state retained independently of phrase storage.
-pub struct CapiInstanceState {
+pub(crate) struct CapiInstanceState {
     /// The context's initial gfloat interpolation weight for prediction.
     pub(crate) predicted_lambda: f32,
     /// Options used to parse the keys that plain full-pinyin aux text displays.
@@ -278,9 +278,9 @@ impl<C, S: std::borrow::BorrowMut<CapiInstanceState>, O> std::ops::DerefMut
     }
 }
 
-pub type CapiInstanceRead<'a> =
+pub(crate) type CapiInstanceRead<'a> =
     CapiInstance<oxpinyin::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
-pub type CapiInstanceMut<'a> =
+pub(crate) type CapiInstanceMut<'a> =
     CapiInstance<oxpinyin::facade::InstanceMut<'a>, &'a mut CapiInstanceState, &'a ContextOwner>;
 
 impl<
@@ -302,7 +302,7 @@ impl<
 
 /// Shared ownership of one context allocation, including its sole runtime.
 /// Handles retain ownership; every access still borrows only for one C call.
-pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
+pub(crate) type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
 /// Borrow storage retained by a handle, including after context fini.
 /// # Safety
@@ -367,7 +367,7 @@ pub(crate) unsafe fn instance_context_mut<'a>(ptr: *mut PinyinInstance) -> &'a m
 /// # Safety
 /// The instance must be live and all calls sharing its runtime serialized.
 /// No instance or context mutation may overlap the returned reader.
-pub unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> CapiInstanceRead<'a> {
+pub(crate) unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> CapiInstanceRead<'a> {
     // SAFETY: the caller supplies a live instance and serializes all shared-handle calls.
     let instance = unsafe { handles::instance_ref(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
@@ -384,7 +384,7 @@ pub unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> CapiInstanceRead<'a>
 /// Borrow composition exclusively and phrase storage for this call only.
 /// # Safety
 /// The instance must be live, with no overlapping access through any shared handle.
-pub unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> CapiInstanceMut<'a> {
+pub(crate) unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> CapiInstanceMut<'a> {
     // SAFETY: the caller grants exclusive access to this live instance.
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.
@@ -421,7 +421,7 @@ mod handles {
     ///
     /// `ptr` must come from `box_context` and remain live through `'a`.
     /// No mutation of the boxed owner may overlap the borrow.
-    pub unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a ContextOwner {
+    pub(super) unsafe fn context_ref<'a>(ptr: *mut PinyinContext) -> &'a ContextOwner {
         // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
         unsafe { &*(ptr.cast::<ContextOwner>()) }
     }
@@ -432,7 +432,7 @@ mod handles {
     ///
     /// `ptr` must come from `box_context` and remain live through `'a`.
     /// No other access to the boxed owner may overlap the borrow.
-    pub unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut ContextOwner {
+    pub(super) unsafe fn context_mut<'a>(ptr: *mut PinyinContext) -> &'a mut ContextOwner {
         // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
         unsafe { &mut *(ptr.cast::<ContextOwner>()) }
     }
@@ -443,7 +443,7 @@ mod handles {
     ///
     /// `ptr` must come from `box_instance` and remain live through `'a`.
     /// No mutation of the boxed instance may overlap the borrow.
-    pub unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> &'a CapiInstance {
+    pub(crate) unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> &'a CapiInstance {
         // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
         unsafe { &*(ptr.cast::<CapiInstance>()) }
     }
@@ -454,18 +454,18 @@ mod handles {
     ///
     /// `ptr` must come from `box_instance` and remain live through `'a`.
     /// No other access to the boxed instance may overlap the borrow.
-    pub unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> &'a mut CapiInstance {
+    pub(super) unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> &'a mut CapiInstance {
         // SAFETY: Caller guarantees the pointer is valid and unique for the chosen lifetime.
         unsafe { &mut *(ptr.cast::<CapiInstance>()) }
     }
 
     /// Converts a backing context into a handle pointer for return to C.
-    pub fn box_context(ctx: ContextOwner) -> *mut PinyinContext {
+    pub(super) fn box_context(ctx: ContextOwner) -> *mut PinyinContext {
         Box::into_raw(Box::new(ctx)).cast()
     }
 
     /// Converts a backing instance into a handle pointer for return to C.
-    pub fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
+    pub(crate) fn box_instance(inst: CapiInstance) -> *mut PinyinInstance {
         Box::into_raw(Box::new(inst)).cast()
     }
 
@@ -477,13 +477,13 @@ mod handles {
     /// `candidates` vec (produced by `candidate_ptr`). The candidate must
     /// stay alive, and valid for shared access, for the returned
     /// lifetime `'a`.
-    pub unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate {
+    pub(crate) unsafe fn candidate_ref<'a>(ptr: *mut LookupCandidate) -> &'a CapiCandidate {
         // SAFETY: Caller guarantees the pointer is valid for the chosen lifetime.
         unsafe { &*(ptr.cast::<CapiCandidate>()) }
     }
 
     /// Returns a lookup-candidate handle pointer to a backing candidate.
-    pub const fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
+    pub(crate) const fn candidate_ptr(cand: &CapiCandidate) -> *mut LookupCandidate {
         (cand as *const CapiCandidate as *mut CapiCandidate).cast()
     }
 }

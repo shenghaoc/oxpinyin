@@ -5,7 +5,7 @@
 
 use std::cell::RefCell;
 
-use crate::{PhraseEntry, PhraseText, SyllableKey};
+use crate::vocab::{PhraseEntry, PhraseText, SyllableKey};
 
 use crate::user::user_index::UserIndex;
 use crate::user::user_library::SessionPhrases;
@@ -57,19 +57,23 @@ impl<'a> UserLookup<'a> {
 
     /// The trellis's with-tones query over the same stored records.
     #[must_use]
-    pub(crate) fn search_toned(&self, keys: &[crate::ChewingKey]) -> Vec<u32> {
+    pub(crate) fn search_toned(&self, keys: &[crate::parser::ChewingKey]) -> Vec<u32> {
         self.with_index(|index| index.search(keys))
     }
 
     /// Append the matching live entries in stored token order.
-    pub(crate) fn lookup_into(&self, keys: &[crate::ChewingKey], out: &mut Vec<PhraseEntry>) {
+    pub(crate) fn lookup_into(
+        &self,
+        keys: &[crate::parser::ChewingKey],
+        out: &mut Vec<PhraseEntry>,
+    ) {
         self.lookup_resolving_missing(keys, out, |_| None);
     }
 
     /// Appends live matches and calls the fallback for tokens without a live item.
     pub(crate) fn lookup_resolving_missing(
         &self,
-        keys: &[crate::ChewingKey],
+        keys: &[crate::parser::ChewingKey],
         out: &mut Vec<PhraseEntry>,
         mut missing: impl FnMut(u32) -> Option<PhraseText>,
     ) {
@@ -167,8 +171,8 @@ fn session_text(
 ) -> Option<PhraseText> {
     if let Some(item) = phrases
         .libraries
-        .get(&crate::phrase_index_library_index(token))
-        .and_then(|library| library.item(token & crate::PHRASE_MASK))
+        .get(&crate::vocab::phrase_index_library_index(token))
+        .and_then(|library| library.item(token & crate::vocab::PHRASE_MASK))
     {
         return item.phrase_text();
     }

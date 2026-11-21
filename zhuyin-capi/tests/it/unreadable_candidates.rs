@@ -9,10 +9,13 @@ use std::ffi::CString;
 
 use std::ptr;
 
-use oxzhuyin_capi::{
-    zhuyin_fini, zhuyin_get_candidate, zhuyin_get_candidate_string, zhuyin_get_n_candidate,
-    zhuyin_guess_candidates_after_cursor, zhuyin_guess_candidates_before_cursor, zhuyin_init,
-};
+use oxzhuyin_capi::candidates::zhuyin_get_candidate;
+use oxzhuyin_capi::candidates::zhuyin_get_candidate_string;
+use oxzhuyin_capi::candidates::zhuyin_get_n_candidate;
+use oxzhuyin_capi::context::zhuyin_fini;
+use oxzhuyin_capi::context::zhuyin_init;
+use oxzhuyin_capi::sentence::zhuyin_guess_candidates_after_cursor;
+use oxzhuyin_capi::sentence::zhuyin_guess_candidates_before_cursor;
 
 use crate::support::{zhuyin_alloc_instance, zhuyin_free_instance, zhuyin_parse_more_chewings};
 
@@ -42,7 +45,11 @@ fn check_row(case: fixture::Case, before_cursor: bool) {
         assert!(unsafe { zhuyin_get_candidate(instance, 0, &raw mut row) });
         let mut row_type = std::mem::MaybeUninit::uninit();
         assert!(unsafe {
-            oxzhuyin_capi::zhuyin_get_candidate_type(instance, row, row_type.as_mut_ptr())
+            oxzhuyin_capi::candidates::zhuyin_get_candidate_type(
+                instance,
+                row,
+                row_type.as_mut_ptr(),
+            )
         });
         // SAFETY: a successful getter writes the type of the live row.
         let row_type = unsafe { row_type.assume_init() };

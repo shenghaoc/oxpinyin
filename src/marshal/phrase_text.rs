@@ -8,7 +8,7 @@
 
 use std::borrow::Cow;
 
-use crate::PhraseText;
+use crate::vocab::PhraseText;
 
 /// Borrows the NUL-free bytes of scalar text. For stored text, encodes each
 /// word before the first zero with `g_unichar_to_utf8`'s historical widths,

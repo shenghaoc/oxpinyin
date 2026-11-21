@@ -1,11 +1,11 @@
-//! Auxiliary text retrieval.
+//! Auxiliary text around the cursor in the current input.
 //!
-//! Full pinyin is C++-formatted (space-separated syllable keys with `|` at
-//! the cursor). Double pinyin and chewing use the scheme aux walkers.
+//! Full-pinyin text separates syllable keys with spaces and places `|` at
+//! the cursor. Double-pinyin and chewing text follows the selected scheme.
 
 use oxpinyin::OptionBits;
-use oxpinyin::ZhuyinParse;
 use oxpinyin::graph::SegmentGraph;
+use oxpinyin::parser::ZhuyinParse;
 
 use crate::aux_matrix::{AuxText, SharedMatrix, split_zhuyin};
 use crate::ffi::{borrow_or_return, strconcat_aux, strdup, write_if_nonnull};
@@ -50,7 +50,7 @@ fn abort_on_full_walk(inst: &crate::state::CapiInstanceRead<'_>, cursor: usize) 
 /// appends `%d` for non-zero tones).
 fn full_index_aux_text(
     input: &str,
-    parse: &oxpinyin::FullPinyinIndexParse,
+    parse: &oxpinyin::parser::FullPinyinIndexParse,
     cursor: usize,
 ) -> AuxText {
     let parsed_len = parse.consumed().min(input.len());

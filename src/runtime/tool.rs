@@ -62,7 +62,7 @@ impl Lookup {
     // The matrix driver reads SEARCH_CONTINUED and aborts on a failed table query.
     /// Reports whether the index has a continuation row for `keys`.
     #[must_use]
-    pub fn key_exists(&self, keys: &[crate::ChewingKey]) -> bool {
+    pub fn key_exists(&self, keys: &[crate::parser::ChewingKey]) -> bool {
         self.tables
             .key_exists(keys)
             .unwrap_or_else(|_| crate::input::tool::abort())

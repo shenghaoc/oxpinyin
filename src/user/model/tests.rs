@@ -1,4 +1,4 @@
-use crate::PhraseToken;
+use crate::vocab::PhraseToken;
 
 use super::*;
 

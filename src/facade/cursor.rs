@@ -15,7 +15,7 @@
 //! zero-key columns, so the law steps their parse's key spans only.
 
 use crate::engine::{EngineError, KeySpans, MatrixKey};
-use crate::{DoublePinyinKey, FullPinyinIndexKey, ZhuyinKey};
+use crate::parser::{DoublePinyinKey, FullPinyinIndexKey, ZhuyinKey};
 
 use crate::facade::instance::{InstanceState, InstanceView};
 
@@ -168,7 +168,7 @@ impl ModeKeys<'_> {
                 let key = &keys[index];
                 KeyAt {
                     text: key.canonical(),
-                    chewing: crate::ChewingKey::from_pinyin(key.canonical())
+                    chewing: crate::parser::ChewingKey::from_pinyin(key.canonical())
                         .unwrap_or_default()
                         .with_tone(key.tone()),
                     key: None,
@@ -267,12 +267,12 @@ impl AbiColumns<'_> {
 #[derive(Clone, Copy, Debug)]
 pub struct KeyAt {
     /// The exact parser key.
-    pub chewing: crate::ChewingKey,
+    pub chewing: crate::parser::ChewingKey,
     /// The key's canonical full-pinyin spelling.
     pub text: &'static str,
     /// The key's vocabulary key; `None` for the index parse, which carries
     /// only canonical text.
-    pub key: Option<crate::SyllableKey>,
+    pub key: Option<crate::vocab::SyllableKey>,
     /// The tone consumed with the key, `0` when toneless.
     pub tone: u8,
     /// Inclusive byte offset of the key's first byte.
@@ -492,7 +492,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// backend failure.
     pub fn character_offset(
         &self,
-        phrase: &crate::PhraseText,
+        phrase: &crate::vocab::PhraseText,
         offset: usize,
         zhuyin: bool,
     ) -> Result<(Option<usize>, bool), EngineError> {

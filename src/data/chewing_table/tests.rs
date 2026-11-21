@@ -437,10 +437,11 @@ fn a_failed_pinyin_table_existence_read_is_a_miss() {
 #[test]
 fn a_failed_pinyin_table_existence_read_is_a_miss_for_zhuyin() {
     let table = native_table();
-    let parse = crate::ZhuyinParser::with_scheme(crate::ZhuyinScheme::Standard).parse_with_options(
-        b"su3",
-        crate::OptionBits::USE_TONE | crate::OptionBits::FORCE_TONE,
-    );
+    let parse = crate::parser::ZhuyinParser::with_scheme(crate::parser::ZhuyinScheme::Standard)
+        .parse_with_options(
+            b"su3",
+            crate::OptionBits::USE_TONE | crate::OptionBits::FORCE_TONE,
+        );
     let key = parse.keys()[0]
         .key()
         .chewing_key()

@@ -20,7 +20,7 @@ impl RuntimeDict<'_> {
         // the ordinary body read; an imported item retains its old error reads.
         let found = if self
             .live_items()
-            .is_system_library(crate::phrase_index_library_index(token))
+            .is_system_library(crate::vocab::phrase_index_library_index(token))
             && user.with_user_item(token, |_| ()).is_none()
         {
             self.live_items()

@@ -35,7 +35,8 @@
 //! refusing, not asserting, on an empty column or a zero key that shares its
 //! column, and in calling the caller's `add` at every complete path.
 
-use crate::{PhraseToken, SyllableKey, model::Dictionary};
+use crate::model::Dictionary;
+use crate::vocab::{PhraseToken, SyllableKey};
 
 use crate::engine::cursor::MatrixKey;
 use crate::engine::error::EngineError;
@@ -277,7 +278,7 @@ where
     }
     let zero_key = column
         .zero_end
-        .map(|end| MatrixKey::from_chewing(crate::ChewingKey::default(), start, end));
+        .map(|end| MatrixKey::from_chewing(crate::parser::ChewingKey::default(), start, end));
     for key in column.real.iter().copied().chain(zero_key) {
         if let Some(found) =
             walk_pronounced_key(dictionary, columns, tokens, key, offset, length, zhuyin)?
@@ -345,7 +346,7 @@ pub fn character_offset_with_walk_over_keys<D>(
     parsed_len: usize,
     keys: impl IntoIterator<Item = MatrixKey>,
     dictionary: &D,
-    phrase: &crate::PhraseText,
+    phrase: &crate::vocab::PhraseText,
     offset: usize,
     zhuyin: bool,
 ) -> Result<(Option<usize>, bool), EngineError>

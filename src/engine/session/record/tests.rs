@@ -1,5 +1,5 @@
 use super::SelectionRecord;
-use crate::PhraseText;
+use crate::vocab::PhraseText;
 
 /// Chosen phrases and raw gaps join in order, an n-best row replaces
 /// the text, and a rebuild keeps the gaps its runs skip over.

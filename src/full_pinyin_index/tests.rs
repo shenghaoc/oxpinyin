@@ -1,7 +1,8 @@
 use super::{
     LUOMA_PINYIN_COUNT, SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, secondary_zhuyin_index,
 };
-use crate::{OptionBits, parse_full_pinyin_index_with_options};
+use crate::OptionBits;
+use crate::full_pinyin_index::parse_full_pinyin_index_with_options;
 
 #[test]
 fn indexes_match_the_pinned_shapes() {
@@ -18,7 +19,7 @@ fn indexes_match_the_pinned_shapes() {
         // covers both indexes with nothing to spare or add.
         for (spelling, canonical) in index.entries() {
             assert!(
-                crate::SyllableKey::from_canonical_text(canonical).is_some(),
+                crate::vocab::SyllableKey::from_canonical_text(canonical).is_some(),
                 "{spelling} -> {canonical} leaves the inventory"
             );
         }
@@ -75,7 +76,7 @@ fn secondary_zhuyin_index_matches_original_rows() {
 }
 
 /// An index parse's keys as `'`-joined canonical spellings.
-fn canonical(parse: &crate::FullPinyinIndexParse) -> String {
+fn canonical(parse: &crate::parser::FullPinyinIndexParse) -> String {
     parse
         .keys()
         .iter()

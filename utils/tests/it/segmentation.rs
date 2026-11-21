@@ -111,7 +111,7 @@ fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
     use oxpinyin::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
     use oxpinyin::single_gram::encode_single_gram;
     use oxpinyin::store::{DefaultStore, WriteStore as _, WriteTxn as _};
-    use oxpinyin::{SENTENCE_START, phrase_index_make_token};
+    use oxpinyin::vocab::{SENTENCE_START, phrase_index_make_token};
 
     let (_directory, data) = data_dir();
     let items = [(1, 2), (2, 1)].map(|(slot, unigram)| {

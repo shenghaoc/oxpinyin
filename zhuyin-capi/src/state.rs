@@ -2,7 +2,7 @@
 //!
 //! `CapiContext` lives behind `zhuyin_context_t *` and `CapiInstance`
 //! behind `zhuyin_instance_t *`. The opaque `#[repr(C)]` types in
-//! [`crate::types`] exist only for the generated C header.
+//! [`crate::types`] represent the opaque handles declared by the C header.
 //!
 //! The orchestration half of both structs — the runtime assembly, the
 //! user store, the live option/scheme word, the parse-mode state machine,
@@ -13,7 +13,7 @@
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
 
-pub use oxpinyin::facade::InstanceCore;
+use oxpinyin::facade::InstanceCore;
 use std::path::Path;
 use std::{cell::UnsafeCell, rc::Rc};
 
@@ -22,7 +22,7 @@ use oxpinyin::facade::{ContextCore, OpenFailure};
 use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
 /// State behind `zhuyin_context_t *`.
-pub struct CapiContext {
+pub(crate) struct CapiContext {
     /// The shared orchestration half: assembly, user store, layered
     /// configuration, and the live option/scheme word.
     pub(crate) core: ContextCore,
@@ -84,7 +84,7 @@ impl CapiContext {
 /// getters and its choose read: the pin's choose reads the row's own
 /// `m_begin`, `m_end` and `m_token` (`zhuyin.cpp:1646-1666` at 074a2219),
 /// on whichever instance a caller passes it to.
-pub struct CapiCandidate {
+pub(crate) struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: oxpinyin::facade::TextSpan,
     /// The pointer `zhuyin_get_candidate_string` answers — from the row
@@ -101,7 +101,7 @@ pub struct CapiCandidate {
     /// also returned when reparsing makes the span refuse.
     pub(crate) span_end: u16,
     /// The row's scoring token, `m_token`, which a choose forces.
-    pub(crate) token: Option<oxpinyin::PhraseToken>,
+    pub(crate) token: Option<oxpinyin::vocab::PhraseToken>,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
@@ -134,7 +134,7 @@ impl oxpinyin::facade::SnapshotRow for CapiCandidate {
 }
 
 /// State behind `zhuyin_instance_t *`.
-pub struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwner> {
+pub(crate) struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwner> {
     /// Retains the sole runtime allocation after the public context is finalised.
     pub(crate) owner: O,
     /// The orchestration half — composition, live option
@@ -145,7 +145,7 @@ pub struct CapiInstance<C = InstanceCore, S = CapiInstanceState, O = ContextOwne
 }
 
 /// ABI presentation state retained independently of phrase storage.
-pub struct CapiInstanceState {
+pub(crate) struct CapiInstanceState {
     /// Snapshotted candidates, rebuilt by `zhuyin_guess_candidates_*`:
     /// the rows `lookup_candidate_t *` pointers address and the packed
     /// strings they read.
@@ -166,9 +166,9 @@ impl<C, S: std::borrow::BorrowMut<CapiInstanceState>, O> std::ops::DerefMut
     }
 }
 
-pub type CapiInstanceRead<'a> =
+pub(crate) type CapiInstanceRead<'a> =
     CapiInstance<oxpinyin::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
-pub type CapiInstanceMut<'a> =
+pub(crate) type CapiInstanceMut<'a> =
     CapiInstance<oxpinyin::facade::InstanceMut<'a>, &'a mut CapiInstanceState, &'a ContextOwner>;
 
 impl<
@@ -189,7 +189,7 @@ impl<
 
 /// Shared ownership of one context allocation, including its sole runtime.
 /// Handles retain ownership; every access still borrows only for one C call.
-pub type ContextOwner = Rc<UnsafeCell<CapiContext>>;
+pub(crate) type ContextOwner = Rc<UnsafeCell<CapiContext>>;
 
 /// Borrow storage retained by a handle, including after context fini.
 /// # Safety
@@ -254,7 +254,7 @@ pub(crate) unsafe fn instance_context_mut<'a>(ptr: *mut ZhuyinInstance) -> &'a m
 /// # Safety
 /// The instance must be live and all calls sharing its runtime serialized.
 /// No instance or context mutation may overlap the returned reader.
-pub unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceRead<'a> {
+pub(crate) unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceRead<'a> {
     // SAFETY: the caller supplies a live instance and serializes all shared-handle calls.
     let instance = unsafe { handles::instance_ref(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
@@ -270,7 +270,7 @@ pub unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceRead<'a>
 /// Borrow composition exclusively and phrase storage for this call only.
 /// # Safety
 /// The instance must be live, with no overlapping access through any shared handle.
-pub unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceMut<'a> {
+pub(crate) unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceMut<'a> {
     // SAFETY: the caller grants exclusive access to this live instance.
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.

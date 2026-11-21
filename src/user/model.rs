@@ -14,10 +14,11 @@
 //! the numeric value. The store itself stays keyed on the raw `u32`
 //! `phrase_token_t` layout; the impl converts at the seam.
 
-use crate::{PhraseToken, model::UserModel};
+use crate::model::UserModel;
+use crate::vocab::PhraseToken;
 
-use crate::SENTENCE_START;
 use crate::user::store::{UserStore, UserStoreError};
+use crate::vocab::SENTENCE_START;
 
 impl UserModel for UserStore {
     type Error = UserStoreError;
@@ -35,7 +36,7 @@ impl UserModel for UserStore {
         &mut self,
         history: &[PhraseToken],
         token: &PhraseToken,
-        readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
+        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
     ) -> Result<(), Self::Error> {
         let last = history.last().map_or(SENTENCE_START, |t| *t);
         let seed = self.observe_selection(last, *token)?;

@@ -576,9 +576,9 @@ pub fn export_state(
     for (token, item) in store.live_system_changes(originals) {
         if let Some(overrides) = state
             .system_overrides
-            .get_or_default(crate::phrase_index_library_index(token))
+            .get_or_default(crate::vocab::phrase_index_library_index(token))
         {
-            overrides.insert(token & crate::PHRASE_MASK, item);
+            overrides.insert(token & crate::vocab::PHRASE_MASK, item);
         }
     }
     Ok(state)
@@ -620,11 +620,11 @@ pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::user::P
     packed
         .iter()
         .map(|&bits| {
-            let key = crate::ChewingKey::from_packed(bits);
+            let key = crate::parser::ChewingKey::from_packed(bits);
             if key.with_tone(0).to_packed() == 0 || !key.elements_in_dims() {
                 return None;
             }
-            let syllable = crate::SyllableKey::from_matrix_key(key);
+            let syllable = crate::vocab::SyllableKey::from_matrix_key(key);
             phrase::toned_key(syllable.index(), key.tone)
         })
         .collect()
@@ -633,12 +633,12 @@ pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::user::P
 /// 074a2219 storage/pinyin_phrase3.h:68-147: initial equality,
 /// incomplete middle/final wildcard, and zero-tone wildcard on either side.
 pub(crate) fn pronunciation_matches(
-    reading: &[crate::ChewingKey],
+    reading: &[crate::parser::ChewingKey],
     packed: impl ExactSizeIterator<Item = u16>,
 ) -> bool {
     reading.len() == packed.len()
         && reading.iter().zip(packed).all(|(query, bits)| {
-            let stored = crate::ChewingKey::from_packed(bits);
+            let stored = crate::parser::ChewingKey::from_packed(bits);
             query.initial == stored.initial
                 && ((query.middle == stored.middle && query.final_ == stored.final_)
                     || (query.middle == 0 && query.final_ == 0)
@@ -651,7 +651,7 @@ pub(crate) fn pronunciation_matches(
 /// words.
 pub(crate) fn pinyin_keys_to_packed(ids: &[crate::user::PinyinKey]) -> Option<Vec<u16>> {
     ids.iter()
-        .map(|&id| phrase::key_chewing(id).map(crate::ChewingKey::to_packed))
+        .map(|&id| phrase::key_chewing(id).map(crate::parser::ChewingKey::to_packed))
         .collect()
 }
 

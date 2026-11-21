@@ -1,5 +1,5 @@
 use super::phrase_text_bytes;
-use crate::PhraseText;
+use crate::vocab::PhraseText;
 
 /// Whether `text` stores exactly `phrase`'s code points: the pin's check of
 /// an existing item against an imported phrase, its stored length then a

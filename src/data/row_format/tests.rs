@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::ChewingKey;
+use crate::parser::ChewingKey;
 
 // Pinned vectors: a change to the shared implementation breaks both
 // halves' tests at once, the same guarantee `chunk_format` carries.

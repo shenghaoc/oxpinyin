@@ -1,5 +1,4 @@
-//! Instance lifecycle: `pinyin_alloc_instance`, `pinyin_free_instance`,
-//! `pinyin_reset`.
+//! Editor instance allocation, input reset, and instance release.
 
 use std::ptr;
 

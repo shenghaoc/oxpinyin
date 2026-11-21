@@ -12,7 +12,7 @@
 //! every other token through the loaded chunk, encoding its UCS-4 words
 //! with `g_ucs4_to_utf8`.
 
-use oxpinyin::phrase_index_library_index;
+use oxpinyin::vocab::phrase_index_library_index;
 use std::ffi::{CString, OsStr};
 
 use crate::k_mixture_model::phrase::PhraseIndex;

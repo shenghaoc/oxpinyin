@@ -3,7 +3,7 @@
 //! One session per input context, with parse, candidate, selection and
 //! training operations shared by the in-tree consumers.
 
-use crate::phrase_index_library_index;
+use crate::vocab::phrase_index_library_index;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 
@@ -11,8 +11,9 @@ use smallvec::SmallVec;
 
 use crate::graph::{Edge, ExactSegment, SegmentGraph};
 use crate::{
-    OptionBits, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
+    OptionBits,
     model::{Dictionary, LanguageModel, MergedGram, UserModel},
+    vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey},
 };
 
 use crate::engine::candidate::{Candidate, CandidateKind, CandidateList};
@@ -377,7 +378,7 @@ fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
 /// `PHRASE_INDEX_LIBRARY_INDEX` names (`pinyin.cpp:1772-1788`,
 /// `chewing_large_table2.h:107`, `novel_types.h:44` at the pin
 /// `074a2219`). The token's high four bits are masked.
-fn window_library(token: crate::PhraseToken) -> usize {
+fn window_library(token: crate::vocab::PhraseToken) -> usize {
     usize::from(phrase_index_library_index(token))
 }
 
@@ -632,7 +633,10 @@ fn extend_matrix(columns: &mut [Vec<ScanKey>], options: OptionBits, divided: boo
     // Per column, initial swaps read the original snapshot; final swaps
     // read the grown column (phonetic_key_matrix.cpp:226-310).
     for column in columns {
-        for swap in [crate::fuzzy_chewing_initials, crate::fuzzy_chewing_finals] {
+        for swap in [
+            crate::vocab::fuzzy_chewing_initials,
+            crate::vocab::fuzzy_chewing_finals,
+        ] {
             for slot in 0..column.len() {
                 let source = column[slot];
                 for alternate in swap(source.key.chewing_key().with_tone(source.tone), options) {
@@ -698,8 +702,8 @@ fn matrix_resplit_pass(columns: &mut [Vec<crate::engine::cursor::MatrixKey>], pa
                     continue;
                 }
                 if let Some((_, _, left, right)) = RESPLIT_TABLE.iter().find(|(a, b, _, _)| {
-                    crate::ChewingKey::from_pinyin(a) == Some(key.key())
-                        && crate::ChewingKey::from_pinyin(b) == Some(next.key())
+                    crate::parser::ChewingKey::from_pinyin(a) == Some(key.key())
+                        && crate::parser::ChewingKey::from_pinyin(b) == Some(next.key())
                 }) {
                     append_matrix_split(columns, key, next.end(), left, right);
                 }
@@ -719,7 +723,7 @@ fn matrix_divided_pass(columns: &mut [Vec<crate::engine::cursor::MatrixKey>]) {
             }
             if let Some((_, left, right)) = DIVIDED_TABLE
                 .iter()
-                .find(|(a, _, _)| crate::ChewingKey::from_pinyin(a) == Some(key.key()))
+                .find(|(a, _, _)| crate::parser::ChewingKey::from_pinyin(a) == Some(key.key()))
             {
                 append_matrix_split(columns, key, key.end(), left, right);
             }
@@ -731,7 +735,10 @@ fn matrix_divided_pass(columns: &mut [Vec<crate::engine::cursor::MatrixKey>]) {
 /// the column as it is, and the final swaps then read the grown column.
 fn matrix_fuzzy_pass(columns: &mut [Vec<crate::engine::cursor::MatrixKey>], options: OptionBits) {
     for column in columns {
-        for swap in [crate::fuzzy_chewing_initials, crate::fuzzy_chewing_finals] {
+        for swap in [
+            crate::vocab::fuzzy_chewing_initials,
+            crate::vocab::fuzzy_chewing_finals,
+        ] {
             for slot in 0..column.len() {
                 let key = column[slot];
                 for alternate in swap(key.key(), options) {
@@ -754,8 +761,8 @@ fn append_matrix_split(
     right: &str,
 ) {
     let (Some(left_key), Some(right_key)) = (
-        crate::ChewingKey::from_pinyin(left),
-        crate::ChewingKey::from_pinyin(right),
+        crate::parser::ChewingKey::from_pinyin(left),
+        crate::parser::ChewingKey::from_pinyin(right),
     ) else {
         return;
     };
@@ -923,13 +930,13 @@ pub(crate) const fn check_lookup_offset_range(
 ///
 /// # Errors
 ///
-/// The [`GramFault`](crate::GramFault) where either read asserts or
+/// The [`GramFault`](crate::single_gram::GramFault) where either read asserts or
 /// leaves the merged row.
 fn dynamic_adjust_bigram_possibility(
     options: OptionBits,
     gram: Option<&MergedGram>,
     token: u32,
-) -> Result<f32, crate::GramFault> {
+) -> Result<f32, crate::single_gram::GramFault> {
     if !options.contains(OptionBits::DYNAMIC_ADJUST) {
         return Ok(0.0);
     }

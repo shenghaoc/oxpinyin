@@ -17,7 +17,8 @@
 //! `chewing_large_table2_tkrzwdb.cpp:133-296`.
 
 use crate::data::phrase_library::CHEWING_KEY_SIZE;
-use crate::{ChewingKey, MAX_PHRASE_LENGTH};
+use crate::parser::ChewingKey;
+use crate::vocab::MAX_PHRASE_LENGTH;
 
 use crate::data::DictError;
 // The key and record layouts this reader shares with

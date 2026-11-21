@@ -13,7 +13,7 @@
 //! reaches the pin's section assertion. Other missing-token paths retain
 //! their prescribed refusal.
 
-use oxpinyin::SENTENCE_START;
+use oxpinyin::vocab::SENTENCE_START;
 use std::ffi::{CStr, CString, OsString, c_int, c_long};
 use std::fmt;
 use std::io::{BufRead, Write as _};

@@ -140,7 +140,7 @@ where
     /// dictionary's backend failure.
     pub(crate) fn character_offset_with_walk(
         &self,
-        phrase: &crate::PhraseText,
+        phrase: &crate::vocab::PhraseText,
         offset: usize,
         zhuyin: bool,
     ) -> Result<(Option<usize>, bool), EngineError> {

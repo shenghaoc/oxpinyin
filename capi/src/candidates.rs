@@ -1,12 +1,22 @@
-//! Candidate access, selection, and training.
+//! Candidate access, selection, constraints, and training.
+//!
+//! [`crate::sentence::pinyin_guess_candidates`] builds candidates for parsed input.
+//! [`crate::predict::pinyin_guess_predicted_candidates`] builds prediction rows.
+//! [`crate::sentence::pinyin_guess_predicted_candidates_with_punctuations`]
+//! adds punctuation rows to predictions.
+//!
+//! Inspect a list with [`pinyin_get_n_candidate`], [`pinyin_get_candidate`],
+//! and [`pinyin_get_candidate_string`]. Select a parsed-input row with
+//! [`pinyin_choose_candidate`] or a prediction with [`pinyin_choose_predicted_candidate`].
+//! [`pinyin_train`] trains a sentence result.
 
 use std::cell::Cell;
 use std::os::raw::c_int;
 
-use oxpinyin::PhraseToken;
 use oxpinyin::engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
 use oxpinyin::marshal::{phrase_text_bytes, phrase_text_len};
 use oxpinyin::user::{UnigramAdd, is_user_token};
+use oxpinyin::vocab::PhraseToken;
 
 use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
@@ -181,7 +191,7 @@ pub unsafe extern "C" fn pinyin_get_candidate_nbest_index(
 /// The §3.2 type and nibble test: only a normal or longer row can be a
 /// user candidate (`NORMAL_CANDIDATE != type && LONGER_CANDIDATE != type`
 /// returns false, `pinyin.cpp:3712-3715`), and its token must live in the
-/// [`USER_DICTIONARY`](crate::USER_DICTIONARY) sub-index. Network (nibble 6) is not "user" —
+/// [`USER_DICTIONARY`](crate::types::USER_DICTIONARY) sub-index. Network (nibble 6) is not "user" —
 /// `if (USER_DICTIONARY != index) return false` (`:3720-3721`). Predicted rows
 /// and sentence-level/fallback rows carry no user status even when a
 /// predicted prefix token names the user library.
@@ -567,54 +577,6 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
     choose_phrase_row(&mut inst, offset, &row, token, text)
 }
 
-/// Whether [`pinyin_choose_candidate`] with the same arguments reaches one
-/// of the pin's asserts, in the pin's order: a predicted row
-/// (`pinyin.cpp:2507`); for an `NBEST_MATCH_CANDIDATE` row, a result this
-/// instance does not hold (`:2517-2518`) or a differing phrase whose
-/// constraint write answers zero (`phonetic_lookup.cpp:203`), the facade's
-/// [`oxpinyin::facade::InstanceView::nbest_choose_aborts`]; a nonzero
-/// `offset` under `SORT_WITHOUT_SENTENCE_CANDIDATE` (`pinyin.cpp:2566`), which a
-/// `LONGER_CANDIDATE` row does not reach. Reads only. For the in-tree fuzz
-/// harness, which skips such a call: not in `pinyin.h`, a Rust function
-/// compiled only with `fuzz-api` and never into the shipped artifact.
-///
-/// # Safety
-///
-/// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
-/// borrowed object. The serial-calls rule applies.
-#[cfg(feature = "fuzz-api")]
-#[must_use]
-pub unsafe fn oxpinyin_choose_aborts(
-    instance: *mut PinyinInstance,
-    offset: usize,
-    candidate: *mut LookupCandidate,
-) -> bool {
-    if instance.is_null() || candidate.is_null() {
-        return false;
-    }
-    // SAFETY: `candidate` is non-null and is a row of a live published
-    // list (the export's precondition). The shared view ends here, before
-    // any view of `instance`.
-    let row = RowArgs::read(unsafe { candidate_ref(candidate) });
-    // SAFETY: `instance` is non-null and was produced by
-    // `pinyin_alloc_instance`.
-    let inst = unsafe { instance_ref(instance) };
-    match row.candidate_type {
-        lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
-        | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE => true,
-        lookup_candidate_type_t::NBEST_MATCH_CANDIDATE => {
-            inst.core.nbest_choose_aborts(row.nbest_index)
-        }
-        lookup_candidate_type_t::LONGER_CANDIDATE => false,
-        lookup_candidate_type_t::NORMAL_CANDIDATE
-        | lookup_candidate_type_t::ZOMBIE_CANDIDATE
-        | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
-        | lookup_candidate_type_t::ADDON_CANDIDATE => {
-            offset != 0 && inst.core.session.sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
-        }
-    }
-}
-
 /// The scalars the pin's choose reads off a candidate (`pinyin.cpp:97-105`),
 /// copied so that no view of the row outlives the read.
 struct RowArgs {
@@ -932,25 +894,77 @@ fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
     }
 }
 
-/// Whether [`pinyin_train`] of row `index` terminates: one of the pin's
-/// own training asserts, or a store fault
-/// the facade classifies as the pin's training abort.
-/// The facade's [`oxpinyin::facade::InstanceView::train_aborts`], the one
-/// ordered, read-only preparation `pinyin_train` runs, simulated store
-/// check included. Reads only. For the in-tree fuzz harness, which skips
-/// such a call: not in `pinyin.h`, a Rust function compiled only with
-/// `fuzz-api` and never into the shipped artifact.
-///
-/// # Safety
-///
-/// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
-/// applies.
-#[cfg(feature = "fuzz-api")]
-#[must_use]
-pub unsafe fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
-    let inst = borrow_or_return!(instance, crate::state::instance_ref, false);
-    inst.core.train_aborts(index)
-}
-
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "fuzz-api")]
+pub(crate) mod fuzz_checks {
+    use super::*;
+
+    /// Whether [`pinyin_choose_candidate`] with the same arguments reaches one
+    /// of the pin's asserts, in the pin's order: a predicted row
+    /// (`pinyin.cpp:2507`); for an `NBEST_MATCH_CANDIDATE` row, a result this
+    /// instance does not hold (`:2517-2518`) or a differing phrase whose
+    /// constraint write answers zero (`phonetic_lookup.cpp:203`), the facade's
+    /// [`oxpinyin::facade::InstanceView::nbest_choose_aborts`]; a nonzero
+    /// `offset` under `SORT_WITHOUT_SENTENCE_CANDIDATE` (`pinyin.cpp:2566`), which a
+    /// `LONGER_CANDIDATE` row does not reach. Reads only. For the in-tree fuzz
+    /// harness, which skips such a call: not in `pinyin.h`, a Rust function
+    /// compiled only with `fuzz-api` and never into the shipped artifact.
+    ///
+    /// # Safety
+    ///
+    /// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
+    /// borrowed object. The serial-calls rule applies.
+    #[must_use]
+    pub unsafe fn oxpinyin_choose_aborts(
+        instance: *mut PinyinInstance,
+        offset: usize,
+        candidate: *mut LookupCandidate,
+    ) -> bool {
+        if instance.is_null() || candidate.is_null() {
+            return false;
+        }
+        // SAFETY: `candidate` is non-null and is a row of a live published
+        // list (the export's precondition). The shared view ends here, before
+        // any view of `instance`.
+        let row = RowArgs::read(unsafe { candidate_ref(candidate) });
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`.
+        let inst = unsafe { instance_ref(instance) };
+        match row.candidate_type {
+            lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
+            | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE => true,
+            lookup_candidate_type_t::NBEST_MATCH_CANDIDATE => {
+                inst.core.nbest_choose_aborts(row.nbest_index)
+            }
+            lookup_candidate_type_t::LONGER_CANDIDATE => false,
+            lookup_candidate_type_t::NORMAL_CANDIDATE
+            | lookup_candidate_type_t::ZOMBIE_CANDIDATE
+            | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
+            | lookup_candidate_type_t::ADDON_CANDIDATE => {
+                offset != 0
+                    && inst.core.session.sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
+            }
+        }
+    }
+
+    /// Whether [`pinyin_train`] of row `index` terminates: one of the pin's
+    /// own training asserts, or a store fault
+    /// the facade classifies as the pin's training abort.
+    /// The facade's [`oxpinyin::facade::InstanceView::train_aborts`], the one
+    /// ordered, read-only preparation `pinyin_train` runs, simulated store
+    /// check included. Reads only. For the in-tree fuzz harness, which skips
+    /// such a call: not in `pinyin.h`, a Rust function compiled only with
+    /// `fuzz-api` and never into the shipped artifact.
+    ///
+    /// # Safety
+    ///
+    /// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
+    /// applies.
+    #[must_use]
+    pub unsafe fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
+        let inst = borrow_or_return!(instance, crate::state::instance_ref, false);
+        inst.core.train_aborts(index)
+    }
+}

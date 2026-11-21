@@ -16,7 +16,7 @@ use crate::support::{
     system_dir, *,
 };
 
-use oxpinyin::SENTENCE_START;
+use oxpinyin::vocab::SENTENCE_START;
 
 use std::ffi::c_char;
 
@@ -271,7 +271,7 @@ fn an_nbest_row_with_empty_text_is_a_sentence_and_outranks_its_phrase() {
 #[test]
 fn an_nbest_row_leaves_out_a_phrase_that_does_not_convert() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let an = oxpinyin::ChewingKey::from_pinyin("an")
+    let an = oxpinyin::parser::ChewingKey::from_pinyin("an")
         .expect("frozen syllable")
         .with_tone(1)
         .to_packed();

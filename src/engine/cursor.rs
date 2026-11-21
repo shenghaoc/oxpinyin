@@ -58,7 +58,7 @@
 
 use std::ops::Range;
 
-use crate::SyllableKey;
+use crate::vocab::SyllableKey;
 
 use crate::engine::error::EngineError;
 
@@ -409,7 +409,7 @@ pub fn right_word_offset_over_spans(
 /// substring), so the syllable start is the value that matches.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MatrixKey {
-    key: crate::ChewingKey,
+    key: crate::parser::ChewingKey,
     syllable_start: usize,
     end: usize,
 }
@@ -426,7 +426,7 @@ impl MatrixKey {
     /// Retains the parser key and its original span.
     #[must_use]
     pub(crate) const fn from_chewing(
-        key: crate::ChewingKey,
+        key: crate::parser::ChewingKey,
         syllable_start: usize,
         end: usize,
     ) -> Self {
@@ -439,7 +439,7 @@ impl MatrixKey {
 
     /// The syllable this key matched.
     #[must_use]
-    pub const fn key(self) -> crate::ChewingKey {
+    pub const fn key(self) -> crate::parser::ChewingKey {
         self.key
     }
 

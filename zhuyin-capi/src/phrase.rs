@@ -1,5 +1,8 @@
-//! The phrase-result surface: `zhuyin_phrase_segment` and the two getters
-//! over `m_phrase_result`.
+//! Sentence segmentation and phrase-token results.
+//!
+//! [`zhuyin_phrase_segment`] segments sentence text.
+//! [`zhuyin_get_n_phrase`] and [`zhuyin_get_phrase_token`] read the resulting
+//! phrase-token sequence.
 
 use std::os::raw::c_char;
 
@@ -131,7 +134,7 @@ pub unsafe extern "C" fn zhuyin_get_phrase_token(
     token: *mut PhraseTokenT,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false);
-    write_if_nonnull!(token, oxpinyin::NULL_TOKEN);
+    write_if_nonnull!(token, oxpinyin::vocab::NULL_TOKEN);
     let Some(value) = inst.core.phrase_token(index as usize) else {
         return false;
     };

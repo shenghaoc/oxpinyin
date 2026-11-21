@@ -22,10 +22,11 @@ mod system_dictionary {
     //! a `gb_char.bin` chunk file through the shared `ChunkBuilder` — and
     //! exercises the `Dictionary` trait plus the runtime's extra surface.
 
-    use crate::PHRASE_INDEX_LIBRARY_COUNT;
+    use crate::vocab::PHRASE_INDEX_LIBRARY_COUNT;
     use crate::{
-        ChewingKey, SyllableKey,
         model::{Dictionary, PhraseIndexRanges},
+        parser::ChewingKey,
+        vocab::SyllableKey,
     };
 
     // The fixtures are written with the crate's own row schema, not a copy of

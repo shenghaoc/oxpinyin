@@ -11,7 +11,7 @@ use std::path::Path;
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OutputStream;
 use oxpinyin::single_gram::decode_single_gram;
-use oxpinyin::{PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token};
+use oxpinyin::vocab::{PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token};
 
 use crate::storage::Hash;
 use crate::storage::load_table_conf;

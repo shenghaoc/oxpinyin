@@ -30,7 +30,7 @@ use crate::test_support::{
 
 use crate::types::lookup_candidate_type_t;
 
-use oxpinyin::phrase_index_library_index;
+use oxpinyin::vocab::phrase_index_library_index;
 
 /// Predicted bigram rows on a zero facade total abort in the scorer.
 #[test]
@@ -142,7 +142,7 @@ fn prediction_replaces_every_row_with_a_spanless_one(
 fn predicted_sort_is_stable_and_uses_wrapping_frequency_after_length() {
     use super::{Predicted, sort_predicted};
     use crate::types::lookup_candidate_type_t;
-    use oxpinyin::PhraseText;
+    use oxpinyin::vocab::PhraseText;
     let mut items: Vec<_> = [(1, 2, 1), (2, 3, 0), (3, 2, u32::MAX), (4, 2, 1), (5, 2, 0)]
         .into_iter()
         .map(|(token, phrase_length, frequency)| Predicted {
@@ -652,7 +652,7 @@ fn a_raw_user_key_predicts_its_live_item() {
 #[test]
 fn rows_of_a_never_loaded_library_are_filtered() {
     let user = TempUserDir::new("never-loaded-library");
-    let value = (oxpinyin::phrase_index_make_token(15, 1))
+    let value = (oxpinyin::vocab::phrase_index_make_token(15, 1))
         .to_le_bytes()
         .to_vec();
     crate::test_support::craft_user_index(
@@ -792,7 +792,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
     // The user rows survived the prefix slice and reached the list.
     let user_position = |text: &str| {
         rows.iter()
-            .position(|row| row.0 == text && row.3 == usize::from(oxpinyin::USER_DICTIONARY))
+            .position(|row| row.0 == text && row.3 == usize::from(oxpinyin::vocab::USER_DICTIONARY))
             .unwrap_or_else(|| panic!("user row {text:?} missing from {rows:?}"))
     };
     let hua = user_position("\u{534e}");

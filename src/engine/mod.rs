@@ -1,4 +1,8 @@
-//! Internal session state and decoding operations used by the C facades.
+//! Session state, candidate selection, constraints, training plans, and decoding.
+//!
+//! [`Session`] operates on dictionary and language-model views from [`crate::model`].
+//! [`SessionState`] retains parse and result state; [`SessionSettings`] supplies
+//! the option word, schemes and candidate ranking.
 //!
 //! Session settings and backend handles arrive as data. The engine has no
 //! frontend key dispatch, display model or platform path discovery.

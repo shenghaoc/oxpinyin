@@ -1,5 +1,5 @@
-use crate::ChewingKey;
 use crate::data::phrase_library::ChunkItem;
+use crate::parser::ChewingKey;
 
 use crate::user::replay::UnigramAdd;
 use crate::user::{SystemLibrary, SystemOriginals};
@@ -38,7 +38,7 @@ fn three_item_originals() -> SystemOriginals {
 fn training_creates_a_live_buffer_with_the_saved_library_total() {
     let originals = three_item_originals();
     let original = originals.get(&1).expect("original");
-    let token = crate::phrase_index_make_token(1, 1);
+    let token = crate::vocab::phrase_index_make_token(1, 1);
     let saved_total = u32::MAX - 3;
     let mut items =
         SystemItems::default().with_totals(crate::user::LibraryTable::from([(1, saved_total)]), 0);

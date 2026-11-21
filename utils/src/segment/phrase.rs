@@ -10,7 +10,7 @@
 //! alone (`phrase_large_table3_tkrzwdb.cpp:124-153`).
 
 use oxpinyin::data::{PhraseIndexTable, PhraseLibraries};
-use oxpinyin::{phrase_index_library_index, phrase_index_make_token};
+use oxpinyin::vocab::{phrase_index_library_index, phrase_index_make_token};
 
 /// One phrase-table search's answer.
 #[derive(Debug, Default)]
@@ -34,7 +34,10 @@ impl Found {
             // `reduce_tokens`'s reachable assertion.
             crate::segment::abort_on_pin_assert();
         }
-        self.tokens.first().copied().unwrap_or(oxpinyin::NULL_TOKEN)
+        self.tokens
+            .first()
+            .copied()
+            .unwrap_or(oxpinyin::vocab::NULL_TOKEN)
     }
 }
 

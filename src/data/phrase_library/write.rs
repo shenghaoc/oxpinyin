@@ -24,10 +24,10 @@
 // phrase_index.cpp:208–216; memory_chunk.h:536–557 specifies the frame. The builder
 // requires the item offsets to fit their output fields.
 
-use crate::PHRASE_MASK;
 use crate::data::phrase_library::{
     CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
 };
+use crate::vocab::PHRASE_MASK;
 
 /// One phrase entry of a library chunk.
 #[derive(Clone, Debug, Eq, PartialEq)]

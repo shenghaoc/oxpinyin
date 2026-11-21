@@ -3,7 +3,8 @@
 //! with the C ABI (contract_tests.rs): `Customized` is rejected and leaves
 //! the effective scheme unchanged.
 
-use oxpinyin::{DoublePinyinParser, DoublePinyinScheme, OptionBits};
+use oxpinyin::OptionBits;
+use oxpinyin::parser::{DoublePinyinParser, DoublePinyinScheme};
 
 fn main() {
     oxpinyin_fuzz::run_once(run);

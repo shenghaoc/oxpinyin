@@ -1,13 +1,53 @@
 //! Helpers more than one verification topic uses: the fixture handles, the
 //! scratch directories, and the abort and child-process helpers. The
-//! exported C functions and types come from the rlib's crate root.
+//! C functions and types come from the rlib's service and type modules.
 
 #![expect(
     clippy::undocumented_unsafe_blocks,
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-pub use oxzhuyin_capi::*;
+pub use oxzhuyin_capi::{
+    candidates::{
+        zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate,
+        zhuyin_get_candidate_string, zhuyin_get_candidate_type, zhuyin_get_n_candidate,
+        zhuyin_train,
+    },
+    config::{
+        zhuyin_load_phrase_library, zhuyin_mask_out, zhuyin_set_chewing_scheme,
+        zhuyin_set_full_pinyin_scheme, zhuyin_set_options, zhuyin_unload_phrase_library,
+    },
+    context::{zhuyin_fini, zhuyin_init, zhuyin_save},
+    cursor::{
+        zhuyin_get_left_zhuyin_offset, zhuyin_get_right_zhuyin_offset, zhuyin_get_zhuyin_key,
+        zhuyin_get_zhuyin_key_rest, zhuyin_get_zhuyin_key_rest_length,
+        zhuyin_get_zhuyin_key_rest_positions, zhuyin_get_zhuyin_offset,
+    },
+    dict::{
+        zhuyin_lookup_tokens, zhuyin_token_get_n_pronunciation, zhuyin_token_get_nth_pronunciation,
+        zhuyin_token_get_phrase,
+    },
+    instance::{zhuyin_alloc_instance, zhuyin_free_instance, zhuyin_reset},
+    iterators::{zhuyin_begin_add_phrases, zhuyin_end_add_phrases, zhuyin_iterator_add_phrase},
+    keys::{
+        zhuyin_get_pinyin_string, zhuyin_get_zhuyin_string, zhuyin_parse_chewing,
+        zhuyin_parse_full_pinyin,
+    },
+    parse::{
+        zhuyin_get_parsed_input_length, zhuyin_in_chewing_keyboard, zhuyin_parse_more_chewings,
+        zhuyin_parse_more_full_pinyins,
+    },
+    phrase::{zhuyin_get_n_phrase, zhuyin_get_phrase_token, zhuyin_phrase_segment},
+    sentence::{
+        zhuyin_get_character_offset, zhuyin_get_sentence, zhuyin_guess_candidates_after_cursor,
+        zhuyin_guess_candidates_before_cursor, zhuyin_guess_sentence,
+        zhuyin_guess_sentence_with_prefix,
+    },
+    types::{
+        ChewingKey, ChewingKeyRest, GChar, LookupCandidate, ZhuyinContext, ZhuyinInstance,
+        lookup_candidate_type_t,
+    },
+};
 
 #[path = "../../src/test_support/abi.rs"]
 mod abi;

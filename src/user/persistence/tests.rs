@@ -1867,9 +1867,9 @@ fn init_and_reload_with_over_read(
         {
             state
                 .system_overrides
-                .get_or_default(crate::phrase_index_library_index(token))
+                .get_or_default(crate::vocab::phrase_index_library_index(token))
                 .unwrap()
-                .insert(token & crate::PHRASE_MASK, item);
+                .insert(token & crate::vocab::PHRASE_MASK, item);
         }
         Loaded {
             state,
@@ -2519,7 +2519,7 @@ mod save_semantics_929 {
             let blocked = dir.path().join("user_phrase_index.bin");
             block_destination(&blocked);
 
-            let reading = [crate::SyllableKey::from_text("ni").unwrap().index() as u16];
+            let reading = [crate::vocab::SyllableKey::from_text("ni").unwrap().index() as u16];
             for session in [&mut store, &mut uninterrupted] {
                 assert_eq!(
                     session
@@ -2631,7 +2631,10 @@ mod save_semantics_929 {
                 .unwrap();
             let mut store = open(Path::new(&dir), law);
             for index in 1..=4_u8 {
-                store.add_system_unigram_frequency(crate::phrase_index_make_token(index, 1), 17);
+                store.add_system_unigram_frequency(
+                    crate::vocab::phrase_index_make_token(index, 1),
+                    17,
+                );
             }
             store.mark_modified();
             store
@@ -2658,7 +2661,7 @@ mod save_semantics_929 {
                 let shipped: Vec<u32> = (1..=4_u8)
                     .map(|index| {
                         seeded
-                            .system_unigram(crate::phrase_index_make_token(index, 1))
+                            .system_unigram(crate::vocab::phrase_index_make_token(index, 1))
                             .expect("item")
                     })
                     .collect();
@@ -2699,7 +2702,7 @@ mod save_semantics_929 {
                 let reopened = open(dir.path(), law);
                 for index in 1..=4_u8 {
                     assert_eq!(
-                        reopened.system_unigram(crate::phrase_index_make_token(index, 1)),
+                        reopened.system_unigram(crate::vocab::phrase_index_make_token(index, 1)),
                         Some(
                             shipped[usize::from(index) - 1]
                                 + if law == UserConfLaw::Zhuyin && usize::from(index) < stop_before
@@ -2729,7 +2732,7 @@ mod save_boundaries_929 {
 
     use std::path::Path;
 
-    use crate::SyllableKey;
+    use crate::vocab::SyllableKey;
 
     use crate::data::phrase_library::ChunkItem;
 
@@ -2900,7 +2903,7 @@ mod save_boundaries_929 {
             for library in 5..=6_u8 {
                 assert_eq!(
                     reopened
-                        .phrase(crate::phrase_index_make_token(library, 1))
+                        .phrase(crate::vocab::phrase_index_make_token(library, 1))
                         .is_some(),
                     law == UserConfLaw::Zhuyin
                 );
@@ -2944,7 +2947,7 @@ mod save_boundaries_929 {
                 for library in 5..=6_u8 {
                     assert_eq!(
                         reopened
-                            .phrase(crate::phrase_index_make_token(library, 1))
+                            .phrase(crate::vocab::phrase_index_make_token(library, 1))
                             .unwrap()
                             .phrase_text()
                             .unwrap(),

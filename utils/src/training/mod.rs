@@ -14,7 +14,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
-use oxpinyin::NULL_TOKEN;
+use oxpinyin::vocab::NULL_TOKEN;
 use std::ffi::{CStr, CString};
 
 use oxpinyin::data::row_format::encode_token_key;

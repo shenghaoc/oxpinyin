@@ -18,7 +18,19 @@ use super::*;
     unused_imports,
     reason = "used by the module tests, redundant in the verification tests"
 )]
-use oxzhuyin_capi::*;
+use oxzhuyin_capi::{
+    candidates::{
+        zhuyin_get_candidate, zhuyin_get_candidate_string, zhuyin_get_candidate_type,
+        zhuyin_get_n_candidate,
+    },
+    context::{zhuyin_fini, zhuyin_init},
+    dict::zhuyin_lookup_tokens,
+    instance::{zhuyin_alloc_instance, zhuyin_free_instance},
+    iterators::{zhuyin_begin_add_phrases, zhuyin_end_add_phrases, zhuyin_iterator_add_phrase},
+    parse::zhuyin_parse_more_chewings,
+    sentence::zhuyin_guess_candidates_after_cursor,
+    types::{LookupCandidate, ZhuyinContext, ZhuyinInstance, lookup_candidate_type_t},
+};
 
 use std::ffi::{c_char, c_uint};
 

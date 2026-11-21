@@ -19,10 +19,9 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-use oxpinyin::{
-    ChewingKey, Completeness, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
-    model::{LanguageModel, PhraseList},
-};
+use oxpinyin::model::{LanguageModel, PhraseList};
+use oxpinyin::parser::{ChewingKey, Completeness};
+use oxpinyin::vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey};
 
 /// Why a fixture could not be read.
 #[derive(Clone, Debug, Eq, PartialEq)]

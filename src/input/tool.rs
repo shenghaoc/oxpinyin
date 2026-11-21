@@ -1,5 +1,5 @@
-//! Native input, output and argument parsing for the command-line utilities. The helpers
-//! own C string and stream lifetimes, typed formatting arguments and the reusable
+//! Native input, output, and argument parsing for the command-line utilities. The helpers
+//! own C string and stream lifetimes, typed formatting arguments, and the reusable
 //! [`LineReader`] buffer. They are available with the `tools` feature.
 
 // The native boundary is described in docs/findings/external-io-boundary.md. GLib
@@ -765,7 +765,7 @@ pub mod pin_tests {
 }
 
 // utils/storage/gen_pinyin_table.cpp.
-/// File input, table output and diagnostics for the pinyin table generator.
+/// File input, table output, and diagnostics for the pinyin table generator.
 pub mod gen_pinyin_table {
     use super::{FILE, NonNull, OutputStream, c_int, c_stderr, c_void, print_text};
     use std::ffi::CStr;
@@ -961,7 +961,7 @@ pub mod gen_pinyin_table {
 }
 
 // utils/storage/gen_zhuyin_table.cpp.
-/// File input, output and diagnostics for the Zhuyin table generator.
+/// File input, output, and diagnostics for the Zhuyin table generator.
 pub mod gen_zhuyin_table {
     use super::{c_stderr, print_text, print_texts};
     use std::ffi::CStr;

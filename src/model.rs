@@ -1,8 +1,10 @@
 //! Dictionary and language-model contracts used by the session engine.
-use crate::{
-    ChewingKey, GramFault, PHRASE_INDEX_LIBRARY_COUNT, PhraseEntry, PhraseText, PhraseToken,
-    phrase_index_library_index, sentence_facts, single_gram,
+use crate::parser::ChewingKey;
+use crate::single_gram::GramFault;
+use crate::vocab::{
+    PHRASE_INDEX_LIBRARY_COUNT, PhraseEntry, PhraseText, PhraseToken, phrase_index_library_index,
 };
+use crate::{sentence_facts, single_gram};
 
 /// User-side count overlay for the decode-time additive merge
 /// (`docs/findings/user-store.md` §5).
@@ -709,7 +711,7 @@ pub enum PhraseItemRead {
 /// Every caller sorts through this function, so the libraries hold one
 /// instance of the sort.
 pub(crate) fn sort_tokens_by_library(tokens: &mut [u32]) {
-    tokens.sort_by_key(|token| crate::phrase_index_library_index(*token));
+    tokens.sort_by_key(|token| crate::vocab::phrase_index_library_index(*token));
 }
 
 /// What one trellis step prices of a ranged token: the phrase's length in

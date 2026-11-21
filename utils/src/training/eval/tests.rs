@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use super::counts::parse_interpolation_dump;
 use super::fixture_doubles::FixtureDictionary;
 use super::{EvalLanguageModel, PhraseSource, correction_rate};
-use oxpinyin::{PhraseToken, SyllableKey};
+use oxpinyin::vocab::{PhraseToken, SyllableKey};
 
 const VOCAB: &str = "\
 token=10\tkeys=zhong\ttext=中\tunigram=100

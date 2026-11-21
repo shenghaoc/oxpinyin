@@ -11,12 +11,12 @@
 // save_db writes a fresh file. See docs/findings/user-store.md §4.
 
 #[cfg(test)]
-use crate::ChewingKey;
-#[cfg(test)]
 use crate::data::phrase_library::build_chunk;
 use crate::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
 #[cfg(test)]
 use crate::data::row_format::pinyin_index::PinyinIndexItem;
+#[cfg(test)]
+use crate::parser::ChewingKey;
 
 use std::collections::BTreeMap;
 #[cfg(test)]
@@ -24,9 +24,6 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::PHRASE_MASK;
-use crate::data::FileName;
-use crate::data::PhraseLibraries;
 use crate::data::chunk_format::build_memory_chunk;
 use crate::data::phrase_library::ChunkItem;
 use crate::data::phrase_library::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
@@ -37,8 +34,10 @@ use crate::data::user_files::{
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
     try_load_chunk_payload,
 };
+use crate::data::{FileName, PhraseLibraries};
 use crate::input::{build_path, rename, unlink};
 use crate::store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
+use crate::vocab::PHRASE_MASK;
 
 use crate::user::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::user::user_index::UserIndex;
@@ -466,7 +465,7 @@ impl SystemOriginals {
             items: &library.items,
             mapped: library.mapped.as_ref().or_else(|| {
                 self.mapped
-                    .library(crate::phrase_index_make_token(*nibble, 0))
+                    .library(crate::vocab::phrase_index_make_token(*nibble, 0))
             }),
         })
     }
@@ -482,7 +481,7 @@ impl SystemOriginals {
                     items: &library.items,
                     mapped: library.mapped.as_ref().or_else(|| {
                         self.mapped
-                            .library(crate::phrase_index_make_token(*nibble, 0))
+                            .library(crate::vocab::phrase_index_make_token(*nibble, 0))
                     }),
                 },
             )
@@ -596,7 +595,7 @@ pub fn system_originals(libraries: PhraseLibraries, layout: UserFileLayout) -> S
 
 /// A mapped library's load-time metadata, without its bytes or items.
 fn library_metadata(libraries: &PhraseLibraries, nibble: u8) -> Option<SystemLibrary> {
-    let library = libraries.library(crate::phrase_index_make_token(nibble, 0))?;
+    let library = libraries.library(crate::vocab::phrase_index_make_token(nibble, 0))?;
     Some(SystemLibrary {
         total: library.total_freq(),
         range_end: library.token_range().end,
@@ -645,11 +644,13 @@ impl UserState {
             for (&slot, item) in items {
                 phrases.push((
                     item.phrase.clone(),
-                    crate::phrase_index_make_token(nibble, slot),
+                    crate::vocab::phrase_index_make_token(nibble, slot),
                 ));
                 for (packed, _) in &item.prons {
-                    self.indexed
-                        .insert((crate::phrase_index_make_token(nibble, slot), packed.clone()));
+                    self.indexed.insert((
+                        crate::vocab::phrase_index_make_token(nibble, slot),
+                        packed.clone(),
+                    ));
                 }
             }
         }
@@ -837,7 +838,7 @@ fn chewing_rows_inner(
     let mut chewing_rows: Vec<PinyinIndexItem> = Vec::new();
     for (&nibble, items) in &state.libraries {
         for (&slot, item) in items {
-            let token = crate::phrase_index_make_token(nibble, slot);
+            let token = crate::vocab::phrase_index_make_token(nibble, slot);
             for (packed, _freq) in &item.prons {
                 if !state.indexed.contains(&(token, packed.clone())) {
                     continue;
@@ -865,7 +866,7 @@ fn chewing_rows_inner(
             let Some(item) = item else {
                 continue;
             };
-            let token = crate::phrase_index_make_token(nibble, slot);
+            let token = crate::vocab::phrase_index_make_token(nibble, slot);
             for (packed, _) in &item.prons {
                 if state.indexed.contains(&(token, packed.clone())) {
                     chewing_rows.push(PinyinIndexItem {
@@ -892,7 +893,7 @@ fn chewing_rows_inner(
         })
         .collect();
     for (token, packed) in state.indexed.difference(&written) {
-        if packed.is_empty() || packed.len() > crate::MAX_PHRASE_LENGTH {
+        if packed.is_empty() || packed.len() > crate::vocab::MAX_PHRASE_LENGTH {
             continue;
         }
         chewing_rows.push(PinyinIndexItem {
@@ -1216,7 +1217,9 @@ fn load_user_pinyin_index(
         index
             .push_record(key, value)
             .unwrap_or_else(|_| std::process::abort());
-        if key.len() < CHEWING_KEY_SIZE || key.len() / CHEWING_KEY_SIZE > crate::MAX_PHRASE_LENGTH {
+        if key.len() < CHEWING_KEY_SIZE
+            || key.len() / CHEWING_KEY_SIZE > crate::vocab::MAX_PHRASE_LENGTH
+        {
             exceptional.push(key.to_vec());
         }
     }) {
@@ -1488,8 +1491,8 @@ pub(crate) fn read_mask_log(
 ) -> Option<MaskStop> {
     let (_, file) = layout.system_logs().iter().find(|(n, _)| *n == nibble)?;
     let read = try_load_chunk_payload(&build_path(dir, file.as_ref()));
-    let selected = (nibble & crate::phrase_index_library_index(mask))
-        == crate::phrase_index_library_index(value);
+    let selected = (nibble & crate::vocab::phrase_index_library_index(mask))
+        == crate::vocab::phrase_index_library_index(value);
     let fault = match &read {
         Err(ChunkPayloadError::HeaderRead) => Some(MaskStop::Directory),
         Ok(payload) if selected => masked_log(payload, mask, value, nibble)
@@ -1614,8 +1617,8 @@ fn replay_log(
         return Ok(());
     };
     if mask.is_some_and(|(mask, value)| {
-        (nibble & crate::phrase_index_library_index(mask))
-            != crate::phrase_index_library_index(value)
+        (nibble & crate::vocab::phrase_index_library_index(mask))
+            != crate::vocab::phrase_index_library_index(value)
     }) {
         return Ok(());
     }

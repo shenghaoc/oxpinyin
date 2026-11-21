@@ -46,7 +46,7 @@ use crate::test_support::promotion_system;
 
 use oxpinyin::facade::TextSpan;
 
-use oxpinyin::SENTENCE_START;
+use oxpinyin::vocab::SENTENCE_START;
 
 use std::cell::Cell;
 
@@ -950,8 +950,8 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
             .get()
             .expect("promoted candidate carries a token");
         assert_eq!(
-            oxpinyin::phrase_index_library_index(token),
-            oxpinyin::ADDON_DICTIONARY,
+            oxpinyin::vocab::phrase_index_library_index(token),
+            oxpinyin::vocab::ADDON_DICTIONARY,
             "promoted token lives in default nibble 5"
         );
         token
@@ -963,7 +963,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
     let store = inst.core.user;
     assert_eq!(
         store
-            .token_for_phrase_in(oxpinyin::ADDON_DICTIONARY, &text)
+            .token_for_phrase_in(oxpinyin::vocab::ADDON_DICTIONARY, &text)
             .expect("store read"),
         Some(promoted),
         "the promoted phrase resolves under nibble 5"
@@ -979,10 +979,10 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
         .expect("promoted phrase copied at least one reading");
 
     // It surfaces through the default-facade user lookup as a normal candidate.
-    let keys: Vec<oxpinyin::SyllableKey> = reading
+    let keys: Vec<oxpinyin::vocab::SyllableKey> = reading
         .keys()
         .iter()
-        .map(|k| oxpinyin::SyllableKey::from_index(usize::from(*k)).expect("stored key"))
+        .map(|k| oxpinyin::vocab::SyllableKey::from_index(usize::from(*k)).expect("stored key"))
         .collect();
     let lookup = store.lookup();
     assert!(
@@ -1156,8 +1156,9 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .0
             .iter()
             .map(|pair| {
-                let packed = oxpinyin::ChewingKey::from_packed(u16::from_le_bytes(*pair));
-                oxpinyin::SyllableKey::from_text(packed.pinyin_spelling()).expect("stored key")
+                let packed = oxpinyin::parser::ChewingKey::from_packed(u16::from_le_bytes(*pair));
+                oxpinyin::vocab::SyllableKey::from_text(packed.pinyin_spelling())
+                    .expect("stored key")
             })
             .collect();
         (
@@ -1473,8 +1474,8 @@ fn a_promoted_addon_item_keeps_every_toned_reading() {
     let user = TempUserDir::new("addon-promote-toned");
     let (context, instance, promoted) = choose_addon_row(&system, &user.path, "erhuang");
     assert_eq!(
-        oxpinyin::phrase_index_library_index(promoted),
-        oxpinyin::ADDON_DICTIONARY
+        oxpinyin::vocab::phrase_index_library_index(promoted),
+        oxpinyin::vocab::ADDON_DICTIONARY
     );
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     assert_eq!(unsafe { looked_up_tokens(instance, "二簧") }, [promoted]);

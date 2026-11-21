@@ -1,9 +1,9 @@
 use super::{phrase_segment, phrase_segment_ucs4};
-use crate::PhraseEntry;
+use crate::vocab::PhraseEntry;
 
 use crate::{
-    PhraseToken, SyllableKey,
     model::{LanguageModel, NbestStepCosts, PhraseList},
+    vocab::{PhraseToken, SyllableKey},
 };
 
 /// A tiny dictionary: the text → tokens reverse map the span DP probes.
@@ -108,8 +108,8 @@ fn a_raw_surrogate_key_segments_to_its_token() {
 
 #[test]
 fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
-    use crate::SENTENCE_START;
     use crate::model::{NbestStepCosts, NbestStepRow, NbestSuccessors};
+    use crate::vocab::SENTENCE_START;
 
     struct Recording(std::cell::RefCell<Vec<u32>>);
     impl LanguageModel for Recording {

@@ -5,14 +5,15 @@ use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::OptionBits;
 use crate::data;
 use crate::engine::SessionSettings;
+use crate::parser::{DoublePinyinScheme, FullPinyinScheme, ZhuyinScheme};
 use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
 };
 use crate::user::MaskStop;
 use crate::user::{JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError};
-use crate::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 
 /// The `mask_out` answer for a fault of the user tables.
 fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {

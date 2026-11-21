@@ -155,7 +155,13 @@ fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
     let dir = tempfile::tempdir().unwrap();
     let (libraries, mut store) = session_over_system_library(dir.path(), 5, "ADDON_DICTIONARY");
     let keys = ["er", "huang"].map(|pinyin| {
-        crate::user::toned_key(crate::SyllableKey::from_text(pinyin).unwrap().index(), 0).unwrap()
+        crate::user::toned_key(
+            crate::vocab::SyllableKey::from_text(pinyin)
+                .unwrap()
+                .index(),
+            0,
+        )
+        .unwrap()
     });
     let token =
         crate::user::test_session::promote(&mut store, "二簧", &[(keys.to_vec(), 100)], 100)
@@ -178,10 +184,10 @@ fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
 
 #[test]
 fn live_items_distinguish_found_absent_and_unloaded() {
-    use crate::ChewingKey;
     use crate::data::phrase_library::PhraseLibrary;
     use crate::data::phrase_library::encode_phrase_item;
     use crate::data::user_files::{LogRecord, SystemVersions, UserTableInfo, encode_log_records};
+    use crate::parser::ChewingKey;
     use crate::user::{ItemOrigin, SystemItem};
     use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
     use std::collections::BTreeMap;
@@ -250,10 +256,10 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     let unloaded = Cell::new(0);
     let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
     let (replayed, removed, untouched, absent) = (
-        crate::phrase_index_make_token(1, 1),
-        crate::phrase_index_make_token(1, 2),
-        crate::phrase_index_make_token(1, 3),
-        crate::phrase_index_make_token(1, 9),
+        crate::vocab::phrase_index_make_token(1, 1),
+        crate::vocab::phrase_index_make_token(1, 2),
+        crate::vocab::phrase_index_make_token(1, 3),
+        crate::vocab::phrase_index_make_token(1, 9),
     );
     let summary = |item: SystemItem<'_>| {
         let reading = item.pronunciation(0).expect("reading");
@@ -285,7 +291,7 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     assert_eq!(live.read(removed, summary), Lookup::Absent);
     assert_eq!(live.read(absent, summary), Lookup::Absent);
     assert_eq!(
-        live.read(crate::phrase_index_make_token(5, 1), summary),
+        live.read(crate::vocab::phrase_index_make_token(5, 1), summary),
         Lookup::Absent
     );
     assert!(live.is_visible(untouched) && !live.is_visible(removed));

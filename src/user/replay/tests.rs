@@ -614,7 +614,7 @@ fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() 
 fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     use crate::data::PhraseLibraries;
 
-    fn possibility(item: &ChunkItem, key: crate::ChewingKey) -> (u64, u64) {
+    fn possibility(item: &ChunkItem, key: crate::parser::ChewingKey) -> (u64, u64) {
         let frame = crate::data::phrase_library::build_chunk(&[(1, item.clone())]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gb_char.bin");
@@ -624,8 +624,8 @@ fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
         libraries.pronunciation_possibility(1, &[key]).unwrap()
     }
 
-    let cheng = crate::ChewingKey::from_pinyin("cheng").unwrap();
-    let shang = crate::ChewingKey::from_pinyin("shang").unwrap();
+    let cheng = crate::parser::ChewingKey::from_pinyin("cheng").unwrap();
+    let shang = crate::parser::ChewingKey::from_pinyin("shang").unwrap();
     let mut stored = item(&[2], 0, &[]);
     crate::user::add_system_reading(&mut stored, &[cheng.to_packed()], 100);
     crate::user::add_system_reading(&mut stored, &[shang.to_packed()], 300);
@@ -659,7 +659,7 @@ fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
 /// `phonetic_lookup.h:868-929`).
 #[test]
 fn training_in_the_buffer_follows_the_running_total() {
-    use crate::ChewingKey;
+    use crate::parser::ChewingKey;
     let ni = ChewingKey::new(23, 0, 1, 0);
     let hao = ChewingKey::new(11, 3, 2, 0);
     let (ni_bits, hao_bits) = (ni.to_packed(), hao.to_packed());
@@ -720,7 +720,7 @@ fn training_in_the_buffer_follows_the_running_total() {
 
 #[test]
 fn training_leaves_an_absent_slot_alone_and_does_not_consume_the_readings() {
-    use crate::ChewingKey;
+    use crate::parser::ChewingKey;
     let library = library();
     let mut buffer = ReplayedLibrary::pristine(library.view());
     let mut consumed = false;

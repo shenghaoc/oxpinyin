@@ -1,4 +1,7 @@
-//! Context lifecycle: `zhuyin_init`, `zhuyin_fini`, `zhuyin_save`.
+//! Context creation, saving, and destruction.
+//!
+//! [`zhuyin_init`] opens the system and user data. [`zhuyin_save`] saves
+//! changed user data. [`zhuyin_fini`] ends the context's lifetime.
 
 use std::os::raw::c_char;
 use std::ptr;

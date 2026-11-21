@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use crate::ChewingKey;
 use crate::data::phrase_library::PhraseLibrary;
 use crate::data::phrase_library::{ChunkItem, build_chunk, encode_phrase_item};
 use crate::data::user_files::{LogRecord, SystemVersions, encode_log_records};
+use crate::parser::ChewingKey;
 
 use crate::user::store::UserStore;
 use crate::user::test_session::tempdir;

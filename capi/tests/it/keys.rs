@@ -1,5 +1,5 @@
 //! The single-key parse + `ChewingKey` display surface (`src/keys.rs`),
-//! driven black-box through the re-exported symbols against the `fixtures/w3`
+//! driven black-box through the C functions against the `fixtures/w3`
 //! mini tables.
 
 #![expect(
@@ -14,13 +14,20 @@ use crate::support::{
     open, pinyin_parse_more_full_pinyins, pinyin_set_options,
 };
 
-use oxpinyin_capi::{
-    PinyinContext, pinyin_fini, pinyin_free_instance, pinyin_get_context,
-    pinyin_get_luoma_pinyin_string, pinyin_get_pinyin_is_incomplete, pinyin_get_pinyin_string,
-    pinyin_get_pinyin_strings, pinyin_get_secondary_zhuyin_string, pinyin_get_zhuyin_string,
-    pinyin_parse_chewing, pinyin_parse_double_pinyin, pinyin_parse_full_pinyin,
+use oxpinyin_capi::config::{
     pinyin_set_double_pinyin_scheme, pinyin_set_zhuyin_scheme, pinyin_unload_addon_phrase_library,
 };
+use oxpinyin_capi::context::pinyin_fini;
+use oxpinyin_capi::cursor::{
+    pinyin_get_pinyin_string, pinyin_get_pinyin_strings, pinyin_get_zhuyin_string,
+};
+use oxpinyin_capi::instance::{pinyin_free_instance, pinyin_get_context};
+use oxpinyin_capi::keys::{
+    pinyin_get_luoma_pinyin_string, pinyin_get_pinyin_is_incomplete,
+    pinyin_get_secondary_zhuyin_string, pinyin_parse_chewing, pinyin_parse_double_pinyin,
+    pinyin_parse_full_pinyin,
+};
+use oxpinyin_capi::types::PinyinContext;
 
 use std::ptr;
 
@@ -276,7 +283,7 @@ fn full_pinyin_one_key_surface() {
     });
     assert_eq!(key.packed, 43, "initial n(11) | medial i(1) packing");
 
-    let mut rendered: *mut oxpinyin_capi::GChar = std::ptr::null_mut();
+    let mut rendered: *mut oxpinyin_capi::types::GChar = std::ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
     // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
     // only here.
@@ -345,7 +352,7 @@ fn double_pinyin_one_key_surface() {
     assert!(unsafe {
         pinyin_parse_double_pinyin(fixture.instance, cstr("ni").as_ptr(), &raw mut key)
     });
-    let mut rendered: *mut oxpinyin_capi::GChar = std::ptr::null_mut();
+    let mut rendered: *mut oxpinyin_capi::types::GChar = std::ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
     // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
     // only here.
@@ -398,7 +405,7 @@ fn chewing_one_key_surface() {
 
     let mut key = ChewingKey::ZERO;
     assert!(unsafe { pinyin_parse_chewing(fixture.instance, cstr("18").as_ptr(), &raw mut key) });
-    let mut rendered: *mut oxpinyin_capi::GChar = std::ptr::null_mut();
+    let mut rendered: *mut oxpinyin_capi::types::GChar = std::ptr::null_mut();
     assert!(unsafe { pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered) });
     // SAFETY: `rendered` is the string the library just returned; this code owns it and frees it
     // only here.
@@ -437,8 +444,8 @@ fn pinyin_strings_contract() {
         pinyin_parse_full_pinyin(fixture.instance, cstr("ba").as_ptr(), &raw mut key)
     });
 
-    let mut shengmu: *mut oxpinyin_capi::GChar = std::ptr::null_mut();
-    let mut yunmu: *mut oxpinyin_capi::GChar = std::ptr::null_mut();
+    let mut shengmu: *mut oxpinyin_capi::types::GChar = std::ptr::null_mut();
+    let mut yunmu: *mut oxpinyin_capi::types::GChar = std::ptr::null_mut();
     assert!(unsafe {
         pinyin_get_pinyin_strings(
             fixture.instance,
@@ -470,7 +477,8 @@ fn pinyin_strings_contract() {
 
     // The zero key fails without touching the out-params.
     let mut key = ChewingKey::ZERO;
-    let sentinel: *mut oxpinyin_capi::GChar = std::ptr::dangling_mut::<oxpinyin_capi::GChar>();
+    let sentinel: *mut oxpinyin_capi::types::GChar =
+        std::ptr::dangling_mut::<oxpinyin_capi::types::GChar>();
     let mut sentinel = sentinel;
     let kept = sentinel;
     assert!(!unsafe {
@@ -484,7 +492,8 @@ fn pinyin_strings_contract() {
     assert_eq!(sentinel, kept, "out-param untouched on the failing guard");
 
     // The four string getters NULL the out-param on the same guard.
-    let mut rendered: *mut oxpinyin_capi::GChar = std::ptr::dangling_mut::<oxpinyin_capi::GChar>();
+    let mut rendered: *mut oxpinyin_capi::types::GChar =
+        std::ptr::dangling_mut::<oxpinyin_capi::types::GChar>();
     assert!(!unsafe {
         pinyin_get_pinyin_string(fixture.instance, &raw mut key, &raw mut rendered)
     });

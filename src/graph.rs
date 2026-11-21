@@ -1,4 +1,7 @@
-//! The weighted segment graph.
+//! Weighted segment graphs for full-pinyin parsing and decoding.
+//!
+//! [`SegmentGraph`] stores byte-position nodes and [`Edge`] alternatives.
+//! [`EdgeKind`] distinguishes exact, segmentation and incomplete input.
 //!
 //! `docs/findings/segment-graph.md` specifies what this builds and why. The
 //! short version: the pin admits an initial-only key at *any* cursor position,
@@ -11,7 +14,10 @@
 //! structure is trivially `Clone`, has no lifetime, and its ordering is a
 //! function of the input alone.
 
-use crate::{Completeness, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
+use crate::OptionBits;
+use crate::parser::Completeness;
+use crate::syllables::MAX_SYLLABLE_LEN;
+use crate::vocab::SyllableKey;
 
 /// Largest input whose byte positions fit an [`Edge`].
 ///

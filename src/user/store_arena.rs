@@ -263,12 +263,12 @@ impl UserStore {
             .add(&words, token)
             .map_err(|_| UserStoreError::Persistence)?;
         for reading in view.pronunciations() {
-            let keys: Vec<crate::ChewingKey> = reading
+            let keys: Vec<crate::parser::ChewingKey> = reading
                 .keys
                 .as_chunks::<2>()
                 .0
                 .iter()
-                .map(|pair| crate::ChewingKey::from_packed(u16::from_le_bytes(*pair)))
+                .map(|pair| crate::parser::ChewingKey::from_packed(u16::from_le_bytes(*pair)))
                 .collect();
             phrases.index.add(&keys, token);
         }
@@ -435,10 +435,10 @@ impl UserStore {
                 .phrase_table
                 .add(words, token)
                 .map_err(|_| UserStoreError::Persistence)?;
-            let chewing: Vec<crate::ChewingKey> = packed
+            let chewing: Vec<crate::parser::ChewingKey> = packed
                 .iter()
                 .copied()
-                .map(crate::ChewingKey::from_packed)
+                .map(crate::parser::ChewingKey::from_packed)
                 .collect();
             phrases.index.add(&chewing, token);
         }
@@ -510,10 +510,10 @@ impl UserStore {
             .phrase_table
             .add(words, token)
             .map_err(|_| UserStoreError::Persistence)?;
-        let chewing: Vec<crate::ChewingKey> = packed
+        let chewing: Vec<crate::parser::ChewingKey> = packed
             .iter()
             .copied()
-            .map(crate::ChewingKey::from_packed)
+            .map(crate::parser::ChewingKey::from_packed)
             .collect();
         phrases.index.add(&chewing, token);
         drop(phrases);
@@ -609,7 +609,7 @@ impl UserStore {
             packed
                 .iter()
                 .copied()
-                .map(crate::ChewingKey::from_packed)
+                .map(crate::parser::ChewingKey::from_packed)
                 .collect()
         });
         if !phrases.index.can_remove(readings, token) {
@@ -624,10 +624,10 @@ impl UserStore {
             .remove(&item.phrase, token)
             .map_err(|_| UserStoreError::Persistence)?;
         for (packed, _) in &item.prons {
-            let keys: Vec<crate::ChewingKey> = packed
+            let keys: Vec<crate::parser::ChewingKey> = packed
                 .iter()
                 .copied()
-                .map(crate::ChewingKey::from_packed)
+                .map(crate::parser::ChewingKey::from_packed)
                 .collect();
             if !phrases.index.remove(&keys, token) {
                 return Err(UserStoreError::UserReadingRemoval);

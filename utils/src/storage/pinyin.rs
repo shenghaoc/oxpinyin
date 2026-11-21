@@ -6,7 +6,7 @@
 
 use std::ffi::CStr;
 
-use oxpinyin::ChewingKey;
+use oxpinyin::parser::ChewingKey;
 
 /// `PinyinDirectParser2::parse` with `USE_TONE`
 /// (`src/storage/pinyin_parser2.cpp:623-715`): the keys it appended before
@@ -29,7 +29,7 @@ pub(crate) fn parse_zhuyin(pinyin: &CStr) -> Vec<ChewingKey> {
     let Ok(text) = std::str::from_utf8(pinyin.to_bytes()) else {
         return Vec::new();
     };
-    oxpinyin::parse_zhuyin_direct(
+    oxpinyin::parser::parse_zhuyin_direct(
         text,
         oxpinyin::OptionBits::USE_TONE | oxpinyin::OptionBits::FORCE_TONE,
     )

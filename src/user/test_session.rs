@@ -239,9 +239,9 @@ pub(crate) fn load_checked(
     for (token, item) in live.changed_items(originals) {
         state
             .system_overrides
-            .get_or_default(crate::phrase_index_library_index(token))
+            .get_or_default(crate::vocab::phrase_index_library_index(token))
             .expect("a library slot")
-            .insert(token & crate::PHRASE_MASK, item);
+            .insert(token & crate::vocab::PHRASE_MASK, item);
     }
     Ok(loaded)
 }
@@ -425,7 +425,7 @@ pub(crate) fn native_tokens(system: &Path, text: &str) -> Vec<u32> {
 }
 
 pub(crate) fn native_unigram(store: &UserStore, token: u32) -> Option<u32> {
-    if store.is_system_library(crate::phrase_index_library_index(token)) {
+    if store.is_system_library(crate::vocab::phrase_index_library_index(token)) {
         store.system_unigram(token)
     } else {
         store
@@ -438,7 +438,7 @@ pub(crate) fn native_exports(store: &UserStore, library: u8) -> Vec<(String, Str
     if store.is_system_library(library) {
         return (1..(store.system_range_end(library).unwrap() & 0x00ff_ffff))
             .flat_map(|slot| {
-                let token = crate::phrase_index_make_token(library, slot);
+                let token = crate::vocab::phrase_index_make_token(library, slot);
                 store
                     .with_effective_system_item(token, Clone::clone)
                     .or_else(|| store.originals.get(&library)?.item(slot))
@@ -455,7 +455,8 @@ pub(crate) fn native_exports(store: &UserStore, library: u8) -> Vec<(String, Str
                                     text.clone(),
                                     keys.iter()
                                         .map(|&key| {
-                                            crate::ChewingKey::from_packed(key).pinyin_string()
+                                            crate::parser::ChewingKey::from_packed(key)
+                                                .pinyin_string()
                                         })
                                         .collect::<Vec<_>>()
                                         .join("'"),

@@ -12,15 +12,15 @@
 // includes the increment from utils/training/gen_unigram.cpp. See
 // docs/findings/scoring-spec.md.
 
-use crate::phrase_index_library_index;
+use crate::vocab::phrase_index_library_index;
 use std::cell::Cell;
 use std::fmt;
 use std::path::Path;
 
 use crate::{
-    PhraseToken,
     model::{LanguageModel, UserCountDelta},
     single_gram,
+    vocab::PhraseToken,
 };
 
 use crate::data::{BigramTable, DictError, PhraseLibraries, TableError};
@@ -367,7 +367,7 @@ impl<
     /// `merge_single_gram` otherwise ([`crate::model::MergedGram::merge`]).
     /// The system value enters the merge as stored, from a fresh DBM read,
     /// whatever its length: the row's reads answer a value the pin cannot
-    /// read with the same faults as a user value ([`crate::GramFault`]).
+    /// read with the same faults as a user value ([`crate::single_gram::GramFault`]).
     ///
     /// # Errors
     /// Propagates the system read failures of

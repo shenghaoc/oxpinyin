@@ -6,12 +6,11 @@ use crate::engine::{
     Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
     check_lookup_offset_range, normalize_lookup_offset,
 };
+use crate::parser::{DoublePinyinParse, FullPinyinIndexParse, ZhuyinParse};
 use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
 use crate::user::UserStore;
-use crate::{
-    DoublePinyinParse, FullPinyinIndexParse, OptionBits, PhraseText, PhraseToken, ZhuyinParse,
-    model::Dictionary,
-};
+use crate::vocab::{PhraseText, PhraseToken};
+use crate::{OptionBits, model::Dictionary};
 
 use crate::facade::context::LiveOptions;
 
@@ -63,7 +62,7 @@ pub struct PublishedRow {
     pub end: u16,
     /// The row's token as it stands, after any in-place promotion
     /// (`pinyin.cpp:2559-2561`).
-    pub token: crate::PhraseToken,
+    pub token: crate::vocab::PhraseToken,
     /// Where the recorded text comes from.
     pub text: crate::engine::RowText,
 }
@@ -439,8 +438,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// answer `None` (074a2219 `phrase_index.h:646-652`, `pinyin.cpp:2821-2834`).
     #[must_use]
     pub fn token_unigram_frequency(&self, token: u32) -> Option<u64> {
-        let token = token & (crate::PHRASE_INDEX_LIBRARY_MASK | crate::PHRASE_MASK);
-        let nibble = crate::phrase_index_library_index(token);
+        let token = token & (crate::vocab::PHRASE_INDEX_LIBRARY_MASK | crate::vocab::PHRASE_MASK);
+        let nibble = crate::vocab::phrase_index_library_index(token);
         match nibble {
             _ if self.dict.is_system_library(nibble) => {
                 self.dict.live_items().effective_unigram(token)

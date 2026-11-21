@@ -1,5 +1,5 @@
-//! User phrase libraries, learning state and profile persistence. [`UserStore`] owns the
-//! user indexes, bigram counts and live system-item changes. The session reads these
+//! User phrase libraries, learning state, and profile persistence. [`UserStore`] owns the
+//! user indexes, bigram counts, and live system-item changes. The session reads these
 //! through [`crate::model::UserModel`]. [`UserStore::is_modified`] reports pending
 //! changes and [`crate::facade::ContextCore::save_user`] saves them.
 //!

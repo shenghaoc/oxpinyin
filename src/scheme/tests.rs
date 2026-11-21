@@ -1,16 +1,15 @@
 use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParse, ZhuyinParser, ZhuyinScheme};
+use crate::full_pinyin_index::{luoma_pinyin_index, secondary_zhuyin_index};
 use crate::options::OptionBits;
-use crate::{
-    FullPinyinScheme, SyllableKey, ZhuyinKey, luoma_pinyin_index, parse_zhuyin_direct,
-    secondary_zhuyin_index,
-};
+use crate::parser::{FullPinyinScheme, ZhuyinKey, parse_zhuyin_direct};
+use crate::vocab::SyllableKey;
 
 /// `parser` over `input` under `USE_TONE`, the word most cases here set.
 fn toned(parser: &ZhuyinParser, input: &[u8]) -> ZhuyinParse {
     parser.parse_with_options(input, OptionBits::USE_TONE)
 }
 
-fn double_full_pinyin(parse: &crate::DoublePinyinParse) -> String {
+fn double_full_pinyin(parse: &crate::parser::DoublePinyinParse) -> String {
     parse
         .keys()
         .iter()
@@ -186,7 +185,7 @@ fn index_flags_gate_through_the_option_word() {
     use crate::zhuyin_map::zhuyin_pinyin_map;
 
     // Shuffle rows: only under the parser-owned correction bit.
-    let bie = crate::SyllableKey::from_text("bie").expect("bie");
+    let bie = crate::vocab::SyllableKey::from_text("bie").expect("bie");
     assert_eq!(
         search_zhuyin_index(
             zhuyin_pinyin_map(),
@@ -203,7 +202,7 @@ fn index_flags_gate_through_the_option_word() {
     // Incomplete rows: only under the caller's option bit. All 14 are
     // parse-dead after the validity mask, but the index gate itself is
     // what this pins (both outcomes at this pin consume 0).
-    let b = crate::SyllableKey::from_text("b").expect("b");
+    let b = crate::vocab::SyllableKey::from_text("b").expect("b");
     assert_eq!(
         search_zhuyin_index(zhuyin_pinyin_map(), "ㄅ", OptionBits::ZHUYIN_INCOMPLETE),
         Some(b)
@@ -319,8 +318,7 @@ fn recovered_rows_parse_with_their_upstream_tone_masks() {
 #[test]
 fn valid_zhuyin_tones_carry_the_extracted_masks() {
     use super::VALID_ZHUYIN_TONES;
-    use crate::SyllableKey;
-    use crate::vocab::SYLLABLE_KEY_COUNT;
+    use crate::vocab::{SYLLABLE_KEY_COUNT, SyllableKey};
     assert_eq!(VALID_ZHUYIN_TONES.len(), SYLLABLE_KEY_COUNT);
 
     let mask = |spelling: &str| {
@@ -344,7 +342,7 @@ fn valid_zhuyin_tones_carry_the_extracted_masks() {
     assert_eq!(mask("rua"), 0x00);
     // The 14 zhuyin incomplete rows are ㄅ..ㄒ; every initial-only key
     // is parse-dead in zhuyin at the pin.
-    for key in crate::INCOMPLETE_PINYIN_KEYS {
+    for key in crate::syllables::INCOMPLETE_PINYIN_KEYS {
         assert_eq!(mask(key), 0x00, "initial-only key {key:?}");
     }
 }
@@ -606,8 +604,8 @@ fn discrete_indexes_gate_their_correction_rows() {
 
     // ㄍㄧ is ji under the HSU bit and qi under the ETEN26 bit — the
     // same keystrokes mean different syllables per keyboard.
-    let ji = crate::SyllableKey::from_text("ji").expect("ji");
-    let qi = crate::SyllableKey::from_text("qi").expect("qi");
+    let ji = crate::vocab::SyllableKey::from_text("ji").expect("ji");
+    let qi = crate::vocab::SyllableKey::from_text("qi").expect("qi");
     assert_eq!(
         search_zhuyin_index(hsu_zhuyin_index(), "ㄍㄧ", OptionBits::ZHUYIN_CORRECT_HSU),
         Some(ji)
@@ -1563,7 +1561,7 @@ fn zhuyin_parse_matches_the_frozen_oracle_pin() {
         let zhuyin: Vec<String> = parsed
             .keys()
             .iter()
-            .map(crate::ZhuyinKey::display)
+            .map(crate::parser::ZhuyinKey::display)
             .collect();
         let expected_zhuyin = if line.zhuyin == "-" {
             String::new()

@@ -61,7 +61,7 @@ pub mod model;
 #[forbid(unsafe_code)]
 mod options;
 #[forbid(unsafe_code)]
-mod parser;
+pub mod parser;
 #[cfg(test)]
 #[path = "../tests/common/parser_rows.rs"]
 #[forbid(unsafe_code)]
@@ -94,38 +94,8 @@ mod string_tables {
 #[forbid(unsafe_code)]
 mod syllables;
 #[forbid(unsafe_code)]
-mod vocab;
+pub mod vocab;
 #[forbid(unsafe_code)]
 mod zhuyin_map;
 
-pub use chewing_key::{CHEWING_ZERO_TONE, ChewingKey, KeyText};
-pub use full_pinyin_index::{
-    FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse, luoma_pinyin_index,
-    parse_full_pinyin_index_with_options, secondary_zhuyin_index,
-};
-#[cfg(test)]
-pub use full_pinyin_index::{LUOMA_PINYIN_COUNT, SECONDARY_ZHUYIN_COUNT};
 pub use options::OptionBits;
-pub use parser::{Completeness, FullPinyinParser};
-pub use scheme::{
-    DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
-    ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,
-};
-#[cfg(test)]
-pub use syllables::full_pinyin_syllables;
-pub use syllables::{
-    FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
-    MAX_SYLLABLE_LEN, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
-    ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES,
-    canonical_complete_syllable, full_pinyin_syllable, option_alias_canonical,
-};
-pub use ucs4::{OutwardWords, PhraseText, PhraseTextConcat};
-pub use vocab::{
-    ADDON_DICTIONARY, GBK_DICTIONARY, MAX_PHRASE_LENGTH, NETWORK_DICTIONARY, NULL_TOKEN,
-    PHRASE_INDEX_LIBRARY_COUNT, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseEntry, PhraseToken,
-    SENTENCE_START, SyllableKey, TSI_DICTIONARY, USER_DICTIONARY, fuzzy_chewing_alternatives,
-    phrase_index_library_index, phrase_index_make_token,
-};
-pub(crate) use vocab::{fuzzy_chewing_finals, fuzzy_chewing_initials};
-
-pub use single_gram::GramFault;

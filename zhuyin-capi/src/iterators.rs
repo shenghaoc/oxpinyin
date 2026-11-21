@@ -1,10 +1,14 @@
-//! Import iterator symbols: `zhuyin_begin_add_phrases`,
-//! `zhuyin_iterator_add_phrase`, `zhuyin_end_add_phrases`.
+//! Phrase import through a context-owned iterator.
+//!
+//! Start an import with [`zhuyin_begin_add_phrases`], add phrase and reading
+//! pairs with [`zhuyin_iterator_add_phrase`], and finish with
+//! [`zhuyin_end_add_phrases`].
 
 use std::os::raw::{c_char, c_int};
 
+use oxpinyin::OptionBits;
+use oxpinyin::parser::parse_zhuyin_direct;
 use oxpinyin::user::{PinyinKey, toned_key};
-use oxpinyin::{OptionBits, parse_zhuyin_direct};
 
 use crate::state::{ContextOwner, context_owner, owner_mut, owner_ref};
 use crate::types::{ImportIterator, ZhuyinContext};
@@ -144,7 +148,7 @@ pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
 }
 
 /// What [`zhuyin_iterator_add_phrase`] does with one pair before it writes.
-pub(crate) use oxpinyin::facade::ImportPlan;
+use oxpinyin::facade::ImportPlan;
 
 /// `zhuyin.cpp:500-534` and `_add_phrase` (`:400-458`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's

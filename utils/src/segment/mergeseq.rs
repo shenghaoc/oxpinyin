@@ -19,7 +19,7 @@ use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
 use crate::segment::{abort_on_pin_assert, c_string};
 use crate::utils_helper::tag_token_text;
-use oxpinyin::{MAX_PHRASE_LENGTH, NULL_TOKEN, phrase_index_library_index};
+use oxpinyin::vocab::{MAX_PHRASE_LENGTH, NULL_TOKEN, phrase_index_library_index};
 
 /// A queued token and its length in characters (`TokenInfo`).
 #[derive(Clone, Copy)]

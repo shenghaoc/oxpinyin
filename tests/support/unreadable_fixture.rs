@@ -1,6 +1,6 @@
 //! Native unreadable candidate fixtures shared by the runtime and C tests.
-use oxpinyin::ChewingKey;
 use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
+use oxpinyin::parser::ChewingKey;
 use oxpinyin::store::{DefaultStore, WriteStore, WriteTxn};
 use std::{fs, path::Path};
 

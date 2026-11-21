@@ -13,11 +13,11 @@ use crate::user::record_skip;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
-use crate::PHRASE_MASK;
 use crate::data::phrase_library::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
 use crate::data::phrase_library::{ChunkItem, decode_phrase_item};
 use crate::data::phrase_library::{PhraseContent, PhraseItemView};
 use crate::data::user_files::LogRecord;
+use crate::vocab::PHRASE_MASK;
 
 #[cfg(test)]
 use crate::user::SystemLibrary;
@@ -587,7 +587,7 @@ impl ReplayedLibrary {
     pub(crate) fn train(
         &mut self,
         slot: u32,
-        readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
+        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
         delta: u32,
     ) -> bool {
         let Some(bytes) = self.complete_item(slot) else {

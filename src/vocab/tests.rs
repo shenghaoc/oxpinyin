@@ -1,7 +1,7 @@
 use super::{PhraseEntry, SYLLABLE_KEY_COUNT, SyllableKey};
-use crate::ChewingKey;
-use crate::{
-    Completeness, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllables,
+use crate::parser::{ChewingKey, Completeness};
+use crate::syllables::{
+    INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllables,
 };
 
 #[test]
@@ -60,7 +60,7 @@ fn completeness_follows_the_frozen_id_ranges() {
         assert_eq!(key.completeness(), Completeness::Complete);
         assert!(key.index() >= full_pinyin_syllables().len() + INCOMPLETE_PINYIN_KEYS.len());
     }
-    for zhuyin_only in crate::ZHUYIN_ONLY_COMPLETE_SYLLABLES {
+    for zhuyin_only in crate::syllables::ZHUYIN_ONLY_COMPLETE_SYLLABLES {
         let key = SyllableKey::from_canonical_text(zhuyin_only).expect("zhuyin-only key");
         assert_eq!(key.completeness(), Completeness::Complete);
         assert!(key.index() >= 430);

@@ -282,7 +282,7 @@ mod native {
     #[test]
     fn a_reparse_after_a_guess_ignores_an_overlong_index_key() {
         let user = TempUserDir::new("overlong-reparse");
-        let first = crate::ChewingKey::from_pinyin("ni")
+        let first = crate::parser::ChewingKey::from_pinyin("ni")
             .unwrap()
             .to_packed()
             .to_le_bytes();
@@ -445,7 +445,7 @@ mod native {
         assert_eq!(
             context
                 .user_store()
-                .bigram_count(crate::SENTENCE_START, t2)
+                .bigram_count(crate::vocab::SENTENCE_START, t2)
                 .unwrap(),
             69
         );
@@ -522,7 +522,7 @@ mod native {
         plant_bigram(
             &user.path,
             vec![(
-                crate::SENTENCE_START.to_le_bytes().to_vec(),
+                crate::vocab::SENTENCE_START.to_le_bytes().to_vec(),
                 gram(&[lo, hi, lo, hi, lo]),
             )],
         );
@@ -561,7 +561,7 @@ mod native {
         assert!(
             context
                 .user_store()
-                .bigram_successors(crate::SENTENCE_START)
+                .bigram_successors(crate::vocab::SENTENCE_START)
                 .unwrap()
                 .is_empty()
         );
@@ -570,7 +570,7 @@ mod native {
         assert!(
             !context
                 .user_store()
-                .bigram_successors(crate::SENTENCE_START)
+                .bigram_successors(crate::vocab::SENTENCE_START)
                 .unwrap()
                 .is_empty()
         );

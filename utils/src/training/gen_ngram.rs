@@ -22,7 +22,7 @@ use crate::storage::{Libraries, token_to_string};
 use crate::training::{
     load_gram, load_table_conf, parse_segmented_line, path_of, skip_pi_gram_entry, store_gram,
 };
-use oxpinyin::{NULL_TOKEN, SENTENCE_START};
+use oxpinyin::vocab::{NULL_TOKEN, SENTENCE_START};
 
 /// `main` (`gen_ngram.cpp:45-124`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {

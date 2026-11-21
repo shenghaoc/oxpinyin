@@ -51,7 +51,7 @@ pub(crate) fn native_context(
 
 pub(crate) fn native_keys(reading: &str) -> Vec<crate::user::PinyinKey> {
     if !reading.is_ascii() {
-        return crate::parse_zhuyin_direct(reading, OptionBits::USE_TONE)
+        return crate::parser::parse_zhuyin_direct(reading, OptionBits::USE_TONE)
             .into_iter()
             .map(|(key, tone)| crate::user::toned_key(key.index(), tone).unwrap())
             .collect();

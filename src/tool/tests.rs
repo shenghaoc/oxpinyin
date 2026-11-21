@@ -37,7 +37,7 @@ fn zhuyin_spans_are_utf8_bytes_from_the_shipping_key_parser() {
             .collect::<Vec<_>>(),
         [0..8, 10..18]
     );
-    let shipping = crate::parse_zhuyin_direct(input, OptionBits::USE_TONE);
+    let shipping = crate::parser::parse_zhuyin_direct(input, OptionBits::USE_TONE);
     assert_eq!(shipping.len(), parsed.keys.len());
     for ((key, tone), with_span) in shipping.iter().zip(parsed.keys) {
         assert_eq!(

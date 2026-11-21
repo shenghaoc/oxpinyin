@@ -200,7 +200,7 @@ mod frozen {
                 .success()
                 .stdout("")
                 .stderr("");
-            let expected = oxpinyin::ChewingKey::from_pinyin("ni")
+            let expected = oxpinyin::parser::ChewingKey::from_pinyin("ni")
                 .expect("ni")
                 .with_tone(3)
                 .to_packed()

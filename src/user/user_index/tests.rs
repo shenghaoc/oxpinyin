@@ -469,7 +469,7 @@ fn a_suggestion_on_an_absent_prefix_key_leaves_the_entries_alone() {
 /// Without the prefix record, suggestion never walks the 17-key extension.
 #[test]
 fn an_overlong_index_key_without_its_prefix_is_not_walked() {
-    let ni = crate::ChewingKey::from_pinyin("ni").unwrap();
+    let ni = crate::parser::ChewingKey::from_pinyin("ni").unwrap();
     let index =
         super::UserIndex::from_entries(vec![(ni.to_packed().to_le_bytes().repeat(17), Vec::new())]);
     assert!(index.suggest(&[ni]).is_empty());

@@ -867,7 +867,7 @@ pub(crate) struct TrainingReadings<'a> {
     end: usize,
     length: usize,
     frames: Vec<(usize, usize)>,
-    keys: Vec<crate::ChewingKey>,
+    keys: Vec<crate::parser::ChewingKey>,
     yielded: bool,
 }
 
@@ -881,7 +881,7 @@ impl TrainingReadings<'_> {
 }
 
 impl Iterator for TrainingReadings<'_> {
-    type Item = Vec<crate::ChewingKey>;
+    type Item = Vec<crate::parser::ChewingKey>;
     fn next(&mut self) -> Option<Self::Item> {
         if self.yielded {
             self.yielded = false;

@@ -24,8 +24,9 @@ use crate::data::row_format::pinyin_index::{
 };
 use smallvec::SmallVec;
 
+use crate::parser::ChewingKey;
 use crate::user::records::NativeTable;
-use crate::{ChewingKey, MAX_PHRASE_LENGTH};
+use crate::vocab::MAX_PHRASE_LENGTH;
 
 /// Whether the table keeps one entry per key length between operations,
 /// as the Kyoto Cabinet and tkrzw `ChewingLargeTable2` do: `search` loads

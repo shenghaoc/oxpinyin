@@ -2,11 +2,11 @@
 //! Rows are `phrase frequency zhuyin`; the tree, stable sort and token
 //! numbering are shared with `gen_pinyin_table` (:90-98, :197-237, :241-334).
 use crate::gen_pinyin_table::{Table, entries};
+use oxpinyin::OptionBits;
 use oxpinyin::input::tool::gen_pinyin_table as common;
 use oxpinyin::input::tool::gen_zhuyin_table as edge;
 use oxpinyin::input::tool::{self, LineReader, OptionValue, OutputStream};
-use oxpinyin::parse_zhuyin_direct;
-use oxpinyin::{ChewingKey, OptionBits};
+use oxpinyin::parser::{ChewingKey, parse_zhuyin_direct};
 use std::ffi::{CString, OsString};
 
 /// `ZhuyinDirectParser2::parse` (:187-188; zhuyin_parser2.cpp:858-958).

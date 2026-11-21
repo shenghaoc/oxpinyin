@@ -1,6 +1,7 @@
 use super::*;
+use crate::parser::Completeness;
 use crate::user::store::UserStore;
-use crate::{Completeness, NETWORK_DICTIONARY, USER_DICTIONARY};
+use crate::vocab::{NETWORK_DICTIONARY, USER_DICTIONARY};
 
 fn key(text: &str) -> SyllableKey {
     SyllableKey::from_text(text).expect("frozen syllable")
@@ -40,9 +41,9 @@ fn session_lookup_reads_a_tagged_token_through_its_masked_library() {
         .libraries
         .get_or_default(USER_DICTIONARY)
         .unwrap()
-        .replace(token & crate::PHRASE_MASK, &bytes)
+        .replace(token & crate::vocab::PHRASE_MASK, &bytes)
         .unwrap();
-    let keys = [crate::ChewingKey::from_pinyin("ni").unwrap()];
+    let keys = [crate::parser::ChewingKey::from_pinyin("ni").unwrap()];
     phrases.index.add(&keys, token);
     phrases.index.add(&keys, token | 0x8000_0000);
     let phrases = RefCell::new(phrases);
@@ -143,7 +144,7 @@ fn lookup_answers_a_single_syllable_incomplete_query_from_by_initial() {
     let entries = lookup.lookup(&[n_partial]);
     let texts: Vec<&str> = entries
         .iter()
-        .filter_map(crate::PhraseEntry::text_str)
+        .filter_map(crate::vocab::PhraseEntry::text_str)
         .collect();
     assert!(texts.contains(&"你"), "expected 你 in {texts:?}");
     assert!(texts.contains(&"那"), "expected 那 in {texts:?}");
@@ -192,7 +193,7 @@ fn lookup_filters_mixed_incomplete_and_complete_syllables() {
     let entries = lookup.lookup(&[n_partial, key("hao")]);
     let texts: Vec<&str> = entries
         .iter()
-        .filter_map(crate::PhraseEntry::text_str)
+        .filter_map(crate::vocab::PhraseEntry::text_str)
         .collect();
     assert!(texts.contains(&"你好"), "expected 你好 in {texts:?}");
     assert!(texts.contains(&"那号"), "expected 那号 in {texts:?}");

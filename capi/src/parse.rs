@@ -1,10 +1,8 @@
-//! Parsing symbols: full pinyin, double pinyin, chewing.
+//! Input parsing for full pinyin, double pinyin, and chewing in an editor instance.
 //!
-//! C wrappers over the shared facade-orchestration seams
-//! (`oxpinyin::facade::InstanceCore`); the laws themselves — the
-//! continue-or-restart rule, the scheme dispatch, the exact-input drive,
-//! the LUOMA / `SECONDARY_ZHUYIN` index branch — live there once, shared
-//! with the zhuyin facade. Chewing parses use [`ChewingCorrections::Masked`]
+//! The shared [`oxpinyin::facade::InstanceCore`] applies the continue-or-restart
+//! rule, selects the scheme, and parses the exact input. It also handles the
+//! LUOMA and `SECONDARY_ZHUYIN` index schemes for both C libraries. Chewing parses use [`ChewingCorrections::Masked`]
 //! to clear the caller's Zhuyin correction flags.
 
 use std::os::raw::c_char;

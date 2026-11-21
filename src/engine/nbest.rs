@@ -18,11 +18,12 @@ use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 
 use crate::{
-    ChewingKey, PhraseText, PhraseToken, SyllableKey,
     model::{
         Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
         TokenPhrase, TrellisItem,
     },
+    parser::ChewingKey,
+    vocab::{PhraseText, PhraseToken, SyllableKey},
 };
 use smallvec::SmallVec;
 
@@ -30,7 +31,7 @@ use crate::engine::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::engine::error::EngineError;
 use crate::engine::session::matrix::{ParsedMatrix, ScanMatrix};
 use crate::engine::session::{ScanKey, column_is_empty};
-use crate::{MAX_PHRASE_LENGTH, SENTENCE_START};
+use crate::vocab::{MAX_PHRASE_LENGTH, SENTENCE_START};
 
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
 /// larger of the two shapes, so neither allocates per node. The live cap
@@ -487,7 +488,7 @@ impl Trellis {
     where
         D: Dictionary<Syllable = SyllableKey>,
     {
-        let mut text = crate::PhraseTextConcat::new();
+        let mut text = crate::ucs4::PhraseTextConcat::new();
         let mut converted = false;
         for (_, token) in spans {
             let Some(part) = self.token_text(dictionary, cache, *token, facts)? else {

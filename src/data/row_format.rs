@@ -62,7 +62,7 @@ fn append_u32_le(buf: &mut Vec<u8>, words: impl Iterator<Item = u32>) {
 /// `docs/findings/data-formats.md` §4,
 /// `chewing_large_table2_tkrzwdb.cpp:133-296`.
 pub mod pinyin_index {
-    use crate::ChewingKey;
+    use crate::parser::ChewingKey;
 
     use crate::data::DictError;
     use crate::data::phrase_library::CHEWING_KEY_SIZE;
@@ -314,7 +314,7 @@ pub mod phrase_index {
 /// punctuation's UCS-4 code points followed by a `u32` zero terminator,
 /// successive punctuations concatenated.
 pub mod punct {
-    use crate::PhraseText;
+    use crate::vocab::PhraseText;
 
     #[cfg(any(test, feature = "test-hooks"))]
     use super::append_u32_le;

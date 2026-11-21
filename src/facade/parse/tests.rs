@@ -1,4 +1,4 @@
-use crate::{ZhuyinParser, ZhuyinScheme};
+use crate::parser::{ZhuyinParser, ZhuyinScheme};
 
 use super::*;
 

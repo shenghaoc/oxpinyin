@@ -1,10 +1,12 @@
-//! Pinyin key access and cursor/offset navigation.
+//! Zhuyin key access and cursor offsets.
 //!
-//! The cursor → lookup-offset normalization and the word-level left/right
-//! moves port the pin's matrix laws over the engine's positional data, using
-//! the zhuyin parse's key spans. Where the pin asserts — `_check_offset`
-//! (`zhuyin.cpp:1453`) or the matrix's own index check
-//! (`phonetic_key_matrix.h:103`) — the process aborts.
+//! Read parsed keys and their raw input spans with [`zhuyin_get_zhuyin_key`]
+//! and [`zhuyin_get_zhuyin_key_rest`]. [`zhuyin_get_zhuyin_offset`] maps an
+//! input cursor to a lookup offset. [`zhuyin_get_left_zhuyin_offset`] and
+//! [`zhuyin_get_right_zhuyin_offset`] move to the preceding key start or the next key end.
+//!
+//! Where the pin asserts in `_check_offset` (`zhuyin.cpp:1453`) or the
+//! matrix index check (`phonetic_key_matrix.h:103`), the process aborts.
 
 use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};

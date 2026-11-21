@@ -1,5 +1,5 @@
 use super::*;
-use oxpinyin::PhraseText;
+use oxpinyin::vocab::PhraseText;
 
 #[test]
 fn ffi_output_helpers_preserve_ownership_and_bytes() {

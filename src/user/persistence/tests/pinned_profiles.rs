@@ -30,10 +30,12 @@ fn user_rows(user: &Path) -> [Vec<(String, String)>; 3] {
 fn import(store: &mut UserStore, text: &str, reading: &str, count: u64, law: UserConfLaw) -> u32 {
     let keys = match law {
         UserConfLaw::Pinyin => native_keys(reading),
-        UserConfLaw::Zhuyin => crate::parse_zhuyin_direct(reading, crate::OptionBits::USE_TONE)
-            .into_iter()
-            .map(|(key, tone)| crate::user::toned_key(key.index(), tone).unwrap())
-            .collect(),
+        UserConfLaw::Zhuyin => {
+            crate::parser::parse_zhuyin_direct(reading, crate::OptionBits::USE_TONE)
+                .into_iter()
+                .map(|(key, tone)| crate::user::toned_key(key.index(), tone).unwrap())
+                .collect()
+        }
     };
     let token = store
         .add_phrase_in(7, &text.into(), &keys, Some(count))

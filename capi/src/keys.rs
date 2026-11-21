@@ -1,4 +1,6 @@
-//! Single-key parsing and the `ChewingKey` display getters.
+//! Single-key parsing and key spellings, including Luoma and secondary Zhuyin.
+//!
+//! [`crate::cursor`] provides the full-pinyin and Zhuyin display getters.
 //!
 //! The single-key parsers are pure probes of (live options, one string):
 //! unlike the `parse_more_*` batch entries they touch no instance parse
@@ -199,7 +201,13 @@ pub unsafe extern "C" fn pinyin_get_luoma_pinyin_string(
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
     // aligned and writable, and a non-NULL key is valid for reads. Access must not conflict
     // with live borrows.
-    unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::luoma_pinyin_text) }
+    unsafe {
+        display_string_getter(
+            key,
+            utf8_str,
+            oxpinyin::parser::ChewingKey::luoma_pinyin_text,
+        )
+    }
 }
 
 // chewing_key.cpp:107-121.
@@ -234,7 +242,13 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
     // aligned and writable, and a non-NULL key is valid for reads. Access must not conflict
     // with live borrows.
-    unsafe { display_string_getter(key, utf8_str, oxpinyin::ChewingKey::secondary_zhuyin_text) }
+    unsafe {
+        display_string_getter(
+            key,
+            utf8_str,
+            oxpinyin::parser::ChewingKey::secondary_zhuyin_text,
+        )
+    }
 }
 
 /// The shared body of the two index-spelling display getters: NULL the
@@ -250,7 +264,7 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
 unsafe fn display_string_getter(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin::ChewingKey) -> oxpinyin::KeyText,
+    render: impl FnOnce(oxpinyin::parser::ChewingKey) -> oxpinyin::parser::KeyText,
 ) -> bool {
     // The pin never reads `instance` (`pinyin.cpp:2729-2749`); it writes
     // `*utf8_str` before any check, so a NULL out stays guarded (row 41).

@@ -1,11 +1,17 @@
 //! Candidate access, selection, and training.
 //!
-//! The four symbols that read or write `lookup_candidate_type_t` use the
-//! zhuyin-local 4-value enum — `zhuyin_guess_candidates_after_cursor`,
-//! `zhuyin_guess_candidates_before_cursor`, `zhuyin_choose_candidate`,
-//! `zhuyin_get_candidate_type`. The zhuyin enum's discriminants collide with
-//! the pinyin eight at 3 and 4 (see [`crate::types::lookup_candidate_type_t`]),
-//! so tagging must use the zhuyin enum, never the pinyin one.
+//! Generate candidates with
+//! [`zhuyin_guess_candidates_after_cursor`](crate::sentence::zhuyin_guess_candidates_after_cursor)
+//! or [`zhuyin_guess_candidates_before_cursor`](crate::sentence::zhuyin_guess_candidates_before_cursor).
+//! Read the list with [`zhuyin_get_n_candidate`] and [`zhuyin_get_candidate`],
+//! then inspect each row with [`zhuyin_get_candidate_type`] and
+//! [`zhuyin_get_candidate_string`]. Select a row with [`zhuyin_choose_candidate`]
+//! and train the result with [`zhuyin_train`]. [`zhuyin_clear_constraint`]
+//! clears the selection constraint at an offset.
+//!
+//! The candidate functions use the zhuyin-local four-value
+//! [`lookup_candidate_type_t`].
+//! Its discriminants differ from the pinyin candidate enum.
 
 use oxpinyin::marshal::{phrase_text_bytes, phrase_text_len};
 use std::os::raw::c_int;
@@ -324,7 +330,7 @@ fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
 /// start is `anchor + span_start()`. `sentence_rows_only` keeps the
 /// sentence rows and nothing else — the after-cursor window at a mid-key
 /// offset, where the pin's matrix column is empty (issue #577).
-pub fn snapshot_candidates(
+pub(crate) fn snapshot_candidates(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     window: &oxpinyin::engine::CandidateList,
     before_cursor: bool,

@@ -1,5 +1,6 @@
-//! The phrase-result surface: `pinyin_phrase_segment` and the two
-//! getters over `m_phrase_result` (`pinyin.cpp:3269-3287`).
+//! Text segmentation into phrase tokens and access to the result.
+//!
+//! The result getters read `m_phrase_result` (`pinyin.cpp:3269-3287`).
 //!
 //! The segmenter is the engine's span DP (`oxpinyin::engine::Session::
 //! phrase_segment`, the `PhraseLookup::get_best_match` port); this
@@ -144,7 +145,7 @@ pub unsafe extern "C" fn pinyin_get_phrase_token(
     token: *mut PhraseTokenT,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false);
-    write_if_nonnull!(token, oxpinyin::NULL_TOKEN);
+    write_if_nonnull!(token, oxpinyin::vocab::NULL_TOKEN);
     let Some(value) = inst.core.phrase_token(index as usize) else {
         return false;
     };

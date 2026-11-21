@@ -1,6 +1,6 @@
 //! Candidate lookup: the expanding-window scan at the composition offset or any lookup offset, the backward-anchored before-cursor window, the n-best prepend, and the DP that pools phrases into sentences.
 
-use crate::{MAX_PHRASE_LENGTH, phrase_index_library_index};
+use crate::vocab::{MAX_PHRASE_LENGTH, phrase_index_library_index};
 
 use super::*;
 
@@ -39,10 +39,10 @@ where
     /// If none can be read, use sentence_start.
     #[must_use]
     pub fn prefix_predecessor(&self) -> PhraseToken {
-        let mut previous = crate::SENTENCE_START;
+        let mut previous = crate::vocab::SENTENCE_START;
         let mut longest = 0;
         for &token in &self.candidate_prefixes {
-            if token == crate::SENTENCE_START {
+            if token == crate::vocab::SENTENCE_START {
                 continue;
             }
             if let Some(length) = self.dictionary.phrase_length_for_token(token)

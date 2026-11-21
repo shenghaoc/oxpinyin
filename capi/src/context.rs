@@ -1,4 +1,4 @@
-//! Context lifecycle: `pinyin_init`, `pinyin_fini`, `pinyin_save`.
+//! Context creation, saving of user data, and context destruction.
 
 use std::os::raw::c_char;
 use std::ptr;

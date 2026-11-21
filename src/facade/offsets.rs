@@ -7,7 +7,7 @@
 //! facades. The Luoma and secondary-zhuyin index parses drive it with the
 //! typed input itself, as plain full pinyin does, so they need no map.
 
-use crate::{DoublePinyinParse, ZhuyinParse};
+use crate::parser::{DoublePinyinParse, ZhuyinParse};
 
 /// Maps a byte offset in the transformed `'`-joined full-pinyin string
 /// back to the original zhuyin input offset.

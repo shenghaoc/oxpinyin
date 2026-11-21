@@ -16,7 +16,7 @@
 //! is set once per surface and survives every reset, a different lifetime
 //! from this transient decode output, so it stays on the session.
 
-use crate::{PhraseText, PhraseToken};
+use crate::vocab::{PhraseText, PhraseToken};
 
 use crate::engine::constraint::PhraseSpan;
 use crate::engine::nbest::NbestRow;

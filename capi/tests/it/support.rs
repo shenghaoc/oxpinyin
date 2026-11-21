@@ -1,6 +1,6 @@
 //! Helpers more than one verification topic uses: the fixture handles, the
 //! scratch directories, and the abort and child-process helpers. The
-//! exported C functions and types come from the rlib's crate root.
+//! C functions and types come from the library's service and type modules.
 
 #![expect(
     clippy::undocumented_unsafe_blocks,
@@ -9,7 +9,10 @@
 
 use std::ffi::CStr;
 
-pub use oxpinyin_capi::*;
+pub use oxpinyin_capi::{
+    candidates::*, config::*, context::*, cursor::*, dict::*, instance::*, iterators::*, keys::*,
+    parse::*, phrase::*, predict::*, sentence::*, text::*, types::*, user_data::*,
+};
 
 #[path = "../../src/test_support/abi.rs"]
 mod abi;
@@ -405,7 +408,7 @@ pub(crate) fn remap_a_directory_library(site: &str) -> bool {
 ///
 /// `rendered` is NULL or a NUL-terminated string that the library returned to the caller, who owns
 /// it. The call frees it with `g_free`, so the caller does not use it again.
-pub(crate) unsafe fn take(rendered: *mut oxpinyin_capi::GChar) -> Option<String> {
+pub(crate) unsafe fn take(rendered: *mut oxpinyin_capi::types::GChar) -> Option<String> {
     if rendered.is_null() {
         return None;
     }

@@ -5,7 +5,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 
-use oxpinyin::KeyText;
+use oxpinyin::parser::KeyText;
 
 // `void *malloc(size_t)` and `void free(void *)` from the host's libc. The
 // C consumer links GLib, which itself links libc, so these symbols are already
@@ -76,7 +76,7 @@ pub(crate) use write_if_nonnull;
 /// `ptr` is NULL or a NUL-terminated string that the library returned to the caller, who owns it.
 /// The call frees it with `g_free`, so the caller does not use it again.
 #[cfg(test)]
-pub unsafe fn take_owned_cstr(ptr: *mut c_char) -> String {
+pub(crate) unsafe fn take_owned_cstr(ptr: *mut c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
@@ -124,7 +124,7 @@ fn c_arg(text: &[u8]) -> Vec<u8> {
 /// `g_strdup(text)`: the pin's duplication of a returned string. GLib
 /// allocates with `g_malloc`, so a failed allocation aborts as the pin's
 /// does. The caller owns the result and frees it with `g_free`.
-pub fn strdup(text: &str) -> *mut c_char {
+pub(crate) fn strdup(text: &str) -> *mut c_char {
     let arg = c_arg(text.as_bytes());
     // SAFETY: `arg` is NUL-terminated and outlives the call.
     unsafe { glib_sys::g_strdup(arg.as_ptr().cast()) }
@@ -137,7 +137,7 @@ pub fn strdup(text: &str) -> *mut c_char {
 /// # Safety
 ///
 /// `text` is NULL or a NUL-terminated string.
-pub unsafe fn strdup_raw(text: *const c_char) -> *mut c_char {
+pub(crate) unsafe fn strdup_raw(text: *const c_char) -> *mut c_char {
     // SAFETY: The caller guarantees `text` is NULL or NUL-terminated;
     // `g_strdup` accepts NULL.
     unsafe { glib_sys::g_strdup(text) }
@@ -147,7 +147,7 @@ pub unsafe fn strdup_raw(text: *const c_char) -> *mut c_char {
 /// (`chewing_key.cpp:47-121`): `g_strdup` of the spelling, or
 /// `g_strdup_printf` with the pin's format and arguments. GLib formats and
 /// allocates, so a failed allocation fails as the pin's does.
-pub fn key_text(text: KeyText) -> *mut c_char {
+pub(crate) fn key_text(text: KeyText) -> *mut c_char {
     match text {
         KeyText::Plain(base) => strdup(base),
         KeyText::Digit(base, tone) => {
@@ -183,7 +183,7 @@ pub fn key_text(text: KeyText) -> *mut c_char {
 /// the terminating NULL and `g_ptr_array_free(array, FALSE)`, whose
 /// segment the caller frees with `g_strfreev`. No symbol answers NULL after
 /// `g_ptr_array_free(array, TRUE)`, as the pin's `false` does.
-pub fn symbol_vector(items: &[impl AsRef<str>]) -> *mut *mut c_char {
+pub(crate) fn symbol_vector(items: &[impl AsRef<str>]) -> *mut *mut c_char {
     // SAFETY: `g_ptr_array_new` takes no arguments and aborts rather than
     // answering NULL.
     let array = unsafe { glib_sys::g_ptr_array_new() };
@@ -218,8 +218,8 @@ pub fn symbol_vector(items: &[impl AsRef<str>]) -> *mut *mut c_char {
 /// phrase and so copies the result unchanged. The phrase and the previous
 /// result are then freed (`:66-67`). GLib aborts if its own allocation
 /// fails. NULL when every conversion failed.
-pub fn sentence_text(
-    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::PhraseText>>>,
+pub(crate) fn sentence_text(
+    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::vocab::PhraseText>>>,
 ) -> *mut c_char {
     let mut result: *mut c_char = ptr::null_mut();
     for phrase in phrases {
@@ -270,7 +270,7 @@ pub fn sentence_text(
 /// another length or the bytes carry a NUL. The buffer is zeroed before
 /// `fill` sees it, so the slice it writes through is initialized memory.
 /// The caller frees the result with `g_free`.
-pub fn malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
+pub(crate) fn malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
     let Some(size) = len.checked_add(1) else {
         return ptr::null_mut();
     };
@@ -302,7 +302,7 @@ pub fn malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *m
 /// return shapes (`false` / NULL) carry no reason, and glib is already
 /// linked for the ABI's `GArray`s. A message with an interior NUL is
 /// dropped rather than truncated.
-pub fn log_warning(message: &str) {
+pub(crate) fn log_warning(message: &str) {
     let Ok(message) = CString::new(message) else {
         return;
     };
@@ -324,7 +324,7 @@ pub fn log_warning(message: &str) {
 /// `middle` is never NULL there: every walk that would leave it NULL dies
 /// first at `assert(matrix.get_column_size(offset) >= 1)` (`:3410`,
 /// `:3467`, `:3545`), which the renderers reproduce.
-pub fn strconcat_aux(prefix: &str, middle: &str, postfix: &str) -> *mut c_char {
+pub(crate) fn strconcat_aux(prefix: &str, middle: &str, postfix: &str) -> *mut c_char {
     let (prefix, middle, postfix) = (
         c_arg(prefix.as_bytes()),
         c_arg(middle.as_bytes()),
@@ -349,7 +349,7 @@ pub fn strconcat_aux(prefix: &str, middle: &str, postfix: &str) -> *mut c_char {
 /// # Safety
 ///
 /// Each argument is NULL or a NUL-terminated string.
-pub unsafe fn strconcat_pair(first: *const c_char, second: *const c_char) -> *mut c_char {
+pub(crate) unsafe fn strconcat_pair(first: *const c_char, second: *const c_char) -> *mut c_char {
     // SAFETY: The caller guarantees both are NULL or NUL-terminated; the
     // list ends with NULL, and `g_strconcat` answers NULL for a NULL first
     // argument.
@@ -360,7 +360,10 @@ pub unsafe fn strconcat_pair(first: *const c_char, second: *const c_char) -> *mu
 /// pronunciation's key strings (`pinyin.cpp:733`). The elements and the
 /// array are this call's own temporaries; only the joined string, which
 /// GLib allocates, is handed out.
-pub fn strjoinv(separator: &CStr, items: impl Iterator<Item = impl AsRef<[u8]>>) -> *mut c_char {
+pub(crate) fn strjoinv(
+    separator: &CStr,
+    items: impl Iterator<Item = impl AsRef<[u8]>>,
+) -> *mut c_char {
     let items: Vec<Vec<u8>> = items.map(|item| c_arg(item.as_ref())).collect();
     let mut array: Vec<*mut c_char> = items
         .iter()

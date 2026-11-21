@@ -2,9 +2,9 @@
 
 use crate::data::phrase_library::ChunkItem;
 
-use crate::PhraseToken;
 use crate::user::SystemLibraryRef;
 use crate::user::replay::{ReplayedLibrary, UnigramAdd};
+use crate::vocab::PhraseToken;
 
 /// The live buffer of `token`'s system library, made from `original` the
 /// first time with the total a reload left. The library is the pin's
@@ -15,7 +15,7 @@ fn library_of<'a>(
     token: PhraseToken,
     original: SystemLibraryRef<'_>,
 ) -> Option<&'a mut ReplayedLibrary> {
-    let nibble = crate::phrase_index_library_index(token);
+    let nibble = crate::vocab::phrase_index_library_index(token);
     replayed.get_or_insert_with(nibble, || {
         let mut library = ReplayedLibrary::pristine(original);
         if let Some(total) = totals.remove(&nibble) {
@@ -165,7 +165,10 @@ impl SystemItems {
         original: Option<SystemLibraryRef<'_>>,
     ) -> Option<u32> {
         let slot = token & 0x00ff_ffff;
-        match self.replayed.get(&crate::phrase_index_library_index(token)) {
+        match self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))
+        {
             Some(library) => library.unigram(slot),
             None => original?.unigram(slot),
         }
@@ -214,7 +217,7 @@ impl SystemItems {
     pub(crate) fn is_removed(&self, token: PhraseToken) -> bool {
         let slot = token & 0x00ff_ffff;
         self.replayed
-            .get(&crate::phrase_index_library_index(token))
+            .get(&crate::vocab::phrase_index_library_index(token))
             .is_some_and(|library| library.item_bytes(slot).is_none())
     }
 
@@ -238,7 +241,7 @@ impl SystemItems {
     /// kept.
     pub(crate) fn get(&self, token: &PhraseToken) -> Option<ChunkItem> {
         self.replayed
-            .get(&crate::phrase_index_library_index(*token))?
+            .get(&crate::vocab::phrase_index_library_index(*token))?
             .item(*token & 0x00ff_ffff)
     }
 
@@ -251,7 +254,7 @@ impl SystemItems {
     ) -> Option<R> {
         let library = self
             .replayed
-            .get(&crate::phrase_index_library_index(token))?;
+            .get(&crate::vocab::phrase_index_library_index(token))?;
         let bytes = library.item_bytes(token & 0x00ff_ffff)?;
         Some(read(&bytes))
     }
@@ -266,7 +269,7 @@ impl SystemItems {
     ) -> Option<Option<R>> {
         let library = self
             .replayed
-            .get(&crate::phrase_index_library_index(token))?;
+            .get(&crate::vocab::phrase_index_library_index(token))?;
         Some(
             library
                 .item_field_bytes(token & 0x00ff_ffff)
@@ -276,13 +279,13 @@ impl SystemItems {
 
     pub(crate) fn live_pronunciation_count(&self, token: PhraseToken) -> Option<u32> {
         self.replayed
-            .get(&crate::phrase_index_library_index(token))?
+            .get(&crate::vocab::phrase_index_library_index(token))?
             .pronunciation_count(token & 0x00ff_ffff)
     }
 
     pub(crate) fn live_item_is_incomplete(&self, token: PhraseToken) -> bool {
         self.replayed
-            .get(&crate::phrase_index_library_index(token))
+            .get(&crate::vocab::phrase_index_library_index(token))
             .is_some_and(|library| library.item_is_incomplete(token & 0x00ff_ffff))
     }
 
@@ -293,11 +296,11 @@ impl SystemItems {
         &mut self,
         original: Option<SystemLibraryRef<'_>>,
         token: PhraseToken,
-        readings: impl Iterator<Item = Vec<crate::ChewingKey>>,
+        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
         delta: u32,
     ) -> bool {
         // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
-        let nibble = crate::phrase_index_library_index(token);
+        let nibble = crate::vocab::phrase_index_library_index(token);
         let slot = token & 0x00ff_ffff;
         if !self.replayed.contains_key(&nibble) {
             let Some(original) = original.filter(|library| library.contains_item(slot)) else {
@@ -319,7 +322,7 @@ impl SystemItems {
     /// replayed ADD's.
     pub(crate) fn is_added(&self, token: PhraseToken) -> bool {
         self.replayed
-            .get(&crate::phrase_index_library_index(token))
+            .get(&crate::vocab::phrase_index_library_index(token))
             .is_some_and(|library| library.is_added_slot(token & 0x00ff_ffff))
     }
 
@@ -332,7 +335,7 @@ impl SystemItems {
     ) -> Option<R> {
         let library = self
             .replayed
-            .get(&crate::phrase_index_library_index(token))?;
+            .get(&crate::vocab::phrase_index_library_index(token))?;
         let slot = token & 0x00ff_ffff;
         if !library.is_added_slot(slot) {
             return None;
