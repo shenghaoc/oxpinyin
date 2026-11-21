@@ -78,7 +78,9 @@ def matches(path: str, entries: tuple[str, ...]) -> bool:
 
 # Every job reads its workflow, the actions, the toolchain and the tool configuration.
 # pyproject.toml is the uv project that every `uv run` of repository Python enters.
-SHARED = ("vcpkg-overlays", "triplets", ".github/workflows/ci.yml", ".github/actions", "rust-toolchain.toml", ".cargo",
+# No Linux job reads the vcpkg overlay or the triplets: they serve the nightly
+# macOS and Windows jobs, and the harness tests the port's files.
+SHARED = (".github/workflows/ci.yml", ".github/actions", "rust-toolchain.toml", ".cargo",
           "justfile", "uv.toml", ".python-version", "pyproject.toml")
 
 
@@ -107,7 +109,6 @@ SHIP_CRATES = ("capi", "zhuyin-capi")
 SHIP = ("src", "codegen", "build.rs", *SHIP_CRATES, "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
         "tools/dev/packaging.py",
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
-        "vcpkg-overlays", "triplets",
         "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
         ".github/workflows/ci.yml", ".github/actions")
 # The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
@@ -143,7 +144,7 @@ CI_INPUTS = {
     # examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
     # of the `changes` job, not an input here.
-    "harness": Inputs((*SHARED, "uv.lock",
+    "harness": Inputs((*SHARED, "uv.lock", "vcpkg-overlays",
                        "tools", "Cargo.toml", "Cargo.lock",
                        *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
                        "fuzz/tool-versions.env"),
@@ -182,8 +183,8 @@ def gate(base: str, inputs: dict[str, Inputs] = CI_INPUTS, root: Path | None = N
 # The store job's gate: docs/runbooks/verification.md, rule 2, as
 # tools/bisection/cells-for-diff.py implements it for local runs, plus the store
 # job's own infrastructure as --also paths: the workflow, the utilities'
-# per-cell tests and their data under utils, the backend provisioning under
-# tools/tkrzw and .github/actions/tkrzw, the sanitizer service
+# per-cell tests and their data under utils, the runtime check under
+# tools/tkrzw, the sanitizer service
 # (tools/dev/test_runner.py), the toolchain pins (the sanitizer nightly is in
 # fuzz/rust-toolchain.toml), clippy.toml (the store job runs clippy for the
 # peer backends), nextest's configuration and this gate's own code.
@@ -194,8 +195,8 @@ STORE_GATE_SCRIPT = Path(__file__).resolve().parents[1] / "bisection" / "cells-f
 STORE_GATE_ARGUMENTS = ("--run-flag", "--run-without-base", *(argument for path in (
     ".github/workflows/ci.yml", "utils/", "fixtures/w3/kct/", "fixtures/w3/db/",
     "tools/dev/ci_tree.py", "tools/dev/ci_tree.test.py", "tools/bisection/cells-for-diff.py",
-    "tools/tkrzw", ".github/actions/tkrzw", "vcpkg-overlays", "triplets", "tools/dev/check.py",
-    "tools/dev/vcpkg.py", "tools/dev/test_runner.py", "rust-toolchain.toml", "fuzz/rust-toolchain.toml",
+    "tools/tkrzw", "tools/dev/check.py",
+    "tools/dev/test_runner.py", "rust-toolchain.toml", "fuzz/rust-toolchain.toml",
     "clippy.toml", ".config/nextest.toml", "pyproject.toml") for argument in ("--also", path)))
 
 
@@ -451,7 +452,11 @@ class CompileCommand:
 
 CACHE_LANES = tuple(sorted(WORKFLOW.cached))
 # The non-default backends the store job builds with the stable toolchain.
-STORE_PEERS = ("bdb", "kyotocabinet")
+# The backend of every Linux job: the one Linux cell, Kyoto Cabinet from Ubuntu's packages
+# (LOCAL_CELL in tools/dev/cell.py; docs/runbooks/verification.md, section 10). The `rust`
+# lane selects it with the backend flag; the store job's workspace build is the remaining peer.
+LINUX_CI_BACKEND = cell.CELL_TO_BACKEND[cell.LOCAL_CELL]
+STORE_PEERS = ("bdb",)
 
 
 def refresh_commands(lane: str) -> tuple[CompileCommand, ...]:
@@ -459,9 +464,10 @@ def refresh_commands(lane: str) -> tuple[CompileCommand, ...]:
     if lane not in CACHE_LANES:
         raise ValueError("invalid cache refresh selection")
     if lane == "rust":
-        return (CompileCommand(("cargo", "clippy", "--locked", "--workspace", "--all-targets", "--", "-D", "warnings")),
-                CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests")))
-    # store: the two peer builds, in the job's order, into its one target directory.
+        flags = cell.feature_flags(LINUX_CI_BACKEND)
+        return (CompileCommand(("cargo", "clippy", "--locked", "--workspace", "--all-targets", *flags, "--", "-D", "warnings")),
+                CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests", *flags)))
+    # store: the peer build into the job's one target directory.
     return tuple(CompileCommand(("cargo", "build", "--locked", "--workspace", "--tests", *cell.feature_flags(backend)))
                  for backend in STORE_PEERS)
 

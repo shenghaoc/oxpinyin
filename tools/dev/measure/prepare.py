@@ -4,8 +4,9 @@
 callgrind-differential and system-import-profile read: oracle builds only the
 selected pin cells with tools/oracle/build.py; callgrind also builds the profiling
 and shipping arms over the pin's data. Every input is working data under the
-`measure` entry of the cache root. Linux pin preparation uses the vcpkg overlay
-tkrzw; macOS native revision builds use the host installation.
+`measure` entry of the cache root. On Linux every build uses the local cell,
+Kyoto Cabinet from the distribution (LOCAL_CELL in tools/dev/cell.py;
+docs/runbooks/setup.md#linux).
 """
 import argparse
 import contextlib
@@ -16,14 +17,13 @@ from pathlib import Path
 import shutil
 import sys
 
-from .. import vcpkg
+from .. import cell
+from ..cell import LOCAL_CELL
 from ..runners import Finished, emit
 from . import bench
 from .bench import fail
 
 DATA_SUBDIRECTORY = 'lib/libpinyin/data'
-# The name the pin's tkrzw cell needs; tools/tkrzw/runtime.py certifies the overlay's file of this name.
-TKRZW_SONAME = 'libtkrzw.so.1'
 
 
 def measure_root(env):
@@ -38,7 +38,7 @@ def pin_prefix(env, backend):
 
 
 def subject_stage(env, name):
-    """The staged cargo-c install of the subject arm NAME (tkrzw: profiled, nodebug: shipping)."""
+    """The staged cargo-c install of the subject arm NAME (the local cell: profiled, nodebug: shipping)."""
     return measure_root(env) / f'oxpinyin-{name}' / 'stage'
 
 
@@ -104,32 +104,18 @@ def prepared_pin_matches(prefix, backend):
 def build_pin(prefix, backend, extracted, work, env):
     """Build the pin's libraries and data for BACKEND into the empty PREFIX with tools/oracle/build.py.
 
-    The libraries are linked as the pin's own recipe links them, with no run path.
-    The pin's configure finds the overlay tkrzw through pkg-config, then links a bare -ltkrzw, and
-    its Makefile.am does not use TKRZW_CFLAGS, so only default compiler and linker directories
-    satisfy it. For the tkrzw cell, both build.py calls therefore get a CPATH that starts with the
-    overlay's include directory and a LIBRARY_PATH that starts with its lib directory; build.py
-    keeps both, and neither changes the compiler or linker flags.
-    build.py replaces LD_LIBRARY_PATH with the prefix's own library directories, so the tkrzw
-    cell's data generators would not find the overlay libtkrzw. For the data build only, the
-    prefix's lib directory therefore holds a symbolic link to the overlay's libtkrzw.so.1; the
-    link is removed afterwards, so the prefix holds only what build.py wrote.
+    The libraries are linked as the pin's own recipe links them, with no run path. The backend's
+    development package is the distribution's, so the pin's configure finds it on the default
+    pkg-config, include and library paths, and its data generators load the library from the
+    default loader path after build.py replaces LD_LIBRARY_PATH with the prefix's own directories.
     """
-    env = vcpkg.pin_build_environment(env, backend)
     shutil.rmtree(prefix, ignore_errors=True)
     shutil.rmtree(work, ignore_errors=True)
     prefix.parent.mkdir(parents=True, exist_ok=True)
     common = [sys.executable, bench.ROOT / 'tools/oracle/build.py', '--dbm', backend, '--enable-libzhuyin',
               '--prefix', prefix]
     bench.heavy([*common, '--libs-only', '--work-dir', work / 'libs', '--jobs', str(os.cpu_count() or 1)], env=env)
-    link = prefix / 'lib' / TKRZW_SONAME
-    if backend == 'tkrzw':
-        link.symlink_to(Path(env['OXPINYIN_TKRZW_PREFIX']) / 'lib' / TKRZW_SONAME)
-    try:
-        bench.heavy([*common, '--regen-data', '--model-dir', extracted, '--work-dir', work / 'data'], env=env)
-    finally:
-        if backend == 'tkrzw':
-            link.unlink(missing_ok=True)
+    bench.heavy([*common, '--regen-data', '--model-dir', extracted, '--work-dir', work / 'data'], env=env)
 
 
 def prepare(argv, env):
@@ -139,11 +125,12 @@ def prepare(argv, env):
     require_local_measurement(env)
     parser = argparse.ArgumentParser(prog='python -m tools.dev.measure.prepare')
     parser.add_argument('mode', choices=('oracle', 'callgrind'))
-    parser.add_argument('--cells', nargs='+', choices=('tkrzw', 'kc', 'bdb'), default=None)
+    # The one Linux measurement cell (docs/runbooks/setup.md#linux).
+    parser.add_argument('--cells', nargs='+', choices=(LOCAL_CELL,), default=None)
     args = parser.parse_args(argv)
     if args.cells is not None and args.mode != 'oracle':
         parser.error('--cells is accepted only in oracle mode')
-    cells = (args.cells or ['tkrzw', 'kc']) if args.mode == 'oracle' else ['tkrzw']
+    cells = args.cells or [LOCAL_CELL]
     extracted = model.fetch(env=env)
     for backend in cells:
         prefix = pin_prefix(env, backend)
@@ -155,10 +142,9 @@ def prepare(argv, env):
         emit(f'{backend}: pin prefix {prefix}')
     if args.mode == 'oracle':
         return 0
-    # Build and certify the Linux subject against the same overlay as the pin.
-    env = vcpkg.environment(env)
+    # Build the subject on the same cell as the pin.
     stages = {}
-    for name, debug in (('tkrzw', True), ('nodebug', False)):
+    for name, debug in ((LOCAL_CELL, True), ('nodebug', False)):
         stage = subject_stage(env, name)
         shutil.rmtree(stage, ignore_errors=True)
         build_env = dict(env, CARGO_TARGET_DIR=str(measure_root(env) / 'target' / name))
@@ -167,14 +153,14 @@ def prepare(argv, env):
         else:
             build_env.pop('RUSTFLAGS', None)
         bench.heavy(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
-                     '--no-default-features', '--features', 'tkrzw', f'--destdir={stage}',
-                     '--prefix=/usr'], env=build_env)
+                     '--no-default-features', '--features', cell.CELL_TO_BACKEND[LOCAL_CELL],
+                     f'--destdir={stage}', '--prefix=/usr'], env=build_env)
         stages[name] = stage
     harness = harness_path(env)
     harness.parent.mkdir(parents=True, exist_ok=True)
     bench.run(bench.harness_build(harness, flags=(*bench.STRICT_FLAGS, '-g')))
     from . import valgrind
-    status = valgrind.callgrind_control([str(stages['tkrzw']), str(stages['nodebug'])], env)
+    status = valgrind.callgrind_control([str(stages[LOCAL_CELL]), str(stages['nodebug'])], env)
     if status:
         raise Finished(status)
     status, report = valgrind.anchors_table(harness)
@@ -190,35 +176,35 @@ if __name__ == '__main__':
 
 
 def native_build(revision, destination, env, *, symbols=True, windows=False, linux=False):
-    """One native default-backend release build in a private invocation worktree.
+    """One native release build in a private invocation worktree.
 
-    Linux packages the shipping library as macOS does. SYMBOLS adds the
-    profiled arm's debug information; a Linux comparison builds without it.
+    macOS and Windows build Cargo's default backend: tkrzw from Homebrew, or from the vcpkg
+    overlay under VCPKG_ROOT. Linux builds the local cell, Kyoto Cabinet from the distribution,
+    and packages the shipping library as macOS does. SYMBOLS adds the profiled arm's debug
+    information; a Linux comparison builds without it.
     """
     import time
     from . import identity
     from .. import packaging
+    features = []
     if linux:
-        # The managed checkout under the cache root, or an explicit VCPKG_ROOT.
-        from .. import cell
-        triplet, installed = vcpkg.triplet(), vcpkg.prefix(env)
-        # Compilation, the loader and the libtkrzw certification all read the overlay install.
-        env = vcpkg.environment(env)
+        features = ['--no-default-features', '--features', cell.CELL_TO_BACKEND[LOCAL_CELL]]
+        if bench.capture(['pkg-config', '--exists', 'kyotocabinet'], env=env).status:
+            raise ValueError('install libkyotocabinet-dev before measuring: pkg-config finds no kyotocabinet')
     elif windows:
         if not env.get('VCPKG_ROOT'):
             raise ValueError('native measurement requires VCPKG_ROOT; see the setup runbook')
-        triplet = 'x64-windows'
-        installed = Path(env['VCPKG_ROOT']).resolve() / 'installed' / triplet
+        installed = Path(env['VCPKG_ROOT']).resolve() / 'installed/x64-windows'
     else:
         from ..provision import homebrew_tkrzw_prefix
         installed = homebrew_tkrzw_prefix(env)
-    pkgconfig = installed / 'lib/pkgconfig'
-    if not (pkgconfig / 'tkrzw.pc').is_file():
-        raise ValueError(f'missing tkrzw.pc in {pkgconfig}')
-    if linux or windows:
+    if not linux:
+        pkgconfig = installed / 'lib/pkgconfig'
+        if not (pkgconfig / 'tkrzw.pc').is_file():
+            raise ValueError(f'missing tkrzw.pc in {pkgconfig}')
+    if windows:
         env = {**env, 'PKG_CONFIG_PATH': str(pkgconfig) +
                (os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else '')}
-    if windows:
         from tools.dev.check import msvc_environment
         env = msvc_environment(env)
         env.update(PKG_CONFIG=str(installed / 'tools/pkgconf/pkgconf.exe'),
@@ -250,17 +236,18 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
             dylib = target / f'release/{library}.dll'
             uuid = identity.sha256(dylib)
         else:
-            # Use this tooling revision with each product source revision. No backend override.
+            # Use this tooling revision with each product source revision. Linux selects the local
+            # cell; macOS builds the revision's default.
             packaging.install_library(['libpinyin', '--prefix=' + str(prefix), '--',
-                                       '--locked', '--release'],
+                                       '--locked', '--release', *features],
                                       packaging.Tools(build_env, root=source))
             if linux:
                 dylib = prefix / 'lib/libpinyin.so.15.0.0'
                 uuid = identity.sha256(dylib)
-                # The linked object names the backend; it must be Cargo's declared default.
+                # The linked object names the backend; it must be the local cell.
                 backend = identity.library_backend(dylib)
-                if backend != cell.BACKEND_TO_CELL[cell.declared_default(source)]:
-                    fail('packaged library does not link the default backend: ' + backend)
+                if backend != LOCAL_CELL:
+                    fail('packaged library does not link the local backend: ' + backend)
             else:
                 dylib = prefix / 'lib/libpinyin.15.0.0.dylib'
                 uuid = identity.macho_uuid(dylib)
@@ -271,7 +258,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
                     windows=windows, import_library=import_library,
                     default_features=package['features']['default'],
                     cold_build_seconds=time.monotonic() - started,
-                    build_options={'profile': 'release', 'features': [],
+                    build_options={'profile': 'release', 'features': features[2:],
                                    'RUSTFLAGS': build_env.get('RUSTFLAGS', ''),
                                    'OXPINYIN_DSYM': build_env.get('OXPINYIN_DSYM', ''),
                                    'toolchain': build_env.get('RUSTUP_TOOLCHAIN', ''),

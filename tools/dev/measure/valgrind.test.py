@@ -6,7 +6,6 @@ neutrality comparison it calls is replaced by a fake module (it has its own test
 """
 import contextlib
 import io
-import os
 from pathlib import Path
 import signal
 import sys
@@ -18,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev import pool, slot, vcpkg
+from tools.dev import pool, slot
 from tools.dev.measure import bench, recipes, valgrind
 from tools.dev import runners
 from tools.dev.measure.fake_world import Stream, World
@@ -127,7 +126,7 @@ class AnnotateTests(World):
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
 
     def test_each_profile_is_annotated_twice_and_the_redirection_probe_is_skipped(self):
-        for name in ('callgrind.libpinyin-tkrzw.r1.out', 'callgrind.redir-probe.out', 'callgrind.oxpinyin-tkrzw.r1.out', 'other.out'):
+        for name in ('callgrind.libpinyin-kc.r1.out', 'callgrind.redir-probe.out', 'callgrind.oxpinyin-kc.r1.out', 'other.out'):
             (self.root / name).write_bytes(b'')
         calls = []
 
@@ -136,15 +135,15 @@ class AnnotateTests(World):
             return pool.Completed(0, b'annotated\n', b'')
         with mock.patch.object(bench, 'capture', capture):
             valgrind.annotate(self.root)
-        profile = self.root / 'callgrind.libpinyin-tkrzw.r1.out'
+        profile = self.root / 'callgrind.libpinyin-kc.r1.out'
         # Independent post-processing on a pool: no order between the units.
         self.assertIn(['callgrind_annotate', '--threshold=99.5', str(profile)], [command for command, _ in calls])
         self.assertIn(['callgrind_annotate', '--threshold=99.5', '--inclusive=yes', str(profile)],
                       [command for command, _ in calls])
         self.assertEqual(len(calls), 4)
         self.assertEqual({merged for _, merged in calls}, {True})
-        self.assertEqual((self.root / 'callgrind.libpinyin-tkrzw.r1.out.annotated.txt').read_bytes(), b'annotated\n')
-        self.assertTrue((self.root / 'callgrind.oxpinyin-tkrzw.r1.out.inclusive.txt').exists())
+        self.assertEqual((self.root / 'callgrind.libpinyin-kc.r1.out.annotated.txt').read_bytes(), b'annotated\n')
+        self.assertTrue((self.root / 'callgrind.oxpinyin-kc.r1.out.inclusive.txt').exists())
         self.assertFalse(list(self.root.glob('*redir-probe*.txt')))
 
     def test_a_missing_annotate_tool_is_noted_in_the_file_and_is_not_a_failure(self):
@@ -160,8 +159,8 @@ class AnnotateTests(World):
 class InterceptionTests(World):
     def setUp(self):
         super().setUp()
-        self.arm = bench.Arm('oxpinyin-tkrzw', Path('/ox/libpinyin.so'), Path('/data'), Path('/ox'))
-        self.worker = bench.Bench('just measure-callgrind-differential', {}, Path('/h/bisect'), '0', cell='tkrzw')
+        self.arm = bench.Arm('oxpinyin-kc', Path('/ox/libpinyin.so'), Path('/data'), Path('/ox'))
+        self.worker = bench.Bench('just measure-callgrind-differential', {}, Path('/h/bisect'), '0', cell='kc')
 
     def probe(self, stderr=b'', profile='', status=0, refuse=False):
         def launch(arm, mode, cycles, **options):
@@ -221,32 +220,21 @@ class DifferentialTests(World):
         self.worker_row = {}
         self.profile_total = 1000
 
-    def test_environment_report_uses_the_selected_overlay_pkg_config(self):
-        outer = self.root / 'outer-pkgconfig'
-        overlay = self.root / 'overlay'
-        for directory, version in ((outer, '1.0.32'), (overlay / 'lib/pkgconfig', '1.0.34')):
-            directory.mkdir(parents=True)
-            (directory / 'tkrzw.pc').write_text(f'Version: {version}\n')
+    def test_environment_report_records_the_distribution_kyoto_cabinet(self):
         original = bench.capture
 
         def capture(command, *, env=None, **kwargs):
-            if command == ['pkg-config', '--modversion', 'tkrzw']:
-                search = (os.environ if env is None else env)['PKG_CONFIG_PATH']
-                fixture = Path(search.split(os.pathsep)[0]) / 'tkrzw.pc'
-                version = fixture.read_text().removeprefix('Version: ')
-                return pool.Completed(0, version.encode(), b'')
+            if command == ['pkg-config', '--modversion', 'kyotocabinet']:
+                return pool.Completed(0, b'1.2.80\n', b'')
             return original(command, env=env, **kwargs)
 
         def run_recipe(argv, env):
             return recipes.run(valgrind.callgrind_differential, argv, env, pin_comparison=True)
 
-        env = dict(self.env, PKG_CONFIG_PATH=str(outer))
-        with mock.patch.dict(os.environ, {'PKG_CONFIG_PATH': str(outer)}), \
-             mock.patch.object(vcpkg, 'prefix', return_value=overlay), \
-             mock.patch.object(bench, 'capture', capture):
-            status, _, err = self.execute(run_recipe, [], env)
+        with mock.patch.object(bench, 'capture', capture):
+            status, _, err = self.execute(run_recipe, [], self.env)
         self.assertEqual(status, 0, err)
-        self.assertIn('libtkrzw: 1.0.34', (self.out / 'environment.txt').read_text().splitlines())
+        self.assertIn('libkyotocabinet: 1.2.80', (self.out / 'environment.txt').read_text().splitlines())
 
     def test_the_seven_stages_run_in_order_and_leave_their_files(self):
         status, out, err = self.execute(valgrind.callgrind_differential, [], self.env)
@@ -256,11 +244,11 @@ class DifferentialTests(World):
             '=== environment ===', '=== collection anchors ===', '=== debug-info neutrality ===',
             '=== valgrind malloc interception ===', '--- redirections naming malloc/free (from --trace-redir) ---',
             '--- objects credited in the profile ---',
-            '--- callgrind: libpinyin-tkrzw round 1 ---', '--- callgrind: oxpinyin-tkrzw round 1 ---',
-            '--- callgrind: libpinyin-tkrzw round 2 ---', '--- callgrind: oxpinyin-tkrzw round 2 ---',
+            '--- callgrind: libpinyin-kc round 1 ---', '--- callgrind: oxpinyin-kc round 1 ---',
+            '--- callgrind: libpinyin-kc round 2 ---', '--- callgrind: oxpinyin-kc round 2 ---',
             '--- timing: 2 alternating runs x 8 cycles x 1 passes ---', f'=== captures written to {self.out} ==='])
         for name in ('environment.txt', 'anchors.txt', 'debuginfo-neutrality.txt', 'malloc-interception.txt',
-                     'cg.libpinyin-tkrzw.r1.stdout', 'cg.oxpinyin-tkrzw.r2.stderr', 'hw-instructions.jsonl', 'hw-instructions.md',
+                     'cg.libpinyin-kc.r1.stdout', 'cg.oxpinyin-kc.r2.stderr', 'hw-instructions.jsonl', 'hw-instructions.md',
                      'hw.err', 'speed.jsonl', 'speed.err', 'timing.md'):
             self.assertTrue((self.out / name).exists(), name)
         self.assertEqual((self.out / 'debuginfo-neutrality.txt').read_text(), '=== debug-info neutrality ===\nPASS (a): identical .text\n')
@@ -279,12 +267,12 @@ class DifferentialTests(World):
                          ['valgrind', '--tool=callgrind', '--collect-atstart=no',
                           '--cache-sim=yes', '--branch-sim=yes', '--separate-threads=no'])
         self.assertFalse([part for part in cell if part.startswith('--toggle-collect')])
-        self.assertIn(f'--callgrind-out-file={self.out / "callgrind.libpinyin-tkrzw.r1.out"}', cell)
-        self.assertEqual((profiled[1][1], profiled[1][3], profiled[1][4]), ('libpinyin-tkrzw', '4', '1'))
+        self.assertIn(f'--callgrind-out-file={self.out / "callgrind.libpinyin-kc.r1.out"}', cell)
+        self.assertEqual((profiled[1][1], profiled[1][3], profiled[1][4]), ('libpinyin-kc', '4', '1'))
         native = [w for w in self.workers_of() if 'valgrind' not in w[6]]
         # Hardware: 2 runs x 2 cells with PERF_HW, then the timing runs.
-        self.assertEqual([w[1] for w in native], ['libpinyin-tkrzw', 'oxpinyin-tkrzw'] * 2
-                         + ['libpinyin-tkrzw', 'oxpinyin-nodebug'] * 2)
+        self.assertEqual([w[1] for w in native], ['libpinyin-kc', 'oxpinyin-kc'] * 2
+                         + ['libpinyin-kc', 'oxpinyin-nodebug'] * 2)
         self.assertEqual({w[3] for w in native}, {'8'})
         self.assertEqual(len(self.kinds('hardware')), 4)
         self.assertEqual([check[2] for check in self.kinds('check')[:3]], ['pin', 'subject', 'subject'])
@@ -326,7 +314,7 @@ class DifferentialTests(World):
         self.profile_total = 0
         status, _, err = self.execute(valgrind.callgrind_differential, [], self.env)
         self.assertEqual(status, 1)
-        self.assertIn('callgrind.libpinyin-tkrzw.r1.out counts no instructions', err)
+        self.assertIn('callgrind.libpinyin-kc.r1.out counts no instructions', err)
         self.assertFalse((self.out / 'hw-instructions.jsonl').exists())
         self.assertNotIn(('annotate', 'out'), self.log)
 
@@ -334,7 +322,7 @@ class DifferentialTests(World):
         self.worker_status = {2: 5}
         status, _, _ = self.execute(valgrind.callgrind_differential, [], self.env)
         self.assertEqual(status, 5)
-        self.assertTrue((self.out / 'cg.libpinyin-tkrzw.r1.stderr').exists())
+        self.assertTrue((self.out / 'cg.libpinyin-kc.r1.stderr').exists())
         self.assertFalse((self.out / 'hw-instructions.jsonl').exists())
         self.assertNotIn(('annotate', 'out'), self.log)
 

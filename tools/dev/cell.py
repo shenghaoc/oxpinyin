@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shlex
 import subprocess
@@ -29,6 +30,12 @@ BACKEND_TO_CELL = {backend: cell for cell, backend in CELL_TO_BACKEND.items()}
 CELLS = tuple(CELL_TO_BACKEND)
 BACKEND_FORMATS = {'bdb': 'BerkeleyDB', 'kyotocabinet': 'KyotoCabinet', 'tkrzw': 'Tkrzw'}
 BACKEND_EXTENSIONS = {'bdb': 'db', 'kyotocabinet': 'kct', 'tkrzw': 'tkt'}
+# The one Linux cell: every Linux build that runs a backend, CI included, uses Kyoto Cabinet
+# from Ubuntu's packages (docs/runbooks/setup.md#linux; docs/runbooks/verification.md,
+# section 10). Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
+# A Linux host provisions this one pin oracle cell. tkrzw is no Linux cell: Ubuntu packages
+# no sound libtkrzw. Berkeley DB stays a CI peer, tested by the store job, not a Linux host cell.
+LOCAL_CELL = 'kc'
 
 
 # The manifests that have declared the backend default, newest layout first: the library at the
@@ -63,6 +70,11 @@ def declared_default(root: Path = ROOT) -> str:
 def default_cell() -> str:
     """Return the cell name for Cargo's declared default backend."""
     return BACKEND_TO_CELL[declared_default()]
+
+
+def host_cell(root: Path = ROOT) -> str:
+    """The cell a host runs when none is selected: LOCAL_CELL on Linux, Cargo's default elsewhere."""
+    return LOCAL_CELL if platform.system() == 'Linux' else BACKEND_TO_CELL[declared_default(root)]
 
 
 def feature_flags(backend: str | None = None) -> list[str]:
@@ -180,7 +192,7 @@ class Settings:
     @classmethod
     def read(cls, environment: Mapping[str, str], root: Path = ROOT) -> 'Settings':
         root = root.resolve()
-        cell = environment.get('PINYIN_ORACLE_DBM') or BACKEND_TO_CELL[declared_default(root)]
+        cell = environment.get('PINYIN_ORACLE_DBM') or host_cell(root)
         choices = {cell: (backend, BACKEND_EXTENSIONS[backend], BACKEND_FORMATS[backend])
                    for cell, backend in CELL_TO_BACKEND.items()}
         if cell not in choices:

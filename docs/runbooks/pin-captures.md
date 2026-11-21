@@ -97,8 +97,12 @@ asks for it.
    `pin-<commit>` entry of `ROOT`; the cells are `oracle/<cell>` there, and model20 is `model20`:
 
    ```bash
-   OXPINYIN_CACHE=ROOT just provision-oracle
+   OXPINYIN_CACHE=ROOT just provision-oracle --cells 'bdb kc tkrzw'
    ```
+
+   On Linux the default is the kc cell alone ([Linux setup](setup.md#linux)); the capture needs
+   all three, which the Debian deps image builds and checks. The Linux `oracle.env` still holds
+   kc only, and no tkrzw code runs on the host.
 
    The data sequence needs a model20 extraction. `just provision-oracle` fetches it into
    the `model20-<digest>` entry of `ROOT`, as `extracted/` beside the `verified` marker

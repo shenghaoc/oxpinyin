@@ -28,7 +28,7 @@ class CampaignFixture:
         for label, name in recipes.PREFIXES.items():
             library = self.root / name / 'lib/libpinyin.so.15.0.0'
             self.arms[label] = dict(label=name, dylib=library, driver=self.root / name / 'bin/bisect',
-                                    data=self.root / 'data', backend='tkrzw')
+                                    data=self.root / 'data', backend='kc')
         self.launches = []
         self.refused = True
         self.ir = lambda label: 5000
@@ -60,7 +60,7 @@ class CampaignFixture:
     def compare(self, **options):
         args = types.SimpleNamespace(pairs=2, control_pairs=2, cycles=4, budget=180, **options)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return recipes.linux_compare(args, self.arms, {'LD_LIBRARY_PATH': '/overlay/lib'}, self.root)
+            return recipes.linux_compare(args, self.arms, {'LD_LIBRARY_PATH': '/host/lib'}, self.root)
 
 
 class LinuxCampaign(CampaignFixture, unittest.TestCase):
@@ -180,37 +180,39 @@ class LinuxPreparation(PreparationFixture, unittest.TestCase):
             recipes.native(['profile', '--template', 'Callgrind'], {})
         build.assert_not_called()
 
-    def test_the_build_is_the_packaged_default_backend_from_the_overlay(self):
-        from tools.dev import cell, vcpkg
+    def test_the_build_is_the_local_cell_from_the_distribution(self):
         def metadata(root, env=None):
             return capi_metadata(root, features={'default': ['declared']})
+        answer = {'status': 1}
+
+        def capture(command, **kwargs):
+            self.assertEqual(command, ['pkg-config', '--exists', 'kyotocabinet'])
+            return mock.Mock(status=answer['status'])
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(bench, 'run'), \
+             mock.patch.object(bench, 'capture', side_effect=capture), \
              mock.patch('tools.dev.packaging.cargo_metadata', side_effect=metadata), \
              mock.patch('tools.dev.packaging.install_library') as install, \
              mock.patch.object(identity, 'sha256', return_value='digest'), \
-             mock.patch.object(cell, 'declared_default', return_value='tkrzw'), \
-             mock.patch.object(vcpkg, 'triplet', return_value='x64-linux-oxpinyin'), \
-             mock.patch.object(identity, 'library_backend', return_value='tkrzw') as backend:
-            env = dict(VCPKG_ROOT=directory, RUSTFLAGS='bad', CARGO_PROFILE_RELEASE_DEBUG='2', OXPINYIN_DSYM='1')
-            installed = Path(directory).resolve() / 'installed/x64-linux-oxpinyin'
-            with self.assertRaisesRegex(ValueError, 'missing tkrzw.pc in .*installed/x64-linux-oxpinyin/lib/pkgconfig'):
+             mock.patch.object(identity, 'library_backend', return_value='kc') as backend:
+            env = dict(RUSTFLAGS='bad', CARGO_PROFILE_RELEASE_DEBUG='2', OXPINYIN_DSYM='1', PKG_CONFIG_PATH='/other')
+            with self.assertRaisesRegex(ValueError, 'install libkyotocabinet-dev before measuring'):
                 prepare.native_build('a' * 40, Path(directory) / 'none', env, linux=True, symbols=False)
             install.assert_not_called()
-            (installed / 'lib/pkgconfig').mkdir(parents=True)
-            (installed / 'lib/pkgconfig/tkrzw.pc').touch()
+            answer['status'] = 0
             arm = prepare.native_build('a' * 40, Path(directory) / 'plain', env, linux=True, symbols=False)
             arguments, tools = install.call_args.args
-            self.assertEqual(arguments[2:], ['--', '--locked', '--release'])
-            for name in ('RUSTFLAGS', 'CARGO_PROFILE_RELEASE_DEBUG', 'OXPINYIN_DSYM'):
+            self.assertEqual(arguments[2:], ['--', '--locked', '--release',
+                                             '--no-default-features', '--features', 'kyotocabinet'])
+            for name in ('RUSTFLAGS', 'CARGO_PROFILE_RELEASE_DEBUG', 'OXPINYIN_DSYM', 'OXPINYIN_TKRZW_PREFIX'):
                 self.assertNotIn(name, tools.env)
-            self.assertTrue(tools.env['PKG_CONFIG_PATH'].startswith(str(installed / 'lib/pkgconfig')))
-            self.assertEqual(tools.env['OXPINYIN_TKRZW_PREFIX'], str(installed))
+            self.assertEqual(tools.env['PKG_CONFIG_PATH'], '/other')
             self.assertEqual((arm['dylib'].name, arm['uuid'], arm['backend'], arm['linux']),
-                             ('libpinyin.so.15.0.0', 'digest', 'tkrzw', True))
+                             ('libpinyin.so.15.0.0', 'digest', 'kc', True))
+            self.assertEqual(arm['build_options']['features'], ['kyotocabinet'])
             prepare.native_build('a' * 40, Path(directory) / 'profiled', env, linux=True)
             self.assertEqual(install.call_args.args[1].env['RUSTFLAGS'], '-Cdebuginfo=1 -Cstrip=none')
             self.assertNotIn('OXPINYIN_DSYM', install.call_args.args[1].env)
-            backend.return_value = 'bdb'
+            backend.return_value = 'tkrzw'
             with self.assertRaises(Finished):
                 prepare.native_build('a' * 40, Path(directory) / 'other', env, linux=True)
 
@@ -237,7 +239,7 @@ class LinuxPreparation(PreparationFixture, unittest.TestCase):
 
 
 if sys.platform == 'linux':
-    # These read Callgrind profiles by their Linux paths and select the host's overlay triplet.
+    # These read Callgrind profiles by their Linux paths and run the Linux cell's arms.
     class LinuxCallgrindCampaign(CampaignFixture, unittest.TestCase):
         """The Callgrind pass of the runner, which parses a profile written for Linux paths."""
 
@@ -252,8 +254,8 @@ if sys.platform == 'linux':
             self.assertEqual((native[1]['PERF_MODE'], native[1]['PERF_WORKLOAD_CHECKSUM'], native[2]), ('rss-diag', '1', False))
             # The existing launcher: pinned to the first allowed CPU, the arm's directory first on the loader path.
             self.assertEqual(native[0][:3], ['taskset', '-c', '3'])
-            self.assertEqual(native[1]['LD_LIBRARY_PATH'], str(self.arms['A']['dylib'].parent) + ':/overlay/lib')
-            self.assertIn(('tkrzw', str(self.arms['A']['dylib']), native[1]['LD_LIBRARY_PATH']), self.guarded)
+            self.assertEqual(native[1]['LD_LIBRARY_PATH'], str(self.arms['A']['dylib'].parent) + ':/host/lib')
+            self.assertIn(('kc', str(self.arms['A']['dylib']), native[1]['LD_LIBRARY_PATH']), self.guarded)
             # No --toggle-collect: the anchor's own client requests bracket the count, and a toggle would invert it.
             self.assertEqual(profiled[0][3:9], ['valgrind', '--tool=callgrind', '--collect-atstart=no', '--cache-sim=no',
                                                 '--branch-sim=no', '--separate-threads=no'])
@@ -276,7 +278,7 @@ if sys.platform == 'linux':
 
 
     class LinuxStaging(PreparationFixture, unittest.TestCase):
-        """The native recipe up to staging, which selects the Linux overlay triplet of this host."""
+        """The native recipe up to staging, on the Linux cell."""
 
         def test_one_plain_build_and_three_identical_prefixes_of_one_length(self):
             from tools.dev import contract_data
@@ -289,7 +291,7 @@ if sys.platform == 'linux':
                         library = destination / 'prefix/lib/libpinyin.so.15.0.0'
                         library.parent.mkdir(parents=True)
                         library.write_bytes(b'product')
-                        return dict(revision=sha, dylib=library, uuid='hash', linux=True, backend='tkrzw')
+                        return dict(revision=sha, dylib=library, uuid='hash', linux=True, backend='kc')
 
                     def driver(arm, output, env):
                         output.write_bytes(b'driver')
@@ -312,7 +314,7 @@ if sys.platform == 'linux':
                          mock.patch.object(recipes, 'linux_profile', side_effect=measure):
                         argv = ([mode, '--base', 'HEAD', '--head', 'HEAD'] if mode == 'compare'
                                 else [mode, '--template', 'Massif']) + ['--data', directory]
-                        env = dict(OXPINYIN_CACHE=directory, VCPKG_ROOT=directory + '/vcpkg')
+                        env = dict(OXPINYIN_CACHE=directory, PATH='/bin')
                         if isinstance(outcome, Exception):
                             with self.assertRaises(ValueError):
                                 self.native(argv, env)
@@ -329,12 +331,56 @@ if sys.platform == 'linux':
                                      [recipes.PREFIXES[label] for label in staged])
                     for path, _, executable, _ in staged.values():
                         self.assertEqual(executable, path.parents[1] / 'bin/bisect')
-                    # Every launch reads the overlay install; the build tree is removed either way.
-                    installed = Path(directory).resolve() / 'vcpkg/installed'
-                    self.assertTrue(environments[0]['OXPINYIN_TKRZW_PREFIX'].startswith(str(installed)))
-                    self.assertTrue(environments[0]['LD_LIBRARY_PATH'].startswith(str(installed)))
+                    # Every launch runs in the caller's environment: the local cell comes from the
+                    # distribution. The build tree is removed either way.
+                    self.assertEqual(environments[0]['OXPINYIN_CACHE'], directory)
+                    self.assertNotIn('OXPINYIN_TKRZW_PREFIX', environments[0])
+                    self.assertNotIn('LD_LIBRARY_PATH', environments[0])
                     self.assertFalse(destinations[0][0].parent.exists())
                     self.assertTrue(destinations[0][0].parent.parent.is_dir(), 'retain session output')
+
+        def test_the_linux_arms_read_the_prepared_host_cell_data(self):
+            # Debian's libpinyin-data is tkrzw data; the Linux arms read the pin data that
+            # `prepare oracle` wrote for the host's cell (tools/dev/cell.py).
+            from tools.dev import cell, contract_data
+            with tempfile.TemporaryDirectory() as directory:
+                received = []
+
+                def build(sha, destination, env, **options):
+                    library = destination / 'prefix/lib/libpinyin.so.15.0.0'
+                    library.parent.mkdir(parents=True)
+                    library.write_bytes(b'product')
+                    return dict(revision=sha, dylib=library, uuid='hash', linux=True, backend='kc')
+
+                def driver(arm, output, env):
+                    output.write_bytes(b'driver')
+                    return identity.sha256(output)
+
+                def measure(args, arms, env, output):
+                    received.extend(arm['data'] for arm in arms.values())
+                    return 0
+                env = dict(OXPINYIN_CACHE=directory, PATH='/bin')
+                prepared = prepare.pin_prefix(env, 'kc') / prepare.DATA_SUBDIRECTORY
+                argv = ['compare', '--base', 'HEAD', '--head', 'HEAD']
+                with mock.patch.object(bench, 'capture', return_value=types.SimpleNamespace(status=0, stdout=b'a' * 40 + b'\n')), \
+                     mock.patch.object(identity, 'first_output_line', return_value='tool 1.0'), \
+                     mock.patch.object(prepare, 'native_build', side_effect=build) as builds, \
+                     mock.patch.object(prepare, 'native_driver', side_effect=driver) as drivers, \
+                     mock.patch.object(contract_data, 'fetch') as fetch, \
+                     mock.patch.object(contract_data, 'data_identity', return_value='data'), \
+                     mock.patch.object(cell.platform, 'system', return_value='Linux'), \
+                     mock.patch.object(recipes, 'linux_compare', side_effect=measure):
+                    # Without the prepared data the recipe refuses before any revision or driver build.
+                    with self.assertRaisesRegex(ValueError, 'no prepared kc pin data'):
+                        self.native(argv, env)
+                    builds.assert_not_called()
+                    drivers.assert_not_called()
+                    self.assertEqual(received, [])
+                    prepared.mkdir(parents=True)
+                    (prepared / 'table.conf').write_text('fixture\n')
+                    self.assertEqual(self.native(argv, env), 0)
+                fetch.assert_not_called()
+                self.assertEqual(set(received), {prepared})
 
 
 if __name__ == '__main__':

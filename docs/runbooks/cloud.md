@@ -68,12 +68,12 @@ it must install.
 
 ## Setup command
 
-Workspace tests in a cloud session need the tkrzw vcpkg overlay installed
-and its paths exported as [Linux setup](setup.md#linux) describes. `just provision`
-installs it ([step 3b](#what-it-does)); the environment file of `just provision-oracle`
-also exports its paths. The Debian packages
+Workspace tests in a cloud session run on the Linux local cell, Kyoto Cabinet from
+the distribution ([Linux setup](setup.md#linux)): `cargo nextest run --workspace
+--no-default-features --features kyotocabinet`. `just provision` checks its
+development package ([step 3b](#what-it-does)). The Debian packages
 `build-essential curl zip unzip tar gzip ca-certificates git pkg-config cmake
-ninja-build` must be installed first. GLib stays on the system.
+ninja-build libkyotocabinet-dev kyotocabinet-utils` must be installed first. GLib stays on the system.
 
 **Native provisioning.** From the repository root, run these two commands. They are the
 same in sh, zsh and pwsh:
@@ -86,7 +86,7 @@ just provision
 The first installs the interpreter that `.python-version` names, and does nothing
 when it is present. The second runs `tools.dev.provision` in that interpreter.
 It checks Cargo, the repository toolchain and, on Linux, Valgrind; keeps or installs the
-development tools (`--dev-tools` below); installs tkrzw through the vcpkg overlay on Linux;
+development tools (`--dev-tools` below); checks Kyoto Cabinet's development package on Linux;
 and prints the ext4 path report. It starts no container, reads no oracle and does not write
 the environment file. Both commands must run from the repository root, where uv finds
 `.python-version` and `uv.toml` and Python finds `tools`.
@@ -144,7 +144,7 @@ libraries, model data or the oracle environment file. On a host that has
 or `--no-pull`; these options fail with exit 2 before
 provisioning. For concurrent worktrees, `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR` can select task-owned interpreter and download-cache locations.
 
-To provision the development tools without the Rust, Valgrind and tkrzw steps,
+To provision the development tools without the Rust, Valgrind and Kyoto Cabinet steps,
 use `--dev-tools` in place of `--python-only`.
 
 ### The environment file
@@ -158,8 +158,7 @@ The file names every cell of the provisioning cache that passes the checks below
 Every run rewrites the file. A runner sources it first:
 
 ```sh
-. "$(just cache-root)/oracle.env"                       # reference cell, tkrzw
-PINYIN_ORACLE_DBM=kc . "$(just cache-root)/oracle.env"  # another cell
+. "$(just cache-root)/oracle.env"   # the Linux cell, kc
 ```
 
 The file also keeps the cells of other caches that the
@@ -171,19 +170,19 @@ existing file names, if their saved prefixes still pass two checks:
 A cell that fails
 either check is removed, with one diagnostic that names the cell and the check.
 The file contains the verified retained cells and the verified cells of this cache, also
-when they use different cache directories. A retained tkrzw cell also
-keeps its local runtime paths. Setup publishes the complete file with an
-atomic rename.
+when they use different cache directories. The cell is the one Linux cell, kc
+([Linux setup](setup.md#linux)): a Linux host provisions no other cell, and an earlier file's
+bdb or tkrzw entry is dropped. Setup publishes the complete file with an atomic rename.
 
 The file exports:
 
-- for each provisioned cell `<C>` in `BDB`, `KC`, `TKRZW`:
+- for the provisioned cell `<C>`, `KC`:
   `OXPINYIN_ORACLE_PREFIX_<C>` (the oracle prefix) and
   `OXPINYIN_ORACLE_DATA_<C>` (its `lib/libpinyin/data`);
 - `PINYIN_MODEL_DIR` (the extracted model20 cache);
 - for the cell that
-  `PINYIN_ORACLE_DBM` names (the value of the caller, else `tkrzw`, else the first
-  provisioned cell): `PINYIN_ORACLE_PREFIX` and `OXPINYIN_LIBPINYIN_DATA_DIR`.
+  `PINYIN_ORACLE_DBM` names (the value of the caller, else `kc`, the Linux cell):
+  `PINYIN_ORACLE_PREFIX` and `OXPINYIN_LIBPINYIN_DATA_DIR`.
   These two are computed again each time the file is sourced.
 
 A cell that the setup did not
@@ -226,10 +225,12 @@ also when `PINYIN_ORACLE_DBM` is unset, `bdb` or `kc`.
 native gates and compatibility recipes share it. The reference images
 keep their environment-only shell check and do not receive `tools.dev`.
 
-The environment writer exports `OXPINYIN_TKRZW_LIBRARY`: the
-exact canonical library that setup verified. A healthy host uses the
-`probe_host` result; an unhealthy host uses the provisioned cache.
-When `OXPINYIN_TKRZW_LIBRARY` is unset, the check takes the library under
+On Linux no object resolves `libtkrzw`: the host runs Kyoto Cabinet only
+([Linux setup](setup.md#linux)), the environment file names no tkrzw runtime, and the
+check refuses any arm that resolves one. The runtimes it certifies are the macOS Homebrew
+install (`OXPINYIN_TKRZW_PREFIX`, set by the host probe), the Windows vcpkg install, and the
+library the Debian containers name in `OXPINYIN_TKRZW_LIBRARY` (release staging and the pin
+capture image). When `OXPINYIN_TKRZW_LIBRARY` is unset, the check takes the library under
 `OXPINYIN_TKRZW_PREFIX`, or else under the first entry of `OXPINYIN_TKRZW_PREFIXES`.
 No implicit home cache or arbitrary system prefix is
 trusted. Alternate caches are selected through their generated environment files.
@@ -257,8 +258,8 @@ These rules apply:
 - Any other launched file is
   checked as itself, so a file that the resolver cannot read is refused.
 
-A pin comparison runs with the vcpkg overlay install first: its preparation links the pin and the
-subject against that `libtkrzw`, and the same check certifies both arms against it
+A pin comparison runs on the Linux cell, Kyoto Cabinet: neither arm resolves a libtkrzw,
+and the same check still runs on every launch and refuses an arm that does
 ([where measurements run](benches.md#where-measurements-run)).
 Installing uv does not establish trust in a runtime.
 
@@ -279,7 +280,7 @@ the same implementation. A refusal is a failed run, never MATCH or SKIP.
 The loader fixtures run with:
 
 ```sh
-uv run --managed-python python -B -X utf8 tools/tkrzw/runtime.test.py
+just test-tools tools/tkrzw/runtime.test.py
 ```
 
 ## What it does
@@ -316,7 +317,9 @@ steps 1 to 4 in `provision oracle`, then step 5 in `provision oracle-env`.
    (`debian:testing`, deliberately unpinned) only when an
    uncached local fallback build needs it. Published artifacts and cached stages
    avoid that pull. Registry retries back off for 2, 4, 8 and 16 s.
-3. Gets the libraries for bdb, kc and tkrzw for the host platform, linux/amd64 or linux/arm64.
+3. Gets the libraries of the requested cells for the host platform, linux/amd64 or linux/arm64:
+   on Linux the one Linux cell, kc, by default; a [pin capture](pin-captures.md) names the
+   others with `--cells`, and their prefixes are built and checked in the Debian deps image.
    Each prefix records their built hashes and installed versions.
    - If `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
      `<tag>-arm64` for arm64, setup pulls it and copies the cells out of it.
@@ -354,19 +357,11 @@ steps 1 to 4 in `provision oracle`, then step 5 in `provision oracle-env`.
    `oracle/<cell>`, `build/<cell>` and `data-<cell>`. On rootful Docker they run as the invoking
    user, so the cache stays theirs.
 
-   3b. Linux only, in `just provision`: installs tkrzw through the repository's vcpkg overlay.
-   macOS and Windows load the oracle only in containers and skip this step.
-   - Uses `VCPKG_ROOT`, or bootstraps a checkout under `<root>/vcpkg`. An
-     existing checkout stays unchanged: vcpkg installs tkrzw with the
-     repository overlay ports and triplets, and classic-mode
-     `vcpkg upgrade tkrzw:<triplet> --no-dry-run --classic` replaces an outdated
-     installed version.
-   - Installs `tkrzw:x64-linux-oxpinyin`, with binaries cached under
-     `<root>/vcpkg-binary-cache` unless `VCPKG_BINARY_SOURCES` is configured.
-     The port alone reads `vcpkg-overlays/tkrzw/pin.json`.
-   - Certifies the installed utility against the installed `libtkrzw.so.1` with
-     `tools/tkrzw/runtime.py`. Step 5 certifies the oracle library against it.
-   - Every invocation runs vcpkg install; its ABI checks decide cache reuse.
+   3b. Linux only, in `just provision`: requires Kyoto Cabinet's development package, the
+   Linux cell ([Linux setup](setup.md#linux)). `pkg-config --modversion kyotocabinet`
+   must answer; as root the step installs `libkyotocabinet-dev` with apt, and an ordinary
+   account is told the command. macOS certifies Homebrew's tkrzw instead ([macOS setup](setup.md#macos));
+   Windows loads the oracle only in containers and skips this step.
 4. Uses model20, which the model fetch (`tools/dev/model.py`) got early into
    `<root>/model20-<digest>`. It runs `build.py --regen-data` for each cell inside
    the image, and verifies the installed files again with the shared
@@ -374,17 +369,14 @@ steps 1 to 4 in `provision oracle`, then step 5 in `provision oracle-env`.
    staging area and published with its own manifest hashes. Reuse checks these
    recorded hashes and every listed file. The repository pin freezes no generated output.
    `provision oracle` then prints the per-cell lines.
-5. `provision oracle-env`, on Linux only, checks every cell in the provisioning cache with the
-   [data verification](#data-verification). It certifies the tkrzw cell's oracle library against
-   the vcpkg install of step 3b, rewrites the `.pc` files of the verified prefixes to the host
-   location and writes the environment file above, with `PKG_CONFIG_PATH`, `LD_LIBRARY_PATH`, the
-   utility `PATH` and `OXPINYIN_TKRZW_PREFIX` for that install. With no verified cell it fails
-   and writes nothing. On macOS and Windows the host loads no oracle, so it writes neither.
+5. `provision oracle-env`, on Linux only, checks every Linux cell in the provisioning cache with the
+   [data verification](#data-verification), rewrites the `.pc` files of the verified prefixes to
+   the host location and writes the environment file above. With no verified cell it fails and
+   writes nothing. On macOS and Windows the host loads no oracle, so it writes neither.
 
 These host steps run only on Linux, and macOS and Windows
-skip them: the Valgrind check and apt install, the apt install of the dump
-utilities, the start of `dockerd`, the ext4 report, the host libtkrzw check,
-the `.pc` rewrite and the environment file.
+skip them: the Valgrind check and apt install, the Kyoto Cabinet check, the apt install of the dump
+utilities, the start of `dockerd`, the ext4 report, the `.pc` rewrite and the environment file.
 
 ### How containers get out
 

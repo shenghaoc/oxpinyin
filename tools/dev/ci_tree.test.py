@@ -449,11 +449,15 @@ class SelectedLaneEvidenceTests(unittest.TestCase):
 class RefreshTests(unittest.TestCase):
     def test_each_cache_lane_keeps_its_compile_selections(self):
         self.assertEqual(ci_tree.CACHE_LANES, tuple(sorted(PROFILE.cached)))
+        # The rust lane compiles under the Linux cell, Kyoto Cabinet (tools/dev/cell.py, verification §10).
+        self.assertEqual(ci_tree.LINUX_CI_BACKEND, 'kyotocabinet')
         self.assertEqual([command.argv for command in ci_tree.refresh_commands('rust')],
-                         [('cargo', 'clippy', '--locked', '--workspace', '--all-targets', '--', '-D', 'warnings'),
-                          ('cargo', 'build', '--locked', '--workspace', '--tests')])
+                         [('cargo', 'clippy', '--locked', '--workspace', '--all-targets',
+                           '--no-default-features', '--features', 'kyotocabinet', '--', '-D', 'warnings'),
+                          ('cargo', 'build', '--locked', '--workspace', '--tests',
+                           '--no-default-features', '--features', 'kyotocabinet')])
         store = [command.argv for command in ci_tree.refresh_commands('store')]
-        self.assertEqual([argv[argv.index('--features') + 1] for argv in store], ['bdb', 'kyotocabinet'])
+        self.assertEqual([argv[argv.index('--features') + 1] for argv in store], ['bdb'])
         for argv in store:
             self.assertEqual(argv[:5], ('cargo', 'build', '--locked', '--workspace', '--tests'))
             self.assertIn('--no-default-features', argv)
@@ -581,11 +585,12 @@ class GateTests(unittest.TestCase):
 
     def test_paths_select_the_jobs_that_read_them(self):
         cases = {
-            'vcpkg-overlays/tkrzw/pin.json': {'rust', 'harness', 'ship'},
-            'vcpkg-overlays/tkrzw/vcpkg.json': {'rust', 'harness', 'ship'},
-            'vcpkg-overlays/tkrzw/portfile.cmake': {'rust', 'harness', 'ship'},
-            'vcpkg-overlays/tkrzw/CMakeLists.txt': {'rust', 'harness', 'ship'},
-            'vcpkg-overlays/tkrzw/usage': {'rust', 'harness', 'ship'},
+            # The overlay port serves the nightly macOS and Windows jobs; the harness tests its files.
+            'vcpkg-overlays/tkrzw/pin.json': {'harness'},
+            'vcpkg-overlays/tkrzw/vcpkg.json': {'harness'},
+            'vcpkg-overlays/tkrzw/portfile.cmake': {'harness'},
+            'vcpkg-overlays/tkrzw/CMakeLists.txt': {'harness'},
+            'vcpkg-overlays/tkrzw/usage': {'harness'},
             'docs/note.md': set(),
             'docs/findings/compatibility-policy.md': set(),
             'AGENTS.md': set(),
@@ -639,7 +644,8 @@ class GateTests(unittest.TestCase):
             # the harness.
             'uv.lock': {'rust', 'harness'},
             'justfile': {'rust', 'harness', 'ship'},
-            'triplets/x64-linux-oxpinyin.cmake': {'rust', 'harness', 'ship'},
+            # No Linux job reads a triplet.
+            'triplets/arm64-osx-oxpinyin.cmake': set(),
             '.github/actions/bootstrap/action.yml': {'rust', 'harness', 'ship'},
             '.github/workflows/ci.yml': {'rust', 'harness', 'ship'},
             'scripts/new.sh': set(),

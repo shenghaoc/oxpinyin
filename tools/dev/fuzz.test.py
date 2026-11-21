@@ -129,6 +129,15 @@ class CorpusTests(unittest.TestCase):
                          {'afl_version': '++4.40c', 'execs_done': '807', 'command_line': 'a -- b'})
 
 
+class BackendTests(unittest.TestCase):
+    def test_a_target_builds_the_hosts_cell(self):
+        from tools.dev import cell
+        with mock.patch.object(cell.platform, 'system', return_value='Linux'):
+            self.assertEqual(fuzz.backend_flags(), ['--no-default-features', '--features', 'kyotocabinet'])
+        with mock.patch.object(cell.platform, 'system', return_value='Darwin'):
+            self.assertEqual(fuzz.backend_flags(), ['--no-default-features', '--features', 'tkrzw'])
+
+
 class ToolsRuleTests(unittest.TestCase):
     def setUp(self):
         self.data = Path(tempfile.mkdtemp())

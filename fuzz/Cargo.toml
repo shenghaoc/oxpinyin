@@ -23,14 +23,27 @@ doc = false
 [profile.release]
 panic = "abort"
 
+# One store backend per build, as in the library (its [features] states the
+# model). Each feature forwards to the library and the C API crate, so a
+# target's user store, data readers and facade all use the selected backend.
+# The default follows the library's. `just fuzz` builds the host's cell
+# (tools/dev/cell.py), and the CI compile check selects the Linux cell with
+# `--no-default-features --features kyotocabinet` (docs/runbooks/verification.md,
+# section 10).
+[features]
+default = ["tkrzw"]
+bdb = ["oxpinyin/bdb", "oxpinyin-capi/bdb"]
+kyotocabinet = ["oxpinyin/kyotocabinet", "oxpinyin-capi/kyotocabinet"]
+tkrzw = ["oxpinyin/tkrzw", "oxpinyin-capi/tkrzw"]
+
 [dependencies]
 # test-hooks: the test-only library items the targets read.
-oxpinyin = { path = "..", features = ["test-hooks"] }
+oxpinyin = { path = "..", default-features = false, features = ["test-hooks"] }
 # dict-loader: hostile bytes through the system chunk loader.
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
 # and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
-oxpinyin-capi = { path = "../capi", features = ["fuzz-api"] }
+oxpinyin-capi = { path = "../capi", default-features = false, features = ["fuzz-api"] }
 tempfile = "3.27"
 
 [[bin]]

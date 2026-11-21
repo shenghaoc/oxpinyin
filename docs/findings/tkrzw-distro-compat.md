@@ -2,13 +2,15 @@
 
 Status: **reference** (the mechanism and the per-distro matrix).
 
-tkrzw is oxpinyin's default backend and reference cell. Linux and Windows
-development builds and CI install the repository's vcpkg overlay port
-(tkrzw 1.0.34, `9ee8416`; the revision is in `vcpkg-overlays/tkrzw/pin.json`):
-Linux jobs through `.github/actions/tkrzw`, Windows through `tools.dev.vcpkg`.
-macOS uses [Homebrew](../runbooks/setup.md#macos). Debian release
-packaging (`release-packages.yml` installs `libtkrzw-dev`), shipping-size
-measurements and oracle/reference images use Debian's library. The
+tkrzw is oxpinyin's default backend and reference cell. Windows development
+builds and CI install the repository's vcpkg overlay port (tkrzw 1.0.34,
+`9ee8416`; the revision is in `vcpkg-overlays/tkrzw/pin.json`) through
+`tools.dev.vcpkg`. macOS uses [Homebrew](../runbooks/setup.md#macos). Linux
+runs no tkrzw code because of the defects below: every Linux build, CI
+included, uses Kyoto Cabinet ([Linux setup](../runbooks/setup.md#linux),
+[verification rule 10.2](../runbooks/verification.md#10-ci-merge-conditions)).
+Debian release packaging (`release-packages.yml` installs `libtkrzw-dev`) and
+oracle/reference images use Debian's library, in their own containers. The
 [verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)
 states how to run against a sound library and how to triage a failing save.
 

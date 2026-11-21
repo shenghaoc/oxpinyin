@@ -257,6 +257,9 @@ SANITIZER_NAMES = ('address', 'thread', 'leak', 'memory')
 SANITIZER_BACKENDS = cell.CELLS
 SANITIZE_USAGE = ('usage: just sanitize [--check] <bdb|kc|tkrzw|all> '
                   '[address|thread|leak|memory]\n')
+# Linux runs no tkrzw code (tools/dev/cell.py): `all` means the Linux cell there; the CI store
+# job names its Berkeley DB gate explicitly.
+TKRZW_NOT_LINUX = 'tkrzw is no Linux cell: Linux uses Kyoto Cabinet (docs/runbooks/setup.md#linux)'
 
 
 @dataclass(frozen=True)
@@ -452,38 +455,29 @@ def _run_kc(backend, sanitizer, *, environment, out, err, tools, host_os, nightl
 
 
 def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target,
-               check_object=None, caller_directory=None):
+               check_object=None):
     display = backend.display[sanitizer]
+    if host_os != 'Darwin':
+        # tkrzw is no Linux cell (tools/dev/cell.py): Linux runs no tkrzw code.
+        print(f'ERROR: {TKRZW_NOT_LINUX}; the sanitizer gate did NOT run.', file=err, flush=True)
+        return 1
     child = _sanitizer_options(backend, sanitizer, host_os, environment)
-    if host_os == 'Darwin':
-        # The just recipe's search paths serve Berkeley DB and Kyoto Cabinet.
-        # tkrzw and its compression libraries are found through pkg-config.
-        for name in ('LIBRARY_PATH', 'CPATH', 'PKG_CONFIG_PATH', 'PKG_CONFIG_LIBDIR',
-                     'OXPINYIN_TKRZW_LIBRARY', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
-            child.pop(name, None)
+    # The just recipe's search paths serve Berkeley DB and Kyoto Cabinet. tkrzw
+    # and its compression libraries are found through pkg-config, and the gate
+    # certifies Homebrew's library by the loader of its utility.
+    for name in ('LIBRARY_PATH', 'CPATH', 'PKG_CONFIG_PATH', 'PKG_CONFIG_LIBDIR',
+                 'OXPINYIN_TKRZW_LIBRARY', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
+        child.pop(name, None)
     child['RUSTFLAGS'] = backend.flags[sanitizer]
-    if caller_directory is not None and child.get('LD_LIBRARY_PATH'):
-        from .cell import library_path
-        inherited = library_path(child['LD_LIBRARY_PATH'], caller_directory)
-        if inherited:
-            child['LD_LIBRARY_PATH'] = inherited
-    if not (child.get('OXPINYIN_TKRZW_LIBRARY') or child.get('OXPINYIN_TKRZW_PREFIX')
-            or child.get('OXPINYIN_TKRZW_PREFIXES')):
-        try:
-            host_library = tools.tkrzw_host(environment=child)
-        except native.NativeRefused:
-            print('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', file=err, flush=True)
-            advice = ('Install tkrzw with Homebrew.' if host_os == 'Darwin' else
-                      'Install the overlay port and set VCPKG_ROOT, or source the cloud environment.')
-            print('  ' + advice,
-                  file=err, flush=True)
-            return 1
-        child['OXPINYIN_TKRZW_LIBRARY'] = str(host_library)
+    try:
+        host_library = tools.tkrzw_host(environment=child)
+    except native.NativeRefused:
+        print('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', file=err, flush=True)
+        print('  Install tkrzw with Homebrew.', file=err, flush=True)
+        return 1
+    child['OXPINYIN_TKRZW_LIBRARY'] = str(host_library)
     command = _cargo_test(backend, nightly, target)
     build = _cargo_test(backend, nightly, target, ('test',))
-    if platform.system() == 'Linux' and sanitizer == 'address':
-        command = ['setarch', platform.machine(), '-R', *command]
-        build = ['setarch', platform.machine(), '-R', *build]
     print(f'--- building the tkrzw feature tests under {display} ---', file=out, flush=True)
     result = _launch(tools, [*build, '--no-run', '--message-format=json-render-diagnostics'],
                      environment=child, err=err, stdout=subprocess.PIPE, stderr=None)
@@ -539,8 +533,6 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
                     '-p', 'oxpinyin-capi', '-p', 'oxzhuyin-capi',
                     '--no-default-features', '--features', backend.feature,
                     '--lib', '-E', 'test(outlives_context)']
-        if platform.system() == 'Linux':
-            lifetime = ['setarch', platform.machine(), '-R', *lifetime]
         result = _launch(tools, lifetime, environment=child, err=err,
                          stdout=None, stderr=None)
         if result.returncode:
@@ -549,8 +541,7 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
     return 0
 
 
-def _run_sanitizer_backend(backend, sanitizer, *, environment, out, err, tools,
-                           host_os, caller_directory=None):
+def _run_sanitizer_backend(backend, sanitizer, *, environment, out, err, tools, host_os):
     """Run one backend's sanitizer gate and return its shell-style status."""
     if sanitizer not in backend.flags:
         print(f'unknown sanitizer: {sanitizer}', file=err, flush=True)
@@ -570,12 +561,10 @@ def _run_sanitizer_backend(backend, sanitizer, *, environment, out, err, tools,
         return _run_kc(backend, sanitizer, environment=environment, out=out, err=err,
                        tools=tools, host_os=host_os, nightly=nightly, target=target)
     return _run_tkrzw(backend, sanitizer, environment=environment, out=out, err=err,
-                      tools=tools, host_os=host_os, nightly=nightly, target=target,
-                      caller_directory=caller_directory)
+                      tools=tools, host_os=host_os, nightly=nightly, target=target)
 
 
-def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, tools=None,
-             caller_directory=None):
+def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, tools=None):
     """Select and run one sanitizer gate, preserving the old entry grammar.
 
     Return the backend's shell-style status; for `all`, 0 when every gate
@@ -591,7 +580,8 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
     if not 1 <= len(arguments) <= 2:
         err.write(SANITIZE_USAGE)
         return 2
-    backend_name = arguments[0] or cell.default_cell()
+    # No backend named: the host's cell (tools/dev/cell.py). A named backend stays as named.
+    backend_name = arguments[0] or cell.host_cell()
     sanitizer = arguments[1] if len(arguments) > 1 else 'address'
     sanitizer = SANITIZER_ALIASES.get(sanitizer, sanitizer)
     if backend_name not in (*SANITIZER_BACKENDS, 'all'):
@@ -618,8 +608,12 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
             print('sanitize: MemorySanitizer has no in-tree wrapper; use address, thread '
                   'or leak.', file=err, flush=True)
         return 1
+    gates = SANITIZER_BACKENDS if selection_os == 'Darwin' else (cell.LOCAL_CELL,)
+    if backend_name == 'tkrzw' and selection_os != 'Darwin':
+        print(f'sanitize: {TKRZW_NOT_LINUX}', file=err, flush=True)
+        return 1
     if sanitizer == 'leak':
-        if backend_name in ('tkrzw', 'all'):
+        if backend_name == 'tkrzw' or (backend_name == 'all' and 'tkrzw' in gates):
             print('sanitize: tkrzw LeakSanitizer is unsupported: the Rust harness keeps '
                   'process-lifetime allocations that LSan reports as leaks; use address '
                   'or thread.', file=err, flush=True)
@@ -634,22 +628,18 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
         print(f'sanitize: check backend={backend_name} sanitizer={sanitizer} '
               f'host={selection_os}/{selection_arch}', file=out, flush=True)
         return 0
-    if caller_directory is None:
-        caller_directory = Path.cwd()
     tools = native.Tools(environment=environment) if tools is None else tools
     if backend_name != 'all':
         return _run_sanitizer_backend(
             BACKEND_DATA[backend_name], sanitizer, environment=environment,
-            out=out, err=err, tools=tools, host_os=host_os,
-            caller_directory=caller_directory)
+            out=out, err=err, tools=tools, host_os=host_os)
     results = []
     failed = 0
-    for name in SANITIZER_BACKENDS:
+    for name in gates:
         print(f'=== sanitize {name} ===', file=out, flush=True)
         code = native.shell_status(_run_sanitizer_backend(
             BACKEND_DATA[name], sanitizer, environment=environment,
-            out=out, err=err, tools=tools, host_os=host_os,
-            caller_directory=caller_directory))
+            out=out, err=err, tools=tools, host_os=host_os))
         results.append(f'{name}: exit {code}')
         failed = failed or code != 0
         print('', file=out, flush=True)

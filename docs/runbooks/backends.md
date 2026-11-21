@@ -18,13 +18,14 @@ A peer requires `--no-default-features`: the default set already
 selects one backend, and the store refuses two backends at once.
 The store build script finds tkrzw through `pkg-config tkrzw` and, on macOS,
 the compression libraries through their pkg-config modules.
-The platform's tkrzw installation is described in [setup](setup.md).
+The platform's tkrzw installation is described in [setup](setup.md). Linux
+installs none: its one cell is Kyoto Cabinet ([Linux setup](setup.md#linux)).
 
 ## System libraries
 
 | backend | Debian/Ubuntu packages | macOS (Homebrew) |
 | --- | --- | --- |
-| tkrzw | the repository's vcpkg overlay port in the `x64-linux-oxpinyin` triplet (see [setup](setup.md)) | `tkrzw` (see [macOS setup](setup.md#macos); `cargo check`/`clippy` never link and are not evidence) |
+| tkrzw | none: Linux runs no tkrzw code ([Linux setup](setup.md#linux)); Ubuntu's `libtkrzw` is defective ([finding](../findings/tkrzw-distro-compat.md)) | `tkrzw` (see [macOS setup](setup.md#macos); `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev pkg-config g++` (the cxx bridge is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc` and pkg-config resolves it. The backend links at link time, so bare-name dylib lookup does not apply |
 | bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5`: 5.3.28 under the Sleepycat license, the surveyed version. The default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so the [overrides](#discovery-and-overrides) point at it |
 

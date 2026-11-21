@@ -14,9 +14,10 @@ Pin-comparison measurements run natively on a Linux host, with no container
 ## Storage backend
 
 Storage-dependent crates build against one DBM backend per build. The
-[default backend](backends.md) is the reference cell on every platform. The build finds tkrzw through pkg-config,
-and the platform sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
-are non-default backends ([backends](backends.md)).
+[default backend](backends.md), tkrzw, is the pin oracle's reference cell. The build finds tkrzw through pkg-config,
+and the macOS and Windows sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
+are non-default backends ([backends](backends.md)). Linux has one cell,
+Kyoto Cabinet: see [Linux](#linux).
 
 Native Windows recipes use pwsh with `-CommandWithArgs`; doctor checks its
 declared minimum.
@@ -27,16 +28,34 @@ The **linker** joins compiled code into executables and native libraries.
 
 ## Linux
 
+**The Linux rule.** Linux runs no tkrzw code: Ubuntu packages no sound libtkrzw
+([finding](../findings/tkrzw-distro-compat.md)), and the vcpkg overlay port is
+not used on Linux. Decided 2026-11-21, amending the 2026-10-30 ruling that the
+general test jobs on every OS use tkrzw. Every Linux build that runs a backend
+uses Kyoto Cabinet from the distribution's packages, `LOCAL_CELL` in
+`tools/dev/cell.py`: Linux CI ([verification rule 10.2](verification.md#10-ci-merge-conditions)),
+`just provision`, the measurement recipes and their pin builds, the pin
+comparisons, `just sanitize` and the oracle reproducibility check. Kyoto Cabinet
+is reproducible, which the exact-count measurement controls need; Berkeley DB is
+not. A Linux host provisions the kc oracle cell by default and its oracle
+environment file holds that cell alone; a [pin capture](pin-captures.md) names
+the other cells with `--cells`, which the Debian deps image builds and checks.
+`just sanitize tkrzw` is refused on Linux; Berkeley DB stays a CI peer, tested
+by the `store` job. A plain Linux
+`cargo test` or `cargo build` selects the
+Cargo default, tkrzw, so on Linux pass the backend:
+`--no-default-features --features kyotocabinet` (or `bdb` for the peer), or
+`just check kyotocabinet`.
+
 Linux setup needs:
 
 - Git, curl and CA certificates;
 - a C/C++ compiler and linker, Make and pkg-config;
-- tkrzw development files (the [default store backend](backends.md));
+- Kyoto Cabinet development files and utilities (the Linux cell above);
 - GLib development files.
 
-Berkeley DB **5.3** and Kyoto Cabinet are needed only to build those
-non-default backends. libclang is needed only to build with the `bdb` feature:
-bindgen generates the Berkeley DB bindings with it. The tkrzw and Kyoto Cabinet
+Berkeley DB **5.3** is needed only to build the `bdb` backend, and libclang
+with it: bindgen generates the Berkeley DB bindings. The tkrzw and Kyoto Cabinet
 bridges use cxx. [Building with Berkeley DB](#building-with-berkeley-db) installs both.
 A development package supplies the headers and libraries that you need to
 compile against a native library. Package names depend on your system.
@@ -50,41 +69,30 @@ distribution targets:
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config zip unzip cmake ninja-build libglib2.0-dev
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config zip unzip cmake ninja-build libglib2.0-dev \
+  libkyotocabinet-dev kyotocabinet-utils
 ```
 
 ```bash
 # Systems using dnf:
-sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config zip unzip cmake ninja-build glib2-devel
+sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config zip unzip cmake ninja-build glib2-devel \
+  kyotocabinet-devel kyotocabinet
 ```
 
-The [Linux](#linux), [macOS](#macos) and [Windows](#windows) sections name each
-platform's tkrzw installation. GLib stays on the system package manager
-(Homebrew on macOS). Windows also uses vcpkg for GLib because it has no system package route.
-Install [vcpkg](https://learn.microsoft.com/vcpkg/get_started/get-started),
-run `bootstrap-vcpkg.bat` on Windows or `bootstrap-vcpkg.sh` on Linux, and
-set `VCPKG_ROOT` to that checkout.
-On Linux x86_64, run from the repository root:
+The build discovers Kyoto Cabinet through `pkg-config kyotocabinet`; the
+distribution's library is on the default loader path, so no path export is
+needed. GLib stays on the system package manager; the [macOS](#macos) and
+[Windows](#windows) sections name those platforms' tkrzw installation, and
+Windows alone uses vcpkg. `just provision` checks the Kyoto Cabinet development
+package and installs it with apt when it runs as root. Check the backend with:
 
 ```bash
-"$VCPKG_ROOT/vcpkg" install tkrzw:x64-linux-oxpinyin --overlay-ports=vcpkg-overlays --overlay-triplets=triplets
-export OXPINYIN_TKRZW_PREFIX="$VCPKG_ROOT/installed/x64-linux-oxpinyin"
-export PKG_CONFIG_PATH="$OXPINYIN_TKRZW_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-export LD_LIBRARY_PATH="$OXPINYIN_TKRZW_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export PATH="$OXPINYIN_TKRZW_PREFIX/tools/tkrzw/bin:$PATH"
-pkg-config --modversion tkrzw
+just check kyotocabinet
 ```
 
-The build discovers tkrzw through pkg-config. The Linux triplet selects shared
-libraries and release-only builds; the port itself keeps vcpkg's linkage
-defaults, and stock `x64-linux` installs static debug and release libraries.
-The loader uses `LD_LIBRARY_PATH`; oxpinyin adds no rpath. Product binaries
-and tests, including `just sanitize tkrzw address`, run with these exports.
-See [tkrzw runtime enforcement](cloud.md#runtime-enforcement-verification-rule-9) for how `tools/tkrzw/runtime.py` checks the resolved library.
-Linux CI uses the same overlay and a vcpkg binary cache. Release packaging
-and oracle/reference images keep Debian's tkrzw.
-Ubuntu's packaged tkrzw is defective and is not used for development
-([finding](../findings/tkrzw-distro-compat.md)).
+Release packaging and oracle/reference images keep Debian's tkrzw, in their own
+containers; see [tkrzw runtime enforcement](cloud.md#runtime-enforcement-verification-rule-9)
+for how `tools/tkrzw/runtime.py` checks the library they resolve.
 
 ### Building with Berkeley DB
 

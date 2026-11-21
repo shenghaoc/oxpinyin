@@ -173,7 +173,8 @@ uv run --managed-python python -X utf8 tools/oracle/build.py --prefix ~/.local/o
 
 To select another cell, use `--dbm bdb` or `--dbm kc` and a separate `--prefix`.
 The prefix records the cell in its `pin_ref` (`+dbm-<cell>`) and `dbm=` field.
-For a differential, set `PINYIN_ORACLE_DBM=tkrzw|bdb|kc` (default tkrzw).
+For a differential, set `PINYIN_ORACLE_DBM=tkrzw|bdb|kc`; the Linux environment file holds the
+one Linux cell, kc ([Linux setup](setup.md#linux)).
 [`tools/dev/cell.py`](../../tools/dev/cell.py) then builds oxpinyin with the
 matching backend feature and expects the matching `pin_ref`.
 
@@ -368,10 +369,11 @@ ELF build ID is omitted. The libraries then hash the same for any work
 directory, given the same toolchain and `--prefix`. On a Linux host, run:
 
 ```sh
-OXPINYIN_CACHE="$(just cache-root)" uv run --managed-python python -X utf8 -m tools.oracle.image check-reproducible --cells bdb kc tkrzw --work-dir "$(just cache-root)/measure/repro-check"
+OXPINYIN_CACHE="$(just cache-root)" uv run --managed-python python -X utf8 -m tools.oracle.image check-reproducible --work-dir "$(just cache-root)/measure/repro-check"
 ```
 
 A direct `uv run` command needs `OXPINYIN_CACHE` ([cache directory](setup.md#cache-directory)).
+The check builds the one Linux cell, kc ([Linux setup](setup.md#linux)).
 
 This command builds each cell twice in different work directories, with the same install
 prefix in one environment, and compares only those two sets of library hashes. It never updates frozen input pins.

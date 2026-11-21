@@ -6,8 +6,10 @@ A cell uses one DBM backend on both sides of a comparison.
 
 ## 1. Reference cell
 
-The reference cell is tkrzw (`PINYIN_ORACLE_DBM=tkrzw`, the default), because upstream maintains tkrzw.
+The reference cell is tkrzw (`PINYIN_ORACLE_DBM=tkrzw`), because upstream maintains tkrzw.
 By default, baselines, differentials, revert-and-check and the gate run on this cell.
+A Linux host has one cell, kc: its oracle environment file holds that cell alone ([Linux setup](setup.md#linux)).
+The tkrzw cell runs in the pin capture image and on macOS and Windows.
 
 ## 2. Backend selection
 
@@ -220,10 +222,11 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 ## 9. Sound tkrzw library
 
 The tkrzw cell, the reference cell, runs only against a sound libtkrzw.
-Linux development and CI use the repository's vcpkg overlay port.
-`tools.dev.provision` installs it and writes the library path and certification
-prefix. Debian release packaging and oracle/reference images retain Debian's
-library. Ubuntu's packaged library is not a development route.
+macOS uses Homebrew's tkrzw and Windows the repository's vcpkg overlay port ([setup](setup.md)).
+Linux runs no tkrzw code: every Linux build uses Kyoto Cabinet
+([section 10](#10-ci-merge-conditions), [Linux setup](setup.md#linux)), and a Linux host
+provisions no tkrzw oracle cell. Debian release packaging and oracle/reference images retain
+Debian's library in their containers. Ubuntu's packaged library is not a development route.
 See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).
 
 A result against a defective libtkrzw is invalid.
@@ -279,9 +282,12 @@ These rules govern the CI gates. This section is the only place that states them
    The nightly runs their Rust checks. It runs the tools Python harness on those platforms only on a manual dispatch of `verify-nightly.yml` with `tools_harness` set.
    It is dispatched on the branch for a tooling change that can behave differently there (process control, command forwarding, cleanup), and on the release commit before a release.
    A lane never dispatches a workflow.
-2. **tkrzw is the default backend.** CI alone tests Berkeley DB and Kyoto Cabinet, and only when their KV code changes.
-   Rule 2 decides that by path, not by judgement.
-   The full-data contract tests run on tkrzw only.
+2. **Linux CI runs the one Linux cell: Kyoto Cabinet, from Ubuntu's packages.**
+   tkrzw stays the Cargo default, and every Linux job selects Kyoto Cabinet with the backend flag instead: the `rust` lane (clippy, rustdoc, nextest, the archive build and the fuzz check), the cell gates, `shipping-sizes`, whose size table is therefore the Kyoto Cabinet libraries', and the nightly fuzz soak.
+   `LOCAL_CELL` in `tools/dev/cell.py` names the cell once for CI and the local tooling; [Linux setup](setup.md#linux) states the companion rule for the local tooling.
+   Decided 2026-11-21, amending the 2026-10-30 ruling that the general test jobs on every OS use tkrzw: Ubuntu's libtkrzw is defective at run time ([finding](../findings/tkrzw-distro-compat.md)), so Linux runs no tkrzw code and the vcpkg overlay is no longer used on Linux; Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
+   The `store` job tests Berkeley DB, and the Berkeley DB and Kyoto Cabinet sanitizers, only when their KV code changes; [rule 2](#2-backend-selection) decides that by path, not by judgement.
+   tkrzw's tests, including the full-data contract tests, which are tkrzw-only, run on the nightly macOS and Windows jobs and never in Linux CI; tkrzw's sanitizer run has no CI job.
 3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under its path gate.
    The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
@@ -292,6 +298,6 @@ These rules govern the CI gates. This section is the only place that states them
    The Python version request rule reads every tracked file, so it runs on every change.
    A later run of the same tree reuses a pull request run only when that run passed every job the later run selects, within 24 hours.
 6. **Linux CI runs natively.** Every Linux job of `ci.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
-   System packages come from Ubuntu's apt, except tkrzw, which comes from the vcpkg overlay port ([rule 9](#9-sound-tkrzw-library)).
+   Every system package, the store backends included, comes from Ubuntu's apt.
    Containers serve only the pin oracle, which is local work and never runs in CI, and the distribution packaging of `release-packages.yml`.
    Rejected: Linux CI in a Debian testing container.

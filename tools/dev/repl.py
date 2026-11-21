@@ -30,8 +30,12 @@ def run(argv):
     """Build one selected backend and keep all session writes in a temporary copy."""
     parser = argparse.ArgumentParser(prog='just repl')
     parser.add_argument('mode', choices=MODES)
-    parser.add_argument('--backend', choices=BACKENDS, default='tkrzw')
+    # No backend named: the host's cell (tools/dev/cell.py).
+    parser.add_argument('--backend', choices=BACKENDS)
     args, mode_args = parser.parse_known_args(argv)
+    if args.backend is None:
+        from .cell import CELL_TO_BACKEND, host_cell
+        args.backend = CELL_TO_BACKEND[host_cell()]
     if mode_args[:1] == ['--']:
         mode_args = mode_args[1:]
     build = ['cargo', 'build', '--locked', '-p', 'oxpinyin-repl',

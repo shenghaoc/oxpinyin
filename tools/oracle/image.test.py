@@ -47,7 +47,7 @@ class ReproducibilityTests(unittest.TestCase):
                 with mock.patch.object(recipes, 'require_local_measurement'), \
                      mock.patch.object(images, 'run', side_effect=build), \
                      contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                    args = ['--cells', 'bdb', '--work-dir', directory]
+                    args = ['--cells', 'kc', '--work-dir', directory]
                     if mismatch:
                         with self.assertRaises(images.Finished):
                             images.check_reproducible(args)
@@ -61,7 +61,7 @@ class ReproducibilityTests(unittest.TestCase):
         with mock.patch.object(recipes, 'require_local_measurement'), \
              mock.patch.object(images, 'run', side_effect=build), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return images.check_reproducible(['--cells', 'bdb', 'kc', '--work-dir', str(directory)])
+            return images.check_reproducible(['--cells', 'kc', '--work-dir', str(directory)])
 
     def test_reproducibility_failure_removes_only_the_failing_backends_paths(self):
         def builder(fail_at=None, differ=False):
@@ -79,26 +79,21 @@ class ReproducibilityTests(unittest.TestCase):
                 return 0
             return build
 
-        for label, build, status, kept in (
-            ('first build', builder(fail_at=1), 7, False),
-            ('second build', builder(fail_at=2), 7, False),
-            ('comparison', builder(differ=True), 1, False),
-            ('next backend', builder(fail_at=3), 7, True),
+        for label, build, status in (
+            ('first build', builder(fail_at=1), 7),
+            ('second build', builder(fail_at=2), 7),
+            ('comparison', builder(differ=True), 1),
         ):
             with self.subTest(failure=label), tempfile.TemporaryDirectory() as directory:
                 work = Path(directory)
                 with self.assertRaises(images.Finished) as raised:
                     self.check_reproducible(work, build)
                 self.assertEqual(raised.exception.status, status, 'the original failure is re-raised')
-                left = {path.relative_to(work).as_posix() for path in work.rglob('*.so')}
-                passed = {f'bdb-{number}/libraries/{library}.so' for number in (1, 2) for library in ('libpinyin', 'libzhuyin')}
-                self.assertEqual(left, passed if kept else set())
-                self.assertFalse((work / 'bdb/prefix').exists() or (work / 'kc/prefix').exists()
-                                 or (work / 'kc-1').exists() or (work / 'kc-2').exists())
-                self.assertEqual((work / 'bdb-1').exists(), kept)
+                self.assertEqual({path.relative_to(work).as_posix() for path in work.rglob('*.so')}, set())
+                self.assertFalse((work / 'kc/prefix').exists() or (work / 'kc-1').exists() or (work / 'kc-2').exists())
 
     def test_reproducibility_refusal_keeps_existing_paths_and_builds_nothing(self):
-        for existing in ('bdb/prefix', 'bdb-1', 'bdb-2'):
+        for existing in ('kc/prefix', 'kc-1', 'kc-2'):
             with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
                 work = Path(directory)
                 (work / existing / 'kept').mkdir(parents=True)

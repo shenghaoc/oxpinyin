@@ -17,6 +17,23 @@ from tools.dev.cell import CellError, ROOT, Settings, library_path
 from tools.dev.cell import main as cell_main
 
 
+class HostCellTests(unittest.TestCase):
+    def test_linux_runs_the_local_cell_and_other_hosts_cargos_default(self):
+        with mock.patch.object(backend_cell.platform, 'system', return_value='Linux'):
+            self.assertEqual(backend_cell.host_cell(), backend_cell.LOCAL_CELL)
+        for host in ('Darwin', 'Windows'):
+            with self.subTest(host=host), mock.patch.object(backend_cell.platform, 'system', return_value=host):
+                self.assertEqual(backend_cell.host_cell(), backend_cell.default_cell())
+        self.assertEqual(backend_cell.default_cell(), 'tkrzw')
+
+    def test_settings_without_a_named_cell_take_the_hosts(self):
+        with mock.patch.object(backend_cell.platform, 'system', return_value='Linux'):
+            self.assertEqual(Settings.read({}).cell, 'kc')
+            self.assertEqual(Settings.read({'PINYIN_ORACLE_DBM': 'bdb'}).cell, 'bdb')
+        with mock.patch.object(backend_cell.platform, 'system', return_value='Darwin'):
+            self.assertEqual(Settings.read({}).cell, 'tkrzw')
+
+
 class SettingsTests(unittest.TestCase):
     def test_cells_are_explicit_and_preserve_overrides(self):
         for cell, feature, extension in [('bdb', 'bdb', 'db'), ('kc', 'kyotocabinet', 'kct'),
@@ -36,7 +53,7 @@ class SettingsTests(unittest.TestCase):
 
     def test_claim_is_atomic_and_rejects_another_owner(self):
         with tempfile.TemporaryDirectory() as scratch:
-            settings = Settings.read({'CARGO_TARGET_DIR': scratch})
+            settings = Settings.read({'CARGO_TARGET_DIR': scratch, 'PINYIN_ORACLE_DBM': 'tkrzw'})
             settings.claim()
             settings.claim()
             path = Path(scratch) / 'oxpinyin-cell-identity.json'
@@ -136,8 +153,10 @@ class BuildLaunchTests(unittest.TestCase):
             with self.recording():
                 self.assertEqual(settings.artifact('OXPINYIN_CAPI_SO', 'liboxpinyin_capi.so', 'oxpinyin-capi'), library)
             [call] = self.calls
+            # No cell named: the host's (tools/dev/cell.py host_cell).
             self.assertEqual(call['argv'], ['cargo', 'build', '--locked', '--manifest-path', str(ROOT / 'Cargo.toml'),
-                                            '-p', 'oxpinyin-capi', '--no-default-features', '--features', 'tkrzw'])
+                                            '-p', 'oxpinyin-capi', '--no-default-features', '--features',
+                                            backend_cell.CELL_TO_BACKEND[backend_cell.host_cell()]])
             self.assertEqual((call['cwd'], call['stdout']), (ROOT, 2))
             self.assert_supervised(call)
 
