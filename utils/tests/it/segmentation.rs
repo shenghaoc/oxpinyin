@@ -105,6 +105,67 @@ fn the_output_file_receives_the_stream() {
     );
 }
 
+#[test]
+fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
+    use oxpinyin::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
+    use oxpinyin::data::single_gram::encode_single_gram;
+    use oxpinyin::store::{DefaultStore, WriteStore as _, WriteTxn as _};
+    use oxpinyin::{SENTENCE_START, phrase_index_make_token};
+
+    let (_directory, data) = data_dir();
+    let items = [(1, 2), (2, 1)].map(|(slot, unigram)| {
+        (
+            slot,
+            ChunkItem {
+                phrase: vec![u32::from('甲')],
+                unigram,
+                prons: Vec::new(),
+            },
+        )
+    });
+    std::fs::write(
+        data.join("gb_char.bin"),
+        build_chunk(&items).expect("build phrase library"),
+    )
+    .expect("write phrase library");
+
+    let unigram_choice = phrase_index_make_token(1, 1);
+    let bigram_choice = phrase_index_make_token(1, 2);
+    let phrase_path = data.join("phrase_index.bin");
+    std::fs::remove_file(&phrase_path).expect("remove copied phrase index");
+    let phrases = DefaultStore::create(&phrase_path).expect("create phrase index");
+    phrases
+        .write(|txn| {
+            txn.put_raw(
+                &encode_ucs4_key("甲"),
+                &encode_tokens(&[unigram_choice, bigram_choice]),
+            )
+        })
+        .expect("write phrase index");
+    drop(phrases);
+
+    // The lower token misses at the first record and the higher token hits it.
+    // Neither walk reaches the tail (ngram.cpp:231-250 at 074a2219).
+    let mut value = encode_single_gram(1, &[(bigram_choice, 1)]);
+    value.push(0);
+    let bigram_path = data.join("bigram.db");
+    std::fs::remove_file(&bigram_path).expect("remove copied bigram table");
+    let bigrams = DefaultStore::create_hash(&bigram_path).expect("create bigram table");
+    bigrams
+        .write(|txn| txn.put_raw(&SENTENCE_START.to_le_bytes(), &value))
+        .expect("write sentence-start gram");
+    drop(bigrams);
+
+    let output = ngseg(&data, &[], "甲\n".as_bytes());
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stderr, b"");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("UTF-8 output"),
+        format!("{bigram_choice} 甲\n0 \n").replace('\n', oxpinyin::input::TEXT_NEWLINE),
+    );
+}
+
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).
 #[cfg(unix)]
 mod frozen {

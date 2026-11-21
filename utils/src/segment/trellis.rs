@@ -8,7 +8,9 @@
 
 use rustc_hash::FxHashMap;
 
-use oxpinyin::data::{BigramRow, BigramTable};
+use oxpinyin::data::{BigramTable, DictError, TableError};
+use oxpinyin::single_gram::{checked_get_freq, get_total_freq};
+use oxpinyin::store::StoreError;
 
 use crate::segment::phrase::PhraseSearch;
 use oxpinyin::{NULL_TOKEN, SENTENCE_START};
@@ -118,26 +120,33 @@ fn search_bigram2(steps: &mut [Step], nstep: usize, tokens: &[u32], context: &Co
             continue;
         };
         for &token in tokens {
-            // `SingleGram::get_freq`: a miss has no bigram edge; a stored
-            // zero still has one.
-            let Some(freq) = row
-                .records
-                .iter()
-                .find_map(|(next, freq)| (*next == token).then_some(*freq))
-            else {
-                continue;
+            let freq = match checked_get_freq(&row, token) {
+                Ok(Some(freq)) => freq,
+                Ok(None) => continue,
+                // This walk would leave the stored value. Keep the unigram
+                // fallback and any earlier defined hits.
+                Err(_) => break,
             };
-            // `freq / (gfloat) total_freq`.
-            let bigram_poss = freq as f32 / row.total as f32;
+            // The pin reads the total only after a hit (phrase_lookup.cpp:287-292).
+            let Some(total) = get_total_freq(&row) else {
+                break;
+            };
+            let bigram_poss = freq as f32 / total as f32;
             bigram_gen_next_step(steps, nstep, current, token, bigram_poss, context);
         }
     }
 }
 
-/// `Bigram::load` (the system gram only; the pin's user bigram is empty),
-/// with a backend failure or miss treated as the pin's `false`.
-fn load_row(bigram: Option<&BigramTable>, token: u32) -> Option<BigramRow> {
-    bigram?.load_successors(token).ok().flatten()
+// `ngseg` leaves the user bigram empty (ngseg.cpp:166-176 at 074a2219).
+fn load_row(bigram: Option<&BigramTable>, token: u32) -> Option<Vec<u8>> {
+    match bigram?.load_raw_successors(token) {
+        Ok(row) => row,
+        // Bigram::load asserts after a successful size check (ngram_kyotodb.cpp:131-139).
+        Err(DictError::Table(TableError::Store(StoreError::ReadAfterCheck))) => {
+            oxpinyin::input::tool::abort()
+        }
+        Err(_) => None,
+    }
 }
 
 /// `unigram_gen_next_step` (`:307-325`).
