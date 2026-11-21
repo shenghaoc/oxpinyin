@@ -167,9 +167,10 @@ def windows_preflight(arms, data, env, installed):
             raise ValueError('wrong loaded library in preflight')
         inventory = module_inventory(row['modules'])
         names = {Path(item['path']).name.lower(): item for item in inventory}
-        for name in ('tkrzw.dll', 'glib-2.0-0.dll'):
-            if name not in names or not same_file(names[name]['path'], installed / 'bin' / name):
-                raise ValueError('wrong vcpkg runtime: ' + name)
+        # tkrzw is linked statically into the arm; GLib is the one vcpkg module.
+        name = 'glib-2.0-0.dll'
+        if name not in names or not same_file(names[name]['path'], installed / 'bin' / name):
+            raise ValueError('wrong vcpkg runtime: ' + name)
         if not any(name.startswith('vcruntime') for name in names) or 'ucrtbase.dll' not in names:
             raise ValueError('missing CRT identity')
         if expected is not None:

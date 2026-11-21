@@ -3,9 +3,10 @@
 Status: **reference** (the mechanism and the per-distro matrix).
 
 tkrzw is oxpinyin's default backend and reference cell. Windows development
-builds and CI install the repository's vcpkg overlay port (tkrzw 1.0.34,
-`9ee8416`; the revision is in `vcpkg-overlays/tkrzw/pin.json`) through
-`tools.dev.vcpkg`. macOS uses [Homebrew](../runbooks/setup.md#macos). Linux
+builds and CI build the pinned tkrzw from source as a static library (tkrzw
+1.0.34, `9ee8416`; the revision is in `tools/tkrzw/pin.json`) with
+`just tkrzw` ([native Windows](../runbooks/setup.md#native-windows)). macOS
+uses [Homebrew](../runbooks/setup.md#macos). Linux
 runs no tkrzw code because of the defects below: every Linux build, CI
 included, uses Kyoto Cabinet ([Linux setup](../runbooks/setup.md#linux),
 [verification rule 10.2](../runbooks/verification.md#10-ci-merge-conditions)).

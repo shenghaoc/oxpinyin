@@ -73,6 +73,13 @@ class RealJustSmokeTests(unittest.TestCase):
             self.assertEqual(result.stdout.strip(),
                              'cpp-smoke is unsupported on Windows: it needs readelf, ldd and an ELF .so.')
 
+        def test_tkrzw_forwards_to_the_windows_build(self):
+            # The recipe runs tools.tkrzw.windows on the managed CPython and forwards its arguments.
+            result = self.invoke('tkrzw', '--help')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('--prefix', result.stdout)
+            self.assertIn('--github-env', result.stdout)
+
     def test_doctor_without_the_interpreter_names_uv_python_install_and_installs_nothing(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'uv.log'

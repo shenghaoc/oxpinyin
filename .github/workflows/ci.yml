@@ -307,15 +307,14 @@ jobs:
         # The real-tool harnesses use gcc and GNU binutils (readelf, nm,
         # objcopy, objdump, as, ld) for the C stubs, make for the trainer
         # layout and pkg-config for the packaging link; the runner image ships
-        # those. apt adds cmake for the tkrzw port's configure, the GLib
-        # development package for the packaging link, diff for the
-        # installed-metadata and neutrality comparisons, taskset (util-linux)
-        # for the CPU-pinned child, and Valgrind for the end-to-end Linux
-        # comparison on the stub library. No harness test compiles C++ or
-        # reads libclang.
+        # those. apt adds the GLib development package for the packaging
+        # link, diff for the installed-metadata and neutrality comparisons,
+        # taskset (util-linux) for the CPU-pinned child, and Valgrind for the
+        # end-to-end Linux comparison on the stub library. No harness test
+        # compiles C++ or reads libclang.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends cmake libglib2.0-dev diffutils util-linux valgrind
+          sudo apt-get install -y --no-install-recommends libglib2.0-dev diffutils util-linux valgrind
       # Pyflakes rules (F) over tools/. This job runs on every tools/ change;
       # the lint job does not run for Python-only paths such as tools/bisection.
       - run: just ruff

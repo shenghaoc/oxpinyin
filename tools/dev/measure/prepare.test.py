@@ -2,6 +2,7 @@
 every recorded input still matches, and are rebuilt otherwise."""
 import contextlib
 import io
+import os
 import shutil
 from pathlib import Path
 import platform
@@ -230,30 +231,44 @@ class PreparationTests(unittest.TestCase):
 
 if sys.platform == 'win32':
     class WindowsBuildTests(unittest.TestCase):
-        def build(self,directory,target):
+        def build(self,directory,target,built=True):
             """native_build of a revision whose C crate names its library target TARGET."""
             def metadata(root,env=None):
                 return capi_metadata(root,features={'default':['tkrzw']},targets={'pinyin':target})
             root=Path(directory);pc=root/'installed/x64-windows/lib/pkgconfig'
-            pc.mkdir(parents=True);(pc/'tkrzw.pc').touch()
+            pc.mkdir(parents=True);(pc/'glib-2.0.pc').touch()
+            # The repository's static tkrzw, complete in the cache root's entry.
+            from tools.tkrzw import windows as tkrzw
+            revision=tkrzw.pin()['revision'];cache=root/'cache'
+            prefix=tkrzw.default_prefix({'OXPINYIN_CACHE':str(cache)},revision)
+            if built:
+                prefix.mkdir(parents=True);(prefix/tkrzw.MARKER).write_text(revision+'\n')
             with mock.patch('tools.dev.check.msvc_environment',side_effect=lambda env:env), \
                  mock.patch.object(bench,'run') as run, \
                  mock.patch('tools.dev.packaging.cargo_metadata',side_effect=metadata) as read, \
                  mock.patch.object(identity,'sha256',return_value='digest'):
-                arm=prepare.native_build('a'*40,root/'build',dict(VCPKG_ROOT=directory,
+                arm=prepare.native_build('a'*40,root/'build',dict(VCPKG_ROOT=directory,OXPINYIN_CACHE=str(cache),
                     RUSTFLAGS='bad',CARGO_ENCODED_RUSTFLAGS='bad',CARGO_PROFILE_RELEASE_DEBUG='2'),windows=True)
-            return arm,run,read,pc
+            return arm,run,read,str(prefix/'lib/pkgconfig')+os.pathsep+str(pc.resolve())
 
-        def test_release_build_has_no_overrides(self):
+        def test_release_build_has_no_overrides_and_links_the_static_tkrzw_first(self):
             with tempfile.TemporaryDirectory() as directory:
-                arm,run,read,pc=self.build(directory,'oxpinyin_capi')
+                arm,run,read,search=self.build(directory,'oxpinyin_capi')
                 command=next(call for call in run.call_args_list if call.args[0][0]=='cargo')
                 self.assertEqual(command.args[0],['cargo','build','--locked','--release','-p','oxpinyin-capi'])
                 self.assertFalse(any(key in command.kwargs['env'] for key in
                                     ('RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','CARGO_PROFILE_RELEASE_DEBUG')))
                 self.assertEqual(arm['dylib'].name,'oxpinyin_capi.dll')
                 self.assertEqual(arm['default_features'],['tkrzw'])
-                self.assertEqual(command.kwargs['env']['PKG_CONFIG_PATH'],str(pc.resolve()))
+                # One search path for both arms: the repository's tkrzw, then vcpkg's GLib.
+                self.assertEqual(command.kwargs['env']['PKG_CONFIG_PATH'],search)
+                self.assertEqual(command.kwargs['env']['PKG_CONFIG_LIBDIR'],search)
+                self.assertTrue(command.kwargs['env']['PKG_CONFIG'].endswith('pkgconf.exe'))
+
+        def test_an_unbuilt_tkrzw_refuses_the_build(self):
+            with tempfile.TemporaryDirectory() as directory, \
+                    self.assertRaisesRegex(ValueError,'just tkrzw'):
+                self.build(directory,'oxpinyin_capi',built=False)
 
         def test_the_library_files_take_the_name_of_the_revisions_own_target(self):
             # A revision names its library target itself: pinyin_capi before the default name, oxpinyin_capi after.

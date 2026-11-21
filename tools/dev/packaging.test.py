@@ -173,13 +173,6 @@ class SourceLayoutTests(unittest.TestCase):
     FLAT = test_support.FLAT_CRATES
     FLAT_MANIFEST = ('[workspace]\nmembers = [".", "capi", "zhuyin-capi"]\n\n[package]\nname = "oxpinyin"\n\n'
                      '[features]\ndefault = ["bdb"]\nbdb = []\n')
-    # A revision before the flat layout: the C crates under crates/, the zhuyin package under its former name.
-    OLDER = (('oxpinyin-capi', 'crates/oxpinyin-capi', 'pinyin'),
-             ('oxpinyin-zhuyin-capi', 'crates/oxpinyin-zhuyin-capi', 'zhuyin'))
-    # Each older revision declared the backend default in one of these manifests; the root
-    # manifest of those revisions is a virtual workspace without [features].
-    OLDER_DEFAULT_MANIFESTS = ('crates/oxpinyin-store/Cargo.toml', 'crates/oxpinyin-core/Cargo.toml',
-                               'crates/oxpinyin/Cargo.toml')
 
     def setUp(self):
         # The crates of each fixture tree, by root. Any other root, such as this checkout, is flat.
@@ -191,8 +184,8 @@ class SourceLayoutTests(unittest.TestCase):
             return test_support.capi_metadata(root, self.crates.get(Path(root), self.FLAT))
         self.enterContext(test_support.fixture_metadata(read))
 
-    def prepare(self, crates, default_manifest='Cargo.toml', root_manifest=FLAT_MANIFEST):
-        """A source tree with the C crates' files in the directories of CRATES and the default in default_manifest."""
+    def prepare(self, crates, root_manifest=FLAT_MANIFEST):
+        """A source tree with the C crates' files in the directories of CRATES and the default in its root manifest."""
         directory = tempfile.TemporaryDirectory(prefix='source-layout-')
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
@@ -205,9 +198,6 @@ class SourceLayoutTests(unittest.TestCase):
         (root / 'tools/oracle').mkdir(parents=True)
         shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', root / 'tools/oracle/oracle-pin.txt')
         (root / 'Cargo.toml').write_text(root_manifest)
-        if default_manifest != 'Cargo.toml':
-            (root / default_manifest).parent.mkdir(parents=True, exist_ok=True)
-            (root / default_manifest).write_text('[package]\nname = "fixture"\n\n[features]\ndefault = ["bdb"]\nbdb = []\n')
         return root
 
     def assert_resolves(self, root, crates):
@@ -234,15 +224,10 @@ class SourceLayoutTests(unittest.TestCase):
         root = self.prepare(self.FLAT)
         self.assert_resolves(root, self.FLAT)
 
-    def test_a_tree_in_the_crates_layout(self):
-        for manifest in self.OLDER_DEFAULT_MANIFESTS:
-            with self.subTest(default=manifest):
-                root = self.prepare(self.OLDER, manifest, '[workspace]\nmembers = ["crates/*"]\n')
-                # A sibling crate that declares no default does not hide the one that does.
-                (root / 'crates/oxpinyin-core').mkdir(exist_ok=True)
-                if not (root / 'crates/oxpinyin-core/Cargo.toml').exists():
-                    (root / 'crates/oxpinyin-core/Cargo.toml').write_text('[package]\nname = "core"\n\n[features]\ntools = []\n')
-                self.assert_resolves(root, self.OLDER)
+    def test_a_root_manifest_without_one_backend_default_is_refused(self):
+        for manifest in ('[workspace]\nmembers = ["capi"]\n', self.FLAT_MANIFEST.replace('["bdb"]', '["bdb", "tkrzw"]')):
+            with self.subTest(manifest=manifest), self.assertRaisesRegex(ValueError, 'one backend default'):
+                packaging.cell.declared_default(self.prepare(self.FLAT, manifest))
 
     def test_the_zhuyin_crate_resolves_under_its_former_and_its_present_package_name(self):
         for name in ('oxpinyin-zhuyin-capi', 'oxzhuyin-capi'):
@@ -271,9 +256,10 @@ class SourceLayoutTests(unittest.TestCase):
             self.assertEqual(self.reads, [root])
 
     def test_a_root_that_takes_another_revision_resolves_from_the_new_tree(self):
-        # One path holds a crates/ revision and then a flat one, as the size build's source directory does.
-        root = self.prepare(self.OLDER)
-        self.assertEqual(packaging.crate_dir(root, 'zhuyin'), root / 'crates/oxpinyin-zhuyin-capi')
+        # One path holds one revision and then another, as the size build's source directory does.
+        moved = (self.FLAT[0], ('oxzhuyin-capi', 'elsewhere/zhuyin-capi', 'zhuyin'))
+        root = self.prepare(moved)
+        self.assertEqual(packaging.crate_dir(root, 'zhuyin'), root / 'elsewhere/zhuyin-capi')
         self.crates[root] = self.FLAT
         self.assertEqual(packaging.crate_dir(root, 'zhuyin'), root / 'zhuyin-capi')
 
@@ -512,7 +498,7 @@ if Path(sys.argv[0]).name == 'import_interpolation':
                     if source.is_file():
                         shutil.copyfile(source, packaging.crate_dir(self.root, library) / source.name)
             shutil.copyfile(ROOT / 'tools/oracle/oracle-pin.txt', self.root / 'tools/oracle/oracle-pin.txt')
-            # declared_default() reads the store manifest's [features].default from the checkout.
+            # declared_default() reads the root manifest's [features].default from the checkout.
             shutil.copyfile(ROOT / 'Cargo.toml', self.root / 'Cargo.toml')
             self.bin = self.work / 'bin'
             self.bin.mkdir()

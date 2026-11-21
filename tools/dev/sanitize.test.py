@@ -205,7 +205,7 @@ class BackendTests(unittest.TestCase):
         self.assertIn('oxzhuyin-capi', lifetime)
         self.assertEqual(lifetime[-3:], ['--lib', '-E', 'test(outlives_context)'])
         self.assertIn('-Zsanitizer=address', environment['RUSTFLAGS'])
-        self.assertEqual(environment['OXPINYIN_TKRZW_LIBRARY'], '/fixture/host/libtkrzw.dylib')
+        self.assertEqual(environment['OXPINYIN_TKRZW_LIBRARY'], str(Path('/fixture/host/libtkrzw.dylib')))
 
     def test_every_gate_runs_its_tests_under_nextest(self):
         cases = (('bdb', 'address', 'Darwin', {'SYSTEM_DEPS_BDB_INCLUDE': '/include'}),

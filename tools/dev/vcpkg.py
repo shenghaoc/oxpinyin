@@ -1,13 +1,14 @@
-"""vcpkg for the Windows CI job; the overlay port owns its tkrzw pin.
+"""vcpkg for the Windows CI job: GLib and pkgconf.
 
 `cache-key` finds the runner image's checkout, names its revision and publishes
 the binary cache location and key. `install` installs the requested packages
-with the repository overlay and publishes where pkg-config, the loader and PATH
-find them. `cache-report` prints what the cache restore matched. A workflow
-keeps only the cache restore and save actions between these commands.
+and publishes where pkg-config, the loader and PATH find them. `cache-report`
+prints what the cache restore matched. A workflow keeps only the cache restore
+and save actions between these commands.
 
-Linux uses no vcpkg: every Linux build takes Kyoto Cabinet from Ubuntu's
-packages (docs/runbooks/setup.md#linux). macOS uses Homebrew's tkrzw
+Windows builds tkrzw itself (`just tkrzw`, tools/tkrzw/windows.py). Linux uses
+no vcpkg: every Linux build takes Kyoto Cabinet from Ubuntu's packages
+(docs/runbooks/setup.md#linux). macOS uses Homebrew's tkrzw
 (docs/runbooks/setup.md#macos).
 """
 import argparse
@@ -28,11 +29,6 @@ def executable(root):
         if (root / name).is_file():
             return root / name
     return None
-
-
-def overlay_options(root):
-    """The repository's overlay ports, for every vcpkg command."""
-    return [f'--overlay-ports={root / "vcpkg-overlays"}']
 
 
 def runner_checkout(env, *, which=shutil.which):
@@ -96,26 +92,29 @@ def publish(path, values):
             stream.write(f'{name}={value}\n')
 
 
-def runner_install(env, triplet, packages='', *, run, root=ROOT):
-    """Install PACKAGES for TRIPLET with the overlay, check them, and return what later steps need.
+def runner_install(env, triplet, packages, *, run, root=ROOT):
+    """Install PACKAGES for TRIPLET, check GLib, and return what later steps need.
 
-    PACKAGES defaults to tkrzw alone. The result names the environment
-    variables to publish and the directories to put on PATH.
+    PACKAGES is the job's space-separated port[features]:triplet specs. The
+    result names the environment variables to publish and the directories to
+    put on PATH.
     """
     if 'windows' not in triplet:
         raise ValueError(f'no install rule for triplet {triplet}')
+    if not packages.split():
+        raise ValueError('install requires --packages')
     if not env.get('VCPKG_ROOT'):
         raise ValueError('VCPKG_ROOT is unset; run cache-key first')
     vcpkg = Path(env['VCPKG_ROOT'])
     program = executable(vcpkg)
     if program is None:
         raise ValueError(f"no vcpkg checkout at '{vcpkg}'")
-    run([program, 'install', *(packages.split() or [f'tkrzw:{triplet}']), *overlay_options(root)], env=env, cwd=root)
+    run([program, 'install', *packages.split()], env=env, cwd=root)
     installed = vcpkg / 'installed' / triplet
     own = (installed / 'lib/pkgconfig').as_posix()
-    # vcpkg's own pkgconf answers for the installed tree; the DLLs load from its bin.
+    # vcpkg's own pkgconf answers for the installed tree; GLib's DLLs load from its bin.
     pkg_config = installed / 'tools/pkgconf/pkgconf.exe'
-    run([pkg_config, '--modversion', '--cflags', '--libs', 'glib-2.0', 'tkrzw'],
+    run([pkg_config, '--modversion', '--cflags', '--libs', 'glib-2.0'],
         env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
     return dict(environment={'PKG_CONFIG': pkg_config.as_posix(), 'PKG_CONFIG_PATH': own},
                 path=[(installed / 'bin').as_posix()])

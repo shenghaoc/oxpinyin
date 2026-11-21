@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 from tools.dev import vcpkg
 
 WINDOWS = 'x64-windows'
-PACKAGES = 'glib:x64-windows pkgconf:x64-windows tkrzw:x64-windows'
+PACKAGES = 'glib:x64-windows pkgconf:x64-windows'
 
 
 def git(status, stdout=b''):
@@ -52,7 +52,7 @@ class RunnerCheckout(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'no vcpkg checkout at'):
             vcpkg.runner_checkout({'VCPKG_INSTALLATION_ROOT': str(self.root)})
         with self.assertRaisesRegex(ValueError, 'no vcpkg checkout at'):
-            vcpkg.runner_install({'VCPKG_ROOT': str(self.root)}, WINDOWS, run=self.fail)
+            vcpkg.runner_install({'VCPKG_ROOT': str(self.root)}, WINDOWS, PACKAGES, run=self.fail)
 
     def test_windows_key_names_triplet_revision_image_and_packages(self):
         selected = vcpkg.binary_cache(self.env, WINDOWS, PACKAGES, capture=git(0, b'abc123\n'))
@@ -76,7 +76,7 @@ class RunnerCheckout(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'no vcpkg cache rule'):
                     vcpkg.binary_cache(self.env, triplet, capture=git(0, b'abc123\n'))
                 with self.assertRaisesRegex(ValueError, 'no install rule'):
-                    vcpkg.runner_install({'VCPKG_ROOT': str(self.root)}, triplet,
+                    vcpkg.runner_install({'VCPKG_ROOT': str(self.root)}, triplet, PACKAGES,
                                          run=lambda command, **options: calls.append(command))
         self.assertEqual(calls, [])
 
@@ -90,26 +90,29 @@ class RunnerCheckout(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
                 vcpkg.binary_cache({**self.env, name: ''}, WINDOWS, capture=git(0, b'abc123\n'))
 
-    def test_windows_install_uses_the_overlay_and_checks_with_its_own_pkgconf(self):
+    def test_windows_install_takes_the_jobs_packages_and_checks_glib_with_its_own_pkgconf(self):
         calls = []
         env = {'VCPKG_ROOT': str(self.root), 'PKG_CONFIG_PATH': '/elsewhere'}
         result = vcpkg.runner_install(env, WINDOWS, PACKAGES,
                                       run=lambda command, **options: calls.append((list(map(str, command)), options)))
         installed = self.root / 'installed' / WINDOWS
         own = (installed / 'lib/pkgconfig').as_posix()
+        # No repository port: tkrzw is the static build of `just tkrzw`, outside vcpkg.
         self.assertEqual([command for command, _ in calls], [
-            [str(self.program), 'install', *PACKAGES.split(), f'--overlay-ports={ROOT / "vcpkg-overlays"}'],
-            [str(installed / 'tools/pkgconf/pkgconf.exe'), '--modversion', '--cflags', '--libs', 'glib-2.0', 'tkrzw']])
+            [str(self.program), 'install', *PACKAGES.split()],
+            [str(installed / 'tools/pkgconf/pkgconf.exe'), '--modversion', '--cflags', '--libs', 'glib-2.0']])
         self.assertEqual(calls[1][1]['env']['PKG_CONFIG_PATH'], own)
         # The job's pkg-config reads this tree alone, through vcpkg's own pkgconf.
         self.assertEqual(result, {
             'environment': {'PKG_CONFIG': (installed / 'tools/pkgconf/pkgconf.exe').as_posix(), 'PKG_CONFIG_PATH': own},
             'path': [(installed / 'bin').as_posix()]})
         with self.assertRaisesRegex(ValueError, 'VCPKG_ROOT'):
-            vcpkg.runner_install({}, WINDOWS, run=self.fail)
+            vcpkg.runner_install({}, WINDOWS, PACKAGES, run=self.fail)
+        with self.assertRaisesRegex(ValueError, 'requires --packages'):
+            vcpkg.runner_install(env, WINDOWS, '', run=self.fail)
         calls.clear()
         with self.assertRaisesRegex(ValueError, 'no install rule'):
-            vcpkg.runner_install(env, 'riscv64-plan9', run=lambda command, **options: calls.append(command))
+            vcpkg.runner_install(env, 'riscv64-plan9', PACKAGES, run=lambda command, **options: calls.append(command))
         self.assertEqual(calls, [])
 
     def test_commands_publish_to_the_runner_files(self):

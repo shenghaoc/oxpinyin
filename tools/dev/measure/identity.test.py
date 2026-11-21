@@ -1,16 +1,19 @@
 """Tests for the host identity readers in tools.dev.measure.identity."""
+import json
 import os
 from pathlib import Path
 import platform
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.dev.measure import identity
+from tools.dev.measure import bench, identity
 
 
 class UnameTests(unittest.TestCase):
@@ -50,6 +53,38 @@ class WindowsIdentityTests(unittest.TestCase):
             result = identity.expected_cow_commit(root, page_size=4096)
             self.assertEqual(result['bytes'], 12288)
             self.assertEqual(len(result['files']), 2)
+
+    def test_preflight_requires_vcpkgs_glib_and_the_crt_and_no_tkrzw_module(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            installed = root/'installed'
+            (installed/'bin').mkdir(parents=True)
+            glib = installed/'bin/glib-2.0-0.dll'
+            glib.write_bytes(b'glib')
+            dll = root/'arm/oxpinyin_capi.dll'
+            dll.parent.mkdir()
+            dll.write_bytes(b'arm')
+            crt = [root/'vcruntime140.dll', root/'ucrtbase.dll']
+            for path in crt:
+                path.write_bytes(path.name.encode())
+            arms = {label: dict(driver=root/'bisect.exe', dylib=dll, uuid='u') for label in 'AB'}
+
+            def preflight(modules):
+                def capture(command, env=None):
+                    self.assertEqual(env['MEASURE_PREFLIGHT'], '1')
+                    row = dict(library=str(dll), modules=list(map(str, modules)))
+                    return types.SimpleNamespace(status=0, stdout=json.dumps(row).encode(), stderr=b'')
+                with mock.patch.object(bench, 'capture', side_effect=capture):
+                    return identity.windows_preflight(arms, root/'data', {}, installed)
+            # The arm links tkrzw statically: GLib and the C runtime are the dependency files.
+            modules = preflight([dll, glib, *crt])
+            self.assertEqual(sorted(Path(item['path']).name for item in modules),
+                             ['glib-2.0-0.dll', 'oxpinyin_capi.dll', 'ucrtbase.dll', 'vcruntime140.dll'])
+            self.assertEqual(arms['A']['modules'], modules)
+            with self.assertRaisesRegex(ValueError, 'glib-2.0-0.dll'):
+                preflight([dll, *crt])
+            with self.assertRaisesRegex(ValueError, 'CRT'):
+                preflight([dll, glib])
 
     def test_module_identity_rejects_other_files_and_changed_bytes(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -178,8 +178,8 @@ if __name__ == '__main__':
 def native_build(revision, destination, env, *, symbols=True, windows=False, linux=False):
     """One native release build in a private invocation worktree.
 
-    macOS and Windows build Cargo's default backend: tkrzw from Homebrew, or from the vcpkg
-    overlay under VCPKG_ROOT. Linux builds the local cell, Kyoto Cabinet from the distribution,
+    macOS and Windows build Cargo's default backend: tkrzw from Homebrew, or the repository's
+    static build (`just tkrzw`). Linux builds the local cell, Kyoto Cabinet from the distribution,
     and packages the shipping library as macOS does. SYMBOLS adds the profiled arm's debug
     information; a Linux comparison builds without it.
     """
@@ -193,22 +193,13 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
             raise ValueError('install libkyotocabinet-dev before measuring: pkg-config finds no kyotocabinet')
     elif windows:
         if not env.get('VCPKG_ROOT'):
-            raise ValueError('native measurement requires VCPKG_ROOT; see the setup runbook')
-        installed = Path(env['VCPKG_ROOT']).resolve() / 'installed/x64-windows'
+            raise ValueError('native measurement requires VCPKG_ROOT for GLib and pkgconf; see the setup runbook')
+        env = windows_environment(env, Path(env['VCPKG_ROOT']).resolve() / 'installed/x64-windows')
     else:
         from ..provision import homebrew_tkrzw_prefix
-        installed = homebrew_tkrzw_prefix(env)
-    if not linux:
-        pkgconfig = installed / 'lib/pkgconfig'
+        pkgconfig = homebrew_tkrzw_prefix(env) / 'lib/pkgconfig'
         if not (pkgconfig / 'tkrzw.pc').is_file():
             raise ValueError(f'missing tkrzw.pc in {pkgconfig}')
-    if windows:
-        env = {**env, 'PKG_CONFIG_PATH': str(pkgconfig) +
-               (os.pathsep + env['PKG_CONFIG_PATH'] if env.get('PKG_CONFIG_PATH') else '')}
-        from tools.dev.check import msvc_environment
-        env = msvc_environment(env)
-        env.update(PKG_CONFIG=str(installed / 'tools/pkgconf/pkgconf.exe'),
-                   PKG_CONFIG_PATH=str(pkgconfig), PKG_CONFIG_LIBDIR=str(pkgconfig))
     source = destination / 'source'
     prefix = destination / 'prefix'
     target = destination / 'target'
@@ -265,6 +256,28 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
                                    'PKG_CONFIG_PATH': build_env.get('PKG_CONFIG_PATH', '')})
     finally:
         bench.run(['git', 'worktree', 'remove', '--force', source])
+
+
+def windows_environment(env, installed):
+    """The Windows arm's build environment: MSVC, vcpkg's pkgconf and GLib, and the static tkrzw first.
+
+    Both arms read one pkg-config search path, so they link the same GLib
+    import library and the same repository-built tkrzw archive.
+    """
+    from tools.dev.check import msvc_environment
+    from tools.tkrzw import windows as tkrzw
+    pkgconfig = installed / 'lib/pkgconfig'
+    if not (pkgconfig / 'glib-2.0.pc').is_file():
+        raise ValueError('install glib:x64-windows and pkgconf:x64-windows with vcpkg before measuring')
+    revision = tkrzw.pin()['revision']
+    prefix = tkrzw.default_prefix(env, revision)
+    if not tkrzw.built(prefix, revision):
+        raise ValueError(f'run just tkrzw before measuring: no complete tkrzw build in {prefix}')
+    search = tkrzw.environment(prefix, {'PKG_CONFIG_PATH': str(pkgconfig)})['PKG_CONFIG_PATH']
+    env = msvc_environment(env)
+    env.update(PKG_CONFIG=str(installed / 'tools/pkgconf/pkgconf.exe'),
+               PKG_CONFIG_PATH=search, PKG_CONFIG_LIBDIR=search)
+    return env
 
 
 def native_driver(arm, output, env):

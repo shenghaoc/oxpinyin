@@ -377,8 +377,9 @@ def native(argv, env):
     if windows:
         if platform.machine().lower() not in ('amd64', 'x86_64'):
             bench.fail('Windows comparison requires the x64 MSVC host and x64-windows triplet', 2)
+        # vcpkg provides GLib and pkgconf; tkrzw is the repository's static build (prepare.native_build).
         if not env.get('VCPKG_ROOT'):
-            bench.fail('Windows comparison requires VCPKG_ROOT', 2)
+            bench.fail('Windows comparison requires VCPKG_ROOT for GLib and pkgconf', 2)
         from tools.dev.check import msvc_environment
         env = {key.upper(): value for key, value in msvc_environment(env).items()}
         installed = Path(env['VCPKG_ROOT']).resolve() / 'installed/x64-windows'

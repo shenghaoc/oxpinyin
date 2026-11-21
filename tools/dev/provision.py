@@ -522,13 +522,12 @@ class Provision:
         previous = read_env(path)
         if path.is_file() and not previous:
             self.log(f'{path}: not written by this provisioner; regenerated with the cells of this run')
-        for cell in CELLS:
+        # The one Linux cell is the only entry the file can carry forward.
+        for cell in (backend_cell.LOCAL_CELL,):
             prefix = previous.get(f'OXPINYIN_ORACLE_PREFIX_{cell.upper()}', '')
             if cell in prefixes or not prefix:
                 continue
-            if cell != backend_cell.LOCAL_CELL:
-                self.log(f'{cell}: removed from environment file; {cell} is no Linux cell')
-            elif not self.libs_ok(cell, prefix):
+            if not self.libs_ok(cell, prefix):
                 self.log(f'{cell}: removed from environment file; current pin/recipe or recorded library bytes failed validation')
             elif not self.data_ok(cell, prefix):
                 self.log(f'{cell}: removed from environment file; data manifest check failed')
