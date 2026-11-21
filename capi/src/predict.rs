@@ -5,7 +5,7 @@
 //! and the punctuation prefix of
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
-use oxpinyin::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text_bytes;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
 use std::os::raw::c_char;
@@ -42,11 +42,10 @@ struct Predicted {
 /// stop at the first whose `get_length` is not zero; then `retrieve_all`.
 /// Answers the items in stored order, duplicates included, or the one
 /// warning a call refuses with where the pin reads past a partial item
-/// tail after a whole item (`retrieve_all`, `ngram.cpp:143`, register row
-/// 98, class (b)). Where the pin asserts, the process aborts at the same
+/// tail after a whole item (`retrieve_all`, `ngram.cpp:143`). Where the pin asserts, the process aborts at the same
 /// point of the walk: a value too short for its total (`get_length` reads
-/// it, `memory_chunk.h:390`, register row 85) and a gram with no whole item
-/// and a total left over (`ngram.cpp:70` via `pinyin.cpp:2332`, row 88).
+/// it, `memory_chunk.h:390`) and a gram with no whole item
+/// and a total left over (`ngram.cpp:70` via `pinyin.cpp:2332`).
 /// Only the prefixes the walk loads are read; a fault under any other token
 /// is never reached.
 fn predicted_bigram_items(
@@ -80,7 +79,7 @@ fn predicted_bigram_items(
 
 /// Fill the candidate snapshot, returning false for a missing prefix.
 ///
-/// A refused gram walk (row 98) returns a warning for the entry point to
+/// A refused gram walk returns a warning for the entry point to
 /// emit after releasing the instance view.
 fn guess_predicted_result(
     inst: &mut crate::state::CapiInstanceMut<'_>,
@@ -165,7 +164,7 @@ fn sort_predicted(items: &mut [Predicted]) {
 ///
 /// At 074a2219, `pinyin_guess_predicted_candidates` frees that string in
 /// `_free_candidates` and empties `m_prefixes` before `_compute_prefixes`
-/// reads it (`pinyin.cpp:1335-1344`, `:2420-2424`). #542's ruling keeps
+/// reads it (`pinyin.cpp:1335-1344`, `:2420-2424`). The contract keeps
 /// the defined part and the stable no-prefix outcome, by pointer identity;
 /// the punctuation entry reaches the same call first (`:2459`), register
 /// entry "Aliased prediction prefix use-after-free".
@@ -219,7 +218,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates(
     if clear_borrowed_prefix(&mut inst, prefix) {
         return false;
     }
-    let prefix = oxpinyin::marshal::ucs4::prefix_text(
+    let prefix = oxpinyin::marshal::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -231,7 +230,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates(
 ///
 /// Upstream returns `true` after the prepend, even when the prefix matched
 /// no phrase-table suffix. The scorer's zero-total assert aborts before
-/// prepending, as the pin's does (register row 61).
+/// prepending, as the pin's does.
 pub(crate) fn guess_predicted_with_punctuations(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     prefix: Option<&PhraseText>,

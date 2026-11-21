@@ -9,19 +9,19 @@
 //! decoding is bounded to the record. A journal record whose payload extends
 //! beyond the log rolls back the changes made by that replay.
 
-use crate::user::persistence::record_skip;
+use crate::user::record_skip;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
-use crate::data::chunk_write::{ChunkItem, decode_phrase_item};
+use crate::data::phrase_library::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
+use crate::data::phrase_library::{ChunkItem, decode_phrase_item};
 use crate::data::phrase_library::{PhraseContent, PhraseItemView};
 use crate::data::user_files::LogRecord;
 
 #[cfg(test)]
-use crate::user::persistence::SystemLibrary;
-use crate::user::persistence::{SystemLibraryRef, journal_item_bytes};
+use crate::user::SystemLibrary;
+use crate::user::{SystemLibraryRef, journal_item_bytes};
 
 /// Why the merge ended at a record.
 pub(crate) enum Stop {
@@ -29,7 +29,7 @@ pub(crate) enum Stop {
     Mismatch(&'static str, u32),
     /// An ADD payload shorter than the unigram `add_phrase_item` reads:
     /// the pin's `get_unigram_frequency` asserts (`memory_chunk.h:390`,
-    /// reached from `phrase_index.cpp:457` through `:215`; row 108). The
+    /// reached from `phrase_index.cpp:457` through `:215`). The
     /// caller returns [`JournalFault::ShortAdd`].
     ShortAdd(u32),
 }
@@ -42,7 +42,7 @@ pub(crate) enum Stop {
 pub enum JournalFault {
     /// `PhraseIndexLogger::next_record`'s `assert(token == null_token)` on a
     /// `MODIFY_HEADER` record (`phrase_index_logger.h:202`), reached by
-    /// `merge` and by `merge_with_mask`'s `_peek_header` (row 91).
+    /// `merge` and by `merge_with_mask`'s `_peek_header`.
     HeaderToken {
         /// The library whose log holds the record.
         library: u8,
@@ -52,7 +52,7 @@ pub enum JournalFault {
     /// `merge`'s ADD stores a payload shorter than six bytes and
     /// `add_phrase_item` reads its unigram through
     /// `PhraseItem::get_unigram_frequency`, whose `check_result` asserts
-    /// (`memory_chunk.h:390` via `phrase_index.cpp:457`, `:215`; row 108).
+    /// (`memory_chunk.h:390` via `phrase_index.cpp:457`, `:215`).
     ShortAdd {
         /// The library whose log holds the record.
         library: u8,
@@ -60,7 +60,7 @@ pub enum JournalFault {
         token: u32,
     },
     /// `_peek_header`'s `assert(1 >= header_count)` (`phrase_index.cpp:745`),
-    /// reached only by `merge_with_mask` (row 92).
+    /// reached only by `merge_with_mask`.
     MultipleHeaders {
         /// The library whose log holds the headers.
         library: u8,

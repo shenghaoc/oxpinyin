@@ -107,7 +107,7 @@ fn n_pronunciation_without_a_sub_index_writes_zero() {
 }
 
 /// Register entry "Token getters on a phrase longer than sixteen characters
-/// (policy row 124, class (b))": at 074a2219 `_token_get_phrase` and
+/// ": at 074a2219 `_token_get_phrase` and
 /// `pinyin_token_get_nth_pronunciation` copy a 17-word item into 16-entry
 /// stack buffers (`pinyin.cpp:1633,1639,2808,2815`), so the pin's result is
 /// undefined and nothing runs on it. oxpinyin's prescribed result: both
@@ -115,7 +115,7 @@ fn n_pronunciation_without_a_sub_index_writes_zero() {
 #[test]
 fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
     use oxpinyin::data::chunk_format::build_memory_chunk;
-    use oxpinyin::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-long-phrase");
     write_user_conf(&user.path, &system_dir());

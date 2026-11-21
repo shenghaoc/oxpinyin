@@ -14,7 +14,7 @@
 //! and `check_result(get_magic_header(…))` abort; they are reached only when
 //! the candidate's own header is inconsistent with the deleted model. A row
 //! of either model shorter than its array header is read outside its record
-//! at `:134` or `:136` (class (b)); it takes the tools' store-error exit
+//! at `:134` or `:136`; it takes the tools' store-error exit
 //! before the token's line.
 
 use std::ffi::CStr;

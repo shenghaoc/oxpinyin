@@ -9,7 +9,7 @@
 //! |---|---|---|
 //! | `pinyin_index.bin` | packed `ChewingKey[L]` | `PinyinIndexItem2<L>[]` ([`pinyin_index`]) |
 //! | `phrase_index.bin` | UCS-4 phrase text | `phrase_token_t[]` ([`phrase_index`]) |
-//! | `bigram.db` | `phrase_token_t` | `total` + `{next, count}[]` ([`bigram`]) |
+//! | `bigram.db` | `phrase_token_t` | `total` + `{next, count}[]` ([`crate::single_gram`]) |
 //! | `punct.bin` | `phrase_token_t` | zero-terminated UCS-4 runs ([`punct`]) |
 //!
 //! oxpinyin has two halves that must agree on every one of those bytes:
@@ -64,8 +64,8 @@ fn append_u32_le(buf: &mut Vec<u8>, words: impl Iterator<Item = u32>) {
 pub mod pinyin_index {
     use crate::ChewingKey;
 
-    use crate::data::chunk_format::CHEWING_KEY_SIZE;
-    use crate::data::dict::DictError;
+    use crate::data::DictError;
+    use crate::data::phrase_library::CHEWING_KEY_SIZE;
 
     /// The C++ `sizeof(PinyinIndexItem2<L>)` with tail padding to 4-byte
     /// alignment. Field sum is `4 + 2*L`; C++ rounds up to the next
@@ -157,8 +157,7 @@ pub mod pinyin_index {
     /// (`chewing_large_table2.h:145-150`, `:197-202` at 074a2219), and the
     /// pointer difference counts whole records. For a stride of 8, 16 or 32
     /// bytes (1, 2, 5, 6, 13 or 14 keys) that count is exact; for any other
-    /// stride it is undefined, and oxpinyin takes the same whole-record count
-    /// (compatibility policy row 128).
+    /// stride it is undefined, and oxpinyin takes the same whole-record count.
     pub(crate) fn item_views(
         value: &[u8],
         phrase_length: usize,
@@ -249,7 +248,7 @@ pub mod pinyin_index {
 /// `docs/findings/data-formats.md` §5,
 /// `phrase_large_table3_tkrzwdb.cpp`.
 pub mod phrase_index {
-    use crate::data::dict::DictError;
+    use crate::data::DictError;
 
     use super::append_u32_le;
 
@@ -303,37 +302,6 @@ pub mod phrase_index {
             .iter()
             .map(|chunk| u32::from_le_bytes(*chunk))
             .collect())
-    }
-}
-
-// ── bigram.db ────────────────────────────────────────────────────
-
-// SingleGram::insert_freq maintains token order when inserting new records;
-// ngram.cpp:133–205, ngram_tkrzwdb.cpp and docs/findings/data-formats.md §6.
-/// Bigram rows keyed by the previous token. Each value stores a total followed by
-/// successor-token and count pairs. The codecs preserve the stored order and total.
-pub mod bigram {
-    use crate::data::dict::DictError;
-    use crate::data::single_gram::decode_single_gram;
-
-    /// A previous token’s stored bigram total and successor records.
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct BigramRow {
-        /// Total from the row header, independent of the supplied successor counts.
-        pub total: u32,
-        /// `(next_token, count)` records, stored order.
-        pub records: Vec<(u32, u32)>,
-    }
-
-    /// Decodes a bigram value as `(total, [{next_token, count}])`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DictError::Parse` when the value length is not `4 + 8n`.
-    pub fn parse_value(data: &[u8]) -> Result<BigramRow, DictError> {
-        decode_single_gram(data)
-            .map(|(total, records)| BigramRow { total, records })
-            .ok_or(DictError::Parse)
     }
 }
 

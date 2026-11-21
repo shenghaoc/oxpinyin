@@ -40,6 +40,40 @@
 //! degrading to `None` where upstream would answer `ERROR_NO_ITEM` /
 //! `ERROR_FILE_CORRUPTION`.
 
+/// `c_separate` (`novel_types.h:126`).
+pub const SEPARATOR: u8 = b'#';
+
+/// `SubPhraseIndex::store`'s `index_one`: the payload's `total_freq` plus
+/// the three section offsets (`u32×4`) and the separator that closes
+/// them, so the offset array starts at byte 17.
+///
+/// Constant in every
+/// upstream file, and no alignment requirement rides on it — the loader
+/// reads its `u32`s at unaligned offsets.
+pub const INDEX_ONE: u32 = 17;
+
+/// The entry area's first item offset.
+///
+/// `SubPhraseIndex::add_phrase_item`
+/// bumps a zero content size to 8 on the first item, reserving bytes
+/// `0..8` so that `0` stays the offset array's "no item" sentinel. A
+/// library with no items reserves nothing and has an empty entry area
+/// (measured on the pin's own `gen_binary_files` output for an empty
+/// `.table`).
+pub const FIRST_ITEM_OFFSET: u32 = 8;
+
+/// `phrase_item_header` (`phrase_index.h:56`): `{u8 phrase_length,
+/// u8 n_pronunciations, u32 unigram}` ahead of every item's UCS-4 text.
+pub const ITEM_HEADER_SIZE: usize = 6;
+
+/// `sizeof(ChewingKey)` — a 16-bit bitfield (`chewing_key.h:41`), the
+/// width one pronunciation key occupies inside an item.
+pub const CHEWING_KEY_SIZE: usize = size_of::<u16>();
+
+mod write;
+pub use write::{ChunkItem, build_chunk, encode_phrase_item};
+pub(crate) use write::{decode_phrase_item, sub_phrase_index_sections};
+
 use std::fmt;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -51,9 +85,7 @@ compile_error!(
      not supported."
 );
 
-use crate::data::chunk_format::{
-    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR, chunk_checksum,
-};
+use crate::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
 
 use crate::{PHRASE_MASK, PhraseText};
 
@@ -269,7 +301,7 @@ impl PhraseItemView<'_> {
     }
 
     // PhraseItem::get_nth_pronunciation, phrase_index.cpp:180–205.
-    /// Borrows one reading’s packed keys and frequency. Supply a stored reading index whose
+    /// Borrows one reading's packed keys and frequency. Supply a stored reading index whose
     /// keys and frequency are present.
     #[must_use]
     pub fn pronunciation(&self, index: usize) -> Option<PronunciationView<'_>> {
@@ -650,9 +682,6 @@ impl PhraseLibrary {
     ///
     /// # Errors
     /// Returns a read, checksum, or layout error.
-    ///
-    /// # Aborts
-    /// A failed header word read aborts at the pin's assertion.
     pub fn load_heap(path: &Path) -> Result<Self, LibraryError> {
         let loaded = crate::input::chunk::load(path).map_err(|error| match error {
             crate::input::chunk::ChunkLoadError::Header => {
@@ -669,10 +698,13 @@ impl PhraseLibrary {
         Self::from_payload(payload)
     }
 
-    /// Construct a library from a validated, heap-owned chunk payload.
+    /// Constructs a library from an owned chunk payload. A missing first
+    /// separator or a wrong separator byte leaves a library with no accessible
+    /// items and the stored total, or zero if the total is unavailable.
     ///
     /// # Errors
-    /// Returns an error when the sub-index layout cannot be represented safely.
+    /// Returns an error for an out-of-bounds later separator, sections out of
+    /// order, or an offset array without a whole number of entries.
     pub fn from_payload(payload: Vec<u8>) -> Result<Self, LibraryError> {
         let len = payload.len();
         Self::from_bytes(LibraryBytes::Owned(payload), 0..len, None)

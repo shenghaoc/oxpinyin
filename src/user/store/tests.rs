@@ -82,7 +82,7 @@ fn next_user_token(store: &UserStore) -> PhraseToken {
         .libraries
         .get(&USER_DICTIONARY)
         .map_or(1, crate::user::user_library::UserLibrary::token_end);
-    crate::user::phrase::add_phrase_token(USER_DICTIONARY, end)
+    crate::user::add_phrase_token(USER_DICTIONARY, end)
 }
 use std::collections::BTreeMap;
 
@@ -90,7 +90,7 @@ use std::collections::BTreeMap;
 /// sub-index add; phrase_index.cpp:243-248 reload adjusts only sub-index totals.
 #[test]
 fn reload_preserves_the_delta_no_subindex_accepted() {
-    use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+    use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
     let originals = || {
         SystemOriginals::from(crate::user::LibraryTable::from([(
             1,
@@ -100,7 +100,7 @@ fn reload_preserves_the_delta_no_subindex_accepted() {
                 range_end: 2,
                 items: BTreeMap::from([(
                     1,
-                    crate::data::chunk_write::ChunkItem {
+                    crate::data::phrase_library::ChunkItem {
                         phrase: vec![0x4f60],
                         unigram: u32::MAX,
                         prons: Vec::new(),
@@ -130,7 +130,7 @@ fn reload_preserves_the_delta_no_subindex_accepted() {
 
 #[test]
 fn system_import_changes_the_first_match_and_guards_its_prefix() {
-    let mut item = crate::data::chunk_write::ChunkItem {
+    let mut item = crate::data::phrase_library::ChunkItem {
         phrase: vec![0x4f60],
         unigram: 0,
         prons: vec![(vec![1], u32::MAX - 10), (vec![2], 3), (vec![2], 5)],
@@ -168,10 +168,10 @@ mod session {
     use super::next_user_token;
     use crate::SENTENCE_START;
     use crate::SyllableKey;
-    use crate::data::chunk_write::{ChunkItem, encode_phrase_item};
+    use crate::data::phrase_library::{ChunkItem, encode_phrase_item};
     use crate::data::user_files::{SystemVersions, UserFileLayout};
     use crate::user::FIRST_USER_TOKEN;
-    use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+    use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
     use crate::{
         ADDON_DICTIONARY, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK,
         USER_DICTIONARY, phrase_index_make_token,
@@ -466,7 +466,7 @@ mod session {
             .unwrap();
         assert_eq!(token, FIRST_USER_TOKEN);
         assert_eq!(token, 0x0700_0001);
-        assert!(phrase::is_user_token(token));
+        assert!(crate::user::is_user_token(token));
         assert_eq!(next_user_token(&store), FIRST_USER_TOKEN + 1);
     }
 
@@ -888,7 +888,7 @@ mod session {
     /// the reserved id (`pinyin.cpp:592-594`): every later add lands on
     /// slot 1, where `add_phrase_item` overwrites the offset word and
     /// adds the new unigram to a total that keeps the overwritten one
-    /// (`phrase_index.cpp:208-217`). Register row 119.
+    /// (`phrase_index.cpp:208-217`)..
     #[test]
     fn add_phrase_fills_the_last_slot_then_wraps_to_slot_1() {
         let mut store = transient();
@@ -950,7 +950,7 @@ mod session {
     /// slot is allocated, and the end past it is masked to slot 0
     /// (`phrase_index.cpp:620`) with no reserved-id bump, so every later
     /// promotion lands on slot 0 and `add_phrase_item` overwrites it
-    /// (`phrase_index.cpp:208-217`). Register row 119.
+    /// (`phrase_index.cpp:208-217`)..
     #[test]
     fn promote_addon_phrase_fills_the_last_slot_then_wraps_to_slot_0() {
         let mut store = transient();
@@ -1089,13 +1089,14 @@ mod session {
     #[test]
     fn promote_addon_phrase_copies_a_word_that_is_not_a_scalar() {
         let mut store = transient();
-        let item =
-            crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
+        let item = crate::data::phrase_library::encode_phrase_item(
+            &crate::data::phrase_library::ChunkItem {
                 phrase: vec![0xD800, 0x4e8c],
                 unigram: 4,
                 prons: vec![(vec![0x0001, 0x0002], 4)],
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         let token = crate::user::test_session::promote_item(&mut store, &item).unwrap();
         assert_eq!(stored_item(&store, token), item);
     }
@@ -1144,7 +1145,7 @@ mod session {
 #[test]
 fn reporting_save_guards_preserve_unigram_overflow() {
     use crate::data::user_files::SystemVersions;
-    use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+    use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
     fn originals() -> SystemOriginals {
         crate::user::LibraryTable::from([(
             1,
@@ -1154,7 +1155,7 @@ fn reporting_save_guards_preserve_unigram_overflow() {
                 mapped: None,
                 items: BTreeMap::from([(
                     1,
-                    crate::data::chunk_write::ChunkItem {
+                    crate::data::phrase_library::ChunkItem {
                         phrase: vec![0x4f60],
                         unigram: 100,
                         prons: Vec::new(),
@@ -1228,8 +1229,8 @@ fn reporting_save_guards_preserve_unigram_overflow() {
 #[test]
 fn repeated_increments_move_the_live_unigram_and_total() {
     use crate::data::user_files::SystemVersions;
-    use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
-    let item = crate::data::chunk_write::ChunkItem {
+    use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
+    let item = crate::data::phrase_library::ChunkItem {
         phrase: vec![u32::from('你')],
         unigram: 0,
         prons: Vec::new(),
@@ -1350,7 +1351,7 @@ mod backend_files {
             ),
         )
         .unwrap();
-        let conf = crate::data::table_info::TableConf::load_from_dir(&system).unwrap();
+        let conf = crate::data::TableConf::load_from_dir(&system).unwrap();
         crate::user::test_session::open_with_conf(dir, &system, &conf, UserConfLaw::Pinyin)
     }
 
@@ -1744,7 +1745,7 @@ mod backend_files {
 #[test]
 fn import_end_compaction_drops_the_reserved_slot() {
     use crate::data::chunk_format::build_memory_chunk;
-    use crate::data::chunk_write::{ChunkItem, build_chunk};
+    use crate::data::phrase_library::{ChunkItem, build_chunk};
     use crate::user::native_fixture::{TempUserDir, system_dir, write_user_conf};
 
     let user = TempUserDir::new("user-file-slot-zero");
@@ -1892,7 +1893,7 @@ fn removing_a_user_item_takes_its_unigram_increment_out_of_the_total() {
 #[test]
 fn user_unigram_item_wraps_when_its_sub_index_total_accepts_the_add() {
     use crate::data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
-    use crate::data::chunk_write::{ChunkItem, build_chunk};
+    use crate::data::phrase_library::{ChunkItem, build_chunk};
     use crate::user::native_fixture::TempUserDir;
 
     let user = TempUserDir::new("user-unigram-wrap");

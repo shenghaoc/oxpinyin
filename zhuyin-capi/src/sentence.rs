@@ -33,16 +33,8 @@ pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) ->
     oxpinyin::facade::guess_result(result, "zhuyin_guess_sentence", crate::ffi::log_warning)
 }
 
-/// The lookup faults of a predecessor's user bigram. A value too short for
-/// its total is the pin's assert in `get_total_freq` (`memory_chunk.h:390`,
-/// read by `merge_single_gram`, `ngram.cpp:303-304`, by `SingleGram::search`,
-/// `:165`, and by the `DYNAMIC_ADJUST` term, `pinyin.cpp:1848`,
-/// `zhuyin.cpp:1250`; register row 85): the process aborts. So does a Kyoto
-/// Cabinet read that fails after its size check, the pin's
-/// `check_result(vsiz == m_db->get(...))` in `Bigram::load`
-/// (`ngram_kyotodb.cpp:138-139`). A read past the value (`ngram.cpp:241`,
-/// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
-/// the call answers `true` when `error` is that read.
+/// Logs one warning for a lookup that would read past a predecessor's system
+/// or user bigram value. Returns `true` when it logs the warning.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::engine::EngineError) -> bool {
     oxpinyin::facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
@@ -99,7 +91,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     let mut inst = borrow_or_return!(instance, instance_mut, false);
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
-    let prefix = oxpinyin::marshal::ucs4::prefix_text(
+    let prefix = oxpinyin::marshal::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -228,7 +220,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
     if columns > 0 && offset >= columns {
         std::process::abort();
     }
-    let text = oxpinyin::marshal::input::utf8_to_ucs4(
+    let text = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -265,7 +257,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
 ///                                            size_t offset);
 /// ```
 ///
-/// Replace the instance’s candidate list, including on a keyless refusal. Returns false when
+/// Replace the instance's candidate list, including on a keyless refusal. Returns false when
 /// lookup cannot proceed. True can mean an empty list. Inside a chewing key the lookup can
 /// publish only sentence rows.
 ///
@@ -294,7 +286,7 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_after_cursor(
 ///                                             size_t offset);
 /// ```
 ///
-/// Replace the instance’s candidate list, including on a keyless refusal. Returns false when
+/// Replace the instance's candidate list, including on a keyless refusal. Returns false when
 /// lookup cannot proceed. True can mean an empty list. Only spans ending at the normalized
 /// cursor qualify.
 ///

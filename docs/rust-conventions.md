@@ -128,7 +128,7 @@ The applicable test kinds are:
 
 - Curated goldens.
 - Deterministic tests for totality and invariants, with exhaustive inputs or boundary cases.
-- Fuzz tests with AFL++ (`just fuzz`), from W1.
+- Fuzz tests with AFL++ (`just fuzz`).
 - Hard-kill crash-path tests on all operating systems.
 - Differentials against frozen captures of pinned libpinyin.
 

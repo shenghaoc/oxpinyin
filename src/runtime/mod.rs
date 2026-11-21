@@ -14,13 +14,13 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 pub(crate) use crate::data::phrase_library::{LibraryError, PhraseItemView, RowFault};
-pub(crate) use crate::data::table_info::{FileType, TableConfSite};
-pub(crate) use crate::data::table_info::{TableConf, TableConfError};
 use crate::data::user_files::{SystemVersions, UserFileLayout};
 use crate::data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary,
 };
+pub(crate) use crate::data::{FileType, TableConfSite};
+pub(crate) use crate::data::{TableConf, TableConfError};
 use crate::engine::{EngineError, Session, SessionSettings};
 use crate::user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
@@ -84,8 +84,7 @@ pub enum OpenError {
     /// and [`TableConfError::Header`] are the pin's ordinary `false` returns
     /// (`open %s failed.` and `load %s failed!`), an ordinary init failure
     /// the C adapters answer with NULL and no warning. Every other kind
-    /// aborts in the C adapters at the pin's abort sites
-    /// (rows 79 and 80), and is a class (b) site the C ABI answers with NULL
+    /// aborts in the C adapters at the pin's abort sites, and is an undefined-read site the C ABI answers with NULL
     /// and one warning otherwise.
     TableConf(TableConfError),
     /// A `SYSTEM_FILE` library's user `.dbin` replay reached a pin
@@ -119,7 +118,7 @@ pub(crate) struct RemapWalk {
 pub(crate) enum RemapStep {
     /// The library mapped and is in the walk's originals.
     Mapped(u8),
-    /// `MemoryChunk::mmap` refuses the file (row 76): the `mmap %s failed!`
+    /// `MemoryChunk::mmap` refuses the file: the `mmap %s failed!`
     /// path.
     Unmappable(PathBuf),
     /// A directory whose header read the pin asserts on (`memory_chunk.h:493`,
@@ -133,7 +132,7 @@ pub(crate) enum RemapStep {
 #[derive(Debug)]
 pub(crate) enum SaveRemapFault {
     /// `MemoryChunk::mmap` refuses the file: the pin writes
-    /// `mmap %s failed!` (row 76, class (b)).
+    /// `mmap %s failed!`.
     Unmappable(PathBuf),
 }
 
@@ -231,10 +230,7 @@ fn chewing_query(syllables: &[SyllableKey]) -> Vec<crate::ChewingKey> {
 /// It borrows the runtime's tables and store for one operation.
 #[derive(Clone, Copy)]
 pub struct RuntimeDict<'a> {
-    system: SystemDictionary<
-        &'a crate::data::phrase_libraries::PhraseLibraries,
-        &'a crate::data::dict::SystemTables,
-    >,
+    system: SystemDictionary<&'a crate::data::PhraseLibraries, &'a crate::data::SystemTables>,
     user: &'a UserStore,
     addons: &'a RefCell<AddonSet>,
     punct: &'a PunctTable,
@@ -504,10 +500,7 @@ impl<'a> RuntimeDict<'a> {
     #[must_use]
     pub fn system(
         &self,
-    ) -> &SystemDictionary<
-        &'a crate::data::phrase_libraries::PhraseLibraries,
-        &'a crate::data::dict::SystemTables,
-    > {
+    ) -> &SystemDictionary<&'a crate::data::PhraseLibraries, &'a crate::data::SystemTables> {
         &self.system
     }
 
@@ -692,8 +685,7 @@ impl<'a> RuntimeDict<'a> {
     /// The stored length and text of the token's item, as the C token
     /// getters read them (`_token_get_phrase`, 074a2219 `pinyin.cpp:1627-1646`,
     /// `zhuyin.cpp:1096-1114`). `None` only when `get_phrase_item` fails, or
-    /// for a shipped item whose text passes the content end (compatibility
-    /// policy row 130). A shipped item is read through its header-bounded
+    /// for a shipped item whose text passes the content end instead. A shipped item is read through its header-bounded
     /// view, so readings that pass the content end do not hide its text.
     #[must_use]
     pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
@@ -1214,8 +1206,8 @@ impl Dictionary for RuntimeDict<'_> {
 #[derive(Clone, Copy)]
 pub struct RuntimeLm<'a> {
     inner: BigramLanguageModel<
-        &'a crate::data::phrase_libraries::PhraseLibraries,
-        &'a crate::data::lm::BigramTables,
+        &'a crate::data::PhraseLibraries,
+        &'a crate::data::BigramTables,
         &'a Cell<u32>,
     >,
     user: &'a UserStore,
@@ -1424,8 +1416,8 @@ pub type RuntimeSession<'a> =
 /// training and saving.
 pub struct Runtime {
     system_dir: PathBuf,
-    system: crate::data::dict::SystemTables,
-    model: crate::data::lm::BigramTables,
+    system: crate::data::SystemTables,
+    model: crate::data::BigramTables,
     user: UserStore,
     conf: TableConf,
     addons: RefCell<AddonSet>,
@@ -1436,7 +1428,7 @@ pub struct Runtime {
 impl Runtime {
     // pinyin_fini, pinyin.cpp:1195–1215, and zhuyin_fini, zhuyin.cpp:741–757. Compatibility
     // row 42 covers surviving handles.
-    /// Applies the facade’s final marker policy and closes each native attachment once.
+    /// Applies the facade's final marker policy and closes each native attachment once.
     /// Repeated calls are inert. In-memory state remains available to surviving handles.
     pub fn finish(&mut self) {
         // pinyin.cpp:1200 writes the marker before deleting the tables.
@@ -1548,7 +1540,7 @@ impl Runtime {
     /// pinyin facade's init passes [`UserConfLaw::Pinyin`], the zhuyin
     /// facade's [`UserConfLaw::Zhuyin`] — the two pins share the data
     /// directory and the user file set but not the open counter's
-    /// lifecycle (`crate::user::persistence::UserConfLaw`). The law also
+    /// lifecycle (`crate::user::UserConfLaw`). The law also
     /// selects the facade's system tables: only pinyin opens the addon
     /// indexes and punctuation table (074a2219 `pinyin.cpp:416-440`;
     /// `zhuyin.cpp:270-358`).
@@ -1585,7 +1577,7 @@ impl Runtime {
         let early = check_profile_early(&conf, user_dir, law);
         let user_profile = user_dir.zip(early);
         let pinyin = SystemDictionary::attach_pinyin(system_dir).map_err(OpenError::Dict)?;
-        let user_pinyin = crate::user::persistence::LoadedPinyinIndex::open(user_profile)
+        let user_pinyin = crate::user::LoadedPinyinIndex::open(user_profile)
             .map_err(|error| OpenError::UserSession(error.into()))?;
         let dict =
             SystemDictionary::attach_phrase(system_dir, &conf, pinyin).map_err(OpenError::Dict)?;
@@ -1597,7 +1589,7 @@ impl Runtime {
         // as freeing the sub-index does upstream.
         let library_mask = Cell::new(0);
         let mut originals = crate::user::system_originals(
-            crate::data::phrase_libraries::PhraseLibraries::empty(),
+            crate::data::PhraseLibraries::empty(),
             UserFileLayout::from_conf(&conf),
         );
         // The library loop: each default row is judged, mapped and merged
@@ -1624,11 +1616,12 @@ impl Runtime {
             .load_libraries(user_profile, &mut originals, &rows, unmapped)
             .map_err(library_loop_error)?;
         // The system bigram attaches first (pinyin.cpp:394-401, zhuyin.cpp:336-343).
-        let bigram = crate::input::path::build_path(
+        let bigram = crate::input::build_path(
             system_dir,
             std::ffi::OsStr::new(&SystemDbm::Bigram.file_name()),
         );
-        let mut lm = crate::data::lm::BigramTables::attach(&bigram).map_err(OpenError::Lm)?;
+        let lm =
+            crate::data::BigramTables::attach(&bigram, conf.lambda_f32()).map_err(OpenError::Lm)?;
         let user = UserStore::open_session(
             user_dir,
             &mut originals,
@@ -1639,7 +1632,6 @@ impl Runtime {
         .map_err(OpenError::UserSession)?;
 
         // λ is the `gfloat` table.conf's scanner read.
-        lm.set_lambda_from_conf(&conf);
 
         let addons = RefCell::new(AddonSet {
             dict: match law {
@@ -1669,7 +1661,7 @@ impl Runtime {
         })
     }
 
-    fn libraries(&self) -> &crate::data::phrase_libraries::PhraseLibraries {
+    fn libraries(&self) -> &crate::data::PhraseLibraries {
         self.user.originals().phrase_libraries()
     }
 
@@ -1734,7 +1726,7 @@ impl Runtime {
     // pinyin_train checks the directory and result count and asserts the selected index,
     // pinyin.cpp:2670–2690; zhuyin.cpp:1696–1715. train_result3 applies successive
     // observations, lookup/phonetic_lookup.h:844–936.
-    /// Applies the retained session’s training plan at `index`. A runtime without a user
+    /// Applies the retained session's training plan at `index`. A runtime without a user
     /// directory or a session without a training plan returns `Ok(false)`. Select an existing
     /// sentence row when rows are present.
     ///
@@ -1953,7 +1945,7 @@ impl Runtime {
             let Some(name) = row.system.as_ref() else {
                 continue;
             };
-            let path = crate::input::path::build_chunk_path(dir, name.as_ref());
+            let path = crate::input::build_chunk_path(dir, name.as_ref());
             let opened = if walk.reload {
                 crate::data::phrase_library::PhraseLibrary::open_retaining_layout(&path)
             } else {

@@ -20,7 +20,7 @@ use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_re
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
-use oxpinyin::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text_bytes;
 
 /// State behind `export_iterator_t *`: the pin's iterator state, which
 /// reads each item when a call needs it and buffers no row.
@@ -249,7 +249,7 @@ unsafe fn plan_import(
     pinyin: *const c_char,
 ) -> ImportPlan {
     // Scalar input conversion; raw-word import is tracked by #1279.
-    let phrase = oxpinyin::marshal::input::utf8_to_ucs4(
+    let phrase = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -257,7 +257,7 @@ unsafe fn plan_import(
     .unwrap_or_default();
     // The reading is parsed from the raw bytes (`pinyin.cpp:638`): the
     // keys before an invalid sequence stand, as they do at the pin.
-    let pinyin = oxpinyin::marshal::input::parser_prefix(
+    let pinyin = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyin) },
@@ -612,10 +612,10 @@ pub unsafe extern "C" fn pinyin_bigram_iterator_has_next_phrase(
     walk_answer(more, "pinyin_bigram_iterator_has_next_phrase")
 }
 
-/// The answer of a `has_next` the walk ran: register row 85,
+/// The answer of a `has_next` the walk ran:
 /// `pinyin.cpp:889` through `ngram.cpp:141` and `memory_chunk.h:390`, a
 /// predecessor too short for its total, where `retrieve_all`'s assert dies
-/// and so does the process; class (b), register row 98, `ngram.cpp:133-143`,
+/// and so does the process; `ngram.cpp:133-143`,
 /// a partial item tail `retrieve_all` reads past, where the walk ends with
 /// one warning and `false`; and a stored key of the loaded pair outside the
 /// table, where `get_pinyin_string` asserts inside the pin's `has_next`

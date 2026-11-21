@@ -4,7 +4,7 @@
 //! moves port the pin's matrix laws over the engine's positional data, using
 //! the zhuyin parse's key spans. Where the pin asserts — `_check_offset`
 //! (`zhuyin.cpp:1453`) or the matrix's own index check
-//! (`phonetic_key_matrix.h:103`) — the process aborts (register row 66).
+//! (`phonetic_key_matrix.h:103`) — the process aborts.
 
 use std::ptr;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -54,7 +54,7 @@ fn check_key_matrix(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
 ///                                 size_t offset, ChewingKeyRest ** key_rest);
 /// ```
 ///
-/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Success writes a borrowed pointer to a static slot. All instances share this getter's slot.
 /// Its contents change on the next successful call, and its storage outlives the instance. The
 /// caller does not free it. An ordinary miss writes null. A null instance returns false without
 /// writing.
@@ -92,8 +92,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest(
     };
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
     // and the pin's `int` positions narrow into them mod 2^16: past byte
-    // 65535 the positions wrap, as the pin's do (maintainer ruling
-    // 2026-11-01 UTC, `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`).
+    // 65535 the positions wrap, as the pin's do (`docs/findings/upstream-divergences.md#key-positions-past-byte-65535`).
     KEY_REST_SLOT.begin.store(found.1 as u16, Ordering::Relaxed);
     KEY_REST_SLOT.end.store(found.2 as u16, Ordering::Relaxed);
     // The returned pointer refers to the static slot above.
@@ -118,7 +117,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest(
 /// The pin's body never reads the instance (`zhuyin.cpp:1930-1941`): a NULL
 /// instance is a defined call there, so it is unused here. The key-rest
 /// pointer is read only to fill a non-NULL `begin` or `end`, so a NULL one
-/// answers `true` when both are NULL and `false` (row 41) when either is not.
+/// answers `true` when both are NULL and `false` when either is not.
 ///
 /// # Safety
 ///
@@ -186,7 +185,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest_length(
 ///                            size_t offset, ChewingKey ** key);
 /// ```
 ///
-/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Success writes a borrowed pointer to a static slot. All instances share this getter's slot.
 /// Its contents change on the next successful call, and its storage outlives the instance. The
 /// caller does not free it. An ordinary miss writes null. A null instance returns false without
 /// writing.
@@ -277,7 +276,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_offset(
 /// `index < size` (`phonetic_key_matrix.h:103`). The matrix has
 /// `parsed_len + 1` columns, fewer than the input has bytes when the parse
 /// stopped early, and none while it placed no key; the process aborts for a
-/// column outside it (register row 66).
+/// column outside it.
 fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
     if index >= inst.core.pin_matrix_columns() {
         std::process::abort();

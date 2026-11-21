@@ -15,7 +15,7 @@ use crate::types::{GChar, PinyinInstance};
 /// Renders the instance's shared matrix. A matrix the renderer then refuses
 /// is the pin's abort — `pinyin.cpp:3311` (`assert(get_column_size(offset)
 /// >= 1)`) or `:3488` (`abort()` for a cut past two bytes) — and the process
-/// aborts there (register row 63); no matrix is the silent `None`.
+/// aborts there; no matrix is the silent `None`.
 fn render_shared(
     inst: &crate::state::CapiInstanceRead<'_>,
     render: impl FnOnce(&SharedMatrix) -> Option<AuxText>,
@@ -29,7 +29,7 @@ fn render_shared(
 
 /// The index-based full-pinyin renderer walks the stored parser keys.
 /// Check the corresponding parse-time matrix for the pin's aborts first
-/// (`pinyin.cpp:3311`, register row 63).
+/// (`pinyin.cpp:3311`).
 fn abort_on_full_walk(inst: &crate::state::CapiInstanceRead<'_>, cursor: usize) {
     if SharedMatrix::of(&inst.read()).is_some_and(|matrix| matrix.full(cursor).is_none()) {
         std::process::abort();

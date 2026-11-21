@@ -54,7 +54,7 @@ fn the_row_one_past_the_list_is_refused() {
     unsafe { close(context, instance) };
 }
 
-/// D10: `pinyin.cpp:2678-2688` at 074a2219 asserts that the train index is
+/// `pinyin.cpp:2678-2688` at 074a2219 asserts that the train index is
 /// below the number of decoded results before training it.
 #[test]
 fn training_the_last_two_nbest_results_succeeds() {

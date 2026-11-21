@@ -15,7 +15,7 @@ use crate::data::chunk_format::CHUNK_HEADER_SIZE;
 use crate::data::chunk_format::chunk_checksum;
 use std::ffi::CString;
 
-use crate::data::table_info::FileName;
+use crate::data::FileName;
 use crate::input::config::{
     Scanned, UserTableInfoFields, UserTableInfoReader, save_user_table_info,
 };
@@ -179,16 +179,16 @@ impl UserFileLayout {
     /// [`Self::from_conf`] builds the layout for that configuration.
     #[must_use]
     pub fn stock() -> Self {
-        Self::from_conf(&crate::data::table_info::TableConf::stock())
+        Self::from_conf(&crate::data::TableConf::stock(0.312_699))
     }
 
     /// The files `conf`'s default rows name.
     #[must_use]
-    pub fn from_conf(conf: &crate::data::table_info::TableConf) -> Self {
+    pub fn from_conf(conf: &crate::data::TableConf) -> Self {
         // `_clean_user_files`, `_write_files` and `_rename_files` all start at
         // sub-index 1: "skip the reserved zero phrase library".
-        let named = |(index, row): (u8, &crate::data::table_info::TableRow)| {
-            (index != 0 && row.file_type != crate::data::table_info::FileType::NotUsed)
+        let named = |(index, row): (u8, &crate::data::TableRow)| {
+            (index != 0 && row.file_type != crate::data::FileType::NotUsed)
                 .then(|| row.user.clone())
                 .flatten()
                 .map(|name| (index, name))
@@ -262,7 +262,7 @@ impl SystemVersions {
     /// (`UserTableInfo::is_conform`, `table_info.cpp:399-413`, compares the
     /// user marker against exactly these three fields).
     #[must_use]
-    pub fn from_conf(conf: &crate::data::table_info::TableConf) -> Self {
+    pub fn from_conf(conf: &crate::data::TableConf) -> Self {
         Self {
             binary_format_version: u32::from_ne_bytes(conf.binary_format_version().to_ne_bytes()),
             model_data_version: u32::from_ne_bytes(conf.model_data_version().to_ne_bytes()),
@@ -400,20 +400,17 @@ impl UserTableInfo {
     /// # Aborts
     /// As [`Self::load`].
     pub fn load_path(path: &std::path::Path) -> Result<Self, UserConfError> {
-        if crate::input::path::path_to_bytes(path).contains(&0) {
+        if crate::input::path_to_bytes(path).contains(&0) {
             return Err(UserConfError::Unopenable);
         }
         Self::load(path)
     }
 
-    /// `UserTableInfo::save(filename)` (`table_info.cpp:377-397`): `false`
-    /// only when `fopen(filename, "w")` failed, after the pin's
-    /// `write %s failed.` line. The writes themselves are not checked, as
-    /// the pin does not check them.
-    ///
-    /// A marker without a database format never reaches a save at the pin
-    /// (`make_conform` copies the system's first); here it writes nothing
-    /// and answers `false`.
+    // UserTableInfo::save, table_info.cpp:377-397.
+    /// Writes the four marker lines. Returns `false` before opening the file
+    /// if the database-format string is absent or contains NUL.
+    /// Returns `false` if opening fails, after a diagnostic.
+    /// Individual write results are ignored.
     #[must_use]
     pub fn save(&self, filename: &(impl crate::input::FileName + ?Sized)) -> bool {
         let Some(database_format) = self
@@ -438,7 +435,7 @@ impl UserTableInfo {
     /// holding a NUL, which no C caller can pass.
     #[must_use]
     pub(crate) fn save_path(&self, path: &std::path::Path) -> bool {
-        !crate::input::path::path_to_bytes(path).contains(&0) && self.save(path)
+        !crate::input::path_to_bytes(path).contains(&0) && self.save(path)
     }
 
     /// The four lines [`Self::save`] writes, in its order, for composing
@@ -598,7 +595,7 @@ pub(crate) enum LogFault {
     MissingHeaderTotals,
     /// A payload whose declared length runs past the logger's end: the pin's
     /// `set_content` copies that many bytes from past its chunk, an
-    /// over-read with no defined result (class (b)). The walk stops here.
+    /// over-read with no defined result. The walk stops here.
     OverRead,
 }
 

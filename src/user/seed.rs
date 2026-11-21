@@ -25,12 +25,10 @@ pub const UNIGRAM_FACTOR: u64 = 7;
 /// Training seed for a `(last_token -> token)` selection (the `pinyin_train`
 /// path, §2).
 ///
-/// `prev_count` is the pair's current stored bigram count, or `None` when the
-/// pair has never been recorded:
-///
-/// - unseen pair -> [`INITIAL_SEED`] (69);
-/// - seen pair -> `min(max(prev_count, INITIAL_SEED).wrapping_mul(2), CEILING_SEED)`
-///   in `guint32` (`074a2219 phonetic_lookup.h:892-894`).
+/// An absent count uses [`INITIAL_SEED`]. For a recorded pair, narrows the
+/// previous count to `u32`, applies the initial-seed minimum, doubles with
+/// wrapping `u32` arithmetic, and caps the result at [`CEILING_SEED`].
+/// Returns the widened result (`074a2219 phonetic_lookup.h:892-894`).
 ///
 /// Note the growth is not a literal doubling of the *count*: because the store
 /// adds this seed to `prev_count`, the stored count roughly triples per
@@ -57,8 +55,7 @@ pub const fn predicted_seed() -> u64 {
     INITIAL_SEED
 }
 
-/// Phrase-index unigram delta derived from a bigram `seed` (§2: the unigram
-/// frequency rises by `seed * 7`).
+/// Multiplies the seed by [`UNIGRAM_FACTOR`], saturating at `u64::MAX`.
 #[must_use]
 pub const fn unigram_delta(seed: u64) -> u64 {
     seed.saturating_mul(UNIGRAM_FACTOR)

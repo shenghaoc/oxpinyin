@@ -85,8 +85,7 @@ impl UserPhraseTable {
 
     /// Fails exactly when [`Self::add`] would, without changing the table:
     /// an empty key, or a stored record with a partial token tail, whose
-    /// entry walk the pin reads past (register row 101,
-    /// `phrase_large_table3.cpp:57-65` at 074a2219).
+    /// entry walk the pin reads past (`phrase_large_table3.cpp:57-65` at 074a2219).
     pub(crate) fn check_add(&self, words: &[u32]) -> Result<(), StoreError> {
         let key = key_ucs4(words);
         if key.is_empty() {
@@ -99,7 +98,7 @@ impl UserPhraseTable {
 
     /// Fails exactly when [`Self::mask`] would, without changing the table:
     /// any record with a partial token tail, whose entry walk the pin's mask
-    /// reads past (register row 101, `phrase_large_table3.cpp:103-117`).
+    /// reads past (`phrase_large_table3.cpp:103-117`).
     pub(crate) fn check_mask(&self) -> Result<(), StoreError> {
         self.for_each_record(|_, value| crate::user::phrase_table::validate(value))
     }

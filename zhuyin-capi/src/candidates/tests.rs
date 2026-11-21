@@ -120,8 +120,7 @@ fn choosing_from_a_before_cursor_window_uses_that_window() {
     );
 
     // The pin's constrain-and-re-decode: a re-guess keeps the leading
-    // key's conversion and the forced 好 (register, measured
-    // 2026-09-05 on the pin-built oracle: 你好 after the choose).
+    // key's conversion and the forced 好: 你好 after the choose.
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     let mut sentence: *mut c_char = ptr::null_mut();
     assert!(unsafe { zhuyin_get_sentence(instance, &raw mut sentence) });
@@ -382,8 +381,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
             .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name())
             .is_file()
     );
-    let conf = oxpinyin::data::table_info::TableConf::load_from_dir(&system_dir())
-        .expect("fixture table.conf");
+    let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let marker =
         oxpinyin::data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
             .expect("saved user.conf");

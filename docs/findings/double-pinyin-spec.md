@@ -85,7 +85,6 @@ So `pinyin_parse_more_double_pinyins` must follow the same law as the one-key se
 - under `FORCE_TONE`, a key that is not exactly three bytes refuses (`pinyin_parser2.cpp:412`);
 - a three-byte key carries its `1`..`5` digit as the tone only under `USE_TONE`.
 
-Both seams implement this law ([compatibility policy](compatibility-policy.md#classification-table) row 16).
 The one-key seam is `pinyin_parse_double_pinyin`.
 On the batch seam, the caller's option word crosses the seam, and the greedy walk follows the length-3 gate and the tone carriage.
 

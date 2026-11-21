@@ -181,8 +181,7 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
     unsafe { crate::context::pinyin_fini(context) };
 }
 
-/// An in-range unreadable reading returns false and empties the C array
-/// (compatibility policy row 130), unlike an ordinary out-of-range read.
+/// An in-range unreadable reading returns false and empties the C array, unlike an ordinary out-of-range read.
 #[test]
 fn an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array() {
     let scratch = tempfile::tempdir().unwrap();

@@ -1,4 +1,4 @@
-# W4 fixture data seam
+# Fixture data seam
 
 Status: **current reference**
 

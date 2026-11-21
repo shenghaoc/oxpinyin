@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use oxpinyin::data::table_info::TableConf;
+use oxpinyin::data::TableConf;
 
 /// One scratch file per fuzzing process: the scanner reads a `FILE *`.
 fn scratch() -> &'static Path {

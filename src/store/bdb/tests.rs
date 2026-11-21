@@ -7,7 +7,7 @@ use super::BdbStore;
 use crate::store::{RawReadStore, StoreError, SystemAttachment, WriteStore, WriteTxn};
 
 // A visitor reads the store it is walking, on both an ordered tree and
-// an unordered hash; the raw tier is what the data crate's chewing,
+// an unordered hash; the raw tier is what the data module's chewing,
 // phrase, bigram, addon and punctuation readers go through.
 #[test]
 fn raw_readers_keep_rows_valid_during_reentrant_reads() {
@@ -526,9 +526,9 @@ fn a_bigram_save_stops_when_its_source_cursor_does_not_open() {
     let source = BdbStore::create_hash(&dir.path().join("source.db")).expect("source");
     source.write(|txn| txn.put_raw(b"k", b"v")).expect("record");
     let destination = dir.path().join("destination.db");
-    crate::store::copy_faults::fail_iterator_creation_after(0);
+    crate::store::fail_iterator_creation_after(0);
     let result = source.save_bigram_db(&destination);
-    crate::store::copy_faults::fail_iterator_creation_after(usize::MAX);
+    crate::store::fail_iterator_creation_after(usize::MAX);
     assert!(result.is_err(), "the pin returns false");
     assert!(
         destination.is_file(),
@@ -591,9 +591,9 @@ mod pin_data {
         hex(&Sha256::digest(text.as_bytes()))
     }
 
-    /// The pin's own data sequence over the W3 subset, `gen_binary_files --gen-punct-table`,
+    /// The pin's own data sequence over the mini subset, `gen_binary_files --gen-punct-table`,
     /// `import_interpolation` and `gen_unigram` on the bdb cell (`data/Makefile.am:60-62` at
-    /// 074a2219): pin capture of 2026-11-07, runs 1 and 2 identical, observation
+    /// 074a2219): Pin observations
     /// `utility/bdb/data-sequence`. Each file's rows equal the committed file's, so these are the
     /// pin-written evidence for `fixtures/w3/db/`.
     const PIN_BIGRAM_ROWS: (usize, &str) = (

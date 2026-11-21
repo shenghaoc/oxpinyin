@@ -93,7 +93,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             // it.
             unsafe { train_once(context) };
             // The first copy writes one record and fails the next.
-            oxpinyin::store::copy_faults::fail_destination_write_after(1);
+            oxpinyin::store::fail_destination_write_after(1);
             unsafe { zhuyin_save(context) };
         },
     );
@@ -129,8 +129,7 @@ fn a_user_session_fault_aborts_the_init() {
     assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
 }
 
-/// One call over a private system directory whose library is a directory
-/// (register row 96): init maps `merged.bin` (`zhuyin.cpp:199`), the save and
+/// One call over a private system directory whose library is a directory: init maps `merged.bin` (`zhuyin.cpp:199`), the save and
 /// the mask-out map it again (`:589`, `:800`), and the reload of the
 /// unloaded library 2 maps `gbk_char.bin` (`:200`).
 #[cfg(unix)]
@@ -168,7 +167,7 @@ fn map_a_directory_library(site: &str) -> bool {
     }
 }
 
-/// Register row 96 at save; row 76's completed save elsewhere.
+/// The save aborts when the directory reads as a short chunk and completes elsewhere.
 // Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
 // size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
 // without a word there (`oxpinyin`, `phrase_libraries.rs`), which no pin observation

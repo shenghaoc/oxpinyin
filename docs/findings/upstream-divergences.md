@@ -243,7 +243,7 @@ An entry holds nothing else.
 ### An oversized user chunk or journal bulk save (policy row 112)
 
 - **Pin:** user saves and utility chunk writes both call `SubPhraseIndex::store`. Buffer growth narrows to `int`, so the content copy is unsafe from 2^31 bytes (`src/storage/phrase_index.cpp:365-390`, `src/include/memory_chunk.h:95-98,290-296`). The same limit applies to journal copies (`src/storage/phrase_index.cpp:271-283`, `src/storage/phrase_index_logger.h:115-117`).
-- **oxpinyin:** `*_save` stops at the oversized copy with `PersistenceError::SaveTooLarge` and returns `false`. Earlier file changes stay and the session stays dirty. When an item's offset in the chunk content exceeds `u32::MAX`, `build_chunk` returns an error (`src/data/chunk_write.rs:122-129`) and the utility aborts (`gen_binary_files`, `gen_unigram`, `gen_ngram`, `import_interpolation`).
+- **oxpinyin:** `*_save` stops at the oversized copy with `PersistenceError::SaveTooLarge` and returns `false`. Earlier file changes stay and the session stays dirty. When an item's offset in the chunk content exceeds `u32::MAX`, `build_chunk` returns `None` (`src/data/phrase_library/write.rs`) and the utility aborts (`gen_binary_files`, `gen_unigram`, `gen_ngram`, `import_interpolation`).
 - **Decision:** accepted, class (b): the copy past the allocation is not performed.
 - **Tests:** `a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is`, `a_system_journal_copy_at_the_limit_stops_the_save_and_retries`, `the_store_copy_threshold_follows_the_compacted_content`.
 
@@ -390,13 +390,6 @@ An entry holds nothing else.
 - **oxpinyin:** after the first incomplete key's tone check (`pinyin_phrase3.h:146-157`), stops before the copy with `exit(EINVAL)`, keeping earlier output.
 - **Decision:** accepted, class (b), by maintainer approval.
 - **Tests:** `overlong_chewing_query_keeps_the_previous_result` in `repl/tests/it/table_guards.rs` checks refusal after prior output. `chewing_table_overlong_toned_first` checks tone validation before the length check.
-
-### The logger test ignores a failed required phrase-chunk load (policy row 117)
-
-- **Pin:** the three required `../../data/gb_char.bin` loads ignore `MemoryChunk::load` returning false and reach row 76's NULL read (`tests/storage/test_phrase_index_logger.cpp:28-30`, `:45-48`, `:52-54`; `src/storage/phrase_index.cpp:271-282`, `:335-354`).
-- **oxpinyin:** The shared utility loader `Libraries::load` exits with `ENOENT` when a required system phrase chunk cannot be loaded (`utils/src/storage/libraries.rs`).
-- **Decision:** accepted, class (b), by maintainer approval.
-- **Tests:** none. Commit f76b0d8f0 made the logger program a product test, so no program run reaches this path.
 
 ## Approved product and ruling exceptions
 

@@ -93,7 +93,7 @@ impl ReadChunk {
     pub(crate) fn open(path: &std::path::Path) -> std::io::Result<Self> {
         #[cfg(unix)]
         let fd = {
-            let path = crate::input::path::c_string(path.as_os_str());
+            let path = crate::input::c_string(path.as_os_str());
             // SAFETY: path is NUL-terminated and lives through open; without
             // O_CREAT its variadic mode argument is not read.
             unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) }

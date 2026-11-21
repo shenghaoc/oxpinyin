@@ -10,7 +10,7 @@ Each needs a request to the maintainer, a measured differential, and a maintaine
 | what | where | regenerate with |
 | --- | --- | --- |
 | the mini data set, per backend | `fixtures/w3/<ext>/` | frozen output of the model subset and the pin program sequence; see `fixtures/w3/README.md` |
-| W4 oracle goldens (candidate structure, sentence surface, paths, tie order) | `fixtures/w4/oracle-*.txt` | no regenerator; see [the next pin capture](#the-next-pin-capture). `oracle-paths.txt` has no source to regenerate from and stays frozen |
+| Oracle goldens (candidate structure, sentence surface, paths, tie order) | `fixtures/w4/oracle-*.txt` | no regenerator; see [the next pin capture](#the-next-pin-capture). `oracle-paths.txt` has no source to regenerate from and stays frozen |
 | trainer manifests and goldens | `fixtures/w9/` (`segmenter-han.txt`, `segmenter-spseg-w3.txt`, `mergeseq-input.txt`) | the segmentation tests of `oxpinyin-utils` compare against these; regenerate with the pin tool that the test names, and commit only when it agrees |
 
 A missing golden is a test failure, never a skip ([test inputs](../testing/README.md#test-inputs)). To refresh a golden:
@@ -37,7 +37,7 @@ None of these regenerators exists yet:
 The cases below are registered for the bdb cell only. They hold no frozen pin observation
 and no policy digest. Each case is captured on the bdb cell through
 `tools/oracle/pin_capture.py` staging and then converted to a C-boundary test in the
-`src` test modules of the facade crate:
+`src` test modules of the facade module:
 
 | case | facade |
 | --- | --- |

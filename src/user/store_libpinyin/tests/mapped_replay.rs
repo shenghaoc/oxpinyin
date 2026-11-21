@@ -3,13 +3,13 @@
 use std::path::PathBuf;
 
 use crate::ChewingKey;
-use crate::data::chunk_write::{ChunkItem, build_chunk, encode_phrase_item};
 use crate::data::phrase_library::PhraseLibrary;
+use crate::data::phrase_library::{ChunkItem, build_chunk, encode_phrase_item};
 use crate::data::user_files::{LogRecord, SystemVersions, encode_log_records};
 
-use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
 use crate::user::store::UserStore;
 use crate::user::test_session::tempdir;
+use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
 
 pub(super) const LIBRARY: u32 = 0x0100_0000;
 
@@ -167,7 +167,7 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     );
 }
 
-/// POLICY-ACCEPTED (row 107). A truncated record cannot be used as a
+/// A truncated record cannot be used as a
 /// MODIFY comparison or change its neighbour's saved value.
 #[test]
 fn a_truncated_system_record_cannot_modify_the_next_record() {

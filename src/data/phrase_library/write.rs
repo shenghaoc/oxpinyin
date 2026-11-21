@@ -25,7 +25,7 @@
 // requires the item offsets to fit their output fields.
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::{
+use crate::data::phrase_library::{
     CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
 };
 
@@ -47,14 +47,13 @@ pub struct ChunkItem {
 
 /// Serialises one library's phrase items into the complete chunk file.
 ///
-/// `items` must be in ascending slot order (slot = `token & PHRASE_MASK`)
-/// — the order `FacadePhraseIndex::compact()` produces — and slots must
-/// not repeat.
+/// Supply strictly increasing library-local slots in `0..=PHRASE_MASK`.
+/// Item offsets, section offsets, and the payload length must fit in `u32`.
 ///
 /// The library's unigram total is the sum of item frequencies modulo 2^32.
 ///
-/// Returns `None` for invalid slots, item shapes, or sizes that exceed
-/// the format's fields.
+/// Returns `None` for a repeated, decreasing, or out-of-range slot, or an
+/// invalid item shape.
 #[must_use]
 pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Option<Vec<u8>> {
     // The first item starts at byte 8. An empty library reserves no bytes.
@@ -196,4 +195,5 @@ pub(crate) fn sub_phrase_index_sections(payload: &[u8]) -> Option<(u32, &[u8], &
 }
 
 #[cfg(test)]
+#[path = "write_tests.rs"]
 mod tests;

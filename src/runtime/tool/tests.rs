@@ -3,7 +3,7 @@
 
 use crate::OptionBits;
 
-use crate::data::table_info::TableConf;
+use crate::data::TableConf;
 
 use crate::engine::tool::prepare_lookup;
 

@@ -50,7 +50,7 @@ impl CapiContext {
     /// `PINYIN_INCOMPLETE` (the pinyin facade's option word).
     /// Opens a context; the failure is kept for `pinyin_init`'s log line.
     pub(crate) fn try_new(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenFailure> {
-        // W8 fork-bootstrap wiring lives in the shared assembly: the
+        // Fork-bootstrap wiring lives in the shared assembly: the
         // constructor opens the DBM handles and chunk mappings, installs λ
         // from table.conf when present, opens the user dir's session (an
         // unreadable profile loads per file, as the pin's does), and wires
@@ -111,7 +111,7 @@ impl CapiContext {
                 std::process::abort()
             }
             Err(oxpinyin::facade::LibraryRowAssert::NullChunkName) => {
-                Err(oxpinyin::data::table_info::TableConfSite::NullSystemFile.warning())
+                Err(oxpinyin::data::TableConfSite::NullSystemFile.warning())
             }
         }
     }
@@ -120,7 +120,7 @@ impl CapiContext {
     ///
     /// The pin asserts `index < PHRASE_INDEX_LIBRARY_COUNT`
     /// (`novel_types.h:43`, 1<<4), and the process aborts here too
-    /// (register row 21, `pinyin.cpp:499`). In range, it mirrors the pin's
+    /// (`pinyin.cpp:499`). In range, it mirrors the pin's
     /// unconditional `true`.
     pub(crate) fn unload_addon(&mut self, index: u8) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {

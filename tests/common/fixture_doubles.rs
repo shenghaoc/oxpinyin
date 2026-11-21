@@ -1,7 +1,7 @@
 //! Fixture-backed [`Dictionary`] and [`LanguageModel`].
 //!
 //! These are what the decoder is developed and tested against: no installed
-//! oracle, no W3 dependency, and portable everywhere. The data is
+//! oracle, no mini-data dependency, and portable everywhere. The data is
 //! frozen in `fixtures/w4/`, and `docs/testing/fixture-adapters.md` records
 //! its provenance — phrase text is captured pinned-oracle output, key
 //! sequences and weights are authored, and no model-archive probability data
@@ -398,6 +398,10 @@ impl FixtureLanguageModel {
 }
 
 impl LanguageModel for FixtureLanguageModel {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = FixtureError;
 }
 
@@ -437,6 +441,10 @@ impl FrequencyFixtureModel {
 }
 
 impl LanguageModel for FrequencyFixtureModel {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = FixtureError;
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, FixtureError> {

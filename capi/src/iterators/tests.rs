@@ -92,7 +92,7 @@ unsafe fn export_an_unspellable_reading(page: *mut u8) {
     };
 }
 
-/// Register row 62: a `USER_FILE` reading the probe counts
+/// a `USER_FILE` reading the probe counts
 /// (`pinyin.cpp:682`) but `get_pinyin_string` cannot spell (`:728` →
 /// `chewing_key.cpp:48`) is read, not skipped, and the pin's assert aborts
 /// the process. No recorded contract diff harness fixture can plant the reading in the

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::{LibraryError, PhraseLibrary, RowFault, map_header};
-use crate::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::phrase_library::{ChunkItem, build_chunk};
 
 #[test]
 fn heap_loaded_library_keeps_its_payload_after_file_changes() {
@@ -270,10 +270,10 @@ mod phrase_library {
     #[test]
     fn adversarial_inputs_never_overflow() {
         let scratch = tempfile::tempdir().expect("scratch directory");
-        // Two shapes found in review, now refused/None at every opt level:
+        // Two shapes return None at every optimization level:
         //
         // 1. index_two == index_one (no room even for the offset array's
-        //    separator) used to underflow `index_two - index_one - 1`.
+        //    separator) cannot supply a length for `index_two - index_one - 1`.
         let sample = sample();
         let mut collapsed = sample.clone();
         let index_two = u32_at(&collapsed[16..20]);
@@ -491,7 +491,7 @@ mod package_libraries {
 }
 
 /// Header and first fields stay readable past an unreadable second reading
-/// (phrase_index.cpp:180-205 at 074a2219; compatibility policy row 130).
+/// (phrase_index.cpp:180-205 at 074a2219).
 #[test]
 fn a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields() {
     let scratch = tempfile::tempdir().unwrap();

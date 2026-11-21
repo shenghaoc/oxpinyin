@@ -1,15 +1,15 @@
 //! Pinyin key access and cursor/offset navigation.
 //!
-//! The cursor → lookup-offset normalization (D1) and the word-level
-//! left/right moves (D2) port the pin's matrix laws
+//! The cursor → lookup-offset normalization and the word-level
+//! left/right moves port the pin's matrix laws
 //! (`pinyin.cpp:3008-3095` at the pin) over the engine's positional
 //! data — `oxpinyin::engine::lookup_offset_over_spans` and the
 //! `*_word_offset_over_spans` pair. Where the pin's `_check_offset` aborts
-//! (`pinyin.cpp:2175`), the left and right moves abort too (register row 14);
+//! (`pinyin.cpp:2175`), the left and right moves abort too;
 //! `pinyin_get_pinyin_offset` aborts only over an empty matrix with a parsed
 //! length above 0 and a cursor of 1 or more; a cursor of 0, or a parsed length
 //! of 0, answers `true` with offset 0. `pinyin_get_right_pinyin_offset` aborts
-//! on an empty matrix, as row 66 records.
+//! on an empty matrix.
 //!
 //! Parse-mode dispatch mirrors `CapiInstance::validate_lookup_offset`:
 //! plain full pinyin runs the law over the session's own buffer; LUOMA /
@@ -67,7 +67,7 @@ fn check_key_matrix(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
 ///                                 ChewingKeyRest ** key_rest);
 /// ```
 ///
-/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Success writes a borrowed pointer to a static slot. All instances share this getter's slot.
 /// Its contents change on the next successful call, and its storage outlives the instance. The
 /// caller does not free it. An ordinary miss writes null. A null instance returns false without
 /// writing.
@@ -102,8 +102,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
     };
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
     // and the pin's `int` positions narrow into them mod 2^16: past byte
-    // 65535 the positions wrap, as the pin's do (maintainer ruling
-    // 2026-11-01 UTC, `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`).
+    // 65535 the positions wrap, as the pin's do (`docs/findings/upstream-divergences.md#key-positions-past-byte-65535`).
     KEY_REST_SLOT.begin.store(found.1 as u16, Ordering::Relaxed);
     KEY_REST_SLOT.end.store(found.2 as u16, Ordering::Relaxed);
     // The returned pointer refers to the static slot above.
@@ -311,7 +310,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_strings(
 /// against the table dimensions (`chewing_key.cpp:28-32`), and the string
 /// renderers assert the tone (`:40`, `:75`, `:92`, `:105`): a key packed from
 /// caller memory with a field outside them aborts the process, as the pin
-/// does (register row 4).
+/// does.
 fn abort_on_elements_outside_dims(key: oxpinyin::ChewingKey) {
     if !key.elements_in_dims() {
         std::process::abort();
@@ -406,7 +405,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_offset(
 /// `index < size` (`phonetic_key_matrix.h:103`). The matrix has
 /// `parsed_len + 1` columns, fewer than the input has bytes when the parse
 /// stopped early, and none while it placed no key; the process aborts for a
-/// column outside it (register row 66).
+/// column outside it.
 fn abort_past_matrix(inst: &crate::state::CapiInstanceRead<'_>, index: usize) {
     if index >= inst.core.pin_matrix_columns() {
         std::process::abort();
@@ -528,7 +527,7 @@ pub unsafe extern "C" fn pinyin_get_right_pinyin_offset(
 ///                            ChewingKey ** key);
 /// ```
 ///
-/// Success writes a borrowed pointer to a static slot. All instances share this getter’s slot.
+/// Success writes a borrowed pointer to a static slot. All instances share this getter's slot.
 /// Its contents change on the next successful call, and its storage outlives the instance. The
 /// caller does not free it. An ordinary miss writes null. A null instance returns false without
 /// writing.

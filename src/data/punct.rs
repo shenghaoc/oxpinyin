@@ -19,18 +19,18 @@ use crate::PhraseText;
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::store::{DefaultStore, RawReadStore};
 
+use crate::data::DictError;
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::data::chewing_table::RawChewingDbm;
 use crate::data::chewing_table::{ChewingDbm, DefaultDbm};
-use crate::data::dict::DictError;
 // The key and value layout this reader shares with `gen_binary_files`'s
 // writer: one written copy (`crate::data::row_format`).
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::data::TableError;
 use crate::data::row_format::encode_token_key;
 use crate::data::row_format::punct::decode_puncts;
 #[cfg(test)]
 use crate::data::row_format::punct::encode_puncts;
-#[cfg(any(test, feature = "test-hooks"))]
-use crate::data::table::TableError;
 
 /// The read-only punctuation table over a DBM handle.
 ///

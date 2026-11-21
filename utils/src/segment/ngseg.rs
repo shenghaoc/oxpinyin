@@ -1,9 +1,9 @@
 //! `ngseg` — the n-gram sentence segmenter
 //! (`utils/segment/ngseg.cpp` at 074a2219).
 //!
-//! The three-state run splitter is `spseg`'s; a segmentable run goes
-//! through [`crate::segment::trellis`] (`PhraseLookup::get_best_match`)
-//! with the `table.conf` λ and the system bigram. `deal_with_segmentable`
+//! The three-state run splitter is shared with `spseg`. A segmentable run uses
+//! `PhraseLookup::get_best_match` with the `table.conf` λ and the system
+//! bigram. `deal_with_segmentable`
 //! (`ngseg.cpp:70-94`) prints `Un-segmentable sentence encountered:%s` on
 //! stderr when `convert_to_utf8` answers NULL, and its caller ignores the
 //! answer.

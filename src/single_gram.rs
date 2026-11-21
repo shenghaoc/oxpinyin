@@ -1,4 +1,4 @@
-//! Raw bigram operations on a predecessor’s row. A row is a four-byte little-endian
+//! Raw bigram operations on a predecessor's row. A row is a four-byte little-endian
 //! total, then eight-byte records. Each record is a four-byte little-endian token
 //! followed by a four-byte little-endian frequency. Searches that start at
 //! [`lower_bound`] need whole records sorted by token. Updates keep the stored order.
@@ -123,11 +123,11 @@ pub fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GramFault {
     /// `get_total_freq` on a value shorter than its total: the pin asserts
-    /// (`memory_chunk.h:390`; register row 85); the C adapters abort.
+    /// (`memory_chunk.h:390`); the C adapters abort.
     Short,
     /// A walk that leaves the value: a partial item after the last whole
     /// one, or a value shorter than its total, where `cur_item != end`
-    /// never meets `end` (register row 98, class (b)).
+    /// never meets `end`.
     OverRead,
 }
 
@@ -203,7 +203,7 @@ pub fn checked_search(
 }
 
 // SingleGram::set_freq, ngram.cpp:252–271.
-/// Replaces the first matching token’s frequency and leaves the row total unchanged.
+/// Replaces the first matching token's frequency and leaves the row total unchanged.
 /// Returns `false` when the sorted row has no such token.
 pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
     let Some(offset) = find(gram, token)
@@ -342,6 +342,76 @@ pub fn merge_single_gram(merged: &mut Vec<u8>, system: Option<&[u8]>, user: Opti
 pub fn new_gram() -> Vec<u8> {
     vec![0; TOTAL_LEN]
 }
+
+/// Checks the reads of a two-sided merge. The pin reads both totals
+/// before walking the records (`ngram.cpp:303-349`). A short total gives
+/// [`GramFault::Short`]. A partial record gives [`GramFault::OverRead`].
+pub(crate) fn merge_fault(system: &[u8], user: &[u8]) -> Option<GramFault> {
+    let short = |gram: &[u8]| get_total_freq(gram).is_none();
+    if short(system) || short(user) {
+        Some(GramFault::Short)
+    } else if has_partial_tail(system) || has_partial_tail(user) {
+        Some(GramFault::OverRead)
+    } else {
+        None
+    }
+}
+
+/// The chunk `merge_single_gram` builds from two present, readable grams.
+pub(crate) fn merged_chunk(system: &[u8], user: &[u8]) -> Vec<u8> {
+    let mut chunk = Vec::with_capacity(
+        system
+            .len()
+            .saturating_add(user.len())
+            .saturating_sub(TOTAL_LEN),
+    );
+    merge_single_gram(&mut chunk, Some(system), Some(user));
+    chunk
+}
+
+/// One successor record: `(next token, count)`.
+pub type SingleGramRecord = (u32, u32);
+
+/// Serialises `total` and `records` into the `SingleGram` layout.
+///
+/// Emits `records` in the supplied order. Callers constructing a searchable
+/// row supply records in ascending token order.
+#[must_use]
+pub fn encode_single_gram(total: u32, records: &[SingleGramRecord]) -> Vec<u8> {
+    let mut value = Vec::with_capacity(TOTAL_LEN + records.len() * ITEM_LEN);
+    value.extend_from_slice(&total.to_le_bytes());
+    for (next, count) in records {
+        value.extend_from_slice(&next.to_le_bytes());
+        value.extend_from_slice(&count.to_le_bytes());
+    }
+    value
+}
+
+/// Whether the value holds a total and only whole records.
+pub(crate) const fn is_complete(gram: &[u8]) -> bool {
+    gram.len() >= TOTAL_LEN && (gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
+}
+
+/// Decodes a `SingleGram` blob into `(total_freq, records)`.
+///
+/// Returns `None` for a short total or a partial 8-byte record.
+#[must_use]
+pub fn decode_single_gram(bytes: &[u8]) -> Option<(u32, Vec<SingleGramRecord>)> {
+    if !is_complete(bytes) {
+        return None;
+    }
+    let (total, rest) = bytes.split_first_chunk::<TOTAL_LEN>()?;
+    let records = rest
+        .as_chunks::<ITEM_LEN>()
+        .0
+        .iter()
+        .map(|record| (record_token(record), record_freq(record)))
+        .collect();
+    Some((u32::from_le_bytes(*total), records))
+}
+
+#[cfg(test)]
+mod codec_tests;
 
 #[cfg(test)]
 mod tests;

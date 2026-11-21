@@ -1,11 +1,11 @@
 //! Interpolates bigram probabilities and phrase-library unigram probabilities for
 //! [`crate::model::LanguageModel`]. Successor rows are read from the hash database by
-//! predecessor token. The unigram numerator is the phrase item’s frequency and the
+//! predecessor token. The unigram numerator is the phrase item's frequency and the
 //! denominator is the facade total for the loaded libraries.
 //!
-//! Standalone tables start with [`crate::data::table_conf::PINNED_LAMBDA`]. Runtime
-//! initialization reads its interpolation weight from the system configuration. Unloading
-//! a library removes its items and total from scoring.
+//! Construction supplies the interpolation weight. Runtime initialization reads it
+//! from the system configuration. Unloading a library removes its items and
+//! total from scoring.
 
 // Bigram::load, ngram_tkrzwdb.cpp:86–122;
 // FacadePhraseIndex::get_phrase_index_total_freq, phrase_index.cpp:237–247. The item
@@ -23,10 +23,7 @@ use crate::{
     single_gram,
 };
 
-use crate::data::bigram_table::BigramTable;
-use crate::data::dict::DictError;
-use crate::data::phrase_libraries::PhraseLibraries;
-use crate::data::table::TableError;
+use crate::data::{BigramTable, DictError, PhraseLibraries, TableError};
 
 /// Error conditions for bigram lookups.
 #[derive(Debug)]
@@ -78,7 +75,7 @@ impl LmError {
     /// found and the body read then failed or sized differently. Kyoto
     /// Cabinet's `Bigram::load` asserts there (`ngram_kyotodb.cpp:131-139`
     /// at 074a2219); the engine reports `ReadAfterCheck` and the C adapters
-    /// abort (register row 110).
+    /// abort.
     #[must_use]
     pub(crate) fn is_read_after_check(&self) -> bool {
         matches!(
@@ -101,12 +98,11 @@ const fn merge_bigram_counts(system: u64, user: u64) -> u64 {
     (system as u32).wrapping_add(user as u32) as u64
 }
 
-/// Merged `(count, total)` for one bigram, or `None` when neither side has
-/// a gram (`merge_single_gram` returns false when both loads miss).
+/// Adds the count and total modulo 2^32 and widens the results to `u64`.
 ///
-/// A system miss with a non-zero user count or total is the user gram alone. A
-/// system hit with a zero user overlay is the system gram alone. Both
-/// sides present: wrapping `guint32` addition of each stored field.
+/// Returns `None` only when the system row is absent and both original user
+/// arguments are zero. A nonzero user argument can produce a present row with
+/// two zero fields after narrowing.
 #[must_use]
 pub fn merge_bigram(
     system: Option<(u32, u32)>,
@@ -125,11 +121,6 @@ pub fn merge_bigram(
         None => None,
     }
 }
-
-/// One previous-token row of the system bigram — re-exported from
-/// [`crate::data::row_format::bigram`], where the row's on-disk layout lives so
-/// the reader and `import_interpolation`'s writer share one definition.
-pub use crate::data::row_format::bigram::BigramRow;
 
 /// Whether library `nibble` is visible under `mask` (bit `n` set =
 /// library `n` unloaded).
@@ -157,9 +148,7 @@ pub struct BigramLanguageModel<L = PhraseLibraries, T = BigramTables, M = Cell<u
 pub struct BigramTables {
     bigram: BigramTable,
     /// Bigram/unigram interpolation weight λ as the pin's `gfloat`, read
-    /// from the model's `table.conf` when available and
-    /// [`crate::data::table_conf::PINNED_LAMBDA`] (`0.312699`, `data-formats.md` §3) otherwise.
-    /// Read from config rather than hardcoded.
+    /// from the model's `table.conf`.
     lambda_f32: f32,
 }
 
@@ -173,8 +162,8 @@ impl<L, T: std::borrow::Borrow<BigramTables>, M> std::ops::Deref for BigramLangu
 impl BigramTables {
     /// Open only the bigram table; readers borrow phrase storage separately.
     #[cfg(test)]
-    pub fn open(bigram_path: &Path) -> Result<Self, LmError> {
-        Ok(Self::with_table(BigramTable::open(bigram_path)?))
+    pub fn open(bigram_path: &Path, lambda: f32) -> Result<Self, LmError> {
+        Ok(Self::with_table(BigramTable::open(bigram_path)?, lambda))
     }
 
     // Bigram::attach, ngram_bdb.cpp:110–124, ngram_kyotodb.cpp:110–120 and
@@ -185,14 +174,14 @@ impl BigramTables {
     /// # Errors
     ///
     /// Returns [`LmError`] if creating the attachment fails before the native open.
-    pub fn attach(bigram_path: &Path) -> Result<Self, LmError> {
-        Ok(Self::with_table(BigramTable::attach(bigram_path)?))
+    pub fn attach(bigram_path: &Path, lambda: f32) -> Result<Self, LmError> {
+        Ok(Self::with_table(BigramTable::attach(bigram_path)?, lambda))
     }
 
-    fn with_table(bigram: BigramTable) -> Self {
+    fn with_table(bigram: BigramTable, lambda: f32) -> Self {
         Self {
             bigram,
-            lambda_f32: crate::data::table_conf::PINNED_LAMBDA,
+            lambda_f32: lambda,
         }
     }
 
@@ -245,9 +234,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<Cell<u32>>>
     /// and tkrzw) over the facade's `libraries`, with every library
     /// visible.
     ///
-    /// λ defaults to [`crate::data::table_conf::PINNED_LAMBDA`] (`0.312699`, `data-formats.md` §3);
-    /// override it from a real install's config with
-    /// `set_lambda_from_conf`.
+    /// Uses the supplied interpolation weight.
     ///
     /// # Errors
     ///
@@ -257,19 +244,13 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<Cell<u32>>>
         bigram_path: &Path,
         libraries: L,
         library_mask: M,
+        lambda: f32,
     ) -> Result<Self, LmError> {
         Ok(Self {
-            tables: BigramTables::open(bigram_path)?,
+            tables: BigramTables::open(bigram_path, lambda)?,
             libraries,
             library_mask,
         })
-    }
-}
-
-impl BigramTables {
-    /// Installs λ from the parsed system `table.conf`.
-    pub(crate) fn set_lambda_from_conf(&mut self, conf: &crate::data::table_info::TableConf) {
-        self.lambda_f32 = conf.lambda_f32();
     }
 }
 
@@ -390,7 +371,7 @@ impl<
     ///
     /// # Errors
     /// Propagates the system read failures of
-    /// [`BigramTable::load_raw_successors`](crate::data::bigram_table::BigramTable::load_raw_successors).
+    /// [`BigramTable::load_raw_successors`](crate::data::BigramTable::load_raw_successors).
     pub(crate) fn load_merged_row(
         &self,
         prev: u32,

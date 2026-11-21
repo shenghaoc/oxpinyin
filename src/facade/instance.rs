@@ -395,7 +395,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// exactly as production does: the pin's own aborts (the index past
     /// nonempty results, a stale forced phrase, a stale span) and the
     /// store faults [`training_answer`] classifies [`TrainingRefusal::Abort`]
-    /// answer `true`; a partial tail (the warn-and-refuse class (b)) and
+    /// answer `true`; a partial tail and
     /// an ordinary backend failure answer `false`. The walk stops at the
     /// first failure, so the probe answers for the fault production meets
     /// first. Reads only: the probe never observes the plan and never
@@ -771,7 +771,7 @@ impl<
     }
 
     // pinyin.cpp:1497–1525; zhuyin.cpp:1017–1043,1058–1081; lookup/phonetic_lookup.cpp:88–165.
-    /// Clears this instance’s stored parse state before every parse, including empty or
+    /// Clears this instance's stored parse state before every parse, including empty or
     /// changed input. Constraints and sentence rows survive, and a clear after the parse
     /// still indexes the constraint columns of the last validation. The next validation,
     /// which a guess or a validating choose runs, checks the constraints against the
@@ -834,14 +834,16 @@ pub fn guess_result(result: Result<bool, EngineError>, name: &str, log: impl FnO
 // (pinyin_phrase3.h:146–157) or a bigram value shorter than its total, system or user
 // (ngram.cpp:303–304, through memory_chunk.h:387–392).
 // A failed Kyoto Cabinet body read after its size check asserts at ngram_kyotodb.cpp:131–139.
-/// Handles a lookup failure at the C boundary. A read past the end of a predecessor’s
+/// Handles a lookup failure at the C boundary. A read past the end of a predecessor's
 /// stored bigram value, from the system or the user gram, logs one warning and returns
-/// `true`. Any other error returns `false`.
+/// `true`. Returns `false` for other recoverable errors.
 ///
 /// # Aborts
 ///
-/// Terminates when called with [`EngineError::ReadAfterCheck`] (a Kyoto Cabinet bigram
-/// read that fails after its size check).
+/// Terminates when called with [`EngineError::ReadAfterCheck`], a Kyoto Cabinet
+/// bigram read that fails after its size check. The engine aborts at the lookup
+/// site for a toned incomplete key or when the lookup needs to read a total
+/// from a predecessor value too short to hold it.
 pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str)) -> bool {
     let message = match error {
         EngineError::ReadAfterCheck => {

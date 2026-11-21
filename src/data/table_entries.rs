@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use crate::ChewingKey;
 
 #[cfg(test)]
-use crate::data::chunk_format::CHEWING_KEY_SIZE;
+use crate::data::phrase_library::CHEWING_KEY_SIZE;
 #[cfg(test)]
 use crate::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key_scalars};
 #[cfg(test)]

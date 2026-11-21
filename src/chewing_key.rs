@@ -97,13 +97,10 @@ impl ChewingKey {
         self.tone < 6
     }
 
-    /// `_ChewingKey::get_table_index` (`chewing_key.cpp:27-35`): the
-    /// `content_table` row for this key's elements, 0 for the zero key
-    /// and for every combination the table marks invalid (`-1`).
-    ///
-    /// Upstream asserts the elements against the table dimensions; a
-    /// hand-crafted out-of-dims key answers 0 here instead, and the C
-    /// adapters abort on it (register row 120).
+    // _ChewingKey::get_table_index, chewing_key.cpp:27-35.
+    /// Returns the content-table index for the initial, middle, and final.
+    /// Returns zero for the zero key, a combination without a spelling row,
+    /// or a field outside the table dimensions.
     #[must_use]
     pub fn table_index(self) -> usize {
         let initial = usize::from(self.initial);
@@ -141,8 +138,8 @@ impl ChewingKey {
 
     // _ChewingKey, chewing_key.h:41–48; little-endian bitfield allocation.
     /// Packs the key into its two-byte C representation. In increasing bit order the initial
-    /// occupies five bits, the middle two, the final five and the tone three. The high
-    /// padding bit is zero.
+    /// occupies five bits, the middle two, the final five, and the tone three. Bits above
+    /// each field's packed width are discarded. The high padding bit is zero.
     #[must_use]
     pub const fn to_packed(self) -> u16 {
         ((self.initial as u16) & 0x1f)

@@ -541,7 +541,7 @@ impl WriteTxn for BdbTxn<'_> {
 /// is read and the pin carries on with that handle (`ngram_bdb.cpp:54-57`;
 /// `pinyin.cpp:401` and `zhuyin.cpp:343` ignore the answer). This is the
 /// failed container: Berkeley DB requires closing its handle
-/// immediately (compatibility register row 113).
+/// immediately.
 pub struct BdbUserBigramDb {
     db: Option<Db>,
 }

@@ -1,5 +1,5 @@
 //! Beam search for n-best sentence rows. Each call builds a trellis over byte positions.
-//! Nodes retain phrase hypotheses using the session’s [`NbestShape`]. The search widens a
+//! Nodes retain phrase hypotheses using the session's [`NbestShape`]. The search widens a
 //! span while the phrase table reports a continuation.
 //!
 //! Each step accumulates the log of interpolated bigram and unigram probability times
@@ -158,7 +158,7 @@ struct BeamEntry {
 
 /// S1/S2: two f32 roundings, without contraction or widening. The penalty
 /// is the pin's `LONG_SENTENCE_PENALTY`, `log(1.2f)`
-/// (`phonetic_lookup.h:39`), in Rust's `f32` maths (class (a)).
+/// (`phonetic_lookup.h:39`), in Rust's `f32` maths.
 fn adjusted_poss(value: &Value) -> f32 {
     value.poss - value.length as f32 * 1.2_f32.ln()
 }
@@ -278,8 +278,7 @@ impl Node {
 }
 
 /// One position's nodes, laid out as the pin's per-step pair
-/// (074a2219 phonetic_lookup.h:184-186, filled by `insert_candidate` at
-/// :300-330): `m_steps_index`, a token → node-index `GHashTable`, and
+/// (074a2219 phonetic_lookup.h:184-186, filled by `insert_candidate` at :300-330): `m_steps_index`, a token → node-index `GHashTable`, and
 /// `m_steps_content`, a `GArray` of nodes in creation order.
 #[derive(Clone, Default)]
 struct Step {
@@ -476,7 +475,7 @@ impl Trellis {
     /// When all items are present and no phrase converts, `None` is the
     /// pin's NULL string. The sentence getters return true and write NULL
     /// (`pinyin.cpp:1464-1482`, `zhuyin.cpp:983-999`). Only the candidate
-    /// dedup's `strcmp` on NULL is class (b) (policy rows 80 and 106).
+    /// dedup's `strcmp` on NULL is undefined.
     /// A missing item also stops this read; the span walk rejects that row.
     fn text<D>(
         &self,

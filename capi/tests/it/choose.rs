@@ -164,8 +164,7 @@ fn remove_user_candidate_aborts_on_a_system_token() {
     );
 }
 
-/// `remove_user_candidate` asserts where the user phrase table is gone
-///.
+/// `remove_user_candidate` asserts where the user phrase table is gone.
 #[test]
 fn remove_user_candidate_aborts_without_the_phrase_table() {
     assert_aborts(
@@ -347,12 +346,10 @@ fn a_choose_over_a_long_separator_run_wraps_the_span_length() {
     unsafe { close(context, instance) };
 }
 
-/// Register row 37 for the transformed input schemes (maintainer ruling
-/// 2026-10-03): the caller's offsets are in the ORIGINAL input's
+/// For the transformed input schemes, the caller's offsets are in the ORIGINAL input's
 /// coordinates and the pin builds every window from `start = offset`
 /// (`pinyin.cpp:2224-2262`), so under double pinyin a lookup at 0 behind a
-/// chosen 你好 shows the offset-0 window (a lookup that used the cached,
-/// composition-anchored list showed none of it), and choosing 你 from it
+/// chosen 你好 shows the offset-0 window, and choosing 你 from it
 /// answers the span's end in original coordinates, `0 + len = 2`.
 #[test]
 fn choosing_behind_the_composition_under_double_pinyin_answers_the_chosen_span() {

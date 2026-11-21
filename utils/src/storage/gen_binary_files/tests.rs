@@ -28,7 +28,7 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
     let mut libraries: [Option<ChunkMap>; 16] = Default::default();
     load_phrase_index(1, &mut file, &mut libraries, PhoneticType::Pinyin);
     let items: Vec<_> = libraries[1].take().unwrap().into_iter().collect();
-    let frame = oxpinyin::data::chunk_write::build_chunk(&items).unwrap();
+    let frame = oxpinyin::data::phrase_library::build_chunk(&items).unwrap();
     oxpinyin::input::chunk::save(&chunk, &frame).unwrap();
     let library = PhraseLibrary::load_heap(&chunk).unwrap();
     let single = library.item(16777222).unwrap();
@@ -48,14 +48,14 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
     let config = dir.path().join("table.conf");
     std::fs::write(&config, format!("binary format version:7\nmodel data version:14\nlambda parameter:0.5\nsource table format:pinyin\ndatabase format:Tkrzw\ndefault GB_DICTIONARY gb.table {} gb.dbin SYSTEM_FILE\n", chunk.display())).unwrap();
     let conf = TableConf::load_from_dir(dir.path()).unwrap();
-    let mut libraries = crate::storage::libraries::Libraries::load(&conf);
+    let mut libraries = crate::storage::Libraries::load(&conf);
     libraries.add_unigram(16870553, 3);
     libraries.save(&conf);
     let library = PhraseLibrary::load_heap(&chunk).unwrap();
     assert_eq!(library.item(16870553).unwrap().unigram(), 3);
 }
 
-/// Strict item loading refuses a consumed invalid phrase (policy row 115).
+/// Strict item loading refuses a consumed invalid phrase.
 /// The new-item paths are at 074a2219 src/storage/phrase_index.cpp:541-556.
 #[test]
 fn invalid_text_for_a_new_item_is_refused_at_the_table_reader() {
@@ -91,7 +91,7 @@ fn invalid_text_for_a_new_item_is_refused_at_the_table_reader() {
 }
 
 /// Strict table loading refuses the failed conversion in
-/// 074a2219 src/storage/phrase_large_table3.cpp:125-139 (policy row 115).
+/// 074a2219 src/storage/phrase_large_table3.cpp:125-139.
 #[cfg(unix)]
 #[test]
 fn phrase_table_invalid_text() {

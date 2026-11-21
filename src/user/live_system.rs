@@ -15,8 +15,8 @@
 use std::cell::Cell;
 
 use crate::PhraseText;
-use crate::data::chunk_format::CHEWING_KEY_SIZE;
-use crate::data::phrase_libraries::PhraseLibraries;
+use crate::data::PhraseLibraries;
+use crate::data::phrase_library::CHEWING_KEY_SIZE;
 use crate::data::phrase_library::PhraseItemView;
 
 use crate::PhraseToken;
@@ -127,7 +127,7 @@ impl<'a> SystemItem<'a> {
         self.view().n_pronunciations()
     }
 
-    /// Reads the item’s outward phrase text, retaining accepted non-scalar UCS-4 words. See
+    /// Reads the item's outward phrase text, retaining accepted non-scalar UCS-4 words. See
     /// [`crate::data::phrase_library::PhraseItemView::phrase_text`] for the word
     /// requirements.
     #[must_use]
@@ -312,9 +312,8 @@ impl<'a> LiveSystemItems<'a> {
     /// the offset and the two header bytes (074a2219 `phrase_index.cpp:180-205`)
     /// and each getter reads its own field, so the item is read field by
     /// field ([`PhraseItemView::fields`]): its unigram, text and readings
-    /// inside the record stay readable when a later reading is incomplete
-    /// (compatibility policy row 130). A journal-written item row 107
-    /// rejected still answers no item. Consumers: `effective_unigram`,
+    /// inside the record stay readable when a later reading is incomplete. A rejected journal-written item
+    /// still answers no item. Consumers: `effective_unigram`,
     /// `token_phrase`, `token_nth_pronunciation`.
     pub(crate) fn read_fields<R>(
         &self,

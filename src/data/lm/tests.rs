@@ -87,7 +87,7 @@ mod language_model {
         fn open(
             &self,
         ) -> (
-            BigramLanguageModel<PhraseLibraries, crate::data::lm::BigramTables, Mask>,
+            BigramLanguageModel<PhraseLibraries, crate::data::BigramTables, Mask>,
             Mask,
         ) {
             let libraries = PhraseLibraries::open(self.dir.path(), SYSTEM_LIBRARY_FILES).unwrap();
@@ -96,6 +96,7 @@ mod language_model {
                 &self.dir.path().join(SystemDbm::Bigram.file_name()),
                 libraries,
                 Rc::clone(&mask),
+                0.312_699,
             )
             .unwrap();
             (lm, mask)
@@ -232,7 +233,7 @@ mod language_model {
     /// with its system gram, read with `get_freq` and `get_total_freq`, then
     /// priced from that item.
     fn merged_row_costs(
-        lm: &BigramLanguageModel<PhraseLibraries, crate::data::lm::BigramTables, Mask>,
+        lm: &BigramLanguageModel<PhraseLibraries, crate::data::BigramTables, Mask>,
         prev: u32,
         token: u32,
         user: UserCountDelta,
@@ -496,7 +497,7 @@ mod language_model {
 
     /// A `table.conf` whose `lambda parameter:` is spelled `lambda`, loaded
     /// with the pin's scanner.
-    fn conf_with_lambda(lambda: &str) -> crate::data::table_info::TableConf {
+    fn conf_with_lambda(lambda: &str) -> crate::data::TableConf {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("table.conf"),
@@ -506,7 +507,7 @@ mod language_model {
             ),
         )
         .unwrap();
-        crate::data::table_info::TableConf::load_from_dir(dir.path()).unwrap()
+        crate::data::TableConf::load_from_dir(dir.path()).unwrap()
     }
 
     #[test]
@@ -521,7 +522,7 @@ mod language_model {
         ];
         for lambda in ["0.312699", "0.5", "0", "1e-1", "1e9999", "-1"] {
             let conf = conf_with_lambda(lambda);
-            lm.set_lambda_from_conf(&conf);
+            lm.lambda_f32 = conf.lambda_f32();
             for prev in [NI, HAO] {
                 for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {
                     let user_gram = MergedGram::new(total, user_rows.to_vec()).to_bytes();
@@ -607,7 +608,7 @@ mod language_model {
         let Err(error) = lm.nbest_step_costs(&prev, &HAO) else {
             panic!("the pair path refuses a present empty value");
         };
-        assert!(matches!(error, crate::data::lm::LmError::Parse));
+        assert!(matches!(error, crate::data::LmError::Parse));
     }
 
     /// A stored system row enters the merge as stored, and both the merged
@@ -621,10 +622,8 @@ mod language_model {
         let fix = Fixture::new();
         let store =
             DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
-        let value = crate::data::single_gram::encode_single_gram(
-            11,
-            &[(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)],
-        );
+        let value =
+            crate::single_gram::encode_single_gram(11, &[(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)]);
         store
             .write(|txn| txn.put_raw(&NI.to_le_bytes(), &value))
             .unwrap();
@@ -660,7 +659,7 @@ mod language_model {
         for text in ["-0.5", "0", "1", "1.5", "2", "1e6", "inf", "nan"] {
             let conf = conf_with_lambda(text);
             let lambda = conf.lambda_f32();
-            lm.set_lambda_from_conf(&conf);
+            lm.lambda_f32 = conf.lambda_f32();
             let branches = lm
                 .nbest_item_costs(&HAO, UserCountDelta::ZERO, Some((7, 7)))
                 .unwrap();
@@ -682,7 +681,7 @@ mod language_model {
                 _ => assert!(weighted.ln().is_finite()),
             }
         }
-        lm.set_lambda_from_conf(&conf_with_lambda("0.5"));
+        lm.lambda_f32 = conf_with_lambda("0.5").lambda_f32();
         // A readable user item whose unigram is zero.
         let zero = 0x0700_0002;
         let zero_item = UserCountDelta {

@@ -2,8 +2,7 @@
 
 Status: **reference**
 
-Rule: [compatibility policy, class (c)
-retired](compatibility-policy.md#failure-behaviour).
+Rule: [failure behaviour](compatibility-policy.md#failure-behaviour).
 Rows: 103, and row 62's store-read sub-shape. Pin: libpinyin
 `074a2219c90feaf962d0d24f034514033ece5f99`. The other pin aborts are in
 [Pin aborts reproduced](upstream-divergences.md#pin-aborts-reproduced).

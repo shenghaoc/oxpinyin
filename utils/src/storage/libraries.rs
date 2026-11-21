@@ -6,7 +6,7 @@
 //! in sub-index order; a chunk that does not load writes
 //! `load %s failed!` and ends the program. `save_phrase_index` stores the
 //! same rows with `SubPhraseIndex::store`, whose bytes
-//! [`oxpinyin::data::chunk_write::build_chunk`] emits.
+//! [`oxpinyin::data::phrase_library::build_chunk`] emits.
 
 use core::ffi::c_int;
 use std::collections::BTreeMap;
@@ -14,9 +14,9 @@ use std::ffi::CString;
 use std::path::Path;
 
 use oxpinyin::data::chunk_format::chunk_checksum;
-use oxpinyin::data::chunk_write::build_chunk;
+use oxpinyin::data::phrase_library::build_chunk;
 use oxpinyin::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary};
-use oxpinyin::data::table_info::{FileType, TableConf};
+use oxpinyin::data::{FileType, TableConf};
 
 use oxpinyin::input::tool;
 use oxpinyin::{PHRASE_MASK, phrase_index_library_index};
@@ -32,7 +32,7 @@ pub(crate) struct Library {
     /// `m_system_filename`, the cwd-relative chunk the pin opens.
     pub name: CString,
     /// Slot → item, `compact()` order.
-    pub items: BTreeMap<u32, oxpinyin::data::chunk_write::ChunkItem>,
+    pub items: BTreeMap<u32, oxpinyin::data::phrase_library::ChunkItem>,
     /// `SubPhraseIndex::get_range`'s end (`src/storage/phrase_index.cpp:624-645`):
     /// the offset count with trailing zeros trimmed, at least 1.
     pub range_end: u32,
@@ -44,7 +44,7 @@ pub(crate) struct Library {
 impl Library {
     /// The complete `MemoryChunk` file `SubPhraseIndex::store` writes.
     pub(crate) fn chunk(&self) -> Vec<u8> {
-        let items: Vec<(u32, oxpinyin::data::chunk_write::ChunkItem)> = self
+        let items: Vec<(u32, oxpinyin::data::phrase_library::ChunkItem)> = self
             .items
             .iter()
             .map(|(slot, item)| (*slot, item.clone()))
@@ -191,7 +191,7 @@ impl Libraries {
 
     /// `FacadePhraseIndex::get_phrase_item`: `None` is
     /// `ERROR_NO_ITEM`/`ERROR_NO_SUB_PHRASE_INDEX`.
-    pub(crate) fn item(&self, token: u32) -> Option<&oxpinyin::data::chunk_write::ChunkItem> {
+    pub(crate) fn item(&self, token: u32) -> Option<&oxpinyin::data::phrase_library::ChunkItem> {
         self.by_index[usize::from(phrase_index_library_index(token))]
             .as_ref()?
             .items
@@ -260,7 +260,7 @@ pub(crate) fn token_to_string(libraries: &Libraries, token: u32) -> Option<CStri
 /// Every resident item of `library` as a writable chunk item.
 pub(crate) fn items_of(
     library: &PhraseLibrary,
-) -> Option<BTreeMap<u32, oxpinyin::data::chunk_write::ChunkItem>> {
+) -> Option<BTreeMap<u32, oxpinyin::data::phrase_library::ChunkItem>> {
     let mut items = BTreeMap::new();
     for (slot, view) in library.items() {
         items.insert(slot, item_of(&view)?);
@@ -269,7 +269,7 @@ pub(crate) fn items_of(
 }
 
 /// One loaded item as a chunk item.
-fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin::data::chunk_write::ChunkItem> {
+fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin::data::phrase_library::ChunkItem> {
     let phrase: Option<Vec<u32>> = view.phrase_codes().collect();
     let mut prons = Vec::new();
     for pronunciation in view.pronunciations() {
@@ -282,7 +282,7 @@ fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin::data::chunk_write::Chu
             .collect();
         prons.push((keys, pronunciation.freq));
     }
-    Some(oxpinyin::data::chunk_write::ChunkItem {
+    Some(oxpinyin::data::phrase_library::ChunkItem {
         phrase: phrase?,
         unigram: view.unigram(),
         prons,

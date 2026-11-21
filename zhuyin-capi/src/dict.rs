@@ -1,7 +1,7 @@
 //! The dictionary-introspection surface: token lookups, per-token reads,
 //! the unigram-frequency write.
 
-use oxpinyin::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
@@ -18,7 +18,7 @@ use crate::types::{GArray, GChar, GUint, PhraseTokenT, ZhuyinInstance};
 ///                           const char * phrase, GArray * tokenarray);
 /// ```
 ///
-/// Look up an exact phrase in the loaded libraries. The caller’s array is cleared, then filled
+/// Look up an exact phrase in the loaded libraries. The caller's array is cleared, then filled
 /// in library order. Returns true when there was a match. A miss leaves the array empty. A null
 /// instance returns false before clearing it.
 ///
@@ -39,7 +39,7 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
     tokenarray: *mut GArray,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false);
-    let text = oxpinyin::marshal::input::utf8_to_ucs4(
+    let text = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -220,7 +220,7 @@ unsafe fn append_stored_words(keys: *mut GArray, length: usize, words: Option<&[
 /// ```
 ///
 /// For an existing token, `nth` must be less than its pronunciation count. The function clears
-/// the caller’s array, appends the selected reading’s packed two-byte keys and returns true. A
+/// the caller's array, appends the selected reading's packed two-byte keys and returns true. A
 /// token miss returns false with an empty array. A null instance returns false without clearing
 /// it.
 ///

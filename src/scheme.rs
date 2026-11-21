@@ -265,10 +265,8 @@ impl DoublePinyinParser {
         self
     }
 
-    /// Selects a scheme. Returns `false` and keeps the current scheme for
-    /// `Customized`, mirroring upstream's lack of a compiled table there
-    /// (`src/storage/pinyin_parser2.cpp:610-612`) without the abort.
-    /// A successful switch clears the suppressed-fallback flag.
+    /// Selects a compiled scheme. `Customized` returns `false` and leaves
+    /// the parser unchanged. A successful switch clears the suppressed-fallback flag.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_scheme(&mut self, scheme: DoublePinyinScheme) -> bool {
         if scheme == DoublePinyinScheme::Customized {
@@ -356,7 +354,7 @@ impl DoublePinyinParser {
     /// two-byte spelling has tone zero. A third byte must be an ASCII digit from 1 to 5 and
     /// requires [`OptionBits::USE_TONE`]. [`OptionBits::FORCE_TONE`] requires all three
     /// bytes. The two-letter lookup supplies its own spelling corrections and ignores the
-    /// caller’s pinyin correction and ambiguity bits.
+    /// caller's pinyin correction and ambiguity bits.
     #[must_use]
     pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         let options = options - (OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL);
@@ -936,18 +934,14 @@ impl ZhuyinParser {
         }
     }
 
-    /// A parser for a specific scheme.
+    /// A parser for a specific scheme. Standard Dvorak produces an empty batch parse.
     #[must_use]
     pub const fn with_scheme(scheme: ZhuyinScheme) -> Self {
         Self { scheme }
     }
 
-    /// Selects a scheme. The Simple keyboards (STANDARD, IBM, GINYIEH,
-    /// ETEN) switch tables the way upstream's `set_scheme` does
-    /// (`src/storage/zhuyin_parser2.cpp:271-300`) and the Discrete
-    /// keyboards (HSU, ETEN26, `HSU_DVORAK`) the way theirs does
-    /// (`:474-490`) — both minus upstream's aborts; everything else
-    /// reports `false` and keeps the current scheme.
+    /// Selects a supported keyboard. A scheme without a keyboard mapping
+    /// returns `false` and leaves the current scheme unchanged.
     #[cfg(test)]
     fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {
         if scheme.keyboard().is_none() {
@@ -1034,7 +1028,7 @@ impl ZhuyinParser {
     // ZhuyinDaChenCP26Parser2::parse, zhuyin_parser2.cpp:216–268,408–460,718–762.
     // is_valid_zhuyin returns a boolean, chewing_key.cpp:38–45. Simple and Discrete OR
     // m_options into caller options (221,413); Rust reconstructs the probe mask. Only the
-    // keyboard’s own correction bit occurs in its index (pinyin_parser_table.h:1492–3975).
+    // keyboard's own correction bit occurs in its index (pinyin_parser_table.h:1492–3975).
     // CP26 emits initial/middle/final order (zhuyin_parser2.cpp:613–705); no SHUFFLE row in
     // the global index has that order. zhuyin_parse_more_chewings forwards the word at
     // zhuyin.cpp:1058–1082.

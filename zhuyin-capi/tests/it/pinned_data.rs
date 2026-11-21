@@ -147,8 +147,7 @@ fn a_prefix_guess_over_five_library_tokens_aborts() {
     );
 }
 
-/// Training a forced choice that the sentence no longer holds asserts
-/// (register row 66).
+/// Training a forced choice that the sentence no longer holds asserts.
 #[test]
 fn training_a_stale_forced_choice_aborts() {
     assert_aborts("pinned_data::training_a_stale_forced_choice_aborts", || {

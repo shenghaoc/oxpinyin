@@ -5,12 +5,12 @@ use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
 
-use crate::data::c_stderr;
+use crate::data;
 use crate::engine::SessionSettings;
 use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
 };
-use crate::user::persistence::MaskStop;
+use crate::user::MaskStop;
 use crate::user::{JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError};
 use crate::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 
@@ -85,12 +85,12 @@ pub enum MaskOutOutcome {
     /// The user bigram carried a value shorter than a `guint32`
     /// `total_freq` under a key the mask leaves to be loaded: the pin's
     /// `SingleGram::mask_out` asserts in `get_total_freq`
-    /// (`memory_chunk.h:390`, `ngram.cpp:80`; register row 85). The C
+    /// (`memory_chunk.h:390`, `ngram.cpp:80`). The C
     /// adapters abort.
     ShortUserBigramValue,
     /// The user bigram carried a partial eight-byte item tail under a key
     /// the mask leaves to be loaded: `SingleGram::mask_out` reads past it
-    /// (`ngram.cpp:76-86`, register row 98, class (b)). The C ABI answers
+    /// (`ngram.cpp:76-86`). The C ABI answers
     /// `false` and logs one warning.
     PartialUserBigramTail,
     /// Masking the user bigram removed every item of a gram whose total
@@ -142,7 +142,7 @@ pub enum InitRefusal {
     Abort,
     /// The pin writes the raw table-conf load-failed line.
     TableConfLoadFailed,
-    /// A table-conf fault covered by the class (b) warning policy.
+    /// A table-conf fault covered by the malformed-input warning policy.
     TableConfWarning(&'static str),
     /// An ordinary open failure, reported with the caller's ABI name.
     OpenWarning,
@@ -241,26 +241,24 @@ pub enum LibraryLoadFault {
 /// Whether the pin's `MemoryChunk::mmap` asserts (`memory_chunk.h:493`) on
 /// `dir` read as the chunk of a row that names none — the complement of
 /// `writes_null_chunk_line`: where it does not assert, it writes
-/// `mmap %s failed!` and dies of SIGSEGV on the empty chunk instead (class
-/// (b)). The C facades abort the process on the assert shape.
+/// `mmap %s failed!` and dies of SIGSEGV on the empty chunk instead. The C facades abort the process on the assert shape.
 #[must_use]
 pub fn null_chunk_asserts(dir: &Path) -> bool {
     !crate::data::phrase_library::null_chunk_writes_mmap_line(dir)
 }
 
 /// Writes the pin's `mmap %s failed!` line for `dir` with
-/// [`c_stderr::mmap_failed`], if `writes_null_chunk_line` says the pin
+/// [`data::mmap_failed`], if `writes_null_chunk_line` says the pin
 /// writes it on this file system.
 fn null_chunk_refused(dir: &Path) {
     if crate::data::phrase_library::null_chunk_writes_mmap_line(dir) {
-        c_stderr::mmap_failed(dir);
+        data::mmap_failed(dir);
     }
 }
 
 /// Bit 30 of [`LiveOptionsInner::double_scheme`]: when set, the live
 /// scheme's fallback table is suppressed — upstream's half-mutation
-/// (`pinyin_parser2.cpp:580` + `:614`; `compatibility-policy.md`
-/// row 5b).  A valid-scheme store clears it implicitly (values 1–6
+/// (`pinyin_parser2.cpp:580` + `:614`). A valid-scheme store clears it implicitly (values 1–6
 /// never have bit 30), and the out-of-enum arm sets it.
 pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
 
@@ -319,7 +317,7 @@ impl LiveOptions {
 /// the user store it opened makes the
 /// fini-time `user.conf` write of the law it was opened under —
 /// libpinyin lowers the open counter its init raised, libzhuyin writes
-/// nothing (`crate::user::persistence::fini`). A context that is never
+/// nothing (`crate::user::fini`). A context that is never
 /// finalised, like a process that dies before its `pinyin_fini`, leaves the
 /// raised counter on disk. Drop also finalises a store that was not explicitly
 /// finished; a later drop never repeats the marker write.
@@ -393,7 +391,7 @@ impl ContextCore {
         // (`check_format` runs before the library loop), on its stream, and
         // stop where the loop dies.
         let runtime = Runtime::open_with_law_reporting(system_dir, user_dir, law, &mut |path| {
-            c_stderr::mmap_failed(path)
+            data::mmap_failed(path)
         })
         .map_err(OpenFailure::Runtime)?;
         Ok(Self {
@@ -457,7 +455,7 @@ impl ContextCore {
                 match Runtime::read_save_baseline(originals, unloaded, nibble) {
                     Ok(baseline) => baseline,
                     Err(crate::runtime::SaveRemapFault::Unmappable(path)) => {
-                        c_stderr::mmap_failed(&path);
+                        data::mmap_failed(&path);
                         crate::user::SaveBaseline::Unmappable
                     }
                 }
@@ -551,7 +549,7 @@ impl ContextCore {
                         }
                     }
                     RemapStep::Unmappable(path) => {
-                        c_stderr::mmap_failed(&path);
+                        data::mmap_failed(&path);
                         return MaskOutOutcome::Done(true);
                     }
                     RemapStep::Directory => {
@@ -626,10 +624,10 @@ impl ContextCore {
     /// library comes back from its saved chunk, or empty
     /// (`:303-321`). The runtime's visibility mask then clears and the call
     /// answers `true`. A system file that cannot be mapped again is the pin's
-    /// SIGSEGV (policy row 76): the library stays unloaded behind its mask,
+    /// SIGSEGV: the library stays unloaded behind its mask,
     /// the call answers `true`, and the next load maps the file again.
     /// Nothing is written to disk, and nothing that can fail is: the pin has
-    /// no failing site here (policy row 103).
+    /// no failing site here.
     ///
     /// # Errors
     ///
@@ -679,7 +677,7 @@ impl ContextCore {
         match runtime.remap_next(&mut walk) {
             Some(RemapStep::Directory) => std::process::abort(),
             Some(RemapStep::Unmappable(path)) => {
-                c_stderr::mmap_failed(&path);
+                data::mmap_failed(&path);
                 return Ok(true);
             }
             None if !user_file => return Ok(true),
@@ -735,7 +733,7 @@ impl ContextCore {
                 | crate::runtime::LibraryError::Unmappable { .. }),
             ) => {
                 if let Some(path) = error.unmappable_path() {
-                    c_stderr::mmap_failed(path);
+                    data::mmap_failed(path);
                 }
                 Ok(false)
             }
@@ -750,7 +748,7 @@ impl ContextCore {
     /// facade total, the runtime's visibility mask sets, and the call
     /// answers the runtime's `true`. Nothing is written to disk: a save
     /// skips the library while it is unloaded (`pinyin.cpp:928-933`), and
-    /// the pin has no failing site here (policy row 103). Which indices a
+    /// the pin has no failing site here. Which indices a
     /// facade lets through is the C adapters' rule.
     #[must_use]
     pub fn unload_phrase_library(&mut self, index: u8) -> bool {

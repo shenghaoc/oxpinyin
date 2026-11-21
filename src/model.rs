@@ -976,7 +976,7 @@ pub trait UserModel {
 // m_merged_single_gram is built by merge_single_gram, ngram.cpp:277–352.
 // pinyin_guess_candidates loads it before the candidate loop;
 // _compute_frequency_of_items reads get_freq inside the loop.
-/// A predecessor’s bigram row after applying the user overlay. Supply whole records
+/// A predecessor's bigram row after applying the user overlay. Supply whole records
 /// ordered by token so that [`single_gram::lower_bound`] can locate the requested range.
 /// Merging keeps record order and does not deduplicate a single input. With one input,
 /// its bytes are retained for later reads. With two, the merge reads both headers and
@@ -985,34 +985,6 @@ pub trait UserModel {
 pub struct MergedGram {
     chunk: Vec<u8>,
     fault: Option<GramFault>,
-}
-
-/// What the pin's merge of two present grams meets before its loop: both
-/// totals are read first (`ngram.cpp:303-304`), asserting on a value
-/// shorter than one ([`GramFault::Short`], register row 85); every item of
-/// both values is then consumed, so a partial tail on either is read past
-/// ([`GramFault::OverRead`], row 98).
-fn merge_fault(system: &[u8], user: &[u8]) -> Option<GramFault> {
-    let short = |gram: &[u8]| single_gram::get_total_freq(gram).is_none();
-    if short(system) || short(user) {
-        Some(GramFault::Short)
-    } else if single_gram::has_partial_tail(system) || single_gram::has_partial_tail(user) {
-        Some(GramFault::OverRead)
-    } else {
-        None
-    }
-}
-
-/// The chunk `merge_single_gram` builds from two present, readable grams.
-fn merged_chunk(system: &[u8], user: &[u8]) -> Vec<u8> {
-    let mut chunk = Vec::with_capacity(
-        system
-            .len()
-            .saturating_add(user.len())
-            .saturating_sub(single_gram::TOTAL_LEN),
-    );
-    single_gram::merge_single_gram(&mut chunk, Some(system), Some(user));
-    chunk
 }
 
 impl MergedGram {
@@ -1025,14 +997,11 @@ impl MergedGram {
     #[cfg(test)]
     #[must_use]
     pub fn new(total: u64, records: Vec<(u32, u64)>) -> Self {
-        let mut chunk = Vec::with_capacity(
-            single_gram::TOTAL_LEN + records.len().saturating_mul(single_gram::ITEM_LEN),
-        );
-        chunk.extend_from_slice(&(total as u32).to_le_bytes());
-        for (token, count) in records {
-            chunk.extend_from_slice(&token.to_le_bytes());
-            chunk.extend_from_slice(&(count as u32).to_le_bytes());
-        }
+        let records: Vec<_> = records
+            .into_iter()
+            .map(|(token, count)| (token, count as u32))
+            .collect();
+        let chunk = single_gram::encode_single_gram(total as u32, &records);
         Self::chunk(chunk)
     }
 
@@ -1046,12 +1015,12 @@ impl MergedGram {
         match (system, user) {
             (None, None) => None,
             (Some(chunk), None) | (None, Some(chunk)) => Some(Self::chunk(chunk)),
-            (Some(system), Some(user)) => Some(match merge_fault(&system, &user) {
+            (Some(system), Some(user)) => Some(match single_gram::merge_fault(&system, &user) {
                 Some(fault) => Self {
                     chunk: Vec::new(),
                     fault: Some(fault),
                 },
-                None => Self::chunk(merged_chunk(&system, &user)),
+                None => Self::chunk(single_gram::merged_chunk(&system, &user)),
             }),
         }
     }
@@ -1336,10 +1305,7 @@ pub trait LanguageModel {
     /// The `gfloat` λ of the install's `table.conf` — the weight the pin's
     /// candidate frequency (`(λ·bigram + (1−λ)·unigram)·2²⁴`,
     /// `pinyin.cpp:1862-1866`, `zhuyin.cpp:1236-1280`) is computed with.
-    /// Defaulted to the pinned model's `0.312699`.
-    fn amplification_lambda(&self) -> f32 {
-        0.312_699
-    }
+    fn amplification_lambda(&self) -> f32;
 }
 
 /// Pre-log pieces returned by [`LanguageModel::nbest_step_costs`].

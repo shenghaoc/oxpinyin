@@ -1,7 +1,7 @@
 use super::*;
-use crate::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::phrase_library::{ChunkItem, build_chunk};
 
-/// Policy row 107: phrase_index.cpp:180-206 at 074a2219 can hand out
+/// phrase_index.cpp:180-206 at 074a2219 can hand out
 /// an item extending past its buffer. The approved safe outcome is no
 /// item, never resurrection of the valid original in a separate mapping.
 #[test]
@@ -10,7 +10,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
         phrase_library::PhraseLibrary,
         user_files::{LogRecord, SystemVersions, UserTableInfo, encode_log_records},
     };
-    use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+    use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
     use std::collections::BTreeMap;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("system.bin");
@@ -32,7 +32,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
             items: BTreeMap::new(),
         },
     )]));
-    let old = crate::data::chunk_write::encode_phrase_item(&item).unwrap();
+    let old = crate::data::phrase_library::encode_phrase_item(&item).unwrap();
     let mut over = old.clone();
     over[0] = 255;
     over[1] = 255;
@@ -78,7 +78,7 @@ fn session_over_system_library(
         phrase_library::PhraseLibrary,
         user_files::{SystemVersions, UserTableInfo},
     };
-    use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+    use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
     use std::collections::BTreeMap;
     let path = dir.join("six.bin");
     let item = ChunkItem {
@@ -102,7 +102,7 @@ fn session_over_system_library(
         ),
     )
     .unwrap();
-    let conf = crate::data::table_info::TableConf::load_path(&conf_path).unwrap();
+    let conf = crate::data::TableConf::load_path(&conf_path).unwrap();
     let originals = SystemOriginals::new(
         crate::user::LibraryTable::from([(
             nibble,
@@ -179,11 +179,11 @@ fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
 #[test]
 fn live_items_distinguish_found_absent_and_unloaded() {
     use crate::ChewingKey;
-    use crate::data::chunk_write::encode_phrase_item;
     use crate::data::phrase_library::PhraseLibrary;
+    use crate::data::phrase_library::encode_phrase_item;
     use crate::data::user_files::{LogRecord, SystemVersions, UserTableInfo, encode_log_records};
-    use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
     use crate::user::{ItemOrigin, SystemItem};
+    use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
     use std::collections::BTreeMap;
 
     let ni = ChewingKey::new(23, 0, 1, 0).to_packed();

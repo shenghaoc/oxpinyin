@@ -39,7 +39,7 @@ pub(crate) fn copy(
 /// Fault injection for the store copy operations used by cross-crate death tests. These
 /// controls select a record at which the read or write fails.
 #[cfg(any(test, feature = "test-hooks"))]
-pub mod faults {
+pub(super) mod faults {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::store::StoreError;

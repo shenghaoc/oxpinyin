@@ -1,5 +1,5 @@
 //! The libpinyin-file user store — [`crate::user::UserStore`] over the pin's own
-//! user-dir file set (drop-in task 9's wiring half).
+//! user-dir file set.
 //!
 //! `UserStore::open_session` opens a user *directory* (not a store
 //! file): [`crate::user::persistence`] reads the profile into the session's
@@ -12,15 +12,11 @@
 //! therefore the pin's own: in memory between saves, as the pin's
 //! context holds its loaded profile (`pinyin.cpp:326-444` at 074a2219),
 //! whole-file `.tmp`+rename at `pinyin_save`, and a crash loses the
-//! sub-timer window exactly as upstream's does (the W6-T5 "reproduce the
-//! call pattern, not the loss window" deviation is reverted by design).
+//! time since the last save, as the pin's does.
 //!
 //! The session touches nothing outside the user dir: no temp directory,
 //! no `TMPDIR` read, nothing left behind by a process that dies before
-//! `pinyin_fini` (#546), and nothing a `fork`ed child can corrupt under
-//! its parent through a shared file description (#531 — a file-backed
-//! session was truncated by the child's save, and the parent's Kyoto
-//! Cabinet handle then failed or spun on its stale view of the file).
+//! `pinyin_fini`, and no file description shared with a `fork`ed child.
 //! The pin reads no temp variable and opens no temp file anywhere under
 //! `src` at 074a2219.
 //!
@@ -45,13 +41,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use crate::data::chunk_write::ChunkItem;
+use crate::data::phrase_library::ChunkItem;
 use crate::data::user_files::SystemVersions;
 use crate::store::{DefaultUserBigramDb, UserBigramDb};
 
-use crate::user::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::user::phrase;
 use crate::user::store::{StoreInner, UserStore, UserStoreError};
+use crate::user::{self as persistence, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
@@ -171,7 +167,7 @@ impl UserStore {
     /// profile under `law` into the session's state in process memory, and
     /// `UserStore::save_reporting` writes the pin's files back. Dropping
     /// the returned owner is the facade's fini: it makes the law's fini-time
-    /// `user.conf` write ([`crate::user::persistence::fini`]).
+    /// `user.conf` write ([`crate::user::fini`]).
     ///
     /// Every open is a session of its own, as every `pinyin_init` /
     /// `zhuyin_init` is a context of its own upstream: nothing is held per
@@ -191,7 +187,7 @@ impl UserStore {
         rows: &crate::user::library_loop::LibraryLoopRows<'_>,
         versions: SystemVersions,
         law: UserConfLaw,
-        check: crate::user::persistence::ProfileCheck,
+        check: crate::user::ProfileCheck,
     ) -> Result<Self, UserStoreError> {
         let (profile, stop) = persistence::load_session_in_loop(user_dir, originals, rows, &check)?;
         stop.map_err(UserStoreError::LibraryLoop)?;
@@ -210,12 +206,12 @@ impl UserStore {
         versions: &SystemVersions,
         layout: &crate::data::user_files::UserFileLayout,
         law: UserConfLaw,
-    ) -> crate::user::persistence::ProfileCheck {
+    ) -> crate::user::ProfileCheck {
         persistence::check_format(user_dir, versions, layout, law)
     }
 
     /// `check_format` for an init without a user dir, whose `user.conf` the
-    /// pin names `""` ([`crate::user::persistence::check_format_unnamed`]): the
+    /// pin names `""` ([`crate::user::check_format_unnamed`]): the
     /// pin's failed load and, under libpinyin's law, failed save.
     pub(crate) fn check_profile_unnamed(versions: &SystemVersions, law: UserConfLaw) {
         persistence::check_format_unnamed(versions, law);
@@ -348,7 +344,7 @@ impl UserStore {
 #[cfg(test)]
 pub(crate) fn seed_totals_plain(
     state: &UserState,
-    originals: &impl crate::user::persistence::OriginalLibraries,
+    originals: &impl crate::user::OriginalLibraries,
     library_totals: &crate::user::LibraryTable<u32>,
 ) -> SeedTotals {
     seed_totals(
@@ -381,7 +377,7 @@ impl SeedItem<'_> {
 /// from when no log total names it. A replayed library holds its own total.
 fn system_override_mass(
     state: &UserState,
-    originals: &impl crate::user::persistence::OriginalLibraries,
+    originals: &impl crate::user::OriginalLibraries,
     seeded: &mut crate::user::LibraryTable<u32>,
 ) {
     for (&nibble, overrides) in &state.system_overrides {
@@ -432,7 +428,7 @@ fn holds_user_data(
     replayed: &crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
 ) -> bool {
     let has_bigram_file = target.dir.as_deref().is_some_and(|dir| {
-        crate::input::path::build_path(
+        crate::input::build_path(
             dir,
             std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
         )
@@ -454,7 +450,7 @@ fn holds_user_data(
 /// views, and what the decoded overrides add on top of an original.
 fn seeded_mass(
     state: &UserState,
-    originals: &impl crate::user::persistence::OriginalLibraries,
+    originals: &impl crate::user::OriginalLibraries,
     user_libraries: &crate::user::LibraryTable<crate::user::user_library::UserLibrary>,
 ) -> crate::user::LibraryTable<u32> {
     let mut seeded: crate::user::LibraryTable<u32> = crate::user::LibraryTable::new();
@@ -507,7 +503,7 @@ fn seeded_mass(
 
 fn seed_totals(
     state: &UserState,
-    originals: &impl crate::user::persistence::OriginalLibraries,
+    originals: &impl crate::user::OriginalLibraries,
     library_totals: &crate::user::LibraryTable<u32>,
     replayed: &crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
     user_libraries: &crate::user::LibraryTable<crate::user::user_library::UserLibrary>,
@@ -563,7 +559,7 @@ fn seed_totals(
 #[cfg(test)]
 pub fn export_state(
     store: &UserStore,
-    originals: &impl crate::user::persistence::OriginalLibraries,
+    originals: &impl crate::user::OriginalLibraries,
 ) -> Result<UserState, UserStoreError> {
     let mut state = export_for_save(store)?;
     let Ok(()) = store
@@ -601,7 +597,7 @@ pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreE
             continue;
         }
         for (slot, view) in library.items() {
-            let item = crate::data::chunk_write::decode_phrase_item(view.as_bytes())
+            let item = crate::data::phrase_library::decode_phrase_item(view.as_bytes())
                 .ok_or(UserStoreError::Persistence)?;
             if let Some(overrides) = state.system_overrides.get_or_default(nibble) {
                 overrides.insert(slot, Some(item));
@@ -620,7 +616,7 @@ pub(crate) fn export_for_save(store: &UserStore) -> Result<UserState, UserStoreE
 /// This is the boundary conversion the two key models need —
 /// `SyllableKey::index()` is a dense id, `ChewingKey::to_packed()` the
 /// 16-bit bit-field the pin's files carry.
-pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::user::phrase::PinyinKey>> {
+pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::user::PinyinKey>> {
     packed
         .iter()
         .map(|&bits| {
@@ -653,7 +649,7 @@ pub(crate) fn pronunciation_matches(
 
 /// The reverse: dense syllable ids, tone included, as packed `ChewingKey`
 /// words.
-pub(crate) fn pinyin_keys_to_packed(ids: &[crate::user::phrase::PinyinKey]) -> Option<Vec<u16>> {
+pub(crate) fn pinyin_keys_to_packed(ids: &[crate::user::PinyinKey]) -> Option<Vec<u16>> {
     ids.iter()
         .map(|&id| phrase::key_chewing(id).map(crate::ChewingKey::to_packed))
         .collect()

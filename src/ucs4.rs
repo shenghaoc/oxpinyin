@@ -35,7 +35,7 @@ fn stored_outward(buffer: &[u32]) -> &[u32] {
 
 impl PhraseText {
     // convert_to_utf8 converts each phrase separately, lookup/lookup.cpp:39–68.
-    /// Reads one phrase’s UCS-4 words. A word at or above `0x8000_0000` before the first zero
+    /// Reads one phrase's UCS-4 words. A word at or above `0x8000_0000` before the first zero
     /// rejects the phrase. A zero ends the outward text. That zero and its suffix remain
     /// available through [`Self::stored_words`].
     #[must_use]
@@ -75,7 +75,8 @@ impl PhraseText {
         })
     }
 
-    /// Builds outward stored words with the declared count used for ranking.
+    /// Builds stored words with a declared count for ranking. Counts above
+    /// `u32::MAX` are stored as `u32::MAX`.
     #[must_use]
     pub fn from_stored_parts(words: Vec<u32>, length: usize) -> Self {
         Self::stored(words, length)
@@ -126,7 +127,9 @@ impl PhraseText {
         })
     }
 
-    /// The stored declared count, or the ordinary text's character count.
+    /// Returns the scalar text's character count. For stored words, returns
+    /// the nonzero declared count, or the number of stored words when the
+    /// declared count is zero.
     #[must_use]
     pub fn phrase_length(&self) -> usize {
         match &self.0 {

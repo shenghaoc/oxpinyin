@@ -389,7 +389,7 @@ tools (Linux, macOS and Windows; any other target is a
 ([g_utf8_next_char from a byte that leads no sequence](upstream-divergences.md#g_utf8_next_char-from-a-byte-that-leads-no-sequence)).
 The input module uses the native calls directly. No borrowed raw pointer
 escapes its safe interface. The core library denies unsafe code. Its algorithm
-modules, the user crate and the facade crate forbid it. C facades keep ABI
+modules, the user and facade modules forbid it. C facades keep ABI
 marshalling. Store keeps DBM calls.
 
 Each stage derives the expected behaviour from the pin and its native

@@ -15,8 +15,8 @@ use std::ffi::CString;
 use std::path::Path;
 
 use oxpinyin::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin::data::table_info::{TableConf, TableConfError};
 use oxpinyin::data::{BigramTable, PhraseIndexTable, PhraseLibraries};
+use oxpinyin::data::{TableConf, TableConfError};
 use oxpinyin::input::tool;
 
 /// The loaded system data.

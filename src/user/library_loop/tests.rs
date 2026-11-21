@@ -1,13 +1,11 @@
 use std::path::PathBuf;
 
 use crate::data::chunk_format::build_memory_chunk;
-use crate::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::phrase_library::{ChunkItem, build_chunk};
 use crate::data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
 
 use super::*;
-use crate::user::persistence::{
-    LoadedPinyinIndex, LoadedProfile, UserConfLaw, check_format, system_originals,
-};
+use crate::user::{LoadedPinyinIndex, LoadedProfile, UserConfLaw, check_format, system_originals};
 
 const LAWS: [UserConfLaw; 2] = [UserConfLaw::Pinyin, UserConfLaw::Zhuyin];
 
@@ -23,7 +21,7 @@ const CONF: &str = "binary format version:7\nmodel data version:14\n\
         default ADDON_DICTIONARY d.table d.bin d.dbin SYSTEM_FILE\n";
 
 /// A `MODIFY_HEADER` with a token, which `next_record` asserts on
-/// (`phrase_index_logger.h:202`, register row 91), framed as a chunk.
+/// (`phrase_index_logger.h:202`), framed as a chunk.
 fn bad_log() -> Vec<u8> {
     let mut payload = 4_u32.to_le_bytes().to_vec();
     payload.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
@@ -87,10 +85,7 @@ impl Fixture {
         let layout = UserFileLayout::from_conf(&conf);
         let versions = SystemVersions::from_conf(&conf);
         let check = check_format(&self.user, &versions, &layout, law);
-        let mut originals = system_originals(
-            crate::data::phrase_libraries::PhraseLibraries::empty(),
-            layout,
-        );
+        let mut originals = system_originals(crate::data::PhraseLibraries::empty(), layout);
         let mut profile = LoadedPinyinIndex::open(Some((&self.user, check)))
             .unwrap()
             .load_phrase_table()
@@ -212,7 +207,7 @@ fn a_bad_log_aborts_before_a_later_fatal_row() {
 }
 
 /// An absent library reports before the later chunk that stops the loop
-/// (`pinyin.cpp:256`; register row 76's prefix).
+/// (`pinyin.cpp:256`).
 #[test]
 fn an_absent_library_keeps_its_line_before_a_later_unmappable_one() {
     for law in LAWS {
@@ -282,7 +277,7 @@ fn a_library_that_cannot_map_never_reads_its_log() {
 }
 
 /// Control: an absent library stays unloaded and the loop goes on to its
-/// log, as row 76's class (b) answer does, with its line kept.
+/// log, with its diagnostic line kept.
 #[test]
 fn an_absent_library_keeps_its_line_and_the_fault_of_its_log() {
     for law in LAWS {
@@ -305,7 +300,7 @@ fn the_loop_without_a_profile_stops_at_the_first_fault() {
     let conf = fixture.conf();
     let rows = LibraryLoopRows::new(&fixture.system, &conf, None);
     let mut originals = system_originals(
-        crate::data::phrase_libraries::PhraseLibraries::empty(),
+        crate::data::PhraseLibraries::empty(),
         UserFileLayout::from_conf(&conf),
     );
     let mut unmapped = Vec::new();

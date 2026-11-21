@@ -32,8 +32,7 @@ use crate::types::lookup_candidate_type_t;
 
 use oxpinyin::phrase_index_library_index;
 
-/// Predicted bigram rows on a zero facade total abort in the scorer
-/// (register row 61).
+/// Predicted bigram rows on a zero facade total abort in the scorer.
 #[test]
 fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
     assert_aborts(
@@ -287,13 +286,13 @@ unsafe fn set_user_bigram(
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { crate::state::context_mut(context) };
     let user = ctx.core.user_store_mut();
-    let prev_text = oxpinyin::marshal::input::scalar_text(
+    let prev_text = oxpinyin::marshal::scalar_text(
         // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
         // Strings. The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prev) },
     )
     .unwrap_or_default();
-    let cur_text = oxpinyin::marshal::input::scalar_text(
+    let cur_text = oxpinyin::marshal::scalar_text(
         // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
         // Strings. The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(cur) },
@@ -506,7 +505,7 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
             .collect::<String>()
     };
     let (context, instance) = open_at(&user.path);
-    oxpinyin::store::read_faults::fail_point_read_of(&extensions[1], 0);
+    oxpinyin::store::fail_point_read_of(&extensions[1], 0);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, cstr("你").as_ptr()) });
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let rows: Vec<String> = unsafe { capture_rows(instance) }

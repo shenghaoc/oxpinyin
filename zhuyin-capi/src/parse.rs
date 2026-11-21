@@ -25,7 +25,7 @@ fn parse_full_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> 
 ///                                       const char * pinyins);
 /// ```
 ///
-/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Parse with the current scheme and replace the instance's parsed length and key matrix.
 /// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
 /// null instance or when no bytes were consumed.
 ///
@@ -42,7 +42,7 @@ pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
         return 0;
     }
 
-    let text = oxpinyin::marshal::input::parser_prefix(
+    let text = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyins) },
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
 ///                                   const char * chewings);
 /// ```
 ///
-/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Parse with the current scheme and replace the instance's parsed length and key matrix.
 /// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
 /// null instance or when no bytes were consumed.
 ///
@@ -78,7 +78,7 @@ pub unsafe extern "C" fn zhuyin_parse_more_chewings(
         return 0;
     }
 
-    let text = oxpinyin::marshal::input::parser_prefix(
+    let text = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(chewings) },

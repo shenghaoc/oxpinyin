@@ -1,10 +1,10 @@
-//! Loads and saves the user’s native phrase libraries, indexes, bigram data and profile
+//! Loads and saves the user's native phrase libraries, indexes, bigram data and profile
 //! marker. [`crate::data::user_files`] describes the file formats. The user indexes
 //! retain the records actually written, including which readings were indexed.
 //!
 //! [`UserConfLaw`] selects the save order. Pinyin writes temporary files before its
 //! rename pass. Zhuyin renames each file as it goes. A hard failure can leave temporary
-//! files or a mix of old and new files. Finalization applies the selected facade’s marker
+//! files or a mix of old and new files. Finalization applies the selected facade's marker
 //! policy.
 
 // pinyin.cpp:569–582,933–1130; zhuyin.cpp:585–698. Bigram::load_db copies into memory,
@@ -13,7 +13,7 @@
 #[cfg(test)]
 use crate::ChewingKey;
 #[cfg(test)]
-use crate::data::chunk_write::build_chunk;
+use crate::data::phrase_library::build_chunk;
 use crate::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
 #[cfg(test)]
 use crate::data::row_format::pinyin_index::PinyinIndexItem;
@@ -25,10 +25,11 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE, build_memory_chunk};
-use crate::data::chunk_write::ChunkItem;
-use crate::data::phrase_libraries::PhraseLibraries;
-use crate::data::table_info::FileName;
+use crate::data::FileName;
+use crate::data::PhraseLibraries;
+use crate::data::chunk_format::build_memory_chunk;
+use crate::data::phrase_library::ChunkItem;
+use crate::data::phrase_library::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
 #[cfg(test)]
 use crate::data::user_files::read_chunk_payload;
 use crate::data::user_files::{
@@ -36,7 +37,7 @@ use crate::data::user_files::{
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
     try_load_chunk_payload,
 };
-use crate::input::path::{build_path, rename, unlink};
+use crate::input::{build_path, rename, unlink};
 use crate::store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
 
 use crate::user::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
@@ -120,7 +121,7 @@ pub enum SaveBaseline {
     /// `pinyin.cpp:928-933`, `:1032-1035`; `zhuyin.cpp:563-568`).
     Unloaded,
     /// `MemoryChunk::mmap` refuses the library's system file at this point of
-    /// the loop (`pinyin.cpp:956`, `zhuyin.cpp:589`; register row 76). The
+    /// the loop (`pinyin.cpp:956`, `zhuyin.cpp:589`). The
     /// pin writes `mmap %s failed!` and dies; the registered safe outcome
     /// stops the save here: the earlier libraries' files stay as written
     /// (libzhuyin has renamed them), nothing later is written or renamed, no
@@ -652,7 +653,7 @@ impl UserState {
                 }
             }
         }
-        self.phrase_table = crate::data::table_entries::phrase_index_entries(&phrases)
+        self.phrase_table = crate::data::phrase_index_entries(&phrases)
             .into_iter()
             .collect();
         self
@@ -670,10 +671,10 @@ pub enum PersistenceError {
     /// A byte stream did not parse under its frozen format.
     Codec,
     /// `MemoryChunk::mmap` refused a system library's file at the save's
-    /// remap (register row 76): the save stopped at that library.
+    /// remap: the save stopped at that library.
     SystemRemapFailed,
-    /// A bulk copy into a fresh chunk reaches the pin's unsafe threshold
-    /// (register row 112, #1514): the save stops there and answers `false`,
+    /// A bulk copy into a fresh chunk reaches the pin's unsafe threshold:
+    /// the save stops there and answers `false`,
     /// keeping the earlier files as written, and the session stays dirty.
     SaveTooLarge,
 }
@@ -959,7 +960,7 @@ pub(crate) fn check_format(
     // profile file named `user.conf` is unlinked after the save.
     if law == UserConfLaw::Pinyin {
         // The save's answer is ignored, and no extra line of oxpinyin's own
-        // follows a failure (maintainer ruling 2026-10-28 UTC, D4).
+        // follows a failure.
         let _ = write_marker(dir, versions, open_counter);
     }
     if !conform {
@@ -1120,7 +1121,7 @@ pub const fn lowered_open_counter(open_counter: i32) -> i32 {
 }
 
 // pinyin_fini and mark_version, pinyin.cpp:1195–1200; zhuyin_fini, zhuyin.cpp:741–757.
-/// Applies the facade’s final profile-marker policy. Pinyin lowers the open counter and
+/// Applies the facade's final profile-marker policy. Pinyin lowers the open counter and
 /// attempts the marker write even if no save preceded it. With no directory it attempts
 /// the empty filename. Zhuyin skips the write. The write result is ignored.
 pub fn fini(dir: Option<&Path>, versions: &SystemVersions, law: UserConfLaw, open_counter: i32) {
@@ -1354,7 +1355,7 @@ pub(crate) type Reloaded = (
 ///
 /// # Errors
 ///
-/// The [`JournalFault`] the merge reaches (rows 91 and 108).
+/// The [`JournalFault`] the merge reaches.
 #[cfg(test)]
 pub(crate) fn load_library_logs(
     dir: &Path,
@@ -1406,8 +1407,8 @@ pub(crate) fn load_user_library(
 ///
 /// # Errors
 ///
-/// The [`JournalFault`] the first library's log reaches (rows 91, 92, 97 and
-/// 108's read in `_compute_new_header`); no later library is read.
+/// The [`JournalFault`] the first library's log reaches, including
+/// `_compute_new_header`'s read; no later library is read.
 #[cfg(test)]
 pub(crate) fn load_masked_logs(
     dir: &Path,
@@ -1471,8 +1472,8 @@ pub struct MaskLogs(crate::user::LibraryTable<Result<Vec<u8>, ChunkPayloadError>
 
 /// Read library `nibble`'s saved log once into `logs` and return the header
 /// fault `merge_with_mask` reaches in it, without touching any state:
-/// `_peek_header` asserts on a non-null header token (row 91) or on a second
-/// header (row 92), and the masked totals read a kept item shorter than its
+/// `_peek_header` asserts on a non-null header token or on a second
+/// header, and the masked totals read a kept item shorter than its
 /// unigram. `None` includes a successfully loaded library excluded by the
 /// mask (its records are not parsed), an absent or unreadable log, a log with
 /// no header, and merge faults that need the library's content. A failed chunk
@@ -1683,7 +1684,7 @@ fn replay_log(
 enum MergeEnd {
     /// The walk ended, or a mismatch stopped the merge, before any over-read.
     Applied,
-    /// The walk reached a payload past the log's end (class (b)).
+    /// The walk reached a payload past the log's end.
     OverRead,
 }
 
@@ -1762,7 +1763,7 @@ where
 /// set, which the rewinds keep: after the header checks the new logger is the
 /// header alone, with the total unchanged (`phrase_index.cpp:847-869`).
 ///
-/// A payload past the log's end (the pin's over-read, class (b)) ends every
+/// A payload past the log's end (the pin's over-read) ends every
 /// walk there, keeping the records before it, as the parent's
 /// `validate_system_logs` snapshot of `decode_log_records_partial` did.
 fn masked_log(
@@ -2078,7 +2079,7 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
 /// `fprintf` on the stream `mark_version`'s own `write %s failed.` line
 /// follows it on.
 fn report_rename_failed(tmp: &Path, final_path: &Path) {
-    crate::data::c_stderr::rename_failed(tmp, final_path);
+    crate::data::rename_failed(tmp, final_path);
 }
 
 /// The files a save has written to `.tmp` siblings. libpinyin writes them
@@ -2220,8 +2221,7 @@ fn log_baseline<B: FnMut(u8) -> SaveBaseline>(
 /// # Errors
 ///
 /// [`PersistenceError::SaveTooLarge`] where `SubPhraseIndex::store` would
-/// copy the compacted content into a fresh chunk in one call (register row
-/// 112): the save stops here, after the earlier files, as row 76's stop does.
+/// copy the compacted content into a fresh chunk in one call: the save stops here, after the earlier files, without writing later files.
 fn user_library_chunk(
     libraries: &crate::user::user_library::SessionPhrases,
     nibble: u8,

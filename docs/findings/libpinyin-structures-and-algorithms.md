@@ -755,9 +755,7 @@ stack and one key scratch for maximum depth d, rather than short-circuiting
 on a positive match. No second placed matrix is allocated. Duplicated entries
 increase path multiplicity and therefore work and pronunciation writes
 (`phonetic_key_matrix.cpp:603-668`; `pinyin.cpp:3594-3606`). Fuzzy passes take
-O(k) work for k original column entries and a constant number of swaps; the
-removed collapse took O(k²). The split passes and dictionary-call costs are
-unchanged. Net wall time, peak RSS and allocation effects are unknown.
+O(k) work for k original column entries and a constant number of swaps. Net wall time, peak RSS and allocation effects are unknown.
 
 For a readable item, the probability calculation follows the pin, including
 the wrapping u32 sums and the zero-total refusal. The abbreviation case
@@ -879,9 +877,7 @@ content key, and the canonical column is the `m_zhuyin_str` that
 `get_zhuyin_string` prints (`chewing_key.cpp:74-89`).
 
 Both search in O(L log n) byte comparisons and then read the key in O(1).
-Since #1986 each Rust row stores its content key: the perfect-hash lookups,
-the repeated equality test, the per-key `String` and the canonical and
-pinyin columns are gone.
+Each Rust row stores its content key.
 
 ### Table-file scanning
 
@@ -1034,16 +1030,13 @@ fewest keys, then lowest distance, then first found. All 662
 `PINYIN_INCOMPLETE` exactly when its key is initial-only. The zhuyin
 direct walk stops at the same segment as the pin (`direct.rs:9-31`): a pin
 segment matches an index row only when its bytes are valid UTF-8.
-Since #1978 `PhraseItem::cmp` (`gen_pinyin_table.rs`) compares the words
+`PhraseItem::cmp` (`gen_pinyin_table.rs`) compares the words
 in place and allocates nothing.
 
 ### Upstream test programs
 
 The upstream test programs are off the parity path: they are not drop-in
 tools ([upstream test coverage](../testing/upstream-test-coverage.md#libpinyin-tests)).
-Commit f76b0d8f0 removed the ports that compared their output with the
-pin's and replaced them as follows:
-
 - `test_memory_chunk`, `test_phrase_index` and `test_phrase_index_logger`
   are product tests that print nothing. Examples are
   `framed_chunk_replaces_an_old_file_and_reads_through_heap_and_map`
@@ -1082,7 +1075,7 @@ attempted slot (`phrase_index.h:628-634`), and a rejected load or merge
 subtracts without adding (`phrase_index.cpp:237-248,291-296`). The check
 macro's message before SIGABRT is
 [policy-accepted](upstream-divergences.md#utility-check-macros-write-no-message).
-Since #2013 `repl` `pinyin_main` prints and decodes one matrix from one
+`repl` `pinyin_main` prints and decodes one matrix from one
 parse (`lookup.rs`); the second physical matrix is gone.
 
 ### Candidate strings across reparsing
@@ -1144,7 +1137,7 @@ is computed in input coordinates (`src/facade/instance.rs:493-501`)
 and guarded again in the engine (`src/engine/session/selection.rs:444-455`). The answers are
 `choose_answer` (`capi/src/candidates.rs:768-771`) and the
 zhuyin span answer (`zhuyin-capi/src/candidates.rs:243-273`).
-A guess clears the old candidates at entry (#1989).
+A guess clears the old candidates at entry.
 
 ### Candidate dedup over malformed phrase text
 

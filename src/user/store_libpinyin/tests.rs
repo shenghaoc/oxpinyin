@@ -1,6 +1,6 @@
 use super::*;
 use crate::store::{DefaultStore, StoreError, WriteStore};
-use crate::user::persistence::SystemLibrary;
+use crate::user::SystemLibrary;
 use crate::user::test_session::tempdir;
 
 /// The container's gram under `key`, owned: `None` on a miss.
@@ -11,7 +11,7 @@ fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreE
 use crate::ChewingKey;
 use crate::user::store::UserStore;
 
-/// Register row 101: a phrase-table record with a partial token tail is
+/// a phrase-table record with a partial token tail is
 /// one the pin's entry walk reads past, in `_add_phrase`'s search, the
 /// promote's `add_index` and the mask's `ProcessEach`
 /// (`phrase_large_table3.cpp:32-39`, `:57-65`, `:103-117` at 074a2219).
@@ -34,10 +34,7 @@ fn a_partial_phrase_table_record_is_refused_before_any_change() {
         let words: Vec<u32> = "他".chars().map(u32::from).collect();
         phrases
             .phrase_table
-            .push_record(
-                &crate::user::phrase_table::key_ucs4(&words),
-                &[1, 0, 0, 7, 9],
-            )
+            .push_record(&crate::user::phrase_key_ucs4(&words), &[1, 0, 0, 7, 9])
             .unwrap();
     }
     let snapshot = |store: &UserStore| format!("{:?}", store.session_target().phrases());
@@ -90,7 +87,7 @@ fn open_law(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     (dir, store)
 }
 
-/// Register row 112, `USER_FILE` (maintainer amendment): the compacted
+/// `USER_FILE`: the compacted
 /// content copy is checked where `SubPhraseIndex::store` makes it. The
 /// save stops there with the earlier files as written (pinyin staged
 /// them, zhuyin renamed them), writes and renames nothing later, leaves
@@ -189,7 +186,7 @@ fn trained(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     (dir, store)
 }
 
-/// Register row 112, `SYSTEM_FILE`: the journal actually encoded is the
+/// `SYSTEM_FILE`: the journal actually encoded is the
 /// copy that is checked, at J >= the limit, and J + 1 saves.
 #[test]
 fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
@@ -233,7 +230,7 @@ fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
 /// against the open-time original reaches the limit.
 #[test]
 fn the_actual_baseline_decides_the_journal_threshold() {
-    use crate::user::persistence::SaveBaseline;
+    use crate::user::SaveBaseline;
     use crate::user::user_library::TestLimits;
     let live = || {
         let mut library = originals().remove(&1).unwrap();
@@ -283,7 +280,7 @@ fn the_actual_baseline_decides_the_journal_threshold() {
 #[test]
 fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
     use crate::data::chunk_format::build_memory_chunk;
-    use crate::data::chunk_write::build_chunk;
+    use crate::data::phrase_library::build_chunk;
     use crate::data::user_files::read_chunk_payload;
     let dir = tempdir("empty-chunk-total");
     // A profile the library saved once, so the open reads its chunks.
@@ -332,7 +329,7 @@ fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// Ruling 3: a session's arena compacts at end-import, save and mask-out
+/// a session's arena compacts at end-import, save and mask-out
 /// only. Replacements between them append, so the content grows with the
 /// history as the pin's does, and each point rebuilds it from the items.
 #[test]
@@ -486,7 +483,7 @@ fn predicted_prefix_trains_an_arena_resident_user_item() {
 /// `packed_to_pinyin_keys` has no key for this one.
 #[test]
 fn foreign_stored_word_is_verbatim_through_the_arena_reader() {
-    use crate::data::chunk_write::build_chunk;
+    use crate::data::phrase_library::build_chunk;
     use crate::user::user_library::UserLibrary;
 
     let dir = tempdir("arena-foreign-word");
@@ -611,7 +608,7 @@ fn failed_system_reload_keeps_the_unloaded_guard() {
 
 #[test]
 fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
-    use crate::data::chunk_write::{build_chunk, encode_phrase_item};
+    use crate::data::phrase_library::{build_chunk, encode_phrase_item};
     use crate::data::user_files::LogRecord;
     use crate::user::user_library::UserLibrary;
 
@@ -925,7 +922,7 @@ fn frequency_of(
 
 #[test]
 fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
-    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::phrase_library::encode_phrase_item;
     use crate::data::user_files::LogRecord;
     use crate::user::{ItemOrigin, Lookup};
     let items = three_items();
@@ -979,7 +976,7 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
         .collect();
     std::fs::write(
         &shipped_path,
-        crate::data::chunk_write::build_chunk(&shipped).expect("chunk"),
+        crate::data::phrase_library::build_chunk(&shipped).expect("chunk"),
     )
     .expect("write shipped chunk");
     let library = crate::data::phrase_library::PhraseLibrary::open(&shipped_path)
@@ -1022,7 +1019,7 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
 
 #[test]
 fn a_payload_over_read_reverses_the_applied_records() {
-    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::phrase_library::encode_phrase_item;
     use crate::data::user_files::LogRecord;
     use crate::user::{ItemOrigin, Lookup};
     let items = three_items();
@@ -1068,7 +1065,7 @@ fn a_payload_over_read_reverses_the_applied_records() {
 
 #[test]
 fn session_owns_the_replayed_overrides_it_was_opened_with() {
-    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::phrase_library::encode_phrase_item;
     use crate::data::user_files::LogRecord;
     let original = ChunkItem {
         phrase: vec![0x4f60],
@@ -1286,7 +1283,7 @@ fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
 /// N2: both training paths read the predecessor's total
 /// (`phonetic_lookup.h:884`, `pinyin.cpp:2630` at the pin `074a2219`),
 /// and a value too short for one is the pin's assert
-/// (`memory_chunk.h:390`, register row 85), which the C adapters
+/// (`memory_chunk.h:390`), which the C adapters
 /// reproduce by aborting on the fault. Training reads it before it
 /// changes anything; the predicted path makes its unigram add first
 /// (`pinyin.cpp:2609-2612`), in memory, and returns the fault after it.
@@ -1374,7 +1371,7 @@ fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     let token = |n: u32| 0x0100_0000 | n;
-    let gram = crate::data::single_gram::encode_single_gram(
+    let gram = crate::single_gram::encode_single_gram(
         5,
         &[
             (token(1), 1),
@@ -1437,7 +1434,7 @@ fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     let (high, low) = (0x0100_0009_u32, 0x0100_0001_u32);
-    let gram = crate::data::single_gram::encode_single_gram;
+    let gram = crate::single_gram::encode_single_gram;
     store.plant_raw_bigram(2, &gram(10, &[(high, 4), (low, 6)]));
     assert_eq!(store.bigram_count(2, low).expect("miss"), 0);
     assert_eq!(store.observe_selection(2, low).expect("train"), 69);
@@ -1682,7 +1679,7 @@ fn short_bigram_guard_reads_the_live_raw_value() {
 #[test]
 fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
     use crate::data::chunk_format::build_memory_chunk;
-    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::phrase_library::encode_phrase_item;
     use crate::data::user_files::{LogRecord, encode_log_records};
     use crate::user::JournalFault;
 
@@ -1793,7 +1790,7 @@ fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
 /// header first when `header` is true.
 fn add_and_modify_log(header: bool) -> Vec<u8> {
     use crate::data::chunk_format::build_memory_chunk;
-    use crate::data::chunk_write::encode_phrase_item;
+    use crate::data::phrase_library::encode_phrase_item;
     use crate::data::user_files::{LogRecord, encode_log_records};
 
     let old = originals()[&1].item(1).expect("original item");
@@ -2713,8 +2710,8 @@ fn appended_system_readings_keep_absolute_training_counts() {
 
 #[test]
 fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
-    use crate::data::chunk_write::build_chunk;
     use crate::data::phrase_library::PhraseLibrary;
+    use crate::data::phrase_library::build_chunk;
 
     let dir = tempdir("mapped-append-second-reading");
     let shipped_dir = tempdir("mapped-append-shipped");
@@ -2769,13 +2766,13 @@ fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
 }
 
-/// POLICY-ACCEPTED. Two slots sharing a file offset keep independent
+/// Two slots sharing a file offset keep independent
 /// values. Only the named slots are saved and both changes reopen.
 #[test]
 fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
     use crate::data::chunk_format::chunk_checksum;
-    use crate::data::chunk_write::build_chunk;
     use crate::data::phrase_library::PhraseLibrary;
+    use crate::data::phrase_library::build_chunk;
     use crate::data::user_files::{LogRecord, load_chunk_payload, log_records};
 
     let dir = tempdir("aliased-offset");
@@ -2959,11 +2956,10 @@ fn train_save_reopen_carries_the_learning() {
         let phrase = store.phrase(token).expect("row");
         assert_eq!(phrase.phrase_text().unwrap(), "你好");
         let pron = &phrase.pronunciations()[0];
-        assert_eq!(pron.count(), crate::user::phrase::DEFAULT_PHRASE_COUNT);
+        assert_eq!(pron.count(), crate::user::DEFAULT_PHRASE_COUNT);
         assert_eq!(
             store.unigram_delta(token),
-            crate::user::phrase::DEFAULT_PHRASE_COUNT
-                * crate::user::phrase::ADD_PHRASE_UNIGRAM_FACTOR
+            crate::user::DEFAULT_PHRASE_COUNT * crate::user::ADD_PHRASE_UNIGRAM_FACTOR
         );
 
         // The .dbin carries the system token's MODIFY; the user.bin
@@ -2971,7 +2967,7 @@ fn train_save_reopen_carries_the_learning() {
         // wrote.
         assert_eq!(
             store.bigram_row(1).expect("row"),
-            Some(crate::data::single_gram::encode_single_gram(
+            Some(crate::single_gram::encode_single_gram(
                 69,
                 &[(0x0100_0001, 69)]
             ))
@@ -3146,10 +3142,7 @@ fn a_preexisting_libpinyin_profile_seeds_the_session() {
     let state = UserState {
         bigram: vec![(
             1_u32.to_le_bytes().to_vec(),
-            crate::data::single_gram::encode_single_gram(
-                207,
-                &[(0x0100_0001, 138), (0x0700_0001, 69)],
-            ),
+            crate::single_gram::encode_single_gram(207, &[(0x0100_0001, 138), (0x0700_0001, 69)]),
         )],
         libraries: crate::user::LibraryTable::from([(
             7_u8,
@@ -3295,7 +3288,7 @@ mod unloaded;
 #[test]
 fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
     use crate::data::chunk_format::build_memory_chunk;
-    use crate::data::chunk_write::{ChunkItem, build_chunk};
+    use crate::data::phrase_library::{ChunkItem, build_chunk};
     use crate::user::native_fixture::{
         TempUserDir, set_phrase_table_row, system_dir, write_user_conf,
     };
@@ -3436,12 +3429,12 @@ fn masking_system_imports_restores_originals_and_removes_appended_items() {
     assert!(modified.iter().any(|row| row.0 == "你你你"));
     store.mask_out(0, 0).unwrap();
     let system = crate::user::native_fixture::system_dir();
-    let conf = crate::data::table_info::TableConf::load_from_dir(&system).unwrap();
+    let conf = crate::data::TableConf::load_from_dir(&system).unwrap();
     let libraries = conf
         .default_row_steps(Some(user.path()))
         .into_iter()
         .filter_map(|(index, step)| {
-            let crate::data::table_info::DefaultRowStep::System { file, .. } = step else {
+            let crate::data::DefaultRowStep::System { file, .. } = step else {
                 return None;
             };
             let path = system.join(file.as_ref());

@@ -29,8 +29,7 @@ The **linker** joins compiled code into executables and native libraries.
 ## Linux
 
 **The Linux rule.** Linux runs no tkrzw code: Ubuntu packages no sound libtkrzw
-([finding](../findings/tkrzw-distro-compat.md)). Decided 2026-11-21, amending the 2026-10-30 ruling that the
-general test jobs on every OS use tkrzw. Every Linux build that runs a backend
+([finding](../findings/tkrzw-distro-compat.md)). Decided 2026-11-21. Every Linux build that runs a backend
 uses Kyoto Cabinet from the distribution's packages, `LOCAL_CELL` in
 `tools/dev/cell.py`: Linux CI ([verification rule 10.2](verification.md#10-ci-merge-conditions)),
 `just provision`, the measurement recipes and their pin builds, the pin

@@ -653,6 +653,10 @@ struct Fixed {
 }
 
 impl LanguageModel for Fixed {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = EngineError;
 
     fn nbest_step_costs(
@@ -796,6 +800,10 @@ fn a_model_without_step_costs_yields_no_rows() {
 fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
     struct UnigramOnly;
     impl LanguageModel for UnigramOnly {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = EngineError;
         fn nbest_step_costs(
             &self,
@@ -860,6 +868,10 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
     }
     struct Pairwise<'a>(&'a Cell<bool>);
     impl LanguageModel for Pairwise<'_> {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = EngineError;
         fn nbest_step_costs(
             &self,
@@ -872,6 +884,10 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
     }
     struct RowCached<'a>(&'a Cell<bool>);
     impl LanguageModel for RowCached<'_> {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = EngineError;
         fn nbest_step_costs_in_row(
             &self,
@@ -945,6 +961,10 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
 
     struct Sparse(RefCell<Vec<u32>>);
     impl LanguageModel for Sparse {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = EngineError;
 
         fn nbest_successors_in_row<'a>(
@@ -996,6 +1016,10 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
 struct FaultRows(Option<crate::model::MergedGram>);
 
 impl LanguageModel for FaultRows {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = EngineError;
 
     fn nbest_successors_in_row<'a>(
@@ -1127,6 +1151,10 @@ fn a_token_the_walk_yields_below_its_range_still_steps() {
     type Steps = Vec<(u32, Option<(u32, u32)>)>;
     struct Walked(RefCell<Steps>);
     impl LanguageModel for Walked {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = EngineError;
 
         fn nbest_successors_in_row<'a>(

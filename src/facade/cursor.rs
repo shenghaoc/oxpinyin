@@ -47,8 +47,7 @@ pub enum CursorLaw {
 /// layer acts on it: it aborts the process or refuses the call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorFault {
-    /// One of the pin's asserts. The C layer aborts the process
-    /// (register rows 14, 19 and 66).
+    /// One of the pin's asserts. The C layer aborts the process.
     PinAssert,
     /// A parse or dictionary failure that the pin has no counterpart
     /// for. The C layer refuses the call.

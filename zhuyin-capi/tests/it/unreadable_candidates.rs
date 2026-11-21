@@ -61,7 +61,7 @@ mod chunk_fixture;
 #[path = "../../../tests/support/unreadable_fixture.rs"]
 mod fixture;
 
-/// POLICY-ACCEPTED (row 106): both cursor paths omit an item removed by a journal.
+/// both cursor paths omit an item removed by a journal.
 #[test]
 fn a_journal_remove_omits_the_row_on_both_cursor_paths() {
     use crate::support::{
@@ -151,13 +151,11 @@ fn a_journal_remove_omits_the_row_on_both_cursor_paths() {
     }
 }
 
-/// POLICY-ACCEPTED (row 106).
 #[test]
 fn a_sole_unreadable_after_cursor_row_is_omitted() {
     check_row(fixture::Case::Single, false);
 }
 
-/// POLICY-ACCEPTED (row 106).
 #[test]
 fn a_sole_unreadable_before_cursor_row_is_omitted() {
     check_row(fixture::Case::Single, true);
@@ -196,7 +194,7 @@ fn zero_total_aborts_before_cursor() {
 }
 
 use crate::support::zhuyin_unload_phrase_library;
-/// POLICY-ACCEPTED (row 106).
+
 #[test]
 fn a_sole_unreadable_row_is_omitted_after_the_user_table_fallback() {
     check_row(fixture::Case::Fallback, false);

@@ -131,7 +131,7 @@ fn scenario() -> TestWalk {
     )
 }
 
-/// Register row 36 and the pin's walk (`pinyin.cpp:790-911`):
+/// The pin's walk (`pinyin.cpp:790-911`):
 /// `get_next` answers `has_next` after the row, so a caller that
 /// trusts it stops before the last predecessor, whose gram was loaded
 /// but never scanned; a `sentence_start` gram's successors are scanned
@@ -210,7 +210,7 @@ fn get_next_without_a_predecessor_is_the_pins_abort() {
     assert_eq!(walk.get_next(), BigramStep::Aborts);
 }
 
-/// Register row 85 (`pinyin.cpp:889`, `ngram.cpp:133-141`): the walk
+/// The walk (`pinyin.cpp:889`, `ngram.cpp:133-141`)
 /// faults where it loads a predecessor too short for its total, in
 /// `get_all_items` order, after handing out the rows of the
 /// predecessors before it; a `has_next` that loads it faults too, also
@@ -457,22 +457,24 @@ fn an_addon_promoted_into_a_missing_library_is_exported() {
     ctx.user_store_mut()
         .promote_addon_phrase(
             0x0500_0001,
-            &crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
-                phrase: "二簧".chars().map(u32::from).collect(),
-                unigram: 9,
-                prons: vec![(
-                    ["er", "huang"]
-                        .iter()
-                        .map(|spelling| {
-                            SyllableKey::from_text(spelling)
-                                .expect("syllable")
-                                .chewing_key()
-                                .to_packed()
-                        })
-                        .collect(),
-                    7,
-                )],
-            })
+            &crate::data::phrase_library::encode_phrase_item(
+                &crate::data::phrase_library::ChunkItem {
+                    phrase: "二簧".chars().map(u32::from).collect(),
+                    unigram: 9,
+                    prons: vec![(
+                        ["er", "huang"]
+                            .iter()
+                            .map(|spelling| {
+                                SyllableKey::from_text(spelling)
+                                    .expect("syllable")
+                                    .chewing_key()
+                                    .to_packed()
+                            })
+                            .collect(),
+                        7,
+                    )],
+                },
+            )
             .unwrap(),
         )
         .unwrap();
@@ -808,7 +810,7 @@ mod native {
     /// array out in that order; the `std::lower_bound` over the raw array
     /// (`:86-99`) is a lookup and does not re-sort it. The walk's first
     /// `has_next` answers false (its do/while loads the last predecessor's gram
-    /// on a false answer, register row 36); the last row's `get_next` answer is
+    /// on a false answer); the last row's `get_next` answer is
     /// the walk's, `false` at the end of the gram.
     #[test]
     fn user_gram_unsorted_export_follows_the_stored_order() {
@@ -859,11 +861,11 @@ mod native {
         );
     }
 
-    /// D6: the bigram export lists an item only when its count is above
+    /// the bigram export lists an item only when its count is above
     /// `threshold = initial_seed - 1`, 68 (`pinyin.cpp:791-792`, `:809` at 074a2219), and doubles
     /// it (`:906`): 你's gram `[好 68, 号 69]` exports only 你号, at 138. Source-derived, with no
-    /// capture, per the 2026-11-01 ruling: the unpatched pin joins the pinyin strings with
-    /// `g_strjoinv` over an unterminated array (`:849`, `:862`; compatibility register row 1).
+    /// capture: the pin joins the pinyin strings with
+    /// `g_strjoinv` over an unterminated array (`:849`, `:862`).
     #[cfg(unix)]
     #[test]
     fn the_bigram_export_skips_a_count_at_the_threshold() {

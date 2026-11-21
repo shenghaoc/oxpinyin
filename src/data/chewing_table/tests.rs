@@ -413,7 +413,7 @@ fn a_failed_pinyin_table_read_is_a_miss() {
         ChewingKey::from_pinyin("hao").unwrap(),
     ];
     assert!(!table.search(&keys).unwrap().is_empty());
-    crate::store::read_faults::fail_point_read_of(&index_key(&keys), 0);
+    crate::store::fail_point_read_of(&index_key(&keys), 0);
     assert!(table.search(&keys).unwrap().is_empty());
 }
 
@@ -424,7 +424,7 @@ fn a_failed_pinyin_table_existence_read_is_a_miss() {
     let table = native_table();
     let keys = [ChewingKey::from_pinyin("ni").unwrap()];
     assert!(table.key_exists(&keys).unwrap());
-    crate::store::read_faults::fail_point_read_of(&index_key(&keys), 0);
+    crate::store::fail_point_read_of(&index_key(&keys), 0);
     assert!(!table.key_exists(&keys).unwrap());
     assert!(
         !table
@@ -445,7 +445,7 @@ fn a_failed_pinyin_table_existence_read_is_a_miss_for_zhuyin() {
         .key()
         .chewing_key()
         .with_tone(parse.keys()[0].tone());
-    crate::store::read_faults::fail_point_read_of(&(key.to_packed() & 0x0fff).to_le_bytes(), 0);
+    crate::store::fail_point_read_of(&(key.to_packed() & 0x0fff).to_le_bytes(), 0);
     assert!(!table.key_exists(&[key]).unwrap());
     assert!(table.search(&[key]).unwrap().is_empty());
 }
@@ -456,7 +456,7 @@ fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
     let table = native_table();
     let ni = ChewingKey::from_pinyin("ni").unwrap();
     let hao = ChewingKey::from_pinyin("hao").unwrap();
-    crate::store::read_faults::fail_point_read_of(&index_key(&[ni, hao]), 0);
+    crate::store::fail_point_read_of(&index_key(&[ni, hao]), 0);
     let mut lengths = Vec::new();
     assert!(
         !table
@@ -470,7 +470,7 @@ fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
 }
 
 /// IndexItem pointer subtraction keeps only whole records
-/// (chewing_large_table2.h:145-150; compatibility policy row 128).
+/// (chewing_large_table2.h:145-150).
 #[test]
 fn a_misaligned_pinyin_table_row_keeps_its_whole_records() {
     let scratch = tempfile::tempdir().unwrap();
@@ -513,7 +513,7 @@ fn a_pinyin_table_body_read_failure_after_the_check_aborts() {
     if std::env::var("OXPINYIN_DATA_CHILD").as_deref() == Ok(NAME) {
         let table = native_table();
         let key = ChewingKey::from_pinyin("ni").unwrap();
-        crate::store::read_faults::fail_point_read_of(&key.to_packed().to_le_bytes(), 1);
+        crate::store::fail_point_read_of(&key.to_packed().to_le_bytes(), 1);
         let _ = table.search(&[key]);
         panic!("the checked body read must abort");
     }

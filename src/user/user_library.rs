@@ -3,11 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use crate::data::chunk_format::{
-    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
-};
-use crate::data::chunk_write::sub_phrase_index_sections;
+use crate::data::chunk_format::CHUNK_HEADER_SIZE;
 use crate::data::phrase_library::PhraseItemView;
+use crate::data::phrase_library::sub_phrase_index_sections;
+use crate::data::phrase_library::{
+    CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
+};
 
 use crate::user::user_index::UserIndex;
 use crate::user::user_phrase_table::UserPhraseTable;
@@ -23,7 +24,7 @@ pub(crate) struct UserLibrary {
 
 /// `MemoryChunk::ensure_has_space` narrows a growth to `int`
 /// (`memory_chunk.h:95-98`): a bulk copy that grows a fresh chunk by 2^31
-/// bytes or more allocates too little (#1514, register row 112).
+/// bytes or more allocates too little.
 const COPY_LIMIT: u64 = 1 << 31;
 
 #[cfg(test)]
@@ -161,7 +162,7 @@ impl UserLibrary {
     /// (`:2546-2556`) call it: the slot's offset word is overwritten and an
     /// item it named keeps its bytes and its share of `m_total_freq`
     /// (`phrase_index.cpp:208-217`). A full library wraps its allocation
-    /// onto a live slot this way (register row 119).
+    /// onto a live slot this way.
     ///
     /// Only a malformed body or a slot past `PHRASE_MASK` refuses, before
     /// anything changes. Both callers pass a slot masked
@@ -487,7 +488,7 @@ impl UserLibrary {
 
     /// Whether `store`'s content copy grows a fresh chunk by `C` bytes, and
     /// `ensure_has_space` narrows that growth to `int` (`memory_chunk.h:
-    /// 95-98`): the unsafe copy of register row 112, from 2^31 bytes.
+    /// 95-98`): the unsafe copy, from 2^31 bytes.
     pub(crate) fn store_copy_is_unsafe(&self) -> bool {
         !self.is_empty() && self.compacted_content_len() as u64 >= copy_limit()
     }

@@ -1,8 +1,6 @@
 //! Helpers shared by the backends' raw walks (Kyoto Cabinet, tkrzw,
 //! Berkeley DB) and by the file-backed ones that hand a path to a C
-//! library (tkrzw). One definition each: the range-bound test and the
-//! path check used to live once per backend, byte-identical, and a fix
-//! to one copy could miss the others.
+//! library (tkrzw). It owns the range-bound test and path check.
 //!
 //! Each item is compiled only for the backends that use it, so a
 //! single-backend build (the exactly-one-backend invariant) carries no

@@ -1,6 +1,6 @@
 //! Nonshipping access to live phrase items for tools.
 use super::*;
-use crate::user::persistence::SystemLibrary;
+use crate::user::SystemLibrary;
 
 /// One heap-loaded SubPhraseIndex, using the same item storage as journal replay.
 pub struct Index {

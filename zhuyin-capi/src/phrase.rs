@@ -16,7 +16,7 @@ use crate::types::{GUint, PhraseTokenT, ZhuyinInstance};
 ///                            const char * sentence);
 /// ```
 ///
-/// Segmentation that completes replaces the instance’s phrase result, even when no path
+/// Segmentation that completes replaces the instance's phrase result, even when no path
 /// matches. A failed input conversion returns `false` and keeps the previous result. An
 /// unmatched sentence can leave a result sized for the sentence, with every token null. A null
 /// sentence follows the empty-input path.
@@ -56,15 +56,14 @@ pub unsafe extern "C" fn zhuyin_phrase_segment(
             }
         };
     }
-    let Some(text) = oxpinyin::marshal::input::utf8_to_ucs4(
+    let Some(text) = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(sentence) },
     ) else {
         // 074a2219 zhuyin.cpp:973: `g_return_val_if_fail(num_of_chars ==
         // ucs4_len, FALSE)` answers false and leaves the result as it was. Its
-        // critical is not reproduced (2026-10-31 UTC ruling,
-        // docs/findings/upstream-divergences.md#phrase-segmentation-writes-no-invalid-utf-8-critical).
+        // critical is not reproduced (docs/findings/upstream-divergences.md#phrase-segmentation-writes-no-invalid-utf-8-critical).
         return false;
     };
     // SAFETY: `instance` is non-null and was produced by

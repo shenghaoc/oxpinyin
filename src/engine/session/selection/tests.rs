@@ -130,23 +130,13 @@ mod session_lifecycle {
 
 mod session_replay {
     //! Authored state transitions driven through direct session operations.
-    //!
-    //! The historical F-D scenarios were authored, never captured; their
-    //! expected candidates come from the pin's real lists in
-    //! `fixtures/foundation/f-a.txt`, restricted to what the mini vocabulary can
-    //! reach.
-    //!
-    //! This is the first cross-platform consumer of the session seam. Nothing in
-    //! it is Linux-specific: no paths are discovered, no environment is read, no
-    //! `cfg(target_os)` appears anywhere beneath it.
 
     use crate::engine::Selection;
 
     use crate::engine::session::tests::select_row;
     use crate::engine::session::tests::session_replay::session;
 
-    /// Candidate and state transitions from the authored F-D scenarios. The
-    /// retired key/preedit layer is not needed to exercise these operations.
+    /// Candidate and state transitions through direct session operations.
     #[test]
     fn recorded_candidate_scenarios_use_direct_operations() {
         for (input, first) in [

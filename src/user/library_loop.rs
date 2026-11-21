@@ -6,10 +6,10 @@
 use std::path::Path;
 
 use crate::data::phrase_library::LibraryError;
-use crate::data::table_info::{DefaultRowStep, TableConf, TableConfSite};
+use crate::data::{DefaultRowStep, TableConf, TableConfSite};
 
-use crate::user::persistence::{SessionProfile, SystemOriginals};
 use crate::user::replay::JournalFault;
+use crate::user::{SessionProfile, SystemOriginals};
 
 /// Where the library loop stopped: the one record of every way a default row
 /// ends the pin's init.
@@ -20,9 +20,9 @@ pub enum LibraryLoopStop {
     Row(TableConfSite),
     /// The row's system chunk: unmappable (`pinyin.cpp:256`, then the empty
     /// chunk), a directory `MemoryChunk::mmap` asserts on
-    /// (`memory_chunk.h:493`, register row 96), or a layout read past it.
+    /// (`memory_chunk.h:493`), or a layout read past it.
     Library(LibraryError),
-    /// The row's log reached a pin assertion (register rows 91 and 108).
+    /// The row's log reached a pin assertion.
     Journal(JournalFault),
 }
 

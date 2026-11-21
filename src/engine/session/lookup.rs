@@ -74,7 +74,7 @@ where
     /// The pin runs this after the span loop, for every valid lookup
     /// offset: the span loop's result is empty at an offset no span
     /// starts at (a mid-key byte, the reserved slot), and the prepend
-    /// still fires (row 65). An in-span apostrophe is a live separator
+    /// still fires. An in-span apostrophe is a live separator
     /// column, not an empty one: the span loop steps over the zero key
     /// and continues to the next key (`search_matrix_recur`,
     /// `phonetic_key_matrix.cpp:388-394` — measured: `ni'hao` at the
@@ -333,7 +333,7 @@ where
     /// the parse: an apostrophe past a stop byte sits outside it entirely
     /// (the matrix has `parsed_len + 1` columns, so `ni,'hao` offset 3 is an
     /// ordinary lookup of the empty window, and the C adapters abort from
-    /// offset 4; register row 66). The scan's own key set
+    /// offset 4). The scan's own key set
     /// ([`super::build_scan_matrix_over`]) models the key columns, so a byte some key's
     /// syllable starts on, or an in-span apostrophe byte, answers; any other
     /// byte is an empty column. Exact mode has no pin counterpart, so its

@@ -1,5 +1,5 @@
 //! Output allocation and diagnostics for the exposed C boundary.
-//! Input conversion is shared by `oxpinyin::marshal::input`.
+//! Input conversion is shared by `oxpinyin::marshal`.
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
@@ -225,7 +225,7 @@ pub fn sentence_text(
     for phrase in phrases {
         // A phrase whose words GLib does not convert is NULL here.
         let converted = phrase.map_or(ptr::null_mut(), |phrase| {
-            let bytes = oxpinyin::marshal::phrase_text::phrase_text_bytes(phrase.borrow());
+            let bytes = oxpinyin::marshal::phrase_text_bytes(phrase.borrow());
             malloc_cstr_with(bytes.len(), |out| {
                 out.copy_from_slice(&bytes);
                 bytes.len()
@@ -323,7 +323,7 @@ pub fn log_warning(message: &str) {
 /// final concatenation (`pinyin.cpp:3431`, `:3509`, `:3569`). The pin's
 /// `middle` is never NULL there: every walk that would leave it NULL dies
 /// first at `assert(matrix.get_column_size(offset) >= 1)` (`:3410`,
-/// `:3467`, `:3545`), which the renderers reproduce (register row 63).
+/// `:3467`, `:3545`), which the renderers reproduce.
 pub fn strconcat_aux(prefix: &str, middle: &str, postfix: &str) -> *mut c_char {
     let (prefix, middle, postfix) = (
         c_arg(prefix.as_bytes()),

@@ -7,7 +7,7 @@ The [compatibility policy](findings/compatibility-policy.md) defines the excepti
 
 ## The pin
 
-The pin is libpinyin 2.11.92 at `074a2219`, its default-branch tip on 2026-09-12.
+The pin is libpinyin 2.11.92 at `074a2219`.
 `tools/oracle/oracle-pin.txt` is authoritative.
 The reference build is the pin's autoconf build with `--with-dbm=Tkrzw`, the default of `tools/oracle/build.py`; `--dbm` selects another backend.
 A bare `./configure` selects Berkeley DB (`configure.ac:94`); that is libpinyin's autoconf default, not the reference build's.

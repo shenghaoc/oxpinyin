@@ -66,7 +66,7 @@ unsafe fn keyboard(instance: *mut PinyinInstance, key: u8) -> (bool, Option<Vec<
 }
 
 /// The luoma and secondary-zhuyin renderers answer false on the zero key
-/// of a column and write NULL to the out-parameter (register row 41).
+/// of a column and write NULL to the out-parameter.
 #[test]
 fn luoma_and_secondary_zhuyin_refuse_the_zero_key() {
     let _slots = crate::support::key_slot_guard();
@@ -571,7 +571,7 @@ fn stop_bytes_terminate_the_parse() {
     unsafe { crate::support::pinyin_fini(context) };
 }
 
-/// Register rows 63 and 66: on a fresh instance the pin's
+/// on a fresh instance the pin's
 /// `offset >= matrix.size() - 1` is `offset >= SIZE_MAX`
 /// (`pinyin.cpp:2927-2928`, `:2950-2951`), so `SIZE_MAX` answers `false`
 /// with the out-param NULLed before `get_column_size` could assert.
@@ -846,7 +846,7 @@ fn invalid_utf8_after_valid_pinyin_keeps_the_parsed_prefix() {
 /// A key query at offset 0 of an apostrophe-only parse aborts. The column holds the zero key,
 /// so `_compute_pinyin_start` (`pinyin.cpp:2903-2919` at 074a2219) walks to the reserved
 /// slot, where `get_item` asserts `row < column->len` (`storage/phonetic_key_matrix.h:115`,
-/// reached from `pinyin.cpp:2933-2938`). Pin capture of 2026-11-07, runs 1 and 2 identical,
+/// reached from `pinyin.cpp:2933-2938`). Pin observation
 /// observations `key-abort/'`, `key-abort/''` and `key-abort/'''`: the parse and the parsed
 /// length answer the input's length, then the key query ends in SIGABRT.
 ///
@@ -882,7 +882,7 @@ fn a_key_query_on_an_apostrophe_only_parse_aborts(#[case] input: &str) {
 }
 
 /// The key walk of `ni` with a trailing apostrophe, then junk or a vowel the parse leaves.
-/// Pin capture of 2026-11-07, runs 1 and 2 identical, observations `key-walk/ni'`,
+/// Pin observations `key-walk/ni'`,
 /// `key-walk/ni'!` and `key-walk/ni'i`, on the default options:
 /// - the parse consumes `ni'`, 3 bytes: `ni`, then the separator, which places the zero key
 ///   (`storage/pinyin_parser2.cpp:238-250`);
@@ -1002,7 +1002,7 @@ unsafe fn render_aux(
 /// The chewing split is the pin's `g_utf8_substring` cut: the raw byte
 /// delta is used as a scalar index into the zhuyin spelling. At the last
 /// scalar the right half is empty; past it the pin's pointer is already
-/// off the allocation (class (b)), so oxpinyin keeps the right half
+/// off the allocation, so oxpinyin keeps the right half
 /// empty as well.
 #[test]
 fn chewing_cuts_the_zhuyin_spelling_by_scalar() {
@@ -1330,8 +1330,7 @@ fn auxiliary_text_ignores_the_resplit_and_fuzzy_alternates() {
     unsafe { close(context, instance) };
 }
 
-/// With no parse each renderer answers false and writes an empty string
-///.
+/// With no parse each renderer answers false and writes an empty string.
 #[test]
 fn auxiliary_text_without_a_parse_is_an_empty_string() {
     let user = TempUserDir::new("aux-no-parse");

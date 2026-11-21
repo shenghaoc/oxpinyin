@@ -194,24 +194,20 @@ the zero low bits of the invalid-conversion sentinel. The source expression
 is `pinyin.cpp:1821-1824,1862-1866`; the reference instructions are
 `cvttss2si %xmm1,%rax` followed by `mov %eax,0x1c(%r15)`.
 
-Sorting is by displayed length, then `-(lhs_frequency - rhs_frequency)`
-with unsigned subtraction and a signed `gint` return (`:1678-1708`).
-For high scores this comparator is not transitive. The safe index merge
-uses the loaded GLib 2.90.0 half-split order and chooses the left row for
-comparison <= 0 ([`glib/gqsort.c:64-183`](https://github.com/GNOME/glib/blob/2.90.0/glib/gqsort.c#L64)).
-It takes O(n log n) comparisons and two usize arrays instead of a temporary
-array of candidate structs; the extra comparisons on already ordered input
-trade against smaller scratch space. Equal scores preserve collection order.
+Sorting uses displayed length and then frequency (`pinyin.cpp:1678–1709,2440–2445`).
+Within an equal-length group, oxpinyin uses stable wrapping-frequency order when
+the comparisons are consistent, and stable descending numeric frequency for a
+cyclic group (`src/engine/candidate.rs`). Equal scores preserve collection order.
+See the [candidate-frequency ruling](compatibility-policy.md#no-ported-external-library-internals).
 Dedup retains the numeric score winner in its sorted position (`:2128-2136`).
 Imported phrases also create index keys for their proper prefixes, without
 requiring a phrase token for that prefix (`phrase_large_table3_bdb.cpp:297-315`
 and its KC/tkrzw twins).
 
-The general scorer asserts a positive total (`pinyin.cpp:1859`); prefix
-rows bypass this assert. A prediction containing a bigram row with zero
-total is the existing policy row 61 class (c): both plain and punctuation
-entry points answer `false`, keep the list empty, and emit exactly one
-`libpinyin` warning. It is an `assert`, live in the reference build.
+The general scorer asserts a positive facade unigram total (`pinyin.cpp:1859`).
+Prefix predictions bypass this assertion. Both prediction entry points abort when a
+bigram prediction reaches the scorer with a zero total (`src/pinyin.cpp:2432–2438`,
+`capi/src/predict.rs`).
 
 ---
 
@@ -270,8 +266,8 @@ operations**. Both are **SHOWN**:
 There is no discrepancy. A phrase added by `pinyin_remember_user_input`
 seeds its unigram with `count * 3`, and later *selections* of it train
 with `seed * 7`. oxpinyin reproduces both as separate constants
-(`oxpinyin::user::seed::UNIGRAM_FACTOR` = 7,
-`oxpinyin::user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
+(`oxpinyin::user::UNIGRAM_FACTOR` = 7,
+`oxpinyin::user::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
 
 ### 3.3 Importing a phrase list
 

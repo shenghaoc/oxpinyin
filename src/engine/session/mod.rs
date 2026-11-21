@@ -415,10 +415,7 @@ fn sort_dedup_window_tail(into: &mut Vec<Candidate>, start: usize) {
     into.truncate(write);
 }
 
-/// λ as the pin parses it out of `table.conf` (`fscanf "%f"`,
-/// `table_info.cpp:220,242`) — the same `f32` bits `oxpinyin::data`'s
-/// `PINNED_LAMBDA` names. Duplicated here because the engine depends on
-/// the core traits, not the data crate.
+/// Interpolation weight supplied by the model fixture.
 #[cfg(test)]
 const PIN_LAMBDA_F32: f32 = 0.312_699;
 
@@ -427,15 +424,16 @@ const PIN_LAMBDA_F32: f32 = 0.312_699;
 /// `float` arithmetic, then truncated into the `guint32` field
 /// (`pinyin.cpp:1862-1866`; `DYNAMIC_ADJUST` clear ⇒ bigram term zero).
 ///
-/// The truncation is load-bearing, not a rounding detail: it collapses
-/// near-ties into equal comparator keys — the Class A tie class — which
-/// the stable sort then resolves by collection order. Evaluation order
+/// Truncation collapses near-ties into equal comparator keys. The stable
+/// sort resolves those ties by collection order. Evaluation order
 /// mirrors the C expression left-to-right (`f32` throughout, the three
 /// `* 256` factors kept as written); any `f64` intermediate or a
 /// pre-combined `* 2²⁴` risks drifting off the tie boundary.
 ///
 /// The predicted-candidate path (`pinyin.cpp:1811-1824`) stores the same
 /// expression, so `oxpinyin-capi` calls this function for its rows.
+/// When `total` is nonzero, the scaled score must be finite and its
+/// truncated integer must fit in `u32`. A zero total returns zero.
 #[must_use]
 pub fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u32 {
     amplified_frequency_with_bigram(unigram, total, 0.0, lambda)
@@ -466,16 +464,12 @@ const AMPLIFY_SCALE_F32: f32 = 256.0 * 256.0 * 256.0;
 /// near-ties into equal comparator keys, so an off-by-one moves candidates
 /// between tie classes and reorders the list.
 ///
-/// With `bigram_poss` at `0.0` the first term is exactly `0.0` and
-/// `0.0 + x == x` in IEEE-754, so the DYNAMIC_ADJUST-clear path is
-/// bit-identical to the pre-existing unigram-only law by construction —
-/// not merely by the frozen words happening to leave the bit clear.
+/// A `bigram_poss` of zero gives the unigram-only expression for a finite
+/// interpolation weight.
 ///
-/// A zero total is the pin's early return (compatibility policy row 61).
-/// The final store is Rust's `as u32`: in range it truncates like the
-/// pin's; a negative, NaN or over-range score, which C leaves undefined
-/// and the pin's x86-64 and AArch64 builds already store differently,
-/// saturates (class (b), `docs/findings/upstream-divergences.md`).
+/// When `total` is nonzero, the scaled score must be finite and its
+/// truncated integer must fit in `u32`. The conversion discards the
+/// fractional part. A zero total returns zero.
 #[must_use]
 pub fn amplified_frequency_with_bigram(
     unigram: u64,

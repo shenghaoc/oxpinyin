@@ -18,7 +18,7 @@
 //!
 //! [`RawReadStore::scan_raw`] and [`RawReadStore::range_raw`] traverse the requested
 //! bounds in ascending byte order, comparing raw keys lexicographically.
-//! [`RawReadStore::native_keys`] returns keys in the container’s own order. A hash
+//! [`RawReadStore::native_keys`] returns keys in the container's own order. A hash
 //! database need not visit keys in sorted order.
 
 // TreeDBM uses LexicalKeyComparator, TreeDB uses LEXICALCOMP, and DB_BTREE uses its
@@ -109,7 +109,7 @@ pub enum StoreError {
     /// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371` and
     /// `flexible_ngram_tkrzwdb.h:388` at the pin), and the K-mixture tools
     /// abort. From `load` it is a value the pin later reads outside of
-    /// (class (b), `upstream-divergences.md#flexiblebigram-malformed-record-lengths`), and the
+    /// (`upstream-divergences.md#flexiblebigram-malformed-record-lengths`), and the
     /// tools report it as a store error.
     #[error("flexible bigram single gram is shorter than its array header")]
     ShortArrayHeader,
@@ -1062,12 +1062,16 @@ mod copy;
     any(test, feature = "test-hooks"),
     any(feature = "tkrzw", feature = "bdb")
 ))]
-pub use copy::faults as copy_faults;
+pub use copy::faults::fail_destination_write_after;
+#[cfg(all(test, any(feature = "tkrzw", feature = "bdb")))]
+pub(crate) use copy::faults::{fail_iterator_creation_after, fail_source_read_after};
 #[cfg(test)]
 pub(crate) mod death_test;
 /// The read-only stores' point-read fault point for other crates' tests.
 #[cfg(any(test, feature = "test-hooks"))]
-pub mod read_faults;
+mod read_faults;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use read_faults::fail_point_read_of;
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw;

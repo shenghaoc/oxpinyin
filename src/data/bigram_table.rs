@@ -1,5 +1,5 @@
 //! Reads bigram successors on demand from the hash database. Each lookup uses the
-//! previous token’s four little-endian bytes as the key. Its value contains the stored
+//! previous token's four little-endian bytes as the key. Its value contains the stored
 //! total and successor-token/count pairs.
 
 // Bigram::load, ngram_tkrzwdb.cpp:86–122. See docs/findings/data-formats.md §6; Kyoto
@@ -9,23 +9,21 @@ use std::path::Path;
 
 use crate::store::{DefaultStore, RawReadStore};
 
+use crate::data::DictError;
 use crate::data::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
-use crate::data::dict::DictError;
-use crate::data::lm::BigramRow;
 // The key layout (`crate::data::row_format`) and the value layout
-// (`crate::data::single_gram`) have one owner each.
-use crate::data::row_format::bigram::parse_value as parse_bigram_value;
+// (`crate::single_gram`) have one owner each.
+use crate::data::TableError;
 use crate::data::row_format::encode_token_key;
 #[cfg(test)]
-use crate::data::single_gram::encode_single_gram;
-use crate::data::table::TableError;
+use crate::single_gram::encode_single_gram;
 
 // ── BigramTable ──────────────────────────────────────────────────
 
 /// A lazy, read-only view over a bigram DBM.
 ///
 /// Does not materialize the entire database at open time. Each
-/// `load_successors` call reads the attached DBM, including sentence start.
+/// `load_raw_successors` call reads the attached DBM, including sentence start.
 pub struct BigramTable<D = DefaultDbm> {
     dbm: D,
 }
@@ -60,21 +58,6 @@ impl<D: ChewingDbm> BigramTable<D> {
     #[cfg(test)]
     pub(crate) fn attachment_finished(&self) -> bool {
         self.dbm.attachment_finished()
-    }
-
-    /// Loads successor records for `prev_token`.
-    ///
-    /// Returns `None` when the token has no bigram entry.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM read fails, or `Parse` when a
-    /// stored value is malformed (an empty value is corruption, reported
-    /// rather than masked as a clean miss).
-    pub fn load_successors(&self, prev_token: u32) -> Result<Option<BigramRow>, DictError> {
-        self.load_checked_successors(prev_token)?
-            .map(|value| parse_bigram_value(&value))
-            .transpose()
     }
 
     /// Reads one encoded successor value from the DBM as stored, without
@@ -112,13 +95,7 @@ impl<D: ChewingDbm> BigramTable<D> {
         let Some(value) = self.load_raw_successors(prev_token)? else {
             return Ok(None);
         };
-        if value.is_empty() {
-            // A present but empty value is malformed: a stored bigram
-            // always carries at least its header. Report the corruption
-            // rather than masking it as a clean miss.
-            return Err(DictError::Parse);
-        }
-        if value.len() < 4 || !(value.len() - 4).is_multiple_of(8) {
+        if !crate::single_gram::is_complete(&value) {
             return Err(DictError::Parse);
         }
         Ok(Some(value))

@@ -2,9 +2,9 @@
 
 Status: **policy**
 
-## W3 test-subset redistribution ruling
+## Test-subset redistribution ruling
 
-The project may commit and redistribute the minimal W3 test subset derived
+The project may commit and redistribute the minimal test subset derived
 from model20 under GPL-3.0-or-later. Distributors must comply with the
 licence, including its notice and corresponding source requirements. This
 ruling lifts the redistribution prohibition
@@ -48,7 +48,7 @@ The provenance and licence terms of that corpus remain unresolved.
 
 ## Archive inspection and build-time fetch ruling
 
-Outside the W3 scope, redistribution is prohibited, and a build-time fetch
+Outside the test-subset scope, redistribution is prohibited, and a build-time fetch
 of the archive pinned by `model_archive_sha256` in
 [`tools/oracle/oracle-pin.txt`](../../tools/oracle/oracle-pin.txt) is
 permitted.
@@ -102,7 +102,7 @@ grant terms for each data input.
 | Artefact | Project status |
 |---|---|
 | Full model20 archive, `interpolation2.text` and its 17 `.table` files | Redistribution prohibited |
-| Model-derived W3 records and expected outputs in the scope above | Redistribution permitted under GPL-3.0-or-later |
+| Model-derived test-subset records and expected outputs in the scope above | Redistribution permitted under GPL-3.0-or-later |
 | Other converted, compiled or derived model20 data | Redistribution prohibited |
 
 ## Redistribution vs build-time fetch
@@ -125,7 +125,7 @@ The project routes considered here are:
 - **Branch B:** build tables and models only from inputs whose provenance and
   redistribution terms are recorded by this project.
 
-**Branch A remains rejected for the full model and tables.** The W3
+**Branch A remains rejected for the full model and tables.** The test-subset
 ruling permits only the listed test files.
 
 **Branch B is recorded as an optional future route, not a shipping prerequisite.** It is
@@ -149,11 +149,11 @@ table from it.
 
 ## Shipping consequence
 
-- Stage 1 may use the checksum-pinned external archive locally and as
+- The project may use the checksum-pinned external archive locally and as
   input to the oracle.
-- The W3 ruling permits redistribution only for the listed test files.
+- The test-subset ruling permits redistribution only for the listed test files.
   Builds that need the full model fetch the archive from upstream.
-- Shipping the reimplementation, including Stage 2, can use the build-time
+- Shipping the reimplementation can use the build-time
   fetch route. Branch B remains an optional route to a replacement model.
 - A future provenance change must assess the model and the tables
   separately.

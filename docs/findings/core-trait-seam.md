@@ -16,8 +16,8 @@ The engine calls every `Dictionary` method, and every implementor answers each o
 A new engine method is required on `Dictionary`, gets one derived body in the `PhraseList` blanket implementation, and is implemented directly by each dictionary that implements `Dictionary` directly.
 The `PhraseList` implementors do not change.
 
-`UserModel` and `LanguageModel` grow by defaulted methods only.
-A new method has a default that answers as the trait did before it existed, so existing implementors and fixture doubles compile unchanged.
+`LanguageModel::amplification_lambda` is required. Each implementor supplies its interpolation weight.
+New methods on `UserModel` and `LanguageModel` have defaults that preserve the traits' prior behaviour, so existing implementors and fixture doubles compile unchanged.
 
 The associated types are an exception in every trait: an implementor names each one.
 
@@ -152,17 +152,21 @@ The model may not depend on hidden process-global state.
 ```rust
 pub trait LanguageModel {
     type Error;
-    // every method is defaulted
+
+    fn amplification_lambda(&self) -> f32;
+    // every other method is defaulted
 }
 ```
 
-Every method is defaulted, and a model that overrides none of them carries no frequency table: each candidate ranks at frequency zero and no bigram term applies.
+Every other method has a default. A model that uses all the defaults carries no frequency table.
+Each candidate ranks at frequency zero, and no bigram term applies.
 The methods are:
 
 - unigram reads: `unigram_freq`, `unigram_total`, `addon_unigram_freq`, `addon_unigram_total`;
 - the merged bigram row: `merged_successors(prev) -> Option<MergedGram>` ([`dynamic-adjust.md`](dynamic-adjust.md));
 - n-best step pricing: `nbest_step_costs`, `nbest_step_costs_in_row`, `nbest_item_costs_with_facts`, `nbest_item_costs_in_row`, `nbest_successors_in_row`, which return the pre-log `NbestStepCosts` pieces;
-- `is_read_after_check` and `amplification_lambda` (default: the pinned model's `0.312699`).
+- `is_read_after_check` identifies a read failure after a successful size check.
+- `amplification_lambda` supplies the interpolation weight. It has no default.
 
 A model reports arithmetic or backend failure through `Result`.
 

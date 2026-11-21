@@ -19,7 +19,7 @@ use crate::k_mixture_model::phrase::PhraseIndex;
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::LibraryError;
-use oxpinyin::data::table_info::{FileName, TableConf, TableConfError};
+use oxpinyin::data::{FileName, TableConf, TableConfError};
 use oxpinyin::input::tool::{self, k_mixture_model as edge};
 
 /// One loaded phrase index.
@@ -96,10 +96,7 @@ pub fn load_system_phrases() -> SystemPhraseIndex {
 /// A `table.conf` file name as a C string for the pin's `%s`.
 fn c_name(name: &FileName) -> CString {
     let os: &OsStr = name.as_ref();
-    CString::new(oxpinyin::input::path::path_to_bytes(std::path::Path::new(
-        os,
-    )))
-    .unwrap_or_default()
+    CString::new(oxpinyin::input::path_to_bytes(std::path::Path::new(os))).unwrap_or_default()
 }
 
 #[cfg(test)]
