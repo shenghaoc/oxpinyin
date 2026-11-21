@@ -406,11 +406,10 @@ The allocation contract is the pin's:
 The per-site GLib calls for returned strings and the allocation-failure
 gate are in [abi-allocator-pairing §5](abi-allocator-pairing.md#5-caller-owned-strings).
 
-Gates: `just abi exports` (the exported-symbol set equals the pin's
-version scripts, 79 + 52 symbols) and `just abi alloc-pairing`
-(`alloc-pairing-pinyin.cc`, `alloc-pairing-zhuyin.cc` and the
-`libpinyin.alloc` / `libzhuyin.alloc` registers, with LeakSanitizer
-negative controls). The `GArray` lifecycle is held by the
+On Linux and macOS, `just abi` checks the exported-symbol sets against the
+pin's version scripts (79 pinyin and 52 zhuyin symbols). On Linux, its Rust
+test exercises every registered slot under AddressSanitizer with leak
+detection enabled. The `GArray` lifecycle is held by the
 `glib-924-array-lifecycle-*` cases (a seeded clear callback, 257 appended
 caller elements, shrink, a refusing lookup, clearing and zero termination,
 zero-fill growth, `g_array_free(FALSE)` and `g_free`), by `oxpinyin-capi`

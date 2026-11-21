@@ -270,7 +270,7 @@ by the inherited value. These sites set the path differently:
 | Sites | Rule |
 | --- | --- |
 | `measure callgrind-differential`: all launch sites | Each selected object's directory, then inheritance. |
-| `just cpp-smoke`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
+| `just abi` C++ header consumers | The gate clears `LD_LIBRARY_PATH` for the `ldd` check to verify that each executable resolves its SONAME to the build under test. |
 | `tools/oracle/build.py`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
 | `tools/dev/provision.py`: generated-path parsing and host-probe filtering; the cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
 

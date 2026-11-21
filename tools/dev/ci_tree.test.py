@@ -702,13 +702,14 @@ class GateTests(unittest.TestCase):
 
     def test_the_store_gate_runs_the_backend_rule_with_its_infrastructure(self):
         self.assertTrue(ci_tree.STORE_GATE_SCRIPT.is_file())
-        for path in ('src/store/mod.rs', 'Cargo.lock', 'utils/tests/cell.rs', 'tools/dev/test_runner.py',
+        for path in ('src/store/mod.rs', 'src/lib.rs', 'Cargo.lock', 'utils/tests/cell.rs', 'tools/dev/test_runner.py',
+                     'capi/libpinyin.alloc', 'zhuyin-capi/zhuyin.h', 'tools/abi/tests/abi.rs', 'tools/dev/abi.py',
                      '.github/workflows/ci.yml', 'fuzz/rust-toolchain.toml', 'clippy.toml'):
             with self.subTest(path=path):
                 self.git('reset', '-q', '--hard', self.base)
                 self.commit({path: 'changed\n'})
                 self.assertTrue(ci_tree.store_gate(self.base, root=self.root))
-        for path in ('src/lib.rs', 'docs/note.md', 'tools/dev/abi.py'):
+        for path in ('docs/note.md', 'repl/src/main.rs'):
             with self.subTest(path=path):
                 self.git('reset', '-q', '--hard', self.base)
                 self.commit({path: 'changed\n'})

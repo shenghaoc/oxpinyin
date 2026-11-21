@@ -121,7 +121,7 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
 
 [workspace]
 resolver = "3"
-members = ["capi", "zhuyin-capi", "utils", "repl"]
+members = ["capi", "zhuyin-capi", "utils", "repl", "tools/abi"]
 default-members = [".", "capi", "zhuyin-capi", "utils", "repl"]
 
 [workspace.package]

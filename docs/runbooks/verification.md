@@ -286,12 +286,13 @@ These rules govern the CI gates. This section is the only place that states them
    tkrzw stays the Cargo default, and every Linux job selects Kyoto Cabinet with the backend flag instead: the `rust` lane (clippy, rustdoc, nextest, the archive build and the fuzz check), the cell gates, `shipping-sizes`, whose size table is therefore the Kyoto Cabinet libraries', and the nightly fuzz soak.
    `LOCAL_CELL` in `tools/dev/cell.py` names the cell once for CI and the local tooling; [Linux setup](setup.md#linux) states the companion rule for the local tooling.
    Decided 2026-11-21: Ubuntu's libtkrzw is defective at run time ([finding](../findings/tkrzw-distro-compat.md)), so Linux runs no tkrzw code; Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
-   The `store` job tests Berkeley DB, and the Berkeley DB and Kyoto Cabinet sanitizers, only when their KV code changes; [rule 2](#2-backend-selection) decides that by path, not by judgement.
+   The `store` job tests Berkeley DB and runs the Berkeley DB and Kyoto Cabinet sanitizers.
+   It runs when [rule 2](#2-backend-selection) selects it or when the libraries, fixtures or tooling used by its ABI check change.
    tkrzw's tests, including the full-data contract tests, which are tkrzw-only, run on the nightly macOS and Windows jobs and never in Linux CI; tkrzw's sanitizer run has no CI job.
 3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under its path gate.
    The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
-5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust`, `harness` and `shipping-sizes`; the `store` job runs under rule 2 through `STORE_GATE_ARGUMENTS` in the same file.
+5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust`, `harness` and `shipping-sizes`. In the same file, `STORE_GATE_ARGUMENTS` adds the ABI inputs to the backend selection for `store`.
    A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.
    The generated Rust tables are such files.
    Within a job, no step depends on the changed paths, so a job's success always means the same checks.

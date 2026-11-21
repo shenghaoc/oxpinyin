@@ -5,8 +5,8 @@ Status: **contract** (the two `.alloc` registers).
 `oxpinyin-capi` and `oxzhuyin-capi` ship as drop-in replacements for
 `libpinyin.so.15` / `libzhuyin.so.15`. Exactly one side owns every pointer
 that the ABI hands a consumer, and exactly one function releases it.
-`just abi exports` fixes *which* symbols cross the boundary. The
-allocator-pairing register and its gate fix *what crosses with them*.
+`just abi` checks the exported symbols against the version scripts and the
+ownership of each pointer against the allocation registers.
 
 ## 1. What crosses the boundary
 
@@ -67,11 +67,10 @@ These are pin behaviour, held by the register's notes:
 
 ## 3. The gate
 
-The gate is `just abi alloc-pairing` (`tools/dev/abi.py`). CI's `test` job
-runs it beside the export gates. It reads one checked-in register per ABI:
-`capi/libpinyin.alloc` and
-`zhuyin-capi/libzhuyin.alloc`. Each register sits beside
-the `.ver` files and has one line per pointer-shaped slot. The line holds:
+Run `just abi` for the same check as the Linux sanitizer job. The gate reads
+`capi/libpinyin.alloc` and `zhuyin-capi/libzhuyin.alloc`. Each register
+sits beside its version script. Each row names the symbol and the return
+value or output parameter, followed by three fields.
 
 - the slot's class (`handle:<fn>`, `g_free`, `g_strfreev`, `borrowed`);
 - what the slot holds on a `false` return (`false-allocates`,
@@ -91,95 +90,38 @@ field of one of these kinds. A negative control requires that check to
 reject a four-field line and a misspelled kind. The check cannot test the
 evidence that a kind names.
 
-Three checks, then a control:
+The gate compares each header with its register. Every pointer return and
+every pointer out-parameter must have exactly one entry. The C type determines
+which ownership classes are valid. Each symbol and each named handle
+destructor must appear in the corresponding version script.
 
-1. **Coverage of the pinned header.** Every pointer return and every `T **`
-   out-parameter that `pinyin.h` / `zhuyin.h` declares is classified exactly
-   once. Nothing is classified that the header does not declare. There are
-   26 slots for pinyin and 12 for zhuyin. This check fires when someone adds
-   a new allocating entry point without saying who frees it.
-2. **Class against C type, and destructor reachability.** A non-const
-   `gchar **` / `char **` must be `g_free`; a `gchar ***` must be
-   `g_strfreev`; a `const T **` must be `borrowed`; a pointer return must be a
-   handle or borrowed. Every `handle:<fn>` must name a symbol that the
-   version script exports. So no handle has a declared destructor that a
-   consumer cannot call.
-3. **The declaration under LeakSanitizer.** One C++ consumer per ABI
-   (`tools/abi/alloc-pairing-*.cc`) drives the real `.so` and releases each
-   slot with the register's deallocator. It is built with
-   `-fsanitize=address`. A slot that the declared deallocator does not
-   actually release is a leak. A borrowed pointer wrongly declared owned is
-   an invalid free. These properties make the run meaningful:
-   - **Coverage.** The driver reports for each slot whether it reached the
-     slot with a non-NULL pointer. The run is rejected unless every
-     registered slot was hit. A gate that never exercises the allocation it
-     checks passes for the wrong reason. To reach all 38 slots, the driver
-     trains a multi-phrase sentence (otherwise the bigram export iterator
-     has no rows). It also drives zhuyin through chewing keystrokes, not
-     full pinyin.
-   - **Attribution.** The whole lifecycle runs twice. The first pass runs
-     inside `__lsan_disable()`, so the one-time statics that the backend and
-     glib allocate at first use are not the gate's subject. A leak reported
-     in the second pass is a *per-call* leak: the kind that a consumer
-     accumulates one keystroke at a time. There is no suppression file, so
-     no suppression can grow broad enough to hide a real leak. Coverage is
-     **cleared between the two passes**. No leak check ran against a slot
-     that the warm-up reached, so keeping its bit would report coverage that
-     the measured pass did not earn.
-   - **No driver/register drift.** Each driver echoes the register's own
-     class and note back with every slot. The script compares the first
-     four fields, not only the symbol and slot name. A class changed from
-     `handle:pinyin_fini` to `borrowed`, a renamed destructor, or an edited
-     note fails here. It does not pass merely because the key still matches.
-   - **The notes are executable.** For every slot whose note is not `n/a` or
-     `false-unreachable`, the driver drives a failure path that a
-     *conforming* consumer can reach. The paths are an empty parse, an
-     out-of-range index, an exhausted unigram iterator, the bigram
-     iterator's terminal row, an unmapped key and `null_token`. The driver
-     asserts the state that the register declares. The slot table selects
-     the assertion; the call site never chooses it. So a note that does not
-     match the library fails and is not echoed back unchallenged.
-     NULL-argument refusals are deliberately not probed: they are caller
-     misuse, where the pin would simply crash. A slot that the driver never
-     probes fails the gate as `unprobed false-return contract`.
-     `false-unreachable` is the one exception. It is an explicit, reviewable
-     claim, not a silent omission. The driver also fails if it *does* reach
-     a path that the register calls unreachable.
-4. **A negative control.** Each driver is built a second time with
-   `-DOXPINYIN_ALLOC_PAIRING_LEAK`, which drops the frees, and that build is
-   *required* to fail with a LeakSanitizer report. Without this control, a
-   sanitizer that silently stopped working would leave the gate passing.
+On Linux the Rust test in `tools/abi` loads each shared library by path and
+calls its exported C functions. It generates its slot list from the registers.
+The release code checks the operation it actually performs, including the
+name of each handle destructor, against that list. The consumer resizes and
+writes each owned string before calling `g_free`. It frees and replaces a
+vector element, resizes the vector, appends another string and calls
+`g_strfreev`. Borrowed pointers stay with their owners.
 
-The gate needs no new dependency and no Rust rebuild:
+A warm-up lifecycle runs with leak detection disabled to absorb allocations
+made on first use. The measured lifecycle starts with fresh coverage and
+leak detection enabled. It must obtain a live pointer for all 26 pinyin
+slots and all 12 zhuyin slots. Training a two-phrase sentence supplies
+bigram rows. The zhuyin fixture uses chewing keystrokes.
 
-- The `g++` that the `test` job installs carries `libasan`/`liblsan`.
-- The Rust side is not instrumented.
-- ASan's `malloc` interposition covers the whole process: GLib's and libc's
-  `malloc`, and Rust's `Box` behind the handles.
+Each reachable refusal starts with a sentinel in the output slot. The test
+checks that the call returned false and that it cleared the pointer, left
+the sentinel in place, or supplied an allocation, as registered. Inputs
+include the empty parse, an out-of-range index on a populated key matrix,
+the zero key, an unmapped keyboard key and `null_token`. The terminal
+bigram row supplies two strings on false. The test releases both. It stops
+the unigram iterator at exhaustion, where another read would abort.
 
-The full gate runs on Linux only. `just abi alloc-pairing --static-only`
-runs checks 1–2 on any host.
-
-The two invocations:
-
-```
-just abi alloc-pairing                 # 38/38 slots, both controls fire
-just abi alloc-pairing --static-only   # checks 1-2, host-portable
-```
-
-The gate's failure messages name what failed:
-
-- an unclassified ABI slot;
-- a class that disagrees with the header's C type;
-- a handle destructor that the `.ver` does not export;
-- a per-call leak, with its Rust source line;
-- an invalid free;
-- driver/register drift;
-- an out-param state that differs from the note;
-- a probed path that the register calls unreachable;
-- an unprobed false-return contract;
-- a slot that the measured pass never reached;
-- a malformed or misspelled register line.
+The test runs with the nightly in `fuzz/rust-toolchain.toml`,
+`-Zsanitizer=address` and `ASAN_OPTIONS=detect_leaks=1`. Negative controls
+run the same test executable in child processes. The parent requires a
+nonzero exit and the corresponding LeakSanitizer or AddressSanitizer
+diagnostic for a missing free or an invalid free.
 
 ## 4. What this does not cover
 
@@ -192,8 +134,8 @@ The gate's failure messages name what failed:
 - **Allocation the C side makes on the library's behalf.** Everything that
   the backend library allocates internally is, by construction, outside
   this gate's per-call window, because the warm pass absorbs it.
-- **Non-Linux hosts.** LeakSanitizer's stop-the-world does not run under
-  macOS's sandbox. `--static-only` is the portable half.
+- **Platform coverage.** The checked allocation lifecycle runs on Linux.
+  The macOS gate checks the registers and the shipped libraries' exports.
 
 ## 5. Caller-owned strings
 
@@ -283,7 +225,7 @@ The adapter copies the `m_phrase` that it converted from
 
 ### Allocation-failure gate
 
-`abi-alloc-failure` (`tools/abi/alloc-failure.cc`) fails these allocations,
+`just abi alloc-failure` (`tools/abi/alloc-failure.cc`) fails these allocations,
 on the subject and the pin alike:
 
 - the nth `malloc` whose caller is `g_malloc` (renderer, keyboard array and

@@ -2,12 +2,10 @@
 #
 # Every pointer-shaped slot the frozen `pinyin.h` declares — a pointer
 # return, or a `T **` out-parameter — is classified here exactly once, and
-# `just abi alloc-pairing` proves three things against it: that
-# the register covers the header's slot set with nothing missing and
-# nothing extra; that each class agrees with the C type the header gives
-# the slot; and, by running a C++ consumer built from this file under
-# LeakSanitizer, that the declared deallocator is the one that actually
-# releases the allocation.
+# `just abi` checks the header's slot set and each slot's C type against
+# this register. The Rust consumer calls the shared library under
+# AddressSanitizer with leak detection enabled and checks the release
+# operation it uses against the registered class.
 #
 # Sibling of `libpinyin.ver`, and read the same way: the .ver file freezes
 # WHICH symbols cross the boundary, this one freezes WHAT CROSSES WITH
@@ -40,8 +38,8 @@
 #                  The caller must never free it.
 #   <notes>  What the slot holds when the call answers `false` — the part
 #            of the contract a consumer gets wrong silently. Each value is
-#            EXECUTABLE: `tools/abi/alloc-pairing-*.cc` drives the failure
-#            path and asserts the stated state, and the gate rejects a
+#            EXECUTABLE: the Rust ABI test drives the failure path and
+#            checks the output pointer. The gate rejects a
 #            register entry whose contract was never probed. "Reachable"
 #            means reachable by a CONFORMING consumer — valid handles and
 #            in-contract arguments, an empty parse or an exhausted

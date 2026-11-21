@@ -88,13 +88,22 @@ package and installs it with apt when it runs as root. Check the backend with:
 just check kyotocabinet
 ```
 
+For `just abi`, install libclang (`libclang-dev` on apt, `clang-devel` on dnf)
+and the nightly named in `fuzz/rust-toolchain.toml`. The test uses libclang to
+read both C headers and nextest to run the AddressSanitizer cases.
+
+```bash
+(cd fuzz && rustup toolchain install)
+just abi
+```
+
 Release packaging and oracle/reference images keep Debian's tkrzw, in their own
 containers; see [tkrzw runtime enforcement](cloud.md#runtime-enforcement-verification-rule-9)
 for how `tools/tkrzw/runtime.py` checks the library they resolve.
 
 ### Building with Berkeley DB
 
-Only a build with the `bdb` feature needs Berkeley DB 5.3 and libclang:
+A build with the `bdb` feature needs Berkeley DB 5.3 and libclang:
 
 ```bash
 # Systems using apt:

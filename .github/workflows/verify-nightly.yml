@@ -378,7 +378,7 @@ jobs:
       # On macOS the gate stages both release libraries with `just packaging
       # install` and checks the relinked files (docs/packaging.md#export-gate).
       - name: Check shipped macOS library exports
-        run: just abi exports
+        run: just abi
       # Clippy over the lane's own feature set, so a lint in
       # macOS-only code fails here rather than nowhere.
       - name: Clippy (macOS)
