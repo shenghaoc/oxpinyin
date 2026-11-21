@@ -668,7 +668,7 @@ pub enum PersistenceError {
     /// A store container failed to open, write or read.
     Store(StoreError),
     /// A byte stream did not parse under its frozen format.
-    Codec(String),
+    Codec,
     /// `MemoryChunk::mmap` refused a system library's file at the save's
     /// remap (register row 76): the save stopped at that library.
     SystemRemapFailed,
@@ -683,7 +683,7 @@ impl std::fmt::Display for PersistenceError {
         match self {
             Self::Io(error) => write!(f, "user file io: {error}"),
             Self::Store(error) => write!(f, "user file store: {error}"),
-            Self::Codec(message) => write!(f, "user file codec: {message}"),
+            Self::Codec => f.write_str("user file codec error"),
             Self::SystemRemapFailed => write!(
                 f,
                 "a system library's file cannot be mapped again (upstream: mmap failed!)"
@@ -706,7 +706,7 @@ impl PersistenceError {
         match self {
             Self::Io(_) => true,
             Self::Store(_) => true,
-            Self::Codec(_) | Self::SystemRemapFailed | Self::SaveTooLarge => false,
+            Self::Codec | Self::SystemRemapFailed | Self::SaveTooLarge => false,
         }
     }
 }
@@ -720,18 +720,6 @@ impl From<std::io::Error> for PersistenceError {
 impl From<StoreError> for PersistenceError {
     fn from(error: StoreError) -> Self {
         Self::Store(error)
-    }
-}
-
-impl From<crate::data::chunk_format::ChunkFrameError> for PersistenceError {
-    fn from(error: crate::data::chunk_format::ChunkFrameError) -> Self {
-        PersistenceError::Codec(error.to_string())
-    }
-}
-
-impl From<crate::data::chunk_write::ChunkWriteError> for PersistenceError {
-    fn from(error: crate::data::chunk_write::ChunkWriteError) -> Self {
-        Self::Codec(error.to_string())
     }
 }
 
@@ -1332,7 +1320,7 @@ fn load_libraries(
             }
         };
         match UserLibrary::load_payload(&bytes) {
-            Ok(library) => {
+            Some(library) => {
                 loaded.library_totals.insert(nibble, library.total());
                 // An absent library and an empty one are the same state;
                 // keep the map absent so save/load are byte- and
@@ -1341,8 +1329,11 @@ fn load_libraries(
                     libraries.insert(nibble, library);
                 }
             }
-            Err(error) => {
-                record_skip(&mut loaded.skip_notes(), format_args!("{name}: {error}"));
+            None => {
+                record_skip(
+                    &mut loaded.skip_notes(),
+                    format_args!("{name}: invalid sub-index"),
+                );
             }
         }
     }
@@ -2192,7 +2183,7 @@ fn log_payload(
         disk,
         new_total.unwrap_or_else(|| live.library_total(nibble, Some(original)).unwrap_or(0)),
     );
-    encode_log_records(&records).map_err(|e| PersistenceError::Codec(e.to_string()))
+    encode_log_records(&records).ok_or(PersistenceError::Codec)
 }
 
 /// The current-on-disk baseline of one `SYSTEM_FILE` library's journal:
@@ -2240,7 +2231,7 @@ fn user_library_chunk(
     if library.store_copy_is_unsafe() {
         return Err(PersistenceError::SaveTooLarge);
     }
-    library.store().map_err(PersistenceError::Codec)
+    library.store().ok_or(PersistenceError::Codec)
 }
 
 /// The chunk bytes of one `SYSTEM_FILE` library's journal.
@@ -2267,7 +2258,7 @@ fn log_chunk(
     if payload.len() as u64 >= crate::user::user_library::copy_limit() {
         return Err(PersistenceError::SaveTooLarge);
     }
-    build_memory_chunk(&payload).map_err(PersistenceError::from)
+    build_memory_chunk(&payload).ok_or(PersistenceError::Codec)
 }
 
 /// Every file of the set but the user bigram, staged as `.tmp` siblings.

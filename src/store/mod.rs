@@ -84,20 +84,25 @@ use std::path::Path;
 /// The variants preserve the I/O-vs-other distinction without naming any
 /// backend type, so callers can branch on I/O failures independently of
 /// which backend produced them.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// An I/O error from the underlying storage layer.
-    Io(std::io::Error),
+    #[error("store I/O error: {0}")]
+    Io(#[source] std::io::Error),
     /// A non-I/O error from the storage backend.
-    Backend(BackendError),
+    #[error("store error: {0}")]
+    Backend(#[source] BackendError),
     /// A mutation was requested through a read-only store.
+    #[error("store is read-only")]
     ReadOnly,
     /// A public input cannot be represented by the selected backend.
+    #[error("invalid store input: {0}")]
     InvalidInput(&'static str),
     /// A checked record read found the record, then the value read failed
     /// or returned a different size. Kyoto Cabinet's `Bigram::load` checks
     /// the size and then reads the body, and asserts when the two disagree
     /// (`ngram_kyotodb.cpp:131-139` at the pin).
+    #[error("store read failed after its size check")]
     ReadAfterCheck,
     /// A `FlexibleBigram` single gram is shorter than its array header.
     /// From `get_array_header` it is the pin's assert
@@ -106,6 +111,7 @@ pub enum StoreError {
     /// abort. From `load` it is a value the pin later reads outside of
     /// (class (b), `upstream-divergences.md#flexiblebigram-malformed-record-lengths`), and the
     /// tools report it as a store error.
+    #[error("flexible bigram single gram is shorter than its array header")]
     ShortArrayHeader,
 }
 
@@ -162,34 +168,6 @@ impl fmt::Display for BackendError {
 }
 
 impl std::error::Error for BackendError {}
-
-impl fmt::Display for StoreError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "store I/O error: {e}"),
-            Self::Backend(e) => write!(f, "store error: {e}"),
-            Self::ReadOnly => f.write_str("store is read-only"),
-            Self::InvalidInput(message) => write!(f, "invalid store input: {message}"),
-            Self::ReadAfterCheck => f.write_str("store read failed after its size check"),
-            Self::ShortArrayHeader => {
-                f.write_str("flexible bigram single gram is shorter than its array header")
-            }
-        }
-    }
-}
-
-impl std::error::Error for StoreError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(e) => Some(e),
-            Self::Backend(e) => Some(e),
-            Self::ReadOnly
-            | Self::InvalidInput(_)
-            | Self::ReadAfterCheck
-            | Self::ShortArrayHeader => None,
-        }
-    }
-}
 
 /// What a scan visitor answers after each row: [`ControlFlow::Continue`]
 /// to go on, [`ControlFlow::Break`] to end the scan right there. A break

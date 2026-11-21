@@ -5,18 +5,6 @@
 // SingleGram, ngram.cpp:133–205. The native writer maintains token order with
 // lower_bound; a fresh gram has a zero total.
 
-/// A malformed `SingleGram` blob.
-#[derive(Debug)]
-pub struct SingleGramError(String);
-
-impl std::fmt::Display for SingleGramError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "single gram error: {}", self.0)
-    }
-}
-
-impl std::error::Error for SingleGramError {}
-
 /// One successor record: `(next token, count)`.
 pub type SingleGramRecord = (u32, u32);
 
@@ -38,29 +26,18 @@ pub fn encode_single_gram(total: u32, records: &[SingleGramRecord]) -> Vec<u8> {
 
 /// Decodes a `SingleGram` blob into `(total_freq, records)`.
 ///
-/// # Errors
-///
-/// Fails on a blob shorter than the 4-byte total, or whose remainder is
-/// not a whole number of 8-byte records.
-pub fn decode_single_gram(bytes: &[u8]) -> Result<(u32, Vec<SingleGramRecord>), SingleGramError> {
-    let Some((total, rest)) = bytes.split_first_chunk::<4>() else {
-        return Err(SingleGramError(format!(
-            "blob of {} bytes has no total_freq",
-            bytes.len()
-        )));
-    };
-    let total = u32::from_le_bytes(*total);
+/// Returns `None` for a short total or a partial 8-byte record.
+#[must_use]
+pub fn decode_single_gram(bytes: &[u8]) -> Option<(u32, Vec<SingleGramRecord>)> {
+    let (total, rest) = bytes.split_first_chunk::<4>()?;
     if !rest.len().is_multiple_of(8) {
-        return Err(SingleGramError(format!(
-            "record area of {} bytes is not a whole number of records",
-            rest.len()
-        )));
+        return None;
     }
     let mut records = Vec::with_capacity(rest.len() / 8);
     for [next, count] in rest.as_chunks::<4>().0.as_chunks::<2>().0 {
         records.push((u32::from_le_bytes(*next), u32::from_le_bytes(*count)));
     }
-    Ok((total, records))
+    Some((u32::from_le_bytes(*total), records))
 }
 
 #[cfg(test)]

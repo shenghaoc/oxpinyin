@@ -20,7 +20,7 @@ fn framing_refuses_a_payload_beyond_the_length_field() {
     // A 2^32-byte payload cannot be named by the header's field;
     // the single framing refuses rather than clamping.
     let huge = vec![0_u8; u32::MAX as usize + 1];
-    assert!(build_memory_chunk(&huge).is_err());
+    assert!(build_memory_chunk(&huge).is_none());
 }
 
 #[test]

@@ -77,8 +77,8 @@ pub enum UserStoreError {
     InvalidPhrase,
     /// The libpinyin user-dir persistence failed (I/O, container, or a
     /// byte stream that does not parse).
-    #[error("libpinyin user-dir persistence: {0}")]
-    Persistence(String),
+    #[error("libpinyin user-dir persistence failed")]
+    Persistence,
     /// `MemoryChunk::mmap` refused a loaded system library's file where the
     /// save's library loop maps it again (`pinyin.cpp:956`, `zhuyin.cpp:589`;
     /// register row 76). The save stopped at that library: the earlier
@@ -167,9 +167,9 @@ pub enum UserStoreError {
     /// The C adapters abort.
     #[error(
         "the session could not be built after the system libraries were handed \
-                 over (upstream dies): {0}"
+                 over (upstream dies)"
     )]
-    SessionSeed(String),
+    SessionSeed,
     /// A training step would store its gram in the failed Berkeley DB user
     /// bigram container (`crate::store::UserBigramDb::is_failed`): its
     /// `store` answers false and the pin's
@@ -310,14 +310,13 @@ fn apply_system_reading(
     }
 }
 
-/// Check the encoder's shape conditions without allocating a serialized
-/// copy. Malformed internal items still take the encoder's original error
-/// path, including its error text. Wrapping deliberately discards old rows.
+/// Check the encoder's shape conditions before changing the item.
+/// Wrapping discards every old pronunciation.
 fn validate_system_merge(
     item: &crate::data::chunk_write::ChunkItem,
     reading: &SystemReading<'_>,
     change: SystemMerge,
-) -> Result<(), StoreError> {
+) -> Result<(), UserStoreError> {
     let length = item.phrase.len();
     let wrapped = matches!(change, SystemMerge::Wrap);
     let appended = matches!(change, SystemMerge::Append);
@@ -328,10 +327,7 @@ fn validate_system_merge(
                 || item.prons.iter().any(|(keys, _)| keys.len() != length)
                 || (appended && reading.packed.len() != length)))
     {
-        let mut candidate = item.clone();
-        apply_system_reading(&mut candidate, reading, change);
-        crate::data::chunk_write::encode_phrase_item(&candidate)
-            .map_err(|error| StoreError::Backend(error.to_string().into()))?;
+        return Err(UserStoreError::Persistence);
     }
     Ok(())
 }
@@ -879,7 +875,7 @@ impl UserStore {
                 error @ (UserStoreError::Io(_)
                 | UserStoreError::Store(_)
                 | UserStoreError::InvalidPhrase
-                | UserStoreError::Persistence(_)
+                | UserStoreError::Persistence
                 | UserStoreError::SaveRemapFailed
                 | UserStoreError::SaveTooLarge
                 | UserStoreError::UnigramTotalOverflow
@@ -890,7 +886,7 @@ impl UserStore {
                 | UserStoreError::ResidualUserBigramGram
                 | UserStoreError::LibraryLoop(_)
                 | UserStoreError::UserReadingRemoval
-                | UserStoreError::SessionSeed(_)
+                | UserStoreError::SessionSeed
                 | UserStoreError::FailedUserBigramStore),
             ) => Err(error),
         }
@@ -1644,7 +1640,7 @@ impl UserStore {
             .phrases()
             .phrase_table
             .tokens(&phrase_table::key(text))
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))
+            .map_err(|_| UserStoreError::Persistence)
     }
 
     /// The pin's user phrase-table search over raw UCS-4 words, preserving
@@ -1662,7 +1658,7 @@ impl UserStore {
             .phrases()
             .phrase_table
             .tokens(&phrase_table::key_ucs4(words))
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))
+            .map_err(|_| UserStoreError::Persistence)
     }
 
     /// Whether the user phrase table holds this exact key, including an
@@ -2212,7 +2208,7 @@ impl UserStore {
             .phrases()
             .phrase_table
             .check_mask()
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            .map_err(|_| UserStoreError::Persistence)?;
         let container_keys = self.container_keys();
         match self.bigram_mask_fault_over(&container_keys, mask, value) {
             Some(error) => Err(error),
@@ -2442,7 +2438,7 @@ impl UserStore {
         }
         if let Some(item) = self
             .with_user_item(token, |view| {
-                crate::data::chunk_write::decode_phrase_item(view.as_bytes()).ok()
+                crate::data::chunk_write::decode_phrase_item(view.as_bytes())
             })
             .flatten()
         {
@@ -2581,7 +2577,7 @@ impl UserStore {
         // the buffer (`pinyin.cpp:559-569`). A slot the journal removed has
         // nothing to remove, so its total is left as the removal left it.
         let bytes = crate::data::chunk_write::encode_phrase_item(&item)
-            .map_err(|error| UserStoreError::Persistence(error.to_string()))?;
+            .ok_or(UserStoreError::Persistence)?;
         let removed = items.remove_item(original, token).is_some();
         items.add_item(original, token, &bytes);
         if !removed {

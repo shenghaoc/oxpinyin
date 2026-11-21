@@ -106,7 +106,7 @@ fn gen_bigram(output: &OutputStream, libraries: &Libraries, bigram: Option<&Hash
         let Some(value) = bigram.get(&key) else {
             tool::abort();
         };
-        let Ok((_total, records)) = decode_single_gram(&value) else {
+        let Some((_total, records)) = decode_single_gram(&value) else {
             // `Bigram::load` handed a malformed value.
             tool::abort();
         };

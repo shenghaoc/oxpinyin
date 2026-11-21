@@ -77,24 +77,6 @@ pub fn chunk_checksum(payload: &[u8]) -> u32 {
     checksum
 }
 
-/// A payload that does not fit the `MemoryChunk` header's `u32` length
-/// field. The one framing policy this module owns: refuse rather than
-/// clamp — a clamped length names a file the reader would misparse.
-#[derive(Debug)]
-pub struct ChunkFrameError(usize);
-
-impl std::fmt::Display for ChunkFrameError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "payload of {} bytes exceeds the u32 length field",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for ChunkFrameError {}
-
 /// Frames a payload into a complete `MemoryChunk` file — the 8-byte
 /// `{length, checksum}` header over the payload, `MemoryChunk::save`'s
 /// output.
@@ -103,33 +85,30 @@ impl std::error::Error for ChunkFrameError {}
 /// shared framing policy for borrowed payloads. The owned variant below
 /// applies the same header and overflow policy without a second buffer.
 ///
-/// # Errors
-///
-/// Fails when the payload exceeds the header's `u32` length field.
-pub fn build_memory_chunk(payload: &[u8]) -> Result<Vec<u8>, ChunkFrameError> {
-    let length = u32::try_from(payload.len()).map_err(|_| ChunkFrameError(payload.len()))?;
+/// Returns `None` when the payload exceeds the header's `u32` length field.
+#[must_use]
+pub fn build_memory_chunk(payload: &[u8]) -> Option<Vec<u8>> {
+    let length = u32::try_from(payload.len()).ok()?;
     let mut file = Vec::with_capacity(CHUNK_HEADER_SIZE + payload.len());
     file.extend_from_slice(&length.to_le_bytes());
     file.extend_from_slice(&chunk_checksum(payload).to_le_bytes());
     file.extend_from_slice(payload);
-    Ok(file)
+    Some(file)
 }
 
 /// Frames an owned payload in place. Reserve eight additional bytes when
 /// constructing the payload to avoid a second allocation for the header.
 ///
-/// # Errors
-///
-/// Fails when the payload exceeds the header's `u32` length field.
-pub(crate) fn build_memory_chunk_owned(mut payload: Vec<u8>) -> Result<Vec<u8>, ChunkFrameError> {
-    let length = u32::try_from(payload.len()).map_err(|_| ChunkFrameError(payload.len()))?;
+/// Returns `None` when the payload exceeds the header's `u32` length field.
+pub(crate) fn build_memory_chunk_owned(mut payload: Vec<u8>) -> Option<Vec<u8>> {
+    let length = u32::try_from(payload.len()).ok()?;
     let checksum = chunk_checksum(&payload);
     let end = payload.len();
     payload.resize(end + CHUNK_HEADER_SIZE, 0);
     payload.copy_within(..end, CHUNK_HEADER_SIZE);
     payload[..4].copy_from_slice(&length.to_le_bytes());
     payload[4..CHUNK_HEADER_SIZE].copy_from_slice(&checksum.to_le_bytes());
-    Ok(payload)
+    Some(payload)
 }
 
 #[cfg(test)]

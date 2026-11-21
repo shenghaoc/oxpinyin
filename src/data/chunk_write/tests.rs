@@ -159,17 +159,17 @@ fn build_chunk_rejects_disorder_and_shape_errors() {
         unigram: 1,
         prons: vec![(vec![0], 1)],
     };
-    assert!(build_chunk(&[(2, item.clone()), (1, item.clone())]).is_err());
+    assert!(build_chunk(&[(2, item.clone()), (1, item.clone())]).is_none());
     let bad_keys = ChunkItem {
         prons: vec![(vec![0, 0], 1)],
         ..item.clone()
     };
-    assert!(build_chunk(&[(1, bad_keys)]).is_err());
+    assert!(build_chunk(&[(1, bad_keys)]).is_none());
     let empty = ChunkItem {
         phrase: Vec::new(),
         ..item
     };
-    assert!(build_chunk(&[(1, empty)]).is_err());
+    assert!(build_chunk(&[(1, empty)]).is_none());
 }
 
 #[test]
@@ -222,11 +222,11 @@ fn phrase_view_matches_decoder_boundaries_and_permissive_values() {
                 assert_eq!(
                     crate::data::phrase_library::PhraseItemView::from_bytes(&bytes[..cut])
                         .is_some(),
-                    decode_phrase_item(&bytes[..cut]).is_ok(),
+                    decode_phrase_item(&bytes[..cut]).is_some(),
                     "length={length}, prons={prons}, cut={cut}"
                 );
             }
-            assert!(decode_phrase_item(&bytes).is_ok());
+            assert!(decode_phrase_item(&bytes).is_some());
         }
     }
 }

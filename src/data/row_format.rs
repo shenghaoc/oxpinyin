@@ -333,7 +333,7 @@ pub mod bigram {
     pub fn parse_value(data: &[u8]) -> Result<BigramRow, DictError> {
         decode_single_gram(data)
             .map(|(total, records)| BigramRow { total, records })
-            .map_err(|_| DictError::Parse)
+            .ok_or(DictError::Parse)
     }
 }
 

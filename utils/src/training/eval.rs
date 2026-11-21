@@ -29,7 +29,6 @@
 #[cfg(test)]
 mod counts;
 mod decode;
-mod error;
 mod model;
 
 #[cfg(test)]

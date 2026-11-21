@@ -295,14 +295,14 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
             oxpinyin::user::UserStoreError::Io(_)
             | oxpinyin::user::UserStoreError::Store(_)
             | oxpinyin::user::UserStoreError::InvalidPhrase
-            | oxpinyin::user::UserStoreError::Persistence(_)
+            | oxpinyin::user::UserStoreError::Persistence
             | oxpinyin::user::UserStoreError::SaveRemapFailed
             | oxpinyin::user::UserStoreError::SaveTooLarge
             | oxpinyin::user::UserStoreError::UnigramTotalOverflow
             | oxpinyin::user::UserStoreError::OverlongIndexKey
             | oxpinyin::user::UserStoreError::LibraryLoop(_)
             | oxpinyin::user::UserStoreError::TrainingSetFreqMiss
-            | oxpinyin::user::UserStoreError::SessionSeed(_)
+            | oxpinyin::user::UserStoreError::SessionSeed
             | oxpinyin::user::UserStoreError::FailedUserBigramStore,
         ) => {
             crate::ffi::log_warning("pinyin_remove_user_candidate: the user store failed");
@@ -861,7 +861,7 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
                 oxpinyin::user::UserStoreError::Io(_)
                 | oxpinyin::user::UserStoreError::Store(_)
                 | oxpinyin::user::UserStoreError::InvalidPhrase
-                | oxpinyin::user::UserStoreError::Persistence(_)
+                | oxpinyin::user::UserStoreError::Persistence
                 | oxpinyin::user::UserStoreError::SaveRemapFailed
                 | oxpinyin::user::UserStoreError::SaveTooLarge
                 | oxpinyin::user::UserStoreError::UnigramTotalOverflow
@@ -871,7 +871,7 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
                 | oxpinyin::user::UserStoreError::LibraryLoop(_)
                 | oxpinyin::user::UserStoreError::TrainingSetFreqMiss
                 | oxpinyin::user::UserStoreError::UserReadingRemoval
-                | oxpinyin::user::UserStoreError::SessionSeed(_)
+                | oxpinyin::user::UserStoreError::SessionSeed
                 | oxpinyin::user::UserStoreError::FailedUserBigramStore,
             ) => false,
         }

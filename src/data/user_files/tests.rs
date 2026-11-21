@@ -28,30 +28,24 @@ fn chunk_payload_round_trip_through_the_frame() {
     let framed = crate::data::chunk_format::build_memory_chunk(&payload).expect("frame");
     assert_eq!(read_chunk_payload(&framed).expect("frame"), &payload[..]);
 
-    // Hostile frames answer typed errors, never panic.
-    assert!(matches!(
-        read_chunk_payload(&framed[..7]),
-        Err(ChunkReadError::ShortHeader)
-    ));
-    let mut truncated = framed.clone();
-    truncated.truncate(framed.len() - 1);
-    assert!(matches!(
-        read_chunk_payload(&truncated),
-        Err(ChunkReadError::TruncatedPayload)
-    ));
     let mut trailing = framed.clone();
     trailing.push(0);
-    assert!(matches!(
-        read_chunk_payload(&trailing),
-        Err(ChunkReadError::TruncatedPayload)
-    ));
     let mut flipped = framed.clone();
     let last = flipped.len() - 1;
     flipped[last] ^= 0xFF;
-    assert!(matches!(
-        read_chunk_payload(&flipped),
-        Err(ChunkReadError::ChecksumMismatch)
-    ));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("user.bin");
+    use std::io::ErrorKind::{InvalidData, UnexpectedEof};
+    for (bytes, kind) in [
+        (&framed[..7], InvalidData),
+        (&framed[..last], UnexpectedEof),
+        (&trailing, UnexpectedEof),
+        (&flipped, InvalidData),
+    ] {
+        assert!(read_chunk_payload(bytes).is_none());
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(load_chunk_payload(&path).unwrap_err().kind(), kind);
+    }
 }
 
 fn parse(bytes: &[u8]) -> Result<UserTableInfo, UserConfError> {
@@ -355,7 +349,7 @@ fn log_encode_rejects_a_payload_beyond_u16() {
             token: 7,
             new_item: huge,
         }])
-        .is_err(),
+        .is_none(),
         "an oversized payload must be refused, not truncated"
     );
 }

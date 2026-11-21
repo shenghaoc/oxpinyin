@@ -1,6 +1,6 @@
 use super::super::counts::Counts;
 use super::super::fixture_doubles::FixtureDictionary;
-use super::{EvalError, EvalLanguageModel, PhraseSource, correction_rate};
+use super::{EvalLanguageModel, PhraseSource, correction_rate};
 use oxpinyin::data::PINNED_LAMBDA;
 use oxpinyin::{PhraseToken, SyllableKey};
 use std::collections::BTreeMap;
@@ -42,8 +42,7 @@ fn a_token_without_pronunciation_is_an_error() {
         text: BTreeMap::new(),
     };
     let sentences = vec![vec![1]];
-    let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
-    assert!(matches!(err, EvalError::NoPronunciation { token: 1 }));
+    assert!(correction_rate(&dict, &model, &source, &sentences).is_none());
 }
 
 #[test]
@@ -56,8 +55,7 @@ fn a_token_without_text_is_an_error_not_a_shorter_expected_sentence() {
         text: BTreeMap::new(),
     };
     let sentences = vec![vec![1]];
-    let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
-    assert!(matches!(err, EvalError::NoText { token: 1 }), "{err}");
+    assert!(correction_rate(&dict, &model, &source, &sentences).is_none());
 }
 
 #[test]
@@ -71,6 +69,5 @@ fn a_key_chain_without_a_phrase_cover_is_an_error_not_a_mismatch() {
     text.insert(1, "国".to_owned());
     let source = MapSource { keys, text };
     let sentences = vec![vec![1]];
-    let err = correction_rate(&dict, &model, &source, &sentences).unwrap_err();
-    assert!(matches!(err, EvalError::Undecodable { keys: 1 }), "{err}");
+    assert!(correction_rate(&dict, &model, &source, &sentences).is_none());
 }

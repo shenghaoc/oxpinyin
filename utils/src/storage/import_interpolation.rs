@@ -201,8 +201,8 @@ impl Converter<'_> {
                         }
                         let gram = match self.bigram.get(&token1.to_le_bytes()) {
                             Some(value) => match decode_single_gram(&value) {
-                                Ok((total, records)) => SingleGram { total, records },
-                                Err(_) => tool::abort(),
+                                Some((total, records)) => SingleGram { total, records },
+                                None => tool::abort(),
                             },
                             None => SingleGram {
                                 total: 0,

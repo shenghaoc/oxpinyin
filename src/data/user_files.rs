@@ -22,30 +22,6 @@ use crate::input::config::{
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::store::DEFAULT_STORE_DB_FORMAT;
 
-/// A `MemoryChunk` file that does not frame a valid payload.
-#[derive(Debug)]
-pub enum ChunkReadError {
-    /// Fewer bytes than the 8-byte header.
-    ShortHeader,
-    /// The declared length does not match the narrowed physical payload length.
-    TruncatedPayload,
-    /// The stored checksum does not match the payload.
-    ChecksumMismatch,
-}
-
-impl std::fmt::Display for ChunkReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let message = match self {
-            Self::ShortHeader => "shorter than the 8-byte header",
-            Self::TruncatedPayload => "payload length does not match the file size",
-            Self::ChecksumMismatch => "checksum mismatch",
-        };
-        write!(f, "memory chunk: {message}")
-    }
-}
-
-impl std::error::Error for ChunkReadError {}
-
 /// Strips and verifies a `MemoryChunk` file frame, returning the payload
 /// — the check `MemoryChunk::load` performs before any consumer sees
 /// bytes.
@@ -53,33 +29,25 @@ impl std::error::Error for ChunkReadError {}
 /// The `.dbin` diff logs frame their logger record stream this
 /// way (`log->save` writes a plain `MemoryChunk`).
 ///
-/// # Errors
-///
-/// Fails on a short header, a length mismatch, or a checksum mismatch.
+/// Returns `None` for a short header, a length mismatch, or a checksum mismatch.
 /// The physical payload size is narrowed to `u32` before the comparison,
 /// as in `MemoryChunk::load` and `::mmap`; a match exposes only the
 /// declared extent, even when the file is larger by a multiple of 2^32.
 #[cfg(test)]
-pub(crate) fn read_chunk_payload(bytes: &[u8]) -> Result<&[u8], ChunkReadError> {
-    let header = bytes
-        .get(..CHUNK_HEADER_SIZE)
-        .ok_or(ChunkReadError::ShortHeader)?;
+pub(crate) fn read_chunk_payload(bytes: &[u8]) -> Option<&[u8]> {
+    let header = bytes.get(..CHUNK_HEADER_SIZE)?;
     let words = header.as_chunks::<4>().0;
     let length = u32::from_le_bytes(words[0]) as usize;
     let checksum = u32::from_le_bytes(words[1]);
     if length as u32 != (bytes.len() - CHUNK_HEADER_SIZE) as u32 {
-        return Err(ChunkReadError::TruncatedPayload);
+        return None;
     }
-    let end = CHUNK_HEADER_SIZE
-        .checked_add(length)
-        .ok_or(ChunkReadError::TruncatedPayload)?;
-    let payload = bytes
-        .get(CHUNK_HEADER_SIZE..end)
-        .ok_or(ChunkReadError::TruncatedPayload)?;
+    let end = CHUNK_HEADER_SIZE.checked_add(length)?;
+    let payload = bytes.get(CHUNK_HEADER_SIZE..end)?;
     if chunk_checksum(payload) != checksum {
-        return Err(ChunkReadError::ChecksumMismatch);
+        return None;
     }
-    Ok(payload)
+    Some(payload)
 }
 
 /// Loads and validates a chunk through the pin's single-read boundary.
@@ -116,9 +84,7 @@ fn chunk_payload(
     defer_header_fault: bool,
 ) -> Result<Vec<u8>, ChunkPayloadError> {
     use crate::input::chunk::{ChunkLoadError, load, load_for_mask_prefetch};
-    let invalid = |reason| {
-        ChunkPayloadError::Load(std::io::Error::new(std::io::ErrorKind::InvalidData, reason))
-    };
+    let invalid = || ChunkPayloadError::Load(std::io::ErrorKind::InvalidData.into());
     let loaded = if defer_header_fault {
         load_for_mask_prefetch(path)
     } else {
@@ -126,12 +92,10 @@ fn chunk_payload(
     };
     let chunk = loaded.map_err(|error| match error {
         ChunkLoadError::Io(error) => ChunkPayloadError::Load(error),
-        ChunkLoadError::ShortHeader => invalid(ChunkReadError::ShortHeader),
+        ChunkLoadError::ShortHeader => invalid(),
         ChunkLoadError::Header => ChunkPayloadError::HeaderRead,
     })?;
-    chunk
-        .finish(chunk_checksum)
-        .ok_or_else(|| invalid(ChunkReadError::ChecksumMismatch))
+    chunk.finish(chunk_checksum).ok_or_else(invalid)
 }
 
 /// One of the three DBM files of a user directory.
@@ -850,39 +814,14 @@ impl<'a> LogReader<'a> {
 /// `sizeof(LOG_TYPE)` — the unscoped enum's underlying `int`.
 const LOG_TYPE_SIZE: usize = 4;
 
-/// A record payload whose length does not fit the format's `u16` length
-/// field.
-///
-/// `build_chunk` accepts items up to 255 characters × 255
-/// pronunciations, which encodes past `u16::MAX`; upstream's
-/// `append_record` truncates silently (`guint16 len = newone->size()`),
-/// and we refuse instead of writing a record stream the reader would
-/// misparse — a write-side validation, not a read behaviour.
-#[derive(Debug)]
-pub struct LogEncodeError(pub String);
-
-impl std::fmt::Display for LogEncodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "log record payload too large for u16: {}", self.0)
-    }
-}
-
-impl std::error::Error for LogEncodeError {}
-
-/// The `u16` length field of one payload — an error where the payload
-/// does not fit, rather than upstream's silent truncation.
-fn u16_len(payload: &[u8], what: &str) -> Result<u16, LogEncodeError> {
-    u16::try_from(payload.len()).map_err(|_| LogEncodeError(what.to_owned()))
-}
-
 /// Encodes a record stream (`PhraseIndexLogger::append_record`'s
 /// layout). Records are written in the given order — the diff's walk
 /// order.
 ///
-/// # Errors
-///
-/// Fails on a payload longer than the format's `u16` length field.
-pub fn encode_log_records(records: &[LogRecord]) -> Result<Vec<u8>, LogEncodeError> {
+/// Returns `None` when an item exceeds the journal's `u16` length field
+/// (`phrase_index_logger.h:248-270`). Such an item can fit a library chunk.
+#[must_use]
+pub fn encode_log_records(records: &[LogRecord]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let push_head = |log_type: u32, token: u32, out: &mut Vec<u8>| {
         out.extend_from_slice(&log_type.to_le_bytes());
@@ -892,12 +831,12 @@ pub fn encode_log_records(records: &[LogRecord]) -> Result<Vec<u8>, LogEncodeErr
         match record {
             LogRecord::Add { token, new_item } => {
                 push_head(1, *token, &mut out);
-                out.extend_from_slice(&u16_len(new_item, "ADD payload")?.to_le_bytes());
+                out.extend_from_slice(&u16::try_from(new_item.len()).ok()?.to_le_bytes());
                 out.extend_from_slice(new_item);
             }
             LogRecord::Remove { token, old_item } => {
                 push_head(2, *token, &mut out);
-                out.extend_from_slice(&u16_len(old_item, "REMOVE payload")?.to_le_bytes());
+                out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
                 out.extend_from_slice(old_item);
             }
             LogRecord::Modify {
@@ -906,8 +845,8 @@ pub fn encode_log_records(records: &[LogRecord]) -> Result<Vec<u8>, LogEncodeErr
                 new_item,
             } => {
                 push_head(3, *token, &mut out);
-                out.extend_from_slice(&u16_len(old_item, "MODIFY old payload")?.to_le_bytes());
-                out.extend_from_slice(&u16_len(new_item, "MODIFY new payload")?.to_le_bytes());
+                out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
+                out.extend_from_slice(&u16::try_from(new_item.len()).ok()?.to_le_bytes());
                 out.extend_from_slice(old_item);
                 out.extend_from_slice(new_item);
             }
@@ -926,7 +865,7 @@ pub fn encode_log_records(records: &[LogRecord]) -> Result<Vec<u8>, LogEncodeErr
             }
         }
     }
-    Ok(out)
+    Some(out)
 }
 
 #[cfg(test)]
