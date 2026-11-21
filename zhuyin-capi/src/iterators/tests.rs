@@ -11,13 +11,13 @@ use crate::test_support::{TempUserDir, close, cstr, open_with_user, with_store};
 
 use oxpinyin::USER_DICTIONARY;
 
-/// D16: libzhuyin's import parses the reading with `ZhuyinDirectParser2` under
+/// libzhuyin's import parses the reading with `ZhuyinDirectParser2` under
 /// `USE_TONE | FORCE_TONE` (`zhuyin.cpp:515-523` at 074a2219). The parser splits on `' '` and
 /// `'\''` and skips any run of them (`storage/zhuyin_parser2.cpp:914-960`), so an apostrophe and
 /// a trailing space change nothing. A leading separator leaves an empty first key, which
 /// `parse_one_key` refuses (`:866-867`), and an initial alone parses no key: the phrase's
 /// length then differs from the key count, and the add answers false (`zhuyin.cpp:525`). Pin
-/// capture of 2026-11-07, runs 1 and 2 identical, observations `zhuyin-import/run`,
+/// Pin observations `zhuyin-import/run`,
 /// `zhuyin-import/leading` and `zhuyin-import/initial` (the run's new library-7 token stored
 /// `ㄋㄧˇ ㄏㄠˇ`; the others stored nothing).
 #[test]

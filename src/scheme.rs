@@ -354,7 +354,7 @@ impl DoublePinyinParser {
     /// two-byte spelling has tone zero. A third byte must be an ASCII digit from 1 to 5 and
     /// requires [`OptionBits::USE_TONE`]. [`OptionBits::FORCE_TONE`] requires all three
     /// bytes. The two-letter lookup supplies its own spelling corrections and ignores the
-    /// caller’s pinyin correction and ambiguity bits.
+    /// caller's pinyin correction and ambiguity bits.
     #[must_use]
     pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         let options = options - (OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL);
@@ -1028,7 +1028,7 @@ impl ZhuyinParser {
     // ZhuyinDaChenCP26Parser2::parse, zhuyin_parser2.cpp:216–268,408–460,718–762.
     // is_valid_zhuyin returns a boolean, chewing_key.cpp:38–45. Simple and Discrete OR
     // m_options into caller options (221,413); Rust reconstructs the probe mask. Only the
-    // keyboard’s own correction bit occurs in its index (pinyin_parser_table.h:1492–3975).
+    // keyboard's own correction bit occurs in its index (pinyin_parser_table.h:1492–3975).
     // CP26 emits initial/middle/final order (zhuyin_parser2.cpp:613–705); no SHUFFLE row in
     // the global index has that order. zhuyin_parse_more_chewings forwards the word at
     // zhuyin.cpp:1058–1082.

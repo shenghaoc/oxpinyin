@@ -70,7 +70,7 @@ record:
 
 The **data sequence** (`DataSequence`, C1) runs the pin's `gen_binary_files --gen-punct-table`,
 `import_interpolation` and `gen_unigram`, in that order (`data/Makefile.am:60-62` at 074a2219).
-It runs from the verified build tree of the bdb cell, in a private work directory. Its input is the W3 subset
+It runs from the verified build tree of the bdb cell, in a private work directory. Its input is the mini subset
 that `tools/dev/w3_fixtures.py` builds:
 
 - `subset` writes the subset tables and interpolation text;

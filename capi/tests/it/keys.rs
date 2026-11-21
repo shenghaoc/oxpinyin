@@ -41,7 +41,7 @@ unsafe fn take_rendered(p: *mut crate::support::GChar) -> String {
 /// S7: the key at offset 0 of a `nihao` parse under full-pinyin scheme 2 (luoma) and
 /// scheme 3 (secondary zhuyin), both under 0x18a after a sentence guess. The key is `ni`,
 /// packed 43, and both renderers spell it from its table index (`pinyin.cpp:2729-2749` at
-/// 074a2219, `storage/chewing_key.cpp:91-116`). Pin capture of 2026-11-07, runs 1 and 2
+/// 074a2219, `storage/chewing_key.cpp:91-116`). Pin observation
 /// identical, observations `scheme-key/luoma/nihao` and `scheme-key/secondary-zhuyin/nihao`.
 #[test]
 fn a_scheme_parse_keys_render_as_luoma_and_secondary_zhuyin() {
@@ -170,8 +170,7 @@ fn nihao_preedit_family_matches_the_pin_expectation_table() {
 }
 
 /// Past byte 65535 the key-rest positions narrow into the pin's
-/// `guint16` fields mod 2^16 (maintainer ruling 2026-11-01 UTC,
-/// `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`). `ni3` then `ni`
+/// `guint16` fields mod 2^16 (`docs/findings/upstream-divergences.md#key-positions-past-byte-65535`). `ni3` then `ni`
 /// repeated puts a key at 65535..65537, which crosses byte 65536, and
 /// one at 65537..65539, wholly past it; both lengths stay 2.
 #[test]
@@ -498,7 +497,7 @@ fn pinyin_strings_contract() {
 
 /// A hand-crafted toned initial-only key: the pin asserts in
 /// `pinyin_get_pinyin_is_incomplete`'s true branch (`pinyin.cpp:2769`),
-/// and the facade aborts the process too (register row 4).
+/// and the facade aborts the process too.
 #[test]
 fn toned_initial_only_key_aborts() {
     assert_aborts("keys::toned_initial_only_key_aborts", || {

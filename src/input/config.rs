@@ -7,8 +7,7 @@
 //! one directive per call. [`SystemTableInfoReader::finish`] and
 //! [`UserTableInfoReader::finish`] are the success path's `fclose` and
 //! `setlocale(LC_NUMERIC, locale)`. Dropping a reader instead is an early
-//! return: `fclose` alone, the locale left at `"C"` as the pin leaves it
-//! (policy row 39).
+//! return: `fclose` alone, the locale left at `"C"` as the pin leaves it.
 
 use std::ffi::{CStr, c_int};
 

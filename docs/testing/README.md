@@ -65,7 +65,7 @@ test.
 
 ## Candidate capture
 
-`fixtures/w4/oracle-candidate-structure.txt` is the single W4 candidate
+`fixtures/w4/oracle-candidate-structure.txt` is the single candidate
 capture. `tests/common/candidate_fixture.rs` reads its
 structured rows and its `(input, rank, text)` projection. Both keep the input
 identity, row order, duplicates and the captured pin reference.
@@ -92,5 +92,5 @@ A new regression uses reduced input and explains any substantial fixture or runt
 | Document | Subject |
 | --- | --- |
 | [`capture-fixtures`](capture-fixtures.md) | F-A and F-C capture fixture freeze |
-| [`fixture-adapters`](fixture-adapters.md) | W4 fixture data seam |
+| [`fixture-adapters`](fixture-adapters.md) | Fixture data seam |
 | [`upstream-test-coverage`](upstream-test-coverage.md) | Upstream test coverage ledger and fuzz harnesses |

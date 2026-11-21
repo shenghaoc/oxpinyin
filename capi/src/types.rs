@@ -35,7 +35,7 @@ pub struct LookupCandidate;
 /// size and alignment asserted against the bitfield): a caller holding a
 /// vendored `chewing_key.h` allocates exactly these 2 bytes and may copy
 /// keys through the pointer, so this must write and read what upstream
-/// writes and reads — the D1' contract. The renderers decode the word
+/// writes and reads — the packed-word contract. The renderers decode the word
 /// through [`oxpinyin::ChewingKey`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -5,7 +5,7 @@
 /// (`:143-147`), and the DP prefers the fewest keys, then the least distance (`:298-309`).
 /// With the row refused, PINYIN_INCOMPLETE (in the base word) lets an initial stand alone
 /// (`:43-44`). The auxiliary text renders the keys at the parsed length
-/// (`pinyin.cpp:3381-3437`). Pin capture of 2026-11-07, runs 1 and 2 identical, observations
+/// (`pinyin.cpp:3381-3437`). Pin observations
 /// `option-row/on/<input>`, `option-row/off/<input>` and `option-distance/chonga`.
 macro_rules! gated_parser_rows {
     ($test:item) => {

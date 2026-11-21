@@ -226,7 +226,7 @@ mod native {
 /// subclass, the empty-region pointer, the read of `BasicDB::error()`, the
 /// constructors and constants, and the forwards through a shared reference
 /// that the classes' own locking permits (Rust/C++ interoperability
-/// ruling, `docs/findings/compatibility-policy.md#rust-cpp-interoperability`).
+/// contract, `docs/findings/compatibility-policy.md#rust-cpp-interoperability`).
 /// `kclangc.h` reached every class through `PolyDB`, whose dispatch and
 /// unopened classes kept libkyotocabinet text resident. The system libkyotocabinet still
 /// supplies the out-of-line code, as it does for libpinyin.
@@ -283,7 +283,7 @@ mod kyotocabinet {
 /// permits. The adapter calls the library; it copies none of it. The C API
 /// (`PolyDBM`) is not used: it deletes a concrete object whose `Open`
 /// failed and catches every C++ exception (Rust/C++ interoperability
-/// ruling, `docs/findings/compatibility-policy.md#rust-cpp-interoperability`).
+/// contract, `docs/findings/compatibility-policy.md#rust-cpp-interoperability`).
 ///
 /// # Compilation
 ///

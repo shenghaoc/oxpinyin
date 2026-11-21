@@ -1,4 +1,4 @@
-//! Approved class (b) outcomes preserve earlier product results in the REPL.
+//! Defined outcomes preserve earlier product results in the REPL.
 use crate::common::snapshot_inputs;
 use std::fs;
 use std::io::Write;
@@ -30,7 +30,7 @@ fn run(mode: &str, input: &[u8]) -> std::process::Output {
     result
 }
 
-/// Policy row 115 covers the consumed failed conversion at
+/// Refuses the consumed failed conversion at
 /// 074a2219 tests/storage/test_phrase_table.cpp:45-59.
 #[test]
 fn invalid_phrase_query_keeps_the_previous_result() {
@@ -44,7 +44,7 @@ fn invalid_phrase_query_keeps_the_previous_result() {
     );
 }
 
-/// Policy row 116 covers the whole-key search before any continuation output
+/// Refuses the whole-key search before any continuation output
 /// at 074a2219 tests/storage/test_chewing_table.cpp:71-102.
 #[test]
 fn overlong_chewing_query_keeps_the_previous_result() {

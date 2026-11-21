@@ -77,7 +77,7 @@ fn pronunciation_count_without_a_sub_index_writes_zero() {
 }
 
 /// Register entry "Token getters on a phrase longer than sixteen characters
-/// (policy row 124, class (b))": at 074a2219 `_token_get_phrase` and
+/// ": at 074a2219 `_token_get_phrase` and
 /// `zhuyin_token_get_nth_pronunciation` copy a 17-word item into 16-entry
 /// stack buffers (`zhuyin.cpp:1101,1107,1800,1807`), so the pin's result is
 /// undefined and nothing runs on it. oxpinyin's prescribed result: both

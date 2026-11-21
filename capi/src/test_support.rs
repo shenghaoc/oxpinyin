@@ -84,7 +84,7 @@ pub unsafe fn token_of(instance: *mut PinyinInstance, cand: *mut LookupCandidate
 }
 
 /// Adds the negation of the loaded facade total to token 0x01000001, so
-/// the total the model divides by wraps to zero (register row 61).
+/// the total the model divides by wraps to zero.
 ///
 /// # Safety
 ///

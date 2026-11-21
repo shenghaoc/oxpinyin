@@ -8,7 +8,7 @@
 //! `g_ucs4_to_utf8`. A token neither table answers prints
 //! `error: unknown token:%d.\n` and answers NULL; callers that print skip
 //! the record, and callers that `strcmp` it (import, gen) read through NULL
-//! in the pin (class (b) of the compatibility policy). The trait's
+//! in the pin. The trait's
 //! [`PhraseIndex::validate_token_with_string`] answers `false` for that
 //! NULL instead of reading through it, so the caller's `check_result`
 //! abort is reproduced without the undefined read.

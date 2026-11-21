@@ -60,7 +60,7 @@ fn a_zero_facade_total_before_offset_zero_ranks_nothing() {
 }
 
 /// A zero facade total asserts while the after-cursor guess ranks a row
-/// (`zhuyin.cpp:1261`, register rows 61 and 66).
+/// (`zhuyin.cpp:1261`).
 #[test]
 fn a_zero_facade_total_aborts_the_after_cursor_ranking() {
     assert_aborts(
@@ -131,7 +131,7 @@ unsafe fn kinds(instance: *mut crate::types::ZhuyinInstance) -> Vec<lookup_candi
 /// span loop does not run (`:1563`); inside a key the span is skipped (`:1590-1591`;
 /// `phonetic_key_matrix.cpp:422-423`). A toneless `su` places no key under FORCE_TONE
 /// (`zhuyin_parser2.cpp:178-179`), so the empty matrix answers false (`zhuyin.cpp:1549-1552`).
-/// Pin capture of 2026-11-07, runs 1 and 2 identical, observations
+/// Pin observations
 /// `zhuyin-noguess-before/su3cl3@0,1,2,4,5` and `zhuyin-noguess-before/su@0`.
 #[test]
 fn an_unguessed_before_cursor_window_with_no_span_is_empty() {
@@ -166,7 +166,7 @@ fn an_unguessed_before_cursor_window_with_no_span_is_empty() {
 /// S6: at a key end every unguessed row is a phrase of the spans ending there,
 /// NORMAL_CANDIDATE_BEFORE_CURSOR (`zhuyin.cpp:1594`); after a guess the sentence is
 /// prepended as the one BEST_MATCH row (`:1283`, `:1626`), and before offset 0 it is the only
-/// row. Pin capture of 2026-11-07, runs 1 and 2 identical, observations
+/// row. Pin observations
 /// `zhuyin-noguess-before/su3cl3@3,6` and `zhuyin-guess-before/su3cl3@0,3,6`; the row counts
 /// are the pinned data's and are not asserted.
 #[test]

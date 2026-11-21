@@ -406,8 +406,7 @@ fn parse_chewing_accepts_a_shuffled_reading_when_enabled() {
 }
 
 /// The `ZHUYIN_STANDARD_DVORAK` slot aborts the process, as the pin's
-/// `set_scheme` falls through to `abort()` (`zhuyin_parser2.cpp:295`,
-/// register row 5c).
+/// `set_scheme` falls through to `abort()` (`zhuyin_parser2.cpp:295`).
 #[test]
 fn the_dvorak_chewing_scheme_aborts() {
     crate::support::assert_aborts("parse_keys::the_dvorak_chewing_scheme_aborts", || {
@@ -417,8 +416,7 @@ fn the_dvorak_chewing_scheme_aborts() {
 }
 
 /// An out-of-enum keyboard (`zhuyin.cpp:736`) and a full-pinyin scheme
-/// outside 1-3 (`pinyin_parser2.cpp:398`) abort the process (register row
-/// 5d).
+/// outside 1-3 (`pinyin_parser2.cpp:398`) abort the process.
 #[test]
 fn an_out_of_enum_chewing_scheme_aborts() {
     crate::support::assert_aborts("parse_keys::an_out_of_enum_chewing_scheme_aborts", || {
@@ -439,7 +437,7 @@ fn an_out_of_range_full_pinyin_scheme_aborts() {
 }
 
 /// An apostrophe in the single-key parser's input is the shared
-/// `parse_one_key` assert (`pinyin_parser2.cpp:170`, register row 21).
+/// `parse_one_key` assert (`pinyin_parser2.cpp:170`).
 #[test]
 fn a_single_key_apostrophe_aborts() {
     crate::support::assert_aborts("parse_keys::a_single_key_apostrophe_aborts", || {
@@ -450,7 +448,7 @@ fn a_single_key_apostrophe_aborts() {
     });
 }
 
-/// Register row 66: on a fresh instance `offset >= matrix.size() - 1` is
+/// on a fresh instance `offset >= matrix.size() - 1` is
 /// `offset >= SIZE_MAX` (`zhuyin.cpp:1892-1893`, `:1914-1915`), so
 /// `SIZE_MAX` answers `false` with the out-param NULLed.
 #[test]
@@ -471,8 +469,7 @@ fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
 }
 
 /// Past byte 65535 the key-rest positions narrow into the pin's `guint16`
-/// fields mod 2^16 (maintainer ruling 2026-11-01 UTC,
-/// `docs/findings/upstream-divergences.md#key-positions-past-byte-65535`). `su3` then `su`
+/// fields mod 2^16 (`docs/findings/upstream-divergences.md#key-positions-past-byte-65535`). `su3` then `su`
 /// repeated puts a key at 65535..65537, which crosses byte 65536, and one
 /// at 65537..65539, wholly past it; both lengths stay 2.
 #[test]

@@ -225,11 +225,11 @@ pub(crate) fn prefix_system(parent: &Path, word: u32) -> std::path::PathBuf {
 /// GLib's `G_LOG_LEVEL_CRITICAL`.
 pub(crate) const CRITICAL: glib_sys::GLogLevelFlags = glib_sys::G_LOG_LEVEL_CRITICAL;
 
-// ── Pin capture of 2026-11-07 (tools/oracle/pin_capture.py, runs 1 and 2 identical) ──
+// Pin observations
 //
 // Each test below names its observation. The values are the pin's on the pinned
 // libpinyin-data; every one asserted here depends only on the test's own imports, parse
-// and options, so the w3 mini fixture holds it too.
+// and options, so the mini fixture holds it too.
 
 /// Copies a string the C API handed out and frees it with `g_free`.
 ///
@@ -365,8 +365,8 @@ pub(crate) unsafe fn parsed_key_and_rest(
     (key, rest)
 }
 
-/// A partial item tail (`4 + 8k + 1` bytes): row 98's value, which the pin's
-/// `retrieve_all` reads past (class (b)).
+/// A partial item tail (`4 + 8k + 1` bytes): a value, which the pin's
+/// `retrieve_all` reads past.
 pub(crate) fn partial_gram(successor: u32) -> Vec<u8> {
     let mut gram = whole_gram(successor);
     gram.push(1);
@@ -374,7 +374,7 @@ pub(crate) fn partial_gram(successor: u32) -> Vec<u8> {
 }
 
 /// One call that maps a system library again over a private system
-/// directory whose library is a directory (register row 96): the save and
+/// directory whose library is a directory: the save and
 /// the mask-out map `merged.bin` (`pinyin.cpp:955`, `:1264`), the reload of
 /// the unloaded GBK library maps `gbk_char.bin` (`:256`).
 #[cfg(unix)]

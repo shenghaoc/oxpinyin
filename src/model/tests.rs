@@ -478,7 +478,7 @@ fn comments_and_blank_lines_are_skipped() {
     assert_eq!(dictionary.len(), 1);
 }
 
-// The W4 fixture vocabulary is derived from the frozen captures.
+// The oracle fixture vocabulary is derived from the frozen captures.
 //
 // `docs/testing/fixture-adapters.md` states the rule; this test is what
 // makes it checkable rather than asserted. Every phrase in

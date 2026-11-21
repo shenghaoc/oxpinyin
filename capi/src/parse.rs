@@ -54,7 +54,7 @@ unsafe fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> 
 ///                                       const char * pinyins);
 /// ```
 ///
-/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Parse with the current scheme and replace the instance's parsed length and key matrix.
 /// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
 /// null instance or when no bytes were consumed.
 ///
@@ -80,7 +80,7 @@ pub unsafe extern "C" fn pinyin_parse_more_full_pinyins(
 ///                                         const char * pinyins);
 /// ```
 ///
-/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Parse with the current scheme and replace the instance's parsed length and key matrix.
 /// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
 /// null instance or when no bytes were consumed.
 ///
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn pinyin_parse_more_double_pinyins(
 ///                                    const char * chewings);
 /// ```
 ///
-/// Parse with the current scheme and replace the instance’s parsed length and key matrix.
+/// Parse with the current scheme and replace the instance's parsed length and key matrix.
 /// Returns the number of input bytes consumed, which may cover only a prefix. Returns zero for a
 /// null instance or when no bytes were consumed.
 ///

@@ -62,7 +62,7 @@ fn pinyin_unloads_only_the_gbk_library() {
     unsafe { close(context, instance) };
 }
 
-/// Register row 91 on the reload path: `pinyin_load_phrase_library` of the
+/// A malformed journal aborts on the reload path: `pinyin_load_phrase_library` of the
 /// unloaded GBK library merges its saved `.dbin` (`pinyin.cpp:276`).
 #[test]
 fn reload_aborts_on_a_log_header_token() {
@@ -83,7 +83,7 @@ fn reload_aborts_on_a_log_header_token() {
     );
 }
 
-/// Register row 96 at the reload of an unloaded library.
+/// A directory read as a short chunk aborts at the reload of an unloaded library.
 // Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
@@ -100,8 +100,8 @@ fn reload_aborts_on_a_directory_library() {
     }
 }
 
-/// Register row 96 at the addon load, which maps `art.bin` through the same
-/// `MemoryChunk::mmap` (`pinyin.cpp:290`); row 76's `false` elsewhere.
+/// A directory read as a short chunk aborts at the addon load, which maps `art.bin` through the same
+/// `MemoryChunk::mmap` (`pinyin.cpp:290`); `false` elsewhere.
 // Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
@@ -142,8 +142,7 @@ fn addon_load_aborts_on_a_row_that_is_not_a_dictionary() {
 
 /// An addon library that cannot be mapped: the load writes the pin's
 /// `mmap %s failed!` line (`pinyin.cpp:286-291`, through `:493`) and answers
-/// `false`, with no GLib log. The pin then reads the empty chunk and dies
-/// (policy row 76, class (b)).
+/// `false`, with no GLib log. The pin then reads the empty chunk and dies.
 #[test]
 fn addon_load_of_an_empty_library_writes_the_mmap_line() {
     let run = crate::support::run_in_child(

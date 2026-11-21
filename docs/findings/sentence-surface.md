@@ -1,4 +1,4 @@
-# Sentence surface (W14)
+# Sentence surface
 
 Status: **reference**, machine-read. This file records how the pin builds
 sentence rows, what oxpinyin must reproduce, and the residual.
@@ -13,8 +13,7 @@ sentence rows, what oxpinyin must reproduce, and the residual.
 The pin source citations in §1–§2 are against the libpinyin 2.11.91
 `0c5e80e` tree (`$S` below); some line numbers differ at the current pin,
 `074a2219`. With no n-best row, `pinyin_get_sentence` answers `false` and
-leaves `*sentence` untouched, as the pin does (`pinyin.cpp:1470-1471`;
-register row 53 in `compatibility-policy.md`).
+leaves `*sentence` untouched, as the pin does (`pinyin.cpp:1470-1471`).
 
 ## 1. Where the rows come from
 
@@ -47,8 +46,8 @@ AND_FREQUENCY` = 0x1e (`pinyin.h:66-69`) does **not** carry
 `SORT_WITHOUT_SENTENCE_CANDIDATE`. Rows therefore appear exactly when
 `m_nbest_results` is non-empty, that is, when `pinyin_guess_sentence` ran
 after the last reset. Only `pinyin_reset` clears it (`pinyin.cpp:2698`).
-The W4 corpus profile never calls `pinyin_guess_sentence`
-(`observe_without_reset` → `collect_candidates`), so the W4 candidate
+The oracle corpus profile never calls `pinyin_guess_sentence`
+(`observe_without_reset` → `collect_candidates`), so the oracle candidate
 fixture and the pin suite exclude sentence rows:
 **a pin move when rows are correctly gated behind `guess_sentence` is a
 leak**.
@@ -191,7 +190,7 @@ Current scoring and selection:
 ## 5. The sentence-surface fixture
 
 `fixtures/w4/oracle-sentence-surface.txt` holds the pin's surface for a
-deterministic W2 sample: every 20th corpus input plus anchors such as
+deterministic corpus sample: every 20th corpus input plus anchors such as
 `nihao`, `nihaoshijie`, `cecenihao` and `zhongguoren`. It has 507 rows and
 500 comparable inputs. The 7 junk-leading inputs that the pin does not
 parse are excluded; neither side has a sentence surface for them. The
@@ -202,7 +201,7 @@ comparable input:
 
 - NBEST rows are at the head in tail order, `n/0` first.
 - No sentence candidate appears before `guess_sentence`. This gating
-  keeps the W4 corpus pins unchanged.
+  keeps the oracle corpus pins unchanged.
 - The `guess_sentence` return value agrees.
 
 §12 defines the three agreement counts and holds the current numbers. The
@@ -460,7 +459,7 @@ occurrences); 156 differ from the pin. Each of them passes only against its
 complete exact subject surface in `oracle-sentence-tie-order.txt`, with
 POLICY-ACCEPTED under the registered S1/S2/S3 repairs. This does not create
 another precondition-violation site. The source is the same beam, node and
-tail path of the S1/S2/S3 amendment: adjusted S and earlier batch ties in
+tail path of the S1/S2/S3 rule: adjusted S and earlier batch ties in
 S1/S2, followed by S3's stable descending raw score. The pin uses its
 pairwise length predicate and truncated tail comparison. These selection
 residuals are not attributed to libm or called MATCH.
@@ -660,7 +659,7 @@ residual is declared. The gate checks guessed status, the entire indexed
 list and all six candidate rows before checking aggregate counts, so a fixed
 residual and a new regression cannot cancel.
 
-#### Source disposition of the two previously unbound cases
+#### Source disposition of the two cases
 
 Pin source: the `074a2219c90feaf962d0d24f034514033ece5f99` Git blobs.
 Model inputs are the pinned model20 text tables and the provisioned tkrzw
@@ -806,7 +805,7 @@ selecting position 8 (㴰) and position 3 (鎒). S3 cannot change the
 selected set.
 
 **Ruling.** The S2 text of the
-[witnessed algorithm-precondition amendment](compatibility-policy.md#algorithm-precondition-violations)
+[algorithm-precondition rule](compatibility-policy.md#algorithm-precondition-violations)
 says: "Selection uses the total key `(ordered S, batch_position)`, with
 earlier batch position first on equal S." The
 [source policy](../source-policy.md#internal-language-artefacts) says:

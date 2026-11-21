@@ -232,7 +232,7 @@ fn log_tokens(path: &std::path::Path) -> Vec<u32> {
     tokens
 }
 
-/// The two-library witness of the unloaded-token ruling (policy row 118),
+/// The two-library witness of unloaded-token training,
 /// through the C entries. Library 1 holds 甲 and library 2 holds 乙, both
 /// `ba1`. One instance chooses 乙 and guesses; library 2 is unloaded
 /// (`pinyin.cpp:464-475`, `phrase_index.cpp:261-268`); a second instance of

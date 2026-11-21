@@ -191,7 +191,7 @@ fn fill(library: &mut UserLibrary, unigrams: &[u32]) {
     }
 }
 
-/// A wrapped allocation lands on a live slot (register row 119):
+/// A wrapped allocation lands on a live slot:
 /// `add_phrase_item` alone moves the offset word and adds the new
 /// unigram, and the overwritten item's unigram stays in `m_total_freq`
 /// (`phrase_index.cpp:208-217`), where `replace` takes it out first.
@@ -208,7 +208,7 @@ fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
     assert_eq!(library.total(), 36, "a replace removes first");
 }
 
-/// POLICY-ACCEPTED: reading a slot cannot consume the next item's bytes.
+/// reading a slot cannot consume the next item's bytes.
 #[test]
 fn a_read_crossing_the_item_boundary_answers_no_item() {
     let mut library = UserLibrary::default();
@@ -221,7 +221,7 @@ fn a_read_crossing_the_item_boundary_answers_no_item() {
     assert_eq!(library.item(2).unwrap().unigram(), 2);
 }
 
-/// Row 112: the save copies the compacted content into a fresh chunk;
+/// The save copies the compacted content into a fresh chunk;
 /// from the limit on, the copy is unsafe.
 #[test]
 fn the_store_copy_threshold_follows_the_compacted_content() {

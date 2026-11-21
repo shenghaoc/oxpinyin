@@ -214,7 +214,7 @@ fn null_instance_key_rest_length_answers() {
 }
 
 /// The NULL handles of the constraint, export and removal entries answer
-/// `false` (or NULL) and read nothing (register row 41).
+/// `false` (or NULL) and read nothing.
 #[test]
 fn null_handles_answer_false() {
     assert!(!unsafe { pinyin_clear_constraint(ptr::null_mut(), 0) });
@@ -232,8 +232,8 @@ fn null_handles_answer_false() {
 /// `pinyin_begin_add_phrases` stores the context unread and returns the
 /// iterator (`pinyin.cpp:506-512`). `pinyin_iterator_add_phrase` returns
 /// `false` before it reads the context for a NULL phrase (`:624-625`) and
-/// where it would read it (`_add_phrase`, `:526`) the pin crashes (row 41);
-/// `pinyin_end_add_phrases` reads it at `:657` (row 41), so the handle is freed.
+/// where it would read it (`_add_phrase`, `:526`) the pin crashes;
+/// `pinyin_end_add_phrases` reads it at `:657`, so the handle is freed.
 #[test]
 fn null_context_import_handle_is_returned_and_freed() {
     let iter = unsafe { pinyin_begin_add_phrases(ptr::null_mut(), 1) };

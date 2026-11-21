@@ -126,8 +126,7 @@ impl PhraseLibraries {
     ///
     /// Returns [`LibraryError`] when the present file does not verify as a
     /// well-formed `SubPhraseIndex` chunk, or when it is a directory whose
-    /// header read `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`,
-    /// register row 96).
+    /// header read `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`).
     pub(crate) fn map_library(
         &mut self,
         nibble: u8,

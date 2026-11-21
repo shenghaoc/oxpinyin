@@ -1,4 +1,4 @@
-//! The W4 structure capture.
+//! The oracle structure capture.
 #![allow(dead_code)]
 
 use std::io;

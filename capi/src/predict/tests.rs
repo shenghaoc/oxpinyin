@@ -32,8 +32,7 @@ use crate::types::lookup_candidate_type_t;
 
 use oxpinyin::phrase_index_library_index;
 
-/// Predicted bigram rows on a zero facade total abort in the scorer
-/// (register row 61).
+/// Predicted bigram rows on a zero facade total abort in the scorer.
 #[test]
 fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
     assert_aborts(

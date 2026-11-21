@@ -812,8 +812,6 @@ oxpinyin stores the score with the same saturating conversion (`src/engine/sessi
   - Items 14 and 15 report one conversion in two facades. They can be filed together.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Filing follows a search of GitHub and Fedora Bugzilla for an existing report.
-- Credit line under the historical attribution convention is the maintainer's to
-  place; the reproductions above stand alone.
 - After filing, each entry in `upstream-divergences.md` and
   `reference/memory-safety-bugs.md` §1.4 is marked with the issue links, so
   that the ledger no longer calls them unreported.

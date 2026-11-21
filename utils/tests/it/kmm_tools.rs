@@ -1,4 +1,4 @@
-//! The seven KMM utilities on the committed W3 fixtures, for the backend
+//! The seven KMM utilities on the committed mini fixtures, for the backend
 //! this build selected. Every expected byte is source-derived from
 //! `utils/training/*_k_mixture_model.cpp` at libpinyin 074a2219 and from the
 //! fixture corpus `fixtures/w9/segmenter-spseg-w3.txt`; the native DBM walk
@@ -1046,8 +1046,7 @@ mod frozen {
         // kmm-import-unigram-only: utils/training/import_k_mixture_model.cpp at 074a2219:
         // 258-317, 72-256; src/storage/tag_utility.cpp:118-264. A 1-gram-only model with no
         // --k-mixture-model-file: the pin exits 0, prints nothing and leaves the tree as it was.
-        // Pin capture of 2026-11-07 on the bdb, kc and tkrzw cells, runs 1 and 2 identical,
-        // observations utility/<cell>/kmm-import-unigram.
+        // Pin observations utility/<cell>/kmm-import-unigram on all three cells.
         #[case::kmm_import_unigram_only(
             w3(),
             &[],

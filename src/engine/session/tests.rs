@@ -1,4 +1,4 @@
-//! The session's unit tests, moved verbatim from `session.rs` (2026-09-08).
+//! The session's unit tests.
 
 use super::ScanKey;
 use super::selection::training_readings;
@@ -508,7 +508,7 @@ fn a_failed_deferred_build_stays_stale_and_is_retried() {
 
 #[test]
 fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
-    // Row 65: the pin runs the LONGER prepend after the span loop for
+    // The pin runs the LONGER prepend after the span loop for
     // every valid offset, so an offset no span starts at — a mid-syllable
     // byte, and the reserved slot — answers it even though the span search
     // found nothing. `_prepend_longer_candidates` searches the whole
@@ -654,7 +654,7 @@ fn training_without_results_does_not_observe_selection_history() {
 /// leaves the store (`constraints->length() - 1`) past the current matrix.
 /// The pin's walk then asserts `end < matrix->size()`
 /// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the preparation
-/// answers the pin-abort fault and production terminates on it (row 82).
+/// answers the pin-abort fault and production terminates on it.
 #[test]
 fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
     let mut session = trellis_session();
@@ -1625,7 +1625,7 @@ fn amplified_frequency_ties_two_unigrams_across_two_to_the_24() {
     // 16_777_215 and 16_777_218. The facade total is model20's 51_051_831
     // plus the library 7 unigrams (207 from four smaller imports, then the
     // two above). The f32 chain truncates both to one frequency, so the
-    // pin ranks them by token order (row58 conversions, float edge).
+    // pin ranks them by token order.
     const TOTAL: u64 = 51_051_831 + 207 + 16_777_215 + 16_777_218;
     let below = super::amplified_frequency(16_777_215, TOTAL, super::PIN_LAMBDA_F32);
     let above = super::amplified_frequency(16_777_218, TOTAL, super::PIN_LAMBDA_F32);
@@ -3179,7 +3179,7 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
     );
 }
 
-/// Row 17: with `USE_DIVIDED_TABLE` clear the divided split column is
+/// With `USE_DIVIDED_TABLE` clear the divided split column is
 /// absent — the pin's `inner_split_step` checks
 /// `options & USE_DIVIDED_TABLE` (`phonetic_key_matrix.cpp:171`) and
 /// returns false without it.
@@ -3219,7 +3219,7 @@ fn divided_table_gate_controls_the_split_column() {
     );
 }
 
-/// Register row 37 (maintainer ruling 2026-09-27): a choose from a window
+/// A choose from a window
 /// looked up BEHIND the composition offset forces its own span over the
 /// overlapped forcing and the record moves back to it — the pin's
 /// `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2578-2590`,
@@ -3599,7 +3599,7 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
 
 /// The candidate frequency is Rust's `as u32` of the amplified score: in
 /// range it truncates; a negative score and NaN are 0 and a score above
-/// `u32::MAX` saturates (class (b): C leaves the conversion undefined).
+/// `u32::MAX` saturates (: C leaves the conversion undefined).
 #[test]
 fn candidate_scores_follow_rusts_saturating_conversion() {
     let score = |unigram, total, lambda| super::amplified_frequency(unigram, total, lambda);
@@ -4364,7 +4364,7 @@ pub(super) mod session_lifecycle {
     pub(in crate::engine::session) type TestSession =
         Session<FixtureDictionary, FrequencyFixtureModel>;
 
-    /// The committed W4 fixtures as one session: the one builder the moved
+    /// The committed oracle fixtures as one session: the builder that the
     /// lookup, selection, lifecycle and replay tests share.
     pub(in crate::engine::session) fn session() -> TestSession {
         let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
@@ -4376,7 +4376,6 @@ pub(super) mod session_lifecycle {
 
     #[test]
     fn reset_clears_the_composition_but_not_the_configuration() {
-        // Chewing's regression: Reset used to wipe dictionaries and settings.
         // After a reset, the same input must convert exactly as the first
         // time, under the configuration set before the reset.
         let mut session = session();
@@ -4529,9 +4528,8 @@ mod decoding {
     ///
     /// Incomplete `b` expands to complete keys (`bu`, `bing`, …). `不` rides on
     /// `bu` (cheaper unigram) and `并` on `bing`. Fixture justification: the full
-    /// W4 capture (`fixtures/w4/oracle-candidate-structure.txt` before the #1764
-    /// reduction) had `b#ing\t1\t不` and `bing\t1\t并`; neither input is in the
-    /// retained subset.
+    /// oracle capture had `b#ing\t1\t不` and `bing\t1\t并`; neither input is in
+    /// `fixtures/w4/oracle-candidate-structure.txt`.
     const JUNK_VOCAB: &str = "\
 token=1\tkeys=bu\ttext=不\tunigram=1000
 token=2\tkeys=bing\ttext=并\tunigram=100

@@ -1,5 +1,5 @@
 //! Reads bigram successors on demand from the hash database. Each lookup uses the
-//! previous token’s four little-endian bytes as the key. Its value contains the stored
+//! previous token's four little-endian bytes as the key. Its value contains the stored
 //! total and successor-token/count pairs.
 
 // Bigram::load, ngram_tkrzwdb.cpp:86–122. See docs/findings/data-formats.md §6; Kyoto

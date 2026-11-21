@@ -88,7 +88,7 @@ impl Gram {
 /// unopened (`m_db` NULL) or has no such key.
 ///
 /// A stored value that is not a whole `SingleGram` would make the pin's
-/// `get_total_freq`/`get_freq` read past the value (class (b)); oxpinyin
+/// `get_total_freq`/`get_freq` read past the value; oxpinyin
 /// refuses it by the abort it already uses for a corrupt chunk.
 pub(crate) fn load_gram(bigram: Option<&Hash>, token: u32) -> Option<Gram> {
     let value = bigram?.get(&encode_token_key(token))?;
@@ -138,8 +138,7 @@ pub(crate) fn all_tokens(bigram: Option<&Hash>) -> Vec<u32> {
 ///
 /// The pin's comparison is `strcmp(taglib_token_to_string(...), phrase)`;
 /// where the helper answers NULL (an unknown token, after its own
-/// `error: unknown token:%d.` line) the `strcmp` reads the NULL pointer
-/// (class (b)). oxpinyin writes the same line and exits 1 instead, the
+/// `error: unknown token:%d.` line) the `strcmp` reads the NULL pointer. oxpinyin writes the same line and exits 1 instead, the
 /// established refusal for that class.
 pub(crate) fn parse_segmented_line(
     line: &CStr,

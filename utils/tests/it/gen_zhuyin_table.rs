@@ -1,5 +1,5 @@
 //! Frozen pin observations of `gen_zhuyin_table`; pin citations are in each case.
-//! The cases outside `frozen` hold registered class (b) results, which run
+//! The cases outside `frozen` hold defined results, which run
 //! only on oxpinyin.
 
 use std::path::Path;
@@ -13,8 +13,7 @@ fn run(dir: &Path, args: &[&str]) -> Output {
         .expect("run gen_zhuyin_table")
 }
 
-/// Register entry "gen_zhuyin_table truncated final lead byte (policy row
-/// 125, class (b))": at 074a2219 `g_utf8_strlen` steps past the end of the
+/// Register entry "gen_zhuyin_table truncated final lead byte ": at 074a2219 `g_utf8_strlen` steps past the end of the
 /// `g_strsplit_set` field (`gen_zhuyin_table.cpp:150,168`), so the pin's
 /// result is undefined and nothing runs on it. oxpinyin's prescribed
 /// result: the count stops on zero padding and the row takes the invalid
@@ -33,8 +32,7 @@ fn a_phrase_ending_in_a_truncated_lead_byte_is_refused() {
     assert_eq!(std::fs::read(dir.path().join("out.table")).unwrap(), b"");
 }
 
-/// Register entry "Generator phrase index of 256 or more, or negative (policy
-/// row 127, class (b))": the zhuyin generator shifts its `gint` `-t` value
+/// Register entry "Generator phrase index of 256 or more, or negative ": the zhuyin generator shifts its `gint` `-t` value
 /// the same way (`utils/storage/gen_zhuyin_table.cpp:42,47` at 074a2219).
 /// For 256 or more, or a negative value, the shift is undefined, so nothing
 /// runs on the pin. oxpinyin's prescribed result: the library nibble is the

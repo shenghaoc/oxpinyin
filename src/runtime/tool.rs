@@ -18,7 +18,7 @@ pub struct Lookup {
 }
 impl Lookup {
     // Native index or model construction failures terminate at the utility boundary. The
-    // pin’s NULL user-bigram attach fails before native I/O.
+    // pin's NULL user-bigram attach fails before native I/O.
     /// Opens the selected phonetic or phrase index and loads the system libraries named in
     /// the configuration. Set `bigram` to attach the system model for decoding.
     ///

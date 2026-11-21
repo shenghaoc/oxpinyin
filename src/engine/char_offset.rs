@@ -10,8 +10,7 @@
 //!    `fill_matrix` leaves it cleared) answers `false`.
 //! 2. `assert(offset < matrix.size())` and `_check_offset(matrix, offset)`
 //!    — abort shapes, answered as [`EngineError::LookupOffsetOutOfRange`]
-//!    and [`EngineError::ZeroKeyOffsetCheck`], which the C adapters abort on
-//!    (register row 19).
+//!    and [`EngineError::ZeroKeyOffsetCheck`], which the C adapters abort on.
 //! 3. A NULL or empty phrase answers `false` (`g_utf8_to_ucs4` also
 //!    answers NULL — length 0 — on invalid UTF-8).
 //! 4. `_pre_compute_tokens`: every character of the phrase is searched in
@@ -28,7 +27,7 @@
 //! Both walks assert on a reached empty column (`assert(size > 0)`).
 //! Pinyin also asserts when a zero key shares a column with real keys
 //! (`assert(1 == size)`). The C adapters abort on the corresponding
-//! [`EngineError::PinAssert`] (register row 19). A missing
+//! [`EngineError::PinAssert`]. A missing
 //! cached token fails the pronunciation test.
 //!
 //! [`remember_walk`] is `_remember_phrase_recur` (`pinyin.cpp:3578-3666`)

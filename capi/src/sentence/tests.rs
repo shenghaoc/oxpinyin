@@ -24,7 +24,7 @@ use crate::types::PinyinInstance;
 use oxpinyin::{OptionBits, PhraseText};
 
 /// With the facade total wrapped to zero, the candidate guess aborts in
-/// the scorer (register row 61).
+/// the scorer.
 #[test]
 fn guess_candidates_aborts_on_a_zero_facade_total() {
     assert_aborts(
@@ -357,7 +357,7 @@ fn a_short_system_gram_aborts_the_ranged_step() {
 
 /// A system value with a partial item tail and no whole item: the phrase
 /// segmenter's `get_freq` walk never meets `end` and reads past the value
-/// (`ngram.cpp:234-248`; register row 98, class (b)). The segment logs the
+/// (`ngram.cpp:234-248`). The segment logs the
 /// one warning and returns false.
 #[test]
 fn a_partial_system_gram_tail_refuses_the_segment_with_one_warning() {

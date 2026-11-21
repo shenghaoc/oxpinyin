@@ -43,17 +43,15 @@ pub enum EngineError {
     /// A cursor normalization or word move examined an offset one past a
     /// lone zero-key matrix column — the shape the pin's `_check_offset`
     /// aborts on (`assert(zero_key != key)`, `pinyin.cpp:2175` at the pin)
-    /// and post-`95e3af7` libpinyin answers with a `false` every caller
-    /// discards (the function then completes with the computed value).
     /// The engine answers with an error; the left and right moves abort on
-    /// it in the C adapters (register row 14).
+    /// it in the C adapters.
     #[error("an offset sits one past a lone zero-key column")]
     ZeroKeyOffsetCheck,
     /// The character-offset walk reached a matrix column the pin asserts
     /// on: an empty column at a stepped-to position (`assert(size > 0)`,
     /// `pinyin.cpp:3152` at the pin) or a zero key sharing a column with
     /// real keys (`assert(1 == size)`, `pinyin.cpp:3166`). Answered as an
-    /// error, on which the C adapters abort (register row 19). The same
+    /// error, on which the C adapters abort. The same
     /// answer carries `reduce_tokens`' assert on more than four tokens
     /// (`phrase_large_table3.h:95`, `:106`) in character-offset and prefix lookup.
     #[error("a matrix column or phrase-token count failed the pin's check")]
@@ -62,23 +60,22 @@ pub enum EngineError {
     /// value has a partial item tail. The pin's `insert_freq`
     /// (`ngram.cpp:178`, loop `:190`), `get_freq` (`:231`, loop `:241`) and `set_freq`
     /// (`:252`, loop `:261`) walk
-    /// with `cur_item != end` and read past it (register row 100); the
+    /// with `cur_item != end` and read past it; the
     /// engine answers an error, before observing anything.
     #[error("a predecessor has a partial user-bigram item")]
     UnsafeTrainingPredecessor,
     /// A training step would load a predecessor whose stored user-bigram
     /// value is shorter than its `guint32` total: the pin's
     /// `get_total_freq` asserts on it (`phonetic_lookup.h:884` through
-    /// `ngram.cpp:49`, `memory_chunk.h:390`; register row 85). The engine
+    /// `ngram.cpp:49`, `memory_chunk.h:390`). The engine
     /// answers an error, before observing anything. The same answer carries
     /// the pin's `set_freq` and user-bigram `store` checks
-    /// (`phonetic_lookup.h:903-904`, register row 113).
+    /// (`phonetic_lookup.h:903-904`).
     #[error("a training store check failed at a pin assertion")]
     TrainingAbort,
     /// A lookup would read past a predecessor's bigram value: a partial
     /// item the merge consumes (`ngram.cpp:318-349`), or a `get_freq` or
-    /// `search` walk (`:241-248`, `:167-173`) that leaves the value
-    /// (register row 98). The engine answers an error instead.
+    /// `search` walk (`:241-248`, `:167-173`) that leaves the value. The engine answers an error instead.
     #[error("reading a predecessor's bigram leaves its value")]
     UnsafeLookupPredecessor,
     /// A checked backend read found a record, then failed to read its
@@ -126,7 +123,7 @@ impl EngineError {
     /// `merge_single_gram` (`ngram.cpp:303-304`), `SingleGram::search`
     /// (`:165`), `get_total_freq` (`:49`) or the `DYNAMIC_ADJUST` term
     /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
-    /// `memory_chunk.h:390` (register row 85).
+    /// `memory_chunk.h:390`.
     #[must_use]
     pub fn lookup_gram(fault: crate::GramFault) -> Self {
         match fault {

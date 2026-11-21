@@ -119,7 +119,7 @@ fn check_stdout(output: Output, stdout: Vec<u8>, files: &str, before: &Snapshot,
 }
 
 /// Preserve the captured product rows and file effects when moving a driver
-/// into the REPL. Clock lines belonged solely to the retired benchmark loop.
+/// into the REPL. Clock lines are not product output.
 pub fn check_repl(output: Output, files: &str, before: &Snapshot, expected: &Run) {
     let stdout = expected.stdout.expected(&output.stdout);
     let mut lines = stdout.split_inclusive(|byte| *byte == b'\n').peekable();

@@ -62,8 +62,7 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
         expected
     );
 }
-/// The first row retains the class (b) refusal. POLICY-ACCEPTED for a
-/// later row: its phrase length comes from its own field (policy row 126).
+/// The first row is refused. For a later row, its phrase length comes from its own field.
 #[rstest::rstest]
 #[case::first(b"", 1)]
 #[case::after_longer_phrase("你好 nihao 5\n".as_bytes(), 2)]
@@ -81,8 +80,7 @@ fn a_truncated_phrase_is_refused(#[case] prefix: &[u8], #[case] nodes: usize) {
     assert_eq!(std::fs::read(dir.path().join("out.table")).unwrap(), b"");
 }
 
-/// Register entry "Generator phrase index of 256 or more, or negative (policy
-/// row 127, class (b))": `PHRASE_INDEX_MAKE_TOKEN` shifts the `gint` `-t`
+/// Register entry "Generator phrase index of 256 or more, or negative ": `PHRASE_INDEX_MAKE_TOKEN` shifts the `gint` `-t`
 /// value left by 24 (`src/include/novel_types.h:45-46`,
 /// `utils/storage/gen_pinyin_table.cpp:36,41` at 074a2219). For 256 or more,
 /// or a negative value, the shift is undefined, so nothing runs on the pin.

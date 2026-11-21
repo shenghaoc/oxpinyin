@@ -61,7 +61,7 @@ impl Drop for RestoreNumericLocale {
 ///   installed locale;
 /// - a modified save writes `user.conf`.
 ///
-/// Pin capture of 2026-11-07, runs 1 and 2 identical, observation `locale/sites`.
+/// Pin observations `locale/sites`.
 #[test]
 fn lc_numeric_follows_the_pins_table_info_sites() {
     let _restore = RestoreNumericLocale(numeric_locale());

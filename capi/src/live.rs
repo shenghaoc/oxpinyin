@@ -6,7 +6,7 @@
 //! a use after free that happens to survive. A Rust handle cannot read freed
 //! memory, and the address says nothing about whether it is still live, so
 //! the entry points that a finalised context can reach consult this set
-//! instead (register row 60, class (b)).
+//! instead.
 
 use oxpinyin::facade::LiveContexts;
 

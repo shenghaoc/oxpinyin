@@ -88,7 +88,7 @@ impl Converter<'_> {
 
     /// `taglib_validate_token_with_string`
     /// (`src/storage/tag_utility.cpp:407-417`); a missing string is the
-    /// pin's `strcmp(NULL, ...)` (class (b)) and compares unequal here.
+    /// pin's `strcmp(NULL, ...)` and compares unequal here.
     fn validate(&self, token: u32, word: &CStr) -> bool {
         self.token_to_string(token)
             .is_some_and(|text| text.as_bytes() == word.to_bytes())

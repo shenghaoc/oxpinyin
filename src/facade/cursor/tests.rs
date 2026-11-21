@@ -183,7 +183,7 @@ mod native {
         (context, instance)
     }
 
-    /// Register rows 19/66: every matrix alternative participates in the
+    /// Every matrix alternative participates in the
     /// character walk (pinyin.cpp:3138-3191, zhuyin.cpp:2117).
     #[rstest::rstest]
     #[case::double(UserConfLaw::Pinyin, 7, "long", "ns", 2, 1, true)]

@@ -147,7 +147,7 @@ pub unsafe extern "C" fn pinyin_get_candidate_string(
 /// # Aborts
 ///
 /// The process aborts if `candidate` points to a row of any other type,
-/// even if `index` is null (`pinyin.cpp:2883`, register row 64).
+/// even if `index` is null (`pinyin.cpp:2883`).
 ///
 /// # Safety
 ///
@@ -215,7 +215,7 @@ pub unsafe extern "C" fn pinyin_is_user_candidate(
 ///                                   lookup_candidate_t * candidate);
 /// ```
 ///
-/// Remove the row’s item, pronunciations and associated frequency data from the receiving
+/// Remove the row's item, pronunciations and associated frequency data from the receiving
 /// context. The change requires a separately armed save. A null instance or candidate returns
 /// false. A true result from `pinyin_is_user_candidate` can also describe a longer row.
 ///
@@ -373,7 +373,7 @@ pub(crate) fn snapshot_candidates(
         // A lookup strictly inside a key: the pin's column there is empty,
         // so the span loop finds no phrase row, but its two prepends still
         // run (`pinyin.cpp:2292-2296`) — the list is the sentence rows with
-        // the LONGER row beneath them (row 65). Keep exactly those kinds.
+        // the LONGER row beneath them. Keep exactly those kinds.
         if frame.sentence_rows_only
             && cand.kind() != oxpinyin::engine::CandidateKind::Sentence
             && !is_longer
@@ -710,7 +710,7 @@ pub unsafe extern "C" fn pinyin_clear_constraint(
 ///   phrase_length - 1`, which wraps to `SIZE_MAX`, and reads past the key
 ///   buffer on every backend (`phrase_large_table3_tkrzwdb.cpp:215-218`,
 ///   `phrase_large_table3_kyotodb.cpp:280-283`,
-///   `phrase_large_table3_bdb.cpp:298-305`). Class (b).
+///   `phrase_large_table3_bdb.cpp:298-305`).
 ///
 /// # Safety
 ///
@@ -759,8 +759,8 @@ unsafe fn try_promote_addon(
 ///                                        lookup_candidate_t * candidate);
 /// ```
 ///
-/// A punctuation row succeeds without training. A prefix row updates the receiving context’s
-/// unigram. A bigram row also updates the transition from the receiving instance’s prefix
+/// A punctuation row succeeds without training. A prefix row updates the receiving context's
+/// unigram. A bigram row also updates the transition from the receiving instance's prefix
 /// predecessor. The unigram increment is 483 and the transition increment is 69. A missing
 /// prefix item can still yield true, and a loaded sub-index can receive the aggregate increment.
 /// Null arguments, unigram overflow or a store failure can return false. These changes require a
@@ -914,7 +914,7 @@ pub unsafe extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) 
 }
 
 /// `pinyin_train`'s answer for its training result: the process aborts where the
-/// pin dies, and a class (b) refusal is `false` with one warning. The pin's own
+/// pin dies, and a refused over-read is `false` with one warning. The pin's own
 /// training aborts — the supplied n-best index included (074a2219
 /// `pinyin.cpp:2684`) — terminate in the engine before this runs.
 fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
@@ -933,8 +933,8 @@ fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
 }
 
 /// Whether [`pinyin_train`] of row `index` terminates: one of the pin's
-/// own training asserts (register rows 6, 38 and 82), or a store fault
-/// the facade classifies as the pin's training abort (rows 85 and 113).
+/// own training asserts, or a store fault
+/// the facade classifies as the pin's training abort.
 /// The facade's [`oxpinyin::facade::InstanceView::train_aborts`], the one
 /// ordered, read-only preparation `pinyin_train` runs, simulated store
 /// check included. Reads only. For the in-tree fuzz harness, which skips

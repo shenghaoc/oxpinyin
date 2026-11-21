@@ -8,7 +8,7 @@ use crate::user::UserStore;
 
 // _compute_prefixes, pinyin.cpp:1389–1422. reduce_tokens checks each suffix separately,
 // phrase_large_table3.h:95.
-/// Resolves suffixes of the prefix’s outward UCS-4 words to enabled phrase tokens.
+/// Resolves suffixes of the prefix's outward UCS-4 words to enabled phrase tokens.
 /// Suffixes are visited shortest first up to [`crate::MAX_PHRASE_LENGTH`]. A failed
 /// system read contributes no system tokens for that suffix. The user table is still
 /// consulted.

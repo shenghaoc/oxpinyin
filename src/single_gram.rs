@@ -1,4 +1,4 @@
-//! Raw bigram operations on a predecessor’s row. A row is a four-byte little-endian
+//! Raw bigram operations on a predecessor's row. A row is a four-byte little-endian
 //! total, then eight-byte records. Each record is a four-byte little-endian token
 //! followed by a four-byte little-endian frequency. Searches that start at
 //! [`lower_bound`] need whole records sorted by token. Updates keep the stored order.
@@ -123,11 +123,11 @@ pub fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GramFault {
     /// `get_total_freq` on a value shorter than its total: the pin asserts
-    /// (`memory_chunk.h:390`; register row 85); the C adapters abort.
+    /// (`memory_chunk.h:390`); the C adapters abort.
     Short,
     /// A walk that leaves the value: a partial item after the last whole
     /// one, or a value shorter than its total, where `cur_item != end`
-    /// never meets `end` (register row 98, class (b)).
+    /// never meets `end`.
     OverRead,
 }
 
@@ -203,7 +203,7 @@ pub fn checked_search(
 }
 
 // SingleGram::set_freq, ngram.cpp:252–271.
-/// Replaces the first matching token’s frequency and leaves the row total unchanged.
+/// Replaces the first matching token's frequency and leaves the row total unchanged.
 /// Returns `false` when the sorted row has no such token.
 pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
     let Some(offset) = find(gram, token)
@@ -343,11 +343,9 @@ pub fn new_gram() -> Vec<u8> {
     vec![0; TOTAL_LEN]
 }
 
-/// What the pin's merge of two present grams meets before its loop: both
-/// totals are read first (`ngram.cpp:303-304`), asserting on a value
-/// shorter than one ([`GramFault::Short`], register row 85); every item of
-/// both values is then consumed, so a partial tail on either is read past
-/// ([`GramFault::OverRead`], row 98).
+/// Checks the reads of a two-sided merge. The pin reads both totals
+/// before walking the records (`ngram.cpp:303-349`). A short total gives
+/// [`GramFault::Short`]. A partial record gives [`GramFault::OverRead`].
 pub(crate) fn merge_fault(system: &[u8], user: &[u8]) -> Option<GramFault> {
     let short = |gram: &[u8]| get_total_freq(gram).is_none();
     if short(system) || short(user) {

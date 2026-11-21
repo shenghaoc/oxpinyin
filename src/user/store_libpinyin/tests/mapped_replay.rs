@@ -167,7 +167,7 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     );
 }
 
-/// POLICY-ACCEPTED (row 107). A truncated record cannot be used as a
+/// A truncated record cannot be used as a
 /// MODIFY comparison or change its neighbour's saved value.
 #[test]
 fn a_truncated_system_record_cannot_modify_the_next_record() {

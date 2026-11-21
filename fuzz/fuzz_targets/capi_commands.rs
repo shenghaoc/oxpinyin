@@ -110,7 +110,7 @@
 //!
 //! # Independent inputs
 //!
-//! Each input opens its own context over the committed W3 tables and a new
+//! Each input opens its own context over the committed mini tables and a new
 //! user directory, and its own instance; it closes them when it ends. So
 //! imported phrases, trained counts, the double pinyin scheme and the
 //! instance state of one input do not reach the next, and an input
@@ -221,7 +221,7 @@ fn copy_dir(from: &Path, to: &Path) {
 /// tests/it/support.rs): fixtures/w3 carries one complete DBM set per
 /// backend under its `DEFAULT_STORE_EXT` subdirectory, and the runtime
 /// opens only that backend's files. Passing the fixtures/w3 root asks for
-/// DBMs that live one level down, so init answers NULL (2026-09-04 soak).
+/// DBMs that live one level down, so init answers NULL.
 fn fixture() -> &'static Fixture {
     static FIXTURE: OnceLock<Fixture> = OnceLock::new();
     FIXTURE.get_or_init(|| {
@@ -268,7 +268,7 @@ impl Session {
             copy_dir(fixture.template.path(), user_dir.path());
         }
         let user = c_path(user_dir.path());
-        // SAFETY: both paths are live C strings; the committed W3 tables
+        // SAFETY: both paths are live C strings; the committed mini tables
         // and the new user directory outlive the context.
         let context = unsafe { pinyin_init(fixture.system_dir.as_ptr(), user.as_ptr()) };
         assert!(

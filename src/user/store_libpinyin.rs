@@ -1,5 +1,5 @@
 //! The libpinyin-file user store — [`crate::user::UserStore`] over the pin's own
-//! user-dir file set (drop-in task 9's wiring half).
+//! user-dir file set.
 //!
 //! `UserStore::open_session` opens a user *directory* (not a store
 //! file): [`crate::user::persistence`] reads the profile into the session's
@@ -12,15 +12,11 @@
 //! therefore the pin's own: in memory between saves, as the pin's
 //! context holds its loaded profile (`pinyin.cpp:326-444` at 074a2219),
 //! whole-file `.tmp`+rename at `pinyin_save`, and a crash loses the
-//! sub-timer window exactly as upstream's does (the W6-T5 "reproduce the
-//! call pattern, not the loss window" deviation is reverted by design).
+//! time since the last save, as the pin's does.
 //!
 //! The session touches nothing outside the user dir: no temp directory,
 //! no `TMPDIR` read, nothing left behind by a process that dies before
-//! `pinyin_fini` (#546), and nothing a `fork`ed child can corrupt under
-//! its parent through a shared file description (#531 — a file-backed
-//! session was truncated by the child's save, and the parent's Kyoto
-//! Cabinet handle then failed or spun on its stale view of the file).
+//! `pinyin_fini`, and no file description shared with a `fork`ed child.
 //! The pin reads no temp variable and opens no temp file anywhere under
 //! `src` at 074a2219.
 //!

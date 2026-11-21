@@ -323,7 +323,7 @@ pub fn log_warning(message: &str) {
 /// final concatenation (`pinyin.cpp:3431`, `:3509`, `:3569`). The pin's
 /// `middle` is never NULL there: every walk that would leave it NULL dies
 /// first at `assert(matrix.get_column_size(offset) >= 1)` (`:3410`,
-/// `:3467`, `:3545`), which the renderers reproduce (register row 63).
+/// `:3467`, `:3545`), which the renderers reproduce.
 pub fn strconcat_aux(prefix: &str, middle: &str, postfix: &str) -> *mut c_char {
     let (prefix, middle, postfix) = (
         c_arg(prefix.as_bytes()),

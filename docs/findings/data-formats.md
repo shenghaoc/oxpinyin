@@ -365,8 +365,7 @@ exist, creates a DBM iterator, `Jump`s to the prefix's UCS-4 key, steps
 past it with `Next`, and then decodes each entry while its key continues
 the prefix. The walk order is the DBM's key order. oxpinyin walks the same
 DBM with the same cursor (`PhraseTable::search_suggestion`, a ranged walk
-of the store), so the predicted order is the pin's on the pin's data
-([`compatibility-policy.md`](compatibility-policy.md), row 12).
+of the store), so the predicted order is the pin's on the pin's data.
 
 ### 5.2 oxpinyin
 

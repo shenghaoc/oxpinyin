@@ -701,7 +701,7 @@ mod native_full_data {
         }
     }
 
-    /// D9: pinyin.cpp:2515-2520 applies a selected tail rank against result zero.
+    /// pinyin.cpp:2515-2520 applies a selected tail rank against result zero.
     #[test]
     fn choosing_a_nonzero_nbest_row_trains_the_selected_result() {
         let user = TempUserDir::new("nonzero-nbest");
@@ -757,8 +757,7 @@ mod native_full_data {
     /// Constraint revalidation: 整个 forced over its abbreviation `zhg`, one initial-only key per
     /// syllable. Observations `constraint-revalidation/pinyin/zhg-整个` (`PhoneticLookup<2, 3>`,
     /// under 0x18a) and `constraint-revalidation/zhuyin/zhg-整个` (`PhoneticLookup<1, 1>`,
-    /// `zhuyin.cpp:348`, parsed as full pinyin under `PINYIN_INCOMPLETE` alone) of the pin capture
-    /// of 2026-11-16 (runs 1 and 2 identical), at 074a2219. The chewing parsers refuse an
+    /// `zhuyin.cpp:348`, parsed as full pinyin under `PINYIN_INCOMPLETE` alone) at 074a2219. The chewing parsers refuse an
     /// initial-only key (`zhuyin_parser2.cpp:256-257`), and the default `FORCE_TONE` refuses an
     /// untoned full pinyin (`pinyin_parser2.cpp:185-189`).
     ///

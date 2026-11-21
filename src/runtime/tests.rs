@@ -947,7 +947,7 @@ mod backend_files {
 
     /// `SystemTableInfo2::load` is the pin's first step, and a `table.conf` it
     /// cannot open fails the init however complete the rest of the directory
-    /// is (maintainer ruling 2026-10-28 UTC, D3).
+    /// is.
     #[test]
     fn open_refuses_a_directory_without_table_conf() {
         let tmp = scratch_dir("oxpinyin-runtime-no-conf-");
@@ -1108,7 +1108,7 @@ mod backend_files {
 
     /// A regular file as the user dir cannot hold `user.conf`: the pin's
     /// `check_format` writes its `write %s failed.` line, ignores the save's
-    /// answer (`pinyin.cpp:187`; maintainer ruling 2026-10-28 UTC, D4) and the
+    /// answer (`pinyin.cpp:187`) and the
     /// context keeps its user state, which no save can write.
     #[test]
     fn regular_file_as_user_dir_keeps_user_state() {
@@ -1620,7 +1620,7 @@ mod backend_files {
         );
     }
 
-    /// Register row 79: the init loop maps the default libraries in index order
+    /// the init loop maps the default libraries in index order
     /// and writes `mmap %s failed!` for each absent one (`pinyin.cpp:253-256`)
     /// before it reaches a `DICTIONARY` row and asserts (`:388`), so the open
     /// reports the libraries before that row, and only those.
@@ -2111,9 +2111,9 @@ mod sentence_surface_parity {
         PortSession::open(&contract_data::contract_data_dir()).expect("the package opens")
     }
 
-    /// The §12 measured residual, over the 500 comparable inputs of the frozen
-    /// W2 sample. Re-measure and obtain approval before updating these numbers
-    /// and §12 together; do not silently change the expected surface.
+    /// The §12 measured residual over the 500 comparable inputs of the frozen
+    /// sentence fixture. Re-measure and obtain approval before updating these
+    /// numbers and §12 together.
     #[test]
     fn sentence_surface_matches_the_declared_residual() {
         let mut session = open_session();
@@ -2425,8 +2425,7 @@ fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
 /// Every `search_bigram2` call loads the predecessor's system gram through
 /// the attached handle, `sentence_start` included, and follows that read's
 /// result (`phonetic_lookup.h:588-599`, `ngram_tkrzwdb.cpp:111-114` and its
-/// BDB and KC peers at 074a2219; the sentence-start ruling of the
-/// compatibility policy). Library 1 holds 甲 (ba1) at 1, 乙 (da1) at 1000
+/// BDB and KC peers at 074a2219). Library 1 holds 甲 (ba1) at 1, 乙 (da1) at 1000
 /// and 丙丁 (ba1 da1) at 1; the `sentence_start` gram gives 甲 and 丙丁 half
 /// each. The step at 0 loads the gram for the span of 甲 and again for the
 /// span of 丙丁. With both reads good, 丙丁 takes its bigram and is the
@@ -2482,7 +2481,7 @@ fn a_later_span_reads_the_sentence_start_gram_again() {
 fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] infinite: bool) {
     use native_fixture::{TempUserDir, craft_hash, gram_bytes, private_system};
 
-    // These are the committed w3 tokens for 你 and 好.
+    // The mini fixture's tokens for 你 and 好.
     const NI: u32 = 0x0100_1225;
     const HAO: u32 = 16_779_429;
     let scratch = tempfile::tempdir().expect("scratch");
@@ -2800,13 +2799,8 @@ fn an_unload_hides_its_rows_without_a_reparse() {
     assert!(gbk_tokens(&runtime, &mut state).is_empty());
     assert!(!normal_texts(&runtime, &mut state).is_empty());
 }
-/// The CR-flagged regression on PR #234: `RuntimeDict::phrase_prefix_exists`
-/// used to short-circuit on the plain system probe, ignoring the
-/// library-visibility mask. That leaked GBK-only continuations into
-/// the n-best widen probe after `pinyin_unload_phrase_library(2)`,
-/// and — as a side effect of the shared unload plumbing — kept GBK
-/// candidate rows on the surface after a fresh scan too. This test
-/// pins the surface: the candidate list rescanned after an unload must
+/// `RuntimeDict::phrase_prefix_exists` respects the library-visibility mask:
+/// the candidate list rescanned after an unload must
 /// carry no GBK-nibble tokens, and the reload must restore them. The
 /// widen-probe path also has to survive the mask armed without
 /// regressing the mixed rows the fixture happens to have.
@@ -2835,7 +2829,7 @@ fn unloading_gbk_hides_its_tokens_from_the_candidate_surface() {
     runtime.session(&mut state).replace_raw("ni").unwrap();
     assert_eq!(gbk_tokens(&runtime, &mut state), before);
 }
-/// D3: a second reading merged into an item is appended and never indexed (`pinyin.cpp:578`,
+/// a second reading merged into an item is appended and never indexed (`pinyin.cpp:578`,
 /// `phrase_index.cpp:88-90`), and lowers the item's pronunciation possibility, the matched
 /// frequency over the total (`phrase_index.h:136-163`): 测侧 loses the sentence to 侧测 once its
 /// `xi'xi` reading carries 9,000,000 of 10,000,000. Observation `import/dilution/cece`.
@@ -2860,7 +2854,7 @@ fn an_unindexed_second_reading_dilutes_the_sentence_score() {
     import_rows(&mut runtime, 1, &[("测侧", "xi'xi", 9_000_000)]);
     assert_eq!(sentence(&runtime, &mut state), "侧测");
 }
-/// D15: one-character user phrases under readings that differ only in the stored key, listed
+/// one-character user phrases under readings that differ only in the stored key, listed
 /// for the incomplete key `n` (0x18a): their order is the user pinyin index's key order, the
 /// ranges `convert` compresses (`storage/chewing_large_table2.h:91-133`). On the pinned data they
 /// are rows 788-796 of 797, in this order; the system rows around them are the data's and are
@@ -3188,7 +3182,7 @@ fn item_readings(item: &[u8]) -> Vec<&[u8]> {
 #[cfg(feature = "tkrzw")]
 /// A merged-library item removed by the journal adds no candidate, and the
 /// search over its reading answers normally
-/// (docs/findings/compatibility-policy.md, row 102).
+/// (`phrase_index.cpp:180-205`).
 #[test]
 fn a_journal_removed_item_adds_no_candidate() {
     let (total, items) = system_items("merged.bin");
@@ -3292,7 +3286,7 @@ fn choose_native(
 }
 
 #[cfg(feature = "tkrzw")]
-/// D5: `pinyin.cpp:1711-1758,2200-2215` at 074a2219 selects the prior
+/// `pinyin.cpp:1711-1758,2200-2215` at 074a2219 selects the prior
 /// result token and conditionally merges its bigram for dynamic adjustment.
 #[test]
 fn dynamic_adjust_ranks_the_window_after_a_chosen_token() {
@@ -3347,7 +3341,7 @@ fn dynamic_adjust_ranks_the_window_after_a_chosen_token() {
 }
 
 #[cfg(feature = "tkrzw")]
-/// D8: the n-best training sequence (`pinyin.cpp:1372-1387`, `:2184-2308`, `:2501-2589`, `:2670-2691` at 074a2219): three
+/// the n-best training sequence (`pinyin.cpp:1372-1387`, `:2184-2308`, `:2501-2589`, `:2670-2691` at 074a2219): three
 /// rounds of 你 then 浩 at the cursor, then three of 你 then 好, by text, on the default options.
 /// `train_result3` trains each ONESTEP token and the next: a new pair seeds 69, an existing one
 /// adds `max(freq, 69) * 2` (`lookup/phonetic_lookup.h:886-903` at 074a2219), so three rounds
@@ -3355,8 +3349,8 @@ fn dynamic_adjust_ranks_the_window_after_a_chosen_token() {
 /// pairs reorder the n-best sentences (observation `nbest-train/ordinary`, runs 1 and 2
 /// identical), and survive a save and reopen.
 ///
-/// The bigram export of the trained grams is derived from source, with no capture (the 2026-11-01
-/// ruling on register row 1's `g_strjoinv` misuse, `pinyin.cpp:849`, `:862`): 你's gram holds both
+/// The bigram export follows the defined stored gram contents rather than the
+/// pin's undefined `g_strjoinv` read (`pinyin.cpp:849`, `:862`): 你's gram holds both
 /// successors in token order, `insert_freq` keeping it ascending (`storage/ngram.cpp:178-193`),
 /// 浩 (16779426) before 好 (16779429); each row's count is the stored 621 doubled (`pinyin.cpp:906`).
 #[test]
