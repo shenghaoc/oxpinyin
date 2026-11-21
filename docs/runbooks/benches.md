@@ -94,12 +94,13 @@ PERF_MODE=speed "$WORK/bisect" --perf "$SO" "$DATA"
 Both campaign arms use the unchanged shipping Cargo profile. The profiled arm
 adds `RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none"`. Cargo appends these flags after its
 `-C strip=debuginfo`, so the final strip setting of rustc keeps DWARF without a change to
-the profile/metadata hash. The `.text` of the profiled arm is expected to be byte-identical to plain
-shipping; `callgrind-control` checks this. Debuginfo alone is stripped back out.
+the profile/metadata hash. Debuginfo alone is stripped back out.
 
-`callgrind-control` verifies the DWARF compilation units in the profiled library. It
-runs the unchanged neutrality check against the separately built plain shipping
-library. The campaign checks neutrality again before collection and uses the
+`callgrind-control` verifies the DWARF compilation units in the profiled library
+and requires its `.text` bytes to match the separately built plain shipping library.
+Any `.text` difference stops the measurement. To investigate, run `objdump -d` on each
+library and compare the disassemblies by hand.
+The campaign checks neutrality again before collection and uses the
 plain shipping arm for wall-clock timing.
 
 To check preparation natively, without a pin run or profile collection:

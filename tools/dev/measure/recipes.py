@@ -450,6 +450,9 @@ def native(argv, env):
                         for arm in built.values()], cycles=args.cycles, pairs=args.pairs,
                         control_pairs=args.control_pairs, budget_seconds=args.budget,
                         staged={label: str(arm['dylib'].parents[1]) for label, arm in arms.items()},
+                        staged_kept=not (windows or linux),
+                        artifacts={label: dict(name=arm['dylib'].name, sha256=identity.sha256(arm['dylib']),
+                                              driver_sha256=digest) for label, arm in arms.items()},
                         operation_boundary=(reports.LINUX_LOOP if linux else
                                             'all typing cycles; initialization and teardown excluded'),
                         footprint_boundary=('after the measured loop, before teardown' if linux else
@@ -465,8 +468,6 @@ def native(argv, env):
         if windows:
             metadata.update(runtime_modules=modules,
                             expected_cow_commit=identity.expected_cow_commit(data),
-                            artifacts={label: dict(name=arm['dylib'].name, sha256=identity.sha256(arm['dylib']),
-                                                  driver_sha256=digest) for label, arm in arms.items()},
                             cpu_boundary='all-thread process CPU during the typing loop',
                             cpu_headline='loop_cpu_cycles (QueryProcessCycleTime delta); paired B over A, never seconds',
                             cpu_secondary='cpu_seconds (GetProcessTimes); 1/64-second resolution',
