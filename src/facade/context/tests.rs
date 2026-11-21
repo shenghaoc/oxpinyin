@@ -97,6 +97,50 @@ fn missing_system_dir_carries_the_runtime_error() {
     assert!(std::error::Error::source(&failure).is_some());
 }
 
+#[test]
+fn init_warning_keeps_dictionary_and_model_details() {
+    use crate::data::dict::DictError;
+    use crate::data::lm::LmError;
+    use crate::data::phrase_library::LibraryError;
+    use crate::data::table::TableError;
+    use crate::store::StoreError;
+
+    let cases = [
+        (
+            OpenError::Dict(DictError::Table(TableError::Store(StoreError::Backend(
+                "dictionary backend failed".into(),
+            )))),
+            "pinyin_init",
+            "pinyin_init: dictionary error: table error: store error: store error: dictionary backend failed (systemdir \"system\")",
+        ),
+        (
+            OpenError::Dict(DictError::Library(LibraryError::Unmappable {
+                path: "system/gb_char.bin".into(),
+                cause: Box::new(LibraryError::Format("chunk shorter than its header".into())),
+            })),
+            "zhuyin_init",
+            "zhuyin_init: dictionary error: phrase library error: phrase library format error: chunk shorter than its header (systemdir \"system\")",
+        ),
+        (
+            OpenError::Lm(LmError::Table(TableError::Store(StoreError::Backend(
+                "model backend failed".into(),
+            )))),
+            "pinyin_init",
+            "pinyin_init: language model error: table error: store error: store error: model backend failed (systemdir \"system\")",
+        ),
+    ];
+    for (error, name, expected) in cases {
+        let mut warnings = Vec::new();
+        OpenFailure::Runtime(error).refuse_init(
+            Path::new("system"),
+            name,
+            |_| panic!("unexpected table.conf diagnostic"),
+            |warning| warnings.push(warning.to_owned()),
+        );
+        assert_eq!(warnings, [expected]);
+    }
+}
+
 #[cfg(unix)]
 use super::RemapStep;
 use super::SaveOutcome;
