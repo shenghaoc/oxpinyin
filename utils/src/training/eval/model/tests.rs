@@ -1,6 +1,5 @@
 use super::super::counts::Counts;
 use super::EvalLanguageModel;
-use oxpinyin::data::PINNED_LAMBDA;
 
 fn model() -> EvalLanguageModel {
     let mut counts = Counts::default();
@@ -10,7 +9,7 @@ fn model() -> EvalLanguageModel {
     counts.bigrams.insert((1, 10), 2);
     counts.bigrams.insert((10, 20), 4);
     counts.bigrams.insert((10, 10), 1);
-    EvalLanguageModel::from_counts(&counts, PINNED_LAMBDA)
+    EvalLanguageModel::from_counts(&counts, 0.312_699)
 }
 
 #[test]

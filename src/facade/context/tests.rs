@@ -39,7 +39,7 @@ use crate::user::UserConfLaw;
 #[test]
 fn every_table_conf_abort_site_refuses_the_init_with_an_abort() {
     use super::InitRefusal;
-    use crate::data::table_info::{TableConfError, TableConfSite};
+    use crate::data::{TableConfError, TableConfSite};
     let refusal =
         |error| OpenFailure::Runtime(OpenError::TableConf(error)).init_refusal(Path::new("system"));
     for site in [
@@ -99,10 +99,10 @@ fn missing_system_dir_carries_the_runtime_error() {
 
 #[test]
 fn init_warning_keeps_dictionary_and_model_details() {
-    use crate::data::dict::DictError;
-    use crate::data::lm::LmError;
+    use crate::data::DictError;
+    use crate::data::LmError;
+    use crate::data::TableError;
     use crate::data::phrase_library::LibraryError;
-    use crate::data::table::TableError;
     use crate::store::StoreError;
 
     let cases = [
@@ -147,9 +147,9 @@ use super::SaveOutcome;
 #[cfg(unix)]
 use crate::ChewingKey;
 #[cfg(unix)]
-use crate::data::chunk_write::{ChunkItem, build_chunk};
-#[cfg(unix)]
 use crate::data::phrase_library::PhraseLibrary;
+#[cfg(unix)]
+use crate::data::phrase_library::{ChunkItem, build_chunk};
 use crate::user::toned_key;
 use crate::{PhraseText, SyllableKey};
 
@@ -1131,7 +1131,7 @@ mod native {
             },
             |scratch| {
                 let user = scratch.join("user");
-                crate::store::copy_faults::fail_source_read_after(1);
+                crate::store::fail_source_read_after(1);
                 let _ = ContextCore::try_open(
                     &system_dir(),
                     Some(&user),
@@ -1165,7 +1165,7 @@ mod native {
             },
             |scratch| {
                 let user = scratch.join("user");
-                crate::store::copy_faults::fail_source_read_after(1);
+                crate::store::fail_source_read_after(1);
                 let _ = ContextCore::try_open(
                     &system_dir(),
                     Some(&user),
@@ -1621,7 +1621,7 @@ mod native {
 
     #[test]
     fn oversized_journal_record_payloads_refuse_save_and_keep_modified() {
-        use crate::data::chunk_write::{ChunkItem, build_chunk};
+        use crate::data::phrase_library::{ChunkItem, build_chunk};
         let system = TempSystemDir::new("oversized-journal-record");
         let user = TempUserDir::new("oversized-journal-record");
         let ni = crate::ChewingKey::from_pinyin("ni").unwrap().to_packed();
@@ -1661,7 +1661,7 @@ mod native {
     /// included (`:695-698`). Both saves answer `false` and stay modified.
     #[test]
     fn an_oversized_journal_stops_a_zhuyin_save_after_the_earlier_renames() {
-        use crate::data::chunk_write::{ChunkItem, build_chunk};
+        use crate::data::phrase_library::{ChunkItem, build_chunk};
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
             let system = TempSystemDir::new("oversized-journal-second-library");
             let user = TempUserDir::new("oversized-journal-second-library");

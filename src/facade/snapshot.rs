@@ -122,7 +122,7 @@ impl<R> CandidateSnapshot<R> {
     ///
     /// The packed copy of a stored-words phrase is lossy: it stops at the
     /// first zero word and drops the stored length
-    /// (`crate::marshal::phrase_text::phrase_text_bytes`), while the selection
+    /// (`crate::marshal::phrase_text_bytes`), while the selection
     /// record and the constraint store keep every stored word
     /// ([`crate::engine::SelectionTarget::text`]). Call it only for such
     /// a text; the packed bytes of every other text are exact.

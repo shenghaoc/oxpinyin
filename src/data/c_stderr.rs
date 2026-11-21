@@ -9,7 +9,7 @@ use std::path::Path;
 /// A path's bytes as they are, which is what `%s` writes.
 #[must_use]
 pub fn path_bytes(path: &Path) -> &[u8] {
-    crate::input::path::path_to_bytes(path)
+    crate::input::path_to_bytes(path)
 }
 
 /// The init's `load %s failed!` for a `table.conf` that
@@ -17,7 +17,7 @@ pub fn path_bytes(path: &Path) -> &[u8] {
 /// `zhuyin.cpp:282`), naming `system_dir/table.conf` as `g_build_filename`
 /// spells it; `None` for a NULL system dir, whose name is `""`.
 pub fn table_conf_load_failed(system_dir: Option<&Path>) {
-    let name = crate::input::path::build_bytes(system_dir, Some("table.conf"));
+    let name = crate::input::build_bytes(system_dir, Some("table.conf"));
     crate::input::diagnostic::report_load_failed(&c_prefix(&name));
 }
 

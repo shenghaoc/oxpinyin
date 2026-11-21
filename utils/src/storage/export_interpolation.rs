@@ -8,14 +8,14 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxpinyin::data::single_gram::decode_single_gram;
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OutputStream;
+use oxpinyin::single_gram::decode_single_gram;
 use oxpinyin::{PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token};
 
-use crate::storage::dbm::Hash;
-use crate::storage::libraries::{Libraries, Library, token_to_string};
+use crate::storage::Hash;
 use crate::storage::load_table_conf;
+use crate::storage::{Libraries, Library, token_to_string};
 
 /// `main` (`:43-73`), which reads no argument.
 pub fn main(_args: impl IntoIterator<Item = OsString>) {
@@ -79,7 +79,7 @@ fn gen_unigram(output: &OutputStream, libraries: &Libraries) {
 fn walked_items(
     index: u8,
     library: &Library,
-) -> impl Iterator<Item = (u32, &oxpinyin::data::chunk_write::ChunkItem)> {
+) -> impl Iterator<Item = (u32, &oxpinyin::data::phrase_library::ChunkItem)> {
     let end = library.range_end & PHRASE_MASK;
     (end > 1)
         .then(|| library.items.range(1..end))

@@ -103,7 +103,7 @@ impl<'a> UserLookup<'a> {
         self.phrases
             .borrow()
             .phrase_table
-            .tokens(&crate::user::phrase_table::key_ucs4(words))
+            .tokens(&crate::user::phrase_key_ucs4(words))
             .unwrap_or_default()
     }
 
@@ -140,7 +140,7 @@ impl<'a> UserLookup<'a> {
     /// the DBM walk order by the runtime before the stable prediction sort.
     #[must_use]
     pub(crate) fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
-        let prefix = crate::user::phrase_table::key_ucs4(prefix);
+        let prefix = crate::user::phrase_key_ucs4(prefix);
         let Ok(rows) = self.phrases.borrow().phrase_table.suggest_after(&prefix) else {
             return Vec::new();
         };

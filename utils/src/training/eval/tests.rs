@@ -104,7 +104,7 @@ fn correction_rate_is_lambda_independent_here() {
     let counts = parse_interpolation_dump(INTERPOLATION2);
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
-    for lambda in [0.0, oxpinyin::data::PINNED_LAMBDA, 1.0] {
+    for lambda in [0.0, 0.312_699, 1.0] {
         let model =
             EvalLanguageModel::from_counts_with_lexicon(&counts, lambda, source.lexicon_tokens());
         // The gen_unigram floor: every lexicon token carries count + 1

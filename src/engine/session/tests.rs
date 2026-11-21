@@ -59,6 +59,10 @@ impl PhraseList for Silent {
 }
 
 impl LanguageModel for Silent {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = EngineError;
 }
 
@@ -1363,6 +1367,10 @@ struct CountingBigrams {
 }
 
 impl LanguageModel for CountingBigrams {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = EngineError;
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
@@ -1766,6 +1774,10 @@ struct FixedUnigrams {
     addon_total: u64,
 }
 impl LanguageModel for FixedUnigrams {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = EngineError;
 
     fn unigram_freq(&self, _token: &PhraseToken) -> Result<Option<u64>, EngineError> {
@@ -1962,6 +1974,10 @@ struct TrainedUnigrams {
 }
 
 impl LanguageModel for TrainedUnigrams {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = EngineError;
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, EngineError> {
@@ -2181,6 +2197,10 @@ struct TrellisModel {
 }
 
 impl LanguageModel for TrellisModel {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = EngineError;
 
     fn nbest_step_costs(

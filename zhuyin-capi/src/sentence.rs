@@ -91,7 +91,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     let mut inst = borrow_or_return!(instance, instance_mut, false);
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
-    let prefix = oxpinyin::marshal::ucs4::prefix_text(
+    let prefix = oxpinyin::marshal::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -220,7 +220,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
     if columns > 0 && offset >= columns {
         std::process::abort();
     }
-    let text = oxpinyin::marshal::input::utf8_to_ucs4(
+    let text = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },

@@ -21,16 +21,16 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
 
-pub mod phrase;
-pub mod phrase_table;
-pub mod seed;
+mod phrase;
+mod phrase_table;
+mod seed;
 
 mod library_loop;
 mod library_table;
 mod live_system;
 mod lookup;
 mod model;
-pub mod persistence;
+mod persistence;
 mod records;
 mod replay;
 mod store;
@@ -79,3 +79,29 @@ pub(crate) mod native_fixture;
 #[cfg(all(test, feature = "tkrzw"))]
 #[path = "../../tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
+
+pub use persistence::{
+    Loaded, OriginalLibraries, PersistenceError, SelectedOriginals, SystemLibraryRef, UserState,
+    check_format_unnamed, fini, lowered_open_counter,
+};
+pub use seed::{
+    CEILING_SEED, EXPAND_FACTOR, INITIAL_SEED, UNIGRAM_FACTOR, predicted_seed, training_seed,
+    unigram_delta,
+};
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub use phrase_table::key as phrase_key;
+pub use phrase_table::{
+    PhraseTableEntry, key_ucs4 as phrase_key_ucs4, search_bytes as search_phrase_bytes,
+};
+
+pub(crate) use persistence::{
+    LiveSubIndex, LoadedPinyinIndex, LoadedProfile, MaskStop, SaveReporting, SaveSource,
+    SessionProfile, check_format, journal_item_bytes, load_library_logs_live,
+    load_masked_logs_live, load_session_in_loop, load_user_bigram_db, load_user_library,
+    read_mask_log, record_skip, save_reporting,
+};
+
+#[cfg(test)]
+pub(crate) use persistence::{chewing_rows, diff_live_records};
+pub(crate) use phrase::add_phrase_token;

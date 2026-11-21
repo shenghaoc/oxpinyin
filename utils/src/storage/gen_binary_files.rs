@@ -13,26 +13,26 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, OsString};
 use std::path::PathBuf;
 
-use oxpinyin::data::chunk_write::ChunkItem;
+use oxpinyin::data::exact_compare2;
+use oxpinyin::data::phrase_library::ChunkItem;
 use oxpinyin::data::row_format::phrase_index::encode_tokens;
 use oxpinyin::data::row_format::pinyin_index::{
     PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key, encode_item,
 };
-use oxpinyin::data::table_entries::exact_compare2;
-use oxpinyin::data::table_info::{FileType, PhoneticType, TableConf, TableRow};
+use oxpinyin::data::{FileType, PhoneticType, TableConf, TableRow};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OptionValue;
 use oxpinyin::input::tool::storage::TableFile;
 use oxpinyin::{PHRASE_MASK, phrase_index_library_index};
 
-use crate::storage::dbm::Tree;
-use crate::storage::libraries::items_of;
+use crate::storage::Tree;
+use crate::storage::items_of;
 use crate::storage::pinyin;
 use crate::storage::punctuation::append_punctuation;
-use crate::storage::table_text::{read_pinyin_record, read_punct_record};
 use crate::storage::{
     gen_punct_entry, load_table_conf, name_c_string, parse_options, table_dir, table_dir_entry,
 };
+use crate::storage::{read_pinyin_record, read_punct_record};
 use crate::utils_helper::save_and_reload_library;
 
 /// `main` (`gen_binary_files.cpp:111-152`).
@@ -70,7 +70,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
 
 /// One index file's path as the store opens it.
 fn path_of(name: &CStr) -> PathBuf {
-    oxpinyin::input::path::path_from_bytes(name.to_bytes())
+    oxpinyin::input::path_from_bytes(name.to_bytes())
 }
 
 /// The rows one `generate_binary_files` call walks (default or addon).
@@ -386,7 +386,7 @@ fn save_chunks(
                     .iter()
                     .map(|(slot, item)| (*slot, item.clone()))
                     .collect();
-                oxpinyin::data::chunk_write::build_chunk(&items).unwrap_or_else(|| tool::abort())
+                oxpinyin::data::phrase_library::build_chunk(&items).unwrap_or_else(|| tool::abort())
             }
             // The pin stores an empty `MemoryChunk` when the library never
             // loaded: the eight-byte zero header.

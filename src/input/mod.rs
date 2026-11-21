@@ -1,9 +1,9 @@
 //! Native I/O for the library and its command-line tools. This module owns configuration
-//! reads and writes, diagnostics, [`chunk`] mappings and writes, and [`path`] operations.
+//! reads and writes, diagnostics, [`chunk`] mappings and writes, and path operations.
 //! The `tools` feature adds native utility input and output. The calling modules
 //! interpret the records and apply their failure policies.
 //!
-//! [`c_path`] converts a whole path for a C call. [`path::c_string`] converts the prefix
+//! [`c_path`] converts a whole path for a C call. [`c_string`] converts the prefix
 //! ending at its first NUL.
 
 // The external I/O boundary is described in docs/findings/external-io-boundary.md.
@@ -16,7 +16,11 @@ pub(crate) mod diagnostic;
     reason = "the library's libc and glib-sys calls behind owned handles; every block carries a SAFETY comment"
 )]
 mod native;
-pub mod path;
+mod path;
+pub use path::{
+    build_filename, c_string, decode_filename, filename, path_from_bytes, path_from_bytes_checked,
+    path_to_bytes, rename, unlink,
+};
 #[cfg(feature = "tools")]
 #[expect(
     unsafe_code,
@@ -84,3 +88,5 @@ impl FileName for CString {
         std::borrow::Cow::Borrowed(self)
     }
 }
+
+pub(crate) use path::{build_bytes, build_chunk_path, build_path};

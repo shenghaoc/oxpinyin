@@ -21,7 +21,7 @@ use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigr
 /// Windows takes its UTF-8 and refuses bytes that are not UTF-8.
 #[must_use]
 pub fn open_path(filename: &CStr) -> Option<PathBuf> {
-    oxpinyin::input::path::path_from_bytes_checked(filename.to_bytes())
+    oxpinyin::input::path_from_bytes_checked(filename.to_bytes())
 }
 
 /// A single gram that [`Database::load`] found.

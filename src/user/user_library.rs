@@ -3,11 +3,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use crate::data::chunk_format::{
-    CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
-};
-use crate::data::chunk_write::sub_phrase_index_sections;
+use crate::data::chunk_format::CHUNK_HEADER_SIZE;
 use crate::data::phrase_library::PhraseItemView;
+use crate::data::phrase_library::sub_phrase_index_sections;
+use crate::data::phrase_library::{
+    CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
+};
 
 use crate::user::user_index::UserIndex;
 use crate::user::user_phrase_table::UserPhraseTable;

@@ -8,10 +8,10 @@
 
 use std::ffi::OsString;
 
-use oxpinyin::data::table_info::{FileType, TableConf};
+use oxpinyin::data::{FileType, TableConf};
 use oxpinyin::input::tool;
 
-use crate::storage::libraries::Libraries;
+use crate::storage::Libraries;
 use crate::training::{UNIGRAM_FILE_TYPES, load_table_conf};
 
 /// `main` (`gen_unigram.cpp:81-113`).

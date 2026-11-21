@@ -140,14 +140,14 @@ fn native_table() -> PhraseTable {
 #[test]
 fn a_failed_phrase_table_read_is_a_miss() {
     let table = native_table();
-    crate::store::read_faults::fail_point_read_of(&encode_ucs4_key("测测"), 0);
+    crate::store::fail_point_read_of(&encode_ucs4_key("测测"), 0);
     assert!(table.search("测测").unwrap().is_empty());
 }
 
 #[test]
 fn a_failed_phrase_table_read_is_a_miss_for_zhuyin() {
     let table = native_table();
-    crate::store::read_faults::fail_point_read_of(&encode_ucs4_key("你你"), 0);
+    crate::store::fail_point_read_of(&encode_ucs4_key("你你"), 0);
     assert!(table.search("你你").unwrap().is_empty());
 }
 
@@ -177,7 +177,7 @@ fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
     extensions.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(extensions.len() >= 2);
     let table = native_table();
-    crate::store::read_faults::fail_point_read_of(&extensions[1].0, 0);
+    crate::store::fail_point_read_of(&extensions[1].0, 0);
     assert_eq!(
         table.search_suggestion(&[u32::from('你')]).unwrap(),
         extensions[0].1

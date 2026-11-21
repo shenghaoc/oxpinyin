@@ -11,7 +11,7 @@
     )
 )]
 
-use oxpinyin::data::table_info::{FileType, TableConf};
+use oxpinyin::data::{FileType, TableConf};
 use oxpinyin::input::tool::{self, storage::TableFile};
 use oxpinyin::user::tool::Index;
 use std::path::{Path, PathBuf};
@@ -66,8 +66,8 @@ fn main() {
 pub(crate) fn load_text_tables(
     data: &Path,
     conf: &TableConf,
-    chewing: Option<&oxpinyin_utils::storage::dbm::Tree>,
-    phrase: Option<&oxpinyin_utils::storage::dbm::Tree>,
+    chewing: Option<&oxpinyin_utils::storage::Tree>,
+    phrase: Option<&oxpinyin_utils::storage::Tree>,
 ) -> [Option<Index>; 16] {
     let mut indices = core::array::from_fn(|_| None);
     for slot in 0..16_u8 {

@@ -1,7 +1,7 @@
 #[test]
 fn null_chunk_refusal_logs_once() {
     let logs = crate::test_support::LogCapture::new();
-    let warning = oxpinyin::data::table_info::TableConfSite::NullSystemFile.warning();
+    let warning = oxpinyin::data::TableConfSite::NullSystemFile.warning();
     assert!(!super::addon_load_answer(Err(warning)));
     assert_eq!(
         logs.take_with_messages(),

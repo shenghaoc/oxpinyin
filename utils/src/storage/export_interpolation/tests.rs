@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use oxpinyin::data::chunk_write::ChunkItem;
+use oxpinyin::data::phrase_library::ChunkItem;
 use oxpinyin::phrase_index_make_token;
 
 use super::walked_items;
-use crate::storage::libraries::Library;
+use crate::storage::Library;
 
 /// A library with items at `slots` and the trimmed offset count
 /// `range_end`.

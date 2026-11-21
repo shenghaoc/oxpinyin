@@ -1,6 +1,6 @@
 //! Heap-loaded lookup data for the nonshipping REPL, assembled beside the runtime readers.
 use super::*;
-use crate::data::{PhraseLibraries, dict::SystemTables};
+use crate::data::{PhraseLibraries, SystemTables};
 
 /// Failure of the test program's required chunk load.
 pub struct LoadError {
@@ -14,7 +14,7 @@ pub struct LoadError {
 pub struct Lookup {
     tables: SystemTables,
     libraries: PhraseLibraries,
-    model: Option<crate::data::lm::BigramTables>,
+    model: Option<crate::data::BigramTables>,
 }
 impl Lookup {
     // Native index or model construction failures terminate at the utility boundary. The
@@ -41,7 +41,7 @@ impl Lookup {
         let mut libraries = PhraseLibraries::empty();
         for (index, row) in conf.system_libraries() {
             let name = row.system.as_ref().map(|name| PathBuf::from(name.as_ref()));
-            let path = crate::input::path::build_path(
+            let path = crate::input::build_path(
                 data,
                 name.as_deref().unwrap_or(Path::new("")).as_os_str(),
             );
@@ -50,10 +50,8 @@ impl Lookup {
                 .map_err(|cause| LoadError { name, cause })?;
         }
         let model = bigram.then(|| {
-            let mut model = crate::data::lm::BigramTables::attach(&data.join("bigram.db"))
-                .unwrap_or_else(|_| crate::input::tool::abort());
-            model.set_lambda_from_conf(conf);
-            model
+            crate::data::BigramTables::attach(&data.join("bigram.db"), conf.lambda_f32())
+                .unwrap_or_else(|_| crate::input::tool::abort())
         });
         Ok(Self {
             tables,

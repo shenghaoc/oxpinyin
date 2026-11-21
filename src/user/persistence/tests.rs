@@ -1,6 +1,6 @@
 // Nextest isolates the process-wide copy-fault hooks by running each test in its own process.
 use super::*;
-use crate::data::chunk_write::encode_phrase_item;
+use crate::data::phrase_library::encode_phrase_item;
 use crate::data::user_files::OPEN_COUNTER_LIMIT;
 use crate::user::test_session::tempdir;
 use crate::user::test_session::{
@@ -157,7 +157,7 @@ fn originals() -> SystemOriginals {
 fn state() -> UserState {
     let bigram = vec![(
         1_u32.to_le_bytes().to_vec(),
-        crate::data::single_gram::encode_single_gram(
+        crate::single_gram::encode_single_gram(
             207,
             &[(1, 69), (0x0100_0001, 138), (0x0700_0001, 69)],
         ),
@@ -600,7 +600,7 @@ fn cleanup_walks_default_rows_then_libpinyins_addons_then_the_fixed_names() {
              addon 4 art.table art.bin addon-user.bin DICTIONARY\n",
     )
     .expect("table.conf");
-    let conf = crate::data::table_info::TableConf::load_path(&conf_path).expect("parse");
+    let conf = crate::data::TableConf::load_path(&conf_path).expect("parse");
     let layout = UserFileLayout::from_conf(&conf);
 
     let names = [
@@ -1032,7 +1032,7 @@ fn the_marker_is_written_before_the_wipe() {
     )
     .expect("table.conf");
     let layout = UserFileLayout::from_conf(
-        &crate::data::table_info::TableConf::load_from_dir(&conf_dir).expect("table.conf"),
+        &crate::data::TableConf::load_from_dir(&conf_dir).expect("table.conf"),
     );
     let check = check_format(&dir, &versions(), &layout, UserConfLaw::Pinyin);
     assert!(!check.conform);
@@ -1096,8 +1096,7 @@ fn reporting_save_aborts_at_a_chunk_header_write() {
         "user::persistence::tests::reporting_save_aborts_at_a_chunk_header_write",
         |dir| {
             let system = crate::user::native_fixture::system_dir();
-            let conf =
-                crate::data::table_info::TableConf::load_from_dir(&system).expect("table.conf");
+            let conf = crate::data::TableConf::load_from_dir(&system).expect("table.conf");
             let marker = UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
             std::fs::write(dir.join(USER_CONF), marker.to_text()).expect("marker");
             std::os::unix::fs::symlink("/dev/full", dir.join("gb_char.dbin.tmp")).expect("symlink");
@@ -1310,7 +1309,7 @@ fn library_for_equivalence(dir: &Path) -> SystemLibrary {
         (3, item(&[0xd800], 4, &[(vec![1], 2)])),
         (4, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 8)])),
     ];
-    let chunk = crate::data::chunk_write::build_chunk(&items).expect("chunk");
+    let chunk = crate::data::phrase_library::build_chunk(&items).expect("chunk");
     let path = dir.join("equiv.bin");
     std::fs::write(&path, chunk).expect("write");
     let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).expect("open");
@@ -2186,7 +2185,7 @@ fn cross_backend_state() -> (UserState, SystemOriginals) {
             },
         )]),
     );
-    let gram = crate::data::single_gram::encode_single_gram;
+    let gram = crate::single_gram::encode_single_gram;
     let bigram = vec![
         (
             1_u32.to_le_bytes().to_vec(),
@@ -2300,20 +2299,20 @@ mod save_semantics_929 {
 
     use std::path::Path;
 
-    use crate::data::chunk_write::ChunkItem;
+    use crate::data::phrase_library::ChunkItem;
 
-    use crate::data::table_info::TableConf;
+    use crate::data::TableConf;
 
     use crate::data::user_files::UserFileLayout;
 
     use crate::user::UserStore;
 
-    use crate::user::persistence::{SaveBaseline, UserConfLaw};
+    use crate::user::{SaveBaseline, UserConfLaw};
 
     /// A system directory with the stock layout's four system libraries, one
     /// item each.
     fn system() -> (std::path::PathBuf, TableConf) {
-        let conf = TableConf::stock();
+        let conf = TableConf::stock(0.312_699);
         let item = || {
             vec![(
                 1,
@@ -2356,7 +2355,7 @@ mod save_semantics_929 {
         libraries.sort_by_key(|(index, _)| *index);
         let mut names: Vec<_> = libraries
             .into_iter()
-            .map(|(_, name)| crate::input::path::build_path(dir, name.as_ref()))
+            .map(|(_, name)| crate::input::build_path(dir, name.as_ref()))
             .collect();
         names.extend(
             [
@@ -2733,13 +2732,13 @@ mod save_boundaries_929 {
 
     use crate::SyllableKey;
 
-    use crate::data::chunk_write::ChunkItem;
+    use crate::data::phrase_library::ChunkItem;
 
-    use crate::data::table_info::TableConf;
+    use crate::data::TableConf;
 
     use crate::data::user_files::UserTableInfo;
 
-    use crate::user::persistence::UserConfLaw;
+    use crate::user::UserConfLaw;
 
     use crate::user::{PinyinKey, UserStore};
 
@@ -3136,7 +3135,7 @@ fn init_survives_a_user_bigram_that_does_not_open() {
     let bigram = user.join("user_bigram.db");
     std::fs::remove_file(&bigram).expect("unlink the user bigram");
     std::fs::create_dir(&bigram).expect("a directory in its place");
-    crate::store::copy_faults::fail_source_read_after(0);
+    crate::store::fail_source_read_after(0);
     let _store = crate::user::test_session::open_w3(user);
 }
 
@@ -3157,8 +3156,8 @@ fn init_survives_a_copy_whose_source_iterator_is_not_made() {
             (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
         ],
     );
-    crate::store::copy_faults::fail_iterator_creation_after(0);
-    crate::store::copy_faults::fail_source_read_after(0);
+    crate::store::fail_iterator_creation_after(0);
+    crate::store::fail_source_read_after(0);
     let _store = crate::user::test_session::open_w3(user);
 }
 
@@ -3279,7 +3278,7 @@ fn a_journal_word_no_import_writes_is_kept() {
         crate::user::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
     let words = store
         .with_live_item_fields(token, |item| {
-            crate::data::chunk_write::decode_phrase_item(item)
+            crate::data::phrase_library::decode_phrase_item(item)
                 .unwrap()
                 .phrase
         })

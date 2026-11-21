@@ -4,7 +4,7 @@
 //! Pure Rust over the context's user store and optional runtime — no C
 //! types cross this boundary.
 
-use crate::marshal::phrase_text::phrase_text_bytes;
+use crate::marshal::phrase_text_bytes;
 use crate::runtime::{PhraseItemView, RuntimeDict};
 use crate::user::{MAX_KEY_TONE, SystemItem, UserPronunciation, UserStore};
 use crate::{ChewingKey, NULL_TOKEN, PhraseText, SENTENCE_START};

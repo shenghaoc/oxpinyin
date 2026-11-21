@@ -153,7 +153,7 @@ fn windows_config_paths_keep_cjk_and_lone_surrogates() {
         assert_eq!(reader.binary_format_version(), Scanned::Assigned(7));
         reader.finish();
         assert!(SystemTableInfoReader::open(&path).is_ok());
-        crate::input::path::unlink(&path);
+        crate::input::unlink(&path);
         assert!(!path.exists());
     }
 }

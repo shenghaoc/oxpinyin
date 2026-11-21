@@ -72,7 +72,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
 
     // `system_bigram.attach(SYSTEM_BIGRAM, ATTACH_READONLY)`: ignored.
     let bigram = Some(
-        crate::storage::dbm::Hash::open_read_only(Path::new("bigram.db"))
+        crate::storage::Hash::open_read_only(Path::new("bigram.db"))
             .unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error)),
     );
 
@@ -130,7 +130,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
 /// The pin's evaluation model over the binary tables.
 fn build_model(
     libraries: &PhraseLibraries,
-    bigram: Option<&crate::storage::dbm::Hash>,
+    bigram: Option<&crate::storage::Hash>,
     lambda: f32,
 ) -> EvalLanguageModel {
     let mut unigrams = BTreeMap::new();

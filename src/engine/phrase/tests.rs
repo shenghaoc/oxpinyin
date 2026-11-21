@@ -66,6 +66,10 @@ impl PhraseList for RawDict {
 struct CheckedModel;
 
 impl LanguageModel for CheckedModel {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = &'static str;
 
     fn nbest_successors_in_row<'a>(
@@ -109,6 +113,10 @@ fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
 
     struct Recording(std::cell::RefCell<Vec<u32>>);
     impl LanguageModel for Recording {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = core::convert::Infallible;
 
         fn nbest_successors_in_row<'a>(
@@ -158,6 +166,10 @@ fn row_read_names_only_the_checked_read_failure() {
     );
     struct Unchecked;
     impl LanguageModel for Unchecked {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = &'static str;
     }
     assert!(matches!(
@@ -180,6 +192,10 @@ fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
 fn prefix_faults_follow_spans_before_predecessors() {
     struct Ordered(std::cell::RefCell<Vec<(u32, u32)>>);
     impl LanguageModel for Ordered {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = &'static str;
 
         fn nbest_item_costs_in_row(
@@ -220,6 +236,10 @@ fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
 
     struct Missing(std::cell::RefCell<Vec<u32>>);
     impl LanguageModel for Missing {
+        fn amplification_lambda(&self) -> f32 {
+            0.312_699
+        }
+
         type Error = core::convert::Infallible;
 
         fn nbest_successors_in_row<'a>(
@@ -266,6 +286,10 @@ struct Rows {
 }
 
 impl LanguageModel for Rows {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = core::convert::Infallible;
 
     fn nbest_successors_in_row<'a>(

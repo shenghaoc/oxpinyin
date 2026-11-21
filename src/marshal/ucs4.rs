@@ -69,11 +69,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Vec<u32>, Ucs4Error> {
 // _compute_prefixes calls g_utf8_to_ucs4 (pinyin.cpp:1397–1398, zhuyin.cpp:918). A NULL
 // prefix dereferences NULL at gutf8.c:950. See the “NULL prediction prefix” divergence.
 /// Decodes a nonempty C prefix to UCS-4 words, preserving accepted non-scalar words.
-/// Empty or rejected input yields [`None`]. [`crate::marshal::input::utf8_to_ucs4`] also
+/// Empty or rejected input yields [`None`]. [`crate::marshal::utf8_to_ucs4`] also
 /// accepts an empty phrase. Supply a valid C string for prefix conversion.
 #[must_use]
 pub fn prefix_text(prefix: Option<&CStr>) -> Option<PhraseText> {
-    crate::marshal::input::utf8_to_ucs4(prefix).filter(|text| !text.is_empty())
+    crate::marshal::utf8_to_ucs4(prefix).filter(|text| !text.is_empty())
 }
 
 #[cfg(test)]

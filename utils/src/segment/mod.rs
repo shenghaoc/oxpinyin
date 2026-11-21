@@ -24,13 +24,13 @@ use std::ffi::{CStr, CString, OsString};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, OutputStream, ParsedOptions};
 
-pub mod data;
-pub mod input;
+mod data;
+mod input;
 pub mod mergeseq;
 pub mod ngseg;
-pub mod phrase;
+mod phrase;
 pub mod spseg;
-pub mod trellis;
+mod trellis;
 
 /// The pin's `assert(cond)` failure: `abort()` without the macro's message
 /// (maintainer ruling 2026-10-31 UTC,

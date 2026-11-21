@@ -135,7 +135,7 @@ fn user_conf_round_trips_and_conforms() {
               source table format:pinyin\ndatabase format:Tkrzw\n",
     )
     .expect("write");
-    let declared = crate::data::table_info::TableConf::load_from_dir(dir.path()).expect("parses");
+    let declared = crate::data::TableConf::load_from_dir(dir.path()).expect("parses");
     assert_eq!(
         SystemVersions::from_conf(&declared),
         SystemVersions {
@@ -172,7 +172,7 @@ fn a_fresh_zero_version_marker_requires_conformance_for_either_source_format() {
     let filename = crate::input::c_path(&profile).unwrap();
     for (source, backend) in [("pinyin", "Tkrzw"), ("zhuyin", "KyotoCabinet")] {
         std::fs::write(&config, format!("binary format version:0\nmodel data version:0\nlambda parameter:0.5\nsource table format:{source}\ndatabase format:{backend}\n")).unwrap();
-        let conf = crate::data::table_info::TableConf::load_from_dir(dir.path()).unwrap();
+        let conf = crate::data::TableConf::load_from_dir(dir.path()).unwrap();
         let versions = SystemVersions::from_conf(&conf);
         let fresh = UserTableInfo {
             binary_format_version: 0,

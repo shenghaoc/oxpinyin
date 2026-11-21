@@ -415,10 +415,7 @@ fn sort_dedup_window_tail(into: &mut Vec<Candidate>, start: usize) {
     into.truncate(write);
 }
 
-/// λ as the pin parses it out of `table.conf` (`fscanf "%f"`,
-/// `table_info.cpp:220,242`) — the same `f32` bits `oxpinyin::data`'s
-/// `PINNED_LAMBDA` names. Duplicated here because the engine depends on
-/// the core traits, not the data crate.
+/// Interpolation weight supplied by the model fixture.
 #[cfg(test)]
 const PIN_LAMBDA_F32: f32 = 0.312_699;
 

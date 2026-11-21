@@ -398,6 +398,10 @@ impl FixtureLanguageModel {
 }
 
 impl LanguageModel for FixtureLanguageModel {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = FixtureError;
 }
 
@@ -437,6 +441,10 @@ impl FrequencyFixtureModel {
 }
 
 impl LanguageModel for FrequencyFixtureModel {
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
+
     type Error = FixtureError;
 
     fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, FixtureError> {

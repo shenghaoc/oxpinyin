@@ -24,7 +24,7 @@ fn unloaded(name: &str) -> (Profile, UserStore) {
     (profile, store)
 }
 
-fn keys(syllable: &str) -> Vec<crate::user::phrase::PinyinKey> {
+fn keys(syllable: &str) -> Vec<crate::user::PinyinKey> {
     super::super::packed_to_pinyin_keys(&[ChewingKey::from_pinyin(syllable)
         .expect("key")
         .to_packed()])

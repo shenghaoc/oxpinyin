@@ -13,7 +13,7 @@
 #[cfg(test)]
 use crate::ChewingKey;
 #[cfg(test)]
-use crate::data::chunk_write::build_chunk;
+use crate::data::phrase_library::build_chunk;
 use crate::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
 #[cfg(test)]
 use crate::data::row_format::pinyin_index::PinyinIndexItem;
@@ -25,10 +25,11 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE, build_memory_chunk};
-use crate::data::chunk_write::ChunkItem;
-use crate::data::phrase_libraries::PhraseLibraries;
-use crate::data::table_info::FileName;
+use crate::data::FileName;
+use crate::data::PhraseLibraries;
+use crate::data::chunk_format::build_memory_chunk;
+use crate::data::phrase_library::ChunkItem;
+use crate::data::phrase_library::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
 #[cfg(test)]
 use crate::data::user_files::read_chunk_payload;
 use crate::data::user_files::{
@@ -36,7 +37,7 @@ use crate::data::user_files::{
     UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
     try_load_chunk_payload,
 };
-use crate::input::path::{build_path, rename, unlink};
+use crate::input::{build_path, rename, unlink};
 use crate::store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
 
 use crate::user::replay::{JournalFault, Merge, ReplayedLibrary, Stop, raw_unigram};
@@ -652,7 +653,7 @@ impl UserState {
                 }
             }
         }
-        self.phrase_table = crate::data::table_entries::phrase_index_entries(&phrases)
+        self.phrase_table = crate::data::phrase_index_entries(&phrases)
             .into_iter()
             .collect();
         self
@@ -2078,7 +2079,7 @@ pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
 /// `fprintf` on the stream `mark_version`'s own `write %s failed.` line
 /// follows it on.
 fn report_rename_failed(tmp: &Path, final_path: &Path) {
-    crate::data::c_stderr::rename_failed(tmp, final_path);
+    crate::data::rename_failed(tmp, final_path);
 }
 
 /// The files a save has written to `.tmp` siblings. libpinyin writes them

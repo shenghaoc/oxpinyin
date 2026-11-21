@@ -7,7 +7,7 @@
 //! the pinyin eight at 3 and 4 (see [`crate::types::lookup_candidate_type_t`]),
 //! so tagging must use the zhuyin enum, never the pinyin one.
 
-use oxpinyin::marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
+use oxpinyin::marshal::{phrase_text_bytes, phrase_text_len};
 use std::os::raw::c_int;
 
 use oxpinyin::engine::CandidateKind;

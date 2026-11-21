@@ -11,11 +11,11 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxpinyin::data::table_info::FileType;
+use oxpinyin::data::FileType;
 use oxpinyin::input::tool;
 
-use crate::storage::dbm::Hash;
-use crate::storage::libraries::Libraries;
+use crate::storage::Hash;
+use crate::storage::Libraries;
 use crate::training::{Gram, all_tokens, load_gram, load_table_conf};
 
 /// `compute_interpolation` (`estimate_interpolation.cpp:30-88`).

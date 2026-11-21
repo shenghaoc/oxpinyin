@@ -15,7 +15,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, OsString, c_int};
 
-use oxpinyin::data::table_entries::exact_compare2;
+use oxpinyin::data::exact_compare2;
 use oxpinyin::graph::SegmentGraph;
 use oxpinyin::input::tool::gen_pinyin_table::{self as edge, TableInput};
 use oxpinyin::input::tool::{

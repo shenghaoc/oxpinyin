@@ -445,9 +445,7 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
         let row = addons.dict.row(4).expect("sub-index 4 is in range");
         assert_eq!(
             row.system,
-            Some(crate::data::table_info::FileName::from_bytes(
-                b"art-local.bin"
-            )),
+            Some(crate::data::FileName::from_bytes(b"art-local.bin")),
             "the configured addon row is kept, not the stock one"
         );
         assert_eq!(Some(row), zhuyin.table_conf().addon_row(4));
@@ -1671,7 +1669,7 @@ mod backend_files {
         }
         let user_tmp = scratch_dir("oxpinyin-runtime-journal-user-");
         let user = user_tmp.path().to_path_buf();
-        let conf = crate::data::table_info::TableConf::load_from_dir(&system).expect("conf");
+        let conf = crate::data::TableConf::load_from_dir(&system).expect("conf");
         let versions = crate::data::user_files::SystemVersions::from_conf(&conf);
         std::fs::write(
             user.join("user.conf"),
@@ -2464,7 +2462,7 @@ fn a_later_span_reads_the_sentence_start_gram_again() {
         runtime.session(&mut state).sentence_text(0).unwrap(),
         "丙丁"
     );
-    crate::store::read_faults::fail_point_read_of(&sentence_start, 1);
+    crate::store::fail_point_read_of(&sentence_start, 1);
     assert!(runtime.session(&mut state).guess_sentence().unwrap());
     assert_eq!(
         runtime.session(&mut state).sentence_text(0).unwrap(),
@@ -2635,7 +2633,7 @@ fn a_failed_pinyin_table_read_is_a_miss() {
         .collect();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("nihao").unwrap();
-    crate::store::read_faults::fail_point_read_of(&row, 0);
+    crate::store::fail_point_read_of(&row, 0);
     assert!(runtime.session(&mut state).guess_sentence().unwrap());
     assert_eq!(
         runtime.session(&mut state).sentence_text(0).unwrap(),
@@ -2657,7 +2655,7 @@ fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
     let before = normal_texts(&runtime, &mut state);
     assert!(before.iter().any(|text| text == "你"));
     assert!(before.iter().any(|text| text == "你好"));
-    crate::store::read_faults::fail_point_read_of(&key.to_le_bytes(), 0);
+    crate::store::fail_point_read_of(&key.to_le_bytes(), 0);
     let after = normal_texts(&runtime, &mut state);
     assert!(!after.iter().any(|text| text == "你"));
     assert!(after.iter().any(|text| text == "你好"));
@@ -2706,7 +2704,7 @@ fn addon_candidate_continuation_uses_its_row_read() {
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("bama").unwrap();
     let reads = if cfg!(feature = "kyotocabinet") { 3 } else { 2 };
-    crate::store::read_faults::fail_point_read_of(&short[0].to_le_bytes(), reads);
+    crate::store::fail_point_read_of(&short[0].to_le_bytes(), reads);
     let rows = runtime
         .session(&mut state)
         .candidates_at_for_abi(0, false)
@@ -2960,7 +2958,7 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
     let file = user.path.join("user.bin");
     let original = std::fs::read(&file).unwrap();
     let gram = gram_bytes(100, &[(token, 100)]);
-    let empty = crate::data::chunk_write::build_chunk(&[]).unwrap();
+    let empty = crate::data::phrase_library::build_chunk(&[]).unwrap();
     for present in [false, true] {
         std::fs::write(&file, if present { &original } else { &empty }).unwrap();
         native_fixture::plant_bigram(

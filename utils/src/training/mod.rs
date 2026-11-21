@@ -18,13 +18,13 @@ use oxpinyin::NULL_TOKEN;
 use std::ffi::{CStr, CString};
 
 use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::data::single_gram::{decode_single_gram, encode_single_gram};
-use oxpinyin::data::table_info::{FileType, TableConf, TableConfError};
+use oxpinyin::data::{FileType, TableConf, TableConfError};
+use oxpinyin::single_gram::{decode_single_gram, encode_single_gram};
 
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
 
-use crate::storage::dbm::Hash;
+use crate::storage::Hash;
 
 pub mod estimate_interpolation;
 mod eval;
@@ -254,5 +254,5 @@ pub(crate) fn filename_value(parsed: &ParsedOptions, index: usize) -> Option<CSt
 /// A C string's bytes as the path the store opens. On Unix the bytes are
 /// the path; Windows uses the shared lossy UTF-8 filename decoder.
 pub(crate) fn path_of(name: &CStr) -> std::path::PathBuf {
-    oxpinyin::input::path::path_from_bytes(name.to_bytes())
+    oxpinyin::input::path_from_bytes(name.to_bytes())
 }

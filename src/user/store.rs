@@ -21,13 +21,11 @@ use std::rc::Rc;
 use crate::store::{DefaultUserBigramDb, StoreError, UserBigramDb};
 use crate::{ChewingKey, Completeness, SyllableKey, model::UserCountDelta, single_gram};
 
-use crate::user::phrase::{
-    self, ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, PinyinKey, UserPhrase,
-};
 use crate::user::phrase_table;
 use crate::user::replay::UnigramAdd;
 use crate::user::seed;
 use crate::user::store_libpinyin::FiniGuard;
+use crate::user::{ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, PinyinKey, UserPhrase};
 use crate::{
     ADDON_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseToken, USER_DICTIONARY,
     phrase_index_library_index,
@@ -250,7 +248,7 @@ enum SystemMerge {
 }
 
 fn plan_system_reading(
-    item: &crate::data::chunk_write::ChunkItem,
+    item: &crate::data::phrase_library::ChunkItem,
     reading: &SystemReading<'_>,
 ) -> SystemMerge {
     let mut total = 0_u32;
@@ -281,7 +279,7 @@ fn plan_system_reading(
 /// import path; `true` means the count wrapped and the stored rows are the
 /// empty view.
 pub fn add_system_reading(
-    item: &mut crate::data::chunk_write::ChunkItem,
+    item: &mut crate::data::phrase_library::ChunkItem,
     packed: &[u16],
     delta: u32,
 ) -> bool {
@@ -292,7 +290,7 @@ pub fn add_system_reading(
 }
 
 fn apply_system_reading(
-    item: &mut crate::data::chunk_write::ChunkItem,
+    item: &mut crate::data::phrase_library::ChunkItem,
     reading: &SystemReading<'_>,
     change: SystemMerge,
 ) {
@@ -313,7 +311,7 @@ fn apply_system_reading(
 /// Check the encoder's shape conditions before changing the item.
 /// Wrapping discards every old pronunciation.
 fn validate_system_merge(
-    item: &crate::data::chunk_write::ChunkItem,
+    item: &crate::data::phrase_library::ChunkItem,
     reading: &SystemReading<'_>,
     change: SystemMerge,
 ) -> Result<(), UserStoreError> {
@@ -588,7 +586,7 @@ pub struct UserStore {
     /// libpinyin open returned ([`FiniGuard`]).
     _fini: FiniGuard,
     inner: StoreInner,
-    pub(crate) originals: crate::user::persistence::SystemOriginals,
+    pub(crate) originals: crate::user::SystemOriginals,
 }
 
 /// Which pin abort or read-past a training step's store check met.
@@ -637,7 +635,7 @@ impl UserStore {
     pub(crate) fn from_parts(
         inner: StoreInner,
         fini: FiniGuard,
-        originals: crate::user::persistence::SystemOriginals,
+        originals: crate::user::SystemOriginals,
     ) -> Self {
         Self {
             _fini: fini,
@@ -655,7 +653,7 @@ impl fmt::Debug for UserStore {
 
 impl UserStore {
     /// Borrow the uniquely owned init baselines for a read operation.
-    pub const fn originals(&self) -> &crate::user::persistence::SystemOriginals {
+    pub const fn originals(&self) -> &crate::user::SystemOriginals {
         &self.originals
     }
 
@@ -664,24 +662,17 @@ impl UserStore {
     /// [`Self::reload_system_libraries_prefetched`] merges the bytes read here.
     pub(crate) fn read_mask_log(
         &self,
-        logs: &mut crate::user::persistence::MaskLogs,
+        logs: &mut crate::user::MaskLogs,
         nibble: u8,
         mask: PhraseToken,
         value: PhraseToken,
-    ) -> Option<crate::user::persistence::MaskStop> {
+    ) -> Option<crate::user::MaskStop> {
         let dir = self.inner.libpinyin.dir.as_deref()?;
-        crate::user::persistence::read_mask_log(
-            dir,
-            self.originals.layout(),
-            logs,
-            nibble,
-            mask,
-            value,
-        )
+        crate::user::read_mask_log(dir, self.originals.layout(), logs, nibble, mask, value)
     }
 
     /// Borrow the init baselines exclusively for a library transition.
-    pub(crate) fn originals_mut(&mut self) -> &mut crate::user::persistence::SystemOriginals {
+    pub(crate) fn originals_mut(&mut self) -> &mut crate::user::SystemOriginals {
         &mut self.originals
     }
 
@@ -1697,7 +1688,7 @@ impl UserStore {
     #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn export_phrases_in(&self, library: u8) -> Vec<ExportedPhrase> {
-        use crate::data::chunk_format::ITEM_HEADER_SIZE;
+        use crate::data::phrase_library::ITEM_HEADER_SIZE;
 
         let phrases = self.inner.libpinyin.phrases();
         let mut out = Vec::new();
@@ -1817,7 +1808,7 @@ impl UserStore {
     pub fn save_reporting_compacted(&mut self, compacted: &[u8]) -> Result<(), UserStoreError> {
         self.save_reporting_inner(
             compacted,
-            None::<fn(u8, &crate::user::SystemOriginals) -> crate::user::persistence::SaveBaseline>,
+            None::<fn(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline>,
         )
     }
 
@@ -1829,16 +1820,13 @@ impl UserStore {
     pub(crate) fn save_reporting_with_baseline(
         &mut self,
         compacted: &[u8],
-        baseline: impl FnMut(
-            u8,
-            &crate::user::SystemOriginals,
-        ) -> crate::user::persistence::SaveBaseline,
+        baseline: impl FnMut(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline,
     ) -> Result<(), UserStoreError> {
         self.save_reporting_inner(compacted, Some(baseline))
     }
 
     fn save_reporting_inner<
-        B: FnMut(u8, &crate::user::SystemOriginals) -> crate::user::persistence::SaveBaseline,
+        B: FnMut(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline,
     >(
         &mut self,
         compacted: &[u8],
@@ -1857,18 +1845,18 @@ impl UserStore {
         let phrases = target.phrases();
         let live = self.inner.system_items.borrow();
         {
-            let mut reporting = crate::user::persistence::SaveReporting {
+            let mut reporting = crate::user::SaveReporting {
                 versions: &target.versions,
                 open_counter: target.open_counter,
                 bigram_db,
-                interleaved: target.law == crate::user::persistence::UserConfLaw::Zhuyin,
+                interleaved: target.law == crate::user::UserConfLaw::Zhuyin,
                 baseline: baseline
                     .as_mut()
                     .map(|baseline| |nibble| baseline(nibble, originals)),
             };
-            crate::user::persistence::save_reporting(
+            crate::user::save_reporting(
                 dir,
-                crate::user::persistence::SaveSource {
+                crate::user::SaveSource {
                     libraries: &phrases,
                     compacted,
                     live: &live,
@@ -1924,7 +1912,7 @@ impl UserStore {
     #[cfg(test)]
     pub(crate) fn reload_system_libraries(
         &mut self,
-        mut originals: crate::user::persistence::SystemOriginals,
+        mut originals: crate::user::SystemOriginals,
         mask: PhraseToken,
         value: PhraseToken,
     ) -> Result<(), crate::user::JournalFault> {
@@ -1938,7 +1926,7 @@ impl UserStore {
     #[cfg(test)]
     pub fn reload_system_libraries_retaining(
         &mut self,
-        originals: &mut crate::user::persistence::SystemOriginals,
+        originals: &mut crate::user::SystemOriginals,
         mask: PhraseToken,
         value: PhraseToken,
     ) -> Result<(), crate::user::JournalFault> {
@@ -1946,7 +1934,7 @@ impl UserStore {
             originals,
             mask,
             value,
-            crate::user::persistence::MaskLogs::default(),
+            crate::user::MaskLogs::default(),
         )
     }
 
@@ -1958,16 +1946,16 @@ impl UserStore {
     /// The same journal fault as `Self::reload_system_libraries`.
     pub(crate) fn reload_system_libraries_prefetched(
         &mut self,
-        originals: &mut crate::user::persistence::SystemOriginals,
+        originals: &mut crate::user::SystemOriginals,
         mask: PhraseToken,
         value: PhraseToken,
-        mut logs: crate::user::persistence::MaskLogs,
+        mut logs: crate::user::MaskLogs,
     ) -> Result<(), crate::user::JournalFault> {
         let target = &self.inner.libpinyin;
         let (replayed, library_totals) = match target.dir.clone() {
-            Some(dir) => crate::user::persistence::load_masked_logs_live(
-                &dir, originals, mask, value, &mut logs,
-            )?,
+            Some(dir) => {
+                crate::user::load_masked_logs_live(&dir, originals, mask, value, &mut logs)?
+            }
             None => (originals.take_live_libraries(), Default::default()),
         };
         self.replace_system_libraries(originals.take(), replayed, &library_totals);
@@ -1992,7 +1980,7 @@ impl UserStore {
     #[cfg(test)]
     pub fn load_system_libraries(
         &mut self,
-        mut originals: crate::user::persistence::SystemOriginals,
+        mut originals: crate::user::SystemOriginals,
     ) -> Result<(), crate::user::JournalFault> {
         self.load_system_libraries_retaining(&mut originals)
     }
@@ -2004,10 +1992,10 @@ impl UserStore {
     /// The same journal fault as [`Self::load_system_libraries`].
     pub(crate) fn load_system_libraries_retaining(
         &mut self,
-        originals: &mut crate::user::persistence::SystemOriginals,
+        originals: &mut crate::user::SystemOriginals,
     ) -> Result<(), crate::user::JournalFault> {
         let (replayed, library_totals) = match &self.inner.libpinyin.dir {
-            Some(dir) => crate::user::persistence::load_library_logs_live(dir, originals)?,
+            Some(dir) => crate::user::load_library_logs_live(dir, originals)?,
             // No user directory means no journal; the freshly mapped system
             // library still replaces the unloaded one (phrase_index.cpp:261,
             // pinyin.cpp:246-276 at 074a2219).
@@ -2024,10 +2012,7 @@ impl UserStore {
     /// entries. In memory, as the pin's: nothing is written to disk, and a
     /// save skips the library while it is unloaded (`pinyin.cpp:928-933`).
     #[cfg(test)]
-    pub fn unload_system_libraries(
-        &mut self,
-        originals: crate::user::persistence::SystemOriginals,
-    ) {
+    pub fn unload_system_libraries(&mut self, originals: crate::user::SystemOriginals) {
         let unloaded: Vec<_> = originals.keys().copied().collect();
         self.replace_system_libraries(
             originals,
@@ -2057,7 +2042,7 @@ impl UserStore {
             .libpinyin
             .dir
             .as_deref()
-            .and_then(|dir| crate::user::persistence::load_user_library(dir, &layout, library));
+            .and_then(|dir| crate::user::load_user_library(dir, &layout, library));
         self.replace_user_arena(library, Some(loaded.unwrap_or_default()));
     }
 
@@ -2081,7 +2066,7 @@ impl UserStore {
     /// `FacadePhraseIndex::load`/`unload` cannot (policy row 103).
     fn replace_system_libraries(
         &mut self,
-        originals: crate::user::persistence::SystemOriginals,
+        originals: crate::user::SystemOriginals,
         replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
         library_totals: &crate::user::LibraryTable<u32>,
     ) {
@@ -2125,7 +2110,7 @@ impl UserStore {
 
     fn apply_system_libraries(
         &self,
-        originals: &impl crate::user::persistence::OriginalLibraries,
+        originals: &impl crate::user::OriginalLibraries,
         mut replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
         library_totals: &crate::user::LibraryTable<u32>,
     ) {
@@ -2291,8 +2276,9 @@ impl UserStore {
     #[cfg(test)]
     pub(crate) fn live_system_changes(
         &self,
-        originals: &impl crate::user::persistence::OriginalLibraries,
-    ) -> std::collections::BTreeMap<PhraseToken, Option<crate::data::chunk_write::ChunkItem>> {
+        originals: &impl crate::user::OriginalLibraries,
+    ) -> std::collections::BTreeMap<PhraseToken, Option<crate::data::phrase_library::ChunkItem>>
+    {
         self.inner.system_items.borrow().changed_items(originals)
     }
 
@@ -2328,7 +2314,7 @@ impl UserStore {
     pub(crate) fn system_item_override(
         &self,
         token: PhraseToken,
-    ) -> Result<Option<crate::data::chunk_write::ChunkItem>, UserStoreError> {
+    ) -> Result<Option<crate::data::phrase_library::ChunkItem>, UserStoreError> {
         if !(1..=4).contains(&(token >> 24)) {
             return Ok(None);
         }
@@ -2434,14 +2420,14 @@ impl UserStore {
     pub(crate) fn with_effective_system_item<R>(
         &self,
         token: PhraseToken,
-        read: impl FnOnce(&crate::data::chunk_write::ChunkItem) -> R,
+        read: impl FnOnce(&crate::data::phrase_library::ChunkItem) -> R,
     ) -> Option<R> {
         if !self.is_system_library(phrase_index_library_index(token)) {
             return None;
         }
         if let Some(item) = self
             .with_user_item(token, |view| {
-                crate::data::chunk_write::decode_phrase_item(view.as_bytes())
+                crate::data::phrase_library::decode_phrase_item(view.as_bytes())
             })
             .flatten()
         {
@@ -2581,7 +2567,7 @@ impl UserStore {
         // `remove_phrase_item`, `add_pronunciation`, `add_phrase_item` over
         // the buffer (`pinyin.cpp:559-569`). A slot the journal removed has
         // nothing to remove, so its total is left as the removal left it.
-        let bytes = crate::data::chunk_write::encode_phrase_item(&item)
+        let bytes = crate::data::phrase_library::encode_phrase_item(&item)
             .ok_or(UserStoreError::Persistence)?;
         let removed = items.remove_item(original, token).is_some();
         items.add_item(original, token, &bytes);
@@ -2608,8 +2594,8 @@ impl UserStore {
     /// Puts `state`'s values into this session's own structures: the user
     /// bigram container, the user library arenas, the two user tables and
     /// the live system buffers.
-    pub(crate) fn seed_from_state(&mut self, state: &crate::user::persistence::UserState) {
-        use crate::data::chunk_write::encode_phrase_item;
+    pub(crate) fn seed_from_state(&mut self, state: &crate::user::UserState) {
+        use crate::data::phrase_library::encode_phrase_item;
         use crate::store::UserBigramDb as _;
         for (key, value) in &state.bigram {
             self.container().store(key, value).expect("store a gram");
@@ -2628,9 +2614,7 @@ impl UserStore {
             }
         }
         phrases.index = crate::user::user_index::UserIndex::from_entries(
-            crate::data::table_entries::pinyin_index_entries(
-                &crate::user::persistence::chewing_rows(state, &self.originals),
-            ),
+            crate::data::pinyin_index_entries(&crate::user::chewing_rows(state, &self.originals)),
         );
         for (key, value) in &state.phrase_table {
             phrases.phrase_table.push_record(key, value).unwrap();

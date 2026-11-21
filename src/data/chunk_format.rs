@@ -5,11 +5,7 @@
 //! libraries) are one `MemoryChunk` each (`src/include/memory_chunk.h`):
 //! an 8-byte header `{length: u32, checksum: u32}` then the payload,
 //! with the payload's inner `SubPhraseIndex` layout owned by
-//! [`crate::data::phrase_library`] (reader) and [`crate::data::chunk_write`]
-//! (writer). This module holds the constants and the checksum both
-//! halves share, so the reader's validation and the writer's emission
-//! cannot drift apart — a wrong byte here makes a file the other half
-//! rejects.
+//! [`crate::data::phrase_library`]. This module owns the frame and its checksum.
 //!
 //! Everything is little-endian on the supported targets (the fields are
 //! host-endian upstream; every target oxpinyin and the pin share is
@@ -22,38 +18,8 @@ compile_error!(
      are not supported."
 );
 
-/// `c_separate` (`novel_types.h:126`).
-pub const SEPARATOR: u8 = b'#';
-
 /// The `MemoryChunk` file header: `{length, checksum}`.
 pub const CHUNK_HEADER_SIZE: usize = 8;
-
-/// `SubPhraseIndex::store`'s `index_one`: the payload's `total_freq` plus
-/// the three section offsets (`u32×4`) and the separator that closes
-/// them, so the offset array starts at byte 17.
-///
-/// Constant in every
-/// upstream file, and no alignment requirement rides on it — the loader
-/// reads its `u32`s at unaligned offsets.
-pub const INDEX_ONE: u32 = 17;
-
-/// The entry area's first item offset.
-///
-/// `SubPhraseIndex::add_phrase_item`
-/// bumps a zero content size to 8 on the first item, reserving bytes
-/// `0..8` so that `0` stays the offset array's "no item" sentinel. A
-/// library with no items reserves nothing and has an empty entry area
-/// (measured on the pin's own `gen_binary_files` output for an empty
-/// `.table`).
-pub const FIRST_ITEM_OFFSET: u32 = 8;
-
-/// `phrase_item_header` (`phrase_index.h:56`): `{u8 phrase_length,
-/// u8 n_pronunciations, u32 unigram}` ahead of every item's UCS-4 text.
-pub const ITEM_HEADER_SIZE: usize = 6;
-
-/// `sizeof(ChewingKey)` — a 16-bit bitfield (`chewing_key.h:41`), the
-/// width one pronunciation key occupies inside an item.
-pub const CHEWING_KEY_SIZE: usize = 2;
 
 /// `MemoryChunk::get_check_sum` (`memory_chunk.h:131-159`): the XOR of
 /// the payload's little-endian `u32` words, with any tail bytes folded

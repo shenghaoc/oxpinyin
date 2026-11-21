@@ -491,7 +491,7 @@ fn rollback_restores_a_mapped_buffer() {
         (1, item(&[0x4f60], 100, &[(vec![1], 100)])),
         (2, item(&[0x597d], 50, &[(vec![2], 30), (vec![3], 20)])),
     ];
-    let chunk = crate::data::chunk_write::build_chunk(&items).expect("chunk");
+    let chunk = crate::data::phrase_library::build_chunk(&items).expect("chunk");
     let dir = crate::user::test_session::tempdir("rollback");
     let path = dir.join("rollback.bin");
     std::fs::write(&path, chunk).expect("write");
@@ -555,7 +555,7 @@ fn valid_records_before_and_after_an_over_read_item_stay() {
 #[test]
 fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() {
     use crate::data::user_files::{encode_log_records, log_records};
-    use crate::user::persistence::{LiveSubIndex, diff_live_records};
+    use crate::user::{LiveSubIndex, diff_live_records};
 
     for total in [7, u32::MAX] {
         let old = SystemLibrary {
@@ -615,7 +615,7 @@ fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     use crate::data::PhraseLibraries;
 
     fn possibility(item: &ChunkItem, key: crate::ChewingKey) -> (u64, u64) {
-        let frame = crate::data::chunk_write::build_chunk(&[(1, item.clone())]).unwrap();
+        let frame = crate::data::phrase_library::build_chunk(&[(1, item.clone())]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gb_char.bin");
         crate::input::chunk::save(&path, &frame).unwrap();
@@ -631,7 +631,7 @@ fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     crate::user::add_system_reading(&mut stored, &[shang.to_packed()], 300);
     // `:54`: 300 of 400 is the pin's 0.75.
     assert_eq!(possibility(&stored, shang), (300, 400));
-    let frame = crate::data::chunk_write::build_chunk(&[(1, stored.clone())]).unwrap();
+    let frame = crate::data::phrase_library::build_chunk(&[(1, stored.clone())]).unwrap();
     let library = PhraseLibrary::from_payload(frame[8..].to_vec()).unwrap();
     let baseline = SystemLibrary::from_library(library);
     let mut live = ReplayedLibrary::pristine(baseline.view());

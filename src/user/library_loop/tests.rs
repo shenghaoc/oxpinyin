@@ -1,13 +1,11 @@
 use std::path::PathBuf;
 
 use crate::data::chunk_format::build_memory_chunk;
-use crate::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::phrase_library::{ChunkItem, build_chunk};
 use crate::data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
 
 use super::*;
-use crate::user::persistence::{
-    LoadedPinyinIndex, LoadedProfile, UserConfLaw, check_format, system_originals,
-};
+use crate::user::{LoadedPinyinIndex, LoadedProfile, UserConfLaw, check_format, system_originals};
 
 const LAWS: [UserConfLaw; 2] = [UserConfLaw::Pinyin, UserConfLaw::Zhuyin];
 
@@ -87,10 +85,7 @@ impl Fixture {
         let layout = UserFileLayout::from_conf(&conf);
         let versions = SystemVersions::from_conf(&conf);
         let check = check_format(&self.user, &versions, &layout, law);
-        let mut originals = system_originals(
-            crate::data::phrase_libraries::PhraseLibraries::empty(),
-            layout,
-        );
+        let mut originals = system_originals(crate::data::PhraseLibraries::empty(), layout);
         let mut profile = LoadedPinyinIndex::open(Some((&self.user, check)))
             .unwrap()
             .load_phrase_table()
@@ -305,7 +300,7 @@ fn the_loop_without_a_profile_stops_at_the_first_fault() {
     let conf = fixture.conf();
     let rows = LibraryLoopRows::new(&fixture.system, &conf, None);
     let mut originals = system_originals(
-        crate::data::phrase_libraries::PhraseLibraries::empty(),
+        crate::data::PhraseLibraries::empty(),
         UserFileLayout::from_conf(&conf),
     );
     let mut unmapped = Vec::new();

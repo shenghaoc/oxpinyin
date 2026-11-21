@@ -13,12 +13,12 @@
 
 use std::ffi::OsString;
 
-use oxpinyin::data::table_info::FileType;
+use oxpinyin::data::FileType;
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::OptionValue;
 
-use crate::storage::dbm::Hash;
-use crate::storage::libraries::{Libraries, token_to_string};
+use crate::storage::Hash;
+use crate::storage::{Libraries, token_to_string};
 use crate::training::{
     load_gram, load_table_conf, parse_segmented_line, path_of, skip_pi_gram_entry, store_gram,
 };

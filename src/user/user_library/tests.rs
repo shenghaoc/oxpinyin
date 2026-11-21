@@ -1,6 +1,6 @@
 use super::*;
 use crate::data::chunk_format::build_memory_chunk;
-use crate::data::chunk_write::{ChunkItem, build_chunk, encode_phrase_item};
+use crate::data::phrase_library::{ChunkItem, build_chunk, encode_phrase_item};
 use crate::data::user_files::read_chunk_payload;
 
 fn items() -> Vec<(u32, ChunkItem)> {
@@ -177,7 +177,7 @@ fn user_library_malformed_frames_match_main_without_panicking() {
 
 /// A one-character, one-reading item: sixteen bytes.
 fn small(unigram: u32) -> Vec<u8> {
-    crate::data::chunk_write::encode_phrase_item(&ChunkItem {
+    crate::data::phrase_library::encode_phrase_item(&ChunkItem {
         phrase: vec![0x4e00 + unigram],
         unigram,
         prons: vec![(vec![0x1234], unigram + 100)],
@@ -272,7 +272,7 @@ fn a_total_past_u32_is_stored_wrapped() {
 #[test]
 fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
     use crate::data::chunk_format::build_memory_chunk;
-    use crate::data::chunk_write::{ChunkItem, build_chunk};
+    use crate::data::phrase_library::{ChunkItem, build_chunk};
     use crate::user::native_fixture::{TempUserDir, system_dir, write_user_conf};
 
     let user = TempUserDir::new("user-file-bad-item");

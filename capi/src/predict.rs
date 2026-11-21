@@ -5,7 +5,7 @@
 //! and the punctuation prefix of
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
-use oxpinyin::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text_bytes;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
 use std::os::raw::c_char;
@@ -219,7 +219,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates(
     if clear_borrowed_prefix(&mut inst, prefix) {
         return false;
     }
-    let prefix = oxpinyin::marshal::ucs4::prefix_text(
+    let prefix = oxpinyin::marshal::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },

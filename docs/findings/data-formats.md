@@ -61,9 +61,8 @@ any backend   gb_char.bin:      {length u32}{checksum u32} then the payload
 Upstream: `src/include/memory_chunk.h` (`MemoryChunk::save`, `mmap`,
 `get_check_sum`) and `src/storage/phrase_index.cpp`
 (`SubPhraseIndex::load`, `store`, `get_phrase_item`, `get_range`).
-oxpinyin: `src/data/chunk_format.rs` holds the shared
-constants and checksum; `phrase_library.rs` reads and `chunk_write.rs`
-writes.
+oxpinyin: `src/data/chunk_format.rs` owns the file header and checksum.
+`src/data/phrase_library.rs` owns reading and writing the payload.
 
 ```text
 u32 length      == file size − 8 (as guint32); mmap refuses a mismatch
@@ -393,7 +392,7 @@ index and `punct.bin` are tree containers.
   (`const char * kbuf = (char *) &index;`, `ngram_kyotodb.cpp:130`).
 - **Value**: `total: u32` (the sum of the counts), then
   `{next_token: u32, count: u32}[]` items. This is `SingleGram`'s layout
-  (`src/data/single_gram.rs`).
+  (`src/single_gram.rs`).
 
 `RawReadStore::open_hash_read_only` opens the hash container class on each
 backend. `BigramTable` reads lazily: each load performs one point lookup

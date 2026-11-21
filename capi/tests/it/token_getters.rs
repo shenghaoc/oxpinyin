@@ -115,7 +115,7 @@ fn n_pronunciation_without_a_sub_index_writes_zero() {
 #[test]
 fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
     use oxpinyin::data::chunk_format::build_memory_chunk;
-    use oxpinyin::data::chunk_write::{ChunkItem, build_chunk};
+    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-long-phrase");
     write_user_conf(&user.path, &system_dir());
