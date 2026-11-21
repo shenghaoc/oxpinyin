@@ -74,8 +74,6 @@ pub(crate) fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]
 /// Initialization continues (`pinyin.cpp:357,369,396` at 074a2219).
 #[derive(Debug)]
 pub enum OpenError {
-    /// A required path exists but could not be read.
-    Io(PathBuf, std::io::Error),
     /// The dictionary tables failed to open or parse.
     Dict(DictError),
     /// The language model failed to open or parse.
@@ -142,7 +140,6 @@ pub(crate) enum SaveRemapFault {
 impl core::fmt::Display for OpenError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Io(path, error) => write!(f, "cannot read {}: {error}", path.display()),
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
             Self::TableConf(error) => write!(f, "table.conf: {error}"),
@@ -1446,43 +1443,23 @@ impl Drop for Runtime {
 /// names `""`.
 ///
 /// The marker save's answer is ignored, as the pin ignores it
-/// (`pinyin.cpp:187`), so the only
-/// failure is the database-format abort point.
+/// (`pinyin.cpp:187`).
+///
+/// # Aborts
+///
+/// An unknown database format aborts during the profile read.
 fn check_profile_early(
     conf: &TableConf,
     user_dir: Option<&Path>,
     law: UserConfLaw,
-) -> Result<Option<crate::user::ProfileCheck>, OpenError> {
+) -> Option<crate::user::ProfileCheck> {
     let versions = SystemVersions::from_conf(conf);
     let Some(user_dir) = user_dir else {
         UserStore::check_profile_unnamed(&versions, law);
-        return Ok(None);
+        return None;
     };
     let layout = UserFileLayout::from_conf(conf);
-    match UserStore::check_profile(user_dir, &versions, &layout, law) {
-        Ok(check) => Ok(Some(check)),
-        Err(
-            error @ (UserStoreError::Io(_)
-            | UserStoreError::Store(_)
-            | UserStoreError::Decode
-            | UserStoreError::InvalidPhrase
-            | UserStoreError::Persistence(_)
-            | UserStoreError::SaveRemapFailed
-            | UserStoreError::SaveTooLarge
-            | UserStoreError::UnigramTotalOverflow
-            | UserStoreError::OverlongIndexKey
-            | UserStoreError::NonTokenUserBigramKey
-            | UserStoreError::ShortUserBigramValue
-            | UserStoreError::PartialUserBigramTail
-            | UserStoreError::ResidualUserBigramGram
-            | UserStoreError::Journal(_)
-            | UserStoreError::LibraryLoop(_)
-            | UserStoreError::TrainingSetFreqMiss
-            | UserStoreError::UserReadingRemoval
-            | UserStoreError::SessionSeed(_)
-            | UserStoreError::FailedUserBigramStore),
-        ) => Err(OpenError::Dict(DictError::Parse(error.to_string()))),
-    }
+    Some(UserStore::check_profile(user_dir, &versions, &layout, law))
 }
 
 /// The library loop's fault, as the open's answer.
@@ -1567,7 +1544,7 @@ impl Runtime {
         // a missing file included, fails the init (`pinyin.cpp:335-340`,
         // `zhuyin.cpp:279-284`).
         let conf = TableConf::load_from_dir(system_dir).map_err(OpenError::TableConf)?;
-        let early = check_profile_early(&conf, user_dir, law)?;
+        let early = check_profile_early(&conf, user_dir, law);
         let user_profile = user_dir.zip(early);
         let pinyin = SystemDictionary::attach_pinyin(system_dir).map_err(OpenError::Dict)?;
         let user_pinyin = crate::user::persistence::LoadedPinyinIndex::open(user_profile)
@@ -1768,7 +1745,6 @@ impl Runtime {
             },
             Err(
                 error @ (EngineError::CandidateIndexOutOfRange { .. }
-                | EngineError::LookupOffsetPastSeparator { .. }
                 | EngineError::LookupOffsetOutOfRange { .. }
                 | EngineError::LookupOffsetInsideCharacter { .. }
                 | EngineError::SelectionAnchorBeforeComposition { .. }

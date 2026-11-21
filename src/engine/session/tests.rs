@@ -1195,7 +1195,7 @@ fn a_lookup_activates_the_sentence_gate_even_without_rows() {
 }
 
 #[test]
-fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
+fn normalized_lookup_offset_walks_only_physical_separator_runs() {
     let mut session = session();
     session
         .replace_raw("ni'hao")

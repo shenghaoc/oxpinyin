@@ -71,9 +71,6 @@ pub enum UserStoreError {
     /// The storage backend reported an error.
     #[error("store error: {0}")]
     Store(#[source] StoreError),
-    /// A stored value could not be decoded (corrupt or incompatible).
-    #[error("stored value could not be decoded")]
-    Decode,
     /// Phrase text is empty, too long, or its key count does not match its
     /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
     #[error("invalid phrase (empty, too long, or key count mismatch)")]
@@ -147,12 +144,6 @@ pub enum UserStoreError {
     /// mask changes anything; the C adapters abort.
     #[error("masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)")]
     ResidualUserBigramGram,
-    /// A system library's user `.dbin` replay reached a pin assertion
-    /// ([`crate::user::JournalFault`]): at init's and a reload's `merge`, or at
-    /// `mask_out`'s `merge_with_mask`. The pin dies there; the C adapters
-    /// abort on it.
-    #[error("journal replay: {0}")]
-    Journal(#[source] crate::user::JournalFault),
     /// Init's library loop died at a row ([`crate::user::LibraryLoopStop`]).
     #[error("library loop: {0}")]
     LibraryLoop(#[source] crate::user::LibraryLoopStop),
@@ -170,12 +161,10 @@ pub enum UserStoreError {
     /// the pin asserts on the failed removal (`pinyin.cpp:3759`).
     #[error("user reading removal failed (upstream asserts, pinyin.cpp:3759)")]
     UserReadingRemoval,
-    /// The open could not build the session once the system libraries
-    /// were handed to it: a loaded item's encoding or its placement, or
-    /// the user bigram's container. The
-    /// pin's counterparts die: an allocation that throws `std::bad_alloc`,
-    /// or the asserts of its in-memory loads (`ngram_bdb.cpp:51-52`,
-    /// `bdb_utils.h:61`, `tkrzwdb_utils.h:45`). The C adapters abort.
+    /// The session could not load the user bigram container after taking
+    /// ownership of the system libraries. The pin's in-memory loads assert
+    /// (`ngram_bdb.cpp:51-52`, `bdb_utils.h:61`, `tkrzwdb_utils.h:45`).
+    /// The C adapters abort.
     #[error(
         "the session could not be built after the system libraries were handed \
                  over (upstream dies): {0}"
@@ -496,9 +485,7 @@ fn trained_gram(
         None => {
             // A miss walks the same items `insert_freq` walks, so it never
             // meets an equal token (`ngram.cpp:190-200`).
-            if !single_gram::insert_freq(&mut gram, cur, 0) {
-                return Err(UserStoreError::Decode);
-            }
+            single_gram::insert_freq(&mut gram, cur, 0);
             (0, seed::INITIAL_SEED)
         }
     };
@@ -524,13 +511,10 @@ fn predicted_gram(row: Option<Vec<u8>>, cur: PhraseToken) -> Result<Vec<u8>, Use
     let seed = seed::predicted_seed() as u32;
     let mut gram = row.unwrap_or_else(single_gram::new_gram);
     let total = single_gram::get_total_freq(&gram).ok_or(UserStoreError::ShortUserBigramValue)?;
-    let stored = match single_gram::get_freq(&gram, cur) {
+    match single_gram::get_freq(&gram, cur) {
         None => single_gram::insert_freq(&mut gram, cur, seed),
         Some(freq) => single_gram::set_freq(&mut gram, cur, freq.wrapping_add(seed)),
     };
-    if !stored {
-        return Err(UserStoreError::Decode);
-    }
     single_gram::set_total_freq(&mut gram, total.wrapping_add(seed));
     Ok(gram)
 }
@@ -898,7 +882,6 @@ impl UserStore {
             Err(
                 error @ (UserStoreError::Io(_)
                 | UserStoreError::Store(_)
-                | UserStoreError::Decode
                 | UserStoreError::InvalidPhrase
                 | UserStoreError::Persistence(_)
                 | UserStoreError::SaveRemapFailed
@@ -909,7 +892,6 @@ impl UserStore {
                 | UserStoreError::ShortUserBigramValue
                 | UserStoreError::PartialUserBigramTail
                 | UserStoreError::ResidualUserBigramGram
-                | UserStoreError::Journal(_)
                 | UserStoreError::LibraryLoop(_)
                 | UserStoreError::UserReadingRemoval
                 | UserStoreError::SessionSeed(_)
@@ -1064,13 +1046,10 @@ impl UserStore {
         let count32 = u32::try_from(count).unwrap_or(u32::MAX);
         let total = single_gram::get_total_freq(&gram).unwrap_or(0);
         let old = single_gram::get_freq(&gram, cur);
-        let stored = match old {
+        match old {
             Some(_) => single_gram::set_freq(&mut gram, cur, count32),
             None => single_gram::insert_freq(&mut gram, cur, count32),
         };
-        if !stored {
-            return Err(UserStoreError::Decode);
-        }
         let new_total = u64::from(total)
             .saturating_sub(u64::from(old.unwrap_or(0)))
             .saturating_add(u64::from(count32))

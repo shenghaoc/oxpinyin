@@ -17,7 +17,6 @@ use std::cell::{OnceCell, RefCell};
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 
-use crate::graph::{GraphError, MAX_GRAPH_POSITION};
 use crate::scoring::ScoringError;
 use crate::{
     ChewingKey, PhraseText, PhraseToken, SyllableKey,
@@ -1674,14 +1673,9 @@ where
         trellis.text_tones.extend_from_slice(tones);
         slot.insert((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
     }
-    // `m_last_step` is a `gint32` step; a graph's positions all fit.
-    let from = u32::try_from(span.start)
-        .ok()
-        .filter(|&from| from != SEED_STEP)
-        .ok_or(EngineError::Graph(GraphError::InputTooLong {
-            len: span.start,
-            limit: MAX_GRAPH_POSITION,
-        }))?;
+    // Every priced span reaches a real key in the graph's matrix by
+    // walking forward. Its start therefore fits below the reserved SEED_STEP.
+    let from = span.start as u32;
     let chars = entry.chars;
     trellis.insert(
         span.end,

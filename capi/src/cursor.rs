@@ -97,13 +97,8 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let found = match inst.core.abi_key_at(offset, false) {
-        Ok(Some(found)) => found,
-        Ok(None) => return false,
-        Err(_) => {
-            crate::ffi::log_warning("pinyin_get_pinyin_key_rest: zero-column assertion");
-            return false;
-        }
+    let Ok(Some(found)) = inst.core.abi_key_at(offset, false) else {
+        return false;
     };
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
     // and the pin's `int` positions narrow into them mod 2^16: past byte
@@ -454,22 +449,10 @@ pub unsafe extern "C" fn pinyin_get_left_pinyin_offset(
     }
     let result = match inst.core.left_offset(offset) {
         Ok(result) => result,
-        Err(error) => {
-            match oxpinyin::facade::CursorFault::of(
-                &error,
-                oxpinyin::facade::CursorLaw::CheckOffset,
-            ) {
-                // Register row 14: `assert(_check_offset(...))`,
-                // `pinyin.cpp:3035`, `:3057`; an offset past the matrix asserts in
-                // its `get_column_size` (`phonetic_key_matrix.h:103`).
-                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
-                // A graph failure the pin has no counterpart for.
-                oxpinyin::facade::CursorFault::Unreadable => {
-                    crate::ffi::log_warning("pinyin_get_left_pinyin_offset: the lookup failed");
-                    return false;
-                }
-            }
-        }
+        // Register row 14: `assert(_check_offset(...))`,
+        // `pinyin.cpp:3035`, `:3057`; an offset past the matrix asserts in
+        // its `get_column_size` (`phonetic_key_matrix.h:103`).
+        Err(_) => std::process::abort(),
     };
     write_if_nonnull!(left, result);
     true
@@ -513,22 +496,10 @@ pub unsafe extern "C" fn pinyin_get_right_pinyin_offset(
         // matrix, where the loop's `get_column_size` asserts first, has no
         // column, so `abort_past_matrix` above has already aborted.
         Ok(None) => return false,
-        Err(error) => {
-            match oxpinyin::facade::CursorFault::of(
-                &error,
-                oxpinyin::facade::CursorLaw::CheckOffset,
-            ) {
-                // Register row 14: `assert(_check_offset(...))`,
-                // `pinyin.cpp:3067`, `:3092`, and the matrix's own index assert
-                // past its end.
-                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
-                // A graph failure the pin has no counterpart for.
-                oxpinyin::facade::CursorFault::Unreadable => {
-                    crate::ffi::log_warning("pinyin_get_right_pinyin_offset: the lookup failed");
-                    return false;
-                }
-            }
-        }
+        // Register row 14: `assert(_check_offset(...))`,
+        // `pinyin.cpp:3067`, `:3092`, and the matrix's own index assert
+        // past its end.
+        Err(_) => std::process::abort(),
     };
     write_if_nonnull!(right, result);
     true
@@ -587,13 +558,8 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let found = match inst.core.abi_key_at(offset, false) {
-        Ok(Some(found)) => found,
-        Ok(None) => return false,
-        Err(_) => {
-            crate::ffi::log_warning("pinyin_get_pinyin_key: zero-column assertion");
-            return false;
-        }
+    let Ok(Some(found)) = inst.core.abi_key_at(offset, false) else {
+        return false;
     };
     let packed = found.0;
     KEY_SLOT.store(packed, Ordering::Relaxed);

@@ -866,12 +866,9 @@ fn append_split(columns: &mut [Vec<ScanKey>], key: ScanKey, end: usize, left: &s
 /// index-parsed scheme (Luoma, secondary zhuyin), whose pinned parse
 /// consumes `'` as the same separator.
 ///
-/// Range first ([`check_lookup_offset_range`]), then the
-/// `_compute_zero_start` walk and the `_check_offset` validation of
-/// `pinyin_guess_candidates` at libpinyin@dbff264: from `offset - 1`
-/// downward while the index stays positive and the byte is `'`, then
-/// refuse a normalized offset still one past a separator (only a leading
-/// run can cause it — the walk never crosses byte 0).
+/// After checking the range, walk back over physical separator columns,
+/// as in `_compute_zero_start` of `pinyin_guess_candidates` at
+/// libpinyin@dbff264. Leading separators leave the matrix columns empty.
 ///
 /// Do **not** call this for a buffer where `'` is not a separator: double
 /// pinyin never admits one into a composition, and the Gin-Yieh/Eten
@@ -880,9 +877,8 @@ fn append_split(columns: &mut [Vec<ScanKey>], key: ScanKey, end: usize, left: &s
 ///
 /// # Errors
 ///
-/// [`EngineError::LookupOffsetOutOfRange`] past one-past-end;
-/// [`EngineError::LookupOffsetPastSeparator`] for the leading-run shape
-/// upstream aborts on.
+/// Returns [`EngineError::LookupOffsetOutOfRange`] for an offset beyond
+/// the input's one-past-end position.
 pub(crate) fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, EngineError> {
     check_lookup_offset_range(input.len(), offset)?;
     let mut normalized = offset;
@@ -894,13 +890,11 @@ pub(crate) fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usi
     // Leading separators propagate parser state but do not create zero
     // columns (074a2219 phonetic_key_matrix.cpp:68-78).
     let leading = input.iter().take_while(|byte| **byte == b'\'').count();
-    if normalized <= leading && input.get(leading).is_some() {
-        return Ok(offset);
+    if normalized <= leading {
+        Ok(offset)
+    } else {
+        Ok(normalized)
     }
-    if normalized > 0 && input.get(normalized - 1) == Some(&b'\'') {
-        return Err(EngineError::LookupOffsetPastSeparator { offset, normalized });
-    }
-    Ok(normalized)
 }
 
 /// The range half of the lookup-offset law: an offset may at most equal

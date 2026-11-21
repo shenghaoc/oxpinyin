@@ -24,13 +24,11 @@ fn mask_error_outcome(error: &UserStoreError) -> MaskOutOutcome {
         UserStoreError::ResidualUserBigramGram => MaskOutOutcome::ResidualUserBigramGram,
         UserStoreError::Io(_)
         | UserStoreError::Store(_)
-        | UserStoreError::Decode
         | UserStoreError::InvalidPhrase
         | UserStoreError::Persistence(_)
         | UserStoreError::SaveRemapFailed
         | UserStoreError::SaveTooLarge
         | UserStoreError::UnigramTotalOverflow
-        | UserStoreError::Journal(_)
         | UserStoreError::LibraryLoop(_)
         | UserStoreError::TrainingSetFreqMiss
         | UserStoreError::UserReadingRemoval
@@ -215,8 +213,7 @@ impl OpenFailure {
                     )
                 }
             }
-            OpenError::Dict(_) => InitRefusal::OpenWarning,
-            OpenError::Io(..) | OpenError::Lm(_) => InitRefusal::OpenWarning,
+            OpenError::Dict(_) | OpenError::Lm(_) => InitRefusal::OpenWarning,
         }
     }
 }
@@ -476,7 +473,6 @@ impl ContextCore {
             Err(
                 UserStoreError::Io(_)
                 | UserStoreError::Store(_)
-                | UserStoreError::Decode
                 | UserStoreError::InvalidPhrase
                 | UserStoreError::Persistence(_)
                 | UserStoreError::UnigramTotalOverflow
@@ -485,7 +481,6 @@ impl ContextCore {
                 | UserStoreError::ShortUserBigramValue
                 | UserStoreError::PartialUserBigramTail
                 | UserStoreError::ResidualUserBigramGram
-                | UserStoreError::Journal(_)
                 | UserStoreError::LibraryLoop(_)
                 | UserStoreError::TrainingSetFreqMiss
                 | UserStoreError::UserReadingRemoval

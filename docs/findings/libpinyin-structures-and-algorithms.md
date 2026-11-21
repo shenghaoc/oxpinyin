@@ -819,8 +819,7 @@ extent reaches outside the content buffer retain policy row 107's safety
 refusal; the pin checks the two header reads but then constructs the declared
 extent without a body bound check (`:195-205`).
 
-`oxpinyin`'s `persistence::encode_persisted_item` shares the journal's
-typed-item shape validation with arena reconstruction. `UserLibrary::store`
+`UserLibrary::load_payload` loads the stored items into the arena. `UserLibrary::store`
 copies each validated `view.as_bytes()` directly, including empty items.
 Public phrase-import validation stays separate. Within the current arena
 limits, empty items retain slot identity, ordered pronunciation frequencies,

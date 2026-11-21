@@ -246,22 +246,12 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
             }
             return false;
         }
-        Err(error) => match oxpinyin::facade::CursorFault::of(
-            &error,
-            oxpinyin::facade::CursorLaw::CharacterOffset,
-        ) {
-            // Register row 19: the recursion's `assert(size > 0)`
-            // (`zhuyin.cpp:2110`), the entry's `assert(offset <
-            // matrix.size())` (`:2158`) and `_check_offset` (`:1453` via
-            // `:2159`); and `_pre_compute_tokens`' `reduce_tokens` count
-            // assert (`:2080`, `phrase_large_table3.h:95`).
-            oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
-            // A graph or dictionary failure the pin has no counterpart for.
-            oxpinyin::facade::CursorFault::Unreadable => {
-                crate::ffi::log_warning("zhuyin_get_character_offset: the lookup failed");
-                return false;
-            }
-        },
+        // Register row 19: the recursion's `assert(size > 0)`
+        // (`zhuyin.cpp:2110`), the entry's `assert(offset <
+        // matrix.size())` (`:2158`) and `_check_offset` (`:1453` via
+        // `:2159`); and `_pre_compute_tokens`' `reduce_tokens` count
+        // assert (`:2080`, `phrase_large_table3.h:95`).
+        Err(_) => std::process::abort(),
     };
     write_if_nonnull!(length, char_count);
     true
@@ -326,7 +316,6 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_before_cursor(
 }
 
 enum CandidateGuessRefusal {
-    InvalidOffset,
     Lookup(oxpinyin::engine::EngineError),
 }
 
@@ -334,10 +323,6 @@ enum CandidateGuessRefusal {
 fn candidate_guess_answer(result: Result<bool, CandidateGuessRefusal>) -> bool {
     match result {
         Ok(answer) => answer,
-        Err(CandidateGuessRefusal::InvalidOffset) => {
-            crate::ffi::log_warning("zhuyin_guess_candidates: the lookup failed");
-            false
-        }
         Err(CandidateGuessRefusal::Lookup(error)) => {
             refuse_lookup_gram("zhuyin_guess_candidates", &error);
             false
@@ -391,7 +376,6 @@ fn lookup_window(
         ) => std::process::abort(),
         Err(
             error @ (oxpinyin::engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin::engine::EngineError::LookupOffsetPastSeparator { .. }
             | oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
             | oxpinyin::engine::EngineError::LookupOffsetInsideCharacter { .. }
             | oxpinyin::engine::EngineError::SelectionAnchorBeforeComposition { .. }
@@ -439,15 +423,10 @@ fn guess_candidates_result(
     // before the offset (`:1441-1456`, via `:1495` and `:1558`), and
     // `get_column_size` asserts past the matrix (`phonetic_key_matrix.h:103`;
     // register row 66).
-    let normalized = match inst.core.abi_candidate_offset(offset, true) {
-        Ok(normalized) => normalized,
-        Err(oxpinyin::facade::CursorFault::PinAssert) => std::process::abort(),
-        // A parse the facade cannot read, which the pin has no counterpart
-        // for.
-        Err(oxpinyin::facade::CursorFault::Unreadable) => {
-            return Err(CandidateGuessRefusal::InvalidOffset);
-        }
-    };
+    let normalized = inst
+        .core
+        .abi_candidate_offset(offset, true)
+        .unwrap_or_else(|_| std::process::abort());
     // The before-cursor entry searches the spans ENDING at the offset
     // (the engine's backward-anchored window builder, the pin's
     // `search_matrix` walk over `(start, offset)`); the after-cursor

@@ -86,7 +86,7 @@ impl Fixture {
         let conf = self.conf();
         let layout = UserFileLayout::from_conf(&conf);
         let versions = SystemVersions::from_conf(&conf);
-        let check = check_format(&self.user, &versions, &layout, law).expect("check_format");
+        let check = check_format(&self.user, &versions, &layout, law);
         let mut originals = system_originals(
             crate::data::phrase_libraries::PhraseLibraries::empty(),
             layout,

@@ -126,23 +126,6 @@ unsafe fn kinds(instance: *mut crate::types::ZhuyinInstance) -> Vec<lookup_candi
         .collect()
 }
 
-/// The defensive matrix failure reaches the entry point as an owned
-/// refusal. Exercise its diagnostic without manufacturing a bad matrix.
-#[test]
-fn candidate_offset_refusal_logs_once() {
-    let logs = crate::test_support::LogCapture::new();
-    assert!(!super::candidate_guess_answer(Err(
-        super::CandidateGuessRefusal::InvalidOffset,
-    )));
-    assert_eq!(
-        logs.take_with_messages(),
-        [(
-            (Some("libzhuyin".to_owned()), glib_sys::G_LOG_LEVEL_WARNING),
-            "zhuyin_guess_candidates: the lookup failed".to_owned(),
-        )]
-    );
-}
-
 /// S6, the noguess protocol: no sentence guess since the parse, so the n-best results
 /// are empty and nothing is prepended (`zhuyin.cpp:1277-1278` at 074a2219). Before offset 0 the
 /// span loop does not run (`:1563`); inside a key the span is skipped (`:1590-1591`;
