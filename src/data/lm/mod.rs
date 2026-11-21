@@ -101,12 +101,11 @@ const fn merge_bigram_counts(system: u64, user: u64) -> u64 {
     (system as u32).wrapping_add(user as u32) as u64
 }
 
-/// Merged `(count, total)` for one bigram, or `None` when neither side has
-/// a gram (`merge_single_gram` returns false when both loads miss).
+/// Adds the count and total modulo 2^32 and widens the results to `u64`.
 ///
-/// A system miss with a non-zero user count or total is the user gram alone. A
-/// system hit with a zero user overlay is the system gram alone. Both
-/// sides present: wrapping `guint32` addition of each stored field.
+/// Returns `None` only when the system row is absent and both original user
+/// arguments are zero. A nonzero user argument can produce a present row with
+/// two zero fields after narrowing.
 #[must_use]
 pub fn merge_bigram(
     system: Option<(u32, u32)>,

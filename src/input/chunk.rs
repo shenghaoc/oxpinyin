@@ -71,10 +71,8 @@ pub(crate) enum ChunkLoadError {
 /// validation remains with the caller.
 ///
 /// # Errors
-/// Returns an open, seek, allocation, short-file, or payload read failure.
-///
-/// # Aborts
-/// A failed read of either header word aborts at the pin's assertion.
+/// Returns a short-header error when the file has fewer than eight bytes.
+/// Also returns open, seek, allocation, or payload read failures.
 pub(crate) fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
     load_with(path, false, |source, payload| {
         source.read_payload(payload, None)
@@ -126,6 +124,7 @@ fn load_header(
     if file_size < 8 {
         return Err(ChunkLoadError::ShortHeader);
     }
+    // MemoryChunk::load asserts on a failed header read (memory_chunk.h:433-438).
     let mut read = || match read_word() {
         Ok(word) => Ok(word),
         Err(_) if defer_header_fault => Err(ChunkLoadError::Header),

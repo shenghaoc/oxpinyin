@@ -650,9 +650,6 @@ impl PhraseLibrary {
     ///
     /// # Errors
     /// Returns a read, checksum, or layout error.
-    ///
-    /// # Aborts
-    /// A failed header word read aborts at the pin's assertion.
     pub fn load_heap(path: &Path) -> Result<Self, LibraryError> {
         let loaded = crate::input::chunk::load(path).map_err(|error| match error {
             crate::input::chunk::ChunkLoadError::Header => {
@@ -669,10 +666,13 @@ impl PhraseLibrary {
         Self::from_payload(payload)
     }
 
-    /// Construct a library from a validated, heap-owned chunk payload.
+    /// Constructs a library from an owned chunk payload. A missing first
+    /// separator or a wrong separator byte leaves a library with no accessible
+    /// items and the stored total, or zero if the total is unavailable.
     ///
     /// # Errors
-    /// Returns an error when the sub-index layout cannot be represented safely.
+    /// Returns an error for an out-of-bounds later separator, sections out of
+    /// order, or an offset array without a whole number of entries.
     pub fn from_payload(payload: Vec<u8>) -> Result<Self, LibraryError> {
         let len = payload.len();
         Self::from_bytes(LibraryBytes::Owned(payload), 0..len, None)

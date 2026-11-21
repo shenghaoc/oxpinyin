@@ -34,16 +34,8 @@ pub unsafe extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) ->
     oxpinyin::facade::guess_result(result, "pinyin_guess_sentence", crate::ffi::log_warning)
 }
 
-/// The lookup faults of a predecessor's user bigram. A value too short for
-/// its total is the pin's assert in `get_total_freq` (`memory_chunk.h:390`,
-/// read by `merge_single_gram`, `ngram.cpp:303-304`, by `SingleGram::search`,
-/// `:165`, and by the `DYNAMIC_ADJUST` term, `pinyin.cpp:1848`,
-/// `zhuyin.cpp:1250`; register row 85): the process aborts. So does a Kyoto
-/// Cabinet read that fails after its size check, the pin's
-/// `check_result(vsiz == m_db->get(...))` in `Bigram::load`
-/// (`ngram_kyotodb.cpp:138-139`). A read past the value (`ngram.cpp:241`,
-/// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
-/// the call answers `true` when `error` is that read.
+/// Logs one warning for a lookup that would read past a predecessor's system
+/// or user bigram value. Returns `true` when it logs the warning.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::engine::EngineError) -> bool {
     oxpinyin::facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
@@ -375,12 +367,11 @@ fn lookup_window(
         // The engine terminates where the pin's own asserts fire during the
         // guess: the over-long suggestion index key (register rows 84 and
         // 95, `chewing_large_table2_bdb.cpp:282`; kc `:269`, tkrzw `:252`),
-        // the toned first initial-only key on a searched path (row 4,
-        // `pinyin_phrase3.h:152`) and the short merged-gram total (row 85,
-        // `ngram.cpp:303-304`, `pinyin.cpp:1848`). Row 110: the
-        // `DYNAMIC_ADJUST` row's Kyoto Cabinet read failed after its size
-        // check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:138-139`), and the
-        // process aborts in `refuse_lookup_gram`.
+        // the toned first initial-only key on a searched path
+        // (pinyin_phrase3.h:152) and a short system or user gram total
+        // (ngram.cpp:303-304, pinyin.cpp:1848).
+        // A Kyoto Cabinet body read after its size check asserts at the load
+        // (pinyin.cpp:2212, ngram_kyotodb.cpp:138-139).
         Err(oxpinyin::engine::EngineError::ReadAfterCheck) => std::process::abort(),
         // Register row 98: the DYNAMIC_ADJUST merge or read of the previous
         // token's grams reads past a partial value (class (b), one warning;
@@ -430,9 +421,7 @@ fn lookup_window(
 /// zero-key separator (plain full pinyin, Luoma/secondary-zhuyin), the
 /// range refusal alone where a composition cannot hold one (double pinyin,
 /// the zhuyin keyboards — there `'` is out of scheme or a content symbol).
-/// The leading-run shape empties the snapshot and answers `false`; an
-/// offset two or more past the reserved slot aborts the process, as
-/// upstream's `_check_offset` does (register row 66).
+/// The leading-run shape empties the snapshot and returns `false`.
 ///
 /// The normalized caller offset selects the lookup window for this call.
 /// The composition offset stays fixed during the lookup. Pass the original
@@ -449,6 +438,11 @@ fn lookup_window(
 /// `LONGER_CANDIDATE` row when it finds a longer suggestion
 /// (`pinyin.cpp:1870-1932`, `:2292-2293`). The `SORT_BY_*` bits determine
 /// list order (`pinyin.cpp:1678-1709`).
+///
+/// # Aborts
+///
+/// An offset two or more past the reserved slot aborts at the matrix offset check
+/// (`pinyin.cpp:2163–2171`, `phonetic_key_matrix.h:103`).
 ///
 /// # Safety
 ///

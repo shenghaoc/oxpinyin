@@ -33,16 +33,8 @@ pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) ->
     oxpinyin::facade::guess_result(result, "zhuyin_guess_sentence", crate::ffi::log_warning)
 }
 
-/// The lookup faults of a predecessor's user bigram. A value too short for
-/// its total is the pin's assert in `get_total_freq` (`memory_chunk.h:390`,
-/// read by `merge_single_gram`, `ngram.cpp:303-304`, by `SingleGram::search`,
-/// `:165`, and by the `DYNAMIC_ADJUST` term, `pinyin.cpp:1848`,
-/// `zhuyin.cpp:1250`; register row 85): the process aborts. So does a Kyoto
-/// Cabinet read that fails after its size check, the pin's
-/// `check_result(vsiz == m_db->get(...))` in `Bigram::load`
-/// (`ngram_kyotodb.cpp:138-139`). A read past the value (`ngram.cpp:241`,
-/// `:167`, `:318-349`; register row 98, class (b)) logs the one warning, and
-/// the call answers `true` when `error` is that read.
+/// Logs one warning for a lookup that would read past a predecessor's system
+/// or user bigram value. Returns `true` when it logs the warning.
 pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::engine::EngineError) -> bool {
     oxpinyin::facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
