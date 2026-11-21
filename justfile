@@ -236,6 +236,15 @@ fuzz-setup:
 fuzz-setup:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz setup; exit $LASTEXITCODE
 
+# Minimize one target's corpus, or every corpus with no target (Linux only).
+[unix]
+fuzz-minimize *targets:
+    @uv run --managed-python python -X utf8 -m tools.dev.fuzz minimize "$@"
+
+[windows]
+fuzz-minimize *targets:
+    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz minimize @forwarded; exit $LASTEXITCODE
+
 # Each run writes a new directory under fuzz/out/<target>/. Arguments after the
 # target go to afl-fuzz, for example `-V 60`. FUZZ_CMPLOG=1 adds CmpLog;
 # FUZZ_GUARD_SECONDS limits the wall time. tools/dev/fuzz.py states the rules;

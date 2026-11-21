@@ -2,11 +2,14 @@
 from pathlib import Path
 import contextlib
 import io
+import json
 import os
 import re
 import shutil
+import signal
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -128,6 +131,175 @@ class CorpusTests(unittest.TestCase):
         self.assertEqual(fuzz.read_stats(stats),
                          {'afl_version': '++4.40c', 'execs_done': '807', 'command_line': 'a -- b'})
 
+    def test_minimization_replaces_only_a_successful_corpus(self):
+        corpus = self.directory / 'corpus' / 'probe'
+        corpus.mkdir(parents=True)
+        (corpus / 'first').write_bytes(b'first')
+        (corpus / 'second').write_bytes(b'second')
+        run = self.directory / 'run'
+        run.mkdir()
+        built = mock.Mock(afl_bin=self.directory / 'afl', binary=self.directory / 'target', env={})
+
+        def cmin(issues=False, status=0, empty=False):
+            def run_cmin(command, environ, log):
+                output = Path(command[command.index('-o') + 1])
+                output.mkdir()
+                if not empty:
+                    (output / 'selected').write_bytes(b'second')
+                if issues:
+                    findings = Path(command[command.index('--crash-dir') + 1])
+                    findings.mkdir()
+                    (findings / 'crash').write_bytes(b'crash')
+                    (findings / 'timeout').write_bytes(b'timeout')
+                return status, False, None
+            return run_cmin
+
+        for kwargs, message in (({'issues': True}, 'seeds that crash or time out'),
+                                ({'status': 1}, 'exited with status 1'),
+                                ({'empty': True}, 'produced no inputs')):
+            with self.subTest(kwargs=kwargs), mock.patch.object(fuzz, '_tee', side_effect=cmin(**kwargs)), \
+                    self.assertRaisesRegex(fuzz.FuzzError, message):
+                fuzz.minimize_corpus('probe', corpus, run, built)
+            self.assertEqual({p.name: p.read_bytes() for p in corpus.iterdir()},
+                             {'first': b'first', 'second': b'second'})
+            shutil.rmtree(run / 'seed-issues', ignore_errors=True)
+
+        with mock.patch.object(fuzz, '_tee', side_effect=cmin()):
+            fuzz.minimize_corpus('probe', corpus, run, built)
+        self.assertEqual({p.name: p.read_bytes() for p in corpus.iterdir()}, {'selected': b'second'})
+        self.assertEqual(sorted(p.name for p in corpus.parent.iterdir()), ['probe'])
+
+    def test_a_seed_issue_does_not_reseed_the_restored_corpus(self):
+        corpus = self.directory / 'corpus' / 'capi-commands'
+        corpus.mkdir(parents=True)
+        (corpus / 'choose').write_bytes(b'cached input')
+        run = self.directory / 'run'
+        run.mkdir()
+        built = mock.Mock(afl_bin=self.directory / 'afl', binary=self.directory / 'target',
+                          env={'AFL_CMIN_ALLOW_ANY': '1', 'AFL_CMIN_CRASHES_ONLY': '1'})
+
+        def cmin(command, environ, log):
+            self.assertNotIn('AFL_CMIN_ALLOW_ANY', environ)
+            self.assertNotIn('AFL_CMIN_CRASHES_ONLY', environ)
+            issues = Path(command[command.index('--crash-dir') + 1])
+            issues.mkdir()
+            (issues / 'bad').write_bytes(b'bad')
+            return 0, False, None
+
+        with mock.patch.object(fuzz, '_tee', side_effect=cmin), \
+                self.assertRaisesRegex(fuzz.FuzzError, 'seeds that crash or time out'):
+            fuzz.minimize_corpus('capi-commands', corpus, run, built)
+        self.assertEqual({p.name: p.read_bytes() for p in corpus.iterdir()}, {'choose': b'cached input'})
+        self.assertEqual((run / 'seed-issues' / 'bad').read_bytes(), b'bad')
+
+    def test_guard_and_fuzzer_status_report_the_observed_failure(self):
+        stats = self.directory / 'stats'
+        for status in (0, 124, 137):
+            with self.subTest(status=status), self.assertRaisesRegex(fuzz.FuzzError, 'did not end within 5 s'):
+                fuzz.check_fuzz_status('probe', status, True, '5', stats)
+        with self.assertRaisesRegex(fuzz.FuzzError, 'status 137 and wrote no statistics'):
+            fuzz.check_fuzz_status('probe', 137, False, '5', stats)
+        stats.write_text('execs_done: 1\n')
+        for status in (124, 137):
+            with self.subTest(status=status), self.assertRaisesRegex(fuzz.FuzzError, f'exited with status {status}\\.$'):
+                fuzz.check_fuzz_status('probe', status, False, '5', stats)
+        self.assertIsNone(fuzz.check_fuzz_status('probe', 0, False, '5', stats))
+
+    def test_all_corpora_are_attempted_even_after_a_failure(self):
+        metadata = json.dumps({'packages': [{'targets': [{'name': 'first', 'kind': ['bin']},
+                                                        {'name': 'lib', 'kind': ['lib']},
+                                                        {'name': 'second', 'kind': ['bin']}]}]})
+        errors = io.StringIO()
+        with mock.patch.object(fuzz.sys, 'platform', 'linux'), \
+                mock.patch.object(fuzz.subprocess, 'run', return_value=completed(metadata)), \
+                mock.patch.object(fuzz, 'minimize', side_effect=[fuzz.FuzzError('seed issue'), 0]) as minimize, \
+                contextlib.redirect_stderr(errors):
+            self.assertEqual(fuzz.minimize_all({}), 1)
+        self.assertEqual([call.args[0] for call in minimize.call_args_list], ['first', 'second'])
+        self.assertIn('seed issue', errors.getvalue())
+
+
+@unittest.skipUnless(os.name == 'posix', 'the fuzz guard uses POSIX signals')
+class GuardTests(unittest.TestCase):
+    def run_child(self, code, guard, grace=.2):
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryFile('w+b') as output:
+            with io.TextIOWrapper(output, encoding='utf-8') as stream, mock.patch.object(sys, 'stdout', stream):
+                return fuzz._tee([sys.executable, '-u', '-c', code], dict(os.environ),
+                                 Path(directory) / 'child.log', guard=guard, grace=grace)
+
+    def test_guard_reports_a_clean_exit_after_sigint(self):
+        code = ('import signal,time,sys\n'
+                'signal.signal(signal.SIGINT, lambda *args: sys.exit(0))\n'
+                'print("ready", flush=True)\n'
+                'time.sleep(60)\n')
+        self.assertEqual(self.run_child(code, guard=.8), (0, True, None))
+
+    def test_guard_kills_a_process_that_ignores_sigint(self):
+        code = ('import signal,time\n'
+                'signal.signal(signal.SIGINT, signal.SIG_IGN)\n'
+                'print("ready", flush=True)\n'
+                'time.sleep(60)\n')
+        self.assertEqual(self.run_child(code, guard=.8), (-signal.SIGKILL, True, None))
+
+    def test_guard_kills_a_descendant_after_the_parent_exits(self):
+        code = ('import os,signal,sys,time\n'
+                'signal.signal(signal.SIGINT, signal.SIG_IGN)\n'
+                'if os.fork() == 0:\n'
+                '    time.sleep(4)\n'
+                '    os._exit(0)\n'
+                'signal.signal(signal.SIGINT, lambda *args: sys.exit(0))\n'
+                'print("ready", flush=True)\n'
+                'time.sleep(4)\n')
+        started = time.monotonic()
+        status, stopped, startup = self.run_child(code, guard=.8, grace=.2)
+        self.assertEqual((status, stopped, startup), (0, True, None))
+        self.assertLess(time.monotonic() - started, 2.5)
+        with self.assertRaisesRegex(fuzz.FuzzError, 'did not end within .8 s'):
+            fuzz.check_fuzz_status('probe', status, stopped, '.8', Path('missing-stats'))
+
+    def test_guard_reports_a_pipe_held_open_outside_the_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pidfile = Path(directory) / 'escaped-pid'
+            code = ('import os,signal,time\n'
+                    'signal.signal(signal.SIGINT, signal.SIG_IGN)\n'
+                    'if os.fork() == 0:\n'
+                    '    os.setsid()\n'
+                    f'    open({str(pidfile)!r}, "w").write(str(os.getpid()))\n'
+                    '    time.sleep(5)\n'
+                    '    os._exit(0)\n'
+                    f'while not os.path.exists({str(pidfile)!r}):\n'
+                    '    time.sleep(.01)\n'
+                    'print("ready", flush=True)\n'
+                    'time.sleep(5)\n')
+            started = time.monotonic()
+            try:
+                with mock.patch.object(fuzz, 'OUTPUT_CLOSE_SECONDS', .2), \
+                        self.assertRaisesRegex(fuzz.FuzzError, 'guard stopped.*output pipe did not close'):
+                    self.run_child(code, guard=.8, grace=.2)
+                self.assertLess(time.monotonic() - started, 2.5)
+            finally:
+                if pidfile.is_file():
+                    try:
+                        os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_an_early_137_is_not_a_guard_stop(self):
+        self.assertEqual(self.run_child('raise SystemExit(137)', guard=5), (137, False, None))
+
+    def test_startup_is_measured_when_the_ready_line_arrives(self):
+        status, stopped, startup = self.run_child('print("All set and ready to roll!")', guard=5)
+        self.assertEqual((status, stopped), (0, False))
+        self.assertGreaterEqual(startup, 0)
+
+    def test_guard_duration_validation(self):
+        self.assertIsNone(fuzz.guard_duration({}))
+        self.assertIsNone(fuzz.guard_duration({'FUZZ_GUARD_SECONDS': '0'}))
+        self.assertEqual(fuzz.guard_duration({'FUZZ_GUARD_SECONDS': '.5'}), .5)
+        for value in ('-1', 'nan', 'inf', 'bad'):
+            with self.subTest(value=value), self.assertRaisesRegex(fuzz.FuzzError, 'non-negative number'):
+                fuzz.guard_duration({'FUZZ_GUARD_SECONDS': value})
+
 
 class BackendTests(unittest.TestCase):
     def test_a_target_builds_the_hosts_cell(self):
@@ -182,7 +354,8 @@ class ToolsRuleTests(unittest.TestCase):
         refusal = ('fuzz: AFL++ fuzzing is supported on Linux only; on another host, fuzz in a native Linux '
                    'container (docs/runbooks/setup.md#fuzzing).\n')
         for host in ('darwin', 'win32'):
-            for argv in (['setup'], ['run', 'chewing-parser'], ['run', 'chewing-parser', '-f', 'x']):
+            for argv in (['setup'], ['minimize', 'chewing-parser'], ['run', 'chewing-parser'],
+                         ['run', 'chewing-parser', '-f', 'x']):
                 stderr = io.StringIO()
                 with self.subTest(host=host, argv=argv), mock.patch.object(fuzz.sys, 'platform', host), \
                         mock.patch.object(fuzz.subprocess, 'run') as ran, contextlib.redirect_stderr(stderr):

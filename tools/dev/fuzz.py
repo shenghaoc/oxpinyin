@@ -1,4 +1,4 @@
-"""Install the AFL++ fuzzing tools and fuzz one target (`just fuzz-setup`, `just fuzz`).
+"""Install AFL++, minimize corpora, and fuzz targets with the `just fuzz` recipes.
 
 AFL++ fuzzing is supported on Linux only, as in libchewing
 (docs/runbooks/setup.md#fuzzing). fuzz/tool-versions.env pins cargo-afl, and
@@ -21,15 +21,19 @@ if __name__ == '__main__':
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[2]
 FUZZ = ROOT / 'fuzz'
@@ -56,6 +60,8 @@ ASAN_OPTIONS = 'abort_on_error=1:symbolize=0:detect_leaks=1:detect_odr_violation
 LSAN_OPTIONS = 'detect_leaks=1:fast_unwind_on_malloc=1:malloc_context_size=30:print_suppressions=0:symbolize=0'
 PLUGINS = 'afl-llvm-dict2file, split-switches, SanitizerCoveragePCGUARD, afl-llvm-ijon'
 TIMEOUT_MS = '15000'
+GUARD_GRACE_SECONDS = 30
+OUTPUT_CLOSE_SECONDS = 2
 # afl-fuzz names a seed issue in "Test case '<entry>' results in a crash" or
 # "... a timeout" (afl-fuzz-init.c, perform_dry_run). <entry> is the name of
 # the input's entry in the run's queue. Only those lines count: afl-fuzz also
@@ -274,6 +280,65 @@ def target_directory(environ):
     return Path(json.loads(text)['target_directory'])
 
 
+class TargetBuild(NamedTuple):
+    env: dict
+    command: list
+    binary: Path
+    target_dir: Path
+    host: str
+    afl_bin: Path
+    version: str
+    afl_version: str
+
+
+def build_target(target, environ, found):
+    """Build one target with the instrumentation shared by cmin and fuzzing."""
+    version = read_tool_versions()['CARGO_AFL_VERSION']
+    afl_version = found.split('AFL++ version ', 1)[1].split(' ', 1)[0]
+    rustc = rustc_facts(environ)
+    host = rustc['host']
+    afl_bin = (data_home(environ) / f'afl.rs/rustc-{rustc["release"]}-{rustc["commit"]}'
+               / f'afl.rs-{version}/afl/bin')
+    target_dir = target_directory(environ)
+    env = dict(environ,
+               ASAN_OPTIONS=ASAN_OPTIONS,
+               LSAN_OPTIONS=LSAN_OPTIONS,
+               AFL_SKIP_CPUFREQ='1',
+               # A crashing or timed-out seed must stop the soak.
+               AFL_EXIT_ON_SEED_ISSUES='1',
+               AFLRS_REQUIRE_PLUGINS='1',
+               # --target keeps build scripts and proc macros out of ASan.
+               RUSTFLAGS=' '.join(filter(None, ('-Zsanitizer=address', environ.get('RUSTFLAGS')))))
+    command = ['cargo', 'afl', 'build', '--release', '--locked', '--target', host, *backend_flags()]
+    _call([*command, '--target-dir', str(target_dir), '--bin', target], dict(env, AFLRS_NO_CMPLOG='1'),
+          f'{target}: cargo afl build')
+    binary = target_dir / host / 'release' / target
+    return TargetBuild(env, command, binary, target_dir, host, afl_bin, version, afl_version)
+
+
+def new_run_directory(target):
+    """Keep each minimization and fuzz run under its own directory."""
+    run_name = f'{time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())}-{os.getpid()}'
+    directory = FUZZ / 'out' / target / run_name
+    directory.mkdir(parents=True)
+    print(f'fuzz: {target}: run directory {directory.relative_to(FUZZ)}')
+    return directory
+
+
+def guard_duration(environ):
+    """Return the optional wall-time guard, in seconds."""
+    value = environ.get('FUZZ_GUARD_SECONDS')
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError as error:
+        raise FuzzError(f'FUZZ_GUARD_SECONDS must be a non-negative number of seconds: {value!r}.') from error
+    if not math.isfinite(seconds) or seconds < 0:
+        raise FuzzError(f'FUZZ_GUARD_SECONDS must be a non-negative number of seconds: {value!r}.')
+    return seconds or None
+
+
 def _call(command, environ, what):
     sys.stdout.flush()
     status = subprocess.run(command, env=environ, cwd=FUZZ, check=False).returncode
@@ -314,18 +379,180 @@ def backend_flags():
     return feature_flags(CELL_TO_BACKEND[host_cell()])
 
 
-def _tee(command, environ, log):
-    """Run COMMAND with its output on standard output and in LOG; return its exit status.
+def _signal_group(process, sig):
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
 
-    Through the pipe afl-fuzz prints status lines, not its terminal UI."""
+
+def _wait_for_output(process, reader, deadline):
+    """Wait for the pipe and child without reaping the group leader early."""
+    def remaining():
+        return None if deadline is None else max(0, deadline - time.monotonic())
+
+    # An unreaped leader keeps its PID, and hence the group ID, from being reused.
+    reader.join(timeout=remaining())
+    if reader.is_alive():
+        return None
+    try:
+        return process.wait(timeout=remaining())
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def _tee(command, environ, log, guard=None, grace=GUARD_GRACE_SECONDS):
+    """Run COMMAND with its output on standard output and in LOG.
+
+    Return its exit status, whether the guard fired, and the elapsed
+    time when afl-fuzz reported that its startup run was complete."""
     sys.stdout.flush()
-    with open(log, 'wb') as written, subprocess.Popen(command, env=environ, cwd=FUZZ, stdout=subprocess.PIPE,
-                                                       stderr=subprocess.STDOUT) as process:
-        for line in iter(process.stdout.readline, b''):
-            sys.stdout.buffer.write(line)
-            sys.stdout.buffer.flush()
-            written.write(line)
-        return process.wait()
+    written = open(log, 'wb')
+    try:
+        process = subprocess.Popen(command, env=environ, cwd=FUZZ, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+    except BaseException:
+        written.close()
+        raise
+    started = time.monotonic()
+    stopped = threading.Event()
+    abandoned = threading.Event()
+    startup = []
+    errors = []
+
+    def copy_output():
+        try:
+            with written, process.stdout:
+                for line in iter(process.stdout.readline, b''):
+                    if abandoned.is_set():
+                        break
+                    if not startup and not stopped.is_set() and b'All set and ready to roll!' in line:
+                        startup.append(time.monotonic() - started)
+                    sys.stdout.buffer.write(line)
+                    sys.stdout.buffer.flush()
+                    written.write(line)
+        except BaseException as error:
+            if not abandoned.is_set():
+                errors.append(error)
+                _signal_group(process, signal.SIGTERM)
+
+    reader = threading.Thread(target=copy_output, daemon=True)
+    reader.start()
+    try:
+        deadline = None if guard is None else started + guard
+        status = _wait_for_output(process, reader, deadline)
+        if status is None:
+            stopped.set()
+            _signal_group(process, signal.SIGINT)
+            status = _wait_for_output(process, reader, time.monotonic() + grace)
+            if status is None:
+                _signal_group(process, signal.SIGKILL)
+                status = _wait_for_output(process, reader, time.monotonic() + OUTPUT_CLOSE_SECONDS)
+                if status is None:
+                    abandoned.set()
+                    process.poll()
+                    if reader.is_alive():
+                        raise FuzzError('guard stopped the command, but its output pipe did not close after SIGKILL.')
+                    raise FuzzError('guard stopped the command, but its process did not exit after SIGKILL.')
+    except KeyboardInterrupt:
+        _signal_group(process, signal.SIGINT)
+        if _wait_for_output(process, reader, time.monotonic() + grace) is None:
+            _signal_group(process, signal.SIGKILL)
+            _wait_for_output(process, reader, time.monotonic() + OUTPUT_CLOSE_SECONDS)
+        abandoned.set()
+        raise
+    if errors:
+        raise errors[0]
+    return status, stopped.is_set(), startup[0] if startup else None
+
+
+def minimize_corpus(target, corpus, run_directory, built):
+    """Minimize a corpus without replacing it when cmin reports a seed issue."""
+    corpus.parent.mkdir(parents=True, exist_ok=True)
+    if corpus.exists() and not corpus.is_dir():
+        raise FuzzError(f'{target}: corpus is not a directory: {corpus}.')
+    issues = run_directory / 'seed-issues'
+    log = run_directory / 'afl-cmin.log'
+    with tempfile.TemporaryDirectory(prefix=f'.{target}-cmin-', dir=corpus.parent) as temporary:
+        staging = Path(temporary)
+        source = corpus
+        if not corpus.is_dir() or not any(path.is_file() for path in corpus.iterdir()):
+            source = staging / 'seeds'
+            seed_corpus(target, source)
+        before = sum(path.is_file() for path in source.iterdir())
+        minimized = staging / 'minimized'
+        command = ['setarch', platform.machine(), '-R', str(built.afl_bin / 'afl-cmin'),
+                   '-i', str(source), '-o', str(minimized), '--crash-dir', str(issues),
+                   '-t', TIMEOUT_MS, '-m', 'none', '--', str(built.binary)]
+        cmin_env = dict(built.env, AFL_PATH=str(built.afl_bin))
+        # These make afl-showmap hide failures or discard normal inputs.
+        cmin_env.pop('AFL_CMIN_ALLOW_ANY', None)
+        cmin_env.pop('AFL_CMIN_CRASHES_ONLY', None)
+        started = time.monotonic()
+        status, _, _ = _tee(command, cmin_env, log)
+        elapsed = time.monotonic() - started
+        if issues.is_dir() and any(issues.iterdir()):
+            raise FuzzError(f'{target}: afl-cmin found seeds that crash or time out; they are in {issues}.')
+        if status != 0:
+            raise FuzzError(f'{target}: afl-cmin exited with status {status}; the corpus was not replaced.')
+        after = sum(path.is_file() for path in minimized.iterdir()) if minimized.is_dir() else 0
+        if not after:
+            raise FuzzError(f'{target}: afl-cmin produced no inputs; the corpus was not replaced.')
+        original = staging / 'original'
+        if corpus.exists():
+            os.replace(corpus, original)
+        try:
+            os.replace(minimized, corpus)
+        except BaseException:
+            if original.exists():
+                os.replace(original, corpus)
+            raise
+    seed_corpus(target, corpus)
+    print(f'fuzz: {target}: afl-cmin {before} -> {after} inputs in {elapsed:.1f} s')
+
+
+def minimize(target, environ):
+    """Minimize the cached corpus with the same target and sanitizer as the soak."""
+    require_linux()
+    found = tools_rule(environ)
+    built = build_target(target, environ, found)
+    directory = new_run_directory(target)
+    minimize_corpus(target, FUZZ / 'corpus' / target, directory, built)
+    return 0
+
+
+def minimize_all(environ):
+    """Minimize every fuzz target, including those after a failed target."""
+    require_linux()
+    metadata = subprocess.run(['cargo', 'metadata', '--no-deps', '--format-version', '1'],
+                              capture_output=True, text=True, env=environ, cwd=FUZZ, check=True).stdout
+    targets = [target['name'] for package in json.loads(metadata)['packages']
+               for target in package['targets'] if target['kind'] == ['bin']]
+    if not targets:
+        raise FuzzError('fuzz/Cargo.toml lists no targets.')
+    failed = False
+    for target in targets:
+        if environ.get('GITHUB_ACTIONS'):
+            print(f'::group::minimize {target}', flush=True)
+        try:
+            minimize(target, environ)
+        except (FuzzError, OSError, subprocess.CalledProcessError) as error:
+            print(f'fuzz: {target}: minimization failed: {error}', file=sys.stderr)
+            failed = True
+        finally:
+            if environ.get('GITHUB_ACTIONS'):
+                print('::endgroup::', flush=True)
+    return 1 if failed else 0
+
+
+def check_fuzz_status(target, status, guard_stopped, guard_value, stats_path):
+    """Report the guard and a missing statistics file only when they occurred."""
+    if guard_stopped:
+        raise FuzzError(f'{target}: afl-fuzz did not end within {guard_value} s.')
+    if not stats_path.is_file():
+        raise FuzzError(f'{target}: afl-fuzz exited with status {status} and wrote no statistics.')
+    if status != 0:
+        raise FuzzError(f'{target}: afl-fuzz exited with status {status}.')
 
 
 def run(target, args, environ):
@@ -341,60 +568,34 @@ def run(target, args, environ):
     require_linux()
     found = tools_rule(environ)
     refuse_options(args)
-    features = backend_flags()
-    version = read_tool_versions()['CARGO_AFL_VERSION']
-    afl_version = found.split('AFL++ version ', 1)[1].split(' ', 1)[0]
-    rustc = rustc_facts(environ)
-    host = rustc['host']
-    afl_fuzz = (data_home(environ) / f'afl.rs/rustc-{rustc["release"]}-{rustc["commit"]}'
-                / f'afl.rs-{version}/afl/bin/afl-fuzz')
-    target_dir = target_directory(environ)
-    env = dict(environ,
-               ASAN_OPTIONS=ASAN_OPTIONS,
-               LSAN_OPTIONS=LSAN_OPTIONS,
-               # afl-fuzz refuses a CPU frequency governor other than performance; it changes speed only.
-               AFL_SKIP_CPUFREQ='1',
-               # Without it, afl-fuzz skips an initial input that crashes, and with -t one that
-               # times out, and fuzzes on from the other inputs.
-               AFL_EXIT_ON_SEED_ISSUES='1',
-               AFLRS_REQUIRE_PLUGINS='1',
-               # cargo afl build adds no ASan runtime. -Zsanitizer=address makes rustc instrument
-               # the crates and link its ASan runtime; cargo-afl appends its own flags.
-               # --target keeps build scripts and proc macros out of the sanitizer.
-               RUSTFLAGS=' '.join(filter(None, ('-Zsanitizer=address', environ.get('RUSTFLAGS')))))
-    build = ['cargo', 'afl', 'build', '--release', '--locked', '--target', host, *features]
-    _call([*build, '--target-dir', str(target_dir), '--bin', target], dict(env, AFLRS_NO_CMPLOG='1'),
-          f'{target}: cargo afl build')
-    binary = target_dir / host / 'release' / target
+    guard = guard_duration(environ)
+    built = build_target(target, environ, found)
     cmplog = []
     if environ.get('FUZZ_CMPLOG', '0') == '1':
         # An inherited AFLRS_NO_CMPLOG would build this binary without CmpLog.
-        cmplog_env = {name: value for name, value in env.items() if name != 'AFLRS_NO_CMPLOG'}
-        _call([*build, '--target-dir', str(target_dir / 'cmplog'), '--bin', target], cmplog_env,
+        cmplog_env = {name: value for name, value in built.env.items() if name != 'AFLRS_NO_CMPLOG'}
+        _call([*built.command, '--target-dir', str(built.target_dir / 'cmplog'), '--bin', target], cmplog_env,
               f'{target}: cargo afl build (CmpLog)')
-        cmplog_binary = target_dir / 'cmplog' / host / 'release' / target
+        cmplog_binary = built.target_dir / 'cmplog' / built.host / 'release' / target
         cmplog = ['-c', str(cmplog_binary)]
         mode = f'CmpLog on (-c {cmplog_binary}, plus cmplog-switches, cmplog-instructions, cmplog-routines)'
     else:
         mode = 'CmpLog off'
-    print(f'fuzz: {target}: AFL++ {afl_version} (cargo-afl {version}), LLVM plugins {PLUGINS}; {mode}; '
+    print(f'fuzz: {target}: AFL++ {built.afl_version} (cargo-afl {built.version}), LLVM plugins {PLUGINS}; {mode}; '
           f'ASan, LSAN_OPTIONS={LSAN_OPTIONS}')
-    print(f'fuzz: {target}: {binary}')
+    print(f'fuzz: {target}: {built.binary}')
     corpus = FUZZ / 'corpus' / target
-    run_name = f'{time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())}-{os.getpid()}'
-    run_directory = FUZZ / 'out' / target / run_name
-    run_directory.mkdir(parents=True)
-    print(f'fuzz: {target}: run directory {run_directory.relative_to(FUZZ)}')
+    run_directory = new_run_directory(target)
     seed_corpus(target, corpus)
-    guard = []
-    if environ.get('FUZZ_GUARD_SECONDS'):
-        guard = ['timeout', '-s', 'INT', '-k', '30', environ['FUZZ_GUARD_SECONDS']]
     # setarch -R disables ASLR: runner kernels' mmap entropy exceeds ASan's shadow
     # mapping (tools/dev/test_runner.py does the same).
     aslr = ['setarch', platform.machine(), '-R']
     log = run_directory / 'afl-fuzz.log'
-    status = _tee([*guard, *aslr, str(afl_fuzz), '-i', str(corpus), '-o', str(run_directory), '-t', TIMEOUT_MS,
-                   '-m', 'none', *cmplog, *args, '--', str(binary)], env, log)
+    status, guard_stopped, startup = _tee([*aslr, str(built.afl_bin / 'afl-fuzz'), '-i', str(corpus), '-o',
+                                           str(run_directory), '-t', TIMEOUT_MS, '-m', 'none', *cmplog, *args,
+                                           '--', str(built.binary)], built.env, log, guard=guard)
+    if startup is not None:
+        print(f'fuzz: {target}: startup {startup:.1f} s')
     instance = run_directory / 'default'
     log_text = log.read_text(errors='replace')
     if status != 0 and SEED_ISSUE.search(log_text):
@@ -408,10 +609,7 @@ def run(target, args, environ):
                         f'the offending input in {log}.')
     promote_queue(instance / 'queue', corpus)
     stats_path = instance / 'fuzzer_stats'
-    if status == 124 and guard:
-        raise FuzzError(f'{target}: afl-fuzz did not end within {environ["FUZZ_GUARD_SECONDS"]} s.')
-    if status != 0 or not stats_path.is_file():
-        raise FuzzError(f'{target}: afl-fuzz exited with status {status} and wrote no statistics.')
+    check_fuzz_status(target, status, guard_stopped, environ.get('FUZZ_GUARD_SECONDS'), stats_path)
     stats = read_stats(stats_path)
     stat = lambda name: stats.get(name, '?')
     print(f'fuzz: {target}: afl_version {stat("afl_version")}, execs_done {stat("execs_done")}, '
@@ -430,7 +628,7 @@ def run(target, args, environ):
     return 1 if failed else 0
 
 
-USAGE = 'usage: python -m tools.dev.fuzz setup | run <target> [afl-fuzz options]'
+USAGE = 'usage: python -m tools.dev.fuzz setup | minimize [target] | run <target> [afl-fuzz options]'
 
 
 def main(argv, environ=None):
@@ -438,6 +636,10 @@ def main(argv, environ=None):
     try:
         if argv[:1] == ['setup'] and len(argv) == 1:
             return setup(environ)
+        if argv == ['minimize']:
+            return minimize_all(environ)
+        if argv[:1] == ['minimize'] and len(argv) == 2:
+            return minimize(argv[1], environ)
         if argv[:1] == ['run'] and len(argv) >= 2:
             return run(argv[1], argv[2:], environ)
     except FuzzError as error:

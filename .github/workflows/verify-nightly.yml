@@ -52,17 +52,18 @@ jobs:
     # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
     # move (26.04: actions/runner-images#14748) happens here under review.
     runs-on: &ubuntu ubuntu-26.04
-    # Two limits. The "Soak each target" step has 60: the target builds take
+    # The "Minimize restored corpora" step has 30 min. The "Soak each target"
+    # step has 60: the target builds take
     # up to 5 min, and each of the 7 targets runs under a FUZZ_GUARD_SECONDS
     # (420 s) limit plus 30 s for the kill, 52.5 min in all. The guard holds
     # FUZZ_SECONDS (180 s) of fuzzing and 240 s for afl-fuzz's start-up run,
-    # which calibrates every corpus input before the -V clock starts and
-    # grows with the cached corpus. The job has 25 more, for
+    # which calibrates every corpus input before the -V clock starts. The job
+    # has 25 more, for
     # the steps before the soak (up to 15 min: LLVM, cargo-afl and the AFL++
     # build) and the upload and cache save after it. The step limit is lower
     # than the job limit, so an overrun fails the step and the crash upload
     # still runs. Add 8 to both numbers for each new target.
-    timeout-minutes: 85
+    timeout-minutes: 115
     defaults:
       run:
         shell: bash
@@ -115,8 +116,7 @@ jobs:
       # (latest-wins — the run-id key always misses so every run saves,
       # the prefix restore-key always loads the newest save), so a soak
       # starts where the last one ended instead of from the single
-      # committed seed. Restored before seeding: the seed step re-copies
-      # its fixture inputs over whatever the cache brought back.
+      # committed seed. Minimize the restore before re-copying the fixtures.
       - name: Restore the accumulated fuzz corpora
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -124,6 +124,13 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-
+      - name: Minimize restored corpora
+        # Each target uses the same ASan build and input timeout as the soak.
+        # A cmin seed issue fails the step and stays in seed-issues/ for upload;
+        # the original corpus is not replaced. Run every target even on failure.
+        timeout-minutes: 30
+        working-directory: fuzz
+        run: just fuzz-minimize
       - name: Seed corpora
         # The five MemoryChunk files of the Kyoto Cabinet cell (byte-identical
         # across the cells, fixtures/w3/README.md) and the committed
@@ -191,9 +198,8 @@ jobs:
         # when afl-fuzz fails, stops on a seed issue, ran no input or saved a
         # crash or a hang. New queue entries join fuzz/corpus, which the cache
         # saves. actions/cache saves only when the job passes (post-if:
-        # success()), and the recipe removes no corpus file, so an input that
-        # stops afl-fuzz as a seed issue comes back the next night and fails
-        # again until the code is fixed.
+        # success()), so an input that stops cmin or afl-fuzz as a seed issue
+        # comes back the next night and fails again until the code is fixed.
         # Lower than the job limit: an overrun fails this step, so the
         # crash upload below still runs. The job's comment gives both numbers.
         timeout-minutes: 60
@@ -237,6 +243,7 @@ jobs:
             fuzz/out/*/*/default/hangs/
             fuzz/out/*/*/default/fuzzer_stats
             fuzz/out/*/*/seed-issues/
+            fuzz/out/*/*/afl-cmin.log
             fuzz/out/*/*/afl-fuzz.log
 
   # Latent-overflow lane: the release-optimized codepath with overflow
