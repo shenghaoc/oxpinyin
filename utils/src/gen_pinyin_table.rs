@@ -62,7 +62,7 @@ struct PhraseItem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Uniphrase {
     /// Its NULL, for a phrase that is not valid UTF-8: the scanned bytes,
-    /// kept to name it (class (b), see [`Sorted::write`]).
+    /// kept to name it (see [`Sorted::write`]).
     Unconverted(Vec<u8>),
     /// The UCS-4 words.
     Converted(Vec<u32>),
@@ -220,7 +220,7 @@ impl Sorted<'_> {
     ///
     /// An unconverted phrase is where the pin's `g_ucs4_to_utf8`
     /// (`:280-281`) reads through its NULL `uniphrase` and dies: undefined
-    /// behaviour, class (b) (`docs/findings/upstream-divergences.md`,
+    /// behaviour, (`docs/findings/upstream-divergences.md`,
     /// "gen_pinyin_table invalid UTF-8 phrase"). The output file is already
     /// open there (`:261`), as the pin's is; oxpinyin names the phrase on
     /// `stderr` and exits 1 through `exit`, which flushes what was
@@ -235,7 +235,7 @@ impl Sorted<'_> {
     }
 
     /// The generators share numbering/output calls; only the key renderer and
-    /// the class (b) refusal name differ (gen_zhuyin_table.cpp:286-325).
+    /// the refusal name differ (gen_zhuyin_table.cpp:286-325).
     pub(crate) fn write_with(
         &self,
         output: &OutputStream,

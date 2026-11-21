@@ -3,8 +3,7 @@
 //! (`docs/findings/compatibility-policy.md`, rows 5a-5d).
 //!
 //! The pin-built `.so` SIGABRTs on double 30, zhuyin 7 and out-of-enum,
-//! and full-pinyin out-of-enum, and so does this facade (register rows
-//! 5a, 5c and 5d; the contract-diff cases hold the comparison); the death
+//! and full-pinyin out-of-enum, and so does this facade (the contract-diff cases hold the comparison); the death
 //! tests below check the facade side. Double out-of-enum half-mutates
 //! behind an unconditional `true` (the live scheme's fallback table is
 //! cleared — reproduced here as of the row-5b revert).
@@ -25,7 +24,7 @@ use std::os::raw::c_int;
 
 /// `DOUBLE_PINYIN_CUSTOMIZED`: upstream aborts inside
 /// `DoublePinyinParser2::set_scheme` (`pinyin_parser2.cpp:611`), and the
-/// facade aborts the process too (register row 5a).
+/// facade aborts the process too.
 #[test]
 fn double_customized_aborts() {
     assert_aborts("contract::double_customized_aborts", || {
@@ -104,8 +103,7 @@ fn double_out_of_enum_reproduces_the_half_mutation() {
 /// `ZHUYIN_STANDARD_DVORAK`: upstream routes 7 into
 /// `ZhuyinSimpleParser2::set_scheme`, which assigns the dvorak tables
 /// and falls through into `default: abort()`
-/// (`zhuyin_parser2.cpp:291-295`); the facade aborts the process too
-/// (register row 5c).
+/// (`zhuyin_parser2.cpp:291-295`); the facade aborts the process too.
 #[test]
 fn zhuyin_standard_dvorak_aborts() {
     assert_aborts("contract::zhuyin_standard_dvorak_aborts", || {
@@ -116,8 +114,7 @@ fn zhuyin_standard_dvorak_aborts() {
 }
 
 /// Out-of-enum zhuyin values: upstream aborts at the API layer's
-/// `default:` (`pinyin.cpp:1189`), and so does the facade (register row
-/// 5d).
+/// `default:` (`pinyin.cpp:1189`), and so does the facade.
 #[test]
 fn zhuyin_out_of_enum_aborts() {
     assert_aborts("contract::zhuyin_out_of_enum_aborts", || {
@@ -129,7 +126,7 @@ fn zhuyin_out_of_enum_aborts() {
 
 /// Out-of-enum full-pinyin values: upstream aborts inside
 /// `FullPinyinParser2::set_scheme` (`pinyin_parser2.cpp:398`), and so does
-/// the facade (register row 5d).
+/// the facade.
 #[test]
 fn full_pinyin_out_of_enum_aborts() {
     assert_aborts("contract::full_pinyin_out_of_enum_aborts", || {

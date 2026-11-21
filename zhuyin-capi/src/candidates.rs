@@ -95,7 +95,7 @@ pub unsafe extern "C" fn zhuyin_get_candidate(
 ///
 /// The pin's body never reads the instance (`zhuyin.cpp:1858-1863`): a NULL
 /// instance is a defined call there, so it is unused here. A NULL `candidate`
-/// is read unconditionally by the pin, so it is register row 41's class (b)
+/// is read unconditionally by the pin, so it is an undefined-read
 /// site and the guard answers `false`.
 ///
 /// # Safety
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn zhuyin_get_candidate_type(
 ///
 /// The pin's body never reads the instance (`zhuyin.cpp:1865-1870`): a NULL
 /// instance is a defined call there, so it is unused here. A NULL `candidate`
-/// is read unconditionally by the pin, so it is register row 41's class (b)
+/// is read unconditionally by the pin, so it is an undefined-read
 /// site and the guard answers `false`.
 ///
 /// # Safety
@@ -296,7 +296,7 @@ pub unsafe extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 }
 
 /// `zhuyin_train`'s answer for its training result: the process aborts where the
-/// pin dies, and a class (b) refusal is `false` with one warning.
+/// pin dies, and a refused over-read is `false` with one warning.
 fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
     use oxpinyin::facade::TrainingRefusal;
     match oxpinyin::facade::training_answer(result) {

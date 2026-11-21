@@ -109,8 +109,7 @@ pub(crate) fn wait_for_abort(
 
 /// Runs `body` in a child process and requires an abort:
 /// SIGABRT on Unix, fast-fail on Windows. This is how
-/// the facade reproduces a pin `assert`/`abort()` (the class (c) rows
-/// retired 2026-10-31 UTC). `name` is the calling test's full path as
+/// the facade reproduces a pin `assert`/`abort()`. `name` is the calling test's full path as
 /// libtest prints it (`module::test`): the test binary is re-executed with
 /// `--exact name`, and in that child `body` runs and must not return.
 /// A normal return, a panic and a child that does not start each fail
@@ -204,8 +203,7 @@ pub(crate) fn files_of(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>
 }
 
 /// Whether a directory reads as a chunk on this host's temporary file
-/// system (register row 96); where it does not, a directory library is row
-/// 76's unmappable one (class (b)).
+/// system; where it does not, the directory library cannot be mapped.
 #[cfg(unix)]
 pub(crate) fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");

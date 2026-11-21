@@ -45,7 +45,8 @@ The group function sets up its files, runs its utility, then calls `check`.
 There is no invocation interpreter, custom test runner or fixture-update mode.
 `tests/it/support.rs` contains only the complete file inventory, the DBM row reader
 and the narrow masks, with their internal traversal and digest operations.
-The backend w3 copy and the save-refusal setup in `tests/it/support/fixtures.rs` are shared rstest fixtures.
+The per-backend copy of `fixtures/w3` and the save-refusal setup in
+`tests/it/support/fixtures.rs` are shared rstest fixtures.
 Groups with nested working directories put that copy under `data/`.
 The unigram group keeps its explicit subset of the bdb chunk inputs.
 

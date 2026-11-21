@@ -23,7 +23,7 @@ use std::os::raw::c_char;
 use std::ptr;
 
 /// The NULL arguments that the pin dereferences answer the declared value
-/// (register row 41, class (b); `docs/findings/upstream-divergences.md`,
+/// (`docs/findings/upstream-divergences.md`,
 /// "NULL pointer arguments: the pin dereferences, oxpinyin null-guards"). The
 /// NULL strings after defined prior work keep the earlier state
 /// ("NULL string conversion after defined prior work (#1279)").
@@ -221,8 +221,8 @@ fn null_instance_zhuyin_string_answers() {
 /// `zhuyin_begin_add_phrases` stores the context unread and returns the
 /// iterator (`zhuyin.cpp:392-398`). `zhuyin_iterator_add_phrase` answers
 /// `false` before it reads the context for a NULL phrase (`:509-510`), and
-/// where it would read it (`_add_phrase`, `:412`) the pin crashes (row 41);
-/// `zhuyin_end_add_phrases` reads it at `:542` (row 41), so the handle is freed.
+/// where it would read it (`_add_phrase`, `:412`) the pin crashes;
+/// `zhuyin_end_add_phrases` reads it at `:542`, so the handle is freed.
 #[test]
 fn null_context_import_handle_is_returned_and_freed() {
     let iter = unsafe { zhuyin_begin_add_phrases(ptr::null_mut(), 1) };

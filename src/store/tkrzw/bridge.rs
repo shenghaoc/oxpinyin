@@ -3,13 +3,13 @@
 //! committed.
 //!
 //! The bridge's C++ side is `adapter.h`/`adapter.cc`, the semantic adapter
-//! the Rust/C++ interoperability ruling permits
+//! the Rust/C++ interoperability contract permits
 //! (`docs/findings/compatibility-policy.md#rust-cpp-interoperability`):
 //! the concrete constructors, byte-view and status conversion, one
 //! `RecordProcessor` subclass and
 //! the shared-reference mutation the classes' locking permits. Every
 //! function in `unsafe extern "C++"` is declared safe to call; `super`
-//! names the claim each one rests on (safety point 1 of the ruling), and
+//! names the claim each one rests on, and
 //! this file states what the generated glue itself guarantees.
 //!
 //! # What cxx checks

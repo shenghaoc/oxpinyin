@@ -123,7 +123,7 @@ pub type PhraseToken = u32;        // the pin's phrase_token_t (novel_types.h:33
 pub struct PhraseEntry { /* token, text: PhraseText, pronunciation, unigram */ }
 ```
 
-The key inventory has 440 keys in Stage 1: the 405 complete syllables of [parser-spec.md](parser-spec.md) in their fixed numeric-ID order, the 23 initial-only keys, two option-only keys (`eng`, `nun`) and ten zhuyin-only syllables.
+The key inventory has 440 keys: the 405 complete syllables of [parser-spec.md](parser-spec.md) in their fixed numeric-ID order, the 23 initial-only keys, two option-only keys (`eng`, `nun`) and ten zhuyin-only syllables.
 An initial-only key is a non-empty proper prefix of a complete syllable that contains no vowel byte (`a`, `e`, `i`, `o`, `u`, `v`) and is not itself a complete syllable.
 That rule gives exactly 23 keys, and a test asserts it against the fixed inventory.
 [segment-graph.md](segment-graph.md) states that these 23 are the pin's incomplete-key set and makes them graph edges.

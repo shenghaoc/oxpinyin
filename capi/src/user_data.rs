@@ -113,7 +113,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
 /// One complete path of `_remember_phrase_recur` reaching `_add_phrase`
 /// (`pinyin.cpp:3600-3610`, `:508-600`): the path-length bounds, then the
 /// preflight that aborts where `_add_phrase` asserts (`:554`, `:568`,
-/// `:571`, `reduce_tokens`; register row 93), then the store write. The
+/// `:571`, `reduce_tokens`), then the store write. The
 /// import path's preflight serves both.
 ///
 /// # Safety

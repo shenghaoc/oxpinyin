@@ -216,7 +216,7 @@ fn a_unigram_add_on_another_item_reorders_two_candidates() {
     unsafe { close(context, instance) };
 }
 
-/// POLICY-ACCEPTED (row 106a): a removed item supplies no prefix suggestion.
+/// a removed item supplies no prefix suggestion.
 #[test]
 fn a_sole_removed_prefix_item_is_omitted() {
     let scratch = tempfile::tempdir().expect("scratch");
@@ -364,7 +364,7 @@ fn a_prediction_list_past_gint_max_keeps_the_wrapping_order() {
 /// 0, which a `guint32` holds, so the conversion is defined and the tie
 /// keeps the token order. At lambda 6 the products are -1.25 and -2.5: they
 /// truncate to -1 and -2, which no `guint32` holds, so the pin's conversion
-/// is undefined (policy row 83, class (b)). oxpinyin stores 0 for both, as
+/// is undefined. oxpinyin stores 0 for both, as
 /// Rust's `as u32` does for a negative value, and the tie keeps the token
 /// order.
 #[test]

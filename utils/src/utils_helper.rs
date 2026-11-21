@@ -46,7 +46,7 @@ impl TaggedModel {
         )
     }
 
-    /// The importers abort where the pin's read is undefined (class (b)).
+    /// The importers abort where the pin's read is undefined.
     pub(crate) fn read_or_abort(&mut self, line: &CStr) -> bool {
         self.read(line, false).unwrap_or_else(|_| tool::abort())
     }

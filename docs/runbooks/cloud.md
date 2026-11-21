@@ -189,7 +189,7 @@ A cell that the setup did not
 provision stops the `source` with an error. The file is sourced from sh:
 every value is single-quoted, and a `case` on the quoted
 `PINYIN_ORACLE_DBM` selects the cell. A file without the current first line,
-such as one written by the retired shell setup, is regenerated from the cells
+is regenerated from the cells
 of the run, not read.
 
 ### Data verification

@@ -55,7 +55,7 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
     assert_eq!(library.item(16870553).unwrap().unigram(), 3);
 }
 
-/// Strict item loading refuses a consumed invalid phrase (policy row 115).
+/// Strict item loading refuses a consumed invalid phrase.
 /// The new-item paths are at 074a2219 src/storage/phrase_index.cpp:541-556.
 #[test]
 fn invalid_text_for_a_new_item_is_refused_at_the_table_reader() {
@@ -91,7 +91,7 @@ fn invalid_text_for_a_new_item_is_refused_at_the_table_reader() {
 }
 
 /// Strict table loading refuses the failed conversion in
-/// 074a2219 src/storage/phrase_large_table3.cpp:125-139 (policy row 115).
+/// 074a2219 src/storage/phrase_large_table3.cpp:125-139.
 #[cfg(unix)]
 #[test]
 fn phrase_table_invalid_text() {

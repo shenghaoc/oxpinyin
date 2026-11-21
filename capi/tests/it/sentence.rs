@@ -267,8 +267,7 @@ fn an_nbest_row_with_empty_text_is_a_sentence_and_outranks_its_phrase() {
 /// `convert_to_utf8` leaves out a phrase whose `g_ucs4_to_utf8` is NULL, a
 /// word at or above 0x80000000 (`lookup/lookup.cpp:58-65`), so the row
 /// [A, 丙] reads `丙` and `pinyin_get_sentence` answers true. A's own NORMAL
-/// row has a NULL string, which the candidate dedup compares (rows 80 and
-/// 106, class (b)), so the test lists no candidates.
+/// row has a NULL string, which the candidate dedup compares, so the test lists no candidates.
 #[test]
 fn an_nbest_row_leaves_out_a_phrase_that_does_not_convert() {
     let scratch = tempfile::tempdir().expect("scratch");
@@ -543,7 +542,7 @@ fn an_empty_matrix_answers_false() {
 /// Parsing reads no gram. With DYNAMIC_ADJUST, a guess at offset zero
 /// merges the sentence-start gram and aborts on its short total (074a2219
 /// pinyin.cpp:1497-1520,1720-1723,2200-2215; ngram.cpp:48-51,303-304;
-/// memory_chunk.h:390; register row 85).
+/// memory_chunk.h:390).
 #[test]
 fn a_short_sentence_start_gram_aborts_the_guess_after_parsing() {
     use std::io::Write as _;

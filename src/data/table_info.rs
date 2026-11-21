@@ -354,7 +354,7 @@ impl TableConf {
     /// `false` or dies.
     ///
     /// The process's `LC_NUMERIC` is `"C"` afterwards, on every path, as
-    /// the pin leaves it (policy row 39).
+    /// the pin leaves it.
     ///
     /// # Errors
     ///

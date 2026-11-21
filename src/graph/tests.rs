@@ -28,7 +28,7 @@ fn rendered_with_options(input: &str, options: OptionBits) -> Vec<String> {
         .collect()
 }
 
-/// `PINYIN_INCOMPLETE | USE_TONE` — the W15 tone profile.
+/// `PINYIN_INCOMPLETE | USE_TONE`.
 fn tone_options() -> OptionBits {
     OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE
 }
@@ -307,12 +307,12 @@ fn edge_distance_marks_alias_spellings_only() {
 
 // Every path the pinned oracle selected is a path through our graph.
 //
-// This is the W4-T1 acceptance check. The pin admits initial-only keys
+// The pin admits initial-only keys
 // at any position, including repeated and non-final keys. The graph
 // represents those keys without enumerating every path.
 //
 // The fixture is the pin's own answer for 1,788 corpus records, recovered
-// from historical W2 logs: every record with a partial segment, a consumed
+// from the frozen logs: every record with a partial segment, a consumed
 // length short of the input, or nothing consumed (1,744), plus one witness
 // per remaining segmentation shape (44). No oracle build is needed to run
 // this, which is the point: the check belongs in ordinary portable CI, not

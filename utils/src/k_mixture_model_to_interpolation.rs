@@ -5,7 +5,7 @@
 //! answers a [`Failure`] where the pin exits or aborts. `convert_text` runs
 //! it in memory for the trainer. [`main`] is the utility: `std::cin`,
 //! `stdout`, the pin's messages, `exit(ENODATA)`, `abort()` and oxpinyin's
-//! class (b) refusal. The utility parses no options, reads no argument
+//! Refuses undefined reads. The utility parses no options, reads no argument
 //! (`main`, :188-213) and makes no locale call.
 //!
 //! A section header re-reads the line its section's parser stopped on
@@ -39,7 +39,7 @@ pub enum Failure {
     /// A registered line type outside its `switch`: `abort()` (:104, :142,
     /// :179).
     LineTypeUnlisted,
-    /// A line whose read is undefined in the pin (class (b)).
+    /// A line whose read is undefined in the pin.
     Undefined {
         /// oxpinyin's reason.
         reason: &'static CStr,
@@ -327,7 +327,6 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
             tool::exit(tool::ENODATA);
         }
         // The pin's `assert` and `abort()`, without the macro's message
-        // (maintainer ruling 2026-10-31 UTC).
         Err(Failure::ReadRefused | Failure::LineTypeUnlisted) => tool::abort(),
         Err(Failure::Undefined { reason, line }) => {
             edge::refuse(reason, &line);

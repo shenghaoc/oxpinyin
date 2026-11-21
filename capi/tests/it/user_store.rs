@@ -223,7 +223,7 @@ fn init_loads_a_log_of_two_headers() {
     unsafe { close(context, instance) };
 }
 
-/// Register row 97: `mask_out` reloads library 1 and `_mask_out_records`
+/// `mask_out` reloads library 1 and `_mask_out_records`
 /// appends a kept ADD with both chunk pointers (`phrase_index_logger.h:245`).
 #[test]
 fn mask_out_aborts_on_a_surviving_add() {
@@ -254,7 +254,7 @@ fn mask_out_aborts_on_a_surviving_remove() {
     });
 }
 
-/// Register row 85: `pinyin_mask_out` loads token 1's gram, which the mask
+/// `pinyin_mask_out` loads token 1's gram, which the mask
 /// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
 /// (`ngram.cpp:80`, `memory_chunk.h:390`).
 #[test]
@@ -274,7 +274,7 @@ fn mask_out_aborts_on_a_short_bigram_value() {
     );
 }
 
-/// Row 98 (class (b)) keeps its refusal: a partial item tail under a key the
+/// A partial item tail under a key the
 /// mask leaves alone answers `false` (`ngram.cpp:76-86`).
 #[test]
 fn mask_out_refuses_a_partial_bigram_tail() {
@@ -288,7 +288,7 @@ fn mask_out_refuses_a_partial_bigram_tail() {
     unsafe { crate::support::pinyin_fini(context) };
 }
 
-/// Register row 93 through `pinyin_remember_user_input`: the pin's
+/// Duplicate library-7 tokens abort through `pinyin_remember_user_input`: the pin's
 /// `_remember_phrase_recur` calls `_add_phrase` for USER_DICTIONARY
 /// (`pinyin.cpp:3702`), so a phrase table whose row for the phrase holds two
 /// library-7 tokens trips `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)`
@@ -316,7 +316,7 @@ fn remember_user_input_aborts_on_two_same_library_tokens() {
 
 /// `_remember_phrase_recur` computes `end = matrix.size() - 1`, which wraps
 /// for an empty matrix, and then asserts in `get_column_size(0)`
-/// (`phonetic_key_matrix.h:102`; register row 66). A fresh instance holds
+/// (`phonetic_key_matrix.h:102`). A fresh instance holds
 /// one.
 #[test]
 fn remember_user_input_aborts_on_a_fresh_instance() {
@@ -357,7 +357,7 @@ fn remember_user_input_refuses_an_unknown_character_before_the_empty_matrix() {
     assert!(!unsafe { pinyin_remember_user_input(instance, cstr("😀").as_ptr(), -1) });
 }
 
-/// Register row 96 at mask-out, after the user tables are masked.
+/// A directory read as a short chunk aborts at mask-out, after the user tables are masked.
 // Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]

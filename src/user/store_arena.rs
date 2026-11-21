@@ -21,7 +21,7 @@ fn packed(keys: &[PinyinKey]) -> Result<Vec<u16>, UserStoreError> {
 ///
 /// # Errors
 ///
-/// A record the search would read past (register row 101) is refused first,
+/// A record the search would read past is refused first,
 /// before any commit. More than one token of the library for the phrase is
 /// [`UserStoreError::InvalidPhrase`].
 fn existing_phrase_token(
@@ -143,7 +143,7 @@ impl UserStore {
     /// the arena's place, with its share of the facade total; `None` is an
     /// unload, which leaves the library without a sub-index until a load. The
     /// session's state is process memory, so this cannot fail, as
-    /// `FacadePhraseIndex::load` and `unload` cannot (policy row 103).
+    /// `FacadePhraseIndex::load` and `unload` cannot.
     pub(super) fn replace_user_arena(&mut self, nibble: u8, library: Option<UserLibrary>) {
         let mut offsets = self.offsets_mut();
         let mut phrases = self.inner.libpinyin.phrases_mut();
@@ -204,7 +204,7 @@ impl UserStore {
     ///
     /// `pinyin.cpp:2541-2545` takes `get_range`'s end as the token with no
     /// overflow check and no reserved-id bump. A full library wraps to slot
-    /// 0 (register row 119).
+    /// 0.
     pub(super) fn arena_promote(
         &mut self,
         token: PhraseToken,

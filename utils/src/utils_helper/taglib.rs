@@ -4,7 +4,7 @@
 //! that read the pin's text models share it. Unicode classification and
 //! warnings are GLib's, through the tool boundary. Its
 //! `g_return_val_if_fail` checks are plain Rust that answer the pin's value
-//! without GLib's critical (maintainer ruling 2026-10-31 UTC).
+//! without GLib's critical.
 //!
 //! The pin reads a line's tokens through two undefined operations, which
 //! [`TagLib::read`] answers as [`Undefined`] instead: a line without a token

@@ -63,7 +63,7 @@ pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
 
 // Addon rows, data/table.conf.in:8–28.
 /// Stock addon-library indices and base names. See [`SYSTEM_LIBRARY_NAMES`] for the
-/// default dictionary’s stock libraries.
+/// default dictionary's stock libraries.
 pub const ADDON_LIBRARY_NAMES: &[(u8, &str)] = &[
     (4, "art"),
     (5, "culture"),

@@ -154,7 +154,7 @@ fn removing_a_user_candidate_keeps_the_instance_owner(#[values(false, true)] fin
     }
 }
 
-/// POLICY-ACCEPTED: a punctuation row leaves the composition's constraints intact.
+/// a punctuation row leaves the composition's constraints intact.
 #[rstest::rstest]
 #[case::composing(crate::test_support::DEFAULT_SORT, false, 0, Some("你好"))]
 #[case::after_reset(crate::test_support::DEFAULT_SORT, true, 0, None)]
@@ -541,7 +541,7 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
 /// A previously published prefix row still chooses after its item disappears. The facade total takes the
 /// fixed 483 (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`),
 /// while the absent item is not written; an unloaded library leaves the
-/// total alone and still answers true (#1231 ruling).
+/// total alone and still answers true.
 #[rstest::rstest]
 fn choosing_an_existing_prefix_row_after_item_removal_advances_the_facade_total(
     #[values(false, true)] finalized: bool,
@@ -1100,7 +1100,7 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
 }
 
 /// With row 5 `NOT_USED`, the pin reads an unwritten token (074a2219
-/// phrase_index.cpp:610-613, pinyin.cpp:2541-2545). The class (b) outcome
+/// phrase_index.cpp:610-613, pinyin.cpp:2541-2545). The defined outcome
 /// leaves the addon candidate and default sub-indices as they were.
 #[test]
 fn choosing_an_addon_without_sub_index_5_skips_promotion() {
@@ -1263,7 +1263,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
 
     // ibus preset 1 (the GSettings default): bit 0x2 clear.
     const IBUS_DEFAULT_SORT: c_uint = 0x1c;
-    // "ni": the w3 mini keys hold two strictly-longer extensions
+    // "ni": the mini fixture holds two strictly longer extensions
     // ("ni'hao" 你好, "ni'men" 你们 — `MINI_KEYS`), and the walk's
     // 2-key cap admits both; the winner is the max-unigram one.
     assert_eq!(
@@ -1358,7 +1358,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
 /// `train_result3`'s `assert(token == constraint->m_token)`
 /// (`phonetic_lookup.h:868`): a phrase forced after the last sentence lookup
 /// no longer matches the decoded result, and the process aborts as the
-/// pin's does (register row 6).
+/// pin's does.
 #[test]
 fn training_a_stale_forcing_aborts() {
     crate::test_support::assert_aborts(
@@ -1586,7 +1586,7 @@ fn an_accepted_candidate_pointer_can_be_chosen_twice() {
     unsafe { close(context, instance) };
 }
 
-/// POLICY-ACCEPTED: a punctuation row leaves the sentence candidate available.
+/// a punctuation row leaves the sentence candidate available.
 #[test]
 fn a_normal_choose_after_punctuation_dispatches_the_retained_span() {
     let user = TempUserDir::new("punctuation-normal-dispatch");

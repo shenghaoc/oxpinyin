@@ -135,7 +135,7 @@ enum DbmState<S> {
     Unopened,
     /// The open file after facade fini: the handle is dropped, which closes
     /// it and releases its lock. An instance or iterator that outlives the
-    /// context reads misses here (compatibility row 42).
+    /// context reads misses here.
     Closed,
 }
 

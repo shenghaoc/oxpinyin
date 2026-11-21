@@ -1,6 +1,6 @@
 //! Interpolates bigram probabilities and phrase-library unigram probabilities for
 //! [`crate::model::LanguageModel`]. Successor rows are read from the hash database by
-//! predecessor token. The unigram numerator is the phrase item’s frequency and the
+//! predecessor token. The unigram numerator is the phrase item's frequency and the
 //! denominator is the facade total for the loaded libraries.
 //!
 //! Construction supplies the interpolation weight. Runtime initialization reads it
@@ -75,7 +75,7 @@ impl LmError {
     /// found and the body read then failed or sized differently. Kyoto
     /// Cabinet's `Bigram::load` asserts there (`ngram_kyotodb.cpp:131-139`
     /// at 074a2219); the engine reports `ReadAfterCheck` and the C adapters
-    /// abort (register row 110).
+    /// abort.
     #[must_use]
     pub(crate) fn is_read_after_check(&self) -> bool {
         matches!(

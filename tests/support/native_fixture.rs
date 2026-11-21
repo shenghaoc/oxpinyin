@@ -1,4 +1,4 @@
-//! Native W3 fixtures and malformed files shared by owner and C tests.
+//! Native mini fixtures and malformed files shared by owner and C tests.
 
 #![allow(dead_code)]
 
@@ -80,7 +80,7 @@ pub mod logs {
         [&kind.to_le_bytes()[..], &token.to_le_bytes(), tail].concat()
     }
 
-    /// A `MODIFY_HEADER` carrying token `0x01000001` (row 91).
+    /// A `MODIFY_HEADER` carrying token `0x01000001`.
     #[must_use]
     pub fn header_token() -> Vec<u8> {
         record(4, 0x0100_0001, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -261,7 +261,7 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 
 /// Writes a conforming profile for the fixture data set whose user bigram
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
-/// such as one too short for its `guint32` total (register row 85).
+/// such as one too short for its `guint32` total.
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     use oxpinyin::store::WriteStore as _;
     let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
@@ -280,8 +280,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
 /// `tokens`, keyed by the UCS-4 text of `phrase`, in the profile under
 /// `user_dir`: the stored state is loaded when a profile exists (a fresh
 /// directory starts empty), the row replaced, and the profile saved again
-/// in the running backend's format. This is the crafted index of register
-/// row 93, whose tokens the library never wrote.
+/// in the running backend's format. Its tokens were not written by the library.
 pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
     use oxpinyin::store::{RawReadStore as _, WriteStore as _};
     if !user_dir.join("user.conf").exists() {
@@ -315,7 +314,7 @@ pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[
 }
 
 /// A private system directory under `parent`: every fixture file linked in,
-/// so a test can replace one library (register row 96).
+/// so a test can replace one library.
 pub fn private_system(parent: &std::path::Path) -> PathBuf {
     let dir = parent.join("system");
     std::fs::create_dir_all(&dir).expect("private system dir");
@@ -349,8 +348,7 @@ pub fn link_file(target: &std::path::Path, link: &std::path::Path) {
 /// name is 25 bytes long. Where a directory reads as a chunk
 /// ([`oxpinyin::data::phrase_library::directory_reads_as_a_chunk`]) the
 /// pin's `MemoryChunk::mmap` asserts on its header read
-/// (`memory_chunk.h:493`, register row 96); elsewhere it is row 76's
-/// unmappable library. Answers which.
+/// (`memory_chunk.h:493`); elsewhere the library cannot be mapped. Answers which.
 #[cfg(unix)]
 pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
     let path = system.join(file);

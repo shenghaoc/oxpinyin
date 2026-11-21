@@ -339,7 +339,7 @@ unsafe fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
     assert!(unsafe { pinyin_train(instance, 0) });
 }
 
-/// Register row 85 inside `get_next`: the pin writes the row's phrase,
+/// A short gram aborts inside `get_next`: the pin writes the row's phrase,
 /// pinyin and count (`pinyin.cpp:904-906`), advances, and only then runs the
 /// `has_next` that loads the next predecessor and asserts on its short
 /// total (`:910`, `:889`). The out-params live in a page shared with the
@@ -396,7 +396,7 @@ fn bigram_get_next_writes_its_row_before_the_short_predecessor_aborts() {
     );
 }
 
-/// Register rows 85 and 98 in walk order: the pin's begin reads no gram
+/// A short gram aborts in walk order: the pin's begin reads no gram
 /// (`pinyin.cpp:775-787`), so a short predecessor the walk loads before a
 /// partial one aborts at `has_next` (`:889`) and the partial one is never
 /// read.
@@ -453,7 +453,7 @@ fn key_outside_the_table_fixture(
 /// `pinyin.cpp:846`, `:859` → `chewing_key.cpp:47-50`, `:29-32`: the
 /// `has_next` that loads a pair renders both items' stored keys through
 /// `get_pinyin_string`, which asserts the tone and then the fields. The
-/// first `has_next` loads the gram and answers `false` (register row 36);
+/// first `has_next` loads the gram and answers `false`;
 /// the second loads the pair and dies.
 #[rstest::rstest]
 #[case::tone("tone", 0x6081)]
@@ -534,7 +534,7 @@ fn bigram_get_next_writes_its_row_before_the_key_assert_aborts() {
     );
 }
 
-/// Row 98 (class (b)) on the export walk: the walk ends with one warning
+/// on the export walk: the walk ends with one warning
 /// where it loads the partial value, after the rows before it.
 #[test]
 fn bigram_export_ends_at_a_partial_predecessor() {

@@ -85,12 +85,12 @@ pub enum MaskOutOutcome {
     /// The user bigram carried a value shorter than a `guint32`
     /// `total_freq` under a key the mask leaves to be loaded: the pin's
     /// `SingleGram::mask_out` asserts in `get_total_freq`
-    /// (`memory_chunk.h:390`, `ngram.cpp:80`; register row 85). The C
+    /// (`memory_chunk.h:390`, `ngram.cpp:80`). The C
     /// adapters abort.
     ShortUserBigramValue,
     /// The user bigram carried a partial eight-byte item tail under a key
     /// the mask leaves to be loaded: `SingleGram::mask_out` reads past it
-    /// (`ngram.cpp:76-86`, register row 98, class (b)). The C ABI answers
+    /// (`ngram.cpp:76-86`). The C ABI answers
     /// `false` and logs one warning.
     PartialUserBigramTail,
     /// Masking the user bigram removed every item of a gram whose total
@@ -142,7 +142,7 @@ pub enum InitRefusal {
     Abort,
     /// The pin writes the raw table-conf load-failed line.
     TableConfLoadFailed,
-    /// A table-conf fault covered by the class (b) warning policy.
+    /// A table-conf fault covered by the malformed-input warning policy.
     TableConfWarning(&'static str),
     /// An ordinary open failure, reported with the caller's ABI name.
     OpenWarning,
@@ -241,8 +241,7 @@ pub enum LibraryLoadFault {
 /// Whether the pin's `MemoryChunk::mmap` asserts (`memory_chunk.h:493`) on
 /// `dir` read as the chunk of a row that names none — the complement of
 /// `writes_null_chunk_line`: where it does not assert, it writes
-/// `mmap %s failed!` and dies of SIGSEGV on the empty chunk instead (class
-/// (b)). The C facades abort the process on the assert shape.
+/// `mmap %s failed!` and dies of SIGSEGV on the empty chunk instead. The C facades abort the process on the assert shape.
 #[must_use]
 pub fn null_chunk_asserts(dir: &Path) -> bool {
     !crate::data::phrase_library::null_chunk_writes_mmap_line(dir)
@@ -259,8 +258,7 @@ fn null_chunk_refused(dir: &Path) {
 
 /// Bit 30 of [`LiveOptionsInner::double_scheme`]: when set, the live
 /// scheme's fallback table is suppressed — upstream's half-mutation
-/// (`pinyin_parser2.cpp:580` + `:614`; `compatibility-policy.md`
-/// row 5b).  A valid-scheme store clears it implicitly (values 1–6
+/// (`pinyin_parser2.cpp:580` + `:614`). A valid-scheme store clears it implicitly (values 1–6
 /// never have bit 30), and the out-of-enum arm sets it.
 pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
 
@@ -626,10 +624,10 @@ impl ContextCore {
     /// library comes back from its saved chunk, or empty
     /// (`:303-321`). The runtime's visibility mask then clears and the call
     /// answers `true`. A system file that cannot be mapped again is the pin's
-    /// SIGSEGV (policy row 76): the library stays unloaded behind its mask,
+    /// SIGSEGV: the library stays unloaded behind its mask,
     /// the call answers `true`, and the next load maps the file again.
     /// Nothing is written to disk, and nothing that can fail is: the pin has
-    /// no failing site here (policy row 103).
+    /// no failing site here.
     ///
     /// # Errors
     ///
@@ -750,7 +748,7 @@ impl ContextCore {
     /// facade total, the runtime's visibility mask sets, and the call
     /// answers the runtime's `true`. Nothing is written to disk: a save
     /// skips the library while it is unloaded (`pinyin.cpp:928-933`), and
-    /// the pin has no failing site here (policy row 103). Which indices a
+    /// the pin has no failing site here. Which indices a
     /// facade lets through is the C adapters' rule.
     #[must_use]
     pub fn unload_phrase_library(&mut self, index: u8) -> bool {

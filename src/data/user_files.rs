@@ -595,7 +595,7 @@ pub(crate) enum LogFault {
     MissingHeaderTotals,
     /// A payload whose declared length runs past the logger's end: the pin's
     /// `set_content` copies that many bytes from past its chunk, an
-    /// over-read with no defined result (class (b)). The walk stops here.
+    /// over-read with no defined result. The walk stops here.
     OverRead,
 }
 

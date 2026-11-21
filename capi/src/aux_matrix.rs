@@ -19,7 +19,7 @@
 //! `:3545`: a column without a key at an offset the loop reads) or aborts
 //! (`:3488`: a double-pinyin cursor three or more bytes into a key) the
 //! renderers return `None`, and the entry points abort the process before
-//! rendering where the pin does (register row 63, `text.rs`).
+//! rendering where the pin does (`text.rs`).
 
 use oxpinyin::ChewingKey;
 use oxpinyin::facade::KeyAt;
@@ -369,7 +369,7 @@ impl SharedMatrix {
 /// passes as a character offset. At or past the spelling's last scalar the
 /// right half is empty — the visible result of the second substring
 /// starting at the terminator. Past that scalar the pin's
-/// `g_utf8_offset_to_pointer` walks off the allocation (class (b)); this
+/// `g_utf8_offset_to_pointer` walks off the allocation; this
 /// cut stays at the string's end instead.
 pub(crate) fn split_zhuyin(spelling: &str, split: usize) -> (&str, &str) {
     let end = spelling

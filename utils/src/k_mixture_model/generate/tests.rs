@@ -7,7 +7,7 @@ use oxpinyin::input::tool::DirectHashTable;
 
 /// A first word whose stored row is shorter than the array header: the
 /// pin's `load` succeeds (`:252`) and `train_single_gram` reads the
-/// header outside the record (`:220`, class (b)), so the tool takes the
+/// header outside the record (`:220`), so the tool takes the
 /// store-error exit.
 #[test]
 fn a_short_first_word_row_takes_the_store_error_exit() {

@@ -37,7 +37,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
 2. **The ranking is the three-key order.**
    - The sort word selects the keys.
      `SORT_BY_PHRASE_LENGTH` (`0x4`), `SORT_BY_PINYIN_LENGTH` (`0x8`) and `SORT_BY_FREQUENCY` (`0x10`) each enable one key, and a cleared bit drops that key (`pinyin.cpp:1678-1709`).
-   - With all three bits set, as in the W4 capture's `0x1e`, the order is:
+   - With all three bits set, as in the oracle capture's `0x1e`, the order is:
      1. phrase length (Unicode scalar count), descending;
      2. pinyin span (window end − start), descending;
      3. the pin's amplified frequency, descending.
@@ -54,7 +54,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
    - `pinyin_guess_candidates` prepends the n-best sentence rows (`NBEST_MATCH_CANDIDATE`) unless `SORT_WITHOUT_SENTENCE_CANDIDATE` is set.
      The LONGER winner is the maximum-unigram eligible token. Ties keep the earlier library, then the earlier matrix path and cursor token within that library (`phrase_large_table3.h:77-97`; `pinyin.cpp:1870-1928`).
      It prepends a `LONGER_CANDIDATE` row unless `SORT_WITHOUT_LONGER_CANDIDATE` is set (`pinyin.cpp:2290-2300`; `capi/src/sentence.rs`; [sentence-surface.md](sentence-surface.md)).
-   - The W4 capture (`fixtures/w4/oracle-candidate-structure.txt`, sort word `0x1e`, options `0x18a`) holds only `NORMAL_CANDIDATE` rows.
+   - The oracle capture (`fixtures/w4/oracle-candidate-structure.txt`, sort word `0x1e`, options `0x18a`) holds only `NORMAL_CANDIDATE` rows.
      That observation applies to the capture only.
 
 ### 8.2 The gate and the frequency key

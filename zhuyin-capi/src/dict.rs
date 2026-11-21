@@ -18,7 +18,7 @@ use crate::types::{GArray, GChar, GUint, PhraseTokenT, ZhuyinInstance};
 ///                           const char * phrase, GArray * tokenarray);
 /// ```
 ///
-/// Look up an exact phrase in the loaded libraries. The caller’s array is cleared, then filled
+/// Look up an exact phrase in the loaded libraries. The caller's array is cleared, then filled
 /// in library order. Returns true when there was a match. A miss leaves the array empty. A null
 /// instance returns false before clearing it.
 ///
@@ -220,7 +220,7 @@ unsafe fn append_stored_words(keys: *mut GArray, length: usize, words: Option<&[
 /// ```
 ///
 /// For an existing token, `nth` must be less than its pronunciation count. The function clears
-/// the caller’s array, appends the selected reading’s packed two-byte keys and returns true. A
+/// the caller's array, appends the selected reading's packed two-byte keys and returns true. A
 /// token miss returns false with an empty array. A null instance returns false without clearing
 /// it.
 ///

@@ -1,10 +1,10 @@
-//! The pin-named segmentation utilities over the committed W3 data.
+//! The pin-named segmentation utilities over the committed mini data.
 //!
 //! Every test runs the built binary (`CARGO_BIN_EXE_*`) in a private copy of
 //! `fixtures/w3/<backend>` — the committed mini system data directory — so
 //! the relative `table.conf`, `phrase_index.bin` and chunk names are the
 //! ones the pin opens. Expectations come from the pin's source
-//! (`utils/segment/*.cpp` at 074a2219) and its committed W9 goldens, not
+//! (`utils/segment/*.cpp` at 074a2219) and its committed segmentation goldens, not
 //! from a live run.
 
 use oxpinyin::input::tool;
@@ -36,7 +36,7 @@ fn copy_tree(source: &Path, destination: &Path) {
     }
 }
 
-/// A private working directory holding a copy of the committed W3 data.
+/// A private working directory holding a copy of the committed mini data.
 fn data_dir() -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().expect("temporary directory");
     let data = directory.path().join("data");

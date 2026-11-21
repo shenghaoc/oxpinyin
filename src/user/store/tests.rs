@@ -888,7 +888,7 @@ mod session {
     /// the reserved id (`pinyin.cpp:592-594`): every later add lands on
     /// slot 1, where `add_phrase_item` overwrites the offset word and
     /// adds the new unigram to a total that keeps the overwritten one
-    /// (`phrase_index.cpp:208-217`). Register row 119.
+    /// (`phrase_index.cpp:208-217`)..
     #[test]
     fn add_phrase_fills_the_last_slot_then_wraps_to_slot_1() {
         let mut store = transient();
@@ -950,7 +950,7 @@ mod session {
     /// slot is allocated, and the end past it is masked to slot 0
     /// (`phrase_index.cpp:620`) with no reserved-id bump, so every later
     /// promotion lands on slot 0 and `add_phrase_item` overwrites it
-    /// (`phrase_index.cpp:208-217`). Register row 119.
+    /// (`phrase_index.cpp:208-217`)..
     #[test]
     fn promote_addon_phrase_fills_the_last_slot_then_wraps_to_slot_0() {
         let mut store = transient();

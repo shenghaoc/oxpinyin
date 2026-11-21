@@ -63,7 +63,7 @@ pub fn double_offset_is_mid_key(parse: &DoublePinyinParse, offset: usize) -> boo
         .any(|item| item.start() < offset && offset < item.end())
 }
 
-// fill_matrix uses each key rest’s m_raw_begin, phonetic_key_matrix.cpp:52–56. The exact
+// fill_matrix uses each key rest's m_raw_begin, phonetic_key_matrix.cpp:52–56. The exact
 // graph uses the preceding segment end for a later edge: SegmentGraph::build_exact
 // (src/graph.rs) sets an edge's from to 0 for the first segment and to the preceding
 // segment's end for each later one.
@@ -115,7 +115,7 @@ pub fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
 /// Maps a byte offset in the original Zhuyin input to a before- or after-cursor lookup
 /// column. At or beyond the consumed prefix, either direction returns `session_len`.
 /// Within that prefix, a before-cursor lookup requires an exact key end and otherwise
-/// returns `session_len`. An after-cursor lookup uses the current key’s column through
+/// returns `session_len`. An after-cursor lookup uses the current key's column through
 /// [`zhuyin_session_offset`].
 #[must_use]
 pub fn zhuyin_lookup_session_offset(

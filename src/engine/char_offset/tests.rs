@@ -25,7 +25,7 @@ fn double_nong_matrix() -> Vec<MatrixKey> {
     parse_time_keys(&keys, 2, options, false)
 }
 
-// The callback's accepted readings are the original W3 items (你 and 好),
+// The callback's accepted readings are the original mini items (你 and 好),
 // or the two imported readings of 弄. The C module tests retain the actual
 // dictionary callback, preflight order and writes of counts 3 and 6.
 fn remembered_paths(

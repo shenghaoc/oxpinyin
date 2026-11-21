@@ -243,8 +243,7 @@ impl Db {
     /// (`ngram_bdb.cpp:51-56`: `DB_HASH, DB_CREATE, 0600`), with the pin's
     /// answers (`:51-57`): `Ok(None)` when the native `DB->open`
     /// failed, after its handle was closed (Berkeley DB requires
-    /// `DB->close` then, `dbopen.html`, 5.3.28; compatibility register row
-    /// 113).
+    /// `DB->close` then, `dbopen.html`, 5.3.28).
     ///
     /// # Errors
     ///

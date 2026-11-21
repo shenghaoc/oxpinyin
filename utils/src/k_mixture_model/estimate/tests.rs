@@ -5,7 +5,7 @@ use crate::k_mixture_model::database::tests::{
 /// A candidate row shorter than the array header for a token of the
 /// deleted model: the pin's `load` succeeds (`:127`) and
 /// `check_result(single_gram->get_array_header(…))` reads outside the
-/// record (`:134`, class (b)), so the tool takes the store-error exit
+/// record (`:134`), so the tool takes the store-error exit
 /// instead of treating the row as missing.
 #[test]
 fn a_short_candidate_row_takes_the_store_error_exit() {

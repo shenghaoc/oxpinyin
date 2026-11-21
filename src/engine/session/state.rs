@@ -219,7 +219,7 @@ where
     /// (`pinyin_parse_more_full_pinyins`, `pinyin.cpp:1497-1524`): only
     /// `pinyin_reset` (`:2700`) and the next `guess_sentence` replace it.
     /// Until then `pinyin_get_sentence` answers the old rows and
-    /// `pinyin_guess_candidates` prepends them (register row 34).
+    /// `pinyin_guess_candidates` prepends them.
     pub(crate) fn discard_composition(&mut self) {
         self.reset_composition();
         self.input.clear();
@@ -239,7 +239,7 @@ where
     /// is that split's engine half: the L2 lifetime rule. The parse leaves
     /// `m_nbest_results` alone too (`pinyin.cpp:1497-1524`; only
     /// `pinyin_reset` clears it, `:2700`), so the sentence rows survive
-    /// until the next `guess_sentence` replaces them (register row 34).
+    /// until the next `guess_sentence` replaces them.
     ///
     /// The raw buffer is NOT cleared here: a cleared raw with a surviving
     /// cursor would leave `consumed > raw.len()` observable, and every

@@ -10,8 +10,8 @@ The library holds the behaviour; the other crates hold only their own interfaces
 | oxpinyin | The library. Its modules are in the [module table](#library-modules). | deny, with scoped exceptions in `input` and `store` | yes | yes |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
 | oxzhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
-| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through the library's `tools` feature (stage 5 of `docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS | never |
-| oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable W3 data; no timing loops. | forbid | Linux, macOS | never |
+| oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through the library's `tools` feature (`docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS | never |
+| oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable mini data; no timing loops. | forbid | Linux, macOS | never |
 
 Every crate links GLib, because the library links it ([native libraries](#native-libraries-and-unsafe-code)).
 
@@ -174,8 +174,8 @@ Its `tool` module, under the `tools` feature, adds the utilities' GLib option ca
 ## External I/O
 
 `input` owns the bidirectional external calls, in its scoped unsafe modules.
-Stage 1 covers library configuration read/write and locale.
-The [boundary plan](findings/external-io-boundary.md#proposed-crate-and-staged-implementation) lists stages 2 to 5: chunks, save and rename, diagnostics, and tools.
+Library configuration read/write and locale belong to `oxpinyin::input`.
+The [external I/O boundary](findings/external-io-boundary.md) covers chunks, save and rename, diagnostics, and tools.
 All five stages are implemented.
 The C crates retain ABI marshalling.
 `store` retains the DBM backends.
@@ -214,7 +214,7 @@ Nothing is scanned at open.
 Its rows determine which libraries exist, their filenames and which calls accept them.
 Its header supplies λ and the versions used to check the user profile.
 `runtime` opens the same system directory as `pinyin_init` for that backend.
-libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the committed `fixtures/w3` sets came from that sequence over the mini subset of the model (recorded evidence).
+libpinyin's own `gen_binary_files` → `import_interpolation` → `gen_unigram` sequence, which `oxpinyin-utils` provides under those names, produces it; the committed `fixtures/w3` sets are that sequence's output over the mini subset of the model.
 The caller supplies the system directory to `Runtime`, which retains it.
 A distribution layout is not auto-detected.
 

@@ -301,7 +301,7 @@ impl PhraseItemView<'_> {
     }
 
     // PhraseItem::get_nth_pronunciation, phrase_index.cpp:180–205.
-    /// Borrows one reading’s packed keys and frequency. Supply a stored reading index whose
+    /// Borrows one reading's packed keys and frequency. Supply a stored reading index whose
     /// keys and frequency are present.
     #[must_use]
     pub fn pronunciation(&self, index: usize) -> Option<PronunciationView<'_>> {

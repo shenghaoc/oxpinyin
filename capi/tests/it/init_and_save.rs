@@ -131,8 +131,7 @@ fn init_aborts_on_a_default_dictionary_row_after_user_conf() {
     assert!(files_of(&run.user_dir).contains_key("user.conf"));
 }
 
-/// The init's answers for the two layout faults of a mapped library (policy
-/// row 76). Both chunks pass `MemoryChunk::mmap`'s length and checksum
+/// The init's answers for the two layout faults of a mapped library. Both chunks pass `MemoryChunk::mmap`'s length and checksum
 /// tests (`memory_chunk.h:470-520`), so neither writes the `mmap %s failed!`
 /// line. A payload shorter than its 17-byte header loads as an empty
 /// sub-index and the init succeeds with no GLib log. A separator index
@@ -594,7 +593,7 @@ fn two_contexts_on_one_user_dir_are_independent() {
     assert_eq!(recorded_open_counter(&user_dir.path), Some(1));
 }
 
-/// Register row 91: init's library loop merges `gb_char.dbin` and
+/// init's library loop merges `gb_char.dbin` and
 /// `next_record` asserts on its non-null `MODIFY_HEADER` token
 /// (`phrase_index_logger.h:202`).
 #[test]
@@ -610,9 +609,9 @@ fn init_aborts_on_a_log_header_token() {
     });
 }
 
-/// A second `pinyin_fini` on one context (#573, register row 105): the pin
+/// A second `pinyin_fini` on one context: the pin
 /// deletes the context twice (`pinyin.cpp:1194-1222`) and dies of SIGSEGV;
-/// the ruling is a silent return. The init's own `user.conf` line is the
+/// the call returns silently. The init's own `user.conf` line is the
 /// only output.
 #[test]
 fn fini_twice_returns_silently() {

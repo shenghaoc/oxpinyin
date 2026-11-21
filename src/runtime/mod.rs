@@ -84,8 +84,7 @@ pub enum OpenError {
     /// and [`TableConfError::Header`] are the pin's ordinary `false` returns
     /// (`open %s failed.` and `load %s failed!`), an ordinary init failure
     /// the C adapters answer with NULL and no warning. Every other kind
-    /// aborts in the C adapters at the pin's abort sites
-    /// (rows 79 and 80), and is a class (b) site the C ABI answers with NULL
+    /// aborts in the C adapters at the pin's abort sites, and is an undefined-read site the C ABI answers with NULL
     /// and one warning otherwise.
     TableConf(TableConfError),
     /// A `SYSTEM_FILE` library's user `.dbin` replay reached a pin
@@ -119,7 +118,7 @@ pub(crate) struct RemapWalk {
 pub(crate) enum RemapStep {
     /// The library mapped and is in the walk's originals.
     Mapped(u8),
-    /// `MemoryChunk::mmap` refuses the file (row 76): the `mmap %s failed!`
+    /// `MemoryChunk::mmap` refuses the file: the `mmap %s failed!`
     /// path.
     Unmappable(PathBuf),
     /// A directory whose header read the pin asserts on (`memory_chunk.h:493`,
@@ -133,7 +132,7 @@ pub(crate) enum RemapStep {
 #[derive(Debug)]
 pub(crate) enum SaveRemapFault {
     /// `MemoryChunk::mmap` refuses the file: the pin writes
-    /// `mmap %s failed!` (row 76, class (b)).
+    /// `mmap %s failed!`.
     Unmappable(PathBuf),
 }
 
@@ -686,8 +685,7 @@ impl<'a> RuntimeDict<'a> {
     /// The stored length and text of the token's item, as the C token
     /// getters read them (`_token_get_phrase`, 074a2219 `pinyin.cpp:1627-1646`,
     /// `zhuyin.cpp:1096-1114`). `None` only when `get_phrase_item` fails, or
-    /// for a shipped item whose text passes the content end (compatibility
-    /// policy row 130). A shipped item is read through its header-bounded
+    /// for a shipped item whose text passes the content end instead. A shipped item is read through its header-bounded
     /// view, so readings that pass the content end do not hide its text.
     #[must_use]
     pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
@@ -1430,7 +1428,7 @@ pub struct Runtime {
 impl Runtime {
     // pinyin_fini, pinyin.cpp:1195–1215, and zhuyin_fini, zhuyin.cpp:741–757. Compatibility
     // row 42 covers surviving handles.
-    /// Applies the facade’s final marker policy and closes each native attachment once.
+    /// Applies the facade's final marker policy and closes each native attachment once.
     /// Repeated calls are inert. In-memory state remains available to surviving handles.
     pub fn finish(&mut self) {
         // pinyin.cpp:1200 writes the marker before deleting the tables.
@@ -1728,7 +1726,7 @@ impl Runtime {
     // pinyin_train checks the directory and result count and asserts the selected index,
     // pinyin.cpp:2670–2690; zhuyin.cpp:1696–1715. train_result3 applies successive
     // observations, lookup/phonetic_lookup.h:844–936.
-    /// Applies the retained session’s training plan at `index`. A runtime without a user
+    /// Applies the retained session's training plan at `index`. A runtime without a user
     /// directory or a session without a training plan returns `Ok(false)`. Select an existing
     /// sentence row when rows are present.
     ///

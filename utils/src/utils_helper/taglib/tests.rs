@@ -49,7 +49,7 @@ fn split_line_answers_the_pins_null_and_its_undefined_reads() {
     assert_eq!(split(c"\"\xe4"), Err(Undefined::PastLineEnd));
 }
 
-/// POLICY-ACCEPTED (policy row 135): malformed UTF-8 does not consume the
+/// malformed UTF-8 does not consume the
 /// valid bytes that follow it.
 #[test]
 fn split_line_keeps_bytes_after_a_malformed_sequence() {

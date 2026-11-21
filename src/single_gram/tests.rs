@@ -101,7 +101,7 @@ fn unpartitioned_records_use_std_without_cleaning(
     }
 }
 
-/// N2 refusals 4 and 6 (register row 98): the pin's `get_freq` walk
+/// the pin's `get_freq` walk
 /// (`ngram.cpp:241-248`) answers before the last whole item, or reads
 /// past a partial tail, or past a value shorter than its total.
 #[test]

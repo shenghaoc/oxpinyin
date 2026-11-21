@@ -19,12 +19,10 @@
 //! The pin validates with `_check_offset`, which ABORTS when the position
 //! before the examined offset is a lone zero key (`assert(zero_key != key)`,
 //! `pinyin.cpp:2175`); the engine answers [`EngineError::ZeroKeyOffsetCheck`]
-//! instead; the left and right moves abort on it in the C adapters
-//! (register row 14). `pinyin_get_pinyin_offset` aborts only over an empty
+//! instead; the left and right moves abort on it in the C adapters. `pinyin_get_pinyin_offset` aborts only over an empty
 //! matrix with a parsed length above 0 and a cursor of 1 or more; a cursor of
 //! 0, or a parsed length of 0, answers `true` with offset 0.
-//! `pinyin_get_right_pinyin_offset` aborts on an empty matrix, as row 66
-//! records.
+//! `pinyin_get_right_pinyin_offset` aborts on an empty matrix.
 //!
 //! ## The column model
 //!
@@ -43,7 +41,7 @@
 //!   over an empty matrix with a parsed length above 0 and a cursor of 1 or
 //!   more; a cursor of 0, or a parsed length of 0, answers `true` with
 //!   offset 0. `pinyin_get_right_pinyin_offset` aborts on an empty matrix, as
-//!   row 66 records. The C adapters abort before this model is asked.
+//!   The C adapters abort before this model is asked.
 //! - Every `'` between two keys holds a lone zero key (raw end one past it).
 //!   The apostrophes before the first key hold none: the fill loop starts
 //!   at the first key's end, so `'ni` has an empty column 0.

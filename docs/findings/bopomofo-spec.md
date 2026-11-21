@@ -181,7 +181,7 @@ Three caller bits reach the parsers:
 - `ZHUYIN_INCOMPLETE` (bit 4, `pinyin_custom2.h:35`), which only `check_chewing_options` consults (`:49-51`).
 
 `PINYIN_AMB_ALL` is masked off on entry (`:166`, `:342`, `:580`).
-The pinyin facade's chewing batch seam forwards the whole word after the `ZHUYIN_CORRECT_ALL` strip ([compatibility policy](compatibility-policy.md#classification-table) rows 16 and 30, both CLOSED).
+The pinyin facade's chewing batch seam forwards the whole word after the `ZHUYIN_CORRECT_ALL` strip.
 The libzhuyin facade forwards the whole word through `ZhuyinParser::parse_with_options`.
 
 Keys that the shuffle and recovery rows produce join the documented non-gated full-candidate divergence class.

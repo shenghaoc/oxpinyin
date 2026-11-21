@@ -1,7 +1,7 @@
 use std::sync::{Mutex, MutexGuard};
 
 /// Tracks the addresses issued by one C facade until it finalizes each context.
-/// Each facade owns a separate registry (compatibility register rows 60 and 105).
+/// Each facade owns a separate registry.
 #[derive(Default)]
 pub struct LiveContexts {
     addresses: Mutex<Vec<usize>>,

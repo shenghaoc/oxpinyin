@@ -4,7 +4,7 @@
 //! safe Rust. The `expect` below is scoped to this module: it carries the
 //! calls to the bridge's five `unsafe fn`s, each with its SAFETY note.
 //!
-//! # Safety claims (ruling point 1)
+//! # Safety claims
 //!
 //! The bridge declares every function safe to call except the five that
 //! take a key region. The claims:
@@ -27,7 +27,7 @@
 //!   the snapshot calls pass no file processor and no progress checker, as
 //!   the pin does.
 //! - The regions the bridge's visitor hands [`Sink::full`] are borrowed for
-//!   that call only (ruling point 4, `adapter.cc`); `Sink` copies them.
+//!   that call only (`adapter.cc`); `Sink` copies them.
 //!
 //! The five region functions (`check`, `get`, `set`, `remove`, `jump_to`)
 //! are `unsafe fn`: Kyoto Cabinet's contract for a key or value region is
@@ -305,7 +305,7 @@ pub(super) fn take_native_calls() -> Vec<(usize, NativeCall)> {
 /// allocated by [`DbType::allocate`], opened — or not — by [`Db::open_mode`],
 /// and torn down in `Drop` as its owner's `reset()` tears it down.
 ///
-/// # Teardown (ruling point 5)
+/// # Teardown
 ///
 /// `Drop` makes the pin's `reset()`: `synchronize()` when the owner's pin
 /// counterpart makes it, then `close()`, both answers ignored as the pin
@@ -768,8 +768,7 @@ impl Drop for Db {
 
 /// A cursor over one database, destroyed on drop.
 ///
-/// `UniquePtr<DbCursor<'db>>` carries the database's lifetime (ruling point
-/// 3): every cursor method dereferences its database (`kcplantdb.h:
+/// `UniquePtr<DbCursor<'db>>` carries the database's lifetime: every cursor method dereferences its database (`kcplantdb.h:
 /// 222-228`), and its destructor takes the database's lock
 /// (`kchashdb.h:146-151`, `kcplantdb.h:134-140`), so the borrow checker
 /// refuses a cursor that outlives the [`Db`] it came from. The cursor is
