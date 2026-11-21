@@ -169,7 +169,7 @@ A static link against `libpinyin.a` must pass the platform libraries itself (`-l
 
 The four streams are independent and change for different reasons:
 
-1. **Crate version:** `0.1.0-alpha.1`, with no stable Rust interface.
+1. **Crate version.** The crates inherit `[workspace.package].version` from [Cargo.toml](../Cargo.toml).
    Native Rust interfaces are not supported externally ([interface ruling](constitution.md#external-interfaces)).
    The C API and ABI follow the pin instead: libpinyin and libzhuyin `2.11.92`, SONAME major `15`.
    A change of the crate version does not change the C ABI.
