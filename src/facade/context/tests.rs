@@ -574,7 +574,6 @@ mod library_directory {
         std::fs::write(user.join("user.conf"), marker.to_text()).expect("write the marker");
     }
 
-    #[cfg(unix)]
     #[test]
     fn init_aborts_where_its_library_loop_maps_the_directory() {
         const NAME: &str = "facade::context::tests::library_directory::init_aborts_where_its_library_loop_maps_the_directory";
@@ -701,7 +700,6 @@ mod library_directory {
     }
 
     /// The save remaps a loaded system library and aborts on its header read.
-    #[cfg(unix)]
     #[test]
     fn save_aborts_at_directory_header_read() {
         const NAME: &str =
@@ -715,7 +713,6 @@ mod library_directory {
         save_header_abort(NAME, UserConfLaw::Pinyin);
     }
 
-    #[cfg(unix)]
     #[test]
     fn zhuyin_save_aborts_after_earlier_log_renames() {
         const NAME: &str = "facade::context::tests::library_directory::zhuyin_save_aborts_after_earlier_log_renames";
@@ -728,7 +725,6 @@ mod library_directory {
         save_header_abort(NAME, UserConfLaw::Zhuyin);
     }
 
-    #[cfg(unix)]
     fn save_header_abort(name: &str, law: UserConfLaw) {
         crate::store::death_test::assert_aborts_in_tempdir(
             name,
