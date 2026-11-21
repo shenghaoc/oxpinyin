@@ -1,5 +1,6 @@
 """Native measurement contracts, using synthetic inputs rather than product measurements."""
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -184,8 +185,13 @@ class NativeCampaignTests(unittest.TestCase):
                                  ['bin/bisect', 'lib/libpinyin.15.0.0.dylib',
                                   'lib/libpinyin.15.0.0.dylib.dSYM/dwarf'])
                 self.assertEqual(contents(first), contents(second))
-                self.assertEqual(json.loads((session / 'session.json').read_text())['staged'][recipes.CONTROL],
-                                 str(second))
+                metadata = json.loads((session / 'session.json').read_text())
+                self.assertEqual(metadata['staged'][recipes.CONTROL], str(second))
+                self.assertIs(metadata['staged_kept'], True)
+                artifact = dict(name='libpinyin.15.0.0.dylib',
+                                sha256=hashlib.sha256(b'product ' + b'a' * 40).hexdigest(),
+                                driver_sha256=hashlib.sha256(b'signed driver').hexdigest())
+                self.assertEqual(metadata['artifacts'], dict.fromkeys(('A', 'B', recipes.CONTROL), artifact))
 
         def test_staged_product_bytes_must_match_the_build(self):
             with tempfile.TemporaryDirectory() as directory:
