@@ -19,7 +19,7 @@ import tempfile
 from .cell import CellError, Settings
 from .drivers import DriverServices
 from . import pool, slot
-from .packaging import crate_dir, linux_exports, version_exports
+from .packaging import Finished, Tools, crate_dir, install, linux_exports, version_exports
 
 
 def driver_services(settings: Settings) -> DriverServices:
@@ -60,17 +60,42 @@ def darwin_export_trie(text: str) -> set[str]:
     return result
 
 
+def shipped_library(settings: Settings, name: str, stage: Path) -> Path:
+    """Stage NAME's release library with `just packaging install` and return the relinked dylib.
+
+    On macOS the gate checks what ships. The cargo-built cdylib exports every `#[export_name]`
+    symbol of the dependency graph, and the packaging relink is the one link that excludes them
+    (docs/packaging.md#export-gate), so the gate stages the library as the nightly job does.
+    """
+    arguments = [name, '--prefix=/usr/local', f'--destdir={stage}', '--', '--release', '--locked',
+                 *settings.feature_args()]
+    try:
+        install(arguments, Tools(env=settings.environment, root=settings.root))
+    except Finished as error:
+        raise CellError(f'FAIL: staging {name}', error.status) from None
+    return stage / 'usr/local/lib' / f'{name}.15.0.0.dylib'
+
+
 def check_exports(settings: Settings, facts: HostFacts) -> int:
     if facts.system not in ('Linux', 'Darwin'):
         print(f'fatal: unsupported host {facts.system}', file=sys.stderr)
         return 2
+    with tempfile.TemporaryDirectory(prefix='abi-exports.') as scratch:
+        return check_export_sets(settings, facts, Path(scratch))
+
+
+def check_export_sets(settings: Settings, facts: HostFacts, scratch: Path) -> int:
     extension = 'so' if facts.system == 'Linux' else 'dylib'
-    libraries = [('libpinyin', settings.artifact('OXPINYIN_CAPI_SO', f'liboxpinyin_capi.{extension}', 'oxpinyin-capi'),
+    libraries = [('libpinyin', 'OXPINYIN_CAPI_SO', f'liboxpinyin_capi.{extension}', 'oxpinyin-capi',
                   settings.root / 'capi/libpinyin.ver'),
-                 ('libzhuyin', settings.artifact('OXPINYIN_ZHUYIN_SO', f'liboxzhuyin_capi.{extension}', 'oxzhuyin-capi'),
+                 ('libzhuyin', 'OXPINYIN_ZHUYIN_SO', f'liboxzhuyin_capi.{extension}', 'oxzhuyin-capi',
                   settings.root / 'zhuyin-capi/libzhuyin.ver')]
     status = 0
-    for name, library, version in libraries:
+    for name, variable, filename, package, version in libraries:
+        if facts.system == 'Darwin' and not settings.environment.get(variable):
+            library = shipped_library(settings, name, scratch / 'stage')
+        else:
+            library = settings.artifact(variable, filename, package)
         print(f'--- {name}: {library} against {version.relative_to(settings.root)} ---')
         flags = ['-D', '--defined-only'] if facts.system == 'Linux' else ['-gU']
         result = subprocess.run(['nm', *flags, str(library)], env=settings.environment,

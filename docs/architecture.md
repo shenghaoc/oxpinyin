@@ -150,7 +150,7 @@ No bridge function returns `Result`, so a C++ exception terminates the process, 
 Like libpinyin, it depends on the system library's C++ ABI.
 Constructing the concrete classes directly, as the pin does, keeps the pin's libkyotocabinet residency; `kclangc.h` reaches every class through `PolyDB`, which keeps more of the library resident.
 The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
-The cdylibs hide the cxx runtime symbols of both bridges ([export gate](packaging.md#export-gate)).
+On Linux, the cargo cdylibs hide the cxx runtime symbols of both bridges through `--exclude-libs`; on macOS, the cargo cdylibs export them and the shipped relink does not ([export gate](packaging.md#export-gate)).
 
 `input` calls the C library through the `libc` crate, with no build step; the [C-library call and macro-check rules](findings/compatibility-policy.md#external-io) apply.
 It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
