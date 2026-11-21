@@ -2,18 +2,16 @@
 #
 # Sibling of `libzhuyin.ver` and of `capi/libpinyin.alloc`,
 # which carries the full format description and the rationale for each
-# class. `just abi alloc-pairing` reads both registers the same
-# way: it proves the register covers exactly the pointer-shaped slots
-# `zhuyin.h` declares, that each class agrees with the C type, and — by
-# running a C++ consumer under LeakSanitizer — that the declared
-# deallocator is the one that actually releases the allocation.
+# class. `just abi` checks both registers against their headers.
+# The Rust consumer checks each release operation against the registered
+# class under AddressSanitizer with leak detection enabled.
 #
 # Format: <symbol>  <slot>  <class>  <notes>  <verified>; `#` comments,
 # blanks ignored.
 # Classes: handle:<fn> | g_free | g_strfreev | borrowed.
 # Notes: false-allocates | false-nulls | false-untouched | false-unreachable
-# | n/a — each EXECUTABLE, probed by alloc-pairing-zhuyin.cc against a
-# failure path a conforming consumer can reach.
+# | n/a. The Rust ABI test probes each reachable false-return contract
+# with arguments a conforming consumer can supply.
 # Verified: pin-probe:<case> | source:<file>:<lines> |
 # unverified | unexecuted | n/a — how <notes> was established. The gate checks its form
 # only; libpinyin.alloc defines each value.

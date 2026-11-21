@@ -416,6 +416,24 @@ def _cargo_test(backend, nightly, target, subcommand=('nextest', 'run')):
     return command
 
 
+def sanitize_abi(settings, environment):
+    """Run the real-library ABI tests with the pinned Rust AddressSanitizer."""
+    nightly = sanitizer_nightly()
+    tools = native.Tools(environment=environment, root=settings.root)
+    target = _rustc_host(tools, environment, nightly)
+    if not target:
+        print(f'ABI gate needs the sanitizer toolchain: rustup toolchain install {nightly}',
+              file=sys.stderr)
+        return 1
+    child = dict(environment, RUSTFLAGS=BACKEND_DATA[settings.cell].flags['address'],
+                 ASAN_OPTIONS='detect_leaks=1:abort_on_error=0', OXPINYIN_ABI_PYTHON=sys.executable)
+    child.pop('CARGO_ENCODED_RUSTFLAGS', None)
+    command = ['cargo', f'+{nightly}', 'nextest', 'run', '--locked', '--target', target,
+               '-p', 'oxpinyin-abi-tests', *settings.feature_args(), '--features', 'abi-test',
+               '--test', 'abi', '--fail-fast']
+    return native.shell_status(slot.run_command(command, env=child, cwd=settings.root))
+
+
 def _run_bdb(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
     display = backend.display[sanitizer]
     child = _sanitizer_options(backend, sanitizer, host_os, environment)

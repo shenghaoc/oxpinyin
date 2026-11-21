@@ -7,9 +7,8 @@
 `src/`. GLib citations start at the root of its repository. These expectations
 were derived from source before the fault-injected pin runs.
 
-This harness is the C consumer pattern of `alloc-pairing-*.cc`, with precise
-allocation-failure injection. It does not create another contract
-framework or change production ownership. Run it against the debug
+This harness injects allocation failures into one public C ABI call at a time.
+Run it against the debug
 libraries that the cell builds. The harness reads no symbols, so a stripped
 library also works:
 

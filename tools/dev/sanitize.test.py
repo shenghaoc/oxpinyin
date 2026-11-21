@@ -136,6 +136,22 @@ class BackendTests(unittest.TestCase):
         return {'OXPINYIN_SANITIZER_TARGET': 'x86_64-unknown-linux-gnu',
                 'OXPINYIN_SANITIZER_TOOLCHAIN': NIGHTLY, **values}
 
+    def test_abi_uses_address_with_leak_detection_on_the_pinned_nightly(self):
+        settings = test_runner.cell.Settings.read({'PINYIN_ORACLE_DBM': 'kc'})
+        tools = FakeTools()
+        environment = {'ASAN_OPTIONS': 'detect_leaks=0', 'CARGO_ENCODED_RUSTFLAGS': '-Cdebuginfo=0'}
+        with mock.patch.object(native, 'Tools', return_value=tools), \
+                mock.patch.object(test_runner.slot, 'run_command', return_value=0) as launch:
+            status = test_runner.sanitize_abi(settings, environment)
+        self.assertEqual(status, 0)
+        command, = launch.call_args.args
+        env = launch.call_args.kwargs['env']
+        self.assertEqual(command[:4], ['cargo', f'+{NIGHTLY}', 'nextest', 'run'])
+        self.assertEqual(command[command.index('--test') + 1], 'abi')
+        self.assertNotIn('CARGO_ENCODED_RUSTFLAGS', env)
+        self.assertIn('-Zsanitizer=address', env['RUSTFLAGS'].split())
+        self.assertIn('detect_leaks=1', env['ASAN_OPTIONS'].split(':'))
+
     def test_bdb_runs_the_rust_test_alone(self):
         tools = FakeTools()
         with mock.patch.object(test_runner.platform, 'system', return_value='Darwin'):

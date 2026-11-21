@@ -324,15 +324,17 @@ Shipping recipes do not enable it; no build exports a test hook.
 
 ## Export gate
 
-`just abi exports` is the mechanical form of the drop-in promise for symbols (`check_exports` in `tools/dev/abi.py`).
+On Linux and macOS, `just abi` checks the drop-in promise for symbols with `check_exports` in `tools/dev/abi.py`.
 It proves that the set of exported `pinyin_*` / `zhuyin_*` symbols is exactly the pin's version script, with nothing missing and nothing extra.
 The version scripts are `capi/libpinyin.ver` (79) and `zhuyin-capi/libzhuyin.ver` (52), both checked in verbatim from the pin.
 It also proves that no other symbol leaks.
 No symbol in a version script is feature-gated.
 
-With `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` set, the gate checks those two files.
-Without them, on Linux it checks the development build, the cdylib that cargo builds (names, not versions); the PR `rust` job runs that check when its path gate selects it.
-Without them, on macOS it checks what ships: it stages each library with `just packaging install --prefix=/usr/local` into a temporary directory, with `--release --locked` and the cell's backend features, and checks the relinked `lib<name>.15.0.0.dylib`; the nightly `test-macos` job runs that command.
+On Windows, `just abi` checks the allocation registers against the headers and version scripts.
+On Linux and macOS, setting `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` selects the two files for the export check.
+On Linux the sanitizer job runs the gate against the development cdylibs by default. It checks their exported names.
+When neither library has an override, the macOS gate stages both in a temporary directory using `just packaging install --prefix=/usr/local`, `--release --locked` and the cell's backend features.
+It checks the relinked `lib<name>.15.0.0.dylib`. The nightly `test-macos` job runs this check.
 The packaging and ABI tests in `tools/dev/packaging.test.py` and `tools/dev/abi.test.py` cover identity preservation, failure atomicity and leak detection.
 
 The cxx bridges of the tkrzw and Kyoto Cabinet backends link the `cxx` crate.

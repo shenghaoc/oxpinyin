@@ -185,7 +185,7 @@ def gate(base: str, inputs: dict[str, Inputs] = CI_INPUTS, root: Path | None = N
 # tools/bisection/cells-for-diff.py implements it for local runs, plus the store
 # job's own infrastructure as --also paths: the workflow, the utilities'
 # per-cell tests and their data under utils, the runtime check under
-# tools/tkrzw, the sanitizer service
+# tools/tkrzw, the C ABI gate and both libraries it loads, the sanitizer service
 # (tools/dev/test_runner.py), the toolchain pins (the sanitizer nightly is in
 # fuzz/rust-toolchain.toml), clippy.toml (the store job runs clippy for the
 # peer backends), nextest's configuration and this gate's own code.
@@ -194,11 +194,15 @@ def gate(base: str, inputs: dict[str, Inputs] = CI_INPUTS, root: Path | None = N
 # select the store job, the over-trigger direction.
 STORE_GATE_SCRIPT = Path(__file__).resolve().parents[1] / "bisection" / "cells-for-diff.py"
 STORE_GATE_ARGUMENTS = ("--run-flag", "--run-without-base", *(argument for path in (
-    ".github/workflows/ci.yml", "utils/", "fixtures/w3/kct/", "fixtures/w3/db/",
+    *SHARED, "utils/", "fixtures/w3/kct/", "fixtures/w3/db/",
+    "src/", "codegen/", "capi/", "zhuyin-capi/", "Cargo.toml", "tools/abi/",
+    "tools/dev/abi.py", "tools/dev/abi_headers.py", "tools/dev/cell.py", "tools/dev/drivers.py",
+    "tools/dev/entry.py", "tools/dev/host.py", "tools/dev/native.py", "tools/dev/pool.py",
+    "tools/dev/slot.py", "tools/dev/runners.py", "tools/dev/packaging.py", "tools/oracle/oracle-pin.txt",
     "tools/dev/ci_tree.py", "tools/dev/ci_tree.test.py", "tools/bisection/cells-for-diff.py",
     "tools/tkrzw", "tools/dev/check.py",
-    "tools/dev/test_runner.py", "rust-toolchain.toml", "fuzz/rust-toolchain.toml",
-    "clippy.toml", ".config/nextest.toml", "pyproject.toml") for argument in ("--also", path)))
+    "tools/dev/test_runner.py", "fuzz/rust-toolchain.toml",
+    "clippy.toml", ".config/nextest.toml") for argument in ("--also", path)))
 
 
 def store_gate(base: str, root: Path | None = None) -> bool:

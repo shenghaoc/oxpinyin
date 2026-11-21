@@ -16,13 +16,10 @@ Each of these conditions holds before a release is tagged:
    `tools_harness` set ([verification rule 10](verification.md#10-ci-merge-conditions)).
    A release is published only if its macOS, Windows, fuzz soak and overflow lane jobs pass on
    that commit; a green run of another commit does not count.
-3. The ABI export gate passed on the tip (`just abi exports`; CI runs it when its path gate selects the `rust` job).
-4. The allocator-pairing gate passed on the tip
-   (`just abi alloc-pairing`; CI runs it when its path gate selects the `rust` job).
-   This gate is Linux only; `--static-only` is the portable half.
-5. The frozen pins are unchanged since the last verified run, or they are re-verified
+3. The ABI gate passed on the tip. The Linux sanitizer job runs `just abi` to check exports, C++ header consumers and the allocation registers.
+4. The frozen pins are unchanged since the last verified run, or they are re-verified
    ([goldens and pins](goldens-and-pins.md)).
-6. The [version streams](../packaging.md#the-four-version-streams) agree:
+5. The [version streams](../packaging.md#the-four-version-streams) agree:
    the drop-in identity is the libpinyin version of the pin, and the crate
    version is the `0.x` lockstep of the workspace.
 

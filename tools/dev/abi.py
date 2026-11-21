@@ -1,4 +1,4 @@
-"""Shared C ABI symbol and allocator gates; standard library only."""
+"""Verify both public C ABIs and run the pin-backed allocation failure audit."""
 
 if __name__ == '__main__':
     from .entry import require_utf8_mode
@@ -6,7 +6,7 @@ if __name__ == '__main__':
     require_utf8_mode()
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import os
 import platform
@@ -18,7 +18,7 @@ import tempfile
 
 from .cell import CellError, Settings
 from .drivers import DriverServices
-from . import pool, slot
+from . import native, pool, slot
 from .packaging import Finished, Tools, crate_dir, install, linux_exports, version_exports
 
 
@@ -178,21 +178,19 @@ def check_alloc_failure(settings: Settings, argv: Sequence[str]) -> int:
 def dispatch(argv: Sequence[str]) -> int:
     try:
         settings = Settings.read(os.environ)
-        if argv == ['exports']:
-            status = check_exports(settings, HostFacts.current())
-        elif argv and argv[0] == 'alloc-failure':
+        if not argv:
+            status = check_abi(settings, HostFacts.current())
+        elif argv[0] == 'alloc-failure':
             status = check_alloc_failure(settings, argv[1:])
-        elif argv and argv[0] == 'alloc-pairing':
-            status = check_alloc_pairing(settings, argv[1:], HostFacts.current())
         else:
-            print('usage: abi exports|alloc-failure|alloc-pairing [ARG ...]', file=sys.stderr)
+            print('usage: just abi [alloc-failure PIN_PREFIX PINYIN_SO ZHUYIN_SO]', file=sys.stderr)
             return 2
-        return 128 - status if status < 0 else status
     except CellError as error:
         print(error, file=sys.stderr)
         return error.status
     except subprocess.CalledProcessError as error:
-        return error.returncode
+        status = error.returncode
+    return native.shell_status(status)
 
 
 VERIFIED = re.compile(r'(pin-probe:[A-Za-z0-9_.-]+|source:[A-Za-z0-9_./-]+:[0-9]+(-[0-9]+)?|unverified|unexecuted|n/a)')
@@ -332,117 +330,34 @@ def check_static(settings: Settings, abi: str, header: str) -> int:
     return status
 
 
-def check_alloc_pairing(settings: Settings, argv: Sequence[str], facts: HostFacts) -> int:
-    services = driver_services(settings)
-    static_only = bool(argv) and argv[0] == '--static-only'
-    if facts.system != 'Linux' and not static_only:
-        print('fatal: the dynamic half needs Linux (LeakSanitizer); re-run with --static-only', file=sys.stderr)
-        return 2
-    gates = [('libpinyin', 'oxpinyin-capi', 'pinyin.h', 'oxpinyin_capi'),
-             ('libzhuyin', 'oxzhuyin-capi', 'zhuyin.h', 'oxzhuyin_capi')]
-    status = 0
-    for abi, _, header, _ in gates:
-        status |= check_static(settings, abi, header)
-    if static_only:
-        print('FAIL: the allocator-pairing register does not match the frozen ABI' if status else
-              'PASS: static half only (--static-only); the dynamic half was not run')
+def check_abi(settings: Settings, facts: HostFacts) -> int:
+    for name in ('pinyin', 'zhuyin'):
+        status = check_static(settings, 'lib' + name, name + '.h')
+        if status:
+            return status
+    if facts.system == 'Windows':
+        print('PASS: allocation registers match the headers and version scripts (Windows).')
+        return 0
+    if facts.system != 'Linux':
+        return check_exports(settings, facts)
+
+    from .abi_headers import check_headers
+    from .test_runner import sanitize_abi
+
+    # Resolve each development artifact once, so the export, link and ownership
+    # checks all observe the same library, including caller-supplied artifacts.
+    pinyin = settings.artifact('OXPINYIN_CAPI_SO', 'liboxpinyin_capi.so', 'oxpinyin-capi')
+    zhuyin = settings.artifact('OXPINYIN_ZHUYIN_SO', 'liboxzhuyin_capi.so', 'oxzhuyin-capi')
+    env = dict(settings.environment, OXPINYIN_CAPI_SO=str(pinyin), OXPINYIN_ZHUYIN_SO=str(zhuyin))
+    status = check_exports(replace(settings, environment=env), facts)
+    if status:
         return status
-    with tempfile.TemporaryDirectory() as directory:
+    with tempfile.TemporaryDirectory(prefix='abi-') as directory:
         work = Path(directory)
-        print('--- building oxpinyin-capi and oxzhuyin-capi ---')
-        library_directory = work / 'lib'
-        library_directory.mkdir()
-        for abi, crate, _, library in gates:
-            variable = 'OXPINYIN_CAPI_SO' if abi == 'libpinyin' else 'OXPINYIN_ZHUYIN_SO'
-            artifact = settings.artifact(variable, f'lib{library}.so', crate)
-            (library_directory / f'lib{library}.so').symlink_to(artifact)
-            (library_directory / f'{abi}.so.15').symlink_to(f'lib{library}.so')
-        services.mini_fixture(work / 'sys')
-        flags = settings.environment.get('GLIB_CFLAGS') or subprocess.run(
-            ['pkg-config', '--cflags', 'glib-2.0'], env=settings.environment,
-            capture_output=True, text=True, check=True).stdout
-        libraries = subprocess.run(['pkg-config', '--libs', 'glib-2.0'], env=settings.environment,
-                                   capture_output=True, text=True, check=True).stdout
-        # The normal run, coverage and deliberately leaking control share a
-        # fixture and library identity. These steps must remain ordered.
-        for abi, crate, _, library in gates:
-            before = status
-            source = settings.root / 'tools/abi' / ('alloc-pairing-' + abi.removeprefix('lib') + '.cc')
-            crate_root = crate_dir(settings.root, abi.removeprefix('lib'))
-            register = crate_root / (abi + '.alloc')
-            rows = sorted(' '.join(fields[:4]) for _, fields in register_rows(register.read_text()) if len(fields) >= 4)
-            print(f'--- {abi}: {source.name} under AddressSanitizer/LeakSanitizer ---')
-            user = work / (abi + '-user')
-            user.mkdir()
-
-            def compile_driver(output: Path, leak: bool) -> int:
-                return services.command(['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-O1', '-g',
-                                         '-fno-omit-frame-pointer', '-fsanitize=address', *shlex.split(flags),
-                                         '-I' + str(crate_root), str(source),
-                                         '-L' + str(library_directory), '-Wl,-rpath,' + str(library_directory),
-                                         '-l' + library, *shlex.split(libraries),
-                                         *(['-DOXPINYIN_ALLOC_PAIRING_LEAK'] if leak else []),
-                                         '-o', str(output)]).returncode
-
-            driver = work / (abi + '-driver')
-            result = compile_driver(driver, False)
-            if result:
-                return result
-            environment = dict(settings.environment, ASAN_OPTIONS='detect_leaks=1:abort_on_error=0')
-            result = services.run([str(driver), str(work / 'sys'), str(user), '--coverage'], driver,
-                                  runner='alloc-pairing', side='subject', cwd=settings.root,
-                                  environment=environment, merged=True)
-            output = result.stdout.decode(errors='replace').rstrip('\n')
-            if result.returncode:
-                print('\n'.join('    ' + line for line in output.splitlines()))
-                print(f'  FAIL: the sanitized run exited {result.returncode} (0 expected)')
-                status = 1
-                continue
-            coverage = sorted(line.split()[1:7] for line in output.splitlines() if line.startswith('SLOT '))
-            for heading, items, reason in (
-                    ('  slots the driver never reached with a live pointer:',
-                     [' '.join(row[:2]) for row in coverage if row[4] != 'hit'],
-                     'unexercised slot — the pairing was not actually tested'),
-                    ('  false-return contracts the driver never probed:',
-                     [f'{row[0]} {row[1]} ({row[3]})' for row in coverage if row[5] == 'unchecked'],
-                     'unprobed false-return contract')):
-                if items:
-                    print(heading)
-                    for item in items:
-                        print('    ' + item)
-                    print('  FAIL: ' + reason)
-                    status = 1
-            actual = sorted(' '.join(row[:4]) for row in coverage)
-            if actual != rows:
-                print('  driver slot table and register disagree (<driver only / register only>):')
-                from collections import Counter
-                left, right = Counter(actual), Counter(rows)
-                for item in sorted((left - right).elements()):
-                    print('    ' + item)
-                for item in sorted((right - left).elements()):
-                    print('    \t' + item)
-                print('  FAIL: driver/register drift')
-                status = 1
-            if status == before:
-                print(f'  OK: {len(coverage)} slots exercised and released, no leak')
-            import shutil
-            shutil.rmtree(user)
-            user.mkdir()
-            leak = work / (abi + '-driver-leak')
-            result = compile_driver(leak, True)
-            if result:
-                return result
-            result = services.command([str(leak), str(work / 'sys'), str(user)],
-                                      environment=environment, capture=True, merged=True)
-            if result.returncode == 0 or b'LeakSanitizer' not in result.stdout:
-                print(f'  the deliberately-leaking build exited {result.returncode} without a LeakSanitizer report')
-                print('  FAIL: negative control did not fire — the leak instrument is not working')
-                status = 1
-            else:
-                print(f'  OK: negative control fired (exit {result.returncode}, LeakSanitizer reported)')
-    print('FAIL: the allocator-pairing contract is not held' if status else
-          'PASS: every ABI allocation is classified, exercised and released by its declared deallocator')
-    return status
+        check_headers(settings, work, {'pinyin': pinyin, 'zhuyin': zhuyin})
+        fixture = work / 'sys'
+        driver_services(settings).mini_fixture(fixture)
+        return sanitize_abi(settings, dict(env, OXPINYIN_ABI_FIXTURE=str(fixture)))
 
 
 def main(argv: Sequence[str]) -> int:

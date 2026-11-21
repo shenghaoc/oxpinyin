@@ -1,10 +1,9 @@
 # Path gates. The workflow always starts. The `changes` job writes one flag per
 # job (`tools.dev.ci_tree gate`), and a job runs only when its flag is true.
 # CI_INPUTS in tools/dev/ci_tree.py holds the paths of `rust`, `harness` and
-# `shipping-sizes`. The `store` flag selects the `store` job: it is
-# docs/runbooks/verification.md, rule 2, as tools/bisection/cells-for-diff.py
-# implements it for local runs, plus the store job's own infrastructure
-# (STORE_GATE_ARGUMENTS in tools/dev/ci_tree.py). A skipped job still reports
+# `shipping-sizes`. The `store` job uses the backend selection rule in
+# docs/runbooks/verification.md, section 2. STORE_GATE_ARGUMENTS adds the
+# inputs to its ABI tests and the tools that run the job. A skipped job still reports
 # `skipped`, so the required `ci-aggregate` check sees it. Paths that no job
 # reads, such as docs/, reference/ and the root Markdown files, select no job.
 # The `changes` job itself checks the one rule that reads every tracked file:
@@ -58,7 +57,7 @@ concurrency:
 #             tools/ or a file its tests read changed
 #   shipping-sizes — the stripped shipping-library sizes
 #   store — Clippy, rustdoc and the workspace tests under bdb; then the bdb
-#           and kyotocabinet store suites under the sanitizers
+#           and kyotocabinet store suites and the C ABI tests under the sanitizers
 # Fuzz execution stays nightly.
 #
 # The store backends. Kyoto Cabinet, tkrzw and Berkeley DB are equal
@@ -135,11 +134,6 @@ jobs:
     if: needs.changes.outputs.rust == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
     runs-on: *ubuntu
     timeout-minutes: 120
-    env:
-      # The Linux cell (LOCAL_CELL in tools/dev/cell.py) for the cell-based
-      # gates (just cpp-smoke, just abi); the Cargo steps below select the same
-      # backend with their flags.
-      PINYIN_ORACLE_DBM: kc
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -262,23 +256,6 @@ jobs:
               --no-default-features --features kyotocabinet \
               --target-dir "$target" --manifest-path "$name-$version/Cargo.toml"
           done <<< "$packages"
-      - name: C++ pinyin.h smoke gate
-        if: needs.changes.outputs.reuse != 'true'
-        run: just cpp-smoke
-      # Each cdylib exports exactly its pin version script's set and nothing else.
-      - name: ABI export gate (development build)
-        if: needs.changes.outputs.reuse != 'true'
-        run: just abi exports
-      # The allocator-pairing gate: every pointer the two C ABIs hand a
-      # consumer is classified in libpinyin.alloc / libzhuyin.alloc, and a
-      # C++ consumer built from those registers releases each one with its
-      # declared deallocator under AddressSanitizer/LeakSanitizer. Catches a
-      # library-side leak, a borrowed pointer wrongly declared owned, and a
-      # new allocating entry point nobody classified. No extra apt package:
-      # the g++ installed above already carries libasan/liblsan.
-      - name: Allocator-pairing gate
-        if: needs.changes.outputs.reuse != 'true'
-        run: just abi alloc-pairing
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
         run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh rust
@@ -411,10 +388,9 @@ jobs:
           path: .ship-sizes
           key: ${{ steps.key.outputs.key }}
 
-  # The Berkeley DB peer and the store sanitizers, in one job under the
-  # store gate. First Berkeley DB: Clippy over all workspace targets, rustdoc
-  # and the workspace tests under exactly that peer. Then the store suite of
-  # bdb and Kyoto Cabinet under the sanitizers. `rust` runs the Kyoto Cabinet
+  # This job runs Clippy, rustdoc and the workspace tests under Berkeley DB.
+  # It then runs the Berkeley DB and Kyoto Cabinet store suites under the
+  # sanitizers and checks both C facades with `just abi`. `rust` runs the Kyoto Cabinet
   # workspace tests on every change that selects this job, so they are not
   # repeated here. No Linux job runs tkrzw code
   # (docs/runbooks/verification.md, section 10), so tkrzw has no sanitizer
@@ -463,6 +439,7 @@ jobs:
           rust-cache: 'true'
           rust-cache-key: store-job
           uv: 'true'
+          just: ${{ needs.changes.outputs.reuse != 'true' }}
           # The tests and the sanitizer service run nextest; a reuse run skips both.
           cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
       - name: Install build dependencies (apt)
@@ -521,7 +498,7 @@ jobs:
       # one callback, cursors borrow their database, and an empty region must
       # not reach Kyoto Cabinet as address 1. The store's build script
       # instruments the adapter and cxx's generated glue under address.
-      - name: Sanitizers (kyotocabinet)
+      - name: Sanitizers (kyotocabinet store and C ABI)
         if: needs.changes.outputs.reuse != 'true'
         id: sanitize-kyotocabinet
         env:
@@ -530,6 +507,7 @@ jobs:
           set -euo pipefail
           start=$EPOCHSECONDS
           uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
+          just abi
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
       - name: Report
         if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
@@ -552,7 +530,7 @@ jobs:
             echo "|---|---|---:|"
             row 'bdb workspace tests' "$TEST_BDB"
             row 'bdb sanitizers (address)' "$SANITIZE_BDB"
-            row 'kyotocabinet sanitizers (address, leak)' "$SANITIZE_KYOTOCABINET"
+            row 'kyotocabinet store and ABI sanitizers (address, leak)' "$SANITIZE_KYOTOCABINET"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Refresh the main Rust cache using the lane's compile mode
         if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'

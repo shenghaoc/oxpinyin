@@ -583,6 +583,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-abi-tests"
+version = "0.1.0-alpha.2"
+dependencies = [
+ "bindgen",
+ "glib-sys",
+ "libloading",
+ "oxpinyin",
+ "pkg-config",
+ "tempfile",
+]
+
+[[package]]
 name = "oxpinyin-capi"
 version = "0.1.0-alpha.2"
 dependencies = [

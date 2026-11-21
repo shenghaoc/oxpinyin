@@ -29,9 +29,10 @@ evidence for specific behaviours. The [E2E I/O compatibility rule](compatibility
 The signatures come from `libpinyin/src/pinyin.h`. This section is the
 prose form. The machine-readable form is
 `capi/libpinyin.alloc` (and
-`zhuyin-capi/libzhuyin.alloc`). `just abi alloc-pairing`
-checks it against the pinned header and against the library's actual
-behaviour under LeakSanitizer (see `abi-allocator-pairing.md`). The
+`zhuyin-capi/libzhuyin.alloc`). `just abi` checks the registers against the
+headers on all supported platforms. On Linux it also exercises the shared
+libraries under AddressSanitizer with leak detection enabled.
+See the [allocator-pairing register](abi-allocator-pairing.md). The
 vocabulary below is the register's, one class per line there. The
 ownership classes are:
 

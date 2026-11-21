@@ -9,3 +9,5 @@
 
 fixtures/** -text
 fuzz/corpus/** -text
+
+tools/scripts2/upstream/** linguist-vendored

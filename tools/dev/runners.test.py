@@ -106,12 +106,12 @@ import json, os, sys
 from tools.dev import pool, slot
 from tools.dev.cell import Settings
 from tools.dev.drivers import DriverServices
-from tools.dev.runners import Context
+from tempfile import TemporaryDirectory
 with slot.cancellation_handlers(), ExitStack() as stack:
     settings = Settings.read(os.environ)
     context = pool.UnitContext('fixture', slot.CANCELLED, environment=dict(settings.environment))
     services = DriverServices(settings, context)
-    work = Context(settings, services, stack, Path.cwd(), 'fixture').scratch()
+    work = stack.enter_context(TemporaryDirectory())
     Path(sys.argv[1] + '.part').write_text(json.dumps(dict(pid=os.getpid(), work=str(work))))
     os.replace(sys.argv[1] + '.part', sys.argv[1])
     code = 'import json,os,subprocess,sys,time; from pathlib import Path; child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"]); Path(sys.argv[1]+".part").write_text(json.dumps([os.getpid(),child.pid])); os.replace(sys.argv[1]+".part",sys.argv[1]); time.sleep(60)'

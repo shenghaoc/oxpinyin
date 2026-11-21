@@ -340,16 +340,6 @@ sanitize backend="" sanitizer="address":
     @{{windows_args}} echo "sanitize is unsupported on Windows: the sanitizer gates are Linux/Darwin native builds."
     @{{windows_args}} exit 1
 
-# Compile and run the C++ pinyin.h smoke gate.
-[unix]
-cpp-smoke:
-    @uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.runners import cpp_smoke; raise SystemExit(cpp_smoke(sys.argv[1:]))'
-
-[windows]
-cpp-smoke:
-    @{{windows_args}} echo "cpp-smoke is unsupported on Windows: it needs readelf, ldd and an ELF .so."
-    @{{windows_args}} exit 1
-
 [unix]
 abi *args:
     @uv run --managed-python python -X utf8 -m tools.dev.abi "$@"

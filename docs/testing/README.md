@@ -23,7 +23,14 @@ A verification test checks behaviour at an interface that a consumer uses: an
 exported C function of `oxpinyin-capi` or `oxzhuyin-capi`, or the
 arguments, standard streams, exit status and files of a utility or of the REPL.
 It lives in the crate's one test target, `tests/it/main.rs`, with one module for
-each topic, and uses nothing else. A helper that more than one topic uses lives
+each topic, and uses nothing else.
+
+On Linux, `just abi` compiles a C++ consumer for each public header and links
+it against the corresponding shared library. The same command runs the
+non-shipping Rust test in `tools/abi`, which loads both libraries and checks
+allocation ownership under AddressSanitizer with leak detection enabled.
+
+A helper that more than one topic uses lives
 in `tests/it/support.rs`. An abort test names itself by its full path.
 
 A test helper has one definition. In each C crate, `src/test_support.rs` and

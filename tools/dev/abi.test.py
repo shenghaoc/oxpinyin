@@ -44,6 +44,15 @@ class SymbolTests(unittest.TestCase):
             darwin_export_trie('mis-aligned LINKEDIT string pool')
 
 
+class DispatchTests(unittest.TestCase):
+    def test_subprocess_error_returns_shell_status(self):
+        for returncode, expected in ((-9, 137), (7, 7)):
+            error = subprocess.CalledProcessError(returncode, 'header')
+            with self.subTest(returncode=returncode), patch.object(abi.Settings, 'read'), \
+                 patch.object(abi, 'check_abi', side_effect=error):
+                self.assertEqual(abi.dispatch([]), expected)
+
+
 class LinuxExportGateTests(unittest.TestCase):
     def gate(self, extra=''):
         with tempfile.TemporaryDirectory() as directory:
