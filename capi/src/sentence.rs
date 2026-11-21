@@ -287,21 +287,11 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
             }
             return false;
         }
-        Err(error) => match oxpinyin::facade::CursorFault::of(
-            &error,
-            oxpinyin::facade::CursorLaw::CharacterOffset,
-        ) {
-            // Register row 19: the pin's recursion and entry asserts
-            // (`pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`).
-            // `_pre_compute_tokens`' `reduce_tokens` count assert
-            // (`pinyin.cpp:3117`, `phrase_large_table3.h:95`).
-            oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
-            // A graph or dictionary failure the pin has no counterpart for.
-            oxpinyin::facade::CursorFault::Unreadable => {
-                crate::ffi::log_warning("pinyin_get_character_offset: the lookup failed");
-                return false;
-            }
-        },
+        // Register row 19: the pin's recursion and entry asserts
+        // (`pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`).
+        // `_pre_compute_tokens`' `reduce_tokens` count assert
+        // (`pinyin.cpp:3117`, `phrase_large_table3.h:95`).
+        Err(_) => std::process::abort(),
     };
     write_if_nonnull!(length, char_count);
     true
@@ -410,7 +400,6 @@ fn lookup_window(
         }
         Err(
             oxpinyin::engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin::engine::EngineError::LookupOffsetPastSeparator { .. }
             | oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
             | oxpinyin::engine::EngineError::LookupOffsetInsideCharacter { .. }
             | oxpinyin::engine::EngineError::SelectionAnchorBeforeComposition { .. }

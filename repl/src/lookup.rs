@@ -16,12 +16,6 @@ use oxpinyin::{ChewingKey, OptionBits};
 fn load(data: &Path, phonetic: bool, bigram: bool) -> Lookup {
     let conf = conf(data);
     Lookup::open(data, &conf, phonetic, bigram).unwrap_or_else(|error| {
-        if matches!(
-            error.cause,
-            oxpinyin::data::phrase_library::LibraryError::Row(_)
-        ) {
-            tool::abort();
-        }
         let name = error.name.as_deref().and_then(oxpinyin::input::c_path);
         tool::phrase_tests::open_failed(name.as_deref());
         tool::exit(tool::ENOENT);

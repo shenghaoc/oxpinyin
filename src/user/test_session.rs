@@ -131,7 +131,7 @@ fn open_over(
 ) -> Result<UserStore, UserStoreError> {
     let layout = originals.layout().clone();
     let rows = Rows::new(originals);
-    let check = crate::user::persistence::check_format(user_dir, &versions, &layout, law)?;
+    let check = crate::user::persistence::check_format(user_dir, &versions, &layout, law);
     let mut loaded = SystemOriginals::new(crate::user::LibraryTable::new(), layout);
     UserStore::open_libpinyin_checked(user_dir, &mut loaded, &rows.rows(), versions, law, check)
 }
@@ -145,7 +145,7 @@ pub(crate) fn load(
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<crate::user::persistence::Loaded, crate::user::persistence::PersistenceError> {
-    let check = crate::user::persistence::check_format(dir, versions, originals.layout(), law)?;
+    let check = crate::user::persistence::check_format(dir, versions, originals.layout(), law);
     load_checked(dir, originals, &check)
 }
 
@@ -177,7 +177,7 @@ pub(crate) fn load_profile(
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<crate::user::persistence::LoadedProfile, crate::user::persistence::PersistenceError> {
-    let check = crate::user::persistence::check_format(dir, versions, originals.layout(), law)?;
+    let check = crate::user::persistence::check_format(dir, versions, originals.layout(), law);
     load_profile_checked(dir, originals, &check)
 }
 
@@ -381,7 +381,7 @@ pub(crate) fn open_with_conf(
         conf.binary_format_version().try_into().unwrap(),
         conf.model_data_version().try_into().unwrap(),
     );
-    let check = UserStore::check_profile(user_dir, &versions, &layout, law).expect("profile");
+    let check = UserStore::check_profile(user_dir, &versions, &layout, law);
     let mut originals = SystemOriginals::new(Default::default(), layout);
     let rows = LibraryLoopRows::new(system_dir, conf, Some(user_dir));
     UserStore::open_libpinyin_checked(user_dir, &mut originals, &rows, versions, law, check)

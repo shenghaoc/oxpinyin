@@ -143,8 +143,7 @@ fn open_session(dir: &std::path::Path) -> UserStore {
     let (system, conf) = system();
     let layout = UserFileLayout::from_conf(conf);
     let versions = SystemVersions::for_this_build(7, 14);
-    let check = UserStore::check_profile(dir, &versions, &layout, UserConfLaw::Pinyin)
-        .expect("a fresh profile passes the check");
+    let check = UserStore::check_profile(dir, &versions, &layout, UserConfLaw::Pinyin);
     let rows = LibraryLoopRows::new(system.path(), conf, Some(dir));
     let mut originals = SystemOriginals::new(Default::default(), layout);
     UserStore::open_libpinyin_checked(

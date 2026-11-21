@@ -294,14 +294,12 @@ pub unsafe extern "C" fn pinyin_remove_user_candidate(
         Err(
             oxpinyin::user::UserStoreError::Io(_)
             | oxpinyin::user::UserStoreError::Store(_)
-            | oxpinyin::user::UserStoreError::Decode
             | oxpinyin::user::UserStoreError::InvalidPhrase
             | oxpinyin::user::UserStoreError::Persistence(_)
             | oxpinyin::user::UserStoreError::SaveRemapFailed
             | oxpinyin::user::UserStoreError::SaveTooLarge
             | oxpinyin::user::UserStoreError::UnigramTotalOverflow
             | oxpinyin::user::UserStoreError::OverlongIndexKey
-            | oxpinyin::user::UserStoreError::Journal(_)
             | oxpinyin::user::UserStoreError::LibraryLoop(_)
             | oxpinyin::user::UserStoreError::TrainingSetFreqMiss
             | oxpinyin::user::UserStoreError::SessionSeed(_)
@@ -862,7 +860,6 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
             Err(
                 oxpinyin::user::UserStoreError::Io(_)
                 | oxpinyin::user::UserStoreError::Store(_)
-                | oxpinyin::user::UserStoreError::Decode
                 | oxpinyin::user::UserStoreError::InvalidPhrase
                 | oxpinyin::user::UserStoreError::Persistence(_)
                 | oxpinyin::user::UserStoreError::SaveRemapFailed
@@ -871,7 +868,6 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
                 | oxpinyin::user::UserStoreError::OverlongIndexKey
                 | oxpinyin::user::UserStoreError::NonTokenUserBigramKey
                 | oxpinyin::user::UserStoreError::ResidualUserBigramGram
-                | oxpinyin::user::UserStoreError::Journal(_)
                 | oxpinyin::user::UserStoreError::LibraryLoop(_)
                 | oxpinyin::user::UserStoreError::TrainingSetFreqMiss
                 | oxpinyin::user::UserStoreError::UserReadingRemoval

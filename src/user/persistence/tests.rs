@@ -1,5 +1,6 @@
 // Nextest isolates the process-wide copy-fault hooks by running each test in its own process.
 use super::*;
+use crate::data::chunk_write::encode_phrase_item;
 use crate::data::user_files::OPEN_COUNTER_LIMIT;
 use crate::user::test_session::tempdir;
 use crate::user::test_session::{
@@ -563,8 +564,7 @@ fn check_format_then_the_profile_read_is_load() {
         let loaded = load(&whole, &originals, &versions(), law).expect("load");
         // The judgement alone already raised the counter and wrote the
         // marker, as it does ahead of the system libraries.
-        let check =
-            check_format(&split, &versions(), &UserFileLayout::stock(), law).expect("check");
+        let check = check_format(&split, &versions(), &UserFileLayout::stock(), law);
         assert_eq!(recorded_counter(&split), recorded_counter(&whole));
         let parts = load_checked(&split, &originals, &check).expect("load the split profile");
         assert_eq!(loaded.state.bigram, state().bigram);
@@ -953,8 +953,7 @@ fn the_marker_is_written_before_the_wipe() {
     let layout = UserFileLayout::from_conf(
         &crate::data::table_info::TableConf::load_from_dir(&conf_dir).expect("table.conf"),
     );
-    let check =
-        check_format(&dir, &versions(), &layout, UserConfLaw::Pinyin).expect("check_format");
+    let check = check_format(&dir, &versions(), &layout, UserConfLaw::Pinyin);
     assert!(!check.conform);
     assert!(!dir.join(USER_CONF).exists(), "the wipe follows the save");
     std::fs::remove_dir_all(&dir).expect("cleanup");

@@ -73,7 +73,6 @@ impl CursorFault {
                 }
             }
             EngineError::CandidateIndexOutOfRange { .. }
-            | EngineError::LookupOffsetPastSeparator { .. }
             | EngineError::LookupOffsetInsideCharacter { .. }
             | EngineError::SelectionAnchorBeforeComposition { .. }
             | EngineError::StaleTrainingConstraint { .. }

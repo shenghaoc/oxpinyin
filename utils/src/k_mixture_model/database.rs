@@ -193,17 +193,7 @@ impl Database {
     /// `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`).
     #[must_use]
     pub fn get_array_header(&self, token: u32) -> Option<KMixtureModelArrayHeader> {
-        match self.inner.as_ref()?.get_array_header(token) {
-            Ok(header) => header,
-            Err(StoreError::ShortArrayHeader) => abort(),
-            Err(
-                StoreError::Io(_)
-                | StoreError::Backend(_)
-                | StoreError::ReadOnly
-                | StoreError::InvalidInput(_)
-                | StoreError::ReadAfterCheck,
-            ) => None,
-        }
+        self.inner.as_ref()?.get_array_header(token).ok().flatten()
     }
 
     /// `check_result(get_array_header(…))`.

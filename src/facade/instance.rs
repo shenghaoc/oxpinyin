@@ -800,7 +800,6 @@ pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, Traini
             | EngineError::ReadAfterCheck { .. }
             | EngineError::UnsafeLookupPredecessor { .. }
             | EngineError::CandidateIndexOutOfRange { .. }
-            | EngineError::LookupOffsetPastSeparator { .. }
             | EngineError::LookupOffsetOutOfRange { .. }
             | EngineError::LookupOffsetInsideCharacter { .. }
             | EngineError::SelectionAnchorBeforeComposition { .. }
@@ -850,7 +849,6 @@ pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str
             "a bigram value would be read past its end (upstream reads past it)"
         }
         EngineError::CandidateIndexOutOfRange { .. }
-        | EngineError::LookupOffsetPastSeparator { .. }
         | EngineError::LookupOffsetOutOfRange { .. }
         | EngineError::LookupOffsetInsideCharacter { .. }
         | EngineError::SelectionAnchorBeforeComposition { .. }

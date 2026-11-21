@@ -10,9 +10,9 @@ where
     L::Error: Display,
 {
     /// Normalizes a caller lookup offset back to the first byte of the
-    /// apostrophe separator run before it, then validates it — the
-    /// `_compute_zero_start` + `_check_offset` pair `pinyin_guess_candidates`
-    /// runs at libpinyin@dbff264 (`pinyin.cpp:2182-2228`).
+    /// physical apostrophe separator run before it, as in the
+    /// `_compute_zero_start` walk of `pinyin_guess_candidates` at
+    /// libpinyin@dbff264 (`pinyin.cpp:2182-2228`).
     ///
     /// ibus-libpinyin ≥ 1.16.1 passes the raw begin of the next key rest,
     /// which can sit one position past the zero-`ChewingKey` `'` run
@@ -40,12 +40,7 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError::LookupOffsetOutOfRange`] for an offset beyond
-    /// the raw input's one-past-end position (upstream reads its matrix out
-    /// of bounds there — no pinned behaviour exists to reproduce), and
-    /// [`EngineError::LookupOffsetPastSeparator`] where upstream's
-    /// `_check_offset` aborts: the normalized offset still sits one past a
-    /// separator, which only a leading apostrophe run can cause (the walk
-    /// never crosses byte 0).
+    /// the raw input's one-past-end position.
     pub(crate) fn normalized_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
         normalize_lookup_offset(self.input.as_bytes(), offset)
     }

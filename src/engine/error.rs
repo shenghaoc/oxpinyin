@@ -40,20 +40,6 @@ pub enum EngineError {
         /// How many candidates the list actually holds.
         len: usize,
     },
-    /// A lookup offset sat one position past a leading separator run,
-    /// which the zero-start walk cannot normalize away — `_check_offset`'s
-    /// refusal at libpinyin@dbff264, answered as an error instead of the
-    /// upstream abort.
-    #[error(
-        "lookup offset {offset} sits one past a leading separator \
-         run (normalized to {normalized})"
-    )]
-    LookupOffsetPastSeparator {
-        /// The offset the caller asked to look up at.
-        offset: usize,
-        /// Where the zero-start walk stopped.
-        normalized: usize,
-    },
     /// A lookup offset lay beyond the raw input's one-past-end position —
     /// upstream reads its matrix out of bounds there, so the range has no
     /// pinned behaviour and the engine refuses it.

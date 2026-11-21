@@ -588,7 +588,6 @@ use super::{UserStoreError, user_gram_or_none};
 fn a_failed_user_read_is_no_gram() {
     let io = UserStoreError::Io(std::io::Error::other("injected"));
     assert_eq!(user_gram_or_none(Err(io)), None);
-    assert_eq!(user_gram_or_none(Err(UserStoreError::Decode)), None);
     assert_eq!(
         user_gram_or_none(Err(UserStoreError::Store(
             crate::store::StoreError::ReadAfterCheck

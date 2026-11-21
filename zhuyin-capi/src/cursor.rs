@@ -39,22 +39,6 @@ static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
     end: AtomicU16::new(0),
 };
 
-/// The key accessors' answer for an `abi_key_at` error:
-/// `_check_offset`'s assert on a lone zero key before the offset
-/// (`zhuyin.cpp:1453` via `:1898`, `:1920`) aborts the process (register row
-/// 66); a parse the facade cannot read, which the pin has no counterpart
-/// for, answers `false` with one warning.
-fn key_lookup_failed(error: &oxpinyin::engine::EngineError, name: &str) -> bool {
-    if matches!(
-        error,
-        oxpinyin::engine::EngineError::ZeroKeyOffsetCheck { .. }
-    ) {
-        std::process::abort();
-    }
-    crate::ffi::log_warning(&format!("{name}: the lookup failed"));
-    false
-}
-
 /// Applies the empty-matrix failure at the C key-accessor boundary.
 fn check_key_matrix(inst: &crate::state::CapiInstanceRead<'_>, offset: usize) {
     if offset != usize::MAX && !inst.core.mode_has_keys() {
@@ -104,7 +88,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest(
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
-        Err(error) => return key_lookup_failed(&error, "zhuyin_get_zhuyin_key_rest"),
+        Err(_) => std::process::abort(),
     };
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
     // and the pin's `int` positions narrow into them mod 2^16: past byte
@@ -236,7 +220,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key(
     let found = match inst.core.abi_key_at(offset, true) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
-        Err(error) => return key_lookup_failed(&error, "zhuyin_get_zhuyin_key"),
+        Err(_) => std::process::abort(),
     };
     let packed = found.0;
     KEY_SLOT.store(packed, Ordering::Relaxed);
@@ -333,23 +317,10 @@ pub unsafe extern "C" fn zhuyin_get_left_zhuyin_offset(
     }
     let result = match inst.core.abi_left_offset(offset, true) {
         Ok(result) => result,
-        Err(error) => {
-            match oxpinyin::facade::CursorFault::of(
-                &error,
-                oxpinyin::facade::CursorLaw::CheckOffset,
-            ) {
-                // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
-                // via `:1998` and `:2020`), and its `get_column_size` past the
-                // matrix (`phonetic_key_matrix.h:103`).
-                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
-                // A parse the facade cannot read, which the pin has no counterpart
-                // for.
-                oxpinyin::facade::CursorFault::Unreadable => {
-                    crate::ffi::log_warning("zhuyin_get_left_zhuyin_offset: the lookup failed");
-                    return false;
-                }
-            }
-        }
+        // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
+        // via `:1998` and `:2020`), and its `get_column_size` past the
+        // matrix (`phonetic_key_matrix.h:103`).
+        Err(_) => std::process::abort(),
     };
     write_if_nonnull!(left, result);
     true
@@ -390,23 +361,10 @@ pub unsafe extern "C" fn zhuyin_get_right_zhuyin_offset(
         Ok(Some(result)) => result,
         // The pin's own graceful `false` (`zhuyin.cpp:2050-2051`).
         Ok(None) => return false,
-        Err(error) => {
-            match oxpinyin::facade::CursorFault::of(
-                &error,
-                oxpinyin::facade::CursorLaw::CheckOffset,
-            ) {
-                // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
-                // via `:2030` and `:2055`), and its `get_column_size` past the
-                // matrix (`phonetic_key_matrix.h:103`).
-                oxpinyin::facade::CursorFault::PinAssert => std::process::abort(),
-                // A parse the facade cannot read, which the pin has no counterpart
-                // for.
-                oxpinyin::facade::CursorFault::Unreadable => {
-                    crate::ffi::log_warning("zhuyin_get_right_zhuyin_offset: the lookup failed");
-                    return false;
-                }
-            }
-        }
+        // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
+        // via `:2030` and `:2055`), and its `get_column_size` past the
+        // matrix (`phonetic_key_matrix.h:103`).
+        Err(_) => std::process::abort(),
     };
     write_if_nonnull!(right, result);
     true

@@ -94,9 +94,8 @@ or user chunk.
   `SessionPhrases::unloaded`. The save does not write or rename either file.
 - The export cursor reads are infallible. `phrase_export_cursor` returns
   the cursor, and `get_next_with` returns the `ExportStep`. A session
-  serves both reads from its arenas. `assert_for` maps an undecodable item
-  (`UserStoreError::Decode`) to its assert site and any other store error
-  to no item.
+  serves both reads from its arenas. A missing item at the cursor yields
+  `ExportAssert::Item`.
 
 These paths add no abort. The fuzz harnesses need no filter:
 

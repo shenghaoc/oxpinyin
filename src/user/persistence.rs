@@ -26,15 +26,15 @@ use std::path::{Path, PathBuf};
 
 use crate::PHRASE_MASK;
 use crate::data::chunk_format::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE, build_memory_chunk};
-use crate::data::chunk_write::{ChunkItem, ChunkWriteError, encode_phrase_item};
+use crate::data::chunk_write::ChunkItem;
 use crate::data::phrase_libraries::PhraseLibraries;
 use crate::data::table_info::FileName;
 #[cfg(test)]
 use crate::data::user_files::read_chunk_payload;
 use crate::data::user_files::{
-    ChunkPayloadError, LogEnd, LogFault, LogRecord, SystemVersions, UserConfError, UserDbm,
-    UserFileLayout, UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload,
-    log_records, try_load_chunk_payload,
+    ChunkPayloadError, LogEnd, LogFault, LogRecord, SystemVersions, UserDbm, UserFileLayout,
+    UserTableInfo, encode_log_records, get_open_counter, load_chunk_payload, log_records,
+    try_load_chunk_payload,
 };
 use crate::input::path::{build_path, rename, unlink};
 use crate::store::{DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb};
@@ -48,21 +48,20 @@ use crate::user::user_phrase_table::UserPhraseTable;
 const USER_CONF: &str = "user.conf";
 
 /// `UserTableInfo::load` of `filename` (`pinyin.cpp:178`, `zhuyin.cpp:132`),
-/// splitting upstream's two failure kinds the way `check_format` meets them.
+/// as read by `check_format`.
 ///
-/// `Ok(None)` is the load's `false`: `fopen` failed, after the pin's `open
+/// `None` is the load's `false`: `fopen` failed, after the pin's `open
 /// %s failed.` line, or a version directive did not convert
 /// (`table_info.cpp:330-348`). Upstream then runs its conformance check
 /// against the reset defaults, so the profile reads as non-conforming and is
 /// wiped — the session load does the same.
 ///
+/// # Aborts
+///
 /// An unknown `database format:` aborts in the reader before this function
 /// can judge the profile or change a file (`table_info.cpp:122-133`).
-fn load_user_conf(filename: &Path) -> Result<Option<UserTableInfo>, PersistenceError> {
-    match UserTableInfo::load_path(filename) {
-        Ok(info) => Ok(Some(info)),
-        Err(UserConfError::Unopenable | UserConfError::Line(_)) => Ok(None),
-    }
+fn load_user_conf(filename: &Path) -> Option<UserTableInfo> {
+    UserTableInfo::load_path(filename).ok()
 }
 
 /// Which facade's `user.conf` lifecycle a profile follows. libpinyin and
@@ -921,6 +920,7 @@ fn chewing_rows_inner(
 /// What `check_format` decided about a profile: the open counter this
 /// session starts from and whether the files are kept.
 #[derive(Clone, Copy, Debug)]
+#[must_use]
 pub struct ProfileCheck {
     open_counter: i32,
     pub(crate) conform: bool,
@@ -946,8 +946,8 @@ pub(crate) fn check_format(
     versions: &SystemVersions,
     layout: &UserFileLayout,
     law: UserConfLaw,
-) -> Result<ProfileCheck, PersistenceError> {
-    let existing = load_user_conf(&build_path(dir, OsStr::new(USER_CONF)))?;
+) -> ProfileCheck {
+    let existing = load_user_conf(&build_path(dir, OsStr::new(USER_CONF)));
 
     let conform = existing
         .as_ref()
@@ -977,10 +977,10 @@ pub(crate) fn check_format(
     if !conform {
         clean_user_files(dir, layout, law);
     }
-    Ok(ProfileCheck {
+    ProfileCheck {
         open_counter,
         conform,
-    })
+    }
 }
 
 /// User pinyin records and load results that precede the system phrase attach.
@@ -1973,21 +1973,6 @@ pub(crate) fn journal_item_bytes(item: &ChunkItem) -> Vec<u8> {
         bytes.extend_from_slice(&frequency.to_le_bytes());
     }
     bytes
-}
-
-/// Encode a typed persisted item, independently of phrase-import validation.
-/// An empty phrase occupies `6 + 4 * n_prons` bytes at a nonzero offset
-/// (074a2219 `phrase_index.cpp:180-217`); each pronunciation still needs
-/// exactly one key per phrase word. The pin's `diff` writes these items
-/// (`:392-436`). Public imports keep the strict [`encode_phrase_item`].
-pub(crate) fn encode_persisted_item(item: &ChunkItem) -> Result<Vec<u8>, ChunkWriteError> {
-    if item.phrase.is_empty()
-        && item.prons.len() <= usize::from(u8::MAX)
-        && item.prons.iter().all(|(keys, _)| keys.is_empty())
-    {
-        return Ok(journal_item_bytes(item));
-    }
-    encode_phrase_item(item)
 }
 
 /// What a save writes: the session's user libraries and its two user

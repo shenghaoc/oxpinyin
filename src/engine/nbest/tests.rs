@@ -14,22 +14,11 @@ use crate::engine::error::EngineError;
 use crate::engine::session::build_scan_matrix;
 use crate::fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
 
-#[derive(Debug)]
-struct TextError;
-
-impl core::fmt::Display for TextError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str("text dictionary error")
-    }
-}
-
-impl std::error::Error for TextError {}
-
 struct TextDictionary;
 
 impl PhraseList for TextDictionary {
     type Syllable = SyllableKey;
-    type Error = TextError;
+    type Error = std::convert::Infallible;
 
     fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
         Ok(vec![PhraseEntry::new(1, "你好")])
@@ -740,9 +729,9 @@ fn two_sub_epsilon_paths_admit_the_span_in_both_step_branches() {
     struct TinyReadings;
     impl PhraseList for TinyReadings {
         type Syllable = SyllableKey;
-        type Error = TextError;
+        type Error = std::convert::Infallible;
 
-        fn lookup(&self, keys: &[SyllableKey]) -> Result<Vec<PhraseEntry>, TextError> {
+        fn lookup(&self, keys: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
             Ok(if keys.len() == 1 {
                 vec![PhraseEntry::new(1, "你").with_pronunciation_possibility(1, 1 << 24)]
             } else {

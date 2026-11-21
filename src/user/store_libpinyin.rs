@@ -150,9 +150,8 @@ impl UserStore {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError::SessionSeed`] if an in-memory container
-    /// cannot be created or seeded with the system libraries' allocation
-    /// bases, where the pin dies.
+    /// Returns [`UserStoreError::SessionSeed`] if the user bigram container
+    /// cannot be created.
     #[cfg(test)]
     pub(crate) fn open_transient(
         mut originals: SystemOriginals,
@@ -203,7 +202,7 @@ impl UserStore {
     /// it loads the system libraries, as the pin does: the `user.conf`
     /// diagnostic, the marker write and the wipe of a non-conform profile.
     ///
-    /// # Errors
+    /// # Aborts
     ///
     /// Unknown database format aborts at the read point.
     pub fn check_profile(
@@ -211,8 +210,8 @@ impl UserStore {
         versions: &SystemVersions,
         layout: &crate::data::user_files::UserFileLayout,
         law: UserConfLaw,
-    ) -> Result<crate::user::persistence::ProfileCheck, UserStoreError> {
-        Ok(persistence::check_format(user_dir, versions, layout, law)?)
+    ) -> crate::user::persistence::ProfileCheck {
+        persistence::check_format(user_dir, versions, layout, law)
     }
 
     /// `check_format` for an init without a user dir, whose `user.conf` the
@@ -256,10 +255,6 @@ impl UserStore {
         // From here the session owns the system libraries (`replayed`), so a
         // failure cannot leave a store without them: each is the pin's
         // death, never a degraded open, and leaves without finalizing.
-        let mut seed_fault = |error: &dyn std::fmt::Display| {
-            fini.abandon();
-            UserStoreError::SessionSeed(error.to_string())
-        };
         let seeded_totals = seed_totals(
             &loaded.state,
             originals,
@@ -272,8 +267,6 @@ impl UserStore {
             phrases.libraries = user_libraries;
             phrases.index = index;
             phrases.phrase_table = phrase_table;
-            seed_session_items(&mut phrases, &loaded.state, originals)
-                .map_err(|e| seed_fault(&e))?;
         }
         // `m_user_bigram->load_db(user_bigram.db)` (`pinyin.cpp:399-401`):
         // the user bigram's one read, after the profile check, so a wiped
@@ -288,8 +281,10 @@ impl UserStore {
         // refused; one the pin cannot create ends the process in the
         // backend, and a Berkeley DB one whose open failed is the pin's
         // failed container.
-        let bigram_db =
-            load_user_bigram(target.dir.as_deref()).map_err(|error| seed_fault(&error))?;
+        let bigram_db = load_user_bigram(target.dir.as_deref()).map_err(|error| {
+            fini.abandon();
+            UserStoreError::SessionSeed(error.to_string())
+        })?;
         let has_user_data = holds_user_data(&target, &replayed);
 
         // The replay's buffers are the sub-indices' items from here on: the
@@ -419,68 +414,6 @@ pub(crate) struct SeedTotals {
     pub(crate) offsets: crate::user::LibraryTable<u32>,
     pub(crate) totals: crate::user::LibraryTable<u32>,
     pub(crate) facade_extra: u64,
-}
-
-/// Why [`seed_session_items`] could not seed an item. Its text is the
-/// failure's own text.
-enum SeedItemError {
-    /// The item could not be encoded.
-    Encode(crate::data::chunk_write::ChunkWriteError),
-    /// The encoded item could not be placed in its arena.
-    Place(String),
-}
-
-impl std::fmt::Display for SeedItemError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Encode(error) => error.fmt(f),
-            Self::Place(error) => error.fmt(f),
-        }
-    }
-}
-
-/// Write the loaded state's items into the session's arenas: the items of
-/// its libraries, then the overrides of each system library without an
-/// original. An item that a system library with an original lacks lives in
-/// that library's live buffer, its only copy; a library with no original has
-/// no buffer, so its items are held in an arena.
-///
-/// # Errors
-///
-/// The first item's encoding or placement failure, unformatted: the caller
-/// abandons the finalization guard before it formats the error.
-fn seed_session_items(
-    phrases: &mut crate::user::user_library::SessionPhrases,
-    state: &UserState,
-    originals: &SystemOriginals,
-) -> Result<(), SeedItemError> {
-    for (&nibble, items) in &state.libraries {
-        for (&slot, item) in items {
-            let bytes = persistence::encode_persisted_item(item).map_err(SeedItemError::Encode)?;
-            if let Some(library) = phrases.libraries.get_or_default(nibble) {
-                library
-                    .replace(slot, &bytes)
-                    .map_err(SeedItemError::Place)?;
-            }
-        }
-    }
-    for (&nibble, items) in &state.system_overrides {
-        if originals.get(&nibble).is_some() {
-            continue;
-        }
-        for (&slot, item) in items {
-            if let Some(item) = item {
-                let bytes =
-                    persistence::encode_persisted_item(item).map_err(SeedItemError::Encode)?;
-                if let Some(library) = phrases.libraries.get_or_default(nibble) {
-                    library
-                        .replace(slot, &bytes)
-                        .map_err(SeedItemError::Place)?;
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 /// The user bigram's one read: the container in `dir`, or the empty one
