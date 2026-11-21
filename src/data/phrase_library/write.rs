@@ -25,7 +25,7 @@
 // requires the item offsets to fit their output fields.
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::{
+use crate::data::phrase_library::{
     CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
 };
 
@@ -195,4 +195,5 @@ pub(crate) fn sub_phrase_index_sections(payload: &[u8]) -> Option<(u32, &[u8], &
 }
 
 #[cfg(test)]
+#[path = "write_tests.rs"]
 mod tests;

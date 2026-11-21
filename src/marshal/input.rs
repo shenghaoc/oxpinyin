@@ -20,7 +20,7 @@ pub fn utf8_to_ucs4(input: Option<&CStr>) -> Option<PhraseText> {
     if let Ok(text) = input.to_str() {
         return Some(PhraseText::from(text));
     }
-    PhraseText::from_words(crate::marshal::ucs4::decode(input.to_bytes()).ok()?)
+    PhraseText::from_words(crate::marshal::decode(input.to_bytes()).ok()?)
 }
 
 /// Read a scalar spelling, rejecting NULL and invalid Unicode UTF-8.

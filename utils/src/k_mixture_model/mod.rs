@@ -19,17 +19,17 @@
 //! These operations only build with the nonshipping utilities.
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
-pub mod database;
-pub mod estimate;
-pub mod export;
-pub mod generate;
-pub mod import;
-pub mod math;
-pub mod merge;
-pub mod phrase;
-pub mod prune;
-pub mod records;
-pub mod validate;
+pub(crate) mod database;
+pub(crate) mod estimate;
+pub(crate) mod export;
+pub(crate) mod generate;
+pub(crate) mod import;
+pub(crate) mod math;
+pub(crate) mod merge;
+pub(crate) mod phrase;
+pub(crate) mod prune;
+pub(crate) mod records;
+pub(crate) mod validate;
 
 #[cfg(test)]
-mod flexible_records;
+pub(crate) mod flexible_records;

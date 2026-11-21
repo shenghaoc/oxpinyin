@@ -15,8 +15,8 @@
 use std::cell::Cell;
 
 use crate::PhraseText;
-use crate::data::chunk_format::CHEWING_KEY_SIZE;
-use crate::data::phrase_libraries::PhraseLibraries;
+use crate::data::PhraseLibraries;
+use crate::data::phrase_library::CHEWING_KEY_SIZE;
 use crate::data::phrase_library::PhraseItemView;
 
 use crate::PhraseToken;

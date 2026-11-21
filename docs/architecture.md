@@ -25,7 +25,7 @@ The next section states which modules it may depend on.
 |---|---|
 | `options`, `static_strings`, `string_tables`, `ucs4`, `direct`, `chewing_key`, `chewing_key_data`, `full_pinyin_index`, `syllables`, `vocab`, `zhuyin_map`, `scheme`, `parser` | The parser layer: option bits, the frozen string and content tables, UCS-4 phrase text, the packed `ChewingKey` and its renderers, the syllable inventory and the full-pinyin, double-pinyin and zhuyin parsers. `vocab` also holds the one definition of the pin's `novel_types.h` types and constants: `PhraseToken`, the alias of `phrase_token_t` (`typedef guint32`), the token masks, the library count and library ids, `null_token`, `sentence_start`, `MAX_PHRASE_LENGTH`, and `PHRASE_INDEX_LIBRARY_INDEX` and `PHRASE_INDEX_MAKE_TOKEN`. The crate root re-exports them. |
 | `graph` | The weighted segment graph and the decoder over it. |
-| `model`, `sentence_facts`, `single_gram` | The dictionary and language-model contracts, the sentence facts the facades share and the pin's `SingleGram` code. |
+| `model`, `sentence_facts`, `single_gram` | The dictionary and language-model contracts, the sentence facts the facades share and the `SingleGram` value layout and operations. |
 | `engine` | Session state, candidate construction, selection, constraints, training plans and decoding. It is storage-free: it reads the system and user models only through the `model` traits. |
 | `store` | The ordered key–value store traits and the three DBM backends, `DefaultStore` included. |
 | `input` | The external-I/O boundary: the pin's C-library and GLib calls for configuration, locale, chunk files, the save path, diagnostics and, under `tools`, the utilities' calls. |
@@ -68,9 +68,10 @@ The rules that follow from the table:
 
 Tests may cross these edges to share fixtures. For example, the `data` tests open the fixture directories that `user`'s test support builds.
 
-The data generators in `oxpinyin-utils` use the `MemoryChunk`/`SubPhraseIndex` constants and the checksum from `data::chunk_format`.
-They use the four DBM row schemas and the library-name tables from `data::row_format` and `data::system_files`.
-Readers and writers therefore share one layout definition.
+The data generators in `oxpinyin-utils` use `data::chunk_format` for the `MemoryChunk` header and checksum and `data::phrase_library` for the `SubPhraseIndex` payload.
+They use `data::row_format` for DBM keys and index and punctuation values, `single_gram` for bigram values, and `data` for library names.
+Readers and writers share one layout definition per format.
+Implementation files are private by default. Owners re-export the items callers need. Public submodules name subsystems, formats, backends or command boundaries.
 
 The fixture `Dictionary`/`LanguageModel` doubles are one source file, `tests/common/fixture_doubles.rs`.
 Each test target that needs them includes the file with `#[path]`, so no shared test crate can close a dependency cycle through the library.

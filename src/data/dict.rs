@@ -29,18 +29,18 @@ use crate::{
     model::{Dictionary, PhraseIndexRanges, PhraseItemRead, TokenPhrase, TrellisItem},
 };
 
+#[cfg(test)]
+use crate::data::FileName;
+use crate::data::PhraseLibraries;
+#[cfg(test)]
+use crate::data::SYSTEM_LIBRARY_FILES;
+use crate::data::SystemDbm;
+use crate::data::TableError;
 use crate::data::chewing_table::{ChewingTable, RawChewingDbm, prefix_keys_match};
-use crate::data::phrase_libraries::PhraseLibraries;
 use crate::data::phrase_library::LibraryError;
 use crate::data::phrase_library::RowFault;
 use crate::data::phrase_table::PhraseTable;
-#[cfg(test)]
-use crate::data::system_files::SYSTEM_LIBRARY_FILES;
-use crate::data::system_files::SystemDbm;
-use crate::data::table::TableError;
-#[cfg(test)]
-use crate::data::table_info::FileName;
-use crate::data::table_info::{FileType, TableConf, TableRow};
+use crate::data::{FileType, TableConf, TableRow};
 
 /// Error conditions for dictionary lookups.
 #[derive(Debug)]
@@ -352,11 +352,11 @@ impl SystemDictionary {
     #[cfg(test)]
     pub fn open(system_dir: &Path) -> Result<Self, DictError> {
         Self::open_files(
-            &crate::input::path::build_path(
+            &crate::input::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
             ),
-            &crate::input::path::build_path(
+            &crate::input::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
             ),
@@ -395,11 +395,11 @@ impl SystemDictionary {
             .filter_map(|(index, row)| row.system.as_ref().map(|file| (index, file)))
             .collect();
         let mut dict = Self::open_files_with(
-            &crate::input::path::build_path(
+            &crate::input::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
             ),
-            &crate::input::path::build_path(
+            &crate::input::build_path(
                 system_dir,
                 std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
             ),
@@ -414,7 +414,7 @@ impl SystemDictionary {
     pub(crate) fn attach_pinyin(system_dir: &Path) -> Result<ChewingTable, DictError> {
         Ok(ChewingTable::new(
             crate::data::chewing_table::DefaultDbm::attach(
-                &crate::input::path::build_path(
+                &crate::input::build_path(
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
                 ),
@@ -432,7 +432,7 @@ impl SystemDictionary {
         Ok(SystemTables {
             pinyin,
             phrase: PhraseTable::new(crate::data::chewing_table::DefaultDbm::attach(
-                &crate::input::path::build_path(
+                &crate::input::build_path(
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
                 ),
@@ -1010,7 +1010,7 @@ impl AddonDictionary {
     /// Returns failures before native attach.
     pub(crate) fn attach_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
         let path = |kind: SystemDbm| {
-            crate::input::path::build_path(system_dir, std::ffi::OsStr::new(&kind.file_name()))
+            crate::input::build_path(system_dir, std::ffi::OsStr::new(&kind.file_name()))
         };
         Ok(Self {
             pinyin: Some(ChewingTable::new(
@@ -1058,7 +1058,7 @@ impl AddonDictionary {
     #[cfg(test)]
     #[must_use]
     pub fn empty() -> Self {
-        Self::without_indexes(&TableConf::stock())
+        Self::without_indexes(&TableConf::stock(0.312_699))
     }
 
     /// An addon facade that keeps `conf`'s `addon` rows and opens nothing:
@@ -1126,7 +1126,7 @@ impl AddonDictionary {
         let Some(file) = file else {
             return Err(LibraryError::Row(RowFault::NullChunkName));
         };
-        let path = crate::input::path::build_chunk_path(dir, file.as_ref());
+        let path = crate::input::build_chunk_path(dir, file.as_ref());
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its reported
             // size where the boundary says the loader opens directories; on

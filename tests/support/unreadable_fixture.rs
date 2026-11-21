@@ -62,7 +62,7 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
     }
 
     let index_path = if matches!(case, Case::Fallback) {
-        let conf = oxpinyin::data::table_info::TableConf::load_from_dir(dir.path()).unwrap();
+        let conf = oxpinyin::data::TableConf::load_from_dir(dir.path()).unwrap();
         let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
         fs::write(
             user.path().join("user.conf"),

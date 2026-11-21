@@ -270,8 +270,8 @@ operations**. Both are **SHOWN**:
 There is no discrepancy. A phrase added by `pinyin_remember_user_input`
 seeds its unigram with `count * 3`, and later *selections* of it train
 with `seed * 7`. oxpinyin reproduces both as separate constants
-(`oxpinyin::user::seed::UNIGRAM_FACTOR` = 7,
-`oxpinyin::user::phrase::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
+(`oxpinyin::user::UNIGRAM_FACTOR` = 7,
+`oxpinyin::user::ADD_PHRASE_UNIGRAM_FACTOR` = 3).
 
 ### 3.3 Importing a phrase list
 

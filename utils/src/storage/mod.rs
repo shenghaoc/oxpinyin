@@ -29,18 +29,18 @@
 
 use std::ffi::{CStr, CString, OsString};
 
-use oxpinyin::data::table_info::{TableConf, TableConfError};
+use oxpinyin::data::{TableConf, TableConfError};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
 
-pub mod dbm;
+mod dbm;
 pub mod export_interpolation;
 pub mod gen_binary_files;
 pub mod import_interpolation;
-pub mod libraries;
-pub mod pinyin;
+mod libraries;
+mod pinyin;
 pub(crate) mod punctuation;
-pub mod table_text;
+mod table_text;
 
 /// `{"table-dir", 0, 0, G_OPTION_ARG_FILENAME, &table_dir, "table
 /// directory", NULL}` (`gen_binary_files.cpp:31`,
@@ -107,10 +107,16 @@ pub(crate) fn load_table_conf() -> TableConf {
 
 /// The name bytes of one `table.conf` column.
 pub(crate) fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
-    oxpinyin::input::path::path_to_bytes(std::path::Path::new(name)).to_vec()
+    oxpinyin::input::path_to_bytes(std::path::Path::new(name)).to_vec()
 }
 
 /// The `CString` a `table.conf` name column names.
 pub(crate) fn name_c_string(name: &std::ffi::OsStr) -> Option<CString> {
     CString::new(os_bytes(name)).ok()
 }
+
+pub(crate) use dbm::Hash;
+pub use dbm::Tree;
+
+pub(crate) use libraries::{Libraries, Library, items_of, token_to_string};
+pub(crate) use table_text::{read_pinyin_record, read_punct_record};

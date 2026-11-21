@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::{LibraryError, PhraseLibrary, RowFault, map_header};
-use crate::data::chunk_write::{ChunkItem, build_chunk};
+use crate::data::phrase_library::{ChunkItem, build_chunk};
 
 #[test]
 fn heap_loaded_library_keeps_its_payload_after_file_changes() {

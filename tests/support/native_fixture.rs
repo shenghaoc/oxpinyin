@@ -119,8 +119,7 @@ pub mod logs {
 /// Writes a `user.conf` that conforms to the `table.conf` of `system`, with
 /// open counter 0, so the next init keeps the profile under `user_dir`.
 pub fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
-    let conf =
-        oxpinyin::data::table_info::TableConf::load_from_dir(system).expect("system table.conf");
+    let conf = oxpinyin::data::TableConf::load_from_dir(system).expect("system table.conf");
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
     std::fs::write(
         user_dir.join("user.conf"),
@@ -246,8 +245,7 @@ pub fn modify_header(token: u32, old: u32, new: u32) -> Vec<u8> {
 }
 
 pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
-    let conf = oxpinyin::data::table_info::TableConf::load_from_dir(&system_dir())
-        .expect("fixture table.conf");
+    let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
     std::fs::write(
         user_dir.join("user.conf"),
@@ -266,8 +264,7 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 /// such as one too short for its `guint32` total (register row 85).
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     use oxpinyin::store::WriteStore as _;
-    let conf = oxpinyin::data::table_info::TableConf::load_from_dir(&system_dir())
-        .expect("fixture table.conf");
+    let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
     let mut marker = oxpinyin::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
@@ -288,8 +285,8 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
 pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
     use oxpinyin::store::{RawReadStore as _, WriteStore as _};
     if !user_dir.join("user.conf").exists() {
-        let conf = oxpinyin::data::table_info::TableConf::load_from_dir(&system_dir())
-            .expect("fixture table.conf");
+        let conf =
+            oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
         let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
         let mut marker = oxpinyin::data::user_files::UserTableInfo::conform_to(&versions);
         marker.open_counter = 1;

@@ -1,9 +1,9 @@
 //! Session phrase operations over the arenas and the live system items.
 
 use super::*;
-use crate::data::chunk_format::ITEM_HEADER_SIZE;
-use crate::data::chunk_write::{ChunkItem, decode_phrase_item, encode_phrase_item};
+use crate::data::phrase_library::ITEM_HEADER_SIZE;
 use crate::data::phrase_library::PhraseItemView;
+use crate::data::phrase_library::{ChunkItem, decode_phrase_item, encode_phrase_item};
 use crate::user::replay::UnigramAdd;
 use crate::user::user_library::{SessionPhrases, UserLibrary};
 
@@ -61,7 +61,7 @@ fn existing_phrase_token(
 /// [`UserStoreError::Persistence`] when the reading cannot be merged.
 fn merged_live_item(
     items: &crate::user::system_items::SystemItems,
-    original: crate::user::persistence::SystemLibraryRef<'_>,
+    original: crate::user::SystemLibraryRef<'_>,
     token: PhraseToken,
     words: &[u32],
     packed: &[u16],
@@ -409,7 +409,7 @@ impl UserStore {
         // (`phrase_index.cpp:620`), and bumps only a zero low word past
         // the reserved id (`pinyin.cpp:589-594`): a full library wraps to
         // slot 1, and nothing refuses (register row 119).
-        let token = phrase::add_phrase_token(library, end);
+        let token = crate::user::add_phrase_token(library, end);
         let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
         let accepted = self
             .library_total_of(&offsets, &phrases, library)
@@ -491,7 +491,7 @@ impl UserStore {
         }
         let end = items.range_end(library, original);
         // `_add_phrase`'s token (`pinyin.cpp:589-594`; register row 119).
-        let token = phrase::add_phrase_token(library, end);
+        let token = crate::user::add_phrase_token(library, end);
         let bytes = encoded(&ChunkItem {
             phrase: words.to_vec(),
             unigram: 0,

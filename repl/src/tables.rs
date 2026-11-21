@@ -6,7 +6,7 @@ use oxpinyin::input::tool;
 use oxpinyin::input::tool::table_tests as output;
 use oxpinyin::user::tool::Index;
 use oxpinyin::{ChewingKey, OptionBits, phrase_index_library_index};
-use oxpinyin_utils::storage::dbm::Tree;
+use oxpinyin_utils::storage::Tree;
 use std::ops::Range;
 use std::{ffi::CString, path::Path};
 

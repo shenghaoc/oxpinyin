@@ -111,7 +111,7 @@ impl CapiContext {
                 std::process::abort()
             }
             Err(oxpinyin::facade::LibraryRowAssert::NullChunkName) => {
-                Err(oxpinyin::data::table_info::TableConfSite::NullSystemFile.warning())
+                Err(oxpinyin::data::TableConfSite::NullSystemFile.warning())
             }
         }
     }

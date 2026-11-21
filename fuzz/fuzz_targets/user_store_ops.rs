@@ -24,7 +24,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use oxpinyin::data::table_info::TableConf;
+use oxpinyin::data::TableConf;
 use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin::user::{
     FIRST_USER_TOKEN, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw, UserStore,

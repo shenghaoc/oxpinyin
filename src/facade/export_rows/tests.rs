@@ -457,22 +457,24 @@ fn an_addon_promoted_into_a_missing_library_is_exported() {
     ctx.user_store_mut()
         .promote_addon_phrase(
             0x0500_0001,
-            &crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
-                phrase: "二簧".chars().map(u32::from).collect(),
-                unigram: 9,
-                prons: vec![(
-                    ["er", "huang"]
-                        .iter()
-                        .map(|spelling| {
-                            SyllableKey::from_text(spelling)
-                                .expect("syllable")
-                                .chewing_key()
-                                .to_packed()
-                        })
-                        .collect(),
-                    7,
-                )],
-            })
+            &crate::data::phrase_library::encode_phrase_item(
+                &crate::data::phrase_library::ChunkItem {
+                    phrase: "二簧".chars().map(u32::from).collect(),
+                    unigram: 9,
+                    prons: vec![(
+                        ["er", "huang"]
+                            .iter()
+                            .map(|spelling| {
+                                SyllableKey::from_text(spelling)
+                                    .expect("syllable")
+                                    .chewing_key()
+                                    .to_packed()
+                            })
+                            .collect(),
+                        7,
+                    )],
+                },
+            )
             .unwrap(),
         )
         .unwrap();

@@ -5,7 +5,7 @@ use std::os::raw::c_int;
 
 use oxpinyin::PhraseToken;
 use oxpinyin::engine::SORT_WITHOUT_SENTENCE_CANDIDATE;
-use oxpinyin::marshal::phrase_text::{phrase_text_bytes, phrase_text_len};
+use oxpinyin::marshal::{phrase_text_bytes, phrase_text_len};
 use oxpinyin::user::{UnigramAdd, is_user_token};
 
 use crate::ffi::{borrow_or_return, write_if_nonnull};

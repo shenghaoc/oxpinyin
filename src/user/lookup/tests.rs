@@ -10,12 +10,12 @@ fn key(text: &str) -> SyllableKey {
 /// user and network libraries, and no system library.
 fn transient() -> UserStore {
     UserStore::open_transient(
-        crate::user::persistence::SystemOriginals::new(
+        crate::user::SystemOriginals::new(
             Default::default(),
             crate::data::user_files::UserFileLayout::stock(),
         ),
         crate::data::user_files::SystemVersions::for_this_build(7, 14),
-        crate::user::persistence::UserConfLaw::Pinyin,
+        crate::user::UserConfLaw::Pinyin,
     )
     .unwrap()
 }
@@ -30,7 +30,7 @@ fn session_lookup_reads_a_tagged_token_through_its_masked_library() {
     let mut phrases = SessionPhrases::default();
     let token = crate::user::FIRST_USER_TOKEN;
     let bytes =
-        crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
+        crate::data::phrase_library::encode_phrase_item(&crate::data::phrase_library::ChunkItem {
             phrase: vec![u32::from('你')],
             unigram: 1,
             prons: Vec::new(),
@@ -91,7 +91,7 @@ fn a_reading_with_an_unconvertible_syllable_is_refused_before_it_is_stored() {
         .expect("frozen syllable inventory fits u16");
     let hao = u16::try_from(SyllableKey::from_text("hao").unwrap().index())
         .expect("frozen syllable inventory fits u16");
-    let unknown = crate::user::phrase::KEY_SYLLABLE_MASK;
+    let unknown = crate::user::KEY_SYLLABLE_MASK;
     assert!(SyllableKey::from_index(usize::from(unknown)).is_none());
     assert!(matches!(
         store.add_phrase_in(USER_DICTIONARY, &"你好".into(), &[ni, unknown], Some(5)),

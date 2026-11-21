@@ -18,7 +18,7 @@ use crate::store::StoreError;
 
 use std::collections::BTreeSet;
 
-use crate::data::chunk_format::CHEWING_KEY_SIZE;
+use crate::data::phrase_library::CHEWING_KEY_SIZE;
 use crate::data::row_format::pinyin_index::{
     encode_complete_key, encode_incomplete_key, encode_item, item2_stride,
 };

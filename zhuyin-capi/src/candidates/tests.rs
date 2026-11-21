@@ -382,8 +382,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
             .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name())
             .is_file()
     );
-    let conf = oxpinyin::data::table_info::TableConf::load_from_dir(&system_dir())
-        .expect("fixture table.conf");
+    let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let marker =
         oxpinyin::data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
             .expect("saved user.conf");

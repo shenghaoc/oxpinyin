@@ -5,12 +5,12 @@ use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
 
-use crate::data::c_stderr;
+use crate::data;
 use crate::engine::SessionSettings;
 use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
 };
-use crate::user::persistence::MaskStop;
+use crate::user::MaskStop;
 use crate::user::{JournalFault, MaskLogs, UserConfLaw, UserStore, UserStoreError};
 use crate::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 
@@ -249,11 +249,11 @@ pub fn null_chunk_asserts(dir: &Path) -> bool {
 }
 
 /// Writes the pin's `mmap %s failed!` line for `dir` with
-/// [`c_stderr::mmap_failed`], if `writes_null_chunk_line` says the pin
+/// [`data::mmap_failed`], if `writes_null_chunk_line` says the pin
 /// writes it on this file system.
 fn null_chunk_refused(dir: &Path) {
     if crate::data::phrase_library::null_chunk_writes_mmap_line(dir) {
-        c_stderr::mmap_failed(dir);
+        data::mmap_failed(dir);
     }
 }
 
@@ -319,7 +319,7 @@ impl LiveOptions {
 /// the user store it opened makes the
 /// fini-time `user.conf` write of the law it was opened under —
 /// libpinyin lowers the open counter its init raised, libzhuyin writes
-/// nothing (`crate::user::persistence::fini`). A context that is never
+/// nothing (`crate::user::fini`). A context that is never
 /// finalised, like a process that dies before its `pinyin_fini`, leaves the
 /// raised counter on disk. Drop also finalises a store that was not explicitly
 /// finished; a later drop never repeats the marker write.
@@ -393,7 +393,7 @@ impl ContextCore {
         // (`check_format` runs before the library loop), on its stream, and
         // stop where the loop dies.
         let runtime = Runtime::open_with_law_reporting(system_dir, user_dir, law, &mut |path| {
-            c_stderr::mmap_failed(path)
+            data::mmap_failed(path)
         })
         .map_err(OpenFailure::Runtime)?;
         Ok(Self {
@@ -457,7 +457,7 @@ impl ContextCore {
                 match Runtime::read_save_baseline(originals, unloaded, nibble) {
                     Ok(baseline) => baseline,
                     Err(crate::runtime::SaveRemapFault::Unmappable(path)) => {
-                        c_stderr::mmap_failed(&path);
+                        data::mmap_failed(&path);
                         crate::user::SaveBaseline::Unmappable
                     }
                 }
@@ -551,7 +551,7 @@ impl ContextCore {
                         }
                     }
                     RemapStep::Unmappable(path) => {
-                        c_stderr::mmap_failed(&path);
+                        data::mmap_failed(&path);
                         return MaskOutOutcome::Done(true);
                     }
                     RemapStep::Directory => {
@@ -679,7 +679,7 @@ impl ContextCore {
         match runtime.remap_next(&mut walk) {
             Some(RemapStep::Directory) => std::process::abort(),
             Some(RemapStep::Unmappable(path)) => {
-                c_stderr::mmap_failed(&path);
+                data::mmap_failed(&path);
                 return Ok(true);
             }
             None if !user_file => return Ok(true),
@@ -735,7 +735,7 @@ impl ContextCore {
                 | crate::runtime::LibraryError::Unmappable { .. }),
             ) => {
                 if let Some(path) = error.unmappable_path() {
-                    c_stderr::mmap_failed(path);
+                    data::mmap_failed(path);
                 }
                 Ok(false)
             }

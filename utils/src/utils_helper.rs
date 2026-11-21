@@ -5,7 +5,7 @@ use std::path::Path;
 
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::{LibraryError, PhraseLibrary};
-use oxpinyin::data::table_info::{FileName, FileType, TableConf};
+use oxpinyin::data::{FileName, FileType, TableConf};
 use oxpinyin::input::tool;
 
 pub mod taglib;

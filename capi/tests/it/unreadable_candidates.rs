@@ -91,7 +91,7 @@ mod fixture {
     /// `Fallback`, else the system index in `dir` with the case's rows.
     fn write_index(dir: &Path, user: &Path, case: Case, key: ChewingKey) {
         let index_path = if matches!(case, Case::Fallback) {
-            let conf = oxpinyin::data::table_info::TableConf::load_from_dir(dir).unwrap();
+            let conf = oxpinyin::data::TableConf::load_from_dir(dir).unwrap();
             let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
             fs::write(
                 user.join("user.conf"),

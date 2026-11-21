@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::data::single_gram::decode_single_gram;
+use oxpinyin::single_gram::decode_single_gram;
 use oxpinyin::store::{DefaultStore, RawReadStore};
 
 /// The repository root.

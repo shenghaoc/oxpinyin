@@ -1,7 +1,7 @@
 //! The dictionary-introspection surface: token lookups, per-token reads,
 //! the unigram-frequency write.
 
-use oxpinyin::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text_bytes;
 use std::os::raw::{c_char, c_uint, c_void};
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
@@ -39,7 +39,7 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
     tokenarray: *mut GArray,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false);
-    let text = oxpinyin::marshal::input::utf8_to_ucs4(
+    let text = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },

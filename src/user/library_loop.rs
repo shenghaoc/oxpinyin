@@ -6,10 +6,10 @@
 use std::path::Path;
 
 use crate::data::phrase_library::LibraryError;
-use crate::data::table_info::{DefaultRowStep, TableConf, TableConfSite};
+use crate::data::{DefaultRowStep, TableConf, TableConfSite};
 
-use crate::user::persistence::{SessionProfile, SystemOriginals};
 use crate::user::replay::JournalFault;
+use crate::user::{SessionProfile, SystemOriginals};
 
 /// Where the library loop stopped: the one record of every way a default row
 /// ends the pin's init.

@@ -36,7 +36,6 @@ use std::path::Path;
 use crate::input::config::SystemTableInfoReader;
 
 use crate::data::phrase_library::directory_reads_as_a_chunk;
-use crate::data::table_conf::PINNED_LAMBDA;
 
 /// `PHRASE_FILE_TYPE` (`table_info.h:44-49`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,7 +110,7 @@ impl DatabaseFormat {
 
 /// A file name as a `table.conf` column spells it: the bytes of the `%s`
 /// word, kept raw (the pin opens whatever bytes it read), and joined to a
-/// directory by `crate::input::path::build_path` — never as `Path::join`
+/// directory by `crate::input::build_path` — never as `Path::join`
 /// does.
 ///
 /// A name that starts with a separator stays beneath the directory; only an
@@ -124,7 +123,7 @@ impl FileName {
     /// The name made of `bytes`.
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        Self(crate::input::path::path_from_bytes(bytes).into_os_string())
+        Self(crate::input::path_from_bytes(bytes).into_os_string())
     }
 
     /// The name with `suffix` appended (`g_strdup_printf("%s.tmp", name)`).
@@ -305,14 +304,14 @@ pub struct TableConf {
 impl TableConf {
     // Stock rows come from data/table.conf.in; pinyin_init loads table.conf
     // (pinyin.cpp:335–340).
-    /// Constructs the stock table configuration for the selected database backend. Runtime
+    /// Constructs the stock table rows for the selected backend and supplied weight. Runtime
     /// initialization reads the installed configuration from disk.
     #[must_use]
-    pub fn stock() -> Self {
+    pub fn stock(lambda: f32) -> Self {
         let mut conf = Self {
             binary_format_version: 7,
             model_data_version: 14,
-            lambda: PINNED_LAMBDA,
+            lambda,
             phonetic: PhoneticType::Pinyin,
             database_format: DatabaseFormat::from_token(crate::store::DEFAULT_STORE_DB_FORMAT)
                 .unwrap_or(DatabaseFormat::BerkeleyDb),
@@ -329,7 +328,7 @@ impl TableConf {
                 );
             }
         };
-        for &(index, stem) in crate::data::system_files::SYSTEM_LIBRARY_NAMES {
+        for &(index, stem) in crate::data::SYSTEM_LIBRARY_NAMES {
             system(&mut conf, usize::from(index), stem);
         }
         for (index, file) in [(5, "addon.bin"), (6, "network.bin"), (7, "user.bin")] {
@@ -337,7 +336,7 @@ impl TableConf {
                 *slot = TableRow::named(b"NULL", b"NULL", file.as_bytes(), FileType::UserFile);
             }
         }
-        for &(index, stem) in crate::data::system_files::ADDON_LIBRARY_NAMES {
+        for &(index, stem) in crate::data::ADDON_LIBRARY_NAMES {
             if let Some(slot) = conf.addon.get_mut(usize::from(index)) {
                 *slot = TableRow::named(
                     format!("{stem}.table").as_bytes(),
@@ -472,7 +471,7 @@ impl TableConf {
     /// As [`Self::load`]; a path holding a NUL is
     /// [`TableConfError::Unopenable`].
     pub fn load_path(path: &Path) -> Result<Self, TableConfError> {
-        if crate::input::path::path_to_bytes(path).contains(&0) {
+        if crate::input::path_to_bytes(path).contains(&0) {
             return Err(TableConfError::Unopenable);
         }
         Self::load(path)
@@ -486,7 +485,7 @@ impl TableConf {
     ///
     /// As [`Self::load_path`].
     pub fn load_from_dir(system_dir: &Path) -> Result<Self, TableConfError> {
-        Self::load_path(&crate::input::path::build_path(
+        Self::load_path(&crate::input::build_path(
             system_dir,
             OsStr::new("table.conf"),
         ))

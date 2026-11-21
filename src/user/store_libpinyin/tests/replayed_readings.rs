@@ -15,14 +15,14 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::data::chunk_write::{ChunkItem, encode_phrase_item};
+use crate::data::phrase_library::{ChunkItem, encode_phrase_item};
 use crate::data::user_files::{LogRecord, SystemVersions};
 use crate::{ChewingKey, model::UserModel};
 
 use super::super::{export_state, packed_to_pinyin_keys};
-use crate::user::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
 use crate::user::store::UserStore;
 use crate::user::test_session::tempdir;
+use crate::user::{SystemLibrary, SystemOriginals, UserConfLaw};
 
 const LIBRARY: u32 = 0x0100_0000;
 
@@ -195,7 +195,7 @@ fn train(store: &mut UserStore, slot: u32, reading: ChewingKey, paths: usize) {
     UserModel::observe_with_keys(store, &[], &(LIBRARY | slot), &mut readings).expect("train");
 }
 
-fn dense(syllable: &str, tone_: u8) -> Vec<crate::user::phrase::PinyinKey> {
+fn dense(syllable: &str, tone_: u8) -> Vec<crate::user::PinyinKey> {
     packed_to_pinyin_keys(&tone(syllable, tone_)).expect("dense")
 }
 

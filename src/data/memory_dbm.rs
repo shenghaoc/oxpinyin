@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use crate::data::DictError;
 use crate::data::chewing_table::ChewingDbm;
-use crate::data::dict::DictError;
 
 /// Raw rows behind `get` and `contains`; a test over a reader that
 /// starts walking fails here.

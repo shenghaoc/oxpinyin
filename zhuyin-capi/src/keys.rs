@@ -43,7 +43,7 @@ pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
     onekey: *mut ChewingKey,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false, onepinyin, onekey);
-    let text = oxpinyin::marshal::input::scalar_text(
+    let text = oxpinyin::marshal::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn zhuyin_parse_chewing(
     onekey: *mut ChewingKey,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false, onechewing, onekey);
-    let text = oxpinyin::marshal::input::scalar_text(
+    let text = oxpinyin::marshal::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onechewing) },

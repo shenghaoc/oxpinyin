@@ -1,5 +1,5 @@
 use super::*;
-use oxpinyin::data::chunk_write::ChunkItem;
+use oxpinyin::data::phrase_library::ChunkItem;
 
 /// tests/storage/test_phrase_index_logger.cpp:32-38 at 074a2219: one
 /// `add_unigram_frequency` per slot of the range, then the facade total.

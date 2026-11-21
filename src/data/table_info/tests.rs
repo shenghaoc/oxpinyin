@@ -73,7 +73,7 @@ fn rows_fill_their_slots() {
     let conf = parse(STOCK).expect("parses");
     assert_eq!(conf.binary_format_version(), 7);
     assert_eq!(conf.model_data_version(), 14);
-    assert_eq!(conf.lambda_f32(), PINNED_LAMBDA);
+    assert_eq!(conf.lambda_f32(), 0.312_699);
     assert_eq!(conf.database_format(), DatabaseFormat::BerkeleyDb);
     let system: Vec<_> = conf.system_libraries().map(|(index, _)| index).collect();
     assert_eq!(system, [1]);
@@ -305,7 +305,7 @@ fn file_name_columns_keep_their_raw_bytes() {
 
 #[test]
 fn the_stock_layout_is_the_shipped_table_conf() {
-    let stock = TableConf::stock();
+    let stock = TableConf::stock(0.312_699);
     let libraries: Vec<_> = stock.system_libraries().map(|(index, _)| index).collect();
     assert_eq!(libraries, [1, 2, 3, 4]);
     let user: Vec<_> = stock.user_libraries().map(|(index, _)| index).collect();

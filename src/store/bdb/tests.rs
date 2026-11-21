@@ -526,9 +526,9 @@ fn a_bigram_save_stops_when_its_source_cursor_does_not_open() {
     let source = BdbStore::create_hash(&dir.path().join("source.db")).expect("source");
     source.write(|txn| txn.put_raw(b"k", b"v")).expect("record");
     let destination = dir.path().join("destination.db");
-    crate::store::copy_faults::fail_iterator_creation_after(0);
+    crate::store::fail_iterator_creation_after(0);
     let result = source.save_bigram_db(&destination);
-    crate::store::copy_faults::fail_iterator_creation_after(usize::MAX);
+    crate::store::fail_iterator_creation_after(usize::MAX);
     assert!(result.is_err(), "the pin returns false");
     assert!(
         destination.is_file(),

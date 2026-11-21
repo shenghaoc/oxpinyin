@@ -9,13 +9,13 @@
 
 use std::path::Path;
 
-use crate::data::chunk_write::{ChunkItem, build_chunk};
-use crate::data::table_info::{DefaultRowStep, FileName, TableConf};
+use crate::data::phrase_library::{ChunkItem, build_chunk};
 use crate::data::user_files::{SystemVersions, UserFileLayout};
+use crate::data::{DefaultRowStep, FileName, TableConf};
 
 use crate::user::LibraryLoopRows;
-use crate::user::persistence::{SystemOriginals, UserConfLaw};
 use crate::user::store::{UserStore, UserStoreError};
+use crate::user::{SystemOriginals, UserConfLaw};
 
 thread_local! {
     /// The scratch system directories of this thread's sessions. A save maps
@@ -41,7 +41,7 @@ pub(crate) fn tempdir(name: &str) -> std::path::PathBuf {
 
 /// Puts `library`'s chunk at `target`. A mapped library's own file is
 /// linked where the platform has links, so the session maps that file.
-fn place_chunk(library: crate::user::persistence::SystemLibraryRef<'_>, target: &Path) {
+fn place_chunk(library: crate::user::SystemLibraryRef<'_>, target: &Path) {
     if let Some(path) = library.mapped.and_then(|mapped| mapped.source_path()) {
         #[cfg(unix)]
         std::os::unix::fs::symlink(path, target).expect("link the fixture's chunk file");
@@ -54,7 +54,7 @@ fn place_chunk(library: crate::user::persistence::SystemLibraryRef<'_>, target: 
         .iter()
         .map(|(&slot, item)| (slot, item.clone()))
         .collect();
-    let file = crate::data::chunk_write::build_chunk(&items).expect("fixture chunk");
+    let file = crate::data::phrase_library::build_chunk(&items).expect("fixture chunk");
     // The chunk header is the length and the checksum; the payload opens
     // with the sub-index total.
     let mut payload = file[8..].to_vec();
@@ -131,7 +131,7 @@ fn open_over(
 ) -> Result<UserStore, UserStoreError> {
     let layout = originals.layout().clone();
     let rows = Rows::new(originals);
-    let check = crate::user::persistence::check_format(user_dir, &versions, &layout, law);
+    let check = crate::user::check_format(user_dir, &versions, &layout, law);
     let mut loaded = SystemOriginals::new(crate::user::LibraryTable::new(), layout);
     UserStore::open_libpinyin_checked(user_dir, &mut loaded, &rows.rows(), versions, law, check)
 }
@@ -144,8 +144,8 @@ pub(crate) fn load(
     originals: &SystemOriginals,
     versions: &SystemVersions,
     law: UserConfLaw,
-) -> Result<crate::user::persistence::Loaded, crate::user::persistence::PersistenceError> {
-    let check = crate::user::persistence::check_format(dir, versions, originals.layout(), law);
+) -> Result<crate::user::Loaded, crate::user::PersistenceError> {
+    let check = crate::user::check_format(dir, versions, originals.layout(), law);
     load_checked(dir, originals, &check)
 }
 
@@ -153,13 +153,13 @@ pub(crate) fn load(
 pub(crate) fn load_profile_checked(
     dir: &Path,
     originals: &SystemOriginals,
-    check: &crate::user::persistence::ProfileCheck,
-) -> Result<crate::user::persistence::LoadedProfile, crate::user::persistence::PersistenceError> {
+    check: &crate::user::ProfileCheck,
+) -> Result<crate::user::LoadedProfile, crate::user::PersistenceError> {
     let rows = Rows::new(originals);
     let mut mapped =
         SystemOriginals::new(crate::user::LibraryTable::new(), originals.layout().clone());
     let (mut profile, stop) =
-        crate::user::persistence::load_session_in_loop(dir, &mut mapped, &rows.rows(), check)?;
+        crate::user::load_session_in_loop(dir, &mut mapped, &rows.rows(), check)?;
     match stop {
         Ok(()) => {}
         Err(crate::user::library_loop::LibraryLoopStop::Journal(fault)) => {
@@ -176,8 +176,8 @@ pub(crate) fn load_profile(
     originals: &SystemOriginals,
     versions: &SystemVersions,
     law: UserConfLaw,
-) -> Result<crate::user::persistence::LoadedProfile, crate::user::persistence::PersistenceError> {
-    let check = crate::user::persistence::check_format(dir, versions, originals.layout(), law);
+) -> Result<crate::user::LoadedProfile, crate::user::PersistenceError> {
+    let check = crate::user::check_format(dir, versions, originals.layout(), law);
     load_profile_checked(dir, originals, &check)
 }
 
@@ -185,10 +185,10 @@ pub(crate) fn load_profile(
 pub(crate) fn load_checked(
     dir: &Path,
     originals: &SystemOriginals,
-    check: &crate::user::persistence::ProfileCheck,
-) -> Result<crate::user::persistence::Loaded, crate::user::persistence::PersistenceError> {
+    check: &crate::user::ProfileCheck,
+) -> Result<crate::user::Loaded, crate::user::PersistenceError> {
     use crate::store::RawReadStore as _;
-    let crate::user::persistence::LoadedProfile {
+    let crate::user::LoadedProfile {
         mut loaded,
         replayed,
         user_libraries,
@@ -197,7 +197,7 @@ pub(crate) fn load_checked(
         ..
     } = load_profile_checked(dir, originals, check)?;
     let state = &mut loaded.state;
-    let bigram = crate::input::path::build_path(
+    let bigram = crate::input::build_path(
         dir,
         std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
     );
@@ -221,7 +221,7 @@ pub(crate) fn load_checked(
             .map(|(slot, item)| {
                 (
                     slot,
-                    crate::data::chunk_write::decode_phrase_item(item.as_bytes())
+                    crate::data::phrase_library::decode_phrase_item(item.as_bytes())
                         .expect("a stored item"),
                 )
             })
@@ -250,7 +250,7 @@ pub(crate) fn load_checked(
 /// profile is read: its data files are removed first.
 pub(crate) fn seeded(
     dir: &Path,
-    state: &crate::user::persistence::UserState,
+    state: &crate::user::UserState,
     originals: &SystemOriginals,
     versions: &SystemVersions,
 ) -> Result<UserStore, UserStoreError> {
@@ -281,7 +281,7 @@ pub(crate) fn seeded(
 /// `open_counter` in its marker.
 pub(crate) fn save_state(
     dir: &Path,
-    state: &crate::user::persistence::UserState,
+    state: &crate::user::UserState,
     originals: &SystemOriginals,
     versions: &SystemVersions,
     open_counter: i32,
@@ -312,7 +312,7 @@ pub(crate) fn addon_item(
     readings: &[(Vec<crate::user::PinyinKey>, u64)],
     unigram: u64,
 ) -> Vec<u8> {
-    crate::data::chunk_write::encode_phrase_item(&crate::data::chunk_write::ChunkItem {
+    crate::data::phrase_library::encode_phrase_item(&crate::data::phrase_library::ChunkItem {
         phrase: phrase.chars().map(u32::from).collect(),
         unigram: unigram as u32,
         prons: readings

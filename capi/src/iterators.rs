@@ -20,7 +20,7 @@ use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_re
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
-use oxpinyin::marshal::phrase_text::phrase_text_bytes;
+use oxpinyin::marshal::phrase_text_bytes;
 
 /// State behind `export_iterator_t *`: the pin's iterator state, which
 /// reads each item when a call needs it and buffers no row.
@@ -249,7 +249,7 @@ unsafe fn plan_import(
     pinyin: *const c_char,
 ) -> ImportPlan {
     // Scalar input conversion; raw-word import is tracked by #1279.
-    let phrase = oxpinyin::marshal::input::utf8_to_ucs4(
+    let phrase = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -257,7 +257,7 @@ unsafe fn plan_import(
     .unwrap_or_default();
     // The reading is parsed from the raw bytes (`pinyin.cpp:638`): the
     // keys before an invalid sequence stand, as they do at the pin.
-    let pinyin = oxpinyin::marshal::input::parser_prefix(
+    let pinyin = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyin) },

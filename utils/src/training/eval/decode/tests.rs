@@ -1,7 +1,6 @@
 use super::super::counts::Counts;
 use super::super::fixture_doubles::FixtureDictionary;
 use super::{EvalLanguageModel, PhraseSource, correction_rate};
-use oxpinyin::data::PINNED_LAMBDA;
 use oxpinyin::{PhraseToken, SyllableKey};
 use std::collections::BTreeMap;
 
@@ -30,7 +29,7 @@ fn fixture() -> (FixtureDictionary, EvalLanguageModel) {
     let dict = FixtureDictionary::parse(vocab).expect("vocab");
     let mut counts = Counts::default();
     counts.unigrams.insert(1, 10);
-    let model = EvalLanguageModel::from_counts(&counts, PINNED_LAMBDA);
+    let model = EvalLanguageModel::from_counts(&counts, 0.312_699);
     (dict, model)
 }
 

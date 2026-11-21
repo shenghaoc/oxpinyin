@@ -160,13 +160,13 @@ unsafe fn plan_import(
     phrase: *const c_char,
     pinyin: *const c_char,
 ) -> ImportPlan {
-    let phrase = oxpinyin::marshal::input::utf8_to_ucs4(
+    let phrase = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
     )
     .unwrap_or_default();
-    let pinyin = oxpinyin::marshal::input::direct_zhuyin_reading(
+    let pinyin = oxpinyin::marshal::direct_zhuyin_reading(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyin) },

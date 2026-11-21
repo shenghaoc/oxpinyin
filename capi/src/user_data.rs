@@ -46,7 +46,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
         return false;
     }
 
-    let phrase = oxpinyin::marshal::input::utf8_to_ucs4(
+    let phrase = oxpinyin::marshal::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },

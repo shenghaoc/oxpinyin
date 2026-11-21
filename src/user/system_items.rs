@@ -1,9 +1,9 @@
 //! Live system items: each loaded system library's private buffer.
 
-use crate::data::chunk_write::ChunkItem;
+use crate::data::phrase_library::ChunkItem;
 
 use crate::PhraseToken;
-use crate::user::persistence::SystemLibraryRef;
+use crate::user::SystemLibraryRef;
 use crate::user::replay::{ReplayedLibrary, UnigramAdd};
 
 /// The live buffer of `token`'s system library, made from `original` the
@@ -149,10 +149,10 @@ impl SystemItems {
         &'a self,
         nibble: u8,
         original: SystemLibraryRef<'a>,
-    ) -> crate::user::persistence::LiveSubIndex<'a> {
+    ) -> crate::user::LiveSubIndex<'a> {
         match self.replayed.get(&nibble) {
-            Some(buffer) => crate::user::persistence::LiveSubIndex::Buffer(buffer),
-            None => crate::user::persistence::LiveSubIndex::Chunk(original),
+            Some(buffer) => crate::user::LiveSubIndex::Buffer(buffer),
+            None => crate::user::LiveSubIndex::Chunk(original),
         }
     }
 
@@ -347,7 +347,7 @@ impl SystemItems {
     #[cfg(test)]
     pub(crate) fn changed_items(
         &self,
-        originals: &impl crate::user::persistence::OriginalLibraries,
+        originals: &impl crate::user::OriginalLibraries,
     ) -> std::collections::BTreeMap<PhraseToken, Option<ChunkItem>> {
         let mut changes = std::collections::BTreeMap::new();
         for (&nibble, buffer) in &self.replayed {

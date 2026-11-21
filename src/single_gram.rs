@@ -343,5 +343,77 @@ pub fn new_gram() -> Vec<u8> {
     vec![0; TOTAL_LEN]
 }
 
+/// What the pin's merge of two present grams meets before its loop: both
+/// totals are read first (`ngram.cpp:303-304`), asserting on a value
+/// shorter than one ([`GramFault::Short`], register row 85); every item of
+/// both values is then consumed, so a partial tail on either is read past
+/// ([`GramFault::OverRead`], row 98).
+pub(crate) fn merge_fault(system: &[u8], user: &[u8]) -> Option<GramFault> {
+    let short = |gram: &[u8]| get_total_freq(gram).is_none();
+    if short(system) || short(user) {
+        Some(GramFault::Short)
+    } else if has_partial_tail(system) || has_partial_tail(user) {
+        Some(GramFault::OverRead)
+    } else {
+        None
+    }
+}
+
+/// The chunk `merge_single_gram` builds from two present, readable grams.
+pub(crate) fn merged_chunk(system: &[u8], user: &[u8]) -> Vec<u8> {
+    let mut chunk = Vec::with_capacity(
+        system
+            .len()
+            .saturating_add(user.len())
+            .saturating_sub(TOTAL_LEN),
+    );
+    merge_single_gram(&mut chunk, Some(system), Some(user));
+    chunk
+}
+
+/// One successor record: `(next token, count)`.
+pub type SingleGramRecord = (u32, u32);
+
+/// Serialises `total` and `records` into the `SingleGram` layout.
+///
+/// Emits `records` in the supplied order. Callers constructing a searchable
+/// row supply records in ascending token order.
+#[must_use]
+pub fn encode_single_gram(total: u32, records: &[SingleGramRecord]) -> Vec<u8> {
+    let mut value = Vec::with_capacity(TOTAL_LEN + records.len() * ITEM_LEN);
+    value.extend_from_slice(&total.to_le_bytes());
+    for (next, count) in records {
+        value.extend_from_slice(&next.to_le_bytes());
+        value.extend_from_slice(&count.to_le_bytes());
+    }
+    value
+}
+
+/// Whether the value holds a total and only whole records.
+pub(crate) const fn is_complete(gram: &[u8]) -> bool {
+    gram.len() >= TOTAL_LEN && (gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
+}
+
+/// Decodes a `SingleGram` blob into `(total_freq, records)`.
+///
+/// Returns `None` for a short total or a partial 8-byte record.
+#[must_use]
+pub fn decode_single_gram(bytes: &[u8]) -> Option<(u32, Vec<SingleGramRecord>)> {
+    if !is_complete(bytes) {
+        return None;
+    }
+    let (total, rest) = bytes.split_first_chunk::<TOTAL_LEN>()?;
+    let records = rest
+        .as_chunks::<ITEM_LEN>()
+        .0
+        .iter()
+        .map(|record| (record_token(record), record_freq(record)))
+        .collect();
+    Some((u32::from_le_bytes(*total), records))
+}
+
+#[cfg(test)]
+mod codec_tests;
+
 #[cfg(test)]
 mod tests;

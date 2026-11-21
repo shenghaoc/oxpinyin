@@ -9,19 +9,19 @@
 //! decoding is bounded to the record. A journal record whose payload extends
 //! beyond the log rolls back the changes made by that replay.
 
-use crate::user::persistence::record_skip;
+use crate::user::record_skip;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use crate::PHRASE_MASK;
-use crate::data::chunk_format::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
-use crate::data::chunk_write::{ChunkItem, decode_phrase_item};
+use crate::data::phrase_library::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
+use crate::data::phrase_library::{ChunkItem, decode_phrase_item};
 use crate::data::phrase_library::{PhraseContent, PhraseItemView};
 use crate::data::user_files::LogRecord;
 
 #[cfg(test)]
-use crate::user::persistence::SystemLibrary;
-use crate::user::persistence::{SystemLibraryRef, journal_item_bytes};
+use crate::user::SystemLibrary;
+use crate::user::{SystemLibraryRef, journal_item_bytes};
 
 /// Why the merge ended at a record.
 pub(crate) enum Stop {

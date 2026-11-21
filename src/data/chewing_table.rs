@@ -16,10 +16,10 @@
 //! See `docs/findings/data-formats.md` §4 and
 //! `chewing_large_table2_tkrzwdb.cpp:133-296`.
 
-use crate::data::chunk_format::CHEWING_KEY_SIZE;
+use crate::data::phrase_library::CHEWING_KEY_SIZE;
 use crate::{ChewingKey, MAX_PHRASE_LENGTH};
 
-use crate::data::dict::DictError;
+use crate::data::DictError;
 // The key and record layouts this reader shares with
 // `gen_binary_files`'s writer: one written copy, so a probe here and an
 // emission there cannot drift (`crate::data::row_format`).

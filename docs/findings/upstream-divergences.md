@@ -243,7 +243,7 @@ An entry holds nothing else.
 ### An oversized user chunk or journal bulk save (policy row 112)
 
 - **Pin:** user saves and utility chunk writes both call `SubPhraseIndex::store`. Buffer growth narrows to `int`, so the content copy is unsafe from 2^31 bytes (`src/storage/phrase_index.cpp:365-390`, `src/include/memory_chunk.h:95-98,290-296`). The same limit applies to journal copies (`src/storage/phrase_index.cpp:271-283`, `src/storage/phrase_index_logger.h:115-117`).
-- **oxpinyin:** `*_save` stops at the oversized copy with `PersistenceError::SaveTooLarge` and returns `false`. Earlier file changes stay and the session stays dirty. When an item's offset in the chunk content exceeds `u32::MAX`, `build_chunk` returns an error (`src/data/chunk_write.rs:122-129`) and the utility aborts (`gen_binary_files`, `gen_unigram`, `gen_ngram`, `import_interpolation`).
+- **oxpinyin:** `*_save` stops at the oversized copy with `PersistenceError::SaveTooLarge` and returns `false`. Earlier file changes stay and the session stays dirty. When an item's offset in the chunk content exceeds `u32::MAX`, `build_chunk` returns `None` (`src/data/phrase_library/write.rs`) and the utility aborts (`gen_binary_files`, `gen_unigram`, `gen_ngram`, `import_interpolation`).
 - **Decision:** accepted, class (b): the copy past the allocation is not performed.
 - **Tests:** `a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is`, `a_system_journal_copy_at_the_limit_stops_the_save_and_retries`, `the_store_copy_threshold_follows_the_compacted_content`.
 

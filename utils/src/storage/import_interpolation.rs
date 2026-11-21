@@ -9,12 +9,12 @@
 
 use std::ffi::{CStr, CString, OsString};
 
-use oxpinyin::data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::LineReader;
+use oxpinyin::single_gram::{decode_single_gram, encode_single_gram};
 
-use crate::storage::dbm::Hash;
-use crate::storage::libraries::Libraries;
+use crate::storage::Hash;
+use crate::storage::Libraries;
 use crate::storage::{load_table_conf, parse_options, table_dir, table_dir_entry};
 use crate::utils_helper::{
     BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,
@@ -30,8 +30,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
 
     // `phrase_table.attach(SYSTEM_PHRASE_INDEX, ATTACH_READONLY)`: opened,
     // its answer checked, and never otherwise used.
-    if crate::storage::dbm::Tree::open_read_only(std::path::Path::new("phrase_index.bin")).is_err()
-    {
+    if crate::storage::Tree::open_read_only(std::path::Path::new("phrase_index.bin")).is_err() {
         tool::storage::report_open_failed(c"phrase_index.bin");
         tool::exit(tool::ENOENT);
     }
@@ -84,7 +83,7 @@ struct Converter<'a> {
 impl Converter<'_> {
     /// `taglib_token_to_string` (`src/storage/tag_utility.cpp:384-405`).
     fn token_to_string(&self, token: u32) -> Option<CString> {
-        crate::storage::libraries::token_to_string(self.libraries, token)
+        crate::storage::token_to_string(self.libraries, token)
     }
 
     /// `taglib_validate_token_with_string`

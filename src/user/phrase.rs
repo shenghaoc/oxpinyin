@@ -17,7 +17,7 @@ use crate::PhraseToken;
 pub const DEFAULT_PHRASE_COUNT: u64 = 5;
 
 /// Unigram seed factor on a *new* user phrase (`pinyin.cpp:522`; §3.2).
-/// Distinct from [`crate::user::seed::UNIGRAM_FACTOR`] (7), which is the *training*
+/// Distinct from [`crate::user::UNIGRAM_FACTOR`] (7), which is the *training*
 /// path.
 pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
 

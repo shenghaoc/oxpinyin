@@ -19,8 +19,8 @@
 //! See `docs/findings/data-formats.md` §5
 //! and `phrase_large_table3_tkrzwdb.cpp`.
 
+use crate::data::DictError;
 use crate::data::chewing_table::{ChewingDbm, DefaultDbm, prefix_upper_bound};
-use crate::data::dict::DictError;
 // The key and value layouts this reader shares with
 // `gen_binary_files`'s writer: one written copy (`crate::data::row_format`).
 #[cfg(test)]
