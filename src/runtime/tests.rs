@@ -3093,6 +3093,61 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
     );
 }
 
+/// The pin's own training aborts fire in `train_session` itself, so no
+/// error variant or C adapter arm carries them: an index past the
+/// nonempty results dies as `pinyin_train`'s assert does
+/// (`pinyin.cpp:2684` at 074a2219).
+#[test]
+fn train_session_aborts_past_the_nonempty_results() {
+    crate::store::death_test::assert_aborts(
+        "runtime::tests::train_session_aborts_past_the_nonempty_results",
+        || {
+            let user = TempUserDir::new("train-abort-index");
+            let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+            let mut state = native_session(&runtime, OptionBits::USE_TONE);
+            runtime.session(&mut state).replace_raw("nihao").unwrap();
+            assert!(runtime.session(&mut state).guess_sentence().unwrap());
+            let _ = runtime.train_session(&state, 9);
+        },
+    );
+}
+
+/// A shortening re-parse leaves the store past the current matrix: the
+/// training walk dies in `train_session` where the pin's
+/// `increase_pronunciation_possibility` asserts
+/// (`storage/phonetic_key_matrix.cpp:661` at 074a2219), before any
+/// observation or modified mark.
+#[test]
+fn train_session_aborts_on_a_stale_span_after_a_shortening_reparse() {
+    crate::store::death_test::assert_aborts(
+        "runtime::tests::train_session_aborts_on_a_stale_span_after_a_shortening_reparse",
+        || {
+            let user = TempUserDir::new("train-abort-span");
+            let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+            let mut state = native_session(&runtime, OptionBits::USE_TONE);
+            runtime.session(&mut state).replace_raw("nihao").unwrap();
+            assert!(runtime.session(&mut state).guess_sentence().unwrap());
+            let row = runtime
+                .session(&mut state)
+                .candidates_at_for_abi(0, false)
+                .unwrap()
+                .iter()
+                .find(|row| {
+                    row.kind() == crate::engine::CandidateKind::Phrase && row.token().is_some()
+                })
+                .unwrap()
+                .clone();
+            runtime
+                .session(&mut state)
+                .select_target(&crate::engine::SelectionTarget::of_candidate(&row, 0, None))
+                .unwrap();
+            assert!(runtime.session(&mut state).guess_sentence().unwrap());
+            runtime.session(&mut state).replace_raw("ni").unwrap();
+            let _ = runtime.train_session(&state, 0);
+        },
+    );
+}
+
 #[cfg(feature = "tkrzw")]
 /// A system chunk's total and its items by slot (`_system_items`).
 fn system_items(name: &str) -> (u32, std::collections::BTreeMap<u32, Vec<u8>>) {

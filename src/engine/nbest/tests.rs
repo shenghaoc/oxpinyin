@@ -991,82 +991,126 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
     assert_eq!(*model.0.borrow(), [3, 1, 3, 3, 2, 1, 3]);
 }
 
-/// N2 refusals 1, 2, 4 and 6 in the n-best step
-/// (`phonetic_lookup.h:594-632`): the predecessor's merge asserts on a
-/// short user value beside a system gram; with no system gram,
-/// `search` asserts on its total, a one-step constraint's `get_freq`
-/// reads past it, and a walk past the last whole item reads past a
-/// partial tail. A walk that stops before the tail steps normally.
-#[test]
-fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
-    use crate::model::{MergedGram, NbestStepRow, NbestSuccessors};
+/// A model whose every predecessor's merged row is the given gram
+/// (`None`: both grams absent), with flat step costs.
+struct FaultRows(Option<crate::model::MergedGram>);
 
-    struct Rows(Option<MergedGram>);
-    impl LanguageModel for Rows {
-        type Error = EngineError;
+impl LanguageModel for FaultRows {
+    type Error = EngineError;
 
-        fn nbest_successors_in_row<'a>(
-            &self,
-            _: &PhraseToken,
-            row: &'a mut NbestStepRow,
-        ) -> Result<Option<NbestSuccessors<'a>>, EngineError> {
-            Ok(Some(
-                row.get_or_try_init::<EngineError>(|| Ok(self.0.clone()))?
-                    .map_or(NbestSuccessors::Miss, NbestSuccessors::Row),
-            ))
-        }
-
-        fn nbest_item_costs_in_row(
-            &self,
-            _: &PhraseToken,
-            _: &PhraseToken,
-            item: Option<(u32, u32)>,
-            _: &mut NbestStepRow,
-        ) -> Result<NbestStepCosts, EngineError> {
-            Ok(NbestStepCosts {
-                blended: item.map(|(freq, total)| f64::from(freq) / f64::from(total)),
-                unigram: Some(0.25),
-
-                unigram_lambda: 1.0,
-            })
-        }
+    fn nbest_successors_in_row<'a>(
+        &self,
+        _: &PhraseToken,
+        row: &'a mut crate::model::NbestStepRow,
+    ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
+        Ok(Some(
+            row.get_or_try_init::<EngineError>(|| Ok(self.0.clone()))?
+                .map_or(
+                    crate::model::NbestSuccessors::Miss,
+                    crate::model::NbestSuccessors::Row,
+                ),
+        ))
     }
 
-    let gram = |total: u32, items: &[(u32, u32)], tail: &[u8]| {
-        let mut value = total.to_le_bytes().to_vec();
-        for (token, freq) in items {
-            value.extend_from_slice(&token.to_le_bytes());
-            value.extend_from_slice(&freq.to_le_bytes());
-        }
-        value.extend_from_slice(tail);
-        value
-    };
+    fn nbest_item_costs_in_row(
+        &self,
+        _: &PhraseToken,
+        _: &PhraseToken,
+        item: Option<(u32, u32)>,
+        _: &mut crate::model::NbestStepRow,
+    ) -> Result<NbestStepCosts, EngineError> {
+        Ok(NbestStepCosts {
+            blended: item.map(|(freq, total)| f64::from(freq) / f64::from(total)),
+            unigram: Some(0.25),
+
+            unigram_lambda: 1.0,
+        })
+    }
+}
+
+/// A stored gram value from its total, whole `(token, freq)` items and a
+/// trailing partial tail.
+fn gram_value(total: u32, items: &[(u32, u32)], tail: &[u8]) -> Vec<u8> {
+    let mut value = total.to_le_bytes().to_vec();
+    for (token, freq) in items {
+        value.extend_from_slice(&token.to_le_bytes());
+        value.extend_from_slice(&freq.to_le_bytes());
+    }
+    value.extend_from_slice(tail);
+    value
+}
+
+/// One n-best step over predecessor 11's `row`, priced for tokens 1 and 2.
+fn expand_with_row(
+    row: Option<crate::model::MergedGram>,
+    one_step: Option<u32>,
+) -> Result<(), EngineError> {
     let mut entries = crate::model::PhraseIndexRanges::new();
     entries.convert([1, 2].map(|token| (token, Some(priced_slot(token)))));
-    let run = |row: Option<MergedGram>, one_step: Option<u32>| {
-        let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
-        let beam = trellis.beam(0);
-        super::expand_entries(
-            &pricing(&entries),
-            &beam,
-            0..1,
-            &Rows(row),
-            &mut trellis,
-            one_step,
-        )
-    };
-    let short = EngineError::ShortLookupPredecessor { token: 11 };
+    let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
+    let beam = trellis.beam(0);
+    super::expand_entries(
+        &pricing(&entries),
+        &beam,
+        0..1,
+        &FaultRows(row),
+        &mut trellis,
+        one_step,
+    )
+}
+
+/// N2 refusals 4 and 6 in the n-best step (`phonetic_lookup.h:594-632`):
+/// a one-step constraint's `get_freq` reads past a short row, and a walk
+/// past the last whole item reads past a partial tail. A walk that stops
+/// before the tail steps normally. The short-total asserts of the same
+/// step die in the engine; the two death tests below witness them.
+#[test]
+fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
+    use crate::model::MergedGram;
+
     let unsafe_read = EngineError::UnsafeLookupPredecessor { token: 11 };
-    let merged = MergedGram::merge(Some(gram(1, &[(1, 1)], &[])), Some(vec![0, 0]));
-    assert_eq!(run(merged, None), Err(short.clone()));
     let alone = || MergedGram::merge(None, Some(vec![0, 0]));
-    assert_eq!(run(alone(), None), Err(short));
-    assert_eq!(run(alone(), Some(1)), Err(unsafe_read.clone()));
-    let tailed = || MergedGram::merge(None, Some(gram(3, &[(1, 3)], &[9])));
-    assert_eq!(run(tailed(), None), Err(unsafe_read));
+    assert_eq!(expand_with_row(alone(), Some(1)), Err(unsafe_read.clone()));
+    let tailed = || MergedGram::merge(None, Some(gram_value(3, &[(1, 3)], &[9])));
+    assert_eq!(expand_with_row(tailed(), None), Err(unsafe_read));
     // `get_freq(1)` returns at the whole item before the tail.
-    assert_eq!(run(tailed(), Some(1)), Ok(()));
-    assert_eq!(run(None, None), Ok(()), "both grams absent: no bigram step");
+    assert_eq!(expand_with_row(tailed(), Some(1)), Ok(()));
+    assert_eq!(
+        expand_with_row(None, None),
+        Ok(()),
+        "both grams absent: no bigram step"
+    );
+}
+
+/// N2 refusal 1: the predecessor's merge asserts on a short user value
+/// beside a system gram (`merge_single_gram` reads both totals first,
+/// `ngram.cpp:303-304`), and the step dies in the engine.
+#[test]
+fn a_short_merge_aborts_the_step() {
+    crate::store::death_test::assert_aborts(
+        "engine::nbest::tests::a_short_merge_aborts_the_step",
+        || {
+            let row = crate::model::MergedGram::merge(
+                Some(gram_value(1, &[(1, 1)], &[])),
+                Some(vec![0, 0]),
+            );
+            let _ = expand_with_row(row, None);
+        },
+    );
+}
+
+/// N2 refusal 2: with no system gram, the ranged walk's `search` asserts
+/// on the lone user row's total (`SingleGram::search`, `ngram.cpp:165`),
+/// and the step dies in the engine.
+#[test]
+fn a_short_lone_row_aborts_the_ranged_step() {
+    crate::store::death_test::assert_aborts(
+        "engine::nbest::tests::a_short_lone_row_aborts_the_ranged_step",
+        || {
+            let row = crate::model::MergedGram::merge(None, Some(vec![0, 0]));
+            let _ = expand_with_row(row, None);
+        },
+    );
 }
 
 /// `SingleGram::search` bounds its walk by the range end only

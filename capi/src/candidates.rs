@@ -914,16 +914,11 @@ pub unsafe extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) 
 }
 
 /// `pinyin_train`'s answer for its training result: the process aborts where the
-/// pin dies, and a class (b) refusal is `false` with one warning.
+/// pin dies, and a class (b) refusal is `false` with one warning. The pin's own
+/// training aborts — the supplied n-best index included (074a2219
+/// `pinyin.cpp:2684`) — terminate in the engine before this runs.
 fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
     use oxpinyin::facade::TrainingRefusal;
-    // The Pinyin caller supplies the n-best index (074a2219 pinyin.cpp:2684).
-    if matches!(
-        result,
-        Err(oxpinyin::engine::EngineError::CandidateIndexOutOfRange { .. })
-    ) {
-        std::process::abort();
-    }
     match oxpinyin::facade::training_answer(result) {
         Ok(trained) => trained,
         Err(TrainingRefusal::Abort) => std::process::abort(),
@@ -937,12 +932,14 @@ fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
     }
 }
 
-/// Whether [`pinyin_train`] of row `index` reaches one of the pin's own
-/// training asserts (register rows 6, 38 and 82): the facade's
-/// [`oxpinyin::facade::InstanceView::train_aborts`], the same row lookup and
-/// span walk `pinyin_train` runs. Reads only. For the in-tree fuzz harness,
-/// which skips such a call: not in `pinyin.h`, a Rust function compiled
-/// only with `fuzz-api` and never into the shipped artifact.
+/// Whether [`pinyin_train`] of row `index` terminates: one of the pin's
+/// own training asserts (register rows 6, 38 and 82), or a store fault
+/// the facade classifies as the pin's training abort (rows 85 and 113).
+/// The facade's [`oxpinyin::facade::InstanceView::train_aborts`], the one
+/// ordered, read-only preparation `pinyin_train` runs, simulated store
+/// check included. Reads only. For the in-tree fuzz harness, which skips
+/// such a call: not in `pinyin.h`, a Rust function compiled only with
+/// `fuzz-api` and never into the shipped artifact.
 ///
 /// # Safety
 ///

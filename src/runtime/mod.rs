@@ -1228,6 +1228,57 @@ pub struct RuntimeLm<'a> {
 /// bigram is the in-memory copy `load_db` makes (`pinyin.cpp:399-401`), so
 /// its checked read cannot fail after the size check; no user container
 /// reports that failure either.
+/// The user store's per-step training check, as the shared preparation
+/// ([`crate::engine::Session::prepare_training`]) takes it: the predecessor
+/// is the last history token, or sentence start for the first step.
+/// Read-only — [`UserStore::check_training_step_with`] replays earlier
+/// checked steps on copies of the grams without writing the store — so
+/// production training and the fuzz probe pass the same check.
+///
+/// # Errors
+///
+/// The store's read error or a short, partial or malformed gram failure,
+/// rendered at the engine seam; `check` keeps the typed fault.
+pub(crate) fn training_step_check(
+    user: &UserStore,
+    check: &mut crate::user::TrainingCheck,
+    history: &[PhraseToken],
+    token: &PhraseToken,
+) -> Result<(), EngineError> {
+    user.check_training_step_with(
+        check,
+        history.last().map_or(crate::SENTENCE_START, |token| *token),
+        *token,
+    )
+    .map_err(|error| EngineError::UserModel(error.to_string()))
+}
+
+/// The engine error a failed per-step store check stands for: the typed
+/// fault the [`crate::user::TrainingCheck`] recorded, or the rendered
+/// backend failure when it recorded none. `Runtime::train_session` and
+/// the fuzz probe classify the same way, so the probe answers `true`
+/// exactly where `training_answer` makes the C facade terminate.
+pub(crate) fn training_check_error(
+    fault: Option<crate::user::TrainingFault>,
+    error: String,
+) -> EngineError {
+    match fault {
+        Some(crate::user::TrainingFault::ShortValue(token)) => {
+            EngineError::ShortTrainingPredecessor { token }
+        }
+        Some(crate::user::TrainingFault::PartialTail(token)) => {
+            EngineError::UnsafeTrainingPredecessor { token }
+        }
+        Some(crate::user::TrainingFault::SetFreqMiss(token)) => {
+            EngineError::TrainingSetFreqMiss { token }
+        }
+        Some(crate::user::TrainingFault::FailedUserBigramStore(token)) => {
+            EngineError::FailedUserBigramStore { token }
+        }
+        None => EngineError::UserModel(error),
+    }
+}
+
 fn user_gram_or_none(read: Result<Option<Vec<u8>>, UserStoreError>) -> Option<Vec<u8>> {
     read.ok().flatten()
 }
@@ -1703,6 +1754,14 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns the first training error. Completed observations can survive a later error.
+    ///
+    /// # Aborts
+    ///
+    /// Terminates where the pin's own training abort fires: the index past
+    /// nonempty results (`pinyin.cpp:2684` at 074a2219), a stale forced
+    /// token (`phonetic_lookup.h:868`) or a stale span
+    /// (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`). The abort
+    /// precedes the modified mark, as the pin's abort precedes its save.
     pub fn train_session(
         &mut self,
         state: &crate::engine::SessionState,
@@ -1713,66 +1772,40 @@ impl Runtime {
             return Ok(false);
         }
         let mut check = crate::user::TrainingCheck::default();
-        let prepared =
-            state
-                .read(self.dict(), self.lm())
-                .prepare_training(index, &mut |history, token| {
-                    user.check_training_step_with(
-                        &mut check,
-                        history.last().map_or(crate::SENTENCE_START, |token| *token),
-                        *token,
-                    )
-                    .map_err(|error| EngineError::UserModel(error.to_string()))
-                });
+        let prepared = state
+            .read(self.dict(), self.lm())
+            .prepare_training(index, &mut |history, token| {
+                training_step_check(user, &mut check, history, token)
+            });
         let user = &mut self.user;
         let result = match prepared {
             Ok(Some(plan)) => plan.observe(user),
             Ok(None) => Ok(false),
-            Err(EngineError::UserModel(error)) => match check.fault() {
-                Some(crate::user::TrainingFault::ShortValue(token)) => {
-                    Err(EngineError::ShortTrainingPredecessor { token })
-                }
-                Some(crate::user::TrainingFault::PartialTail(token)) => {
-                    Err(EngineError::UnsafeTrainingPredecessor { token })
-                }
-                Some(crate::user::TrainingFault::SetFreqMiss(token)) => {
-                    Err(EngineError::TrainingSetFreqMiss { token })
-                }
-                Some(crate::user::TrainingFault::FailedUserBigramStore(token)) => {
-                    Err(EngineError::FailedUserBigramStore { token })
-                }
-                None => Err(EngineError::UserModel(error)),
-            },
-            Err(
-                error @ (EngineError::CandidateIndexOutOfRange { .. }
-                | EngineError::LookupOffsetOutOfRange { .. }
+            Err(crate::engine::TrainingPrepFault::PinAbort) => std::process::abort(),
+            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel(error))) => {
+                Err(training_check_error(check.fault(), error))
+            }
+            Err(crate::engine::TrainingPrepFault::Engine(
+                error @ (EngineError::LookupOffsetOutOfRange { .. }
                 | EngineError::LookupOffsetInsideCharacter { .. }
                 | EngineError::SelectionAnchorBeforeComposition { .. }
                 | EngineError::ZeroKeyOffsetCheck { .. }
                 | EngineError::MatrixColumnAssert { .. }
-                | EngineError::StaleTrainingConstraint { .. }
                 | EngineError::UnsafeTrainingPredecessor { .. }
                 | EngineError::ShortTrainingPredecessor { .. }
-                | EngineError::ShortLookupPredecessor { .. }
                 | EngineError::UnsafeLookupPredecessor { .. }
                 | EngineError::ReadAfterCheck { .. }
                 | EngineError::TrainingSetFreqMiss { .. }
                 | EngineError::FailedUserBigramStore { .. }
-                | EngineError::StaleTrainingSpan { .. }
-                | EngineError::OverlongUserIndexKey { .. }
-                | EngineError::TonedIncompleteKey
                 | EngineError::ReduceTokensCount { .. }
                 | EngineError::Graph(_)
                 | EngineError::Scoring(_)),
-            ) => Err(error),
+            )) => Err(error),
         };
         if !matches!(
             &result,
             Ok(false)
-                | Err(EngineError::CandidateIndexOutOfRange { .. }
-                    | EngineError::StaleTrainingConstraint { .. }
-                    | EngineError::StaleTrainingSpan { .. }
-                    | EngineError::UnsafeTrainingPredecessor { .. }
+                | Err(EngineError::UnsafeTrainingPredecessor { .. }
                     | EngineError::ShortTrainingPredecessor { .. }
                     | EngineError::TrainingSetFreqMiss { .. }
                     | EngineError::FailedUserBigramStore { .. })

@@ -372,45 +372,34 @@ fn lookup_window(
         .candidates_at_for_abi(frame.session_offset, frame.abort_on_rank)
     {
         Ok(window) => window,
-        // Register rows 84 and 95, `chewing_large_table2_bdb.cpp:282` (kc
-        // `:269`, tkrzw `:252`): the suggestion walk reached an index key
-        // past MAX_PHRASE_LENGTH syllables that extends this path, and the
-        // pin's `search_suggestion` switch falls to `default: abort()`.
-        Err(oxpinyin::engine::EngineError::OverlongUserIndexKey { .. }) => std::process::abort(),
-        // Register row 4, `pinyin_phrase3.h:152`: a table search of the
-        // guess (the span loop from `offset`, `pinyin.cpp:2224-2262`, or
-        // the LONGER suggestion walk, `:2292-2293`) met a key path whose
-        // first initial-only key carries a tone.
-        Err(oxpinyin::engine::EngineError::TonedIncompleteKey) => std::process::abort(),
-        // Register rows 85 and 98: the DYNAMIC_ADJUST merge or read of the
-        // previous token's grams asserts on a short user value, and the
-        // process aborts in `refuse_lookup_gram`, or reads past a partial
-        // one (class (b), one warning; `pinyin.cpp:2214`, `:1848-1849`).
-        // Row 110: the `DYNAMIC_ADJUST` row's Kyoto Cabinet read failed after
-        // its size check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:138-139`), and
-        // the process aborts in `refuse_lookup_gram` too.
-        Err(
-            oxpinyin::engine::EngineError::ShortLookupPredecessor { .. }
-            | oxpinyin::engine::EngineError::ReadAfterCheck { .. },
-        ) => std::process::abort(),
+        // The engine terminates where the pin's own asserts fire during the
+        // guess: the over-long suggestion index key (register rows 84 and
+        // 95, `chewing_large_table2_bdb.cpp:282`; kc `:269`, tkrzw `:252`),
+        // the toned first initial-only key on a searched path (row 4,
+        // `pinyin_phrase3.h:152`) and the short merged-gram total (row 85,
+        // `ngram.cpp:303-304`, `pinyin.cpp:1848`). Row 110: the
+        // `DYNAMIC_ADJUST` row's Kyoto Cabinet read failed after its size
+        // check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:138-139`), and the
+        // process aborts in `refuse_lookup_gram`.
+        Err(oxpinyin::engine::EngineError::ReadAfterCheck { .. }) => std::process::abort(),
+        // Register row 98: the DYNAMIC_ADJUST merge or read of the previous
+        // token's grams reads past a partial value (class (b), one warning;
+        // `pinyin.cpp:2214`, `:1848-1849`).
         Err(error @ oxpinyin::engine::EngineError::UnsafeLookupPredecessor { .. }) => {
             inst.state.candidates.clear();
             refuse_lookup_gram("pinyin_guess_candidates", &error);
             return None;
         }
         Err(
-            oxpinyin::engine::EngineError::CandidateIndexOutOfRange { .. }
-            | oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
+            oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
             | oxpinyin::engine::EngineError::LookupOffsetInsideCharacter { .. }
             | oxpinyin::engine::EngineError::SelectionAnchorBeforeComposition { .. }
             | oxpinyin::engine::EngineError::ZeroKeyOffsetCheck { .. }
             | oxpinyin::engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin::engine::EngineError::StaleTrainingConstraint { .. }
             | oxpinyin::engine::EngineError::UnsafeTrainingPredecessor { .. }
             | oxpinyin::engine::EngineError::ShortTrainingPredecessor { .. }
             | oxpinyin::engine::EngineError::TrainingSetFreqMiss { .. }
             | oxpinyin::engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin::engine::EngineError::StaleTrainingSpan { .. }
             | oxpinyin::engine::EngineError::ReduceTokensCount { .. }
             | oxpinyin::engine::EngineError::UserModel(_)
             | oxpinyin::engine::EngineError::Graph(_)

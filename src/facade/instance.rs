@@ -388,23 +388,45 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         self.phrase_result.get(index).copied()
     }
 
-    /// Whether training row `index` reaches one of the pin's own
-    /// training aborts — the index past nonempty results, a stale forced
-    /// phrase or a span outside the matrix
-    /// (`crate::engine::Session::train_nbest_preflight`) — after the
-    /// same directory gate. Reads only.
+    /// Whether training row `index` terminates `pinyin_train` — after the
+    /// same directory gate. The probe runs the one preparation production
+    /// training runs (`crate::engine::Session::prepare_training`), with
+    /// the same simulated store check, and classifies a store failure
+    /// exactly as production does: the pin's own aborts (the index past
+    /// nonempty results, a stale forced phrase, a stale span) and the
+    /// store faults [`training_answer`] classifies [`TrainingRefusal::Abort`]
+    /// answer `true`; a partial tail (the warn-and-refuse class (b)) and
+    /// an ordinary backend failure answer `false`. The walk stops at the
+    /// first failure, so the probe answers for the fault production meets
+    /// first. Reads only: the probe never observes the plan and never
+    /// marks the store modified.
     #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn train_aborts(&self, index: u8) -> bool {
         if !self.user.has_user_directory() {
             return false;
         }
-        matches!(
-            self.session.train_nbest_preflight(index),
-            Err(EngineError::CandidateIndexOutOfRange { .. }
-                | EngineError::StaleTrainingConstraint { .. }
-                | EngineError::StaleTrainingSpan { .. })
-        )
+        let user = self.user;
+        let mut check = crate::user::TrainingCheck::default();
+        let prepared = self
+            .read()
+            .session
+            .prepare_training(index, &mut |history, token| {
+                crate::runtime::training_step_check(user, &mut check, history, token)
+            });
+        match prepared {
+            Err(crate::engine::TrainingPrepFault::PinAbort) => true,
+            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel(error))) => {
+                matches!(
+                    training_answer(Err(crate::runtime::training_check_error(
+                        check.fault(),
+                        error
+                    ))),
+                    Err(TrainingRefusal::Abort)
+                )
+            }
+            Err(crate::engine::TrainingPrepFault::Engine(_)) | Ok(_) => false,
+        }
     }
 
     /// Whether the pin's NBEST choose of row `rank` asserts: a missing
@@ -765,47 +787,40 @@ impl<
 /// How the C facade reports a shared training fault.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrainingRefusal {
-    /// The pin asserts or aborts during the training walk.
+    /// The pin asserts during a training step's store operations.
     Abort,
     /// A user bigram has a partial item tail. The C facade warns and refuses.
     PartialBigram,
 }
 
-/// Classifies the shared result of `train_result3`. The ABI keeps any
-/// facade-specific index check and performs the terminal action.
+/// Classifies the shared result of `train_result3`. The engine terminates
+/// at the pin's own training aborts (`Runtime::train_session`); the ABI
+/// performs the terminal action for the store faults classified here.
 ///
 /// # Errors
 ///
-/// Returns the pin's abort sites or the partial-item refusal. Earlier
+/// Returns the store's abort sites or the partial-item refusal. Earlier
 /// training steps have already made the same changes when this runs.
 pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, TrainingRefusal> {
     match result {
         Ok(trained) => Ok(trained),
-        // 074a2219: phonetic_lookup.h:868 (the forced token), and
-        // phonetic_key_matrix.cpp:661, :663, :664 (the current matrix).
         // The predecessor's total and set_freq/store checks are at
         // phonetic_lookup.h:884, :903-904 (register rows 85 and 113).
         Err(
-            EngineError::StaleTrainingConstraint { .. }
-            | EngineError::StaleTrainingSpan { .. }
-            | EngineError::ShortTrainingPredecessor { .. }
+            EngineError::ShortTrainingPredecessor { .. }
             | EngineError::TrainingSetFreqMiss { .. }
             | EngineError::FailedUserBigramStore { .. },
         ) => Err(TrainingRefusal::Abort),
         // ngram.cpp:190, :241, :261 walks a partial item past its end.
         Err(EngineError::UnsafeTrainingPredecessor { .. }) => Err(TrainingRefusal::PartialBigram),
         Err(
-            EngineError::TonedIncompleteKey
-            | EngineError::ShortLookupPredecessor { .. }
-            | EngineError::ReadAfterCheck { .. }
+            EngineError::ReadAfterCheck { .. }
             | EngineError::UnsafeLookupPredecessor { .. }
-            | EngineError::CandidateIndexOutOfRange { .. }
             | EngineError::LookupOffsetOutOfRange { .. }
             | EngineError::LookupOffsetInsideCharacter { .. }
             | EngineError::SelectionAnchorBeforeComposition { .. }
             | EngineError::ZeroKeyOffsetCheck { .. }
             | EngineError::MatrixColumnAssert { .. }
-            | EngineError::OverlongUserIndexKey { .. }
             | EngineError::ReduceTokensCount { .. }
             | EngineError::UserModel(_)
             | EngineError::Graph(_)
@@ -826,8 +841,9 @@ pub fn guess_result(result: Result<bool, EngineError>, name: &str, log: impl FnO
     }
 }
 
-// The pin asserts an incomplete toned key (pinyin_phrase3.h:146–157), and a bigram value
-// shorter than its total, system or user (ngram.cpp:303–304, through memory_chunk.h:387–392).
+// The engine terminates where the pin asserts an incomplete toned key
+// (pinyin_phrase3.h:146–157) or a bigram value shorter than its total, system or user
+// (ngram.cpp:303–304, through memory_chunk.h:387–392).
 // A failed Kyoto Cabinet body read after its size check asserts at ngram_kyotodb.cpp:131–139.
 /// Handles a lookup failure at the C boundary. A read past the end of a predecessor’s
 /// stored bigram value, from the system or the user gram, logs one warning and returns
@@ -835,32 +851,25 @@ pub fn guess_result(result: Result<bool, EngineError>, name: &str, log: impl FnO
 ///
 /// # Aborts
 ///
-/// Terminates when called with [`EngineError::TonedIncompleteKey`],
-/// [`EngineError::ShortLookupPredecessor`] (a system or user bigram value shorter than its
-/// total) or [`EngineError::ReadAfterCheck`] (a Kyoto Cabinet bigram read that fails after
-/// its size check).
+/// Terminates when called with [`EngineError::ReadAfterCheck`] (a Kyoto Cabinet bigram
+/// read that fails after its size check).
 pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str)) -> bool {
     let message = match error {
-        EngineError::TonedIncompleteKey => std::process::abort(),
-        EngineError::ShortLookupPredecessor { .. } | EngineError::ReadAfterCheck { .. } => {
+        EngineError::ReadAfterCheck { .. } => {
             std::process::abort();
         }
         EngineError::UnsafeLookupPredecessor { .. } => {
             "a bigram value would be read past its end (upstream reads past it)"
         }
-        EngineError::CandidateIndexOutOfRange { .. }
-        | EngineError::LookupOffsetOutOfRange { .. }
+        EngineError::LookupOffsetOutOfRange { .. }
         | EngineError::LookupOffsetInsideCharacter { .. }
         | EngineError::SelectionAnchorBeforeComposition { .. }
         | EngineError::ZeroKeyOffsetCheck { .. }
         | EngineError::MatrixColumnAssert { .. }
-        | EngineError::StaleTrainingConstraint { .. }
         | EngineError::UnsafeTrainingPredecessor { .. }
         | EngineError::ShortTrainingPredecessor { .. }
         | EngineError::TrainingSetFreqMiss { .. }
         | EngineError::FailedUserBigramStore { .. }
-        | EngineError::StaleTrainingSpan { .. }
-        | EngineError::OverlongUserIndexKey { .. }
         | EngineError::ReduceTokensCount { .. }
         | EngineError::UserModel(_)
         | EngineError::Graph(_)

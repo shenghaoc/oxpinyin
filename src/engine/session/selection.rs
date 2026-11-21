@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::engine::constraint::PhraseSpan;
-use crate::engine::error::TrainingSpanFault;
+use crate::engine::error::TrainingPrepFault;
 
 /// The anchor of a **before-cursor** window — the buffer start, not the
 /// lookup offset — that a caller passes to [`SelectionTarget::of_candidate`]
@@ -153,16 +153,27 @@ where
         &state.input.parsed.retained.matrix
     }
 
-    /// Check one n-best training operation without retaining a storage reader.
+    /// Check one n-best training operation without retaining a storage
+    /// reader: the one ordered, read-only preparation step production
+    /// training and the fuzz probe share. The order is the pin's: the row
+    /// lookup's index check, then per span its forced-token check, the
+    /// caller's `check` (the user model's per-step store checks) and the
+    /// span bounds.
     ///
     /// # Errors
-    /// The ordered index, constraint, store and span checks of
-    /// [`Self::train_nbest_preflight`], plus the user model's per-step store checks.
+    ///
+    /// [`TrainingPrepFault::PinAbort`] where the pin's own training abort
+    /// fires — the index past nonempty results, a stale forced token or a
+    /// stale span — and [`TrainingPrepFault::Engine`] for `check`'s
+    /// failures. Production terminates on `PinAbort`
+    /// (`Runtime::train_session`) and classifies an `Engine` fault; the
+    /// probe (`InstanceView::train_aborts`) answers `true` for `PinAbort`
+    /// and for an `Engine` store fault whose classification terminates.
     pub(crate) fn prepare_training(
         &self,
         index: u8,
         check: &mut impl FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
-    ) -> Result<Option<TrainingPlan<'s>>, EngineError> {
+    ) -> Result<Option<TrainingPlan<'s>>, TrainingPrepFault> {
         let Some(row) = self.nbest_training_row(index)? else {
             return Ok(None);
         };
@@ -200,32 +211,6 @@ where
         }
     }
 
-    /// The pin's own aborts of training row `index`, without the user
-    /// model: the index past nonempty results (`pinyin.cpp:2684`), a stale
-    /// forced phrase (`phonetic_lookup.h:868`) and a span outside the
-    /// current matrix (`storage/phonetic_key_matrix.cpp:661`, `:663`,
-    /// `:664`), in the order [`Self::prepare_training`] meets them. It runs
-    /// the same row lookup and span walk as `prepare_training`, with the
-    /// user model's per-step store checks left out, and observes nothing.
-    /// `Ok(())` where `prepare_training` would reach none of them (it may
-    /// still meet a store fault).
-    ///
-    /// # Errors
-    ///
-    /// [`EngineError::CandidateIndexOutOfRange`],
-    /// [`EngineError::StaleTrainingConstraint`] or
-    /// [`EngineError::StaleTrainingSpan`]; [`EngineError::Graph`] when the
-    /// raw buffer cannot be built into a segment graph.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn train_nbest_preflight(&self, index: u8) -> Result<(), EngineError> {
-        if let Some(row) = self.nbest_training_row(index)?
-            && !row.spans.is_empty()
-        {
-            self.plan_spans(&row.spans, &mut |_, _| Ok(()))?;
-        }
-        Ok(())
-    }
-
     /// Whether the pin's NBEST choose of row `rank` asserts (074a2219
     /// `pinyin.cpp:2515-2520`): the results do not hold row 0 and row
     /// `rank` (`:2517-2518`), or `diff_result` meets a write that answers
@@ -247,21 +232,21 @@ where
     }
 
     /// The decoded row [`Session::prepare_training`] trains: `None` for no
-    /// results (the pin's quiet `false`), the bounds error past nonempty
-    /// results.
+    /// results (the pin's quiet `false`), the pin's index assert past
+    /// nonempty results (`pinyin.cpp:2684` at 074a2219; the Zhuyin caller
+    /// always trains row 0, `zhuyin.cpp:1696-1715`).
     fn nbest_training_row(
         &self,
         index: u8,
-    ) -> Result<Option<&crate::engine::nbest::NbestRow>, EngineError> {
+    ) -> Result<Option<&crate::engine::nbest::NbestRow>, TrainingPrepFault> {
         if self.sentence.rows.is_empty() {
             return Ok(None);
         }
-        self.sentence.rows.get(usize::from(index)).map(Some).ok_or(
-            EngineError::CandidateIndexOutOfRange {
-                index: usize::from(index),
-                len: self.sentence.rows.len(),
-            },
-        )
+        self.sentence
+            .rows
+            .get(usize::from(index))
+            .map(Some)
+            .ok_or(TrainingPrepFault::PinAbort)
     }
 
     /// Check `spans` before the engine observes them. The check order
@@ -277,7 +262,7 @@ where
         &self,
         spans: &[PhraseSpan],
         check: &mut F,
-    ) -> Result<Option<Vec<Option<usize>>>, EngineError>
+    ) -> Result<Option<Vec<Option<usize>>>, TrainingPrepFault>
     where
         F: FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
     {
@@ -350,9 +335,7 @@ where
                     .one_step_token_at(span.start)
                     .is_some_and(|forced_token| forced_token != span.token)
             {
-                return Err(EngineError::StaleTrainingConstraint {
-                    position: span.start,
-                });
+                return Err(TrainingPrepFault::PinAbort);
             }
             // The step's bigram half comes next (`phonetic_lookup.h:876-909`:
             // `get_total_freq` :884, the `get_freq` walk :888, `set_freq`
@@ -364,23 +347,18 @@ where
             let next = spans.get(index + 1).map_or(tail, |next| next.start);
             // :921 clamps the last span to constraints->length()-1.
             let end = next.min(tail);
-            if end >= matrix.len() {
-                return Err(EngineError::StaleTrainingSpan {
-                    position: span.start,
-                    fault: TrainingSpanFault::PastMatrixEnd,
-                });
-            }
-            if column_is_empty(matrix, zeros, span.start) {
-                return Err(EngineError::StaleTrainingSpan {
-                    position: span.start,
-                    fault: TrainingSpanFault::EmptyStartColumn,
-                });
-            }
-            if column_is_empty(matrix, zeros, end) {
-                return Err(EngineError::StaleTrainingSpan {
-                    position: span.start,
-                    fault: TrainingSpanFault::EndEmptyColumn,
-                });
+            // The span asserts in the pin's order: `end < matrix->size()`
+            // (`storage/phonetic_key_matrix.cpp:661`), a filled start
+            // column (`:663` — an internal separator holds a zero key and
+            // is accepted; only a genuine gap, a leading separator run,
+            // trips it), then a filled end column (`:664` — the internal
+            // apostrophe can leave the start column non-empty while the
+            // stale end still lands on an empty column).
+            if end >= matrix.len()
+                || column_is_empty(matrix, zeros, span.start)
+                || column_is_empty(matrix, zeros, end)
+            {
+                return Err(TrainingPrepFault::PinAbort);
             }
             ends[index] = Some(end);
         }

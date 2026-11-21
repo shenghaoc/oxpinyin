@@ -12,7 +12,6 @@ use crate::facade::test_fixture::{open_context, pinyin_instance, zhuyin_instance
 #[case::zero_key(EngineError::ZeroKeyOffsetCheck { offset: 4 }, true, true)]
 #[case::matrix_column(EngineError::MatrixColumnAssert { offset: 4 }, false, true)]
 #[case::reduce_tokens(EngineError::ReduceTokensCount { count: 5 }, false, true)]
-#[case::toned_incomplete(EngineError::TonedIncompleteKey, false, false)]
 fn each_law_aborts_at_its_own_pin_asserts(
     #[case] error: EngineError,
     #[case] check_offset_asserts: bool,
