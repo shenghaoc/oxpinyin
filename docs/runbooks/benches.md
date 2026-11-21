@@ -451,8 +451,8 @@ Each distinct source SHA builds once, into a fresh directory for each invocation
 packaging install procedure: locked release and Cargo's default backend,
 with `RUSTFLAGS='-Cdebuginfo=1 -Cstrip=none'` and `OXPINYIN_DSYM=1` for symbols. The dylib and
 dSYM must have matching arm64 UUIDs. Product code uses no profiling profile or instrumentation.
-`VCPKG_ROOT` names the checkout installed by the [macOS setup](setup.md#macos); measurement
-builds require that checkout's `arm64-osx-oxpinyin` triplet `tkrzw.pc`.
+macOS measurement builds use the `tkrzw.pc` selected by
+[macOS setup](setup.md#macos). They do not require `VCPKG_ROOT`.
 
 Before this build recipe is accepted, its one-time neutrality validation runs:
 

@@ -65,6 +65,13 @@ proptest.workspace = true
 feature = "tkrzw"
 version = "0"
 
+# Homebrew's tkrzw.pc names -llz4 and -lzstd without their search paths.
+# Their own .pc files supply those paths. The Linux overlay and the Windows
+# static port do not require these additional modules.
+[package.metadata.system-deps.'cfg(target_os = "macos")']
+liblz4 = { version = "0", feature = "tkrzw" }
+libzstd = { version = "0", feature = "tkrzw" }
+
 [package.metadata.system-deps.kyotocabinet]
 feature = "kyotocabinet"
 version = "0"

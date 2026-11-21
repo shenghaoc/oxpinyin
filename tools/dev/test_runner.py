@@ -455,6 +455,12 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
                check_object=None, caller_directory=None):
     display = backend.display[sanitizer]
     child = _sanitizer_options(backend, sanitizer, host_os, environment)
+    if host_os == 'Darwin':
+        # The just recipe's search paths serve Berkeley DB and Kyoto Cabinet.
+        # tkrzw and its compression libraries are found through pkg-config.
+        for name in ('LIBRARY_PATH', 'CPATH', 'PKG_CONFIG_PATH', 'PKG_CONFIG_LIBDIR',
+                     'OXPINYIN_TKRZW_LIBRARY', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
+            child.pop(name, None)
     child['RUSTFLAGS'] = backend.flags[sanitizer]
     if caller_directory is not None and child.get('LD_LIBRARY_PATH'):
         from .cell import library_path
@@ -467,7 +473,9 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
             host_library = tools.tkrzw_host(environment=child)
         except native.NativeRefused:
             print('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', file=err, flush=True)
-            print('  Install the overlay port and set VCPKG_ROOT, or source the cloud environment.',
+            advice = ('Install tkrzw with Homebrew.' if host_os == 'Darwin' else
+                      'Install the overlay port and set VCPKG_ROOT, or source the cloud environment.')
+            print('  ' + advice,
                   file=err, flush=True)
             return 1
         child['OXPINYIN_TKRZW_LIBRARY'] = str(host_library)

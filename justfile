@@ -9,8 +9,6 @@ set shell := ["pwsh", "-NoLogo", "-NoProfile", "-CommandWithArgs"]
 
 # Discard just's recipe name once, before native argument forwarding.
 windows_args := '$null, [object[]]$forwarded = $args;'
-# The vcpkg overlay port's tkrzw in the repository's macOS triplet (triplets/).
-macos_tkrzw := '${VCPKG_ROOT:?set VCPKG_ROOT to your vcpkg checkout}/installed/arm64-osx-oxpinyin'
 
 # The cache root of everything the tooling fetches or builds from pinned sources,
 # shared by all worktrees (docs/runbooks/setup.md#cache-directory).
@@ -299,10 +297,9 @@ _oracle-env:
 sanitize backend="" sanitizer="address":
     @uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
-# Darwin uses Homebrew's Berkeley DB 5.3 and Kyoto Cabinet, and tkrzw from the
-# vcpkg overlay port's install. The recipe selects Darwin paths and omits Linux
-# setarch. The tkrzw gate certifies the host library by the library its
-# tkrzw_dbm_util loads, so that install's tkrzw_dbm_util goes first on PATH.
+# Darwin uses Homebrew's Berkeley DB 5.3, Kyoto Cabinet and tkrzw. The recipe
+# selects Darwin paths and omits Linux setarch. The tkrzw gate certifies the
+# library loaded by Homebrew's tkrzw_dbm_util.
 [macos]
 sanitize backend="" sanitizer="address":
     @env \
@@ -310,10 +307,9 @@ sanitize backend="" sanitizer="address":
         SYSTEM_DEPS_BDB_LIB=db \
         SYSTEM_DEPS_BDB_SEARCH_NATIVE="$(brew --prefix berkeley-db@5)/lib" \
         SYSTEM_DEPS_BDB_INCLUDE="$(brew --prefix berkeley-db@5)/include" \
-        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig:{{macos_tkrzw}}/lib/pkgconfig" \
+        PKG_CONFIG_PATH="$(brew --prefix glib)/lib/pkgconfig:$(brew --prefix kyoto-cabinet)/lib/pkgconfig" \
         LIBRARY_PATH="$(brew --prefix berkeley-db@5)/lib:$(brew --prefix kyoto-cabinet)/lib" \
         CPATH="$(brew --prefix berkeley-db@5)/include:$(brew --prefix kyoto-cabinet)/include" \
-        PATH="{{macos_tkrzw}}/tools/tkrzw/bin:$PATH" \
         uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' "$1" "$2"
 
 # The gates are Linux/Darwin native builds; Windows sanitizers are unsupported.

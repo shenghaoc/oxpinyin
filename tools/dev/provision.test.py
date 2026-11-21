@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import tomllib
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -76,10 +77,10 @@ class EntrypointFixtureTests(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, '-I', '-X', 'utf8', '-c',
                  'import sys; sys.path.insert(0, sys.argv[1]); '
-                 'from tools.dev.provision import vcpkg; print(vcpkg.triplet())', str(root)],
+                 'from tools.dev.provision import vcpkg; print(callable(vcpkg.install))', str(root)],
                 cwd=root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), provision.vcpkg.triplet())
+            self.assertEqual(result.stdout.strip(), 'True')
 
 
 class CargoToolTests(unittest.TestCase):
@@ -580,7 +581,7 @@ if sys.platform.startswith('linux'):
             utility.unlink()
             with contextlib.redirect_stderr(io.StringIO()) as diagnostic:
                 self.assertEqual(provision.probe_host(env=env), '')
-            self.assertIn('missing vcpkg utility', diagnostic.getvalue())
+            self.assertIn('missing tkrzw utility', diagnostic.getvalue())
 
         def test_uncertified_host_names_the_outcome_and_keeps_status_one(self):
             with mock.patch.object(provision, 'probe_host', return_value=''):
@@ -912,6 +913,9 @@ class RuntimeProvisionTests(unittest.TestCase):
         patcher = mock.patch.object(provision.images, 'host_system', return_value='Darwin')
         patcher.start()
         self.addCleanup(patcher.stop)
+        triplet = mock.patch.object(provision.vcpkg, 'triplet', return_value='arm64-linux-oxpinyin')
+        triplet.start()
+        self.addCleanup(triplet.stop)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.work = Path(directory.name)
@@ -1217,9 +1221,41 @@ class RuntimeProvisionTests(unittest.TestCase):
     def test_provision_and_provision_oracle_use_the_keyed_entries_of_one_root(self):
         env = {'PATH': '', 'OXPINYIN_CACHE': str(self.work / 'root')}
         service = provision.Provision(root=ROOT, env=env)
+        service.host = 'Linux'
         self.assertEqual(service.cache, provision.images.provision_cache(env))
-        self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
+        with mock.patch.object(provision.vcpkg.platform, 'system', return_value='Linux'):
+            self.assertEqual(service.tkrzw_prefix, (self.work / 'root/vcpkg/installed' / provision.vcpkg.triplet()).resolve())
         self.assertEqual(provision.images.model_cache(env), provision.model.default_cache(env))
+
+    if sys.platform == 'darwin':
+        def test_macos_probe_uses_homebrew_pkg_config_and_exact_loader(self):
+            prefix = self.work / 'homebrew/tkrzw'
+            utility = prefix / 'bin/tkrzw_dbm_util'
+            utility.parent.mkdir(parents=True)
+            utility.touch()
+            library = prefix / 'lib/libtkrzw.dylib'
+            library.parent.mkdir()
+            library.touch()
+            def selected(command, **kwargs):
+                return SimpleNamespace(status=0, stdout=(str(prefix) + '\n').encode())
+            env = {'PATH': '/host/bin', 'OXPINYIN_TKRZW_LIBRARY': '/stale/libtkrzw.dylib'}
+            with mock.patch.object(provision, 'capture', side_effect=selected) as capture, \
+                    mock.patch.object(provision.runtime, 'check', return_value=library) as check, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(provision.probe_host(env=env), str(library))
+            self.assertEqual([call.args[0] for call in capture.call_args_list],
+                             [['pkg-config', '--variable=prefix', 'tkrzw'], ['brew', '--prefix', 'tkrzw']])
+            selected_env = check.call_args.kwargs['env']
+            self.assertEqual(selected_env['OXPINYIN_TKRZW_PREFIX'], str(prefix.resolve()))
+            self.assertNotIn('OXPINYIN_TKRZW_LIBRARY', selected_env)
+            self.assertEqual(check.call_args.args[3], utility.resolve())
+
+        def test_macos_rejects_pkg_config_from_another_source(self):
+            values = iter((b'/other/tkrzw\n', b'/homebrew/tkrzw\n'))
+            with mock.patch.object(provision, 'capture', side_effect=lambda *args, **kwargs:
+                                   SimpleNamespace(status=0, stdout=next(values))), \
+                    self.assertRaisesRegex(ValueError, 'not Homebrew tkrzw'):
+                provision.homebrew_tkrzw_prefix({})
 
     def test_the_cache_root_is_needed_only_by_a_run_that_uses_it(self):
         service = provision.Provision(root=ROOT, env={'PATH': ''})

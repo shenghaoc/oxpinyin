@@ -122,7 +122,7 @@ This follows libpinyin's `--with-dbm` model.
 Runtime dispatch and fallback are not added.
 
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
-Development and CI install tkrzw from the vcpkg overlay port on all three platforms.
+Development and CI use the platform's tkrzw source described in [setup](runbooks/setup.md).
 Debian release packages and oracle/reference images retain Debian's library.
 The peer matrix remains on Linux.
 

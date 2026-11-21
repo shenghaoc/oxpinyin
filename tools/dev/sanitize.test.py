@@ -229,12 +229,30 @@ class BackendTests(unittest.TestCase):
                 self.assertTrue(any(command[2:4] == ['nextest', 'run'] for command in cargo))
 
     def test_tkrzw_reports_a_missing_verified_runtime(self):
-        tools = FakeTools()
-        status, _, err = run('tkrzw', tools=tools,
-                             environment=self.environment())
-        self.assertEqual(status, 1)
-        self.assertIn('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', err)
-        self.assertIn('Install the overlay port and set VCPKG_ROOT', err)
+        for host, guidance in (('Darwin', 'Install tkrzw with Homebrew.'),
+                               ('Linux', 'Install the overlay port and set VCPKG_ROOT')):
+            with self.subTest(host=host):
+                tools = FakeTools()
+                with mock.patch.object(test_runner.platform, 'system', return_value=host):
+                    status, _, err = run('tkrzw', host=host, tools=tools,
+                                         environment=self.environment())
+                self.assertEqual(status, 1)
+                self.assertIn('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', err)
+                self.assertIn(guidance, err)
+
+    def test_macos_tkrzw_ignores_peer_link_search_paths(self):
+        tools = FakeTools(host_library='/fixture/host/libtkrzw.dylib')
+        with mock.patch.object(test_runner.platform, 'system', return_value='Darwin'):
+            status, _, err = run('tkrzw', host='Darwin', tools=tools,
+                                 environment=self.environment(LIBRARY_PATH='/peer/lib', CPATH='/peer/include',
+                                                              PKG_CONFIG_PATH='/overlay/pkgconfig',
+                                                              OXPINYIN_TKRZW_PREFIX='/overlay'))
+        self.assertEqual((status, err), (0, ''))
+        cargo = [env for command, env in tools.calls if 'cargo' in command]
+        self.assertTrue(cargo)
+        for env in cargo:
+            for name in ('LIBRARY_PATH', 'CPATH', 'PKG_CONFIG_PATH', 'OXPINYIN_TKRZW_PREFIX'):
+                self.assertNotIn(name, env)
 
 
 if __name__ == '__main__':

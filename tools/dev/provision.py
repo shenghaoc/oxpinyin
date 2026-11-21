@@ -116,18 +116,39 @@ def check_manifest(manifest, cwd):
 PREFIX_INVALID = 10
 
 
+def homebrew_tkrzw_prefix(environment):
+    """Return the Homebrew tkrzw selected by pkg-config, refusing another .pc file."""
+    def selected(command):
+        done = capture(command, env=environment, check=False, stderr=False)
+        if done.status or not done.stdout.strip():
+            raise ValueError(f'cannot find Homebrew tkrzw: {" ".join(command)}')
+        return Path(done.stdout.decode().strip()).resolve()
+
+    prefix = selected(['pkg-config', '--variable=prefix', 'tkrzw'])
+    if prefix != selected(['brew', '--prefix', 'tkrzw']):
+        raise ValueError(f'pkg-config selects {prefix}, not Homebrew tkrzw')
+    return prefix
+
+
 def probe_host(*, env=None, root=ROOT, out=None):
-    """Certify the configured overlay install by its utility's actual loader."""
+    """Certify the selected host tkrzw by its utility's actual loader."""
     environment = dict(os.environ if env is None else env)
     try:
-        installed = vcpkg.prefix(environment)
-        child = vcpkg.environment(environment)
-        utility = installed / 'tools/tkrzw/bin/tkrzw_dbm_util'
+        if platform.system() == 'Darwin':
+            installed = homebrew_tkrzw_prefix(environment)
+            child = dict(environment, OXPINYIN_TKRZW_PREFIX=str(installed))
+            child.pop('OXPINYIN_TKRZW_LIBRARY', None)
+            child.pop('OXPINYIN_TKRZW_PREFIXES', None)
+            utility = installed / 'bin/tkrzw_dbm_util'
+        else:
+            installed = vcpkg.prefix(environment)
+            child = vcpkg.environment(environment)
+            utility = installed / 'tools/tkrzw/bin/tkrzw_dbm_util'
         if not utility.is_file():
-            raise ValueError(f'missing vcpkg utility: {utility}')
+            raise ValueError(f'missing tkrzw utility: {utility}')
         library = runtime.check('tkrzw', 'host check', 'subject', utility, env=child, cwd=root)
         if library is None:
-            raise ValueError('the vcpkg utility does not load libtkrzw')
+            raise ValueError('the tkrzw utility does not load libtkrzw')
         print(f'host check: {utility} resolves libtkrzw to {library}', file=out or sys.stdout)
         return str(library)
     except (ValueError, runtime.RuntimeRefused) as error:
@@ -196,7 +217,7 @@ class Provision:
 
     @property
     def tkrzw_prefix(self):
-        return vcpkg.prefix(self.env)
+        return homebrew_tkrzw_prefix(self.env) if self.host == 'Darwin' else vcpkg.prefix(self.env)
 
     @property
     def env_file(self):
@@ -824,8 +845,16 @@ class Provision:
         self.log(f'tkrzw: certified vcpkg install at {self.tkrzw_prefix}')
 
     def certify_tkrzw(self, sides=('subject', 'pin')):
-        """Require each of SIDES' binaries to load the vcpkg install's libtkrzw."""
+        """Require each of SIDES' binaries to load the selected host libtkrzw."""
         try:
+            if self.host == 'Darwin':
+                if sides != ('subject',):
+                    raise ValueError('macOS certifies the host tkrzw utility only')
+                self.tkrzw_host_library = probe_host(env=self.env, root=self.root)
+                if not self.tkrzw_host_library:
+                    raise ValueError('Homebrew tkrzw did not pass the host check')
+                self.tkrzw_local = True
+                return
             prefix = self.tkrzw_prefix
             child = vcpkg.environment(self.env)
             binaries = {'subject': prefix / 'tools/tkrzw/bin/tkrzw_dbm_util',
@@ -866,6 +895,9 @@ class Provision:
         if not self.minimal:
             if self.linux:
                 self.install_tkrzw()
+            elif self.host == 'Darwin':
+                self.certify_tkrzw(('subject',))
+                self.log(f'tkrzw: certified Homebrew install at {self.tkrzw_prefix}')
             else:
                 self.log(f'tkrzw: no vcpkg overlay install on {self.host}; the oracle runs only in containers here')
         self.report_ext4()

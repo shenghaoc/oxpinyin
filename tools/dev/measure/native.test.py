@@ -2,7 +2,6 @@
 import contextlib
 import io
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -320,34 +319,42 @@ class NativePreparation(unittest.TestCase):
     def test_packaged_default_release_and_matching_dsym(self):
         def metadata(root, env=None):
             return capi_metadata(root, features={'default': ['declared']})
+        def worktree(command, **kwargs):
+            if command[:3] == ['git', 'worktree', 'add']:
+                source = Path(command[-2])
+                source.mkdir()
+                (source / 'Cargo.toml').write_bytes((ROOT / 'Cargo.toml').read_bytes())
         with tempfile.TemporaryDirectory() as directory, \
-             mock.patch.object(bench, 'run'), \
+             mock.patch.object(bench, 'run', side_effect=worktree), \
              mock.patch('tools.dev.packaging.cargo_metadata', side_effect=metadata), \
              mock.patch('tools.dev.packaging.install_library') as install, \
+             mock.patch('tools.dev.provision.homebrew_tkrzw_prefix', return_value=Path(directory)/'installed') as homebrew, \
              mock.patch.object(identity, 'macho_uuid', return_value='a'*32):
             destination = Path(directory)/'build'
-            pkgconfig = Path(directory)/'installed/arm64-osx-oxpinyin/lib/pkgconfig'
+            pkgconfig = Path(directory)/'installed/lib/pkgconfig'
             pkgconfig.mkdir(parents=True)
             (pkgconfig/'tkrzw.pc').touch()
-            env = {'RUSTUP_TOOLCHAIN': 'selected', 'VCPKG_ROOT': directory, 'PKG_CONFIG_PATH': '/other'}
+            env = {'RUSTUP_TOOLCHAIN': 'selected'}
             arm = prepare.native_build('a'*40, destination, env)
+            homebrew.assert_called_once_with(env)
             arguments, tools = install.call_args.args
             self.assertEqual(arguments, ['libpinyin', '--prefix='+str(destination/'prefix'), '--',
                                          '--locked', '--release'])
             self.assertEqual(tools.env['RUSTFLAGS'], '-Cdebuginfo=1 -Cstrip=none')
             self.assertEqual(tools.env['RUSTUP_TOOLCHAIN'], 'selected')
             self.assertEqual(tools.env['OXPINYIN_DSYM'], '1')
-            self.assertEqual(tools.env['PKG_CONFIG_PATH'], str(pkgconfig.resolve()) + os.pathsep + '/other')
+            self.assertNotIn('PKG_CONFIG_PATH', tools.env)
+            self.assertEqual(arm['build_options']['PKG_CONFIG_PATH'], '')
             self.assertEqual(arm['default_features'], ['declared'])
             with mock.patch.object(identity, 'macho_uuid', side_effect=['a'*32, 'b'*32]):
                 with self.assertRaises(Finished):
                     prepare.native_build('b'*40, Path(directory)/'bad', env)
 
-    def test_native_build_requires_the_vcpkg_triplet(self):
+    def test_native_build_requires_homebrew_tkrzw_metadata(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(bench, 'run') as run:
-            for env in ({}, {'VCPKG_ROOT': directory}):
-                with self.subTest(env=env), self.assertRaises(ValueError):
-                    prepare.native_build('a'*40, Path(directory)/'build', env)
+            with mock.patch('tools.dev.provision.homebrew_tkrzw_prefix', return_value=Path(directory)), \
+                    self.assertRaisesRegex(ValueError, 'missing tkrzw.pc'):
+                prepare.native_build('a'*40, Path(directory)/'build', {})
             run.assert_not_called()
 
     def test_profile_passes_environment_and_propagates_invalid_capture(self):

@@ -2,10 +2,11 @@
 
 Status: **reference** (the mechanism and the per-distro matrix).
 
-tkrzw is oxpinyin's default backend and reference cell. Development builds
-and CI install the repository's vcpkg overlay port (tkrzw 1.0.34, `9ee8416`;
-the revision is in `vcpkg-overlays/tkrzw/pin.json`): Linux jobs through
-`.github/actions/tkrzw`, Windows through `tools.dev.vcpkg`. Debian release
+tkrzw is oxpinyin's default backend and reference cell. Linux and Windows
+development builds and CI install the repository's vcpkg overlay port
+(tkrzw 1.0.34, `9ee8416`; the revision is in `vcpkg-overlays/tkrzw/pin.json`):
+Linux jobs through `.github/actions/tkrzw`, Windows through `tools.dev.vcpkg`.
+macOS uses [Homebrew](../runbooks/setup.md#macos). Debian release
 packaging (`release-packages.yml` installs `libtkrzw-dev`), shipping-size
 measurements and oracle/reference images use Debian's library. The
 [verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)

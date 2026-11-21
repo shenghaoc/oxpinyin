@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 from . import cell, pool, slot
 from .runners import Finished, emit, guarded, status, write
@@ -515,7 +516,7 @@ def relink_darwin(layout, destination, tools, backend):
     identity = DarwinIdentity.read(destination, tools)
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
-    flags += backend_flags(backend, tools, '-lc++')
+    flags += backend_flags(backend, tools, '-lc++', 'darwin')
     # The link always takes libc++. tkrzw's pkg-config flags and the Kyoto
     # Cabinet flags can already name it; ld warns about a repeated library.
     if '-lc++' not in flags:
@@ -558,11 +559,24 @@ def optional_pkg_config(arguments, tools):
         return pool.Completed(127, b'', b'')
 
 
-def backend_flags(backend, tools, cxx):
+def macos_tkrzw_modules(root):
+    """Read the macOS tkrzw pkg-config dependencies from the product revision."""
+    manifest = tomllib.loads((Path(root) / 'Cargo.toml').read_text(encoding='utf-8'))
+    macos = manifest['package']['metadata']['system-deps']['cfg(target_os = "macos")']
+    return [module for module, spec in macos.items() if spec.get('feature') == 'tkrzw']
+
+
+def backend_flags(backend, tools, cxx, platform):
     """The backend's link flags; CXX is the C++ runtime the Kyoto Cabinet shim was built against."""
     if backend == 'bdb':
         return ['-ldb']
-    done = optional_pkg_config(['--libs', backend], tools)
+    modules = [backend]
+    if backend == 'tkrzw' and platform == 'darwin':
+        # Match the macOS system-deps declaration used by cargo-c's staticlib.
+        modules.extend(macos_tkrzw_modules(tools.root))
+    done = optional_pkg_config(['--libs', *modules], tools)
+    if backend == 'tkrzw' and platform == 'darwin' and done.status:
+        fail('error: pkg-config must resolve ' + ', '.join(modules) + ' for the macOS link', 2)
     flags = done.stdout.decode().split() if not done.status else ['-l' + backend]
     # Kyoto Cabinet's pkg-config output can already name the C++ runtime.
     return [*flags, *([cxx] if backend == 'kyotocabinet' and cxx not in flags else [])]
@@ -602,7 +616,7 @@ def relink(argv, tools):
         fail('error: relink needs exactly one selected backend from its build', 2)
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
-    flags += backend_flags(backend, tools, '-lstdc++')
+    flags += backend_flags(backend, tools, '-lstdc++', 'linux')
     destination = Path(dest)
     # As mktemp ${DEST%.so*}.relink.XXXXXX: scratch stays beside the object,
     # so the verified replacement is atomic and its symlinks keep resolving.
