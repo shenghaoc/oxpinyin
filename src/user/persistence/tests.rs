@@ -7,32 +7,113 @@ use crate::user::test_session::{
     load, load_checked, load_profile, save_state as save_state_reporting,
 };
 
-/// Register row 76: pinyin.cpp:944-957 reaches the current disk mapping
-/// before diffing a library; the approved refusal stops that save there.
-#[test]
-fn an_unmappable_save_baseline_stops_before_the_library_write() {
+/// The changed chunk has one readable item to remove. With 128 readings
+/// its item length fits the chunk but exceeds the journal's u16 field.
+fn changed_baseline(readings: usize) -> SaveBaseline {
+    SaveBaseline::Changed(SystemLibrary {
+        items: BTreeMap::from([(
+            1,
+            item(&[0x4f60; 255], 1, &vec![(vec![1; 255], 1); readings]),
+        )]),
+        total: 1,
+        range_end: 2,
+        mapped: None,
+    })
+}
+
+/// pinyin.cpp:933-1020,1141-1144 stages the files before renaming;
+/// zhuyin.cpp:585-617 renames each completed file immediately.
+#[rstest::rstest]
+#[case::remap(SaveBaseline::Unmappable, None)]
+#[case::journal_length(changed_baseline(128), None)]
+#[case::copy_size(changed_baseline(1), Some(512))]
+fn hard_save_stops_after_the_earlier_library(
+    #[case] stop: SaveBaseline,
+    #[case] limit: Option<u64>,
+    #[values(UserConfLaw::Pinyin, UserConfLaw::Zhuyin)] law: UserConfLaw,
+) {
     let dir = tempfile::tempdir().unwrap();
-    let originals = originals();
+    let libraries = crate::user::LibraryTable::from([
+        (1, SystemLibrary::default()),
+        (2, SystemLibrary::default()),
+    ])
+    .into();
     let mut store =
-        crate::user::test_session::seeded(dir.path(), &state(), &originals, &versions()).unwrap();
-    let marker = std::fs::read(dir.path().join(USER_CONF)).unwrap();
+        crate::user::test_session::open(dir.path(), libraries, versions(), law).unwrap();
+    store.mark_modified();
+    std::fs::write(dir.path().join(USER_CONF), b"previous marker").unwrap();
+    let _limit = limit.map(crate::user::user_library::TestLimits::set);
+    let remap = matches!(stop, SaveBaseline::Unmappable);
+    let mut stop = Some(stop);
     let mut visited = Vec::new();
     let result = store.save_reporting_with_baseline(&[], |library, _| {
         visited.push(library);
-        SaveBaseline::Unmappable
+        if library == 2 {
+            stop.take().unwrap()
+        } else {
+            SaveBaseline::Keep
+        }
     });
-    assert!(matches!(
-        result,
-        Err(crate::user::UserStoreError::SaveRemapFailed)
-    ));
-    assert_eq!(visited.len(), 1);
-    assert!(!dir.path().join("gb_char.dbin.tmp").exists());
+    let error = result.unwrap_err();
     assert_eq!(
-        std::fs::read(dir.path().join(USER_CONF)).unwrap(),
-        marker,
-        "no marker is written"
+        matches!(error, crate::user::UserStoreError::SaveRemapFailed),
+        remap
     );
+    assert_eq!(
+        matches!(error, crate::user::UserStoreError::SaveTooLarge),
+        limit.is_some()
+    );
+    assert_eq!(visited, [1, 2]);
     assert!(store.is_modified());
+    let first = match law {
+        UserConfLaw::Pinyin => "gb_char.dbin.tmp",
+        UserConfLaw::Zhuyin => "gb_char.dbin",
+    };
+    let header = LogRecord::ModifyHeader {
+        old_total: 0,
+        new_total: 0,
+    };
+    let journal = build_memory_chunk(&encode_log_records(&[header]).unwrap()).unwrap();
+    assert_eq!(
+        dir_snapshot(dir.path()),
+        [
+            (first.to_owned(), journal),
+            (USER_CONF.to_owned(), b"previous marker".to_vec())
+        ]
+    );
+}
+
+/// A failed chunk open and a failed index save both leave the later
+/// writes, renames and marker reachable (pinyin.cpp:963-1020,1141-1144).
+#[rstest::rstest]
+fn soft_writes_allow_the_rest_of_the_save(
+    #[values(UserConfLaw::Pinyin, UserConfLaw::Zhuyin)] law: UserConfLaw,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    let mut store = crate::user::test_session::open(dir, originals(), versions(), law).unwrap();
+    let blocked = ["gb_char.dbin", "user_pinyin_index.bin"];
+    for name in blocked {
+        std::fs::write(dir.join(name), b"previous file").unwrap();
+        std::fs::create_dir(dir.join(format!("{name}.tmp"))).unwrap();
+    }
+    std::fs::write(dir.join(USER_CONF), b"previous marker").unwrap();
+    store.mark_modified();
+    store.save_reporting().unwrap();
+    assert!(!store.is_modified());
+    for name in blocked {
+        assert_eq!(std::fs::read(dir.join(name)).unwrap(), b"previous file");
+        assert!(dir.join(format!("{name}.tmp")).is_dir());
+    }
+    for name in ["user.bin", "user_phrase_index.bin", "user_bigram.db"] {
+        assert!(dir.join(name).is_file(), "{name}");
+        assert!(!dir.join(format!("{name}.tmp")).exists(), "{name}");
+    }
+    assert!(
+        UserTableInfo::load_path(&dir.join(USER_CONF))
+            .unwrap()
+            .is_conform(&versions())
+    );
 }
 
 fn item(phrase: &[u32], unigram: u32, prons: &[(Vec<u16>, u32)]) -> ChunkItem {

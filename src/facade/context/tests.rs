@@ -1313,8 +1313,17 @@ mod native {
             assert_eq!(unigram(&context, token), Some(original + 18));
 
             let header_stop = directory_library(&user.path, "gbk_char.dbin");
-            // Keep the odd slot in library 1. Library 2 is excluded, but its log is read.
-            let result = context.mask_out(0x0f00_0001, 0x0100_0000);
+            if header_stop {
+                // A continued walk would reach library 3's two headers.
+                std::fs::write(
+                    user.path.join("opengram.dbin"),
+                    crate::data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
+                )
+                .unwrap();
+            }
+            let before = files_of(&user.path);
+            // Keep the odd slot in library 1. Library 2 is excluded but its log is read.
+            let result = context.mask_out(0x0100_0001, 0x0100_0000);
             assert_eq!(
                 result,
                 if header_stop {
@@ -1324,6 +1333,7 @@ mod native {
                 }
             );
             assert_eq!(unigram(&context, token), Some(original + 7), "{law:?}");
+            assert_eq!(files_of(&user.path), before, "{law:?}");
         }
     }
 
