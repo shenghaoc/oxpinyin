@@ -295,7 +295,7 @@ fn right_offset_aborts_after_a_separator() {
 }
 
 /// The character offset asserts on the empty leading column of a
-/// leading separator (MatrixColumnAssert).
+/// leading separator (`PinAssert`).
 #[test]
 fn character_offset_aborts_on_an_empty_leading_column() {
     assert_aborts(

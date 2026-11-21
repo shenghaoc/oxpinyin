@@ -572,11 +572,8 @@ fn train_prepared<D, L, U>(
 ) -> Result<bool, TrainingPrepFault>
 where
     D: Dictionary<Syllable = SyllableKey> + Clone,
-    D::Error: std::fmt::Display,
     L: LanguageModel + Clone,
-    L::Error: std::fmt::Display,
     U: UserModel,
-    U::Error: std::fmt::Display,
 {
     let view = session.read(session.dictionary.clone(), session.model.clone());
     let Some(plan) = view.prepare_training(index, &mut |_, _| Ok(()))? else {
@@ -852,9 +849,7 @@ fn an_earlier_store_check_failure_precedes_a_later_pin_fault() {
     // first span still fits.
     session.replace_raw("ni").expect("shrink");
     let view = session.read(session.dictionary.clone(), session.model.clone());
-    let Err(fault) = view.prepare_training(0, &mut |_, _| {
-        Err(EngineError::UserModel("short value".to_owned()))
-    }) else {
+    let Err(fault) = view.prepare_training(0, &mut |_, _| Err(EngineError::UserModel)) else {
         panic!("the first span's store check fails");
     };
     assert!(matches!(fault, TrainingPrepFault::Engine(_)));
@@ -1036,7 +1031,7 @@ fn train_reports_a_failing_user_model() {
             _history: &[PhraseToken],
             _token: &PhraseToken,
         ) -> Result<(), Self::Error> {
-            Err(EngineError::UserModel("closed".to_owned()))
+            Err(EngineError::UserModel)
         }
     }
 
@@ -1049,19 +1044,13 @@ fn train_reports_a_failing_user_model() {
         keys: 1,
         span: 2,
     }];
-    // The engine renders the model's error at the boundary: the failing
-    // model reports an `EngineError::UserModel`, so the wrap doubles the
-    // prefix — the point is that the failure surfaces, not that the text
-    // is pretty.
+    // The model failure stays distinct from the pin's own training abort.
     let TrainingPrepFault::Engine(error) =
         train_prepared(&session, 0, &mut Failing).expect_err("the model fails")
     else {
         panic!("a user-model failure is an engine fault, not a pin abort");
     };
-    assert_eq!(
-        error.to_string(),
-        "user model error: user model error: closed"
-    );
+    assert_eq!(error, EngineError::UserModel);
 }
 
 #[test]
@@ -1921,7 +1910,7 @@ fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
         for _ in 0..2 {
             assert_eq!(
                 guess(&mut session).expect_err("partial predecessor must refuse"),
-                EngineError::UnsafeLookupPredecessor { token: 1 },
+                EngineError::UnsafeLookupPredecessor,
             );
         }
 
@@ -2737,10 +2726,7 @@ fn candidates_at_rejects_mid_character_offsets() {
     session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
     for offset in [1, 2] {
         assert!(
-            matches!(
-                session.candidates_at(offset),
-                Err(EngineError::LookupOffsetInsideCharacter { .. })
-            ),
+            matches!(session.candidates_at(offset), Err(EngineError::Failure)),
             "offset {offset} is inside the character and must be refused"
         );
     }
@@ -3874,9 +3860,7 @@ impl PhraseList for ItemDictionary {
         token: PhraseToken,
     ) -> Result<crate::model::PhraseItemRead, EngineError> {
         if self.failing {
-            return Err(EngineError::Scoring(
-                crate::scoring::ScoringError::Dictionary("item read failed".into()),
-            ));
+            return Err(EngineError::Failure);
         }
         Ok(self
             .items
@@ -4086,9 +4070,7 @@ pub(super) fn select_row<D, L>(
 ) -> Result<Selection, EngineError>
 where
     D: crate::model::Dictionary<Syllable = crate::SyllableKey>,
-    D::Error: core::fmt::Display,
     L: crate::model::LanguageModel,
-    L::Error: core::fmt::Display,
 {
     session.refresh_candidates()?;
     let candidate = session
@@ -4290,9 +4272,7 @@ fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
 fn duplicate_the_first_key<D, L>(session: &mut Session<D, L>)
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: std::fmt::Display,
     L: LanguageModel,
-    L::Error: std::fmt::Display,
 {
     let physical = session.input.physical_separators();
     let parse = &mut session.input.parsed.retained;

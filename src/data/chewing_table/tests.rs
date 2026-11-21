@@ -387,14 +387,9 @@ fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
     // A visitor error comes back as itself, not as the sentinel that
     // aborted the store scan.
     let err = dbm
-        .walk(&[2], Some(&[8]), |_, _| {
-            Err(DictError::Parse("boom".to_owned()))
-        })
+        .walk(&[2], Some(&[8]), |_, _| Err(DictError::Parse))
         .unwrap_err();
-    assert!(
-        matches!(err, DictError::Parse(ref m) if m == "boom"),
-        "{err:?}"
-    );
+    assert!(matches!(err, DictError::Parse), "{err:?}");
 }
 
 fn native_table() -> ChewingTable {

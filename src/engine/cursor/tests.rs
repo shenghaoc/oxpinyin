@@ -27,7 +27,7 @@ const PARITY: OptionBits = OptionBits::from_bits_retain(0x18a);
 /// Keys appear in the matrix's column order, so the first key of a column
 /// is the pin's `matrix.get_item(column, 0, ...)`.
 fn matrix_keys(input: &[u8], options: OptionBits) -> Result<(Vec<MatrixKey>, usize), EngineError> {
-    let graph = SegmentGraph::build_with_options(input, options)?;
+    let graph = SegmentGraph::build_with_options(input, options).ok_or(EngineError::Failure)?;
     let parsed = graph.consumed();
     let matrix = ScanMatrix::from_columns(build_scan_matrix(&graph, options, true));
     Ok((MatrixKeys::new(matrix.keys()).iter().collect(), parsed))
@@ -78,7 +78,7 @@ fn left(input: &[u8], probes: &[(usize, i64)]) {
                 std::str::from_utf8(input)
             ),
             -1 => assert!(
-                matches!(got, Err(EngineError::ZeroKeyOffsetCheck { .. })),
+                matches!(got, Err(EngineError::ZeroKeyOffsetCheck)),
                 "{:?} LEFT off={offset}: pin aborts, got {got:?}",
                 std::str::from_utf8(input)
             ),
@@ -100,7 +100,7 @@ fn right(input: &[u8], probes: &[(usize, i64)]) {
                 std::str::from_utf8(input)
             ),
             -1 => assert!(
-                matches!(got, Err(EngineError::ZeroKeyOffsetCheck { .. })),
+                matches!(got, Err(EngineError::ZeroKeyOffsetCheck)),
                 "{:?} RIGHT off={offset}: pin aborts, got {got:?}",
                 std::str::from_utf8(input)
             ),
@@ -546,7 +546,7 @@ fn apostrophe_only_inputs_follow_the_zero_fill() {
                     over_matrix(input, PARITY, |i, p, s, sep| lookup_offset_over_spans(
                         i, p, s, sep, cursor
                     )),
-                    Err(EngineError::ZeroKeyOffsetCheck { .. })
+                    Err(EngineError::ZeroKeyOffsetCheck)
                 ),
                 "{input:?} OFF c={cursor}: pin aborts"
             );
@@ -563,7 +563,7 @@ fn apostrophe_only_inputs_follow_the_zero_fill() {
                     over_matrix(input, PARITY, |i, p, s, sep| left_word_offset_over_spans(
                         i, p, s, sep, offset
                     )),
-                    Err(EngineError::ZeroKeyOffsetCheck { .. })
+                    Err(EngineError::ZeroKeyOffsetCheck)
                 ),
                 "{input:?} LEFT off={offset}: pin aborts"
             );
@@ -574,7 +574,7 @@ fn apostrophe_only_inputs_follow_the_zero_fill() {
                     over_matrix(input, PARITY, |i, p, s, sep| right_word_offset_over_spans(
                         i, p, s, sep, offset
                     )),
-                    Err(EngineError::ZeroKeyOffsetCheck { .. })
+                    Err(EngineError::ZeroKeyOffsetCheck)
                 ),
                 "{input:?} RIGHT off={offset}: pin aborts"
             );

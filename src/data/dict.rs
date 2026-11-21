@@ -48,7 +48,7 @@ pub enum DictError {
     /// A table-level error (I/O, the store backend).
     Table(TableError),
     /// Stored bytes did not decode under libpinyin's record layout.
-    Parse(String),
+    Parse,
     /// A phrase-library chunk file failed to verify.
     Library(crate::data::phrase_library::LibraryError),
 }
@@ -57,7 +57,7 @@ impl fmt::Display for DictError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Table(e) => write!(f, "table error: {e}"),
-            Self::Parse(msg) => write!(f, "parse error: {msg}"),
+            Self::Parse => f.write_str("parse error"),
             Self::Library(e) => write!(f, "phrase library error: {e}"),
         }
     }
@@ -67,7 +67,7 @@ impl std::error::Error for DictError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Table(e) => Some(e),
-            Self::Parse(_) => None,
+            Self::Parse => None,
             Self::Library(e) => Some(e),
         }
     }

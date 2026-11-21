@@ -7,9 +7,8 @@ use super::*;
 /// An unreadable item contributes no Rust row, but the pin still enters
 /// its scorer. Any short merged-gram header asserts before its zero total.
 fn abort_unreadable_ranking(gram: Option<&(u32, MergedGram)>) -> Result<(), EngineError> {
-    if let Some((previous, row)) = gram {
-        row.total()
-            .map_err(|fault| EngineError::lookup_gram(*previous, fault))?;
+    if let Some((_, row)) = gram {
+        row.total().map_err(EngineError::lookup_gram)?;
     }
     std::process::abort();
 }
@@ -32,9 +31,7 @@ fn beats_longer_winner(
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Offset-zero predecessor for candidate ranking and predicted bigram
     /// training (074a2219, pinyin.cpp:1711-1740 and zhuyin.cpp:1146-1175).
@@ -180,7 +177,7 @@ where
         let total = self
             .model
             .unigram_total()
-            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .map_err(|_| EngineError::Failure)?
             .unwrap_or(0);
         // LONGER has no bigram term (`pinyin.cpp:1916-1927`). Its zero
         // span marks the C-facing row as LONGER. The final dedup reads
@@ -243,9 +240,7 @@ where
             let tokens = self
                 .dictionary
                 .checked_extension_tokens(keys.as_slice())
-                .map_err(|error| {
-                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                })?;
+                .map_err(|_| EngineError::Failure)?;
             let Some(tokens) = tokens else {
                 if gate_overlong {
                     std::process::abort();
@@ -276,9 +271,7 @@ where
                 let unigram = self
                     .model
                     .unigram_freq(&token)
-                    .map_err(|error| {
-                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                    })?
+                    .map_err(|_| EngineError::Failure)?
                     .unwrap_or(0);
                 if winner.as_ref().is_none_or(|(best_token, best, _)| {
                     beats_longer_winner(token, unigram, *best_token, *best)
@@ -435,12 +428,12 @@ where
         let gram = self
             .model
             .merged_successors(&prev)
-            .map_err(|error| EngineError::row_read(&self.model, prev, &error))?;
+            .map_err(|error| EngineError::row_read(&self.model, &error))?;
         if let Some(fault) = gram.as_ref().and_then(MergedGram::fault) {
             if !gate {
                 return Ok(None);
             }
-            return Err(EngineError::lookup_gram(prev, fault));
+            return Err(EngineError::lookup_gram(fault));
         }
         Ok(gram.map(|gram| (prev, gram)))
     }
@@ -485,12 +478,12 @@ where
         let default_total = self
             .model
             .unigram_total()
-            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .map_err(|_| EngineError::Failure)?
             .unwrap_or(0);
         let addon_total = self
             .model
             .addon_unigram_total()
-            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .map_err(|_| EngineError::Failure)?
             .unwrap_or(0);
         for (index, candidate) in collected.iter().enumerate() {
             let Some(token) = candidate.token() else {
@@ -503,9 +496,7 @@ where
                 let raw = self
                     .model
                     .addon_unigram_freq(&token)
-                    .map_err(|error| {
-                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                    })?
+                    .map_err(|_| EngineError::Failure)?
                     .unwrap_or(0);
                 Some(amplified_frequency(raw, addon_total, lambda))
             } else {
@@ -521,15 +512,13 @@ where
                     Ok(bigram) => bigram,
                     Err(_) if !gate => 0.0,
                     Err(fault) => {
-                        return Err(EngineError::lookup_gram(
-                            gram.map_or(0, |(prev, _)| prev),
-                            fault,
-                        ));
+                        return Err(EngineError::lookup_gram(fault));
                     }
                 };
-                let count = self.model.unigram_freq(&token).map_err(|error| {
-                    EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                })?;
+                let count = self
+                    .model
+                    .unigram_freq(&token)
+                    .map_err(|_| EngineError::Failure)?;
                 // The zero total asserts at this row's scorer, after its
                 // dynamic adjustment and before any later row or span.
                 if abort_on_rank {
@@ -710,7 +699,7 @@ where
         let (failed_item, extends) = self
             .dictionary
             .candidate_search_into(path, tones, entries, row)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+            .map_err(|_| EngineError::Failure)?;
         **unreadable += failed_item.count;
         **continued |= extends;
         append_scan_entries(
@@ -723,7 +712,7 @@ where
         **continued |= self
             .dictionary
             .search_addon_into(path, entries, row)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+            .map_err(|_| EngineError::Failure)?;
         append_scan_entries(
             entries.drain(..),
             path.len(),
@@ -738,9 +727,7 @@ where
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Recomputes the candidate list for the current state.
     ///
@@ -1028,7 +1015,7 @@ where
     /// [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds the raw
     /// buffer's one-past-end position — the pin reads its matrix out of
     /// bounds there, so no pinned behaviour exists and the offset is
-    /// refused — and [`EngineError::LookupOffsetInsideCharacter`] when
+    /// refused — and [`EngineError::Failure`] when
     /// `offset` falls inside a multi-byte character of the raw buffer (no
     /// window exists under a mid-character slice). An offset equal to
     /// one-past-end is valid: `scan_window` answers the terminal sentence
@@ -1062,10 +1049,7 @@ where
             });
         }
         if !self.input.is_char_boundary(offset) {
-            return Err(EngineError::LookupOffsetInsideCharacter {
-                offset,
-                len: self.input.len(),
-            });
+            return Err(EngineError::Failure);
         }
         self.build_window(|session, items| {
             if offset < session.input.len() && !session.spans_a_matrix_key(offset) {
@@ -1134,7 +1118,7 @@ where
     ///
     /// Returns [`EngineError::LookupOffsetOutOfRange`] when `offset` exceeds
     /// the raw buffer's one-past-end position, and
-    /// [`EngineError::LookupOffsetInsideCharacter`] when it falls inside a
+    /// [`EngineError::Failure`] when it falls inside a
     /// multi-byte character — the same refusals as
     /// [`Session::candidates_at`] — plus backend failures during the scan.
     #[cfg(test)]
@@ -1166,10 +1150,7 @@ where
             });
         }
         if !self.input.is_char_boundary(offset) {
-            return Err(EngineError::LookupOffsetInsideCharacter {
-                offset,
-                len: self.input.len(),
-            });
+            return Err(EngineError::Failure);
         }
         self.build_window(|session, items| {
             // The start and apostrophe separators have no ending span.

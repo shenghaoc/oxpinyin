@@ -34,17 +34,17 @@ pub enum LmError {
     /// A table-level error (I/O, backend, etc.).
     Table(TableError),
     /// Value bytes did not parse under the frozen bigram schema.
-    Parse(String),
+    Parse,
     /// The user-count overlay failed (a read on the user store).
-    User(String),
+    User,
 }
 
 impl fmt::Display for LmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Table(e) => write!(f, "table error: {e}"),
-            Self::Parse(msg) => write!(f, "parse error: {msg}"),
-            Self::User(msg) => write!(f, "user store error: {msg}"),
+            Self::Parse => f.write_str("parse error"),
+            Self::User => f.write_str("user store error"),
         }
     }
 }
@@ -53,7 +53,7 @@ impl std::error::Error for LmError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Table(e) => Some(e),
-            Self::Parse(_) | Self::User(_) => None,
+            Self::Parse | Self::User => None,
         }
     }
 }
@@ -68,8 +68,7 @@ impl From<DictError> for LmError {
     fn from(e: DictError) -> Self {
         match e {
             DictError::Table(table) => Self::Table(table),
-            DictError::Parse(message) => Self::Parse(message),
-            DictError::Library(library) => Self::Parse(library.to_string()),
+            DictError::Parse | DictError::Library(_) => Self::Parse,
         }
     }
 }

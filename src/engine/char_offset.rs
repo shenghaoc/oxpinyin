@@ -28,7 +28,7 @@
 //! Both walks assert on a reached empty column (`assert(size > 0)`).
 //! Pinyin also asserts when a zero key shares a column with real keys
 //! (`assert(1 == size)`). The C adapters abort on the corresponding
-//! [`EngineError::MatrixColumnAssert`] (register row 19). A missing
+//! [`EngineError::PinAssert`] (register row 19). A missing
 //! cached token fails the pronunciation test.
 //!
 //! [`remember_walk`] is `_remember_phrase_recur` (`pinyin.cpp:3578-3666`)
@@ -36,7 +36,6 @@
 //! refusing, not asserting, on an empty column or a zero key that shares its
 //! column, and in calling the caller's `add` at every complete path.
 
-use crate::scoring::ScoringError;
 use crate::{PhraseToken, SyllableKey, model::Dictionary};
 
 use crate::engine::cursor::MatrixKey;
@@ -98,11 +97,10 @@ fn build_columns(
 fn pronounces<D>(dictionary: &D, key: MatrixKey, token: PhraseToken) -> Result<bool, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     match dictionary
         .phrase_item_pronunciations(token)
-        .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
+        .map_err(|_| EngineError::Failure)?
     {
         crate::model::PhraseItemRead::Item(rows) => {
             let query = [key.key()];
@@ -129,7 +127,7 @@ where
 ///
 /// # Errors
 ///
-/// The dictionary's backend failure as [`EngineError::Scoring`].
+/// The dictionary's backend failure as [`EngineError::Failure`].
 pub fn key_pronounced_by<D>(
     dictionary: &D,
     key: MatrixKey,
@@ -137,7 +135,6 @@ pub fn key_pronounced_by<D>(
 ) -> Result<bool, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     pronounces(dictionary, key, token)
 }
@@ -257,7 +254,6 @@ fn walk<D>(
 ) -> Result<Option<usize>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     if start > offset {
         return Ok(Some(length));
@@ -266,15 +262,15 @@ where
         // Unreachable by construction: every raw end is at most the
         // reserved slot, and the reserved slot's zero key ends past
         // `offset`. Answered as the empty-column assert shape.
-        return Err(EngineError::MatrixColumnAssert { offset: start });
+        return Err(EngineError::PinAssert);
     };
     if column.real.is_empty() && column.zero_end.is_none() {
-        return Err(EngineError::MatrixColumnAssert { offset: start });
+        return Err(EngineError::PinAssert);
     }
     if !zhuyin && let Some(zero_end) = column.zero_end {
         // "assume only one key here for "'" or the last key."
         if !column.real.is_empty() {
-            return Err(EngineError::MatrixColumnAssert { offset: start });
+            return Err(EngineError::PinAssert);
         }
         return walk(
             dictionary, columns, tokens, zero_end, offset, length, zhuyin,
@@ -304,7 +300,6 @@ fn walk_pronounced_key<D>(
 ) -> Result<Option<usize>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     // A missing cached token fails the pronunciation test.
     let Some(&token) = tokens.get(length) else {
@@ -343,9 +338,9 @@ where
 ///
 /// [`EngineError::LookupOffsetOutOfRange`] past the reserved slot and
 /// [`EngineError::ZeroKeyOffsetCheck`] one past a lone zero-key column
-/// (the pin's asserts); [`EngineError::MatrixColumnAssert`] for the two
+/// (the pin's asserts); [`EngineError::PinAssert`] for the two
 /// recursion asserts; the dictionary's backend failure as
-/// [`EngineError::Scoring`].
+/// [`EngineError::Failure`].
 pub fn character_offset_with_walk_over_keys<D>(
     (input, separators): (&[u8], bool),
     parsed_len: usize,
@@ -357,7 +352,6 @@ pub fn character_offset_with_walk_over_keys<D>(
 ) -> Result<(Option<usize>, bool), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
 {
     // `0 == matrix.size()`: no parse ran, or the parse placed no key —
     // `fill_matrix` clears the matrix and returns before sizing it when
@@ -374,7 +368,7 @@ where
     }
     let columns = build_columns(input, parsed_len, keys, separators);
     if offset > 0 && columns.get(offset - 1).is_some_and(Column::lone_zero) {
-        return Err(EngineError::ZeroKeyOffsetCheck { offset });
+        return Err(EngineError::ZeroKeyOffsetCheck);
     }
     if phrase.is_empty() {
         return Ok((None, false));
@@ -388,7 +382,7 @@ where
     for word in phrase.outward_words() {
         let found = dictionary.tokens_for_ucs4(&[word]);
         if found.len() > 4 {
-            return Err(EngineError::ReduceTokensCount { count: found.len() });
+            return Err(EngineError::PinAssert);
         }
         let Some(&token) = found.first() else {
             return Ok((None, false));

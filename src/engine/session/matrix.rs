@@ -172,9 +172,7 @@ impl ParsedMatrix {
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Whether the session's scan matrix carries the resplit and divided
     /// passes. zhuyin.cpp:1017-1040 omits the full-pinyin divided/resplit
@@ -202,7 +200,7 @@ where
     ///
     /// # Errors
     ///
-    /// [`EngineError::Graph`] when the buffer cannot be built into a graph.
+    /// [`EngineError::Failure`] when the buffer cannot be built into a graph.
     pub(super) fn build_parse(&self) -> Result<Parsed, EngineError> {
         let graph = self.build_graph()?;
         let edges = graph.fewest_keys(self.settings.incomplete());
@@ -234,16 +232,14 @@ where
         } else {
             SegmentGraph::build_exact(raw, self.input.exact())
         }
-        .map_err(EngineError::Graph)
+        .ok_or(EngineError::Failure)
     }
 }
 
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Parses the raw input and keeps the result: every parse seam calls
     /// this after it changes the input. A failed build leaves the empty

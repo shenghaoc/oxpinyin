@@ -167,9 +167,7 @@ pub mod pinyin_index {
             (1, 0)
         } else {
             if phrase_length == 0 {
-                return Err(DictError::Parse(
-                    "phrase_length must be at least 1".to_owned(),
-                ));
+                return Err(DictError::Parse);
             }
             let key_bytes = CHEWING_KEY_SIZE * phrase_length;
             (item2_stride(phrase_length), key_bytes)
@@ -297,10 +295,7 @@ pub mod phrase_index {
             return Ok(Vec::new());
         }
         if !value.len().is_multiple_of(4) {
-            return Err(DictError::Parse(format!(
-                "phrase index value length {} is not a multiple of 4",
-                value.len(),
-            )));
+            return Err(DictError::Parse);
         }
         Ok(value
             .as_chunks::<4>()
@@ -338,9 +333,7 @@ pub mod bigram {
     pub fn parse_value(data: &[u8]) -> Result<BigramRow, DictError> {
         decode_single_gram(data)
             .map(|(total, records)| BigramRow { total, records })
-            .map_err(|_| {
-                DictError::Parse(format!("bigram value length {} is not 4 + 8n", data.len()))
-            })
+            .map_err(|_| DictError::Parse)
     }
 }
 

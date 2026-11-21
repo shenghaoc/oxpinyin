@@ -534,10 +534,7 @@ mod native {
         assert!(instance.read(&context.runtime).train_aborts(0));
         let result = context.train(&instance, 0);
         assert!(
-            matches!(
-                &result,
-                Err(crate::engine::EngineError::TrainingSetFreqMiss { .. })
-            ),
+            matches!(&result, Err(crate::engine::EngineError::TrainingAbort)),
             "{result:?}"
         );
         // The classification the probe shares: the C adapters terminate.

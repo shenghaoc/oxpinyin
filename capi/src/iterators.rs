@@ -318,7 +318,7 @@ pub unsafe fn oxpinyin_import_aborts(
 /// (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
 fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
     let options = OptionBits::PINYIN_CORRECT_ALL | OptionBits::USE_TONE;
-    let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options).ok()?;
+    let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options)?;
     graph
         .fewest_keys(false)
         .iter()

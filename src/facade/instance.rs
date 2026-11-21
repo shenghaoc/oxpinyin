@@ -416,12 +416,9 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
             });
         match prepared {
             Err(crate::engine::TrainingPrepFault::PinAbort) => true,
-            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel(error))) => {
+            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel)) => {
                 matches!(
-                    training_answer(Err(crate::runtime::training_check_error(
-                        check.fault(),
-                        error
-                    ))),
+                    training_answer(Err(crate::runtime::training_check_error(check.fault()))),
                     Err(TrainingRefusal::Abort)
                 )
             }
@@ -806,25 +803,17 @@ pub fn training_answer(result: Result<bool, EngineError>) -> Result<bool, Traini
         Ok(trained) => Ok(trained),
         // The predecessor's total and set_freq/store checks are at
         // phonetic_lookup.h:884, :903-904 (register rows 85 and 113).
-        Err(
-            EngineError::ShortTrainingPredecessor { .. }
-            | EngineError::TrainingSetFreqMiss { .. }
-            | EngineError::FailedUserBigramStore { .. },
-        ) => Err(TrainingRefusal::Abort),
+        Err(EngineError::TrainingAbort) => Err(TrainingRefusal::Abort),
         // ngram.cpp:190, :241, :261 walks a partial item past its end.
-        Err(EngineError::UnsafeTrainingPredecessor { .. }) => Err(TrainingRefusal::PartialBigram),
+        Err(EngineError::UnsafeTrainingPredecessor) => Err(TrainingRefusal::PartialBigram),
         Err(
-            EngineError::ReadAfterCheck { .. }
-            | EngineError::UnsafeLookupPredecessor { .. }
+            EngineError::ReadAfterCheck
+            | EngineError::UnsafeLookupPredecessor
             | EngineError::LookupOffsetOutOfRange { .. }
-            | EngineError::LookupOffsetInsideCharacter { .. }
-            | EngineError::SelectionAnchorBeforeComposition { .. }
-            | EngineError::ZeroKeyOffsetCheck { .. }
-            | EngineError::MatrixColumnAssert { .. }
-            | EngineError::ReduceTokensCount { .. }
-            | EngineError::UserModel(_)
-            | EngineError::Graph(_)
-            | EngineError::Scoring(_),
+            | EngineError::Failure
+            | EngineError::ZeroKeyOffsetCheck
+            | EngineError::PinAssert
+            | EngineError::UserModel,
         ) => Ok(false),
     }
 }
@@ -855,25 +844,19 @@ pub fn guess_result(result: Result<bool, EngineError>, name: &str, log: impl FnO
 /// read that fails after its size check).
 pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str)) -> bool {
     let message = match error {
-        EngineError::ReadAfterCheck { .. } => {
+        EngineError::ReadAfterCheck => {
             std::process::abort();
         }
-        EngineError::UnsafeLookupPredecessor { .. } => {
+        EngineError::UnsafeLookupPredecessor => {
             "a bigram value would be read past its end (upstream reads past it)"
         }
         EngineError::LookupOffsetOutOfRange { .. }
-        | EngineError::LookupOffsetInsideCharacter { .. }
-        | EngineError::SelectionAnchorBeforeComposition { .. }
-        | EngineError::ZeroKeyOffsetCheck { .. }
-        | EngineError::MatrixColumnAssert { .. }
-        | EngineError::UnsafeTrainingPredecessor { .. }
-        | EngineError::ShortTrainingPredecessor { .. }
-        | EngineError::TrainingSetFreqMiss { .. }
-        | EngineError::FailedUserBigramStore { .. }
-        | EngineError::ReduceTokensCount { .. }
-        | EngineError::UserModel(_)
-        | EngineError::Graph(_)
-        | EngineError::Scoring(_) => return false,
+        | EngineError::Failure
+        | EngineError::ZeroKeyOffsetCheck
+        | EngineError::PinAssert
+        | EngineError::UnsafeTrainingPredecessor
+        | EngineError::TrainingAbort
+        | EngineError::UserModel => return false,
     };
     log(&format!("{name}: {message}"));
     true

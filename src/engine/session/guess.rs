@@ -5,9 +5,7 @@ use super::*;
 impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     /// Segments an arbitrary already-typed sentence string into its
     /// best dictionary phrase path — upstream `pinyin_phrase_segment`
@@ -44,9 +42,7 @@ where
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
 where
     D: Dictionary<Syllable = SyllableKey>,
-    D::Error: Display,
     L: LanguageModel,
-    L::Error: Display,
 {
     // pinyin_guess_sentence and PhoneticLookup::get_nbest_match, pinyin.cpp:1373–1386.
     /// Replaces the previous n-best results with a sentence lookup over the current matrix

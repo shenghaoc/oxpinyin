@@ -15,7 +15,7 @@ use crate::user::UserStore;
 ///
 /// # Errors
 ///
-/// Returns [`crate::engine::EngineError::ReduceTokensCount`] when more than four enabled
+/// Returns [`crate::engine::EngineError::PinAssert`] when more than four enabled
 /// tokens match a single suffix.
 pub fn compute_prefixes(
     dict: &RuntimeDict,
@@ -36,9 +36,7 @@ pub fn compute_prefixes(
         matches.retain(|token| dict.phrase_table_token_enabled(*token));
         // 074a2219 pinyin.cpp:1414-1420 reduces each suffix separately.
         if matches.len() > 4 {
-            return Err(crate::engine::EngineError::ReduceTokensCount {
-                count: matches.len(),
-            });
+            return Err(crate::engine::EngineError::PinAssert);
         }
         crate::model::sort_tokens_by_library(&mut matches);
         tokens.extend(matches);

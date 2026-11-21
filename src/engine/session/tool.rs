@@ -14,7 +14,7 @@ use crate::{
 pub fn parse_full(input: &[u8], options: OptionBits) -> Parse {
     let input = full_input(input);
     let input = input.as_ref();
-    let Ok(graph) = SegmentGraph::build_with_options(input, options) else {
+    let Some(graph) = SegmentGraph::build_with_options(input, options) else {
         return Parse::default();
     };
     let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
@@ -145,7 +145,8 @@ pub fn prepare_lookup(
     options: OptionBits,
 ) -> Result<PreparedLookup, crate::engine::EngineError> {
     let input = full_input(input);
-    let graph = SegmentGraph::build_with_options(input.as_ref(), options)?;
+    let graph = SegmentGraph::build_with_options(input.as_ref(), options)
+        .ok_or(crate::engine::EngineError::Failure)?;
     let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     let parsed = selected_parse(input.as_ref(), &path);
     let scan = super::matrix::ScanMatrix::from_columns(super::build_scan_matrix_over(
@@ -170,9 +171,7 @@ pub fn lookup<D, L>(
 ) -> Result<Vec<LookupRow>, crate::engine::EngineError>
 where
     D: crate::model::Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: crate::model::LanguageModel,
-    L::Error: core::fmt::Display,
 {
     crate::engine::nbest::nbest_sentences_generation(
         crate::engine::nbest::GenerationInput {
@@ -215,9 +214,7 @@ pub fn phrase_lookup<D, L>(
 ) -> Result<Vec<crate::PhraseToken>, crate::engine::EngineError>
 where
     D: crate::model::Dictionary<Syllable = SyllableKey>,
-    D::Error: core::fmt::Display,
     L: crate::model::LanguageModel,
-    L::Error: core::fmt::Display,
 {
     crate::engine::phrase::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)
 }

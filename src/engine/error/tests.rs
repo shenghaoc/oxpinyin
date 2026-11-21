@@ -40,8 +40,8 @@ fn a_toned_initial_only_key_behind_a_complete_key_aborts() {
 #[test]
 fn an_over_read_gram_fault_keeps_its_refusal() {
     assert_eq!(
-        EngineError::lookup_gram(7, crate::GramFault::OverRead),
-        EngineError::UnsafeLookupPredecessor { token: 7 }
+        EngineError::lookup_gram(crate::GramFault::OverRead),
+        EngineError::UnsafeLookupPredecessor
     );
 }
 
@@ -54,38 +54,7 @@ fn a_short_gram_fault_aborts_at_the_shared_mapping() {
     crate::store::death_test::assert_aborts(
         "engine::error::tests::a_short_gram_fault_aborts_at_the_shared_mapping",
         || {
-            let _ = EngineError::lookup_gram(7, crate::GramFault::Short);
+            let _ = EngineError::lookup_gram(crate::GramFault::Short);
         },
-    );
-}
-
-#[test]
-fn core_errors_convert_at_the_engine_boundary() {
-    use crate::graph::GraphError;
-    use crate::scoring::ScoringError;
-
-    let graph: EngineError = GraphError::InputTooLong { len: 1, limit: 0 }.into();
-    assert!(matches!(graph, EngineError::Graph(_)));
-    let scoring: EngineError = ScoringError::Dictionary("closed".to_owned()).into();
-    assert!(matches!(scoring, EngineError::Scoring(_)));
-}
-
-#[test]
-fn wrapped_backend_errors_chain_a_source() {
-    use crate::graph::GraphError;
-    use std::error::Error as _;
-
-    let graph = EngineError::Graph(GraphError::InputTooLong { len: 1, limit: 0 });
-    assert!(graph.source().is_some());
-    // String-erased and token variants terminate the chain.
-    assert!(
-        EngineError::UserModel("closed".to_owned())
-            .source()
-            .is_none()
-    );
-    assert!(
-        EngineError::UnsafeLookupPredecessor { token: 9 }
-            .source()
-            .is_none()
     );
 }

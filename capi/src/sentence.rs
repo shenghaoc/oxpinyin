@@ -381,29 +381,23 @@ fn lookup_window(
         // `DYNAMIC_ADJUST` row's Kyoto Cabinet read failed after its size
         // check (`pinyin.cpp:2212`, `ngram_kyotodb.cpp:138-139`), and the
         // process aborts in `refuse_lookup_gram`.
-        Err(oxpinyin::engine::EngineError::ReadAfterCheck { .. }) => std::process::abort(),
+        Err(oxpinyin::engine::EngineError::ReadAfterCheck) => std::process::abort(),
         // Register row 98: the DYNAMIC_ADJUST merge or read of the previous
         // token's grams reads past a partial value (class (b), one warning;
         // `pinyin.cpp:2214`, `:1848-1849`).
-        Err(error @ oxpinyin::engine::EngineError::UnsafeLookupPredecessor { .. }) => {
+        Err(error @ oxpinyin::engine::EngineError::UnsafeLookupPredecessor) => {
             inst.state.candidates.clear();
             refuse_lookup_gram("pinyin_guess_candidates", &error);
             return None;
         }
         Err(
             oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin::engine::EngineError::LookupOffsetInsideCharacter { .. }
-            | oxpinyin::engine::EngineError::SelectionAnchorBeforeComposition { .. }
-            | oxpinyin::engine::EngineError::ZeroKeyOffsetCheck { .. }
-            | oxpinyin::engine::EngineError::MatrixColumnAssert { .. }
-            | oxpinyin::engine::EngineError::UnsafeTrainingPredecessor { .. }
-            | oxpinyin::engine::EngineError::ShortTrainingPredecessor { .. }
-            | oxpinyin::engine::EngineError::TrainingSetFreqMiss { .. }
-            | oxpinyin::engine::EngineError::FailedUserBigramStore { .. }
-            | oxpinyin::engine::EngineError::ReduceTokensCount { .. }
-            | oxpinyin::engine::EngineError::UserModel(_)
-            | oxpinyin::engine::EngineError::Graph(_)
-            | oxpinyin::engine::EngineError::Scoring(_),
+            | oxpinyin::engine::EngineError::Failure
+            | oxpinyin::engine::EngineError::ZeroKeyOffsetCheck
+            | oxpinyin::engine::EngineError::PinAssert
+            | oxpinyin::engine::EngineError::UnsafeTrainingPredecessor
+            | oxpinyin::engine::EngineError::TrainingAbort
+            | oxpinyin::engine::EngineError::UserModel,
         ) => {
             // Unreachable for a well-formed lookup: the offset-shaped
             // contracts are refused by `validate_lookup_offset` and

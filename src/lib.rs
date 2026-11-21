@@ -71,8 +71,6 @@ pub mod runtime;
 #[forbid(unsafe_code)]
 mod scheme;
 #[forbid(unsafe_code)]
-mod scoring;
-#[forbid(unsafe_code)]
 mod sentence_facts;
 #[forbid(unsafe_code)]
 pub mod single_gram;

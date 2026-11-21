@@ -105,7 +105,7 @@ fn the_character_offset_after_a_separator_aborts() {
     // The init's `open …/user.conf failed.` precedes it without a newline.
     let stderr = String::from_utf8_lossy(&stderr);
     assert!(
-        stderr.ends_with("walk: Err(ZeroKeyOffsetCheck { offset: 3 })\n"),
+        stderr.ends_with("walk: Err(ZeroKeyOffsetCheck)\n"),
         "{stderr}"
     );
 }
@@ -119,7 +119,7 @@ fn a_read_failure_after_the_size_check_aborts() {
     crate::test_support::assert_aborts(
         "sentence::tests::a_read_failure_after_the_size_check_aborts",
         || {
-            let error = oxpinyin::engine::EngineError::ReadAfterCheck { token: 0x0100_0001 };
+            let error = oxpinyin::engine::EngineError::ReadAfterCheck;
             crate::sentence::refuse_lookup_gram("pinyin_phrase_segment", &error);
         },
     );

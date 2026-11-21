@@ -4,14 +4,12 @@
 //! training operations shared by the in-tree consumers.
 
 use crate::phrase_index_library_index;
-use core::fmt::Display;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 
 use smallvec::SmallVec;
 
 use crate::graph::{Edge, ExactSegment, SegmentGraph};
-use crate::scoring::ScoringError;
 use crate::{
     OptionBits, PhraseEntry, PhraseText, PhraseToken, SyllableKey,
     model::{Dictionary, LanguageModel, MergedGram, UserModel},
