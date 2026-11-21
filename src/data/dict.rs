@@ -231,7 +231,7 @@ impl PinyinIndexTable {
 
 // ── the default facade ───────────────────────────────────────────
 
-/// The default dictionary’s pinyin index, phrase index and phrase libraries selected by
+/// The default dictionary's pinyin index, phrase index and phrase libraries selected by
 /// the system rows in the table configuration.
 #[derive(Clone, Copy)]
 pub struct SystemDictionary<L = PhraseLibraries, T = SystemTables> {

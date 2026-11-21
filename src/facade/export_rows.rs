@@ -30,7 +30,7 @@ use crate::facade::ContextCore;
 /// pronunciation; a present item that is malformed is read and refused at
 /// the pin's assert site ([`ExportAssert`]). Every read is infallible, as
 /// the pin's in-memory sub-index read is: a libpinyin session keeps its
-/// phrases in memory, in per-library arenas (policy row 62).
+/// phrases in memory, in per-library arenas.
 ///
 /// What the store answers is held while its write generation stands still
 /// and re-read as soon as it moves: an arena's token end. The pin re-reads
@@ -570,8 +570,7 @@ impl ExportSource<'_> {
     /// `load(token, gram, true)` then `retrieve_all` (`pinyin.cpp:889-890`):
     /// the gram's whole items in stored order, duplicates included, or the
     /// fault where `retrieve_all`'s `get_total_freq` asserts on a value too
-    /// short for its total (`ngram.cpp:141`, `memory_chunk.h:390`; register
-    /// row 85).
+    /// short for its total (`ngram.cpp:141`, `memory_chunk.h:390`).
     fn gram(&self, token: u32) -> Result<Vec<(u32, u32)>, GramLoadFault> {
         if self.user.has_short_bigram_value_for(token) {
             return Err(GramLoadFault::ShortTotal { token });
@@ -665,13 +664,13 @@ pub struct ExportedBigramRow {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GramLoadFault {
     /// Shorter than its `guint32` total: `get_total_freq`'s assert
-    /// (`memory_chunk.h:390`; register row 85). The C adapter aborts.
+    /// (`memory_chunk.h:390`). The C adapter aborts.
     ShortTotal {
         /// The predecessor whose gram the walk loaded.
         token: u32,
     },
     /// A partial item tail, which `retrieve_all`'s `cur != end` walk reads
-    /// past (register row 98, class (b)). The walk ends there.
+    /// past. The walk ends there.
     PartialTail {
         /// The predecessor whose gram the walk loaded.
         token: u32,
@@ -757,7 +756,7 @@ pub enum BigramStep {
 
 impl BigramExportWalk {
     // pinyin_bigram_iterator_has_next_phrase, pinyin.cpp:790–893; ngram.cpp:133–143.
-    /// Probes for another export row. The probe can load a predecessor’s gram and render a
+    /// Probes for another export row. The probe can load a predecessor's gram and render a
     /// new pair before answering.
     ///
     /// # Errors

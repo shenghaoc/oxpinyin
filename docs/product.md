@@ -23,8 +23,7 @@ Two kinds of product statement stay separate:
 
 ## Stages
 
-**Stage 1: complete.**
-The candidate surface agrees bit-identically with the pin-built oracle on the 750 W4 candidate-surface inputs; the [frozen parity numbers](runbooks/goldens-and-pins.md#2-the-frozen-parity-numbers) state the counts.
+The candidate surface agrees bit-identically with the pin-built oracle on the 750 candidate-surface inputs; the [frozen parity numbers](runbooks/goldens-and-pins.md#2-the-frozen-parity-numbers) state the counts.
 Drop-in measurements covered Fedora rawhide with Kyoto Cabinet, Debian testing with tkrzw, and NixOS.
 Each had 1,571/1,571 rows.
 

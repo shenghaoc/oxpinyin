@@ -74,7 +74,7 @@ where
     /// The pin runs this after the span loop, for every valid lookup
     /// offset: the span loop's result is empty at an offset no span
     /// starts at (a mid-key byte, the reserved slot), and the prepend
-    /// still fires (row 65). An in-span apostrophe is a live separator
+    /// still fires. An in-span apostrophe is a live separator
     /// column, not an empty one: the span loop steps over the zero key
     /// and continues to the next key (`search_matrix_recur`,
     /// `phonetic_key_matrix.cpp:388-394` — measured: `ni'hao` at the
@@ -153,7 +153,7 @@ where
         // (`phonetic_key_matrix.cpp:512`), the parse's reserved slot: the
         // last byte the SELECTED parse covers. That is not
         // `graph.consumed()`, which also counts incomplete edges — a
-        // trailing byte the parser left unparsed (row 65's `nih`) would
+        // trailing byte the parser left unparsed (as in `nih`) would
         // otherwise put `end` past the last key's column, the walk would
         // find no path, and the LONGER row would vanish.
         let end = selected.last().map_or(0, |edge| edge.to());
@@ -333,7 +333,7 @@ where
     /// the parse: an apostrophe past a stop byte sits outside it entirely
     /// (the matrix has `parsed_len + 1` columns, so `ni,'hao` offset 3 is an
     /// ordinary lookup of the empty window, and the C adapters abort from
-    /// offset 4; register row 66). The scan's own key set
+    /// offset 4). The scan's own key set
     /// ([`super::build_scan_matrix_over`]) models the key columns, so a byte some key's
     /// syllable starts on, or an in-span apostrophe byte, answers; any other
     /// byte is an empty column. Exact mode has no pin counterpart, so its
@@ -819,9 +819,9 @@ where
             // sentence rows — upstream's window prepends `m_nbest_results`
             // whether or not any phrase candidate remains at the cursor (the
             // L1 terminal-choose surface) — and its LONGER row, which the
-            // pin prepends at every valid offset (`pinyin.cpp:2292-2293`;
-            // row 65: the reserved slot's column holds no key, so the span
-            // loop finds nothing but the prepends still run).
+            // pin prepends at every valid offset (`pinyin.cpp:2292-2293`).
+            // The reserved slot's column holds no key, so the span loop
+            // finds nothing but the prepends still run.
             self.prepend_longer_row(out, gate)?;
             self.prepend_nbest_rows(out);
             return Ok(());
@@ -1061,8 +1061,8 @@ where
                     None,
                     None,
                 ));
-                // Row 65: an empty column still has the LONGER and sentence
-                // prepends (pinyin.cpp:2292–2296).
+                // An empty column still has the LONGER and sentence
+                // prepends (`pinyin.cpp:2292–2296`).
                 session.prepend_longer_row(items, true)?;
                 session.prepend_nbest_rows(items);
                 return Ok(());

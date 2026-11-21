@@ -340,7 +340,7 @@ boundary and reload the newly stored chunk into the index.
 | [interpolation2-grammar](interpolation2-grammar.md) | The tools use GLib's `g_unichar_isgraph` and warnings through `oxpinyin-utils` `taglib`. No matching pin runtime `interpolation2.text` reader is established for the standalone decoder. |
 | [Policy row 109](compatibility-policy.md) | The whole-file writable private mapping; memmap2 releases it in full. |
 | [Punctuation values contain whole words](upstream-divergences.md#punctuation-values-contain-whole-words) | **Stands:** the class (b) treatment for the undefined surrounding read. DBM record access stays in store; no out-of-bounds native read is introduced. |
-| Policy row 39 and assertion records | **Stand:** reproduce the `LC_NUMERIC` side effect and keep the class (b) refusal and warning behaviour and the reproduced aborts. |
+| [`LC_NUMERIC` ruling](compatibility-policy.md#lc_numeric-after-init-row-39) and assertion records | **Stand:** reproduce the `LC_NUMERIC` side effect and keep the class (b) refusal and warning behaviour and the reproduced aborts. |
 
 ## Platform gaps
 
@@ -389,7 +389,7 @@ tools (Linux, macOS and Windows; any other target is a
 ([g_utf8_next_char from a byte that leads no sequence](upstream-divergences.md#g_utf8_next_char-from-a-byte-that-leads-no-sequence)).
 The input module uses the native calls directly. No borrowed raw pointer
 escapes its safe interface. The core library denies unsafe code. Its algorithm
-modules, the user crate and the facade crate forbid it. C facades keep ABI
+modules, the user and facade modules forbid it. C facades keep ABI
 marshalling. Store keeps DBM calls.
 
 Each stage derives the expected behaviour from the pin and its native

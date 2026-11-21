@@ -124,7 +124,7 @@ fn a_user_session_fault_aborts_the_init() {
 }
 
 /// One call that maps a system library again over a private system
-/// directory whose library is a directory (register row 96): the save and
+/// directory whose library is a directory: the save and
 /// the mask-out map `merged.bin` (`pinyin.cpp:955`, `:1264`), the reload of
 /// the unloaded GBK library maps `gbk_char.bin` (`:256`).
 #[cfg(unix)]
@@ -157,8 +157,8 @@ fn remap_a_directory_library(site: &str) -> bool {
     }
 }
 
-/// Register row 96 at save; row 76's completed save where a directory does
-/// not read as a chunk.
+/// The save aborts when the directory reads as a short chunk and completes
+/// where the directory does not read as a chunk.
 // Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
 // size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
 // without a word there (`oxpinyin`, `phrase_libraries.rs`), which no pin observation

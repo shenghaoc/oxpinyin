@@ -34,7 +34,7 @@ fn content_table_matches_original_rows() {
 
 /// Every content row's components resolve, through
 /// `chewing_key_table`, to the row's own index — the two ported
-/// tables cross-validate (row 0, the zero key, is exempt: its
+/// tables cross-validate (the zero key, is exempt: its
 /// components are the all-zero key, which maps to row 0 anyway).
 #[test]
 fn tables_cross_validate() {

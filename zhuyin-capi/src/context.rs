@@ -153,8 +153,7 @@ pub unsafe extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
     // Past both guards the save's `mark_version` writes user.conf through
     // `UserTableInfo::save`, which resets LC_NUMERIC to "C"
-    // (`table_info.cpp:378`; register row 39); the two early returns do
-    // not reach it.
+    // (`table_info.cpp:378`). The two early returns do not reach it.
     let outcome = ctx.core.save_user();
     match outcome {
         outcome @ (oxpinyin::facade::SaveOutcome::NotSaved

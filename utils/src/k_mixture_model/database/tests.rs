@@ -140,7 +140,7 @@ fn a_short_array_header_aborts_without_a_panic() {
 
 /// `check_result(load(…))` on a short single gram, as export, validate,
 /// prune and estimate's deleted model make it: the pin's `load` succeeds
-/// and the gram is then read outside its record (class (b)), so the
+/// and the gram is then read outside its record, so the
 /// tools take the store-error exit.
 #[test]
 fn a_checked_load_of_a_short_row_takes_the_store_error_exit() {

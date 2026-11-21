@@ -166,7 +166,7 @@ fn check_row(case: fixture::Case, sort: u32) {
     unsafe { pinyin_fini(context) };
 }
 
-/// POLICY-ACCEPTED (row 106): omit an unreadable item even when it is the only match.
+/// omit an unreadable item even when it is the only match.
 #[test]
 fn a_sole_unreadable_after_cursor_row_is_omitted() {
     check_row(fixture::Case::Single, 0x1f);
@@ -177,7 +177,7 @@ fn two_unreadable_rows_are_omitted() {
     check_row(fixture::Case::Pair, 0x1f);
 }
 
-/// POLICY-ACCEPTED (row 106): omit an unreadable item found through the user table.
+/// omit an unreadable item found through the user table.
 #[test]
 fn a_sole_unreadable_row_is_omitted_after_the_user_table_fallback() {
     check_row(fixture::Case::Fallback, 0x1f);

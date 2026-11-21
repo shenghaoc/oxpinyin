@@ -116,7 +116,7 @@ where
 
     // pinyin_get_pinyin_key and the corresponding getters read m_matrix in place
     // (pinyin.cpp:2924,3013–3066; zhuyin.cpp:1886–1927).
-    /// Borrows the last parse’s matrix keys and their raw byte spans in column order. Cursor
+    /// Borrows the last parse's matrix keys and their raw byte spans in column order. Cursor
     /// operations read these same spans through [`crate::engine::KeySpans`].
     #[must_use]
     pub fn matrix_keys(&self) -> crate::engine::cursor::MatrixKeys<'_> {

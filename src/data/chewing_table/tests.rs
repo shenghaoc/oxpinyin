@@ -470,7 +470,7 @@ fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
 }
 
 /// IndexItem pointer subtraction keeps only whole records
-/// (chewing_large_table2.h:145-150; compatibility policy row 128).
+/// (chewing_large_table2.h:145-150).
 #[test]
 fn a_misaligned_pinyin_table_row_keeps_its_whole_records() {
     let scratch = tempfile::tempdir().unwrap();

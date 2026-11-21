@@ -388,7 +388,7 @@ pub(crate) fn open_with_conf(
         .expect("open profile")
 }
 
-/// The committed W3 system, through the production profile and library loop.
+/// The committed mini system, through the production profile and library loop.
 pub(crate) fn open_w3(user: &Path) -> UserStore {
     open_native(
         user,

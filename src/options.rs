@@ -42,7 +42,7 @@ bitflags::bitflags! {
         const USE_RESPLIT_TABLE = 1 << 8;
 
         // pinyin_custom2.h:40 and pinyin.cpp:1845–1866.
-        /// Includes the previous token’s bigram probability in candidate ranking. A missing gram
+        /// Includes the previous token's bigram probability in candidate ranking. A missing gram
         /// or a zero row total contributes zero.
         const DYNAMIC_ADJUST = 1 << 9;
 

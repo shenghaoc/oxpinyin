@@ -58,7 +58,7 @@ pub enum RowText {
     /// The session dictionary's item text for the token.
     Resolve,
     /// No text: an addon row whose item the receiving context lacks
-    /// (class (b), `pinyin.cpp:2534-2563`).
+    /// (`pinyin.cpp:2534-2563`).
     Empty,
 }
 
@@ -730,7 +730,7 @@ where
         }
     }
 
-    /// A choose whose span starts before the composition offset (register row 37):
+    /// A choose whose span starts before the composition offset:
     /// the pin's `add_constraint(m_begin, m_end,
     /// token)` (`pinyin.cpp:2582-2584`, `phonetic_lookup.cpp:61-86`) —
     /// every forcing the span overlaps is cleared, the span is forced, and

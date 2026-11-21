@@ -281,7 +281,7 @@ fn load_phrase_index(
 }
 
 /// The shared phrase-index text walk. Test programs select their source phonetic
-/// type and refuse an invalid conversion under the family E class (b) ruling.
+/// type and refuse an invalid conversion under the input contract.
 pub fn read_phrase_items(
     index: u8,
     file: &mut TableFile,

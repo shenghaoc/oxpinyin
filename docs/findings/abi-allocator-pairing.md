@@ -42,7 +42,7 @@ These are pin behaviour, held by the register's notes:
   empty (`pinyin.cpp:3382-3386`, `3442-3445`). A consumer that frees only on
   `true` leaks one buffer per keystroke, on oxpinyin and on the pin.
   The bigram iterator's terminal row also answers `false` with both strings
-  written (`pinyin.cpp:904-910`, compatibility-policy row 36). These slots
+  written (`pinyin.cpp:904-910`). These slots
   are `false-allocates`.
 - **`pinyin_get_pinyin_strings` writes nothing on refusal.** The four
   single-string key getters (`pinyin.cpp:2707-2749`) open with an

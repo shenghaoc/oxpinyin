@@ -15,7 +15,7 @@ use crate::types::{GChar, PinyinInstance};
 /// Renders the instance's shared matrix. A matrix the renderer then refuses
 /// is the pin's abort — `pinyin.cpp:3311` (`assert(get_column_size(offset)
 /// >= 1)`) or `:3488` (`abort()` for a cut past two bytes) — and the process
-/// aborts there (register row 63); no matrix is the silent `None`.
+/// aborts there; no matrix is the silent `None`.
 fn render_shared(
     inst: &crate::state::CapiInstanceRead<'_>,
     render: impl FnOnce(&SharedMatrix) -> Option<AuxText>,
@@ -29,7 +29,7 @@ fn render_shared(
 
 /// The index-based full-pinyin renderer walks the stored parser keys.
 /// Check the corresponding parse-time matrix for the pin's aborts first
-/// (`pinyin.cpp:3311`, register row 63).
+/// (`pinyin.cpp:3311`).
 fn abort_on_full_walk(inst: &crate::state::CapiInstanceRead<'_>, cursor: usize) {
     if SharedMatrix::of(&inst.read()).is_some_and(|matrix| matrix.full(cursor).is_none()) {
         std::process::abort();
@@ -286,7 +286,7 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
         Some(full_index_aux_text(&inst.core.full_input, parse, cursor))
     } else if inst.core.double_parse.is_some() || inst.core.zhuyin_parse.is_some() {
         // A double or chewing parse filled the matrix; the pin renders it
-        // all the same (register row 55).
+        // all the same.
         render_shared(&inst.read(), |m| m.full(cursor))
     } else {
         // The pin uses the matrix made by the last parse. A context
@@ -341,9 +341,9 @@ pub unsafe extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
         // without conflicting with live borrows. Its contents need not be initialized.
         return unsafe { write_aux(aux_text, None) };
     }
-    // The pin renders the shared matrix whichever parser filled it
-    // (register row 55): the keys of a double-pinyin parse carry their
-    // tone, which the renderer appends after a cut key.
+    // The pin renders the shared matrix whichever parser filled it.
+    // The keys of a double-pinyin parse carry their tone, which the
+    // renderer appends after a cut key.
     let text = render_shared(&inst.read(), |m| m.double(cursor));
 
     // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
@@ -392,7 +392,7 @@ pub unsafe extern "C" fn pinyin_get_chewing_auxiliary_text(
             cursor,
         )),
         // Another parser filled the matrix; the pin renders it all the
-        // same (register row 55).
+        // same.
         None => render_shared(&inst.read(), |m| m.chewing(cursor)),
     };
 

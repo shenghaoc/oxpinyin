@@ -30,13 +30,12 @@ pub enum Loaded {
     Gram(KmmGram),
     /// A stored value shorter than the array header. The pin's `load`
     /// answers true for it, and the pin then reads outside the record
-    /// wherever it uses the gram (class (b),
-    /// `upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
+    /// wherever it uses the gram (`upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
     Short,
 }
 
 /// The tools' store-error exit for a short single gram that the pin reads
-/// outside of (class (b), `upstream-divergences.md#flexiblebigram-malformed-record-lengths`): one
+/// outside of (`upstream-divergences.md#flexiblebigram-malformed-record-lengths`): one
 /// stderr line, then status 1. The pin's work before that read is done.
 pub fn exit_on_short_single_gram() -> ! {
     oxpinyin::input::tool::exit_on_store_error(&StoreError::ShortArrayHeader)
@@ -244,7 +243,7 @@ fn attached(result: Result<KmmBigram, StoreError>) -> KmmBigram {
 }
 
 /// The pin's abort at a `check_result` or `assert` site; the macro's text is
-/// not reproduced (POLICY-ACCEPTED,
+/// not reproduced (
 /// `upstream-divergences.md#utility-check-macros-write-no-message`).
 fn abort() -> ! {
     std::process::abort()

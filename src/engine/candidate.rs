@@ -283,7 +283,7 @@ impl CandidateList {
     /// (`pinyin.cpp:2283`, `zhuyin.cpp:1526`, `:1607`), less the addon rows
     /// it scores against the addon total (`pinyin.cpp:1828-1840`). With that
     /// total at zero, the pin's `assert (0 < total_freq)` dies on such a row
-    /// (`pinyin.cpp:1859`, `zhuyin.cpp:1261`, register row 61), even when the
+    /// (`pinyin.cpp:1859`, `zhuyin.cpp:1261`), even when the
     /// dedup later removes it from the list. A window of prepended or
     /// fallback rows alone has none.
     #[must_use]

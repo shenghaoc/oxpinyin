@@ -29,7 +29,7 @@ use std::ptr;
 /// token does not resolve: `get_phrase_item` fails and leaves the default
 /// item of length 0 (`lookup.cpp:35,43`, `storage/phrase_index.h:81-84`),
 /// so the token adds "". The next import reuses the token
-/// (`zhuyin.cpp:474-478`, register row 104), and the kept sentence then
+/// (`zhuyin.cpp:474-478`), and the kept sentence then
 /// reads the new phrase with no new guess.
 #[test]
 fn a_kept_sentence_reads_its_tokens_through_the_live_phrase_index() {
@@ -233,7 +233,7 @@ fn unload_refuses_only_the_tsi_library() {
 /// truncate to 0, which a `guint32` holds, so the conversion is defined and
 /// the tie keeps the token order. At lambda 6 the products are -1.25 and
 /// -2.5: they truncate to -1 and -2, which no `guint32` holds, so the pin's
-/// conversion is undefined (policy row 83, class (b)). oxpinyin stores 0 for
+/// conversion is undefined. oxpinyin stores 0 for
 /// both, as Rust's `as u32` does for a negative value, and the tie keeps the
 /// token order.
 // tkrzw only: `candidate_rows` is.

@@ -85,8 +85,7 @@ fn an_imported_den_reading_stores_its_key() {
     unsafe { close(context, instance) };
 }
 
-/// mask_out walks the user index and asserts on a key longer than 16 words
-/// (register row 84).
+/// mask_out walks the user index and asserts on a key longer than 16 words.
 #[test]
 fn mask_out_over_an_overlong_user_index_key_aborts() {
     assert_aborts(
@@ -118,7 +117,7 @@ fn cursor_guesses_ignore_an_overlong_user_index_key() {
     unsafe { close(context, instance) };
 }
 
-/// Two library-7 tokens for one phrase key (register row 93).
+/// Two library-7 tokens for one phrase key.
 #[test]
 fn adding_a_phrase_with_two_library_tokens_aborts() {
     assert_aborts(
@@ -217,7 +216,7 @@ fn the_import_reads_a_chewing_reading_up_to_an_invalid_byte() {
     unsafe { close(context, instance) };
 }
 
-/// Register row 97: `mask_out` reloads library 1 and `_mask_out_records`
+/// `mask_out` reloads library 1 and `_mask_out_records`
 /// appends a kept ADD with both chunk pointers (`phrase_index_logger.h:245`).
 #[test]
 fn mask_out_aborts_on_a_surviving_add() {
@@ -256,7 +255,7 @@ fn mask_out_aborts_on_a_surviving_remove() {
     );
 }
 
-/// Register row 85: `zhuyin_mask_out` loads token 1's gram, which the mask
+/// `zhuyin_mask_out` loads token 1's gram, which the mask
 /// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
 /// (`ngram.cpp:80`, `memory_chunk.h:390`).
 #[test]
@@ -276,7 +275,7 @@ fn mask_out_aborts_on_a_short_bigram_value() {
     );
 }
 
-/// Register row 96 at mask-out, after the user tables are masked.
+/// A directory read as a short chunk aborts at mask-out, after the user tables are masked.
 // Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]

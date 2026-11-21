@@ -84,8 +84,7 @@ fn missing_system_dir_carries_the_runtime_error() {
         .err()
         .expect("a missing system dir cannot open");
     let OpenFailure::Runtime(error) = &failure;
-    // `SystemTableInfo2::load` is the first step (maintainer ruling
-    // 2026-10-28 UTC, D3); its `open %s failed.` line and the init's
+    // `SystemTableInfo2::load` is the first step (D3); its `open %s failed.` line and the init's
     // `load %s failed!` name the file.
     assert!(
         matches!(
@@ -197,7 +196,7 @@ fn readings(ctx: &ContextCore, token: u32) -> usize {
 }
 
 /// 074a2219 pinyin.cpp:1260-1294 visits each library and its log in order.
-/// Row 76 refuses an unmappable library without partial masking; row 91
+/// An unmappable library is refused without partial masking;
 /// preserves the earlier journal assertion before any later mmap failure.
 #[rstest::rstest]
 #[case::unmappable_without_partial_mask(false)]
@@ -376,7 +375,7 @@ fn system_with_gbk_naming_no_user_file(scratch: &Path) -> std::path::PathBuf {
 /// the row names a user file (`pinyin.cpp:246-264`); only the mask-out
 /// loop skips such a row (`:1250-1251`). The mask clears for a library
 /// the remap mapped, and only for it. A file the remap cannot map is the
-/// pin's SIGSEGV (row 76): the library stays unloaded, the call answers
+/// pin's SIGSEGV: the library stays unloaded, the call answers
 /// `true`, and the next load maps the repaired file. The context has no
 /// user directory: with one, the pin reads the directory itself as the
 /// row's log, and on a file system where that asserts the init dies.
@@ -439,7 +438,7 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
 
 mod failed_attachment_fini {
     //! Context finalization closes open tables while an instance still holds
-    //! the runtime (compatibility row 42).
+    //! the runtime.
 
     use std::path::PathBuf;
 
@@ -497,7 +496,7 @@ mod failed_attachment_fini {
 }
 
 mod library_directory {
-    //! Register row 96: a system library that is a directory whose reported size
+    //! a system library that is a directory whose reported size
     //! passes `MemoryChunk::mmap`'s header check, so the pin's header `read`
     //! fails and `assert(ret_len == sizeof(length))` aborts it
     //! (`memory_chunk.h:493` at 074a2219). The facade returns the fault at the
@@ -506,7 +505,7 @@ mod library_directory {
     //!
     //! The size is the file system's: on one where a directory does not read as a
     //! chunk (`directory_reads_as_a_chunk`), the same directory is row 76's
-    //! unmappable library (class (b)), and each test asserts that outcome
+    //! unmappable library, and each test asserts that outcome
     //! instead.
 
     use std::path::{Path, PathBuf};
@@ -588,8 +587,7 @@ mod library_directory {
     }
 
     /// A `.dbin` holding one `MODIFY_HEADER` with a token: the replay's
-    /// `next_record` asserts on it (`phrase_index_logger.h:202`, register row
-    /// 91). Framed as `MemoryChunk::save` frames it: the payload length and the
+    /// `next_record` asserts on it (`phrase_index_logger.h:202`). Framed as `MemoryChunk::save` frames it: the payload length and the
     /// word-XOR checksum, little-endian.
     fn plant_header_token_log(user: &Path, file: &str) {
         let mut payload = 4_u32.to_le_bytes().to_vec();
@@ -1652,7 +1650,7 @@ mod native {
         assert!(!user.path.join("gb_char.dbin").exists());
     }
 
-    /// The oversized record of policy row 123 in library 2, behind a changed
+    /// An oversized record in library 2, behind a changed
     /// library 1. The encoder refuses library 2's journal on both facades.
     /// libpinyin renames after it has written every file
     /// (`pinyin.cpp:1141`), so no log of this save is in place. libzhuyin

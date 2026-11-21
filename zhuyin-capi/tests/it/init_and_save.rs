@@ -304,9 +304,8 @@ fn an_empty_or_dot_system_name_reads_the_working_directory() {
     );
 }
 
-/// A reload and a mask-out over a system library that cannot be mapped
-/// (policy row 76). Each writes the pin's `mmap %s failed!` line where the
-/// pin then dies on the empty chunk (class (b)). The reload answers `true`
+/// A reload and a mask-out over a system library that cannot be mapped. Each writes the pin's `mmap %s failed!` line where the
+/// pin then dies on the empty chunk. The reload answers `true`
 /// and leaves the library unloaded, so the next load maps it
 /// (`zhuyin.cpp:186`, `:198-201`). The mask-out answers `true`
 /// (`:795-800`).
@@ -344,7 +343,7 @@ fn a_reload_and_a_mask_out_report_a_library_that_cannot_be_mapped() {
 }
 
 /// A save that cannot map a loaded system library again writes the pin's
-/// line and answers `false` (policy row 76). libzhuyin renames each library's
+/// line and answers `false`. libzhuyin renames each library's
 /// log as it writes it (`zhuyin.cpp:586-615`), so the logs of the libraries
 /// before the unmappable one are already in place; nothing later is written,
 /// `user.conf` included (`:695`). The context stays modified, and the next
@@ -494,7 +493,7 @@ fn zhuyin_launches_never_move_the_open_counter() {
     assert_eq!(std::fs::read(&marker).expect("marker"), saved);
 }
 
-/// Register row 91 on the reload path: `zhuyin_load_phrase_library` of an
+/// A malformed journal aborts on the reload path: `zhuyin_load_phrase_library` of an
 /// unloaded library merges its saved `.dbin` (`zhuyin.cpp:219`).
 #[test]
 fn reload_aborts_on_a_log_header_token() {
@@ -513,7 +512,7 @@ fn reload_aborts_on_a_log_header_token() {
     });
 }
 
-/// Register row 96 at the reload of an unloaded library.
+/// A directory read as a short chunk aborts at the reload of an unloaded library.
 // Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
 #[cfg(unix)]
 #[test]
@@ -530,9 +529,9 @@ fn reload_aborts_on_a_directory_library() {
     }
 }
 
-/// A second `zhuyin_fini` on one context (#573, register row 105): the pin
+/// A second `zhuyin_fini` on one context: the pin
 /// deletes the context twice (`zhuyin.cpp:741-757`) and dies of SIGSEGV;
-/// the ruling is a silent return.
+/// the call returns silently.
 #[test]
 fn fini_twice_returns_silently() {
     let run = crate::support::run_in_child("init_and_save::fini_twice_returns_silently", |user| {

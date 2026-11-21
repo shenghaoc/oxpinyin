@@ -3,14 +3,13 @@
 //! committed.
 //!
 //! The bridge's C++ side is `adapter.h`/`adapter.cc`, the semantic adapter
-//! the Rust/C++ interoperability ruling permits
+//! the Rust/C++ interoperability contract permits
 //! (`docs/findings/compatibility-policy.md#rust-cpp-interoperability`):
 //! the `Visitor` subclass, the empty-region pointer and the read of
 //! `BasicDB::error()`, with the
 //! constructors, the version string and shared-reference forwards cxx has no syntax
 //! for. `open`, `close` and the cursor's `jump()` are bound directly as
-//! members. Each claim a declaration rests on (safety point 1 of the
-//! ruling) is stated in `super::ffi`, the one module that calls the
+//! members. Each safety claim is stated in `super::ffi`, the one module that calls the
 //! bridge.
 //!
 //! # What cxx checks

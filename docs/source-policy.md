@@ -132,8 +132,8 @@ The compatibility policy's [decision order](findings/compatibility-policy.md#dec
 ### Adapter placement
 
 The compatibility policy's [crate-placement rule](findings/compatibility-policy.md#crate-placement) decides which crate holds external I/O, DBM, C ABI and core code.
-`oxpinyin::input` exists from stage 1, for library configuration read/write and locale.
-All five stages of the [boundary plan](findings/external-io-boundary.md#proposed-crate-and-staged-implementation) are implemented.
+`oxpinyin::input` owns library configuration read/write and locale.
+The [external I/O boundary](findings/external-io-boundary.md) covers configuration, chunks, save and rename, diagnostics, and tools.
 The broader user-library audit stays in #1198.
 
 ### External I/O
@@ -196,13 +196,9 @@ Replacement of existing required work, rather than an added capability, separate
 | Observable behaviour | Product behaviour matches under existing exceptions; external I/O uses the pin's calls on Linux ([platform scope](#platform-scope-of-pinned-behaviour)) | Explicit differences permitted |
 | Data formats and ABI | Drop-in compatibility stays | An incompatible change requires explicit opt-in and a suitable binary identity |
 
-Stage 1, exact-output parity with the pin-built oracle on the corpus surfaces, is complete.
-
 The language-artefact exception applies to internal behaviour, not to external I/O.
 Data formats and ABI do not change.
 
-Older records use "Stage 2" for compatible performance work.
-Those records describe the ruling under which the work was done.
 Current Stage 2 work adds no unapproved capability, independently maintained parallel product model or observable behaviour; the compatibility policy governs permitted differences.
 An unapproved capability or intentional output change belongs to Stage 3.
 New benchmark names do not include a stage.

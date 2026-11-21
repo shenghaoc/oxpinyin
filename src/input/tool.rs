@@ -907,7 +907,7 @@ pub mod gen_pinyin_table {
         );
     }
 
-    // The extra diagnostic precedes the pin’s dereference of a NULL conversion result,
+    // The extra diagnostic precedes the pin's dereference of a NULL conversion result,
     // gen_pinyin_table.cpp:174,280–281 (class (b)).
     /// Reports an unconvertible phrase on standard error.
     pub fn report_unconverted_phrase(phrase: &CStr) {
@@ -920,7 +920,7 @@ pub mod gen_pinyin_table {
 
     // store_one_item calls g_array_append_val(g_item_array[0], item),
     // gen_pinyin_table.cpp:117,240.
-    /// Performs the generator’s empty-phrase append, invoking GLib’s null-array diagnostic.
+    /// Performs the generator's empty-phrase append, invoking GLib's null-array diagnostic.
     pub fn store_into_null_array() {
         let item: c_int = 0;
         // SAFETY: GLib refuses the NULL array before reading the item.
@@ -2300,7 +2300,7 @@ pub mod lookup_tests {
             )
         };
     }
-    /// Prints a matrix search’s start and end positions on standard output.
+    /// Prints a matrix search's start and end positions on standard output.
     pub fn search(start: usize, end: usize) {
         // SAFETY: %ld arguments are native longs.
         unsafe {

@@ -1,7 +1,7 @@
 use super::*;
 use crate::data::phrase_library::{ChunkItem, build_chunk};
 
-/// Policy row 107: phrase_index.cpp:180-206 at 074a2219 can hand out
+/// phrase_index.cpp:180-206 at 074a2219 can hand out
 /// an item extending past its buffer. The approved safe outcome is no
 /// item, never resurrection of the valid original in a separate mapping.
 #[test]

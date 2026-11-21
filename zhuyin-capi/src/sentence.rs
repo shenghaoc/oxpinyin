@@ -257,7 +257,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
 ///                                            size_t offset);
 /// ```
 ///
-/// Replace the instance’s candidate list, including on a keyless refusal. Returns false when
+/// Replace the instance's candidate list, including on a keyless refusal. Returns false when
 /// lookup cannot proceed. True can mean an empty list. Inside a chewing key the lookup can
 /// publish only sentence rows.
 ///
@@ -286,7 +286,7 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_after_cursor(
 ///                                             size_t offset);
 /// ```
 ///
-/// Replace the instance’s candidate list, including on a keyless refusal. Returns false when
+/// Replace the instance's candidate list, including on a keyless refusal. Returns false when
 /// lookup cannot proceed. True can mean an empty list. Only spans ending at the normalized
 /// cursor qualify.
 ///

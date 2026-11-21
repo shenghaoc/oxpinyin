@@ -32,7 +32,7 @@ fn user_tokens_are_distinguished_by_library_nibble() {
     assert!(!is_user_token(0));
 }
 
-/// The session's allocation has no upper boundary (register row 119):
+/// The session's allocation has no upper boundary:
 /// the pin masks the range end into the nibble and bumps a zero low
 /// word, so a full library wraps to slot 1, and the promotion's bare
 /// mask wraps to slot 0.

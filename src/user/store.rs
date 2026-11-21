@@ -78,14 +78,13 @@ pub enum UserStoreError {
     #[error("libpinyin user-dir persistence failed")]
     Persistence,
     /// `MemoryChunk::mmap` refused a loaded system library's file where the
-    /// save's library loop maps it again (`pinyin.cpp:956`, `zhuyin.cpp:589`;
-    /// register row 76). The save stopped at that library: the earlier
+    /// save's library loop maps it again (`pinyin.cpp:956`, `zhuyin.cpp:589`). The save stopped at that library: the earlier
     /// libraries' files stand as written, nothing later was written or
     /// renamed, no marker was written, and the session stays dirty.
     #[error("a system library's file cannot be mapped again for the save (upstream: mmap failed!)")]
     SaveRemapFailed,
     /// A bulk copy of the save reaches the pin's unsafe size
-    /// (`memory_chunk.h:95-98`; register row 112, #1514). The save stops at
+    /// (`memory_chunk.h:95-98`). The save stops at
     /// that copy: the earlier files stay as written (libpinyin's staged
     /// `.tmp` files, libzhuyin's completed renames), nothing later happens,
     /// no marker is written, the session stays dirty and a later save retries.
@@ -118,7 +117,7 @@ pub enum UserStoreError {
     NonTokenUserBigramKey,
     /// A `user_bigram.db` value is shorter than a `guint32` `total_freq`:
     /// the pin's `get_total_freq` asserts on it (`memory_chunk.h:390`,
-    /// through `ngram.cpp:49`; register row 85). Returned where the pin's
+    /// through `ngram.cpp:49`). Returned where the pin's
     /// walk reads that total; the C adapters abort on it.
     #[error(
         "user bigram value shorter than a guint32 total_freq (upstream asserts, \
@@ -127,8 +126,7 @@ pub enum UserStoreError {
     ShortUserBigramValue,
     /// A `user_bigram.db` value has an incomplete eight-byte item after
     /// its total: the pin's `cur != end` walks read past it
-    /// (`ngram.cpp:76-86`, `:190`, `:241`, `:261`; register rows 98 and
-    /// 100, class (b)). The mask, removal and predicted-training facades
+    /// (`ngram.cpp:76-86`, `:190`, `:241`, `:261`). The mask, removal and predicted-training facades
     /// refuse it with one warning.
     #[error(
         "user bigram value with a partial item tail (upstream reads past it, \
@@ -148,8 +146,7 @@ pub enum UserStoreError {
     /// A training step's `set_freq` misses the item its `insert_freq` just
     /// added: on an unsorted gram the second `lower_bound` can land past
     /// it, and the pin's `check_result(user->set_freq(token, freq + seed))`
-    /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`; register row
-    /// 85). Returned before anything is stored; the C adapters abort.
+    /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`). Returned before anything is stored; the C adapters abort.
     #[error(
         "a training step's set_freq misses the item insert_freq added \
                  (upstream asserts, phonetic_lookup.h:903)"
@@ -596,7 +593,7 @@ pub enum TrainingFault {
     /// the failed container refuses a store (`memory_chunk.h:390`,
     /// `phonetic_lookup.h:903-904`).
     Abort,
-    /// The gram has a partial item tail (register row 100).
+    /// The gram has a partial item tail.
     PartialTail,
 }
 
@@ -624,7 +621,7 @@ pub struct MaskCheck {
 
 impl UserStore {
     /// Run the context's fini marker write once, while retaining its live data
-    /// for handles that outlive the public context (compatibility row 42).
+    /// for handles that outlive the public context.
     pub fn finish(&mut self) {
         self._fini.finish();
     }
@@ -658,7 +655,7 @@ impl UserStore {
     }
 
     /// Read system library `nibble`'s saved log once into `logs` and return
-    /// the chunk-read or journal fault the walk reached (rows 91, 92 and 96).
+    /// the chunk-read or journal fault the walk reached.
     /// [`Self::reload_system_libraries_prefetched`] merges the bytes read here.
     pub(crate) fn read_mask_log(
         &self,
@@ -783,7 +780,7 @@ impl UserStore {
     }
 
     /// Whether `token`'s stored user-bigram value has a partial item
-    /// tail (register rows 98 and 100). The pin's `retrieve_all`
+    /// tail. The pin's `retrieve_all`
     /// (`ngram.cpp:133-143`), `SingleGram::mask_out` (`ngram.cpp:86`) and
     /// the training walks (`ngram.cpp:190`, `:241`, `:261`) all walk with
     /// `cur != end` and read past that tail. Read from the live value, so
@@ -1273,9 +1270,9 @@ impl UserStore {
     ///
     /// Returns [`UserStoreError`] when the observation cannot be committed,
     /// [`UserStoreError::ShortUserBigramValue`] when `last`'s stored
-    /// value is too short for its total (register row 85, the pin's abort),
+    /// value is too short for its total (the pin's abort),
     /// or [`UserStoreError::PartialUserBigramTail`] when it has a partial
-    /// item tail (register row 100); nothing changes then.
+    /// item tail; nothing changes then.
     pub fn observe_selection(
         &mut self,
         last: PhraseToken,
@@ -1975,8 +1972,7 @@ impl UserStore {
     /// memory and has no failure of its own: nothing is written to disk.
     ///
     /// # Errors
-    /// The [`JournalFault`](crate::user::JournalFault) where the merge reaches a pin assertion (rows 91
-    /// and 108), with nothing replaced.
+    /// The [`JournalFault`](crate::user::JournalFault) where the merge reaches a pin assertion, with nothing replaced.
     #[cfg(test)]
     pub fn load_system_libraries(
         &mut self,
@@ -2063,7 +2059,7 @@ impl UserStore {
     /// library's live buffer and total are replaced by the one its replay
     /// left in `replayed` (none when its log left the chunk as it is). The
     /// session's state is process memory, so this cannot fail, as
-    /// `FacadePhraseIndex::load`/`unload` cannot (policy row 103).
+    /// `FacadePhraseIndex::load`/`unload` cannot.
     fn replace_system_libraries(
         &mut self,
         originals: crate::user::SystemOriginals,
@@ -2173,9 +2169,8 @@ impl UserStore {
 
     /// The faults [`Self::mask_out`] reaches before it changes anything, in
     /// the pin's order (`pinyin.cpp:1228-1230`): an overlong user pinyin index
-    /// key (rows 84 and 94), a phrase-table record the mask would read past
-    /// (row 101), then the user bigram's non-token key, short value, partial
-    /// tail and residual gram (rows 86, 85, 98, 87). It changes no state, so a
+    /// key, a phrase-table record the mask would read past, then the user bigram's non-token key, short value, partial
+    /// tail and residual gram. It changes no state, so a
     /// caller can learn that the user tables fault before it opens any system
     /// library or journal. The answer carries the one walk of the bigram
     /// keys to [`Self::apply_mask_out`], which checks nothing again.

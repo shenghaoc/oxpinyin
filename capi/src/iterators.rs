@@ -612,10 +612,10 @@ pub unsafe extern "C" fn pinyin_bigram_iterator_has_next_phrase(
     walk_answer(more, "pinyin_bigram_iterator_has_next_phrase")
 }
 
-/// The answer of a `has_next` the walk ran: register row 85,
+/// The answer of a `has_next` the walk ran:
 /// `pinyin.cpp:889` through `ngram.cpp:141` and `memory_chunk.h:390`, a
 /// predecessor too short for its total, where `retrieve_all`'s assert dies
-/// and so does the process; class (b), register row 98, `ngram.cpp:133-143`,
+/// and so does the process; `ngram.cpp:133-143`,
 /// a partial item tail `retrieve_all` reads past, where the walk ends with
 /// one warning and `false`; and a stored key of the loaded pair outside the
 /// table, where `get_pinyin_string` asserts inside the pin's `has_next`

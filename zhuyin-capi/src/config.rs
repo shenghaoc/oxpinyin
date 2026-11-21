@@ -131,7 +131,7 @@ pub unsafe extern "C" fn zhuyin_set_options(
 /// for its total (`memory_chunk.h:390`) and on a gram it leaves with a
 /// residual total (`ngram.cpp:70`); the reload of each loaded system
 /// library then asserts on one that is a directory (`memory_chunk.h:493`).
-/// The process aborts at each (register rows 84, 85, 86, 87, 94 and 96).
+/// The process aborts at each.
 ///
 /// # Safety
 ///

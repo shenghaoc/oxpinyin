@@ -11,7 +11,7 @@ fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreE
 use crate::ChewingKey;
 use crate::user::store::UserStore;
 
-/// Register row 101: a phrase-table record with a partial token tail is
+/// a phrase-table record with a partial token tail is
 /// one the pin's entry walk reads past, in `_add_phrase`'s search, the
 /// promote's `add_index` and the mask's `ProcessEach`
 /// (`phrase_large_table3.cpp:32-39`, `:57-65`, `:103-117` at 074a2219).
@@ -87,7 +87,7 @@ fn open_law(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     (dir, store)
 }
 
-/// Register row 112, `USER_FILE` (maintainer amendment): the compacted
+/// `USER_FILE`: the compacted
 /// content copy is checked where `SubPhraseIndex::store` makes it. The
 /// save stops there with the earlier files as written (pinyin staged
 /// them, zhuyin renamed them), writes and renames nothing later, leaves
@@ -186,7 +186,7 @@ fn trained(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     (dir, store)
 }
 
-/// Register row 112, `SYSTEM_FILE`: the journal actually encoded is the
+/// `SYSTEM_FILE`: the journal actually encoded is the
 /// copy that is checked, at J >= the limit, and J + 1 saves.
 #[test]
 fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
@@ -329,7 +329,7 @@ fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// Ruling 3: a session's arena compacts at end-import, save and mask-out
+/// a session's arena compacts at end-import, save and mask-out
 /// only. Replacements between them append, so the content grows with the
 /// history as the pin's does, and each point rebuilds it from the items.
 #[test]
@@ -1283,7 +1283,7 @@ fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
 /// N2: both training paths read the predecessor's total
 /// (`phonetic_lookup.h:884`, `pinyin.cpp:2630` at the pin `074a2219`),
 /// and a value too short for one is the pin's assert
-/// (`memory_chunk.h:390`, register row 85), which the C adapters
+/// (`memory_chunk.h:390`), which the C adapters
 /// reproduce by aborting on the fault. Training reads it before it
 /// changes anything; the predicted path makes its unigram add first
 /// (`pinyin.cpp:2609-2612`), in memory, and returns the fault after it.
@@ -2766,7 +2766,7 @@ fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
 }
 
-/// POLICY-ACCEPTED. Two slots sharing a file offset keep independent
+/// Two slots sharing a file offset keep independent
 /// values. Only the named slots are saved and both changes reopen.
 #[test]
 fn aliased_offsets_keep_independent_values_through_save_and_reopen() {

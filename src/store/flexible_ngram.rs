@@ -72,8 +72,7 @@
 //! [`FlexibleBigram::get_array_header`] aborts there. It does no work before
 //! that point, as the pin's read does none. [`FlexibleBigram::load`] returns the same
 //! error for such a value. The pin loads that value and later reads outside
-//! it, and the tools report it as a store error (class (b),
-//! `upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
+//! it, and the tools report it as a store error (`upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
 //! On a failed key walk, Berkeley DB prints `training db error, exit!`
 //! without a newline to stderr and exits with status `EIO`
 //! (`flexible_ngram_bdb.h:279-286`). Kyoto Cabinet and tkrzw return the
@@ -460,7 +459,7 @@ where
     // on a failed bounded read, unexpected length or invalid magic
     // (flexible_ngram_kyotodb.h:282–309). tkrzw checks size and magic after Get
     // (flexible_ngram_tkrzwdb.h:292–323).
-    /// Reads the model’s magic header. Berkeley DB reads the header at byte offset four, so a
+    /// Reads the model's magic header. Berkeley DB reads the header at byte offset four, so a
     /// longer record can contain a usable header. A closed handle, a missing tkrzw record or
     /// a record containing just the magic number has no header. Kyoto Cabinet and tkrzw check
     /// the magic number before decoding a full header.
@@ -612,7 +611,7 @@ where
     // The pin uses a partial put on BDB (flexible_ngram_bdb.h:402–420) and
     // read/overwrite/store on KC and tkrzw (flexible_ngram_kyotodb.h:385–408,
     // flexible_ngram_tkrzwdb.h:402–430).
-    /// Writes a single gram’s array header while retaining its item bytes. A newly created
+    /// Writes a single gram's array header while retaining its item bytes. A newly created
     /// record contains the header alone.
     ///
     /// # Errors
@@ -645,7 +644,7 @@ where
     // Kyoto Cabinet ignores the iterate status (flexible_ngram_kyotodb.h:262–272).
     // The pin's training utilities ignore the tkrzw ProcessEach status returned by
     // flexible_ngram_tkrzwdb.h:274–282 (for example, export_k_mixture_model.cpp:53,74).
-    /// Collects token keys in the container’s native walk order. The magic key and other keys
+    /// Collects token keys in the container's native walk order. The magic key and other keys
     /// outside the token width are skipped. A closed handle gives [`None`]. On a walk
     /// failure, Kyoto Cabinet and tkrzw return the token keys collected before the
     /// failure, which may be empty.

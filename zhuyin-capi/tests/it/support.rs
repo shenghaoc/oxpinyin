@@ -305,8 +305,7 @@ pub(crate) fn init_at(user_dir: &std::path::Path) -> *mut crate::support::Zhuyin
     unsafe { zhuyin_init(system.as_ptr(), user.as_ptr()) }
 }
 
-/// One call over a private system directory whose library is a directory
-/// (register row 96): init maps `merged.bin` (`zhuyin.cpp:199`), the save and
+/// One call over a private system directory whose library is a directory: init maps `merged.bin` (`zhuyin.cpp:199`), the save and
 /// the mask-out map it again (`:589`, `:800`), and the reload of the
 /// unloaded library 2 maps `gbk_char.bin` (`:200`).
 #[cfg(unix)]

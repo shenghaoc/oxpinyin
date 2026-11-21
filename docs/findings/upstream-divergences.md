@@ -391,13 +391,6 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b), by maintainer approval.
 - **Tests:** `overlong_chewing_query_keeps_the_previous_result` in `repl/tests/it/table_guards.rs` checks refusal after prior output. `chewing_table_overlong_toned_first` checks tone validation before the length check.
 
-### The logger test ignores a failed required phrase-chunk load (policy row 117)
-
-- **Pin:** the three required `../../data/gb_char.bin` loads ignore `MemoryChunk::load` returning false and reach row 76's NULL read (`tests/storage/test_phrase_index_logger.cpp:28-30`, `:45-48`, `:52-54`; `src/storage/phrase_index.cpp:271-282`, `:335-354`).
-- **oxpinyin:** The shared utility loader `Libraries::load` exits with `ENOENT` when a required system phrase chunk cannot be loaded (`utils/src/storage/libraries.rs`).
-- **Decision:** accepted, class (b), by maintainer approval.
-- **Tests:** none. Commit f76b0d8f0 made the logger program a product test, so no program run reaches this path.
-
 ## Approved product and ruling exceptions
 
 ### Pinyin trellis adjusted cost — S1/S2 repair
@@ -519,7 +512,7 @@ An entry holds nothing else.
 
 These entries are pin defects that oxpinyin collects for the libpinyin report-back batch; the drafts are in [upstream report drafts](upstream-report-drafts.md), and none is filed.
 
-### `pinyin_init`/`zhuyin_init` leave the process `LC_NUMERIC` at "C" (policy row 39)
+### `pinyin_init`/`zhuyin_init` leave the process `LC_NUMERIC` at "C"
 
 - **Pin:** `UserTableInfo::load` and `SystemTableInfo2::load` call `setlocale(LC_NUMERIC, "C")` and keep its return, the name of the locale just installed, which is `"C"` (`src/storage/table_info.cpp:328`, `:197`). On success they pass that name back, which installs `"C"` again (`:372`, `:291`); an early return skips that call. `save` does the same (`:378`, `:394`). So after any init `LC_NUMERIC` is `"C"`.
 - **oxpinyin:** installs `"C"` with the C library's `setlocale` at the pin's points.

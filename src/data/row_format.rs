@@ -157,8 +157,7 @@ pub mod pinyin_index {
     /// (`chewing_large_table2.h:145-150`, `:197-202` at 074a2219), and the
     /// pointer difference counts whole records. For a stride of 8, 16 or 32
     /// bytes (1, 2, 5, 6, 13 or 14 keys) that count is exact; for any other
-    /// stride it is undefined, and oxpinyin takes the same whole-record count
-    /// (compatibility policy row 128).
+    /// stride it is undefined, and oxpinyin takes the same whole-record count.
     pub(crate) fn item_views(
         value: &[u8],
         phrase_length: usize,

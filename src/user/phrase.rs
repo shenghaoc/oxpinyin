@@ -135,8 +135,7 @@ pub const FIRST_USER_TOKEN: PhraseToken = phrase_index_make_token(USER_DICTIONAR
 /// masks the sub-index end into the library nibble (`phrase_index.cpp:620`,
 /// `PHRASE_INDEX_MAKE_TOKEN`), and a zero low word is bumped past the
 /// reserved id. Nothing checks for overflow: a library whose last slot is
-/// live has the end `PHRASE_MASK + 1`, which wraps to slot 1 (register row
-/// 119). The addon promotion takes the masked end without the bump
+/// live has the end `PHRASE_MASK + 1`, which wraps to slot 1. The addon promotion takes the masked end without the bump
 /// (`pinyin.cpp:2541-2545`), so it wraps to slot 0.
 #[must_use]
 pub(crate) fn add_phrase_token(library: u8, end: u32) -> PhraseToken {
@@ -214,7 +213,7 @@ pub struct UserPhrase {
 }
 
 impl UserPhrase {
-    /// The allocated token, including the configured target library’s index.
+    /// The allocated token, including the configured target library's index.
     #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub const fn token(&self) -> PhraseToken {

@@ -165,7 +165,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 /// # Aborts
 ///
 /// The process aborts when `index > 0`, at least one n-best row exists, and
-/// no row exists at `index` (`pinyin.cpp:1474`, register row 10).
+/// no row exists at `index` (`pinyin.cpp:1474`).
 ///
 /// # Safety
 ///
@@ -300,7 +300,7 @@ pub(crate) struct GuessFrame {
     /// The lookup is strictly inside a key: only the prepended rows are kept.
     pub(crate) sentence_rows_only: bool,
     /// The facade total is zero and the lookup searches: ranking a searched
-    /// row aborts (register row 61).
+    /// row aborts.
     pub(crate) abort_on_rank: bool,
 }
 

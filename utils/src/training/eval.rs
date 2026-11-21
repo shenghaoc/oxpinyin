@@ -6,12 +6,6 @@
 //! model, decode the evaluation corpus against the phrase index, and report
 //! `correction rate = passed / tested`.
 //!
-//! The former `evaluate.py` driver — λ estimation, applying it to the
-//! `interpolation2.text` model, and the end-to-end run — was removed with the
-//! Python ports. λ estimation itself is the pin's `estimate_interpolation`,
-//! now `oxpinyin_utils::training::estimate_interpolation`, and this module
-//! is the decode behind `oxpinyin-utils`' `eval_correction_rate`.
-//!
 //! Never ships with the engine.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

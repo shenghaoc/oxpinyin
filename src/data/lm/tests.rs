@@ -383,8 +383,8 @@ mod language_model {
         assert!(!lm.has_unigrams(), "no visible library holds an item");
     }
 
-    /// The §12 presence gate (register #35): every pin scoring step reads the
-    /// token's phrase item first and skips the token when the read fails
+    /// Every scoring step in the pin reads the token's phrase item first
+    /// and skips the token when the read fails
     /// (`phrase_lookup.cpp:310,329`, `phonetic_lookup.h:646,674`). The three
     /// `USER_FILE` sub-indexes (nibbles 5/6/7) keep their items in the user
     /// directory, so the user side reports the item's own unigram as

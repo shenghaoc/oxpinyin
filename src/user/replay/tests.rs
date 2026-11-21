@@ -256,7 +256,7 @@ fn a_shorter_replacement_is_what_the_next_record_sees() {
     );
 }
 
-/// POLICY-ACCEPTED (row 107). An absent-token MODIFY stops the replay
+/// An absent-token MODIFY stops the replay
 /// without altering the previous record's item.
 #[test]
 fn an_absent_modify_stops_with_the_previous_item_intact() {
@@ -289,7 +289,7 @@ fn an_absent_modify_stops_with_the_previous_item_intact() {
     assert!(overrides.is_empty());
 }
 
-/// POLICY-ACCEPTED (row 107). An incomplete replacement cannot read the
+/// An incomplete replacement cannot read the
 /// previous item or the following item to supply its missing fields.
 #[test]
 fn an_incomplete_modify_cannot_borrow_bytes_from_other_records() {

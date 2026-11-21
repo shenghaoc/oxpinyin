@@ -36,7 +36,7 @@ use oxpinyin::{
 };
 use tempfile::TempDir;
 
-/// Real frozen syllables (a slice of the inventory the w4 fixtures
+/// Real frozen syllables (a slice of the inventory the oracle fixtures
 /// exercise); fuzz bytes index into this list to build valid keys.
 const SYLLABLES: &[&str] = &[
     "a", "ai", "an", "ang", "ao", "ba", "bai", "ban", "bang", "bao", "bei", "ben", "beng", "bi",
