@@ -31,7 +31,13 @@ impl SystemAttachment {
         Self::attach(path, true, read_only)
     }
 
-    fn attach(path: &Path, hash: bool, read_only: bool) -> Result<Self, StoreError> {
+    /// Attaches a tree or hash file with one native open. Writable attachments
+    /// create the file if it is missing.
+    ///
+    /// # Errors
+    /// Returns failures before the native open. A failed native open returns
+    /// [`Self::Unopened`].
+    pub fn attach(path: &Path, hash: bool, read_only: bool) -> Result<Self, StoreError> {
         #[cfg(feature = "bdb")]
         let store = crate::store::bdb::open_system(path, hash, read_only)?;
         #[cfg(feature = "kyotocabinet")]

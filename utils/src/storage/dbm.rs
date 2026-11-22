@@ -2,21 +2,26 @@
 //! keyspace: `TreeDB`/`TreeDBM`/`DB_BTREE` for the index and punctuation
 //! tables, `HashDB`/`HashDBM`/`DB_HASH` for `bigram.db`.
 //!
-//! The pin's `attach` opens the named file with `ATTACH_READWRITE` (and
-//! `ATTACH_CREATE`) or `ATTACH_READONLY`, so an existing container is
-//! **appended to**, never replaced; `Tree::create` and
-//! `Hash::create` make that same open, and every row is written with the
-//! pin's `get` then `put` (or `put` alone) through one committed
-//! transaction each.
+//! Writable attachments create a missing file and preserve existing records.
+//! Each record write uses one native put or set. On close, file-backed trees
+//! synchronize first. Bigram hashes do the same on Berkeley DB and Kyoto
+//! Cabinet. On tkrzw the bigram owner closes the file directly.
 
 use std::path::Path;
 
-use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, WriteStore, WriteTxn as _};
+use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore};
 
-/// One writable tree container.
+/// The utility checks the result of this attachment.
+fn open_required(path: &Path, hash: bool, read_only: bool) -> Result<DefaultStore, StoreError> {
+    match SystemAttachment::attach(path, hash, read_only)? {
+        SystemAttachment::Open(store) => Ok(store),
+        SystemAttachment::Unopened => Err(StoreError::Backend("the container did not open".into())),
+    }
+}
+
+/// One tree container.
 pub struct Tree {
     store: DefaultStore,
-    plain_set: bool,
 }
 
 impl Tree {
@@ -24,7 +29,6 @@ impl Tree {
     pub fn memory() -> Result<Self, StoreError> {
         Ok(Self {
             store: DefaultStore::create_in_memory()?,
-            plain_set: true,
         })
     }
 
@@ -49,8 +53,7 @@ impl Tree {
     /// `attach(filename, ATTACH_READWRITE|ATTACH_CREATE)`.
     pub(crate) fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: <DefaultStore as WriteStore>::create(path)?,
-            plain_set: false,
+            store: open_required(path, false, false)?,
         })
     }
 
@@ -65,8 +68,7 @@ impl Tree {
     /// `attach(filename, ATTACH_READONLY)`.
     pub(crate) fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: <DefaultStore as oxpinyin::store::RawReadStore>::open_read_only(path)?,
-            plain_set: false,
+            store: open_required(path, false, true)?,
         })
     }
 
@@ -80,13 +82,7 @@ impl Tree {
 
     /// `m_db->put(m_db, NULL, &key, &data, 0)`.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        if self.plain_set {
-            return self.store.set_raw(key, value);
-        }
-        self.store.write(|txn| {
-            txn.put_raw(key, value)?;
-            Ok(())
-        })
+        self.store.set_raw(key, value)
     }
 }
 
@@ -101,7 +97,7 @@ impl Hash {
     /// class.
     pub(crate) fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: Some(<DefaultStore as WriteStore>::create_hash(path)?),
+            store: Some(open_required(path, true, false)?),
         })
     }
 
@@ -146,7 +142,7 @@ impl Hash {
             .store
             .as_ref()
             .ok_or_else(|| StoreError::Backend("the bigram container did not open".into()))?;
-        store.write(|txn| txn.put_raw(key, value))
+        store.set_raw(key, value)
     }
 
     /// Collects the raw keys in the container's native order.
