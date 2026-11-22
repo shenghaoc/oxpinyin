@@ -11,7 +11,7 @@ use oxpinyin::{
 #[must_use]
 pub fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
     Parse {
-        consumed: oxpinyin::engine::apostrophe_extended(input, path.last().map_or(0, Edge::to)),
+        consumed: oxpinyin::__internal::apostrophe_extended(input, path.last().map_or(0, Edge::to)),
         keys: path
             .iter()
             .map(|edge| {
@@ -37,8 +37,8 @@ pub struct PreparedLookup {
     /// Consumed input-prefix length and keys captured when the lookup was prepared. Editing
     /// this field does not rebuild the stored lookup matrix.
     pub parsed: Parse,
-    scan: oxpinyin::engine::ScanMatrix,
-    matrix: oxpinyin::engine::ParsedMatrix,
+    scan: oxpinyin::__internal::ScanMatrix,
+    matrix: oxpinyin::__internal::ParsedMatrix,
 }
 
 impl PreparedLookup {
@@ -83,10 +83,10 @@ pub fn prepare_lookup(
         full_graph(input, options).ok_or(oxpinyin::engine::EngineError::Failure)?;
     let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     let parsed = selected_parse(input.as_ref(), &path);
-    let scan = oxpinyin::engine::ScanMatrix::from_columns(
-        oxpinyin::engine::build_scan_matrix_over(&graph, &path, options, false),
+    let scan = oxpinyin::__internal::ScanMatrix::from_columns(
+        oxpinyin::__internal::build_scan_matrix_over(&graph, &path, options, false),
     );
-    let matrix = oxpinyin::engine::ParsedMatrix::from_scan(&scan, parsed.consumed, true);
+    let matrix = oxpinyin::__internal::ParsedMatrix::from_scan(&scan, parsed.consumed, true);
     Ok(PreparedLookup {
         parsed,
         scan,
@@ -107,8 +107,8 @@ where
     D: oxpinyin::model::Dictionary<Syllable = SyllableKey>,
     L: oxpinyin::model::LanguageModel,
 {
-    oxpinyin::engine::nbest_sentences_generation(
-        oxpinyin::engine::GenerationInput {
+    oxpinyin::__internal::nbest_sentences_generation(
+        oxpinyin::__internal::GenerationInput {
             matrix: &prepared.scan,
             bound: prepared.parsed.consumed,
             physical_separators: true,
@@ -150,7 +150,7 @@ where
     D: oxpinyin::model::Dictionary<Syllable = SyllableKey>,
     L: oxpinyin::model::LanguageModel,
 {
-    oxpinyin::engine::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)
+    oxpinyin::__internal::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)
 }
 
 /// Builds the full-pinyin graph over the explicit-length bytes.

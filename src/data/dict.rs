@@ -152,6 +152,7 @@ impl<L, T: std::borrow::Borrow<SystemTables>> std::ops::Deref for SystemDictiona
 impl SystemTables {
     /// Combines the native table handles and the configured user-library bits.
     #[must_use]
+    #[doc(hidden)]
     pub const fn new(pinyin: ChewingTable, phrase: PhraseTable, user_nibbles: u32) -> Self {
         Self {
             pinyin,
@@ -162,6 +163,7 @@ impl SystemTables {
 
     /// Borrows the native pinyin index for phonetic reads.
     #[must_use]
+    #[doc(hidden)]
     pub const fn pinyin(&self) -> &ChewingTable {
         &self.pinyin
     }

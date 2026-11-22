@@ -557,25 +557,30 @@ impl ItemBounds {
     }
 }
 
-/// Owned or mapped input to the common phrase-library layout reader.
-pub struct LibraryBytes(LibraryBacking);
+use backing::LibraryBacking;
+pub(crate) use backing::LibraryBytes;
 
-enum LibraryBacking {
-    Mapped(crate::input::chunk::Mapping),
-    Owned(Vec<u8>),
-}
+pub(crate) mod backing {
+    /// Owned or mapped input to the common phrase-library layout reader.
+    pub struct LibraryBytes(pub(super) LibraryBacking);
 
-impl From<Vec<u8>> for LibraryBytes {
-    fn from(bytes: Vec<u8>) -> Self {
-        Self(LibraryBacking::Owned(bytes))
+    pub(super) enum LibraryBacking {
+        Mapped(crate::input::chunk::Mapping),
+        Owned(Vec<u8>),
     }
-}
 
-impl LibraryBytes {
-    fn as_slice(&self) -> &[u8] {
-        match &self.0 {
-            LibraryBacking::Mapped(mapping) => mapping.as_slice(),
-            LibraryBacking::Owned(payload) => payload,
+    impl From<Vec<u8>> for LibraryBytes {
+        fn from(bytes: Vec<u8>) -> Self {
+            Self(LibraryBacking::Owned(bytes))
+        }
+    }
+
+    impl LibraryBytes {
+        pub(super) fn as_slice(&self) -> &[u8] {
+            match &self.0 {
+                LibraryBacking::Mapped(mapping) => mapping.as_slice(),
+                LibraryBacking::Owned(payload) => payload,
+            }
         }
     }
 }
@@ -691,6 +696,7 @@ impl PhraseLibrary {
     ///
     /// # Errors
     /// Returns an error when the layout exceeds the supplied bytes.
+    #[doc(hidden)]
     pub fn from_bytes(
         file: LibraryBytes,
         payload: Range<usize>,

@@ -55,12 +55,12 @@ pub struct Parse {
 #[must_use]
 pub fn parse_direct(input: &[u8], options: oxpinyin::OptionBits, zhuyin: bool) -> Parse {
     let mut keys = Vec::new();
-    let consumed = oxpinyin::parser::scan_direct(
+    let consumed = oxpinyin::__internal::scan_direct(
         input,
         |span| {
             let segment = &input[span];
             if zhuyin {
-                let (key, tone) = oxpinyin::parser::parse_zhuyin_direct_key(
+                let (key, tone) = oxpinyin::__internal::parse_zhuyin_direct_key(
                     core::str::from_utf8(segment).ok()?,
                     options,
                 )?;
@@ -96,10 +96,10 @@ pub fn fuzzy_alternatives(key: SyllableKey, options: oxpinyin::OptionBits) -> Ve
 /// admitted initial alternative, even when the resulting final has no spelling row.
 #[must_use]
 fn fuzzy_chewing_alternatives(key: ChewingKey, options: oxpinyin::OptionBits) -> Vec<ChewingKey> {
-    let initials = oxpinyin::vocab::fuzzy_chewing_initials(key, options);
+    let initials = oxpinyin::__internal::fuzzy_chewing_initials(key, options);
     let mut out = initials.clone();
     for source in std::iter::once(key).chain(initials) {
-        out.extend(oxpinyin::vocab::fuzzy_chewing_finals(source, options));
+        out.extend(oxpinyin::__internal::fuzzy_chewing_finals(source, options));
     }
     out
 }

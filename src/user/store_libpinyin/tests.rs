@@ -2121,7 +2121,7 @@ fn persisted_empty_add_survives_reload_save_and_reopen() {
             },
             LogRecord::Add {
                 token: 9,
-                new_item: persistence::journal_item_bytes(&item),
+                new_item: crate::user::persistence::journal_item_bytes(&item),
             },
         ];
         let (dir, mut store) = open_with_log("persisted-empty-add", &records);

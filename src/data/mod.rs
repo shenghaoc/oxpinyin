@@ -38,10 +38,7 @@ pub use crate::model::UserCountDelta;
 // backend the build selected without naming `store` themselves.
 pub use crate::store::DEFAULT_STORE_DB_FORMAT;
 // Native row decoding for the pin test-program tools.
-pub use chewing_table::{
-    ChewingTable, DefaultDbm, RawChewingDbm, index_key as chewing_index_key, visit_matching_items,
-};
-pub use phrase_table::PhraseTable;
+pub use chewing_table::index_key as chewing_index_key;
 
 pub use bigram_table::BigramTable;
 

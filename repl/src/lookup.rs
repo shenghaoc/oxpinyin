@@ -275,7 +275,7 @@ impl Lookup {
         let mut libraries = PhraseLibraries::empty();
         for (index, row) in conf.system_libraries() {
             let name = row.system.as_ref().map(|name| PathBuf::from(name.as_ref()));
-            let path = oxpinyin::input::build_path(
+            let path = oxpinyin::__internal::build_path(
                 data,
                 name.as_deref().unwrap_or(Path::new("")).as_os_str(),
             );

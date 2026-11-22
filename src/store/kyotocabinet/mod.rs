@@ -25,7 +25,6 @@
 mod bridge;
 mod ffi;
 
-#[cfg(test)]
 use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::path::Path;
@@ -62,6 +61,7 @@ impl KcStore {
     ///
     /// # Errors
     /// Returns an unsupported Kyoto Cabinet runtime version.
+    #[doc(hidden)]
     pub fn allocate_native(hash: bool, read_only: bool) -> Result<Self, StoreError> {
         let kind = if hash { DbType::Hash } else { DbType::Tree };
         Ok(Self {
@@ -73,6 +73,7 @@ impl KcStore {
     ///
     /// # Errors
     /// Returns failures that occur before the native open.
+    #[doc(hidden)]
     pub fn try_open_native(&mut self, path: &Path, create: bool) -> Result<bool, StoreError> {
         let flags = if self.db.is_read_only() {
             ffi::OREADER
@@ -438,7 +439,6 @@ impl WriteStore for KcStore {
         self.db.begin_transaction()?;
         let mut txn = KcTxn {
             store: self,
-            #[cfg(test)]
             buffer: None,
         };
         match f(&mut txn) {
@@ -458,7 +458,6 @@ impl WriteStore for KcStore {
     /// transaction and no sync, its answer the pin's. The closure's writes
     /// are buffered, so an `Err` from it applies nothing. `reset()` makes
     /// the one `synchronize()` (`:86-92`), which [`WriteStore::flush`] is.
-    #[cfg(test)]
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
@@ -507,17 +506,15 @@ impl WriteStore for KcStore {
 /// Under [`WriteStore::write`] every method writes straight through to the
 /// database inside Kyoto Cabinet's transaction, so read-your-writes is the
 /// database's semantics and rollback is the library's. Under
-/// the deferred-write tests the writes wait in the buffer.
+/// [`WriteStore::write_deferred`] the writes wait in the buffer.
 pub struct KcTxn<'store> {
     store: &'store KcStore,
-    #[cfg(test)]
     buffer: Option<BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
 }
 
 impl KcTxn<'_> {
     /// Applies one write now, or buffers it under `write_deferred`.
     fn apply(&mut self, key: Vec<u8>, value: Option<&[u8]>) -> Result<(), StoreError> {
-        #[cfg(test)]
         if let Some(buffer) = self.buffer.as_mut() {
             buffer.insert(key, value.map(<[u8]>::to_vec));
             return Ok(());

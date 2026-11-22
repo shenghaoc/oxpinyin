@@ -13,14 +13,11 @@ pub(crate) mod diagnostic;
     unsafe_code,
     reason = "the library's libc and glib-sys calls behind owned handles; every block carries a SAFETY comment"
 )]
-mod native;
-mod path;
-pub use native::{c_stderr, fopen};
-#[cfg(windows)]
-pub use native::{errno_location, wide_path};
+pub(crate) mod native;
+pub(crate) mod path;
 pub use path::{
-    build_filename, build_path, c_string, decode_filename, filename, path_from_bytes,
-    path_to_bytes, rename, unlink,
+    build_filename, c_string, decode_filename, filename, path_from_bytes, path_to_bytes, rename,
+    unlink,
 };
 
 use std::ffi::CString;
@@ -84,4 +81,4 @@ impl FileName for CString {
     }
 }
 
-pub(crate) use path::{build_bytes, build_chunk_path};
+pub(crate) use path::{build_bytes, build_chunk_path, build_path};

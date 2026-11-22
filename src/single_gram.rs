@@ -387,10 +387,16 @@ pub fn encode_single_gram(total: u32, records: &[SingleGramRecord]) -> Vec<u8> {
     value
 }
 
-/// Whether the value holds a total and only whole records.
-#[must_use]
-pub const fn is_complete(gram: &[u8]) -> bool {
-    gram.len() >= TOTAL_LEN && (gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
+pub(crate) use layout::is_complete;
+
+pub(crate) mod layout {
+    use super::{ITEM_LEN, TOTAL_LEN};
+
+    /// Whether the value holds a total and only whole records.
+    #[must_use]
+    pub const fn is_complete(gram: &[u8]) -> bool {
+        gram.len() >= TOTAL_LEN && (gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
+    }
 }
 
 #[cfg(test)]

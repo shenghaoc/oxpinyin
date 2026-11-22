@@ -33,6 +33,7 @@ impl BigramTable {
 
 impl<D: ChewingDbm> BigramTable<D> {
     /// Wraps an open native DBM.
+    #[doc(hidden)]
     pub const fn new(dbm: D) -> Self {
         Self { dbm }
     }
