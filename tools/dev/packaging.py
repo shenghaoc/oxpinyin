@@ -10,7 +10,7 @@ if __name__ == '__main__':
 
     require_utf8_mode()
 
-from contextlib import contextmanager
+from contextlib import chdir, contextmanager
 from dataclasses import dataclass
 import json
 import os
@@ -135,18 +135,8 @@ def fail(message='', code=1):
     raise Finished(code)
 
 
-@contextmanager
-def directory(path):
-    previous = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(previous)
-
-
 class Tools:
-    """Process boundary, injectable for fixtures without replacing global services."""
+    """Run packaging commands with the selected directory and environment."""
     def __init__(self, env=None, *, root=ROOT):
         self.root = Path(root)
         self.env = dict(os.environ if env is None else env)
@@ -169,7 +159,7 @@ class Tools:
         return done.stdout.decode(errors='surrogateescape').rstrip('\n')
 
     def heavy(self, argv, *, cwd=None, env=None):
-        with directory(cwd or Path.cwd()):
+        with chdir(cwd or Path.cwd()):
             try:
                 code = status(slot.run_command(list(map(str, argv)), env=self.env if env is None else env))
             except PermissionError as error:
@@ -351,7 +341,7 @@ class Layout:
                     profile = 'debug' if word == '--debug' else 'release'
                 passthru.append(word)
                 index += 1
-        with directory(tools.root):
+        with chdir(tools.root):
             target_path = Path(target) if target else tools.root / 'target'
             if not target_path.is_absolute():
                 target_path = tools.root / target_path
@@ -410,7 +400,7 @@ def pc_text(library, backend, root=ROOT):
 
 
 def install(argv, tools):
-    with directory(tools.root):
+    with chdir(tools.root):
         return install_library(argv, tools)
 
 
@@ -450,7 +440,7 @@ def install_library(argv, tools):
     if system == 'Linux':
         soname = layout.library + '.so.15'
         destination = Path(layout.destdir + layout.libdir) / (soname + '.0.0')
-        with directory(tools.root):
+        with chdir(tools.root):
             relink(['--staticlib', str(layout.qualified / (layout.library + '.a')),
                     '--ver', str(crate / (layout.library + '.ver')),
                     '--soname', soname, '--dest', str(destination),
@@ -1029,12 +1019,10 @@ def release_stage(argv, tools):
         fail(f"error: --dest '{dest}' collides with a real install root", 2)
     if not tools.which('strip'):
         fail('error: strip is required; install binutils')
-    if not tools.which('cmp'):
-        fail('error: cmp (diffutils) is required for the companion-header check')
     companion_headers(stage=True, root=tools.root)
     if not tools.which('cargo-cinstall'):
         fail("error: cargo-c (cargo cinstall) is required; install the distro's cargo-c package")
-    with directory(tools.root):
+    with chdir(tools.root):
         tools.run(['rm', '-rf', '--', dest])
         for library in LIBRARIES:
             emit(f'== installing {library} into {dest} (backend: {backend}) ==')
@@ -1145,7 +1133,7 @@ def metadata(argv, tools):
                 'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO'):
         if key in settings.environment:
             tools.env[key] = settings.environment[key]
-    with directory(tools.root):
+    with chdir(tools.root):
         if backend:
             tools.run(['rm', '-rf', '--', values['subject_root']])
             layout = [f'--prefix={values["prefix"]}', f'--destdir={values["subject_root"]}']

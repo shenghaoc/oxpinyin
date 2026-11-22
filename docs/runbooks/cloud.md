@@ -161,18 +161,7 @@ Every run rewrites the file. A runner sources it first:
 . "$(just cache-root)/oracle.env"   # the Linux cell, kc
 ```
 
-The file also keeps the cells of other caches that the
-existing file names, if their saved prefixes still pass two checks:
-
-- the library hashes in the current pin/recipe provenance;
-- the prefix-local data-manifest checks.
-
-A cell that fails
-either check is removed, with one diagnostic that names the cell and the check.
-The file contains the verified retained cells and the verified cells of this cache, also
-when they use different cache directories. The cell is the one Linux cell, kc
-([Linux setup](setup.md#linux)): a Linux host provisions no other cell, and the file names
-no other. Setup publishes the complete file with an atomic rename.
+Setup verifies the current cache’s Linux cell (kc), checks its library and data manifests, and publishes the file with an atomic rename.
 
 The file exports:
 
@@ -188,15 +177,11 @@ The file exports:
 A cell that the setup did not
 provision stops the `source` with an error. The file is sourced from sh:
 every value is single-quoted, and a `case` on the quoted
-`PINYIN_ORACLE_DBM` selects the cell. A file without the current first line,
-is regenerated from the cells
-of the run, not read.
+`PINYIN_ORACLE_DBM` selects the cell.
 
 ### Data verification
 
-`Provision.data_ok` in `tools/dev/provision.py` checks the same data contract in three cases: when setup
-reuses a cache, when it verifies regenerated data, and when it keeps an existing cell in
-the environment file. The check does these steps:
+`Provision.data_ok` in `tools/dev/provision.py` checks cached and regenerated data and verifies the current prefix before publishing its environment. The check does these steps:
 
 1. It compares the SHA-256 of `oracle-data.sha256`
    with `data_manifest_sha256` in the own `oracle-pin.txt` of that prefix, and checks
@@ -272,7 +257,7 @@ by the inherited value. These sites set the path differently:
 | `measure callgrind-differential`: all launch sites | Each selected object's directory, then inheritance. |
 | `just abi` C++ header consumers | The gate clears `LD_LIBRARY_PATH` for the `ldd` check to verify that each executable resolves its SONAME to the build under test. |
 | `tools/oracle/build.py`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
-| `tools/dev/provision.py`: generated-path parsing and host-probe filtering; the cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
+| `tools/dev/provision.py`: environment generation and host-probe filtering; the cache-probe assignments | The host and selected cache are isolated during provisioning. |
 
 No measurement path is exempt as never-tkrzw. The profiling and packaging
 launches, and the Python contract, gcov, training and ordering tools, share

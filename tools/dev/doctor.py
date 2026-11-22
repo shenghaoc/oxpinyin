@@ -332,7 +332,7 @@ def identity(environ=None):
     """
     environ = os.environ if environ is None else environ
     reject_overrides(environ)
-    uv_version(environ)
+    uv = uv_version(environ)
     implementation = sys.implementation.name
     version = platform.python_version()
     if implementation != 'cpython':
@@ -341,7 +341,7 @@ def identity(environ=None):
     gil_disabled = sysconfig.get_config_var('Py_GIL_DISABLED')
     if gil_disabled:
         raise DoctorError('free-threaded CPython is not accepted; use the GIL-enabled build')
-    gil_enabled = getattr(sys, '_is_gil_enabled', lambda: True)()
+    gil_enabled = sys._is_gil_enabled()
     if not gil_enabled:
         raise DoctorError('the running CPython has the GIL disabled')
     # --system: the managed installation, not the project environment built on it.
@@ -361,7 +361,7 @@ def identity(environ=None):
     return dict(implementation=implementation, version=version,
                 gil_enabled=bool(gil_enabled), gil_disabled=bool(gil_disabled),
                 executable=str(executable), managed=True,
-                uv=uv_version(environ))
+                uv=uv)
 
 
 def _first_line(result):

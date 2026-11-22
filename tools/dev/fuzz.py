@@ -172,25 +172,14 @@ def tools_rule(environ, run=subprocess.run):
     return found
 
 
-def _option_letters(spec=AFL_FUZZ_OPTIONS):
-    """The option letters of a getopt string, and those that take a value."""
-    letters, valued = set(), set()
-    for index, letter in enumerate(spec):
-        if letter in '+:':
-            continue
-        letters.add(letter)
-        if spec[index + 1:index + 2] == ':':
-            valued.add(letter)
-    return letters, valued
-
-
 def refuse_options(args):
     """Refuse afl-fuzz arguments that break the recipe's assumptions, before any build.
 
     The recipe feeds each input on standard input, runs one instance and supplies
     the target command itself. The arguments are read as afl-fuzz reads them, so
     a value such as `-V 60` or `-x dict` is not taken for an option."""
-    _, valued = _option_letters()
+    valued = set(re.findall(r'([A-Za-z0-9]):', AFL_FUZZ_OPTIONS))
+    given = set()
     for argument in args:
         if '@@' in argument:
             raise FuzzError(f"refused '{argument}': @@ passes the target a file name; {STDIN}.")
@@ -203,6 +192,7 @@ def refuse_options(args):
             raise FuzzError(f"refused '{argument}': afl-fuzz would take it as the target command; "
                             'the recipe supplies the target command.')
         for position, letter in enumerate(argument[1:], start=1):
+            given.add(letter)
             if letter in REFUSED_OPTIONS:
                 raise FuzzError(f"refused '{argument}': {REFUSED_OPTIONS[letter]}.")
             if letter in valued:
@@ -210,57 +200,22 @@ def refuse_options(args):
                     index += 1  # the value is the next argument
                 break
         index += 1
-
-
-def given_options(args):
-    """The option letters that afl-fuzz arguments set, read as afl-fuzz reads them."""
-    _, valued = _option_letters()
-    given = set()
-    index = 0
-    while index < len(args):
-        argument = args[index]
-        if argument.startswith('-') and argument != '-':
-            for position, letter in enumerate(argument[1:], start=1):
-                given.add(letter)
-                if letter in valued:
-                    if position == len(argument) - 1:
-                        index += 1
-                    break
-        index += 1
     return given
 
 
-def default_options(target, args, fuzz=FUZZ):
+def default_options(target, given):
     """afl-fuzz options that TARGET gets unless ARGS set them: its dictionary and its input limit."""
-    given = given_options(args)
     added = []
     dictionary = DICTIONARIES.get(target)
     if dictionary is not None and 'x' not in given:
         added += ['-x', str(dictionary)]
     if target in LIMIT_FROM_CURATED and 'G' not in given:
-        added += ['-G', str(max(len(data) for _, _, data in curated_inputs(target, fuzz)))]
+        added += ['-G', str(max(len(data) for _, _, data in curated_inputs(target)))]
     return added
 
 
-def replace_file(source, destination):
-    """Write SOURCE's bytes to DESTINATION through a temporary file and a rename.
-
-    afl-fuzz hard-links its seed queue entries to the corpus files, and every
-    run directory is kept, so writing into an existing corpus file would change
-    an older run's queue entry. A rename gives the corpus path a new inode."""
-    destination = Path(destination)
-    handle, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.fuzz-')
-    try:
-        with os.fdopen(handle, 'wb') as written, open(source, 'rb') as read:
-            shutil.copyfileobj(read, written)
-        os.replace(temporary, destination)
-    except BaseException:
-        Path(temporary).unlink(missing_ok=True)
-        raise
-
-
 def write_file(data, destination):
-    """Write DATA to DESTINATION through a temporary file and a rename (see `replace_file`)."""
+    """Atomically replace DESTINATION without modifying files hard-linked into an earlier queue."""
     destination = Path(destination)
     handle, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.fuzz-')
     try:
@@ -327,9 +282,10 @@ def promote_queue(queue, corpus):
     if queue.is_dir():
         for entry in sorted(queue.iterdir()):
             if entry.is_file():
-                name = content_name(entry)
+                data = entry.read_bytes()
+                name = content_hash(data)
                 if name not in present:
-                    replace_file(entry, corpus / name)
+                    write_file(data, corpus / name)
                     present.add(name)
                     added += 1
     return added
@@ -755,7 +711,7 @@ def run(target, args, environ):
     seed issue, ran no input, or saved a crash or a hang."""
     require_linux()
     found = tools_rule(environ)
-    refuse_options(args)
+    given = refuse_options(args)
     guard = guard_duration(environ)
     built = build_target(target, environ, found)
     cmplog = []
@@ -779,7 +735,7 @@ def run(target, args, environ):
     # mapping (tools/dev/test_runner.py does the same).
     aslr = ['setarch', platform.machine(), '-R']
     log = run_directory / 'afl-fuzz.log'
-    defaults = default_options(target, args)
+    defaults = default_options(target, given)
     status, guard_stopped, startup = _tee([*aslr, str(built.afl_bin / 'afl-fuzz'), '-i', str(corpus), '-o',
                                            str(run_directory), '-m', 'none', *cmplog, *defaults, *args,
                                            '--', str(built.binary)], built.env, log, guard=guard)
