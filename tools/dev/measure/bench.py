@@ -32,6 +32,8 @@ from ..runners import Finished, emit, status as shell_status
 from tools.tkrzw.runtime import RuntimeRefused, check
 
 ROOT = Path(__file__).resolve().parents[3]
+# vcpkg manifest mode (vcpkg.json at the repository root) installs GLib and pkgconf here.
+VCPKG_INSTALLED = ROOT / 'vcpkg_installed/x64-windows'
 BISECT = ROOT / 'tools/bisection'
 DRIVER_PACKAGE = ROOT / 'tools/measurement'
 HARNESS_SOURCE = DRIVER_PACKAGE / 'src/workload.rs'

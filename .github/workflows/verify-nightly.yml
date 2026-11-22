@@ -44,10 +44,9 @@ jobs:
   fuzz-soak:
     # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
-    # The one Linux runner label in this workflow; the other Linux jobs
-    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
-    # move (26.04: actions/runner-images#14748) happens here under review.
-    runs-on: &ubuntu ubuntu-26.04
+    # Pinned, not ubuntu-latest, so a runner-image move
+    # (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: ubuntu-26.04
     # The "Prepare corpora" step has 30 min. The "Soak each target"
     # step has 60: the target builds take
     # up to 5 min, and each of the 7 targets runs under a FUZZ_GUARD_SECONDS
@@ -203,7 +202,7 @@ jobs:
   overflow-lane:
     # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
     if: ${{ !inputs.windows_only && !inputs.macos_only }}
-    runs-on: *ubuntu
+    runs-on: ubuntu-26.04
     # Twice a cold release build, which takes about 20 min with no Rust cache; the tests take seconds.
     timeout-minutes: 40
     defaults:
@@ -246,14 +245,13 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUSTFLAGS: -D warnings
-      # The package specs (port[features]:triplet) passed to `vcpkg install`,
-      # space-separated. The binary cache key hashes this value, so adding a
-      # port or feature here gives the cache a new key.
-      VCPKG_PACKAGES: glib:x64-windows pkgconf:x64-windows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Configure vcpkg binary cache
+        run: |
+          printf 'VCPKG_BINARY_SOURCES=clear;files,%s/vcpkg-binary-cache,readwrite\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: ./.github/actions/bootstrap
         with:
           rust-toolchain: 'true'
@@ -262,56 +260,39 @@ jobs:
           uv: 'true'
           just: 'true'
       - run: rustup show active-toolchain
-      # vcpkg's binary cache, persisted across runs. vcpkg writes one zip per
-      # built package, named by the package's ABI hash, to the files provider
-      # below, and `vcpkg install` still runs every time: it computes each
-      # ABI hash itself (port files, triplet, compiler, dependencies) and
-      # restores only an archive whose hash matches, so a stale entry is
-      # never used, only rebuilt. The installed tree is not cached.
-      #
-      # tools/dev/vcpkg.py holds the key, install and report steps; only the
-      # cache actions stay here. The vcpkg revision is the runner image's own
-      # checkout, read once in the key step. The cache key changes whenever an input to the
-      # ABI hashes can: that revision (ports and baseline), the triplet, the
-      # runner image (compiler and SDK) and the requested package specs
-      # (VCPKG_PACKAGES). This job installs no repository port, so no
-      # overlay or triplet file is hashed. The restore-keys fall
-      # back to the newest entry for the same revision and image, then for
-      # the same image OS and triplet; vcpkg's own hash check decides what in
-      # it is reusable.
-      #
-      # Restore and save are separate steps. The save runs right after
-      # `vcpkg install`, before the build and tests, so a red test run still
-      # keeps the archives it built. It runs only on main and is skipped when
-      # the restore matched the primary key exactly, because that entry
-      # already exists. A branch dispatch restores main's entry through the
-      # restore keys and writes nothing. The restore comes before the dependency
-      # action, so its pkgconf install reads the cache too.
-      - name: Compute the vcpkg binary cache key
-        id: vcpkg-cache-key
-        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg cache-key --triplet x64-windows --packages "$VCPKG_PACKAGES"
+      # The runner image and the vcpkg checkout it carries decide which port
+      # versions vcpkg builds. The env context does not hold the image's
+      # ImageVersion variable, so this step reads it, with the revision of the
+      # vcpkg that the install step runs, into outputs for the cache key. The
+      # key only starts a fresh entry; vcpkg's ABI hashes already keep an
+      # incompatible archive from being used.
+      - name: Identify the runner image and the vcpkg revision
+        id: vcpkg-identity
+        run: |
+          set -euo pipefail
+          vcpkg_root="$(dirname "$(command -v vcpkg)")"
+          revision="$(git -C "$vcpkg_root" rev-parse HEAD 2>/dev/null || echo unknown)"
+          printf 'image=%s\nrevision=%s\n' "${ImageVersion:-unknown}" "$revision" >> "$GITHUB_OUTPUT"
+      # Manifest mode keeps the Windows dependencies beside this checkout;
+      # the binary cache keeps vcpkg's content-addressed archives, not an
+      # installed tree. The manifest carries the same GLib, pkgconf and
+      # x64-windows request the job used before this migration.
       - name: Restore the vcpkg binary cache
-        id: vcpkg-cache-restore
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
-          key: ${{ steps.vcpkg-cache-key.outputs.key }}-pkgs-${{ steps.vcpkg-cache-key.outputs.packages }}
-          restore-keys: |
-            ${{ steps.vcpkg-cache-key.outputs.key }}-
-            ${{ steps.vcpkg-cache-key.outputs.prefix }}
-      - name: Report the vcpkg binary cache restore
-        env:
-          REQUESTED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
-          MATCHED_KEY: ${{ steps.vcpkg-cache-restore.outputs.cache-matched-key }}
-        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg cache-report
-      - name: Install GLib and pkgconf (vcpkg)
-        run: uv run --managed-python python -X utf8 -m tools.dev.vcpkg install --triplet x64-windows --packages "$VCPKG_PACKAGES"
-      - name: Save the vcpkg binary cache
-        if: steps.vcpkg-cache-restore.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.vcpkg-cache-key.outputs.dir }}
-          key: ${{ steps.vcpkg-cache-restore.outputs.cache-primary-key }}
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-x64-windows-${{ steps.vcpkg-identity.outputs.image }}-${{ steps.vcpkg-identity.outputs.revision }}-${{ hashFiles('vcpkg.json') }}
+      - name: Install manifest dependencies (vcpkg)
+        run: |
+          set -euo pipefail
+          vcpkg install --triplet x64-windows
+          installed="$GITHUB_WORKSPACE/vcpkg_installed/x64-windows"
+          pkgconf="$installed/tools/pkgconf/pkgconf.exe"
+          # GITHUB_ENV applies to the later steps, so the probe names its own search path.
+          PKG_CONFIG_PATH="$installed/lib/pkgconfig" "$pkgconf" --modversion --cflags --libs glib-2.0
+          printf 'PKG_CONFIG=%s\n' "$pkgconf" >> "$GITHUB_ENV"
+          printf 'PKG_CONFIG_PATH=%s\n' "$installed/lib/pkgconfig" >> "$GITHUB_ENV"
+          printf '%s\n' "$installed/bin" >> "$GITHUB_PATH"
       # Nothing packages tkrzw for Windows. The repository builds the pinned
       # revision (tools/tkrzw/pin.json) as a static library with
       # upstream's VCMakefile through nmake and the DLL C runtime, and puts
