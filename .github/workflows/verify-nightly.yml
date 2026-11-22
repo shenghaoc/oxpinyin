@@ -52,7 +52,7 @@ jobs:
     # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
     # move (26.04: actions/runner-images#14748) happens here under review.
     runs-on: &ubuntu ubuntu-26.04
-    # The "Minimize restored corpora" step has 30 min. The "Soak each target"
+    # The "Prepare corpora" step has 30 min. The "Soak each target"
     # step has 60: the target builds take
     # up to 5 min, and each of the 7 targets runs under a FUZZ_GUARD_SECONDS
     # (420 s) limit plus 30 s for the kill, 52.5 min in all. The guard holds
@@ -115,8 +115,8 @@ jobs:
       # Fuzzing memory, half one: the corpora persist across nightly runs
       # (latest-wins — the run-id key always misses so every run saves,
       # the prefix restore-key always loads the newest save), so a soak
-      # starts where the last one ended instead of from the single
-      # committed seed. Minimize the restore before re-copying the fixtures.
+      # starts where the last one ended instead of from the curated inputs
+      # alone. The next step adds the curated inputs and minimizes.
       - name: Restore the accumulated fuzz corpora
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -124,71 +124,19 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: |
             fuzz-corpus-
-      - name: Minimize restored corpora
-        # Each target uses the same ASan build and input timeout as the soak.
-        # A cmin seed issue fails the step and stays in seed-issues/ for upload;
-        # the original corpus is not replaced. Run every target even on failure.
+      - name: Prepare corpora
+        # just fuzz-minimize, per target: the restored inputs plus the target's
+        # curated inputs (fuzz/seeds/<target>, and the fixtures that
+        # tools/dev/fuzz.py names: the five MemoryChunk files for dict-loader,
+        # art.bin's payload for phrase-library, table.conf for table-conf),
+        # deduplicated by content. A missing curated input fails. Each curated
+        # input runs alone through the target's ASan build first; then afl-cmin
+        # minimizes, and a curated input that it dropped is put back. A failing
+        # input stays in seed-issues/, with its output, for upload; the
+        # restored corpus is not replaced. Run every target even on failure.
         timeout-minutes: 30
         working-directory: fuzz
         run: just fuzz-minimize
-      - name: Seed corpora
-        # The five MemoryChunk files of the Kyoto Cabinet cell (byte-identical
-        # across the cells, fixtures/w3/README.md) and the committed
-        # capi-commands command streams, named one by one: a seed that
-        # goes missing fails the step rather than silently shrinking the
-        # corpus.
-        run: |
-          seeds=(
-            fixtures/w3/kct/gb_char.bin
-            fixtures/w3/kct/gbk_char.bin
-            fixtures/w3/kct/opengram.bin
-            fixtures/w3/kct/merged.bin
-            fixtures/w3/kct/art.bin
-          )
-          capi_seeds=(
-            fuzz/seeds/capi-commands/choose
-            fuzz/seeds/capi-commands/double-pinyin
-            fuzz/seeds/capi-commands/first-run
-            fuzz/seeds/capi-commands/import-export
-            fuzz/seeds/capi-commands/stale-sentence
-          )
-          status=0
-          for seed in "${seeds[@]}" "${capi_seeds[@]}"; do
-            if [ ! -f "$seed" ]; then
-              echo "::error::missing seed $seed"
-              status=1
-            fi
-          done
-          [ "$status" -eq 0 ] || exit "$status"
-          mkdir -p fuzz/corpus/dict-loader
-          cp "${seeds[@]}" fuzz/corpus/dict-loader/
-          # dict-loader reads whole files. A mutation longer than its input
-          # limit is cut, and the chunk length check then refuses the file
-          # before any decoding. The soak step gives this target alone a
-          # limit (afl-fuzz -G) that admits its largest seed.
-          largest=0
-          for seed in "${seeds[@]}"; do
-            size=$(($(wc -c < "$seed")))
-            if [ "$size" -gt "$largest" ]; then
-              largest=$size
-            fi
-          done
-          echo "DICT_LOADER_MAX_LEN=$largest" >> "$GITHUB_ENV"
-          # phrase-library writes its own chunk header in front of the input,
-          # so its seed is a payload: art.bin, which holds four items, without
-          # its 8-byte header.
-          mkdir -p fuzz/corpus/phrase-library
-          tail -c +9 fixtures/w3/kct/art.bin > fuzz/corpus/phrase-library/art.payload
-          # capi-commands: one stream per operation that no mutation of an
-          # empty corpus reaches soon (fuzz/fuzz_targets/capi_commands.rs
-          # gives the byte layout). just fuzz also copies fuzz/seeds/<target>;
-          # naming them here fails the step when one goes missing.
-          mkdir -p fuzz/corpus/capi-commands
-          cp "${capi_seeds[@]}" fuzz/corpus/capi-commands/
-          # table-conf: libc scans the header, so no coverage feedback leads a
-          # mutation to a valid one. A real file starts the target past it.
-          mkdir -p fuzz/corpus/table-conf
-          cp fixtures/w3/kct/table.conf fuzz/corpus/table-conf/
       - name: Soak each target
         # Every target runs even if an earlier one fails; the accumulated
         # status is the step's exit code. just fuzz builds the target with
@@ -216,34 +164,40 @@ jobs:
           status=0
           for target in "${targets[@]}"; do
             echo "::group::fuzz $target"
-            # The Seed step computed dict-loader's input limit from its seeds.
-            max_len=4096
+            # dict-loader's input limit admits its largest curated input; just
+            # fuzz sets it. The other targets take 4096 bytes.
+            limit=(-G 4096)
             if [ "$target" = dict-loader ]; then
-              max_len=$DICT_LOADER_MAX_LEN
+              limit=()
             fi
-            if ! just fuzz "$target" -V "$FUZZ_SECONDS" -G "$max_len"; then
+            if ! just fuzz "$target" -V "$FUZZ_SECONDS" "${limit[@]}"; then
               status=1
               echo "::error::fuzz target $target failed"
             fi
             echo "::endgroup::"
           done
           exit $status
-      # Fuzzing memory, half two: a crash survives the runner as an
-      # artifact, not as a log line that dies with the job. just fuzz gives
-      # each run its own directory, fuzz/out/<target>/<run>/: afl-fuzz writes
-      # crashing and hanging inputs under default/, and the recipe keeps a
-      # seed that crashes or times out in seed-issues/ and afl-fuzz's output
-      # in afl-fuzz.log.
+      # Fuzzing memory, half two: a failed night survives the runner as an
+      # artifact, not as a log line that dies with the job. The cache saves
+      # only on success, so the artifact also keeps what the night found.
+      # just fuzz gives each run its own directory, fuzz/out/<target>/<run>/:
+      # afl-fuzz writes its queue and the crashing and hanging inputs under
+      # default/, and the recipe keeps a failing curated input or seed in
+      # seed-issues/ and afl-fuzz's output in afl-fuzz.log. AFL++ names
+      # inputs with ':', which an artifact's file name cannot hold, so the
+      # archive step packs the queue, findings and seed issues of every run
+      # directory, passed and stopped runs included, into one file.
+      - name: Archive fuzz inputs
+        if: failure()
+        run: uv run --managed-python python -X utf8 -m tools.dev.fuzz archive fuzz/out/fuzz-inputs.tar.gz
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-crash-artifacts
           path: |
-            fuzz/out/*/*/default/crashes/
-            fuzz/out/*/*/default/hangs/
+            fuzz/out/fuzz-inputs.tar.gz
             fuzz/out/*/*/default/fuzzer_stats
-            fuzz/out/*/*/seed-issues/
             fuzz/out/*/*/afl-cmin.log
             fuzz/out/*/*/afl-fuzz.log
 

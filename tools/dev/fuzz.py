@@ -10,12 +10,14 @@ once in `tools_rule`, decides which installation `run` accepts, and `just
 doctor` asks the same function.
 
 `setup` installs cargo-afl and builds its bundled AFL++ with the LLVM plugins,
-against the LLVM of the fuzz nightly. `run` builds one target with
-AddressSanitizer, the plugins and AFL++ persistent mode, runs afl-fuzz in a
-new run directory and fails on any finding
-(docs/testing/upstream-test-coverage.md#fuzz-harness). Each target builds the
-host's cell (`backend_flags`): Kyoto Cabinet on Linux, the one host that
-fuzzes (tools/dev/cell.py).
+against the LLVM of the fuzz nightly. `minimize` prepares a target's corpus:
+the restored inputs and the target's curated inputs, replayed one by one, then
+afl-cmin. `run` builds one target with AddressSanitizer, the plugins and AFL++
+persistent mode, runs afl-fuzz in a new run directory and fails on any finding
+(docs/testing/upstream-test-coverage.md#fuzz-harness). `archive` packs the
+inputs of every run directory for upload. Each target builds the host's cell
+(`backend_flags`): Kyoto Cabinet on Linux, the one host that fuzzes
+(tools/dev/cell.py).
 """
 
 if __name__ == '__main__':
@@ -36,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import tarfile
 import time
 import tomllib
 from typing import NamedTuple
@@ -45,6 +48,24 @@ FUZZ = ROOT / 'fuzz'
 LOCKFILE = FUZZ / 'Cargo.lock'
 SETUP = 'just fuzz-setup'
 
+# The inputs of each target that the corpus must always hold, beyond
+# fuzz/seeds/<target>: (corpus name, source relative to the checkout, bytes
+# to skip at the start). The MemoryChunk files are the Kyoto Cabinet cell's,
+# byte-identical across the cells (fixtures/w3/README.md). phrase-library
+# writes its own chunk header in front of the input, so its input is a
+# payload: art.bin, which holds four items, without its 8-byte header.
+# table-conf: libc scans the header, so no coverage feedback leads a mutation
+# to a valid one; a real file starts the target past it.
+CURATED_FIXTURES = {
+    'dict-loader': tuple((name, f'fixtures/w3/kct/{name}', 0)
+                         for name in ('gb_char.bin', 'gbk_char.bin', 'opengram.bin', 'merged.bin', 'art.bin')),
+    'phrase-library': (('art.payload', 'fixtures/w3/kct/art.bin', 8),),
+    'table-conf': (('table.conf', 'fixtures/w3/kct/table.conf', 0),),
+}
+# dict-loader reads whole files. A mutation longer than afl-fuzz's input limit
+# is cut, and the chunk length check then refuses the file before any
+# decoding, so its default limit (-G) admits its largest curated input.
+LIMIT_FROM_CURATED = {'dict-loader'}
 DENYLIST = FUZZ / 'instrument-denylist.txt'
 
 # afl-fuzz's option string in AFL++ 4.40c (src/afl-fuzz.c, the getopt call in
@@ -67,6 +88,8 @@ ASAN_OPTIONS = 'abort_on_error=1:symbolize=0:detect_leaks=1:detect_odr_violation
 LSAN_OPTIONS = 'detect_leaks=1:fast_unwind_on_malloc=1:malloc_context_size=30:print_suppressions=0:symbolize=0'
 PLUGINS = 'afl-llvm-dict2file, split-switches, SanitizerCoveragePCGUARD, afl-llvm-ijon'
 TIMEOUT_MS = '15000'
+# The curated replay's limit per input, the same as afl-cmin's.
+REPLAY_TIMEOUT_MS = 15000
 # MAP_SIZE of AFL++ 4.40c (include/config.h), the runtime's default map size.
 CMIN_MAP_SIZE = '65536'
 GUARD_GRACE_SECONDS = 30
@@ -183,6 +206,33 @@ def refuse_options(args):
         index += 1
 
 
+def given_options(args):
+    """The option letters that afl-fuzz arguments set, read as afl-fuzz reads them."""
+    _, valued = _option_letters()
+    given = set()
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument.startswith('-') and argument != '-':
+            for position, letter in enumerate(argument[1:], start=1):
+                given.add(letter)
+                if letter in valued:
+                    if position == len(argument) - 1:
+                        index += 1
+                    break
+        index += 1
+    return given
+
+
+def default_options(target, args, fuzz=FUZZ):
+    """afl-fuzz options that TARGET gets unless ARGS set them: its input limit."""
+    given = given_options(args)
+    added = []
+    if target in LIMIT_FROM_CURATED and 'G' not in given:
+        added += ['-G', str(max(len(data) for _, _, data in curated_inputs(target, fuzz)))]
+    return added
+
+
 def replace_file(source, destination):
     """Write SOURCE's bytes to DESTINATION through a temporary file and a rename.
 
@@ -200,18 +250,57 @@ def replace_file(source, destination):
         raise
 
 
+def write_file(data, destination):
+    """Write DATA to DESTINATION through a temporary file and a rename (see `replace_file`)."""
+    destination = Path(destination)
+    handle, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.fuzz-')
+    try:
+        with os.fdopen(handle, 'wb') as written:
+            written.write(data)
+        os.replace(temporary, destination)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
 def content_name(path):
-    return hashlib.sha1(Path(path).read_bytes()).hexdigest()
+    return content_hash(Path(path).read_bytes())
+
+
+def content_hash(data):
+    return hashlib.sha1(data).hexdigest()
+
+
+def curated_inputs(target, fuzz=FUZZ):
+    """TARGET's curated inputs as (corpus name, source, bytes): fuzz/seeds/<target>, then its fixtures.
+
+    A fixture that is missing fails, so a lost input cannot shrink the corpus unnoticed."""
+    inputs = []
+    seeds = fuzz / 'seeds' / target
+    if seeds.is_dir():
+        inputs += [(seed.name, seed, seed.read_bytes()) for seed in sorted(seeds.iterdir()) if seed.is_file()]
+    for name, relative, skip in CURATED_FIXTURES.get(target, ()):
+        source = fuzz.parent / relative
+        if not source.is_file():
+            raise FuzzError(f'{target}: the curated input {relative} is missing.')
+        inputs.append((name, source, source.read_bytes()[skip:]))
+    return inputs
 
 
 def seed_corpus(target, corpus, fuzz=FUZZ):
-    """Copy fuzz/seeds/<target> into the corpus; one byte stands for an empty corpus."""
+    """Write TARGET's curated inputs into the corpus by name; one byte stands for an empty corpus.
+
+    A corpus file that has a curated input's name but other content is kept
+    under its content name, so no distinct input is lost. It is renamed, not
+    copied: a queue entry that afl-fuzz linked to it keeps its bytes."""
     corpus.mkdir(parents=True, exist_ok=True)
-    seeds = fuzz / 'seeds' / target
-    if seeds.is_dir():
-        for seed in sorted(seeds.iterdir()):
-            if seed.is_file():
-                replace_file(seed, corpus / seed.name)
+    for name, _, data in curated_inputs(target, fuzz):
+        destination = corpus / name
+        if destination.is_file() and destination.read_bytes() != data:
+            kept = corpus / content_name(destination)
+            if not kept.exists():
+                os.replace(destination, kept)
+        write_file(data, destination)
     if not any(corpus.iterdir()):
         (corpus / 'one-byte').write_bytes(b'\0')
 
@@ -480,24 +569,81 @@ def _tee(command, environ, log, guard=None, grace=GUARD_GRACE_SECONDS):
     return status, stopped.is_set(), startup[0] if startup else None
 
 
-def minimize_corpus(target, corpus, run_directory, built):
-    """Minimize a corpus without replacing it when cmin reports a seed issue."""
+def replay_curated(target, curated, run_directory, built):
+    """Run each curated input alone through the target's standard input; return the failures.
+
+    A failing input keeps its bytes and its output in <run>/seed-issues/, under
+    its corpus name, with the source in the message."""
+    failed = []
+    issues = run_directory / 'seed-issues'
+    for name, source, data in curated:
+        try:
+            # setarch -R, as for afl-fuzz (see `run`).
+            result = subprocess.run(['setarch', platform.machine(), '-R', str(built.binary)], input=data, capture_output=True, env=built.env, cwd=FUZZ,
+                         timeout=REPLAY_TIMEOUT_MS / 1000, check=False)
+            problem = f'exit status {result.returncode}' if result.returncode else None
+            output = result.stdout + result.stderr
+        except subprocess.TimeoutExpired as error:
+            problem = f'no exit within {REPLAY_TIMEOUT_MS} ms'
+            output = (error.stdout or b'') + (error.stderr or b'')
+        if problem:
+            issues.mkdir(exist_ok=True)
+            (issues / name).write_bytes(data)
+            (issues / f'{name}.log').write_bytes(output)
+            failed.append(f'{name} (from {source}): {problem}')
+    return failed
+
+
+def stage_inputs(target, corpus, staging, curated):
+    """Stage the restored corpus and the curated inputs, one file per content.
+
+    A curated input keeps its own name. A restored file is staged under its
+    content name, unless that content is already staged, so a restored file
+    whose name is a curated input's but whose content differs is kept."""
+    staging.mkdir()
+    staged = set()
+    for name, _, data in curated:
+        if content_hash(data) not in staged:
+            staged.add(content_hash(data))
+            (staging / name).write_bytes(data)
+    if corpus.is_dir():
+        for path in sorted(corpus.iterdir()):
+            if path.is_file():
+                name = content_name(path)
+                if name not in staged:
+                    staged.add(name)
+                    shutil.copyfile(path, staging / name)
+    if not staged:
+        (staging / 'one-byte').write_bytes(b'\0')
+    return sum(path.is_file() for path in staging.iterdir())
+
+
+def minimize_corpus(target, corpus, run_directory, built, curated=None):
+    """Prepare a target's corpus; replace it only when every step succeeds.
+
+    The restored inputs and the curated inputs are staged and deduplicated by
+    content; each curated input is replayed alone; afl-cmin minimizes the
+    staging; a curated input that afl-cmin dropped is put back. A failure at
+    any step leaves the corpus as it was."""
     corpus.parent.mkdir(parents=True, exist_ok=True)
     if corpus.exists() and not corpus.is_dir():
         raise FuzzError(f'{target}: corpus is not a directory: {corpus}.')
+    if curated is None:
+        curated = curated_inputs(target)
     issues = run_directory / 'seed-issues'
     log = run_directory / 'afl-cmin.log'
+    failed = replay_curated(target, curated, run_directory, built)
+    if failed:
+        raise FuzzError(f'{target}: curated inputs fail on their own; they are in {issues}: ' + '; '.join(failed)
+                        + '. The corpus was not replaced.')
     with tempfile.TemporaryDirectory(prefix=f'.{target}-cmin-', dir=corpus.parent) as temporary:
         staging = Path(temporary)
-        source = corpus
-        if not corpus.is_dir() or not any(path.is_file() for path in corpus.iterdir()):
-            source = staging / 'seeds'
-            seed_corpus(target, source)
-        before = sum(path.is_file() for path in source.iterdir())
+        source = staging / 'inputs'
+        before = stage_inputs(target, corpus, source, curated)
         minimized = staging / 'minimized'
         command = ['setarch', platform.machine(), '-R', str(built.afl_bin / 'afl-cmin'),
                    '-i', str(source), '-o', str(minimized), '--crash-dir', str(issues),
-                   '-t', TIMEOUT_MS, '-m', 'none', '--', str(built.binary)]
+                   '-t', str(REPLAY_TIMEOUT_MS), '-m', 'none', '--', str(built.binary)]
         cmin_env = dict(built.env, AFL_PATH=str(built.afl_bin))
         # afl-cmin otherwise passes afl-showmap the map size that the binary
         # reports, and afl-showmap makes its shared memory that size. A
@@ -520,6 +666,13 @@ def minimize_corpus(target, corpus, run_directory, built):
         after = sum(path.is_file() for path in minimized.iterdir()) if minimized.is_dir() else 0
         if not after:
             raise FuzzError(f'{target}: afl-cmin produced no inputs; the corpus was not replaced.')
+        kept = {content_name(path) for path in minimized.iterdir() if path.is_file()}
+        restored = 0
+        for name, _, data in curated:
+            if content_hash(data) not in kept:
+                (minimized / name).write_bytes(data)
+                kept.add(content_hash(data))
+                restored += 1
         original = staging / 'original'
         if corpus.exists():
             os.replace(corpus, original)
@@ -529,8 +682,8 @@ def minimize_corpus(target, corpus, run_directory, built):
             if original.exists():
                 os.replace(original, corpus)
             raise
-    seed_corpus(target, corpus)
-    print(f'fuzz: {target}: afl-cmin {before} -> {after} inputs in {elapsed:.1f} s')
+    print(f'fuzz: {target}: afl-cmin {before} -> {after} inputs in {elapsed:.1f} s, '
+          f'{restored} curated inputs put back')
 
 
 def minimize(target, environ):
@@ -582,7 +735,8 @@ def run(target, args, environ):
 
     The target is built with AddressSanitizer, the AFL++ LLVM plugins
     (cargo-afl fails if the plugins are absent) and the persistent-mode entry
-    point. FUZZ_CMPLOG=1 adds a CmpLog
+    point. A target's input limit applies unless ARGS set -G
+    (`default_options`). FUZZ_CMPLOG=1 adds a CmpLog
     binary, run through afl-fuzz -c. afl-fuzz reads corpus/<target> and writes a
     new run directory, out/<target>/<UTC time>-<pid>, so a run never deletes an
     earlier run's findings. ARGS go to afl-fuzz. FUZZ_GUARD_SECONDS stops
@@ -614,8 +768,9 @@ def run(target, args, environ):
     # mapping (tools/dev/test_runner.py does the same).
     aslr = ['setarch', platform.machine(), '-R']
     log = run_directory / 'afl-fuzz.log'
+    defaults = default_options(target, args)
     status, guard_stopped, startup = _tee([*aslr, str(built.afl_bin / 'afl-fuzz'), '-i', str(corpus), '-o',
-                                           str(run_directory), '-t', TIMEOUT_MS, '-m', 'none', *cmplog, *args,
+                                           str(run_directory), '-t', TIMEOUT_MS, '-m', 'none', *cmplog, *defaults, *args,
                                            '--', str(built.binary)], built.env, log, guard=guard)
     if startup is not None:
         print(f'fuzz: {target}: startup {startup:.1f} s')
@@ -651,7 +806,35 @@ def run(target, args, environ):
     return 1 if failed else 0
 
 
-USAGE = 'usage: python -m tools.dev.fuzz setup | minimize [target] | run <target> [afl-fuzz options]'
+# Per run directory, the inputs that the archive keeps. AFL++ names them with
+# ':' (id:000000,...), which an uploaded artifact's file name cannot hold.
+ARCHIVED = ('default/queue', 'default/crashes', 'default/hangs', 'seed-issues')
+
+
+def archive(destination, out=FUZZ / 'out'):
+    """Pack the queue, findings and seed issues of every run directory into a gzip tar file.
+
+    Runs that ended early and runs of targets that passed are packed too.
+    Return the number of files packed."""
+    destination = Path(destination).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    packed = 0
+    with tarfile.open(destination, 'w:gz') as written:
+        for run_directory in sorted(out.glob('*/*')):
+            for relative in ARCHIVED:
+                directory = run_directory / relative
+                if not directory.is_dir():
+                    continue
+                for path in sorted(directory.iterdir()):
+                    if path.is_file() and path.resolve() != destination:
+                        written.add(path, arcname=str(path.relative_to(out)))
+                        packed += 1
+    print(f'fuzz: archived {packed} inputs in {destination}')
+    return packed
+
+
+USAGE = ('usage: python -m tools.dev.fuzz setup | minimize [target] | run <target> [afl-fuzz options] '
+         '| archive <file>')
 
 
 def main(argv, environ=None):
@@ -665,6 +848,9 @@ def main(argv, environ=None):
             return minimize(argv[1], environ)
         if argv[:1] == ['run'] and len(argv) >= 2:
             return run(argv[1], argv[2:], environ)
+        if argv[:1] == ['archive'] and len(argv) == 2:
+            archive(argv[1])
+            return 0
     except FuzzError as error:
         print(f'fuzz: {error}', file=sys.stderr)
         return 1

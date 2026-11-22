@@ -50,6 +50,14 @@ class OptionTests(unittest.TestCase):
             with self.subTest(args=args):
                 fuzz.refuse_options(args)
 
+    def test_a_target_gets_its_input_limit_unless_given(self):
+        largest = max(len(data) for _, _, data in fuzz.curated_inputs('dict-loader'))
+        self.assertEqual(fuzz.default_options('dict-loader', []), ['-G', str(largest)])
+        self.assertEqual(fuzz.default_options('dict-loader', ['-G', '4096']), [])
+        # A value is not read as an option.
+        self.assertEqual(fuzz.default_options('dict-loader', ['-V', '-G']), ['-G', str(largest)])
+        self.assertEqual(fuzz.default_options('chewing-parser', ['-G', '4096']), [])
+
     def test_the_option_string_is_afl_fuzz_440c(self):
         letters, valued = fuzz._option_letters()
         self.assertTrue({'f', 'M', 'S', 'V', 'x', 'c', 'i', 'o'} <= valued)
@@ -73,7 +81,11 @@ class CorpusTests(unittest.TestCase):
         fuzz.seed_corpus('probe', corpus, fuzz=self.directory)
         self.assertEqual((corpus / 'one').read_bytes(), b'second')
         self.assertEqual(queue_entry.read_bytes(), b'first')
-        self.assertEqual(sorted(path.name for path in corpus.iterdir()), ['one'])
+        # The earlier content shares the curated name but differs, so it stays under its content name.
+        self.assertEqual({path.name: path.read_bytes() for path in corpus.iterdir()},
+                         {'one': b'second', fuzz.content_hash(b'first'): b'first'})
+        fuzz.seed_corpus('probe', corpus, fuzz=self.directory)
+        self.assertEqual(len(list(corpus.iterdir())), 2)
 
     def test_an_empty_corpus_gets_one_byte(self):
         corpus = self.directory / 'corpus' / 'empty'
@@ -186,11 +198,102 @@ class CorpusTests(unittest.TestCase):
             (issues / 'bad').write_bytes(b'bad')
             return 0, False, None
 
+        # The curated replay passes; afl-cmin reports the issue.
         with mock.patch.object(fuzz, '_tee', side_effect=cmin), \
+                mock.patch.object(fuzz, 'replay_curated', return_value=[]), \
                 self.assertRaisesRegex(fuzz.FuzzError, 'seeds that crash or time out'):
             fuzz.minimize_corpus('capi-commands', corpus, run, built)
         self.assertEqual({p.name: p.read_bytes() for p in corpus.iterdir()}, {'choose': b'cached input'})
         self.assertEqual((run / 'seed-issues' / 'bad').read_bytes(), b'bad')
+
+    def test_a_curated_input_that_fails_alone_keeps_the_corpus(self):
+        corpus = self.directory / 'corpus' / 'probe'
+        corpus.mkdir(parents=True)
+        (corpus / 'cached').write_bytes(b'cached')
+        run = self.directory / 'run'
+        run.mkdir()
+        built = mock.Mock(binary=self.directory / 'target', env={'ASAN_OPTIONS': 'x'})
+        curated = [('good', Path('fuzz/seeds/probe/good'), b'good'), ('bad', Path('fixtures/bad'), b'bad')]
+
+        def replay(command, input, **kwargs):
+            self.assertEqual(command[-1], str(built.binary))
+            self.assertEqual(kwargs['env'], built.env)
+            return mock.Mock(returncode=0 if input == b'good' else -6, stdout=b'', stderr=b'ERROR: AddressSanitizer')
+
+        with mock.patch.object(fuzz.subprocess, 'run', side_effect=replay), \
+                mock.patch.object(fuzz, '_tee') as cmin, \
+                self.assertRaisesRegex(fuzz.FuzzError, r'bad \(from fixtures/bad\): exit status -6\. '
+                                                       r'The corpus was not replaced\.$'):
+            fuzz.minimize_corpus('probe', corpus, run, built, curated=curated)
+        cmin.assert_not_called()
+        self.assertEqual({p.name: p.read_bytes() for p in corpus.iterdir()}, {'cached': b'cached'})
+        self.assertEqual((run / 'seed-issues' / 'bad').read_bytes(), b'bad')
+        self.assertIn(b'AddressSanitizer', (run / 'seed-issues' / 'bad.log').read_bytes())
+
+    def test_minimization_stages_by_content_and_puts_curated_inputs_back(self):
+        corpus = self.directory / 'corpus' / 'probe'
+        corpus.mkdir(parents=True)
+        (corpus / fuzz.content_hash(b'seed')).write_bytes(b'seed')  # a promoted copy of a curated input
+        (corpus / 'found').write_bytes(b'found')
+        (corpus / 'fixture').write_bytes(b'restored')  # a curated input's name, other content
+        run = self.directory / 'run'
+        run.mkdir()
+        built = mock.Mock(afl_bin=self.directory / 'afl', binary=self.directory / 'target', env={})
+        curated = [('seed', Path('seed'), b'seed'), ('fixture', Path('fixture'), b'fixture')]
+
+        def cmin(command, environ, log):
+            source = Path(command[command.index('-i') + 1])
+            self.assertEqual({p.name: p.read_bytes() for p in source.iterdir()},
+                             {'seed': b'seed', 'fixture': b'fixture', fuzz.content_hash(b'found'): b'found',
+                              fuzz.content_hash(b'restored'): b'restored'})
+            output = Path(command[command.index('-o') + 1])
+            output.mkdir()
+            for data in (b'found', b'restored'):
+                (output / fuzz.content_hash(data)).write_bytes(data)
+            return 0, False, None
+
+        with mock.patch.object(fuzz, '_tee', side_effect=cmin), \
+                mock.patch.object(fuzz, 'replay_curated', return_value=[]):
+            fuzz.minimize_corpus('probe', corpus, run, built, curated=curated)
+        self.assertEqual({p.name: p.read_bytes() for p in corpus.iterdir()},
+                         {fuzz.content_hash(b'found'): b'found', fuzz.content_hash(b'restored'): b'restored',
+                          'seed': b'seed', 'fixture': b'fixture'})
+
+    def test_curated_inputs_include_the_fixtures_and_refuse_a_missing_one(self):
+        names = {name: data for name, _, data in fuzz.curated_inputs('phrase-library')}
+        art = (fuzz.ROOT / 'fixtures/w3/kct/art.bin').read_bytes()
+        self.assertEqual(names, {'art.payload': art[8:]})
+        self.assertEqual([name for name, _, _ in fuzz.curated_inputs('capi-commands')],
+                         ['choose', 'double-pinyin', 'first-run', 'import-export', 'stale-sentence'])
+        (self.directory / 'fuzz').mkdir()
+        with self.assertRaisesRegex(fuzz.FuzzError, r'^table-conf: the curated input fixtures/w3/kct/table\.conf '
+                                                    r'is missing\.$'):
+            fuzz.curated_inputs('table-conf', fuzz=self.directory / 'fuzz')
+
+    if os.name == 'posix':
+        def test_the_archive_keeps_every_runs_inputs_under_their_afl_names(self):
+            out = self.directory / 'out'
+            for target, run_name in (('first', 'passed'), ('second', 'stopped')):
+                queue = out / target / run_name / 'default' / 'queue'
+                (queue / '.state').mkdir(parents=True)
+                (queue / 'id:000000,time:0,orig:seed').write_bytes(target.encode())
+                (queue / fuzz.content_hash(b'x')).write_bytes(b'x')
+            crashes = out / 'second' / 'stopped' / 'default' / 'crashes'
+            crashes.mkdir()
+            (crashes / 'id:000000,sig:06').write_bytes(b'crash')
+            (out / 'second' / 'stopped' / 'afl-fuzz.log').write_text('not an input')
+            destination = self.directory / 'inputs.tar.gz'
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(fuzz.archive(destination, out=out), 5)
+            import tarfile
+            with tarfile.open(destination) as packed:
+                self.assertEqual(sorted(packed.getnames()), sorted([
+                    'first/passed/default/queue/id:000000,time:0,orig:seed',
+                    f'first/passed/default/queue/{fuzz.content_hash(b"x")}',
+                    'second/stopped/default/queue/id:000000,time:0,orig:seed',
+                    f'second/stopped/default/queue/{fuzz.content_hash(b"x")}',
+                    'second/stopped/default/crashes/id:000000,sig:06',
+                ]))
 
     def test_guard_and_fuzzer_status_report_the_observed_failure(self):
         stats = self.directory / 'stats'
