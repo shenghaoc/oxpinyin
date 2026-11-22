@@ -218,7 +218,7 @@ def campaign(args, env):
                     native_rounds=getattr(args, 'native_rounds', 0),
                     native_iterations=getattr(args, 'native_iterations', 20),
                     captured_utc=bench.utc_now(), system_dir=str(args.system_dir),
-                    kernel=identity.uname('srvm'), cpu_model=identity.cpu_model(),
+                    kernel=identity.kernel(), cpu_model=identity.cpu_model(),
                     libraries={arm: dict(path=str(path), sha256=identity.sha256(path))
                                for arm, path in libraries.items()},
                     sources=dict(main=str(args.main), pr=str(args.pr), pin=str(args.pin)),

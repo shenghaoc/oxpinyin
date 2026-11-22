@@ -3,26 +3,22 @@
 A record whose subject cannot be named is not a record, so the runners write
 what the numbers depend on before taking any: the kernel, the CPU, the tool
 versions and a digest of each artifact. These are the readers behind those
-tables. Each takes the proc root and the command runner as parameters, so the
-tables are built from fixtures on any platform; the defaults read the real host.
-Standard library only.
+tables. Standard library only.
 """
 import hashlib
 from pathlib import Path
 import platform
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
-from .. import host
 from . import bench
 
 PROC = Path('/proc')
-Run = Callable[..., 'bench.pool.Completed'] | None    # None: bench.capture, looked up at call time
 
 
-def library_backend(library, *, run: Run = None):
+def library_backend(library):
     """Identify the linked object's backend, not the caller's environment."""
-    result = (run or bench.capture)(['readelf', '-dW', library])
+    result = bench.capture(['readelf', '-dW', library])
     if result.status:
         raise ValueError('cannot read library backend: ' + result.stderr.decode(errors='replace'))
     needed = re.findall(r'\(NEEDED\).*\[([^]]+)\]', result.stdout.decode())
@@ -38,28 +34,14 @@ def library_backend(library, *, run: Run = None):
 
 def sha256(path) -> str:
     """The hex SHA-256 digest of the file at PATH."""
-    digest = hashlib.sha256()
     with open(path, 'rb') as stream:
-        for block in iter(lambda: stream.read(1 << 20), b''):
-            digest.update(block)
-    return digest.hexdigest()
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def uname(flags: str = 'srm') -> str:
-    """The fields `uname -FLAGS` prints, in the order of FLAGS (s, r, v, m)."""
-    names = platform.uname()    # os.uname() on POSIX; Windows has no os.uname
-    fields = {'s': names.system, 'r': names.release, 'v': names.version, 'm': names.machine}
-    return ' '.join(fields[flag] for flag in flags)
-
-
-def processors(proc: Path = PROC, cgroup_root: Path = Path('/sys/fs/cgroup')) -> int:
-    """The CPUs this process may use: its affinity set held to the smallest cgroup CPU quota, rounded up.
-
-    The shell runners printed GNU `nproc`, which rounds a fractional cgroup v2 quota to the nearest CPU,
-    reads no cgroup v1 quota and honours OMP_NUM_THREADS and OMP_THREAD_LIMIT. This count is the budget
-    that cargo's job default uses.
-    """
-    return host.cpu_snapshot(proc, cgroup_root)['cargo_cpus']
+def kernel() -> str:
+    """System, release, version and machine in the recorded kernel field."""
+    names = platform.uname()
+    return f'{names.system} {names.release} {names.version} {names.machine}'
 
 
 def _first_line(path: Path, needle: str) -> str | None:
@@ -73,38 +55,38 @@ def _first_line(path: Path, needle: str) -> str | None:
     return None
 
 
-def cpu_model(proc: Path = PROC) -> str:
+def cpu_model() -> str:
     """The first `model name` of /proc/cpuinfo without its label; empty where it has none (arm64)."""
-    line = _first_line(proc / 'cpuinfo', 'model name')
+    line = _first_line(PROC / 'cpuinfo', 'model name')
     return '' if line is None else line.partition(':')[2].lstrip(' ')
 
 
-def memory_total(proc: Path = PROC) -> str:
+def memory_total() -> str:
     """The MemTotal line of /proc/meminfo as it reads; empty where there is none."""
-    return _first_line(proc / 'meminfo', 'MemTotal') or ''
+    return _first_line(PROC / 'meminfo', 'MemTotal') or ''
 
 
-def perf_event_paranoid(proc: Path = PROC) -> str:
+def perf_event_paranoid() -> str:
     """The kernel's perf_event_paranoid setting, or `unknown` where it cannot be read."""
     try:
-        return (proc / 'sys/kernel/perf_event_paranoid').read_text().rstrip('\n')
+        return (PROC / 'sys/kernel/perf_event_paranoid').read_text().rstrip('\n')
     except OSError:
         return 'unknown'
 
 
-def first_output_line(command: Sequence, *, run: Run = None) -> str:
+def first_output_line(command: Sequence, *, env=None) -> str:
     """The first line COMMAND prints (`$(COMMAND | head -1)`); empty when it cannot run."""
     try:
-        done = (run or bench.capture)(command)
+        done = bench.capture(command, env=env)
     except OSError:
         return ''
     return done.stdout.decode(errors='replace').split('\n')[0]
 
 
-def package_version(package: str, *, run: Run = None) -> str:
+def package_version(package: str, *, env) -> str:
     """`pkg-config --modversion PACKAGE`, or `unknown` when pkg-config fails or is absent."""
     try:
-        done = (run or bench.capture)(['pkg-config', '--modversion', package])
+        done = bench.capture(['pkg-config', '--modversion', package], env=env)
     except OSError:
         return 'unknown'
     return done.stdout.decode(errors='replace').rstrip('\n') if done.status == 0 else 'unknown'
@@ -120,9 +102,9 @@ def pc_version(path) -> str:
     return '\n'.join(lines) if lines else 'unknown'
 
 
-def macho_uuid(path, *, run=None):
+def macho_uuid(path):
     """Read exactly one native slice UUID, for a dylib or its dSYM."""
-    done = (run or bench.capture)(['xcrun', 'dwarfdump', '--uuid', str(path)])
+    done = bench.capture(['xcrun', 'dwarfdump', '--uuid', str(path)])
     ids = re.findall(r'UUID: ([0-9A-Fa-f-]{36}) \(arm64\)', done.stdout.decode())
     if done.status or len(ids) != 1:
         raise ValueError('expected one arm64 UUID: ' + str(path))
@@ -181,15 +163,14 @@ def windows_preflight(arms, data, env, installed):
     return expected
 
 
-def expected_cow_commit(data, *, page_size=None):
+def expected_cow_commit(data):
     """Input-derived MemoryChunk views: default SYSTEM_FILE rows, no addon loads.
 
     Init maps these whole files; the typing corpus never calls load_phrase_library.
     DBM files belong to tkrzw and are not memmap2 copy-on-write views.
     """
-    if page_size is None:
-        import mmap
-        page_size = mmap.PAGESIZE
+    import mmap
+    page_size = mmap.PAGESIZE
     rows = {}
     for line in (Path(data) / 'table.conf').read_text().splitlines():
         fields = line.split()

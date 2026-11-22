@@ -105,7 +105,7 @@ def stage_arm(prefix, built_arm, driver, digest, *, windows=False):
 
 def native_sample(arm, data, cycles, env, timeout):
     import json
-    from . import bench, reports
+    from . import bench
     command = [arm['driver'], '--measure', arm['dylib'], arm['uuid'], data]
     if arm.get('windows'):
         from . import identity
@@ -119,8 +119,7 @@ def native_sample(arm, data, cycles, env, timeout):
         identity.verify_modules(row['modules'], arm['modules'])
         if not identity.same_file(row['library'], arm['dylib']):
             raise ValueError('wrong loaded library')
-    return reports.observation(json.dumps(row), cycles=cycles, operations=cycles * workload_operations(),
-                               windows=arm.get('windows', False))
+    return row
 
 
 def workload_operations():
@@ -140,6 +139,7 @@ def native_compare(args, arms, data, env, output):
     windows = getattr(args, 'windows', False)
     deadline = time.monotonic() + args.budget
     # Append each valid run before launching the next. No outlier filtering or retries.
+    operations = args.cycles * workload_operations()
     with (output / 'runs.jsonl').open('w') as stream:
         for kind, block, label in schedule(args.pairs, args.control_pairs):
             remaining = deadline - time.monotonic()
@@ -151,8 +151,8 @@ def native_compare(args, arms, data, env, output):
                 row = native_sample(arm, data, args.cycles, env, remaining)
             except subprocess.TimeoutExpired:
                 raise ValueError('measurement budget exhausted; campaign incomplete') from None
-            row = reports.observation(json.dumps(row), cycles=args.cycles,
-                                      operations=args.cycles * workload_operations(), fingerprint=fingerprint, windows=windows)
+            row = reports.observation(row, cycles=args.cycles, operations=operations,
+                                      fingerprint=fingerprint, windows=windows)
             fingerprint = row['fingerprint']
             row.update(kind=kind, block=block, arm=label)
             rows.append(row)
@@ -188,7 +188,7 @@ def finish_profile(args, arm, output):
     trace = output / 'capture.trace'
     row = reports.driver_result((output / 'driver.json').read_text())
     # Validate operation data independently; profile has no wait4 observation of its grandchild.
-    reports.observation(json.dumps(row), cycles=args.cycles,
+    reports.observation(row, cycles=args.cycles,
                         operations=args.cycles * workload_operations(), child_rss=False)
     bench.run(['xcrun', 'xctrace', 'symbolicate', '--input', trace,
                '--dsym', str(arm['dylib']) + '.dSYM'])
@@ -221,7 +221,7 @@ def linux_worker(arm, env):
     """The existing bisect --perf launcher for one staged arm: libtkrzw check, loader path, CPU pin."""
     from . import bench
     worker = bench.Bench('just measure', env, arm['driver'], str(min(os.sched_getaffinity(0))),
-                         cell=arm['backend'], required=True)
+                         cell=arm['backend'])
     return worker, bench.Arm(arm['label'], arm['dylib'], arm['data'], arm['dylib'].parent)
 
 

@@ -27,7 +27,6 @@ if __name__ == '__main__':
 
     require_utf8_mode()
 
-import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -39,7 +38,7 @@ import tempfile
 from .process import ROOT, fail, run
 from .runners import guarded
 from tools import cachedir
-from tools.oracle.build import MODEL_FILES, fields
+from tools.oracle.build import MODEL_FILES, fields, file_sha256
 
 MODEL_URL = 'https://downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'
 PIN_FILE = ROOT / 'tools/oracle/oracle-pin.txt'
@@ -67,15 +66,6 @@ The cache is the model20 entry under $OXPINYIN_CACHE. It must be a gitignored
 path inside the work tree, or a path outside the repository. The last stdout
 line is the extracted directory.
 """
-
-
-def file_sha256(path):
-    """Return the hex SHA-256 of PATH."""
-    digest = hashlib.sha256()
-    with open(path, 'rb') as stream:
-        for block in iter(lambda: stream.read(1 << 20), b''):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def extraction_complete(directory):
