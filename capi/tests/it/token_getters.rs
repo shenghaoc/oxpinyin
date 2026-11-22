@@ -126,7 +126,7 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
         unigram: 17,
         prons: vec![(keys.clone(), 5)],
     };
-    let chunk = build_chunk(&[(1, item)]).expect("one-item user chunk");
+    let chunk = build_chunk(&[(1, &item)]).expect("one-item user chunk");
     std::fs::write(
         user.path.join("user.bin"),
         build_memory_chunk(&chunk[8..]).expect("frame"),

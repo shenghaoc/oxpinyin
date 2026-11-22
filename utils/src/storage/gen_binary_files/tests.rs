@@ -26,7 +26,12 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
     let mut file = open_table(&table);
     let mut libraries: [Option<ChunkMap>; 16] = Default::default();
     load_phrase_index(1, &mut file, &mut libraries, PhoneticType::Pinyin);
-    let items: Vec<_> = libraries[1].take().unwrap().into_iter().collect();
+    let items: Vec<_> = libraries[1]
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|(&slot, item)| (slot, item))
+        .collect();
     let frame = oxpinyin::data::phrase_library::build_chunk(&items).unwrap();
     oxpinyin::input::chunk::save(&chunk, &frame).unwrap();
     let library = oxpinyin_tool_support::data::load_heap(&chunk).unwrap();

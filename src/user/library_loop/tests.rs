@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::data::chunk_format::build_memory_chunk;
-use crate::data::phrase_library::{ChunkItem, build_chunk};
+use crate::data::phrase_library::build_chunk;
 use crate::data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
 
 use super::*;
@@ -44,8 +44,7 @@ impl Fixture {
         std::fs::create_dir_all(&system).expect("system dir");
         std::fs::create_dir_all(&user).expect("user dir");
         std::fs::write(system.join("table.conf"), conf).expect("table.conf");
-        let empty: &[(u32, ChunkItem)] = &[];
-        let chunk = build_chunk(empty).expect("empty chunk");
+        let chunk = build_chunk(&[]).expect("empty chunk");
         for file in ["a.bin", "b.bin", "c.bin", "d.bin"] {
             std::fs::write(system.join(file), &chunk).expect("library");
         }
@@ -235,10 +234,9 @@ fn the_loop_touches_nothing_after_the_faulting_log() {
     for law in LAWS {
         let fixture = Fixture::new(CONF);
         fixture.bad_log("a.dbin");
-        let empty: &[(u32, ChunkItem)] = &[];
         std::fs::write(
             fixture.user.join("u.bin"),
-            build_chunk(empty).expect("empty chunk"),
+            build_chunk(&[]).expect("empty chunk"),
         )
         .expect("user library");
         let conf = fixture.conf();

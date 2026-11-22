@@ -1714,7 +1714,7 @@ fn import_end_compaction_drops_the_reserved_slot() {
         unigram: 17,
         prons: vec![(vec![0x302b], 5)],
     };
-    let chunk = build_chunk(&[(1, item)]).expect("one-item user chunk");
+    let chunk = build_chunk(&[(1, &item)]).expect("one-item user chunk");
     // Move the item's offset word from slot 1 to slot 0.
     let mut payload = chunk[8..].to_vec();
     let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
@@ -1859,7 +1859,7 @@ fn user_unigram_item_wraps_when_its_sub_index_total_accepts_the_add() {
     drop(crate::user::test_session::open_w3(&user.path));
     let chunk = build_chunk(&[(
         1,
-        ChunkItem {
+        &ChunkItem {
             phrase: vec![u32::from('词')],
             unigram: u32::MAX - 2,
             prons: vec![],

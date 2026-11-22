@@ -2,6 +2,7 @@
 use super::*;
 use crate::data::phrase_library::encode_phrase_item;
 use crate::data::user_files::OPEN_COUNTER_LIMIT;
+use crate::user::test_session::borrowed_items;
 use crate::user::test_session::tempdir;
 use crate::user::test_session::{
     load, load_checked, load_profile, save_state as save_state_reporting,
@@ -322,7 +323,7 @@ fn mapped_originals_save_and_replay_exact_logs_without_expanding_items() {
     let pairs: Vec<_> = base
         .items
         .iter()
-        .map(|(&slot, item)| (slot, item.clone()))
+        .map(|(&slot, item)| (slot, item))
         .collect();
     let chunk = dir.join("system.bin");
     std::fs::write(&chunk, build_chunk(&pairs).expect("fixture chunk")).expect("write fixture");
@@ -1314,7 +1315,7 @@ fn library_for_equivalence(dir: &Path) -> SystemLibrary {
         (3, item(&[0xd800], 4, &[(vec![1], 2)])),
         (4, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 8)])),
     ];
-    let chunk = crate::data::phrase_library::build_chunk(&items).expect("chunk");
+    let chunk = crate::data::phrase_library::build_chunk(&borrowed_items(&items)).expect("chunk");
     let path = dir.join("equiv.bin");
     std::fs::write(&path, chunk).expect("write");
     let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).expect("open");
@@ -1394,7 +1395,7 @@ fn replay_over_mapped_originals_matches_replay_over_inline_ones() {
         (4, item(&[0x754c], 9, &[(key(5), 9)])),
     ];
     let total = 100 + 50 + 7 + 9;
-    let chunk = build_chunk(&items).expect("chunk");
+    let chunk = build_chunk(&borrowed_items(&items)).expect("chunk");
     let dir = tempdir("mapped-vs-inline");
     let path = dir.join("lib.bin");
     std::fs::write(&path, chunk).expect("write");

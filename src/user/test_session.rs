@@ -52,7 +52,7 @@ fn place_chunk(library: crate::user::SystemLibraryRef<'_>, target: &Path) {
     let items: Vec<_> = library
         .items
         .iter()
-        .map(|(&slot, item)| (slot, item.clone()))
+        .map(|(&slot, item)| (slot, item))
         .collect();
     let file = crate::data::phrase_library::build_chunk(&items).expect("fixture chunk");
     // The chunk header is the length and the checksum; the payload opens
@@ -354,12 +354,20 @@ pub(crate) fn versions() -> SystemVersions {
     SystemVersions::for_this_build(7, 14)
 }
 
+pub(super) fn borrowed_items(items: &[(u32, ChunkItem)]) -> Vec<(u32, &ChunkItem)> {
+    items.iter().map(|(slot, item)| (*slot, item)).collect()
+}
+
 /// A system directory that holds `chunks` by file name, each built from its
 /// items, kept until the thread ends.
 pub(crate) fn system_dir(chunks: &[(&str, Vec<(u32, ChunkItem)>)]) -> std::path::PathBuf {
     let dir = tempfile::tempdir().expect("system directory");
     for (name, items) in chunks {
-        std::fs::write(dir.path().join(name), build_chunk(items).expect("chunk")).expect("write");
+        std::fs::write(
+            dir.path().join(name),
+            build_chunk(&borrowed_items(items)).expect("chunk"),
+        )
+        .expect("write");
     }
     let path = dir.path().to_path_buf();
     SYSTEM_DIRS.with_borrow_mut(|dirs| dirs.push(dir));

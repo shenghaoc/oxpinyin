@@ -487,9 +487,9 @@ fn rollback_restores_the_buffer_for_every_kind_of_mutation() {
 
 #[test]
 fn rollback_restores_a_mapped_buffer() {
-    let items = vec![
-        (1, item(&[0x4f60], 100, &[(vec![1], 100)])),
-        (2, item(&[0x597d], 50, &[(vec![2], 30), (vec![3], 20)])),
+    let items = [
+        (1, &item(&[0x4f60], 100, &[(vec![1], 100)])),
+        (2, &item(&[0x597d], 50, &[(vec![2], 30), (vec![3], 20)])),
     ];
     let chunk = crate::data::phrase_library::build_chunk(&items).expect("chunk");
     let dir = crate::user::test_session::tempdir("rollback");
@@ -615,7 +615,7 @@ fn a_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     use crate::data::PhraseLibraries;
 
     fn possibility(item: &ChunkItem, key: crate::parser::ChewingKey) -> (u64, u64) {
-        let frame = crate::data::phrase_library::build_chunk(&[(1, item.clone())]).unwrap();
+        let frame = crate::data::phrase_library::build_chunk(&[(1, item)]).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gb_char.bin");
         crate::input::chunk::save(&path, &frame).unwrap();
@@ -636,7 +636,7 @@ fn a_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     );
     // `:54`: 300 of 400 is the pin's 0.75.
     assert_eq!(possibility(&stored, shang), (300, 400));
-    let frame = crate::data::phrase_library::build_chunk(&[(1, stored.clone())]).unwrap();
+    let frame = crate::data::phrase_library::build_chunk(&[(1, &stored)]).unwrap();
     let end = frame.len();
     let library = PhraseLibrary::from_bytes(
         crate::data::phrase_library::LibraryBytes::from(frame),

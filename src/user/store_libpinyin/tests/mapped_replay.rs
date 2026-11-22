@@ -57,7 +57,11 @@ impl Profile {
         let dir = tempdir(name);
         let shipped_dir = tempdir(&format!("{name}-shipped"));
         let chunk = shipped_dir.join("gb_char.bin");
-        std::fs::write(&chunk, build_chunk(&shipped()).expect("chunk")).expect("write chunk");
+        std::fs::write(
+            &chunk,
+            build_chunk(&shipped().each_ref().map(|(slot, item)| (*slot, item))).expect("chunk"),
+        )
+        .expect("write chunk");
         std::fs::write(
             dir.join("gb_char.dbin"),
             crate::data::chunk_format::build_memory_chunk(log).expect("log chunk"),

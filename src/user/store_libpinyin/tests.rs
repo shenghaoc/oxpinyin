@@ -525,7 +525,7 @@ fn foreign_stored_word_is_verbatim_through_the_arena_reader() {
         unigram: 5,
         prons: vec![(vec![0x8000], 7)],
     };
-    let library = UserLibrary::load(&build_chunk(&[(1, item)]).unwrap()).unwrap();
+    let library = UserLibrary::load(&build_chunk(&[(1, &item)]).unwrap()).unwrap();
     let target = store.session_target();
     let mut phrases = target.phrases_mut();
     phrases
@@ -691,7 +691,13 @@ fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
     let libraries: crate::user::LibraryTable<_> = [5, 7]
         .into_iter()
         .map(|nibble| {
-            let file = build_chunk(&items.clone().into_iter().collect::<Vec<_>>()).unwrap();
+            let file = build_chunk(
+                &items
+                    .iter()
+                    .map(|(&slot, item)| (slot, item))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
             (nibble, UserLibrary::load(&file).unwrap())
         })
         .collect();
@@ -1002,7 +1008,6 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     let shipped_path = shipped_dir.join("gb_char.bin");
     let shipped: Vec<_> = items
         .iter()
-        .cloned()
         .zip(1_u32..)
         .map(|(item, slot)| (slot, item))
         .collect();
@@ -2771,7 +2776,7 @@ fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
             100,
         )],
     };
-    std::fs::write(&path, build_chunk(&[(1, shipped)]).expect("chunk")).expect("write");
+    std::fs::write(&path, build_chunk(&[(1, &shipped)]).expect("chunk")).expect("write");
     let originals = || {
         SystemOriginals::from(crate::user::LibraryTable::from([(
             1_u8,
@@ -2834,9 +2839,9 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
         )],
     };
     let mut chunk = build_chunk(&[
-        (1, item(0x4f60, "ni", 100)),
-        (2, item(0x597d, "hao", 50)),
-        (3, item(0x6211, "wo", 70)),
+        (1, &item(0x4f60, "ni", 100)),
+        (2, &item(0x597d, "hao", 50)),
+        (3, &item(0x6211, "wo", 70)),
     ])
     .expect("chunk");
     // Alias slot 2 to slot 1: the offset word of slot `s` is at
@@ -3354,7 +3359,7 @@ fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
         unigram: 15,
         prons: vec![(vec![ce4, ce4], 5)],
     };
-    let chunk = build_chunk(&[(1, item()), (2, item())]).expect("two-item user chunk");
+    let chunk = build_chunk(&[(1, &item()), (2, &item())]).expect("two-item user chunk");
     // Point slot 2 at slot 1's body.
     let mut payload = chunk[8..].to_vec();
     let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));

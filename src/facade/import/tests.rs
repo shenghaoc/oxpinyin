@@ -219,7 +219,7 @@ fn a_user_file_row_at_a_system_index_is_read_and_imported_into() {
         user.path.join("gb_user.bin"),
         build_chunk(&[(
             1,
-            ChunkItem {
+            &ChunkItem {
                 phrase: vec![u32::from('你')],
                 unigram: 17,
                 prons: vec![(vec![0x302b], 5)],

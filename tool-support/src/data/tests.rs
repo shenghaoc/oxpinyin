@@ -10,7 +10,7 @@ fn heap_loaded_library_keeps_its_payload_after_file_changes() {
         unigram: 7,
         prons: vec![],
     };
-    let bytes = build_chunk(&[(1, item)]).expect("chunk");
+    let bytes = build_chunk(&[(1, &item)]).expect("chunk");
     std::fs::write(&path, bytes).expect("write");
     let library = load_heap(&path).expect("load");
     std::fs::write(&path, []).expect("replace file");

@@ -428,7 +428,7 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
             7,
         )],
     };
-    std::fs::write(&chunk, build_chunk(&[(1, item)]).expect("chunk")).expect("repair");
+    std::fs::write(&chunk, build_chunk(&[(1, &item)]).expect("chunk")).expect("repair");
     assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
     assert!(visible(&ctx));
     assert_eq!(mapped_total(&ctx), Some(7), "the repaired chunk was mapped");
@@ -1605,7 +1605,7 @@ mod native {
             .to_packed();
         let chunk = build_chunk(&[(
             1,
-            ChunkItem {
+            &ChunkItem {
                 phrase: vec![u32::from('你'); 128],
                 unigram: 100,
                 prons: vec![(vec![ni; 128], 1); 255],
@@ -1648,7 +1648,7 @@ mod native {
                 .to_packed();
             let chunk = build_chunk(&[(
                 1,
-                ChunkItem {
+                &ChunkItem {
                     phrase: vec![u32::from('你'); 128],
                     unigram: 100,
                     prons: vec![(vec![ni; 128], 1); 255],
