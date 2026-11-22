@@ -112,6 +112,17 @@ def observation(row, *, cycles, operations, fingerprint=None, child_rss=True, wi
     return row
 
 
+def paired_summary(pairs, metric):
+    from . import stats
+    samples = {}
+    entry = {}
+    for arm in 'AB':
+        values = [pair[arm][metric] for pair in pairs]
+        samples[arm] = values
+        entry[arm] = {**stats.summary(values), **stats.paired_bootstrap(values)}
+    return samples, entry
+
+
 def comparison(rows, *, windows=False):
     """Paired block estimates; controls are descriptive and never produce a verdict.
 
@@ -132,22 +143,19 @@ def comparison(rows, *, windows=False):
         pairs = [block for block in blocks.values() if set(block) == {'A', 'B'}]
         if not pairs:
             continue
-        def values(arm, metric):
-            return [pair[arm][metric] for pair in pairs]
         result[kind] = {}
         for metric in (WINDOWS_MEASURES if windows else MEASURES):
-            entry = {arm: {**stats.summary(values(arm, metric)), **stats.paired_bootstrap(values(arm, metric))}
-                     for arm in 'AB'}
+            samples, entry = paired_summary(pairs, metric)
             if metric == 'loop_runnable_seconds':
                 for arm in 'AB':
-                    entry[arm]['over_cpu_seconds'] = stats.paired_ratio(values(arm, metric),
-                                                                        values(arm, 'cpu_seconds'))
+                    entry[arm]['over_cpu_seconds'] = stats.paired_ratio(samples[arm],
+                                                                        [pair[arm]['cpu_seconds'] for pair in pairs])
             elif unresolved and metric == 'cpu_seconds':
                 entry['no_ratio'] = BELOW_RESOLUTION
             elif windows and metric.endswith('_bytes'):
-                entry['B_minus_A_bytes'] = stats.paired_difference(values('B', metric), values('A', metric))
+                entry['B_minus_A_bytes'] = stats.paired_difference(samples['B'], samples['A'])
             else:
-                entry['B_over_A'] = stats.paired_ratio(values('B', metric), values('A', metric))
+                entry['B_over_A'] = stats.paired_ratio(samples['B'], samples['A'])
             result[kind][metric] = entry
     return result
 
@@ -255,17 +263,14 @@ def linux_comparison(rows, *, source, creators=()):
         if not pairs:
             continue
 
-        def values(arm, metric):
-            return [pair[arm][metric] for pair in pairs]
         result[kind] = {}
         for metric in measures:
-            entry = {arm: {**stats.summary(values(arm, metric)), **stats.paired_bootstrap(values(arm, metric))}
-                     for arm in 'AB'}
+            samples, entry = paired_summary(pairs, metric)
             if metric in LINUX_RESIDENCY:
-                entry['B_minus_A_kib'] = stats.paired_difference(values('B', metric), values('A', metric))
+                entry['B_minus_A_kib'] = stats.paired_difference(samples['B'], samples['A'])
                 gate = stats.stable_residency
             else:
-                entry['B_over_A'] = stats.paired_ratio(values('B', metric), values('A', metric))
+                entry['B_over_A'] = stats.paired_ratio(samples['B'], samples['A'])
                 gate = stats.stable_control
             if metric == counter and ir is not None:
                 if ir['verdict'] == 'INVALID':
@@ -273,7 +278,7 @@ def linux_comparison(rows, *, source, creators=()):
                 if kind == 'control':
                     entry['gate'] = ir
             elif kind == 'control':
-                entry['gate'] = gate(values('A', metric), values('B', metric))
+                entry['gate'] = gate(samples['A'], samples['B'])
                 result['verdicts'][metric] = 'VALID' if entry['gate']['stable'] else 'DIAGNOSTIC'
             result[kind][metric] = entry
     return result
@@ -314,6 +319,11 @@ def capture_rows(xml, *, pid, uuid, allocations):
             return expand(ids[ref], seen | {ref})
         return [node, *(child for item in node for child in expand(item, seen))]
 
+    def numeric(nodes, tags, minimum):
+        return any(node.tag in tags and node.text is not None
+                   and re.fullmatch(r'[0-9]+', node.text.strip())
+                   and int(node.text) >= minimum for node in nodes)
+
     count = product = 0
     for row in root.iter('row'):
         nodes = expand(row)
@@ -321,13 +331,9 @@ def capture_rows(xml, *, pid, uuid, allocations):
         if not any(any(child.tag == 'pid' and child.text == str(pid) for child in expand(process))
                    or re.search(r'\(' + str(pid) + r'\)$', process.get('fmt', '')) for process in processes):
             continue
-        def numeric(tags, minimum):
-            return any(node.tag in tags and node.text is not None
-                       and re.fullmatch(r'[0-9]+', node.text.strip())
-                       and int(node.text) >= minimum for node in nodes)
-        if not numeric({'sample-time', 'start-time', 'timestamp', 'time'}, 0):
+        if not numeric(nodes, {'sample-time', 'start-time', 'timestamp', 'time'}, 0):
             continue
-        if allocations and not numeric({'size', 'allocation-size', 'alloc-size'}, 1):
+        if allocations and not numeric(nodes, {'size', 'allocation-size', 'alloc-size'}, 1):
             continue
         stacks = [node for node in nodes if node.tag in ('backtrace', 'tagged-backtrace')]
         if not stacks:
@@ -445,7 +451,7 @@ def allocation_rows(xml, *, uuid, dylib):
         names = done.stdout.decode().splitlines()
         if done.status or len(names) != len(ordered):
             raise ValueError('allocation backtrace symbolication failed')
-        resolved.update(((base, address), name.split(' (in ', 1)[0]) for address, name in zip(ordered, names))
+        resolved.update(((base, address), name.split(' (in ', 1)[0]) for address, name in zip(ordered, names, strict=True))
     known = {'pinyin_init', 'pinyin_guess_candidates', 'pinyin_parse_more_full_pinyins'}
     functions = sorted(set(resolved.values()) & known)
     attributed = sum(any(resolved.get(location) in known for location in locations) for locations in product_rows)

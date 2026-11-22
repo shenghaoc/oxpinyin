@@ -15,7 +15,6 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 
 [profile.local]
 inherits = "default"
-test-threads = "num-cpus"
 
 [profile.ci]
 inherits = "default"

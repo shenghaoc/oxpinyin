@@ -188,15 +188,14 @@ shear:
     @cargo shear --locked --deny-warnings --check-test-targets
     @cd fuzz && cargo shear --locked --deny-warnings --check-test-targets
 
-# Check tools/ Python with ruff's pyflakes rules (F) only. upstream/ holds
-# unmodified pin copies (tools/scripts2/README.md), so it is excluded.
+# Check tools/ Python with the Ruff rules in pyproject.toml.
 [unix]
 ruff:
-    @uv run --locked --only-group lint --managed-python ruff check --select F --extend-exclude tools/scripts2/upstream tools
+    @uv run --locked --only-group lint --managed-python ruff check tools
 
 [windows]
 ruff:
-    @{{windows_args}} uv run --locked --only-group lint --managed-python ruff check --select F --extend-exclude tools/scripts2/upstream tools; exit $LASTEXITCODE
+    @{{windows_args}} uv run --locked --only-group lint --managed-python ruff check tools; exit $LASTEXITCODE
 
 # Fail when a Rust function is above cyclomatic complexity (CCN) 15, with the
 # Lizard that uv.lock names. A function's own `#lizard forgives` comment is

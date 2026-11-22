@@ -9,3 +9,10 @@ dependencies = [
 [dependency-groups]
 complexity = ["lizard>=1.26.1"]
 lint = ["ruff>=0.17.3"]
+
+[tool.ruff]
+# These files are unmodified copies from the pin.
+extend-exclude = ["tools/scripts2/upstream"]
+
+[tool.ruff.lint]
+select = ["F", "B"]

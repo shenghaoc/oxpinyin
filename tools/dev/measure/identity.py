@@ -130,7 +130,7 @@ def verify_modules(paths, expected):
     observed = module_inventory(paths)
     if len(observed) != len(expected) or any(
             not same_file(a['path'], b['path']) or a['sha256'] != b['sha256']
-            for a, b in zip(observed, expected)):
+            for a, b in zip(observed, expected, strict=True)):
         raise ValueError('runtime module files differ')
     return observed
 

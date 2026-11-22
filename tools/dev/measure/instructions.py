@@ -84,8 +84,8 @@ def callgrind_costs(text, library, *, preserve_objects=False):
         target = inclusive.setdefault((caller_object, caller), [0] * len(names))
         for index, count in enumerate(value):
             target[index] += count
-    return dict(totals=dict(zip(names, total)),
-                objects={key: dict(zip(names, value)) for key, value in sorted(objects.items())},
+    return dict(totals=dict(zip(names, total, strict=True)),
+                objects={key: dict(zip(names, value, strict=True)) for key, value in sorted(objects.items())},
                 functions=[dict(object=obj, function=name, Ir=value) for obj, name, value in functions],
                 inclusive_functions=[dict(object=label(obj), function=fn, Ir=value[ir])
                     for (obj, fn), value in sorted(inclusive.items(), key=lambda item: -item[1][ir]) if value[ir]],

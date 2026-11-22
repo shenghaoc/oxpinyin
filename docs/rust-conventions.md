@@ -11,8 +11,9 @@ A toolchain update is a dedicated PR.
 
 The [constitution](constitution.md) (§5) sets which crates and modules forbid, deny or scope `unsafe`; the [crate table](architecture.md#crates) shows each crate's current level.
 
-Every crate inherits `[workspace.lints]` with `[lints] workspace = true`.
-A crate-local `[lints]` table replaces the workspace table instead of extending it, so do not add one.
+Each member of the root workspace inherits `[workspace.lints]` with `[lints] workspace = true`.
+A crate-local `[lints]` table replaces the workspace table instead of extending it, so a root-workspace crate has none.
+The independent fuzz workspace sets its lints in `fuzz/Cargo.toml`.
 Apply the constitution’s unsafe levels at the crate and module boundaries it names.
 That attribute covers only the library or binary; a build script, test or example that uses `unsafe` carries its own waiver.
 

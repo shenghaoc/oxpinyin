@@ -53,7 +53,7 @@ def paired_ratio(numerator, denominator):
     """
     if len(numerator) != len(denominator) or not numerator or any(value <= 0 for value in denominator):
         raise ValueError('paired ratios require equal, positive-denominator samples')
-    return paired_bootstrap([a / b for a, b in zip(numerator, denominator)])
+    return paired_bootstrap([a / b for a, b in zip(numerator, denominator, strict=True)])
 
 
 def paired_difference(minuend, subtrahend):
@@ -63,7 +63,7 @@ def paired_difference(minuend, subtrahend):
     """
     if len(minuend) != len(subtrahend) or not minuend:
         raise ValueError('paired differences require equal, nonempty samples')
-    return paired_bootstrap([a - b for a, b in zip(minuend, subtrahend)])
+    return paired_bootstrap([a - b for a, b in zip(minuend, subtrahend, strict=True)])
 
 
 def within(estimate, lo, hi):

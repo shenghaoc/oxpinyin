@@ -280,7 +280,7 @@ def render(source=SOURCE):
         data = {name: rows(text, enums) for name, text in sections.items() if not name.startswith('CHEWING_')}
         content = data['CONTENT_TABLE']
         content_by_spelling = {row[0]: row for row in content}
-        text = ''.join(count(f'NUM_{part}S', len(names)) for part, names in zip(('INITIAL', 'MIDDLE', 'FINAL'), enum_lists))
+        text = ''.join(count(f'NUM_{part}S', len(names)) for part, names in zip(('INITIAL', 'MIDDLE', 'FINAL'), enum_lists, strict=False))
         text += array('CHEWING_KEY_TABLE', f'[i16; {len(data["TABLE_INDEX"])}]', map(str, data['TABLE_INDEX']))
         output[CORE + 'chewing_key_tables.rs'] = text
 

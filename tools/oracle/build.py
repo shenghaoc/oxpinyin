@@ -344,7 +344,7 @@ def data_manifests(content_root, out_dir):
     stable = sorted({path.relative_to(content_root).as_posix() for path in data.rglob('*')
                      if path.is_file() and not path.is_symlink()} - set(unstable))
     digests = []
-    for manifest, names in zip(DATA_MANIFESTS, (stable, unstable)):
+    for manifest, names in zip(DATA_MANIFESTS, (stable, unstable), strict=True):
         (out_dir / manifest).write_bytes(''.join(f'{file_sha256(content_root / name)}  {name}\n' for name in names).encode())
         digests.append(file_sha256(out_dir / manifest))
     return digests
