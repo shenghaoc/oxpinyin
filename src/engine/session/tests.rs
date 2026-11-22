@@ -276,19 +276,6 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
         .set_sort_options(SORT_IBUS_DEFAULT)
         .expect("set cannot fail");
     session.guess_sentence().expect("guess cannot fail");
-    eprintln!(
-        "DEBUG candidates={:?}",
-        session
-            .candidates()
-            .iter()
-            .map(|c| (
-                c.text().to_string(),
-                c.token(),
-                c.consumed_bytes(),
-                c.kind()
-            ))
-            .collect::<Vec<_>>()
-    );
     let longer = session
         .candidates()
         .iter()
