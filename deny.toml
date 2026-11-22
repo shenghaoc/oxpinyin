@@ -29,7 +29,7 @@ highlight = "simplest-path"
 deny = [
   { crate = "cxx", wrappers = ["oxpinyin"] },
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin"] },
-  { crate = "bindgen", wrappers = ["oxpinyin"] },
+  { crate = "bindgen", wrappers = ["oxpinyin", "valgrind-requests"] },
   { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-repl"] },
   { crate = "oxzhuyin-capi", wrappers = ["oxpinyin-repl"] },
   # The REPL is the utilities' only dependent: it uses their table builders.
