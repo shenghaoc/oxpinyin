@@ -29,13 +29,21 @@ impl Tree {
     }
 
     /// mask_out(0,0) leaves every key with an empty value, then synchronizes.
+    ///
+    /// # Aborts
+    /// On Berkeley DB, a read or update failure after the cursor opens aborts.
     pub fn mask_all(&self) {
-        if let Ok(keys) = self.native_keys() {
-            for key in keys {
-                let _ = self.put(&key, &[]);
+        #[cfg(feature = "bdb")]
+        self.store.mask_all();
+        #[cfg(not(feature = "bdb"))]
+        {
+            if let Ok(keys) = self.native_keys() {
+                for key in keys {
+                    let _ = self.put(&key, &[]);
+                }
             }
+            let _ = self.store.flush();
         }
-        let _ = self.store.flush();
     }
 
     /// `attach(filename, ATTACH_READWRITE|ATTACH_CREATE)`.
@@ -47,6 +55,7 @@ impl Tree {
     }
 
     /// The pin's complete native key walk (`PunctTable::get_all_items`).
+    #[cfg(any(test, not(feature = "bdb")))]
     pub(crate) fn native_keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
         let mut keys = Vec::new();
         self.store.native_keys(&mut keys)?;

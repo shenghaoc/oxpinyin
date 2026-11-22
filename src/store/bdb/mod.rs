@@ -108,6 +108,38 @@ pub(crate) fn open_system(
 }
 
 impl BdbStore {
+    /// Empty each value in cursor order for the REPL table mask.
+    ///
+    /// # Aborts
+    /// Once the cursor opens, a failed read or update aborts, as in
+    /// `phrase_large_table3_bdb.cpp:376-414` and
+    /// `chewing_large_table2_bdb.cpp:473-546` at 074a2219.
+    #[doc(hidden)]
+    pub fn mask_all(&self) {
+        let Ok(mut cursor) = self.db.cursor() else {
+            return;
+        };
+        loop {
+            let row = cursor.get(Seek::Next);
+            #[cfg(test)]
+            let row = if tests::FAIL_MASK_CURSOR_READ.replace(false) {
+                Err(StoreError::Backend(
+                    "injected mask cursor read failure".into(),
+                ))
+            } else {
+                row
+            };
+            if row.unwrap_or_else(|_| std::process::abort()).is_none() {
+                break;
+            }
+            cursor
+                .put_current(&[])
+                .unwrap_or_else(|_| std::process::abort());
+        }
+        drop(cursor);
+        let _ = self.db.sync();
+    }
+
     /// Attempts one native open with the supplied DB type and access mode.
     ///
     /// # Errors

@@ -105,6 +105,49 @@ fn a_failed_user_bigram_db_create_aborts_where_load_db_asserts() {
     assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
 }
 
+thread_local! {
+    pub(super) static FAIL_MASK_CURSOR_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[test]
+fn mask_all_aborts_on_a_failed_cursor_read() {
+    // The pin asserts on any walk error other than DB_NOTFOUND
+    // (phrase_large_table3_bdb.cpp:406, chewing_large_table2_bdb.cpp:538).
+    let stderr = crate::store::death_test::assert_aborts_after_setup(
+        "store::bdb::tests::mask_all_aborts_on_a_failed_cursor_read",
+        || BdbStore::create_in_memory().unwrap(),
+        |store| {
+            FAIL_MASK_CURSOR_READ.set(true);
+            store.mask_all();
+        },
+    );
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+}
+
+#[test]
+fn mask_all_aborts_on_a_failed_cursor_update() {
+    // A read-only handle supplies a native DB_CURRENT write failure at the
+    // pin's assertion (phrase_large_table3_bdb.cpp:400, chewing_large_table2_bdb.cpp:507).
+    crate::store::death_test::assert_aborts_in_tempdir(
+        "store::bdb::tests::mask_all_aborts_on_a_failed_cursor_update",
+        |dir| {
+            let store = BdbStore::create(&dir.join("table.db")).unwrap();
+            store.set_raw(b"first", b"old value").unwrap();
+        },
+        |dir| {
+            BdbStore::open_read_only(&dir.join("table.db"))
+                .unwrap()
+                .mask_all()
+        },
+        |dir| {
+            let store = BdbStore::open_read_only(&dir.join("table.db")).unwrap();
+            let mut value = Vec::new();
+            assert!(store.get_raw(b"first", &mut value).unwrap());
+            assert_eq!(value, b"old value");
+        },
+    );
+}
+
 #[test]
 fn a_failed_in_memory_open_leaves_the_pins_failed_container() {
     use crate::store::UserBigramDb as _;
