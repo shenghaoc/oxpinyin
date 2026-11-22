@@ -19,7 +19,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
         unigram: 1,
         prons: Vec::new(),
     };
-    std::fs::write(&path, build_chunk(&[(1, item.clone())]).unwrap()).unwrap();
+    std::fs::write(&path, build_chunk(&[(1, &item)]).unwrap()).unwrap();
     let mut shipped = PhraseLibraries::empty();
     shipped.load(1, &path).unwrap();
     let original = PhraseLibrary::open(&path).unwrap();
@@ -82,7 +82,7 @@ fn session_over_system_library(
         unigram: 1,
         prons: Vec::new(),
     };
-    std::fs::write(&path, build_chunk(&[(1, item)]).unwrap()).unwrap();
+    std::fs::write(&path, build_chunk(&[(1, &item)]).unwrap()).unwrap();
     let mut libraries = PhraseLibraries::empty();
     assert!(libraries.load(nibble, &path).unwrap());
     let original = PhraseLibrary::open(&path).unwrap();
@@ -197,7 +197,11 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     ];
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gb_char.bin");
-    std::fs::write(&path, build_chunk(&shipped).expect("chunk")).expect("write chunk");
+    std::fs::write(
+        &path,
+        build_chunk(&shipped.each_ref().map(|(slot, item)| (*slot, item))).expect("chunk"),
+    )
+    .expect("write chunk");
     let library = PhraseLibrary::open(&path).expect("open");
     let total = library.total_freq();
     let originals: SystemOriginals = crate::user::LibraryTable::from([(

@@ -116,7 +116,7 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     let keys = [oxpinyin::parser::ChewingKey::from_packed(0x1081)];
     let items = [(
         1,
-        ChunkItem {
+        &ChunkItem {
             phrase: vec![0x8000_0000],
             unigram: 100,
             prons: vec![(vec![keys[0].to_packed()], 10)],

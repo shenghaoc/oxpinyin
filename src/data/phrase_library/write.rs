@@ -1,7 +1,6 @@
 //! Builds phrase-library chunk files from stored items. Each input pair to
 //! [`build_chunk`] uses a 24-bit slot within one library. Supply distinct slots in
-//! ascending order. [`crate::data::chunk_format::build_memory_chunk`] frames a prepared
-//! payload.
+//! ascending order.
 //!
 //! ```text
 //! file    = { length: u32, checksum: u32 } payload          (MemoryChunk)
@@ -24,6 +23,7 @@
 // phrase_index.cpp:208–216; memory_chunk.h:536–557 specifies the frame. The builder
 // requires the item offsets to fit their output fields.
 
+use crate::data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk_owned};
 use crate::data::phrase_library::{
     CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
 };
@@ -55,45 +55,48 @@ pub struct ChunkItem {
 /// Returns `None` for a repeated, decreasing, or out-of-range slot, or an
 /// invalid item shape.
 #[must_use]
-pub fn build_chunk(items: &[(u32, ChunkItem)]) -> Option<Vec<u8>> {
-    // The first item starts at byte 8. An empty library reserves no bytes.
-    let mut content = Vec::new();
-    let mut offsets = Vec::new();
-    let mut total_freq = 0_u32;
+pub fn build_chunk(items: &[(u32, &ChunkItem)]) -> Option<Vec<u8>> {
+    let mut slots = 0;
+    let mut content_len = if items.is_empty() {
+        0
+    } else {
+        FIRST_ITEM_OFFSET
+    };
     for (slot, item) in items {
-        let index = *slot as usize;
-        if *slot > PHRASE_MASK || index < offsets.len() {
+        if *slot > PHRASE_MASK || *slot < slots {
             return None;
         }
-        if content.is_empty() {
-            content.resize(FIRST_ITEM_OFFSET as usize, 0);
-        }
-        let offset = u32::try_from(content.len()).ok()?;
-        write_phrase_item(&mut content, item)?;
-        offsets.resize(index + 1, 0);
-        offsets[index] = offset;
+        slots = slot + 1;
+        let [length, count] = phrase_item_counts(item)?.map(u32::from);
+        let item_len =
+            ITEM_HEADER_SIZE as u32 + 4 * length + count * (CHEWING_KEY_SIZE as u32 * length + 4);
+        content_len = content_len.checked_add(item_len)?;
+    }
+
+    let index_two = INDEX_ONE + 4 * slots + 1;
+    let index_three = index_two.checked_add(content_len)?.checked_add(1)?;
+    let mut payload = Vec::with_capacity((index_three as usize).checked_add(CHUNK_HEADER_SIZE)?);
+    payload.resize(index_two as usize, 0);
+    payload[4..8].copy_from_slice(&INDEX_ONE.to_le_bytes());
+    payload[8..12].copy_from_slice(&index_two.to_le_bytes());
+    payload[12..16].copy_from_slice(&index_three.to_le_bytes());
+    payload[INDEX_ONE as usize - 1] = SEPARATOR;
+    payload[index_two as usize - 1] = SEPARATOR;
+    if !items.is_empty() {
+        payload.resize(payload.len() + FIRST_ITEM_OFFSET as usize, 0);
+    }
+
+    let mut total_freq = 0_u32;
+    for (slot, item) in items {
+        let offset = u32::try_from(payload.len() - index_two as usize).ok()?;
+        let pos = (INDEX_ONE + 4 * slot) as usize;
+        payload[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
+        write_phrase_item(&mut payload, item)?;
         total_freq = total_freq.wrapping_add(item.unigram);
     }
-
-    // ---- assemble payload: header, offset array, entry area ------------
-    let index_one = INDEX_ONE;
-    let index_two = index_one + u32::try_from(offsets.len() * 4).unwrap_or(u32::MAX) + 1;
-    let index_three = index_two + u32::try_from(content.len()).unwrap_or(u32::MAX) + 1;
-
-    let mut payload = Vec::with_capacity(index_three as usize);
-    payload.extend_from_slice(&total_freq.to_le_bytes());
-    payload.extend_from_slice(&index_one.to_le_bytes());
-    payload.extend_from_slice(&index_two.to_le_bytes());
-    payload.extend_from_slice(&index_three.to_le_bytes());
+    payload[..4].copy_from_slice(&total_freq.to_le_bytes());
     payload.push(SEPARATOR);
-    for offset in &offsets {
-        payload.extend_from_slice(&offset.to_le_bytes());
-    }
-    payload.push(SEPARATOR);
-    payload.extend_from_slice(&content);
-    payload.push(SEPARATOR);
-
-    crate::data::chunk_format::build_memory_chunk(&payload)
+    build_memory_chunk_owned(payload)
 }
 
 /// Serialises one item into the `PhraseItem` wire form.
@@ -109,7 +112,7 @@ pub fn encode_phrase_item(item: &ChunkItem) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn write_phrase_item(bytes: &mut Vec<u8>, item: &ChunkItem) -> Option<()> {
+fn phrase_item_counts(item: &ChunkItem) -> Option<[u8; 2]> {
     let length = u8::try_from(item.phrase.len()).ok()?;
     let count = u8::try_from(item.prons.len()).ok()?;
     if length == 0
@@ -120,7 +123,11 @@ fn write_phrase_item(bytes: &mut Vec<u8>, item: &ChunkItem) -> Option<()> {
     {
         return None;
     }
-    bytes.extend_from_slice(&[length, count]);
+    Some([length, count])
+}
+
+fn write_phrase_item(bytes: &mut Vec<u8>, item: &ChunkItem) -> Option<()> {
+    bytes.extend_from_slice(&phrase_item_counts(item)?);
     bytes.extend_from_slice(&item.unigram.to_le_bytes());
     for &code in &item.phrase {
         bytes.extend_from_slice(&code.to_le_bytes());

@@ -44,10 +44,10 @@ pub(crate) struct Library {
 impl Library {
     /// The complete `MemoryChunk` file `SubPhraseIndex::store` writes.
     pub(crate) fn chunk(&self) -> Vec<u8> {
-        let items: Vec<(u32, oxpinyin::data::phrase_library::ChunkItem)> = self
+        let items: Vec<_> = self
             .items
             .iter()
-            .map(|(slot, item)| (*slot, item.clone()))
+            .map(|(&slot, item)| (slot, item))
             .collect();
         let mut file = build_chunk(&items).unwrap_or_else(|| tool::abort());
         // `SubPhraseIndex::store` writes the resident `m_total_freq`, which

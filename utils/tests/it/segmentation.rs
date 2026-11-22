@@ -127,7 +127,8 @@ fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
     });
     std::fs::write(
         data.join("gb_char.bin"),
-        build_chunk(&items).expect("build phrase library"),
+        build_chunk(&items.each_ref().map(|(slot, item)| (*slot, item)))
+            .expect("build phrase library"),
     )
     .expect("write phrase library");
 

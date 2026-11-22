@@ -392,10 +392,7 @@ fn save_chunks(
         let name = name_c_string(name.as_ref()).unwrap_or_else(|| tool::abort());
         let file = match &libraries[index] {
             Some(items) => {
-                let items: Vec<(u32, ChunkItem)> = items
-                    .iter()
-                    .map(|(slot, item)| (*slot, item.clone()))
-                    .collect();
+                let items: Vec<_> = items.iter().map(|(&slot, item)| (slot, item)).collect();
                 oxpinyin::data::phrase_library::build_chunk(&items).unwrap_or_else(|| tool::abort())
             }
             // The pin stores an empty `MemoryChunk` when the library never

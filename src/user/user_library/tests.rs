@@ -2,6 +2,7 @@ use super::*;
 use crate::data::chunk_format::build_memory_chunk;
 use crate::data::phrase_library::{ChunkItem, build_chunk, encode_phrase_item};
 use crate::data::user_files::read_chunk_payload;
+use crate::user::test_session::borrowed_items;
 
 fn items() -> Vec<(u32, ChunkItem)> {
     vec![
@@ -78,7 +79,7 @@ fn persisted_empty_user_item_survives_load_compact_and_store() {
 /// and compaction produce the same item bytes and offset layout.
 #[test]
 fn mutations_compact_to_the_pins_item_and_store_layout() {
-    let mut library = UserLibrary::load(&build_chunk(&items()).unwrap()).unwrap();
+    let mut library = UserLibrary::load(&build_chunk(&borrowed_items(&items())).unwrap()).unwrap();
     let mut expected = items();
     library.add_reading(1, &[0x1234], 4).unwrap();
     expected[0].1.prons[0].1 += 4;
@@ -90,7 +91,10 @@ fn mutations_compact_to_the_pins_item_and_store_layout() {
     expected.pop();
     assert_eq!(library.token_end(), 2);
     library.compact();
-    assert_eq!(library.store().unwrap(), build_chunk(&expected).unwrap());
+    assert_eq!(
+        library.store().unwrap(),
+        build_chunk(&borrowed_items(&expected)).unwrap()
+    );
     assert_eq!(library.content.len(), library.compacted_content_len());
 }
 
@@ -98,7 +102,7 @@ fn mutations_compact_to_the_pins_item_and_store_layout() {
 fn exact_reading_overflow_and_count_wrap_follow_the_pin() {
     let mut item = items().remove(0).1;
     item.prons = vec![(vec![0x1234], u32::MAX), (vec![0x2234], 1)];
-    let mut library = UserLibrary::load(&build_chunk(&[(1, item)]).unwrap()).unwrap();
+    let mut library = UserLibrary::load(&build_chunk(&[(1, &item)]).unwrap()).unwrap();
     library.add_reading(1, &[0x1234], 1).unwrap();
     assert_eq!(
         library.item(1).unwrap().pronunciation(0).unwrap().freq,
@@ -123,7 +127,7 @@ fn user_library_store_matches_build_chunk_with_offset_holes() {
     for slot in [3, 1024] {
         let mut items = items();
         items[1].0 = slot;
-        let file = build_chunk(&items).unwrap();
+        let file = build_chunk(&borrowed_items(&items)).unwrap();
         let library = UserLibrary::load(&file).unwrap();
 
         assert_eq!(library.total(), 8, "the two item unigrams sum to 8");
@@ -160,7 +164,7 @@ fn assert_no_panic(file: &[u8]) {
 
 #[test]
 fn user_library_malformed_frames_match_main_without_panicking() {
-    let file = build_chunk(&items()).unwrap();
+    let file = build_chunk(&borrowed_items(&items())).unwrap();
     for cut in 0..=file.len() {
         assert_no_panic(&file[..cut]);
     }
@@ -288,7 +292,7 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
             },
         )
     });
-    let chunk = build_chunk(&items).expect("three-item user chunk");
+    let chunk = build_chunk(&borrowed_items(&items)).expect("three-item user chunk");
     let mut payload = chunk[8..].to_vec();
     let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
     let slot_two = offsets_start as usize + 2 * 4;

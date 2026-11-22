@@ -95,7 +95,7 @@ fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
         unigram: 17,
         prons: vec![(vec![0x302b_u16; 17], 5)],
     };
-    let chunk = build_chunk(&[(1, item)]).expect("one-item user chunk");
+    let chunk = build_chunk(&[(1, &item)]).expect("one-item user chunk");
     std::fs::write(
         user.path.join("user.bin"),
         build_memory_chunk(&chunk[8..]).expect("frame"),
@@ -135,7 +135,7 @@ fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
     };
     std::fs::write(
         user.path.join("user.bin"),
-        build_chunk(&[(1, item)]).expect("one-item user chunk"),
+        build_chunk(&[(1, &item)]).expect("one-item user chunk"),
     )
     .expect("write user.bin");
 

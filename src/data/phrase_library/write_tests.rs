@@ -4,10 +4,10 @@ use super::*;
 /// addressing, the 8-byte entry-area reservation, and item encoding.
 #[test]
 fn build_chunk_matches_hand_layout() {
-    let items = vec![
+    let items = [
         (
             1,
-            ChunkItem {
+            &ChunkItem {
                 phrase: vec![0x4f60], // 你
                 unigram: 3,
                 prons: vec![(vec![0x1234], 7)],
@@ -15,7 +15,7 @@ fn build_chunk_matches_hand_layout() {
         ),
         (
             3,
-            ChunkItem {
+            &ChunkItem {
                 phrase: vec![0x597d], // 好
                 unigram: 5,
                 prons: vec![(vec![0x5678], 11), (vec![0x5679], 2)],
@@ -78,7 +78,7 @@ fn build_chunk_writes_wrapped_unigram_total() {
         unigram: 3_000_000_000,
         prons: vec![(vec![0x1234], 7)],
     };
-    let file = build_chunk(&[(1, item.clone()), (2, item)]).expect("build");
+    let file = build_chunk(&[(1, &item), (2, &item)]).expect("build");
     let payload = &file[crate::data::chunk_format::CHUNK_HEADER_SIZE..];
     let total = u32::from_le_bytes(payload[..4].try_into().unwrap());
     assert_eq!(total, 1_705_032_704);
@@ -87,9 +87,9 @@ fn build_chunk_writes_wrapped_unigram_total() {
 /// The reader half of this crate must accept what this writer emits.
 #[test]
 fn build_chunk_reads_back_through_phrase_library() {
-    let items = vec![(
+    let items = [(
         1,
-        ChunkItem {
+        &ChunkItem {
             phrase: vec![0x4f60, 0x597d],
             unigram: 9,
             prons: vec![(vec![0x0011, 0x0022], 9)],
@@ -159,17 +159,19 @@ fn build_chunk_rejects_disorder_and_shape_errors() {
         unigram: 1,
         prons: vec![(vec![0], 1)],
     };
-    assert!(build_chunk(&[(2, item.clone()), (1, item.clone())]).is_none());
+    assert!(build_chunk(&[(2, &item), (1, &item)]).is_none());
+    assert!(build_chunk(&[(1, &item), (1, &item)]).is_none());
+    assert!(build_chunk(&[(PHRASE_MASK + 1, &item)]).is_none());
     let bad_keys = ChunkItem {
         prons: vec![(vec![0, 0], 1)],
         ..item.clone()
     };
-    assert!(build_chunk(&[(1, bad_keys)]).is_none());
+    assert!(build_chunk(&[(1, &bad_keys)]).is_none());
     let empty = ChunkItem {
         phrase: Vec::new(),
         ..item
     };
-    assert!(build_chunk(&[(1, empty)]).is_none());
+    assert!(build_chunk(&[(1, &empty)]).is_none());
 }
 
 #[test]
@@ -187,7 +189,7 @@ fn phrase_item_codec_round_trips_and_matches_the_entry_area() {
 
     // The entry area a built chunk stores for the item decodes the
     // same way — one wire form, two containers.
-    let file = build_chunk(&[(1, item.clone())]).expect("build");
+    let file = build_chunk(&[(1, &item)]).expect("build");
     let body = &file[crate::data::chunk_format::CHUNK_HEADER_SIZE..];
     let index_two = usize::try_from(u32::from_le_bytes(body[8..12].try_into().unwrap())).unwrap();
     let entry_area = &body[index_two..];
