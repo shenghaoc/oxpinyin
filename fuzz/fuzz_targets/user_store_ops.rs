@@ -198,19 +198,17 @@ fn check_phrase_index(store: &UserStore, freshest: Option<u32>) {
                 );
             }
         }
-    } else if let Some(token) = freshest {
-        if let Some(row) = store.phrase(token) {
-            if let Some(text) = row
-                .phrase_text()
-                .and_then(|text| text.as_str().map(str::to_owned))
-            {
-                assert_eq!(
-                    store.token_for_phrase(&text).expect("text lookup"),
-                    Some(token),
-                    "the freshest row must stay self-consistent"
-                );
-            }
-        }
+    } else if let Some(token) = freshest
+        && let Some(row) = store.phrase(token)
+        && let Some(text) = row
+            .phrase_text()
+            .and_then(|text| text.as_str().map(str::to_owned))
+    {
+        assert_eq!(
+            store.token_for_phrase(&text).expect("text lookup"),
+            Some(token),
+            "the freshest row must stay self-consistent"
+        );
     }
 }
 
@@ -299,8 +297,8 @@ fn run(data: &[u8]) {
             // the typed invalid-phrase refusal: length ceiling violated
             // (exactly 16 chars with 16 keys), and length/key mismatch
             3 => {
-                let over_limit: String = std::iter::repeat('词').take(16).collect();
-                let keys16: Vec<PinyinKey> = (0..16).map(|index| key_for(index)).collect();
+                let over_limit: String = std::iter::repeat_n('词', 16).collect();
+                let keys16: Vec<PinyinKey> = (0..16).map(key_for).collect();
                 assert!(matches!(
                     store.add_phrase(
                         &oxpinyin::vocab::PhraseText::from(&over_limit),
