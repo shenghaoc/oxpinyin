@@ -42,8 +42,8 @@ the other cells with `--cells`, which the Debian deps image builds and checks.
 by the `store` job. A plain Linux
 `cargo test` or `cargo build` selects the
 Cargo default, tkrzw, so on Linux pass the backend:
-`--no-default-features --features kyotocabinet` (or `bdb` for the peer), or
-`just check kyotocabinet`.
+`--no-default-features --features kyotocabinet` (or `bdb` for the peer). `just test` and
+`just clippy` pass the Kyoto Cabinet flags on Linux, so do not repeat them there.
 
 Linux setup needs:
 
@@ -81,10 +81,10 @@ The build discovers Kyoto Cabinet through `pkg-config kyotocabinet`; the
 distribution's library is on the default loader path, so no path export is
 needed. GLib stays on the system package manager; the [macOS](#macos) and
 [Windows](#windows) sections name those platforms' tkrzw installation, and
-Windows alone uses vcpkg. Check the backend with:
+Windows alone uses vcpkg. Check the backend with `just test`, which runs Kyoto Cabinet on Linux:
 
 ```bash
-just check kyotocabinet
+just test
 ```
 
 For `just abi`, install libclang (`libclang-dev` on apt, `clang-devel` on dnf)
@@ -114,7 +114,8 @@ sudo apt-get install -y libdb-dev libclang-dev
 sudo dnf install libdb-devel clang-devel
 ```
 
-Then run `just check bdb` ([backends](backends.md)).
+Then run `cargo nextest run --locked --no-default-features --features bdb`
+([backends](backends.md)).
 
 ### Comparing against another revision
 
@@ -263,7 +264,8 @@ Two alternatives are rejected:
 `just build`, `just clippy` and `just fmt` pass Cargo arguments to
 Cargo unchanged ([limit parallel builds](verification.md#8-builds) with
 `CARGO_BUILD_JOBS`). The selection of native packages and backend is the same as for the Cargo
-command that the recipe replaces:
+command that the recipe replaces. The exception is `just clippy` (and `just test`) on Linux: it adds
+`--no-default-features --features kyotocabinet`, the one Linux cell, so do not repeat those flags there:
 
 ```bash
 just build --locked -p oxpinyin
@@ -287,7 +289,8 @@ The native Rust test entry point uses cargo-nextest at or above the
 needs it); `just doctor` reports it. `cargo install
 cargo-nextest --locked` (or the prebuilt release) installs it. `just test` runs `cargo nextest run --profile local`
 with the given arguments, which take the same crate and
-feature selection as other Cargo commands (see [backend selection](backends.md)). `--profile ci` selects the CI limits.
+feature selection as other Cargo commands (see [backend selection](backends.md)); on Linux it first
+passes `--no-default-features --features kyotocabinet`. `--profile ci` selects the CI limits.
 
 `just packaging install` and `just measure compare` build the shipping library
 with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
@@ -333,19 +336,17 @@ installation, run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo nextest run --locked -p oxpinyin
-just check
+cargo nextest run --locked -p oxpinyin --no-default-features --features kyotocabinet
+just test
 ```
 
-The `cargo nextest run` command tests native Rust packages. `just check` (tkrzw by
-default; `just check bdb` or `just check kyotocabinet` for the others)
-also links and runs storage and C-library tests. Headers
+The `cargo nextest run` command tests native Rust packages. `just test` runs the nextest
+suite with the host's backend (Kyoto Cabinet on Linux, tkrzw by default elsewhere); it also links
+and runs storage and C-library tests. Headers
 are the native library declarations that the compiler uses. For `bdb`, bindgen
-also reads `db.h` with libclang. pkg-config locates native library installations. The check prints
-the selected toolchain, architecture and backend. It installs nothing.
+also reads `db.h` with libclang. pkg-config locates native library installations.
 
-Success means that all test summaries have zero failures, and that the storage check ends
-with `Setup check passed`. Negative
+Success means that all test summaries have zero failures. Negative
 tests can deliberately print warnings, assertions, `failed` or `CRITICAL`.
 The final summaries and the process exit status decide success.
 
@@ -354,7 +355,7 @@ In a fresh Bash terminal, use your checkout directory if it is different:
 ```bash
 cd ~/src/oxpinyin
 . "$HOME/.cargo/env"
-just check
+just test
 ```
 
 Cargo reuses downloaded dependencies and the `target/` outputs of that checkout.
@@ -441,7 +442,7 @@ and run:
 rustup show
 cargo nextest run --locked -p oxpinyin
 export CARGO_TARGET_DIR=target/tkrzw
-just check
+just test
 ```
 
 The `cargo nextest` command is a real storage link/run check; a `cargo check`
@@ -456,7 +457,7 @@ backend. To use it:
 2. Export the keg-only `SYSTEM_DEPS_BDB_*` overrides
    ([backends](backends.md#discovery-and-overrides)).
 3. Run `export CARGO_TARGET_DIR=target/bdb`.
-4. Run `just check bdb`.
+4. Run `cargo nextest run --locked --no-default-features --features bdb`.
 
 The target and user-data directories of each backend stay separate.
 

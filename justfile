@@ -118,15 +118,6 @@ trainer-layout target *args:
     @{{windows_args}} echo "trainer-layout is unsupported on Windows: it copies extensionless executables for a Unix make tree."
     @{{windows_args}} exit 1
 
-[unix]
-check backend="":
-    @uv run --managed-python python -X utf8 -m tools.dev.check "$1"
-
-[windows]
-check backend="":
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.check @forwarded; exit $LASTEXITCODE
-
-
 # Native source-revision comparison and xctrace profiling.
 [unix]
 measure *args:
@@ -136,8 +127,13 @@ measure *args:
 measure *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' @forwarded; exit $LASTEXITCODE
 
-# Run the native Rust tests through nextest.
-[unix]
+# Run the native Rust tests through nextest. Linux runs the Kyoto Cabinet
+# backend, its one cell (tools/dev/cell.py); other hosts keep Cargo's default.
+[linux]
+test *args:
+    @cargo nextest run --profile local --no-default-features --features kyotocabinet "$@"
+
+[macos]
 test *args:
     @cargo nextest run --profile local "$@"
 
@@ -163,8 +159,12 @@ fmt *args:
 fmt *args:
     @{{windows_args}} cargo fmt @forwarded; exit $LASTEXITCODE
 
-# Lint the workspace.
-[unix]
+# Lint the workspace. Linux selects the Kyoto Cabinet backend, as `test` does.
+[linux]
+clippy *args:
+    @cargo clippy --no-default-features --features kyotocabinet "$@"
+
+[macos]
 clippy *args:
     @cargo clippy "$@"
 
