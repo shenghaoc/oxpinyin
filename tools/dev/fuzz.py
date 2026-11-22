@@ -823,6 +823,10 @@ def main(argv):
     except FuzzError as error:
         print(f'fuzz: {error}', file=sys.stderr)
         return 1
+    except OSError as error:
+        # A corpus file that cannot be read or copied stops the command before anything is replaced.
+        print(f'fuzz: {error}', file=sys.stderr)
+        return 1
     except subprocess.CalledProcessError as error:
         print(f'fuzz: {error.cmd[0]} failed with exit status {error.returncode}.', file=sys.stderr)
         return 1

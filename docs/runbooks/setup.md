@@ -368,9 +368,10 @@ is supported on Linux only, as in libchewing, and the fuzz soak runs in the
 Linux nightly. On macOS, each input's new process costs about 200 ms in
 `fork()`, and the default System V shared-memory limit (4 MiB per segment,
 `kern.sysv.shmmax`) blocks CmpLog's 144 MiB map, so a native macOS run would
-only be a smoke test. AFL++ does not support Windows. `just fuzz-setup` and
-`just fuzz` exist on every platform, and on any host other than Linux they
-refuse with one message that names this section.
+only be a smoke test. AFL++ does not support Windows. `just fuzz-setup`,
+`just fuzz-minimize` and `just fuzz` are Linux recipes, so just does not find
+them on macOS or Windows. Run directly on any host other than Linux,
+`tools/dev/fuzz.py` refuses with one message that names this section.
 
 `just fuzz-setup` installs cargo-afl at the version that `fuzz/Cargo.lock`
 resolves for the `afl` crate, and the AFL++ release that it bundles, with
@@ -530,8 +531,8 @@ cargo clippy --locked -p oxpinyin --all-targets -- -D warnings
 ```
 
 Repository Python tooling on Windows runs through the pwsh recipes.
-AFL++ does not support Windows: `just fuzz-setup` and `just fuzz` exist on
-Windows and refuse with the Linux-only message ([fuzzing](#fuzzing)).
+AFL++ does not support Windows: the fuzz recipes are Linux recipes and are
+not available on Windows ([fuzzing](#fuzzing)).
 Install uv with its native Windows installer, then just (`cargo install just
 --locked`). The interpreter rule of the Linux section applies unchanged.
 

@@ -328,8 +328,9 @@ input on standard input.
   the same advice. The bundled AFL++ is Apache-2.0. It is a tool that
   cargo-afl builds from source, and no shipping crate depends on it.
 - **Platforms.** Linux only, as in libchewing; AFL++ does not support
-  Windows. `just fuzz-setup` and `just fuzz` exist on every platform, and on
-  macOS and Windows `tools/dev/fuzz.py` refuses with one message. The setup
+  Windows. `just fuzz-setup`, `just fuzz-minimize` and `just fuzz` are Linux
+  recipes, so just does not find them on macOS or Windows; run directly there,
+  `tools/dev/fuzz.py` refuses with one message. The setup
   runbook's [fuzzing](../runbooks/setup.md#fuzzing) section gives the reason
   and the route: a native Linux container of the host's own architecture.
 
