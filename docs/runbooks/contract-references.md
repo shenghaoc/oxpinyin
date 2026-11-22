@@ -19,17 +19,31 @@ An expectation changes at a pin bump under [the oracle pin](goldens-and-pins.md#
 ## Reverse cross-open (local only)
 
 The handoff tests cover a pin-written file that oxpinyin reads. The other direction
-needs the pin, so it is a local command:
+needs the pin, so it is a local command. `PREFIX` is the oracle prefix of the
+cell that `just provision-oracle` built. Build the two subject libraries with
+the same backend as the cell.
+
+For the tkrzw cell, pass the pinned package data:
 
 ```sh
-uv run --managed-python python -X utf8 \
-  tools/bisection/reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX \
+just reverse-cross-open --cell tkrzw --pin-prefix PREFIX \
   --data "$(just fetch-contract-data)" \
   target/debug/liboxpinyin_capi.so target/debug/liboxzhuyin_capi.so
 ```
 
-The command runs four handoff cases: `issue1114-collision-load-save` and
-`save-929-logical-cross-open`, each for pinyin and for zhuyin. Each case does these steps:
+For the bdb and kc cells, pass the verified data of the cell's prefix:
+
+```sh
+just reverse-cross-open --cell bdb --pin-prefix PREFIX \
+  --data PREFIX/lib/libpinyin/data \
+  target/debug/liboxpinyin_capi.so target/debug/liboxzhuyin_capi.so
+```
+
+Every cell needs `--data`. Without it, the command stops at argument parsing.
+
+On the tkrzw cell, the command runs four handoff cases: `issue1114-collision-load-save` and
+`save-929-logical-cross-open`, each for pinyin and for zhuyin. On the bdb and kc
+cells, it runs the two `save-929-logical-cross-open` cases. Each case does these steps:
 
 1. oxpinyin writes a profile in a fresh worker.
 2. The case copies that profile.
@@ -42,4 +56,11 @@ The issue1114 handoff cases also read tkrzw HashDBM bytes, so they run only on
 the tkrzw cell. The save-929 cases run on every supported cell.
 
 The handoff check runs after a change to a persistence writer, to serialisation or
-to a database format. No workflow and no just recipe calls the command.
+to a database format. The `just reverse-cross-open` recipe is local-only. No workflow runs the pin.
+The command stops at the first failed case.
+
+The Berkeley DB fixture writer uses `db5.3_load` from `PATH`. The shared
+reader uses `db5.3_dump` from `PATH`. Both names must be available on a
+Berkeley DB host. The writer loads dump-format byte values into a fresh,
+unnamed hash database. It clears `DB_HOME` and runs in an empty temporary
+directory. It does not rewrite the profile handed from oxpinyin to the pin.

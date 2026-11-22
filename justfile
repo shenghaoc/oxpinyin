@@ -85,6 +85,12 @@ fetch-contract-data *args:
 fetch-contract-data *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.contract_data @forwarded; exit $LASTEXITCODE
 
+# Local-only profile handoff to the pin for any cell: four cases on tkrzw, two on
+# bdb and kc. Every cell needs --data. No workflow runs these cases.
+[unix]
+reverse-cross-open *args:
+    @uv run --managed-python python -X utf8 tools/bisection/reverse_cross_open.py "$@"
+
 # Report native capabilities and the managed interpreter identity. Doctor
 # installs nothing: it names `uv python install` when the interpreter is missing.
 [unix]
