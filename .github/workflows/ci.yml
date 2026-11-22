@@ -1,25 +1,10 @@
-# Path gates. The workflow always starts. The `changes` job writes one flag per
-# job (`tools.dev.ci_tree gate`), and a job runs only when its flag is true.
-# CI_INPUTS in tools/dev/ci_tree.py holds the paths of `rust` and
-# `shipping-sizes`. The `store` job uses the backend selection rule in
-# docs/runbooks/verification.md, section 2. STORE_GATE_ARGUMENTS adds the
-# inputs to its ABI tests and the tools that run the job. A skipped job still reports
-# `skipped`, so the required `ci-aggregate` check sees it. Paths that no job
-# reads, such as docs/, reference/ and the root Markdown files, select no job.
-# The `changes` job itself checks the one rule that reads every tracked file:
-# the Python version request is written once.
+# Every pull request runs the Rust, store, and shipping-size lanes. The
+# lightweight repository checks remain separate so their result is visible on
+# its own. `ci-aggregate` is the required check and uses ordinary GitHub
+# Actions job results; there is no repository-maintained path selector.
 #
-# The CI_INPUTS gates compare the event's base with HEAD (a two-dot diff). A
-# branch behind main also sees main's own changes, so it can select more jobs,
-# never fewer. The store gate diffs from the merge base. A missing base
-# selects every job.
-#
-# Main's required set is `ci-aggregate`. It fails when an applicable job fails or
-# when a job's result does not agree with its flag. A pull request that changes
-# this workflow can also change its gates; branch protection covers that case.
-# The platform and backend merge conditions, and the rule that every Linux
-# job runs natively on the runner, are docs/runbooks/verification.md,
-# section 10.
+# The platform and backend merge conditions, and the rule that every Linux job
+# runs natively on the runner, are docs/runbooks/verification.md, section 10.
 
 name: CI
 
@@ -84,15 +69,10 @@ concurrency:
 # developer machines only.
 
 jobs:
-  changes:
-    # The one Linux runner label in this workflow; the other Linux jobs
-    # alias it (*ubuntu). It names a release, not ubuntu-latest, so a runner
-    # image change happens here under review.
-    runs-on: &ubuntu ubuntu-26.04
-    outputs:
-      rust: ${{ steps.gate.outputs.rust }}
-      ship: ${{ steps.gate.outputs.ship }}
-      store: ${{ steps.gate.outputs.store }}
+  checks:
+    # This names a release, not ubuntu-latest, so a runner image change happens
+    # here under review.
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,11 +84,6 @@ jobs:
         with:
           uv: 'true'
           just: 'true'
-      - name: Compute the path-gate flags
-        id: gate
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree gate
-      # Every tracked file is an input of this rule, so it runs here on every
-      # change.
       - name: Python version request is written once
         run: uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_python_request; raise SystemExit(lint_python_request())'
       - run: just ruff
@@ -116,9 +91,7 @@ jobs:
 
   # The Linux Rust lane: every check that reads the workspace, under the Linux cell.
   rust:
-    needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: *ubuntu
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -239,16 +212,11 @@ jobs:
   # base / PR table to the job summary. A failed build, install or export
   # check fails the job; a size increase does not.
   #
-  # Base sizes come from a cache keyed by the shipping inputs' tree ids and
-  # the toolchain fingerprint (`just packaging sizes key`), written by this
-  # job on pushes to main. A hit costs one build, a miss two. A pull request
-  # that misses saves its own base result, so its later pushes hit.
-  # The pull request side builds the PR head, not the merge ref: the table
-  # compares the PR's own change with its base.
+  # The PR head is built against its base on every run. Rebuilding both
+  # revisions keeps the constitution's report independent of a cache key or a
+  # previously published artifact.
   shipping-sizes:
-    needs: changes
-    if: needs.changes.outputs.ship == 'true'
-    runs-on: *ubuntu
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     defaults:
       run:
@@ -256,20 +224,18 @@ jobs:
     env:
       # Warnings change no byte. The size build adds its own path remapping.
       RUSTFLAGS: ''
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      # Only main saves the dependency cache; pull requests restore it.
       - uses: ./.github/actions/bootstrap
         with:
           rust-toolchain: 'true'
           rust-cache: 'true'
           rust-cache-key: shipping-sizes-job
-          rust-cache-save-if: ${{ github.event_name == 'push' }}
           uv: 'true'
           just: 'true'
       - run: rustup show active-toolchain
@@ -283,43 +249,15 @@ jobs:
           read -r -a backend_pkgs <<< "$backend"
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libglib2.0-dev cargo-c "${backend_pkgs[@]}"
-      # After apt: the toolchain fingerprint reads the backend packages' versions.
-      - name: Compute the base recipe key
-        id: key
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            just packaging sizes key --commit "$BASE_SHA"
-          else
-            just packaging sizes key --commit HEAD
-          fi
-      - name: Restore the cached sizes
-        id: cached
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .ship-sizes
-          key: ${{ steps.key.outputs.key }}
       - name: Build base and head, report the table
-        if: github.event_name == 'pull_request'
         run: >
-          just packaging sizes run --base "$BASE_SHA" --base-cache .ship-sizes/sizes.json
+          just packaging sizes run --base "$BASE_SHA"
           --work "$RUNNER_TEMP/ship-sizes" --target target
-      - name: Build main and cache its sizes
-        if: github.event_name == 'push'
-        run: >
-          just packaging sizes build --reuse --commit HEAD --out .ship-sizes/sizes.json
-          --work "$RUNNER_TEMP/ship-sizes" --target target
-      - name: Save the sizes under the recipe key
-        if: success() && steps.cached.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .ship-sizes
-          key: ${{ steps.key.outputs.key }}
 
   # This job runs Clippy, rustdoc and the workspace tests under Berkeley DB.
   # It then runs the Berkeley DB and Kyoto Cabinet store suites under the
   # sanitizers and checks both C facades with `just abi`. `rust` runs the Kyoto Cabinet
-  # workspace tests on every change that selects this job, so they are not
+  # workspace tests on every pull request, so they are not
   # repeated here. No Linux job runs tkrzw code
   # (docs/runbooks/verification.md, section 10), so tkrzw has no sanitizer
   # run; the nightly macOS and Windows jobs run its tests uninstrumented.
@@ -353,9 +291,7 @@ jobs:
   # and their own target directory under the runner's temporary directory, so
   # no sanitizer-flavoured artifact enters the cache.
   store:
-    needs: changes
-    if: needs.changes.outputs.store == 'true'
-    runs-on: *ubuntu
+    runs-on: ubuntu-26.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -454,21 +390,22 @@ jobs:
             row 'kyotocabinet store and ABI sanitizers (address, leak)' "$SANITIZE_KYOTOCABINET"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The required aggregate checks each job against its path flag. Selected
-  # jobs must succeed and unselected jobs must be skipped. It runs after
-  # failures and can be cancelled.
+  # The required aggregate runs after failures and requires every ordinary
+  # lane to succeed.
   ci-aggregate:
-    needs: [changes, rust, shipping-sizes, store]
-    if: ${{ !cancelled() }}
-    runs-on: *ubuntu
+    needs: [checks, rust, shipping-sizes, store]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          uv: 'true'
-      - name: Require every applicable lane to succeed
+      - name: Require every lane to succeed
         env:
-          NEEDS: ${{ toJSON(needs) }}
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree aggregate
+          CHECKS: ${{ needs.checks.result }}
+          RUST: ${{ needs.rust.result }}
+          SHIPPING_SIZES: ${{ needs.shipping-sizes.result }}
+          STORE: ${{ needs.store.result }}
+        run: |
+          set -euo pipefail
+          test "$CHECKS" = success
+          test "$RUST" = success
+          test "$SHIPPING_SIZES" = success
+          test "$STORE" = success

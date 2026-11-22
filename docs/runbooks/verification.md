@@ -24,9 +24,6 @@ The three checks are:
 Check 2 excludes Markdown because documentation quotes these patterns.
 Check 2 reads each changed file at both revisions, so a change that deletes a file's last gate, or deletes a gated file, still fires it.
 A deleted file matches through its merge-base version, and an added file through its `HEAD` version.
-`uv run --managed-python python -X utf8 tools/bisection/cells-for-diff.py [base]` applies the checks to `base...HEAD`.
-The default base is `origin/main`.
-The command prints the selected cells, the check that selected them, and the matching paths and lines.
 Rule 7's documentation and comments case needs no backend-selection run.
 A change that seems to depend on a backend but fails these checks is reported as a finding.
 A finding of this kind does not authorize a three-cell run.
@@ -56,9 +53,11 @@ During iteration, run these checks for each changed crate:
 - `cargo clippy --locked -p <crate> --all-targets -- -D warnings`
 - fail-fast `cargo nextest run -p <crate>`
 
+On Linux the backend is Kyoto Cabinet: `just clippy` and `just test` pass `--no-default-features --features kyotocabinet`, so do not repeat the flags with them. With plain `cargo`, pass the flags yourself, as in the commands below.
+
 Diagnostics are fixed when they appear.
 
-Before a push for review or merge and after each rebase, one `cargo clippy --locked --workspace --all-targets -- -D warnings` runs on the final tree. These also run, only when the change calls for them:
+Before a push for review or merge and after each rebase, one `cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings` (on Linux; elsewhere without the backend flags) runs on the final tree. These also run, only when the change calls for them:
 
 - `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace` when doc comments or public items changed.
 - `just deny` when a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed. The recipe runs the cargo-deny checks of CI's `deny` job.
@@ -102,7 +101,7 @@ A check that is missing, cancelled or skipped when it applies does not count as 
 A check that is skipped because it does not apply to the change is not a failure.
 The checks that CI does not cover run locally: the differentials of the issue, revert-and-check, and any measurement that a concrete unresolved question requires for a decision ([controlling rule](../source-policy.md#controlling-rule)).
 Stripped shipping-library sizes ([constitution §2](../constitution.md)) are not a local check.
-For each PR that can change a shipping library, the `shipping-sizes` CI job reports the base and PR sizes in its job summary.
+On every pull request, the `shipping-sizes` CI job rebuilds the base and the head and reports both sizes in its job summary.
 The PR body states and justifies any increase over base; it does not copy the table.
 Release libraries are not built locally to get sizes.
 [`just packaging sizes run`](../packaging.md#shipping-library-sizes) reproduces the table, to debug a failure of the job.
@@ -277,7 +276,7 @@ Check the build of the library, not its version:
 
 These rules govern the CI gates. This section is the only place that states them. A workflow or a runbook that needs a rule links to this section.
 
-1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the `store` job when the store gate selects it.
+1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which requires the `checks`, `rust`, `store` and `shipping-sizes` jobs.
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
    The nightly runs their Rust checks. Dispatch it on the release commit before tagging.
    A lane never dispatches a workflow.
@@ -286,15 +285,15 @@ These rules govern the CI gates. This section is the only place that states them
    `LOCAL_CELL` in `tools/dev/cell.py` names the cell once for CI and the local tooling; [Linux setup](setup.md#linux) states the companion rule for the local tooling.
    Decided 2026-11-21: Ubuntu's libtkrzw is defective at run time ([finding](../findings/tkrzw-distro-compat.md)), so Linux runs no tkrzw code; Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
    The `store` job tests Berkeley DB and runs the Berkeley DB and Kyoto Cabinet sanitizers.
-   It runs when [rule 2](#2-backend-selection) selects it or when the libraries, fixtures or tooling used by its ABI check change.
+   It runs on every pull request.
    tkrzw's tests, including the full-data contract tests, which are tkrzw-only, run on the nightly macOS and Windows jobs and never in Linux CI; tkrzw's sanitizer run has no CI job.
-3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under its path gate.
+3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`.
    The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
-5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust` and `shipping-sizes`. In the same file, `STORE_GATE_ARGUMENTS` adds the ABI inputs and job infrastructure to the backend selection for `store`.
-   Within a job, no step depends on the changed paths, so a job's success always means the same checks.
-   The changes job runs the Python version request check, Ruff and the offline generated-table comparison.
-   Pushes to main run the normal path-selected checks.
+5. **Every lane runs on every PR.** `checks`, `rust`, `store` and `shipping-sizes` run on every pull request, and `ci-aggregate` requires their ordinary job results.
+   No job or step depends on the changed paths, so a job's success always means the same checks.
+   The `checks` job runs the Python version request check, Ruff and the offline generated-table comparison.
+   Pushes to main run the same lanes.
 6. **Linux CI runs natively.** Every Linux job of `ci.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
    Every system package, the store backends included, comes from Ubuntu's apt.
    Containers serve only the pin oracle, which is local work and never runs in CI, and the distribution packaging of `release-packages.yml`.
