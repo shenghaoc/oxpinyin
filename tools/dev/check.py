@@ -66,13 +66,13 @@ def lookup(env, name):
     return next((value for key, value in env.items() if key.upper() == name.upper()), '')
 
 
-def msvc_environment(env, *, capture=subprocess.run):
+def msvc_environment(env):
     """The Visual Studio developer environment: the caller's, or vcvars' via vswhere."""
     if lookup(env, 'VCToolsInstallDir'):
         return env
     root = lookup(env, 'ProgramFiles(x86)') or r'C:\Program Files (x86)'
     vswhere = Path(root) / 'Microsoft Visual Studio' / 'Installer' / 'vswhere.exe'
-    found = capture([str(vswhere), '-latest', '-products', '*', '-requires',
+    found = subprocess.run([str(vswhere), '-latest', '-products', '*', '-requires',
                      'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'],
                     env=env, capture_output=True, text=True)
     installation = found.stdout.strip().splitlines()[0] if found.returncode == 0 and found.stdout.strip() else ''
@@ -81,7 +81,7 @@ def msvc_environment(env, *, capture=subprocess.run):
     script = 'vcvarsarm64.bat' if platform.machine().upper() == 'ARM64' else 'vcvars64.bat'
     vcvars = Path(installation) / 'VC' / 'Auxiliary' / 'Build' / script
     # cmd /s keeps the outer quotes literal, so the batch path may hold spaces.
-    done = capture(f'cmd /d /s /c ""{vcvars}" >nul && set"', env=env, capture_output=True, text=True)
+    done = subprocess.run(f'cmd /d /s /c ""{vcvars}" >nul && set"', env=env, capture_output=True, text=True)
     if done.returncode:
         raise ValueError(f'{vcvars} failed with status {done.returncode}')
     # `set` also lists cmd's hidden per-drive "=C:=C:\\..." entries; skip them.
@@ -95,17 +95,17 @@ def msvc_environment(env, *, capture=subprocess.run):
 USAGE = 'usage: just check [' + '|'.join(cell.BACKENDS) + ']'
 
 
-def windows_compiler(env, *, capture=subprocess.run, which=shutil.which):
+def windows_compiler(env):
     """Whether the MSVC compiler the Windows build uses is available through ENV.
 
     A developer shell has cl on PATH or has loaded the developer environment;
     otherwise the Visual Studio found through vswhere is used.
     The Rust and C++ bridge builds use MSVC, never cc.
     """
-    if which('cl', path=lookup(env, 'PATH')):
+    if shutil.which('cl', path=lookup(env, 'PATH')):
         return True
     try:
-        msvc_environment(env, capture=capture)
+        msvc_environment(env)
     except (ValueError, OSError):
         return False
     return True
@@ -138,16 +138,16 @@ def missing_tool(tools):
     return None
 
 
-def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
+def run(backend=None):
     """Check native prerequisites, then build and run the selected backend tests.
 
     With no backend named, use the host's cell (tools/dev/cell.py host_cell):
     Kyoto Cabinet on Linux, the Cargo default elsewhere. Include the C API
     tests on Linux. Print tool and backend diagnostics; return 2 for an
     unknown backend, 1 for missing tools or launch errors, or the failing
-    child status. The optional env is used only for the supervised Cargo
-    child.
+    child status.
     """
+    out, err = sys.stdout, sys.stderr
     backend = backend or cell.CELL_TO_BACKEND[cell.host_cell()]
     if backend not in cell.BACKENDS:
         print(USAGE, file=err, flush=True)
@@ -217,7 +217,7 @@ def run(backend=None, out=sys.stdout, err=sys.stderr, env=None):
         args += ['-p', 'oxpinyin-capi']
     try:
         rc = tools.supervised(['cargo', 'nextest', 'run', *args],
-                              environment=dict(os.environ if env is None else env))
+                              environment=tools.environment)
     except Exception as exc:
         print(f'FAIL: {exc}', file=err, flush=True)
         return 1
@@ -250,18 +250,18 @@ def _placement_hit(path):
     return None
 
 
-def lint_crate_cfg_placement(argv, *, out=sys.stdout, err=sys.stderr, root=ROOT,
-                             tools=None):
+def lint_crate_cfg_placement(argv):
     """Lint crate-level `#![cfg(...)]` placement and return 0, 1 or 2.
 
     No arguments scan every tracked Rust file; named paths must be readable
     regular files. Exit 2 is a usage or environment error, never a violation.
     """
+    out, err = sys.stdout, sys.stderr
     args = list(argv)
     if args[:1] in (['-h'], ['--help']):
         err.write(LINT_USAGE)
         return 2
-    tools = native.Tools(root=root) if tools is None else tools
+    tools = native.Tools()
     if args:
         unreadable = [f'  {name}\n' for name in args if not Path(name).is_file()]
         if unreadable:
@@ -281,7 +281,7 @@ def lint_crate_cfg_placement(argv, *, out=sys.stdout, err=sys.stderr, root=ROOT,
     checked = 0
     named = bool(args)
     for name in files:
-        path = Path(name) if named else Path(root) / name
+        path = Path(name) if named else ROOT / name
         if not path.is_file():
             continue
         checked += 1

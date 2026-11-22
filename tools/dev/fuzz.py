@@ -113,12 +113,12 @@ class FuzzError(RuntimeError):
     """A refused installation, option or run; the message states the problem and the step."""
 
 
-def cargo_afl_version(path=LOCKFILE):
+def cargo_afl_version():
     """The cargo-afl version: the `afl` crate version that fuzz/Cargo.lock resolves."""
-    versions = {package['version'] for package in tomllib.loads(Path(path).read_text()).get('package', ())
+    versions = {package['version'] for package in tomllib.loads(LOCKFILE.read_text()).get('package', ())
                 if package.get('name') == 'afl'}
     if len(versions) != 1:
-        raise FuzzError(f'{path} must resolve exactly one version of the afl crate, not {sorted(versions)}.')
+        raise FuzzError(f'{LOCKFILE} must resolve exactly one version of the afl crate, not {sorted(versions)}.')
     return versions.pop()
 
 
@@ -151,7 +151,7 @@ def refuse_checkout(environ, cargo_afl_version):
                         f'Remove {source}, then run {SETUP}.')
 
 
-def tools_rule(environ, run=subprocess.run):
+def tools_rule(environ):
     """The rule for the fuzzing tools, stated once; return the accepted version line.
 
     cargo-afl must be the `afl` version of fuzz/Cargo.lock, with the AFL++ LLVM
@@ -160,8 +160,8 @@ def tools_rule(environ, run=subprocess.run):
     first, and `just doctor` reports its answer."""
     version = cargo_afl_version()
     try:
-        result = run(['cargo', 'afl', '--version'], capture_output=True, text=True, env=environ, cwd=FUZZ,
-                     check=False)
+        result = subprocess.run(['cargo', 'afl', '--version'], capture_output=True, text=True,
+                                env=environ, cwd=FUZZ, check=False)
         found = result.stdout.strip() if result.returncode == 0 else ''
     except OSError:
         found = ''
@@ -235,30 +235,30 @@ def content_hash(data):
     return hashlib.sha1(data).hexdigest()
 
 
-def curated_inputs(target, fuzz=FUZZ):
+def curated_inputs(target):
     """TARGET's curated inputs as (corpus name, source, bytes): fuzz/seeds/<target>, then its fixtures.
 
     A fixture that is missing fails, so a lost input cannot shrink the corpus unnoticed."""
     inputs = []
-    seeds = fuzz / 'seeds' / target
+    seeds = FUZZ / 'seeds' / target
     if seeds.is_dir():
         inputs += [(seed.name, seed, seed.read_bytes()) for seed in sorted(seeds.iterdir()) if seed.is_file()]
     for name, relative, skip in CURATED_FIXTURES.get(target, ()):
-        source = fuzz.parent / relative
+        source = FUZZ.parent / relative
         if not source.is_file():
             raise FuzzError(f'{target}: the curated input {relative} is missing.')
         inputs.append((name, source, source.read_bytes()[skip:]))
     return inputs
 
 
-def seed_corpus(target, corpus, fuzz=FUZZ):
+def seed_corpus(target, corpus):
     """Write TARGET's curated inputs into the corpus by name; one byte stands for an empty corpus.
 
     A corpus file that has a curated input's name but other content is kept
     under its content name, so no distinct input is lost. It is renamed, not
     copied: a queue entry that afl-fuzz linked to it keeps its bytes."""
     corpus.mkdir(parents=True, exist_ok=True)
-    for name, _, data in curated_inputs(target, fuzz):
+    for name, _, data in curated_inputs(target):
         destination = corpus / name
         if destination.is_file() and destination.read_bytes() != data:
             kept = corpus / content_name(destination)
@@ -779,11 +779,12 @@ def run(target, args, environ):
 ARCHIVED = ('default/queue', 'default/crashes', 'default/hangs', 'seed-issues')
 
 
-def archive(destination, out=FUZZ / 'out'):
+def archive(destination):
     """Pack the queue, findings and seed issues of every run directory into a gzip tar file.
 
     Runs that ended early and runs of targets that passed are packed too.
     Return the number of files packed."""
+    out = FUZZ / 'out'
     destination = Path(destination).resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
     packed = 0
@@ -805,8 +806,8 @@ USAGE = ('usage: python -m tools.dev.fuzz setup | minimize [target] | run <targe
          '| archive <file>')
 
 
-def main(argv, environ=None):
-    environ = dict(os.environ if environ is None else environ)
+def main(argv):
+    environ = dict(os.environ)
     try:
         if argv[:1] == ['setup'] and len(argv) == 1:
             return setup(environ)

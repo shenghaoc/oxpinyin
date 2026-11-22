@@ -96,16 +96,15 @@ def bash_word(value: str) -> str:
                    else '\\' + character for character in value)
 
 
-def main(argv: Sequence[str], *, root: Path = ROOT,
-         environment: Mapping[str, str] | None = None) -> int:
+def main(argv: Sequence[str]) -> int:
     """Build or describe the selected cell artifacts."""
     try:
-        environment = os.environ if environment is None else environment
+        environment = os.environ
         if list(argv[:1]) == ['--library-path'] and len(argv) in (1, 2):
             sys.stdout.write(library_path(environment.get('LD_LIBRARY_PATH', ''),
                                          Path(argv[1]) if len(argv) == 2 else Path.cwd()))
             return 0
-        settings = Settings.read(environment, root)
+        settings = Settings.read(environment)
         if list(argv) == ['--shell']:
             keys = ('ORACLE_DBM', 'ORACLE_DBM_NAME', 'CAPI_FEATURE', 'OXPINYIN_CAPI_BACKEND_EXT',
                     'EXPECTED_PIN_REF', 'CARGO_TARGET_DIR', 'CARGO_PROFILE_DEV_OPT_LEVEL',

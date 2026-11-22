@@ -1241,12 +1241,12 @@ def tree(work, before, cell):
     return entries
 
 
-def run_utility(name, program, root=ROOT):
+def run_utility(name, program):
     """Run utility observation NAME's PROGRAM in a private copy of the cell's W3 directory."""
     spec = OBSERVATIONS[name]
     with tempfile.TemporaryDirectory(prefix='pin-utility-') as scratch:
         work, temporary = Path(scratch) / 'w3', Path(scratch) / 'tmp'
-        shutil.copytree(Path(root) / 'fixtures/w3' / W3_DIRECTORIES[spec.cell], work)
+        shutil.copytree(ROOT / 'fixtures/w3' / W3_DIRECTORIES[spec.cell], work)
         temporary.mkdir()
         before = {path.relative_to(work).as_posix(): path.read_bytes()
                   for path in work.rglob('*') if path.is_file()}
@@ -1272,7 +1272,7 @@ def run_utility(name, program, root=ROOT):
     return observation
 
 
-def run_sequence(name, programs, model, root=ROOT):
+def run_sequence(name, programs, model):
     """Run C1's three pin programs over the W3 subset of MODEL in a private work directory.
 
     The subset's temporary directory is staged as `<table-dir>` in the arguments and streams, so two
@@ -1329,7 +1329,7 @@ def built_library(tree_):
     return found[-1]
 
 
-def checked_utilities(cache, root=ROOT):
+def checked_utilities(cache):
     """Each cell's verified provisioned prefix and the utilities its build tree built."""
     needed = {}
     for spec in OBSERVATIONS.values():
@@ -1339,11 +1339,11 @@ def checked_utilities(cache, root=ROOT):
         return {}
     if cache is None:
         raise CaptureError('the utility runs need --provision-cache, a `just provision-oracle` cache')
-    commit = image.fields(Path(root) / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
+    commit = image.fields(ROOT / 'tools/oracle/oracle-pin.txt')['libpinyin_commit']
     cells = {}
     for cell, programs in sorted(needed.items()):
         prefix = Path(cache) / 'oracle' / cell
-        if not image.prefix_ok(prefix, cell, root):
+        if not image.prefix_ok(prefix, cell):
             raise CaptureError(f'{prefix}: prefix_ok refused it: another pin or recipe, or damaged recorded bytes')
         record = image.fields(prefix / 'oracle-pin.txt')
         tree_ = build_tree(cache, cell, commit)
@@ -1377,22 +1377,21 @@ def checked_model(model):
         raise CaptureError(str(error)) from error
 
 
-def checked_identity(prefix, data, root=ROOT, libraries=None, cache=None, model=None):
+def checked_identity(prefix, data, cache, model):
     """capture.json for the facades at PREFIX on the system data DATA, the utility cells under CACHE
-    and the model20 extraction MODEL; refuse any other pin, library, data, build or model.
-    LIBRARIES overrides the loaded paths."""
-    if not image.prefix_ok(prefix, BACKEND, root):
+    and the model20 extraction MODEL; refuse any other pin, library, data, build or model."""
+    if not image.prefix_ok(prefix, BACKEND):
         raise CaptureError(f'{prefix}: prefix_ok refused it: another pin or recipe, or damaged recorded bytes')
     record = image.fields(Path(prefix) / 'oracle-pin.txt')
     facades = {}
     for facade, (relative, key) in LIBRARIES.items():
-        library = (libraries or {}).get(facade, Path(prefix) / relative)
+        library = Path(prefix) / relative
         loaded = image.digest_file(library)
         if loaded != record[key]:
             raise CaptureError(f'{library}: the loaded lib{facade} is {loaded}, the prefix records {record[key]}')
         facades[facade] = {'library_sha256': loaded}
     digest = contract_data.data_identity(data)
-    pinned = json.loads((Path(root) / 'tools/oracle/libpinyin-data.json').read_text())['content_sha256']
+    pinned = json.loads((ROOT / 'tools/oracle/libpinyin-data.json').read_text())['content_sha256']
     if digest != pinned:
         raise CaptureError(f'{data}: the data digest is {digest}, the repository pins {pinned}')
     return {'schema': SCHEMA, 'families': sorted({family(name) for name in OBSERVATIONS}), 'backend': BACKEND,
@@ -1404,7 +1403,7 @@ def checked_identity(prefix, data, root=ROOT, libraries=None, cache=None, model=
             'facades': facades,
             'versions_sha256': record['versions_sha256'],
             'data': {'kind': 'package', 'digest': digest},
-            'utility_cells': checked_utilities(cache, root),
+            'utility_cells': checked_utilities(cache),
             'model_dir': None if (path := checked_model(model)) is None else str(path)}
 
 
@@ -1420,16 +1419,16 @@ def require_capture_environment():
         raise ValueError('capture needs OXPINYIN_CAPTURE_IMAGE, the image identity (set by just capture-pin)')
 
 
-def capture(run, prefix, data, staging, take, root=ROOT, libraries=None, cache=None, model=None):
-    """Check the pin, data and builds, take each observation with TAKE, and stage both under STAGING/RUN."""
+def capture(run, prefix, data, staging, cache, model):
+    """Check the pin, data and builds, take each observation, and stage both under STAGING/RUN."""
     separators = {'/', os.sep, os.altsep} - {None}
     if run in ('', '.', '..') or any(separator in run for separator in separators):
         raise CaptureError(f'the run name {run!r} is not a single path component')
-    identity = checked_identity(prefix, data, root, libraries, cache, model)
+    identity = checked_identity(prefix, data, cache, model)
     directory = Path(staging) / run
     if directory.exists():
         raise CaptureError(f'{directory} exists: stage each run once')
-    observations = {name: take(name, identity) for name in OBSERVATIONS}
+    observations = {name: take_observation(name, identity, prefix, data) for name in OBSERVATIONS}
     directory.mkdir(parents=True)
     for name, value in (('capture.json', identity), ('observations.json', observations)):
         (directory / name).write_text(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + '\n')
@@ -1437,17 +1436,15 @@ def capture(run, prefix, data, staging, take, root=ROOT, libraries=None, cache=N
     return 0
 
 
-def take_observation(prefix, data, root=ROOT):
-    def take(name, identity):
-        spec = OBSERVATIONS[name]
-        built = identity['utility_cells'].get(getattr(spec, 'cell', None), {}).get('utilities', {})
-        if isinstance(spec, Utility):
-            return run_utility(name, built[spec.program]['path'], root)
-        if isinstance(spec, DataSequence):
-            return run_sequence(name, {program: built[program]['path'] for _, program in SEQUENCE_PROGRAMS},
-                                identity['model_dir'], root)
-        return observe(name, prefix, data)
-    return take
+def take_observation(name, identity, prefix, data):
+    spec = OBSERVATIONS[name]
+    built = identity['utility_cells'].get(getattr(spec, 'cell', None), {}).get('utilities', {})
+    if isinstance(spec, Utility):
+        return run_utility(name, built[spec.program]['path'])
+    if isinstance(spec, DataSequence):
+        return run_sequence(name, {program: built[program]['path'] for _, program in SEQUENCE_PROGRAMS},
+                            identity['model_dir'])
+    return observe(name, prefix, data)
 
 
 def main(argv):
@@ -1466,9 +1463,7 @@ def main(argv):
     args = parser.parse_args(argv)
     try:
         require_capture_environment()
-        return capture(args.run, args.prefix, args.data, args.staging,
-                       take_observation(args.prefix, args.data), cache=args.provision_cache,
-                       model=args.model_dir)
+        return capture(args.run, args.prefix, args.data, args.staging, args.provision_cache, args.model_dir)
     except (CaptureError, ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f'FAIL: {error}', file=sys.stderr)
         return 1

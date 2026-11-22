@@ -137,9 +137,9 @@ def probe_host(*, env=None, root=ROOT, out=None):
 class Provision:
     """One invocation's paths, qualification state, and provisioning phases."""
 
-    def __init__(self, *, root=ROOT, env=None):
-        self.root = Path(root)
-        self.env = dict(os.environ if env is None else env)
+    def __init__(self):
+        self.root = ROOT
+        self.env = dict(os.environ)
         self.pin = self.root / 'tools/oracle/oracle-pin.txt'
         # The provisioning cache; the property resolves it on first use, so a run that
         # needs no cache does not need OXPINYIN_CACHE.

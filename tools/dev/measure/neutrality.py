@@ -11,7 +11,7 @@ from pathlib import Path
 from ..runners import status
 
 
-def compare(first, second, *, run=subprocess.run) -> tuple[int, str]:
+def compare(first, second) -> tuple[int, str]:
     """Compare the extracted .text bytes and return the status and report."""
     texts = []
     with tempfile.TemporaryDirectory(prefix='neutrality-') as scratch:
@@ -19,7 +19,7 @@ def compare(first, second, *, run=subprocess.run) -> tuple[int, str]:
             destination = Path(scratch) / f'{name}.text'
             command = ['objcopy', '-O', 'binary', '--only-section=.text', str(library), str(destination)]
             try:
-                done = run(command, capture_output=True)
+                done = subprocess.run(command, capture_output=True)
             except FileNotFoundError:
                 return 127, ''
             if done.returncode:
@@ -77,14 +77,14 @@ def macho_code(path):
     return sections
 
 
-def compare_macho(symbols, plain, *, run=None):
+def compare_macho(symbols, plain):
     """Native timing requires identical code AND layout; no multiset allowance."""
     from . import bench
     if macho_code(symbols) != macho_code(plain):
         raise ValueError('Mach-O executable sections or addresses differ')
     listings = []
     for path in (symbols, plain):
-        done = (run or bench.capture)(['xcrun', 'llvm-objdump', '--disassemble', '--no-symbolic-operands', str(path)])
+        done = bench.capture(['xcrun', 'llvm-objdump', '--disassemble', '--no-symbolic-operands', str(path)])
         if done.status:
             raise ValueError('arm64 disassembly failed')
         # Keep addresses, bytes and operands. Ignore filenames and symbol labels only.

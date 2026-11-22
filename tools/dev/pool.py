@@ -81,7 +81,7 @@ class ProcessLauncher:
     """
 
     def __init__(self, env: Mapping[str, str] | None = None,
-                 cpus: Sequence[int] = (), wake: threading.Event | None = None,
+                 cpus: Sequence[int] = (),
                  cancelled: Callable[[], bool] | None = None):
         """Remember the child environment.
 
@@ -92,7 +92,7 @@ class ProcessLauncher:
         self.leases: queue.Queue = queue.Queue()
         for cpu in cpus:
             self.leases.put(cpu)
-        self.wake = wake or threading.Event()
+        self.wake = threading.Event()
         self.units: dict[str, 'UnitHandle'] = {}    # the handles of the units launched, by name
 
     def launch(self, task: Task):
@@ -353,7 +353,7 @@ def run_units(units: Sequence[tuple[str, Callable[[UnitContext], object]]], work
               cancelled: Callable[[], bool], launcher: ProcessLauncher | None = None,
               emit: Callable[[str, object], object] | None = None,
               cancel_error: Callable[[str], BaseException] = UnitsCancelled,
-              poll: float = 0.05, grace: float = 5.0, out=sys.stderr) -> list:
+              out=sys.stderr) -> list:
     """Run UNITS, (name, function) pairs, at most WORKERS at once; return their values in order.
 
     This is run_pool with callables: the same stop rule, with every thread joined
@@ -380,7 +380,7 @@ def run_units(units: Sequence[tuple[str, Callable[[UnitContext], object]]], work
             if emit is not None:
                 emit(names[emitted - 1], handle.value)
     result = run_pool([Task(name, [], run=function) for name, function in units], workers, launcher,
-                      cancelled=cancelled, poll=poll, grace=grace, out=out,
+                      cancelled=cancelled, poll=0.05, out=out,
                       sleep=lambda seconds: (launcher.wake.wait(seconds), launcher.wake.clear()),
                       progress=progress)
     if result.cancelled:
@@ -411,8 +411,7 @@ def _capture(argv: Sequence[str]) -> subprocess.CompletedProcess:
                           check=False, timeout=60)
 
 
-def remove_owned(owned: OwnedContainer, run: Callable[[Sequence[str]], subprocess.CompletedProcess] = _capture,
-                 out=sys.stderr) -> bool:
+def remove_owned(owned: OwnedContainer) -> bool:
     """Remove the container OWNED recorded, only if it is the one this invocation created.
 
     The ID comes from the cidfile the runtime wrote for this run's `run` command. An empty or
@@ -426,18 +425,18 @@ def remove_owned(owned: OwnedContainer, run: Callable[[Sequence[str]], subproces
     if not recorded:
         return False
     from tools.oracle import image
-    found = image.container_owner(owned.runtime, recorded, owned.label, run=run)
+    found = image.container_owner(owned.runtime, recorded, owned.label, run=_capture)
     if found is None:
         return False
     identity, _, label = found.partition(' ')
     if identity != recorded or label != owned.token:
-        print(f'left container {recorded[:12]} alone: it was not created by this run', file=out, flush=True)
+        print(f'left container {recorded[:12]} alone: it was not created by this run', file=sys.stderr, flush=True)
         return False
-    run(image.runtime_command([*owned.runtime, 'container', 'rm', '-f', recorded]))
+    _capture(image.runtime_command([*owned.runtime, 'container', 'rm', '-f', recorded]))
     return True
 
 
-def remove_labelled(owned: OwnedContainer, run: Callable[[Sequence[str]], subprocess.CompletedProcess] = _capture) -> int:
+def remove_labelled(owned: OwnedContainer) -> int:
     """Remove every container that carries this run's token, whatever the cidfile holds.
 
     The runtime creates the container and then writes its ID to the cidfile. A pool that stops
@@ -447,49 +446,47 @@ def remove_labelled(owned: OwnedContainer, run: Callable[[Sequence[str]], subpro
     """
     from tools.oracle import image
     removed = 0
-    for candidate in image.container_ids(owned.runtime, owned.label, owned.token, run=run):
-        found = image.container_owner(owned.runtime, candidate, owned.label, run=run)
+    for candidate in image.container_ids(owned.runtime, owned.label, owned.token, run=_capture):
+        found = image.container_owner(owned.runtime, candidate, owned.label, run=_capture)
         if found is None:
             continue
         identity, _, label = found.partition(' ')
         if identity != candidate or label != owned.token:
             continue
-        run(image.runtime_command([*owned.runtime, 'container', 'rm', '-f', candidate]))
+        _capture(image.runtime_command([*owned.runtime, 'container', 'rm', '-f', candidate]))
         removed += 1
     return removed
 
 
-def remove_run_containers(owned: OwnedContainer, run: Callable[[Sequence[str]], subprocess.CompletedProcess] = _capture,
-                          out=sys.stderr) -> bool:
+def remove_run_containers(owned: OwnedContainer) -> bool:
     """Remove the container OWNED recorded, then any container of this run the cidfile never named."""
-    recorded = remove_owned(owned, run, out)
-    return remove_labelled(owned, run) > 0 or recorded
+    recorded = remove_owned(owned)
+    return remove_labelled(owned) > 0 or recorded
 
 
 def run_leased(units: Sequence[tuple[str, Callable[[UnitContext], object]]], *,
-               cancelled: Callable[[], bool], serial: bool = False, cpus: Sequence[int] | None = None,
+               cancelled: Callable[[], bool], serial: bool = False,
                max_workers: int | None = None,
                emit: Callable[[str, object], object] | None = None,
                cancel_error: Callable[[str], BaseException] = UnitsCancelled,
-               env: Mapping[str, str] | None = None, out=sys.stderr) -> list:
+               out=sys.stderr) -> list:
     """Run independent UNITS, one CPU leased per running unit; return values in order.
 
     SERIAL caps execution at one worker. The pool never exceeds MAX_WORKERS, the
-    unit count or CPUS (the CPU ids to lease; defaults to the host's allowed set).
-    See `run_units` for the stop and ordering rules. Every unit sees ENV
-    (default os.environ) as its environment.
+    unit count or the host’s allowed CPU set.
+    See `run_units` for the stop and ordering rules. Every unit inherits the process environment.
     """
     if max_workers is not None and max_workers < 1:
         raise ValueError('max_workers must be positive')
     if not units:
         return []
-    cpus = sorted(host.allowed_cpus()) if cpus is None else list(cpus)
+    cpus = sorted(host.allowed_cpus())
     if not cpus:
         raise ValueError('cpus must not be empty')
     if serial:
         max_workers = 1
     workers = max(1, min(len(units), len(cpus), max_workers if max_workers is not None else len(units)))
-    launcher = ProcessLauncher(env=dict(os.environ if env is None else env), cpus=cpus[:workers],
+    launcher = ProcessLauncher(env=dict(os.environ), cpus=cpus[:workers],
                                cancelled=cancelled)
     return run_units(units, workers, cancelled=cancelled, launcher=launcher, emit=emit,
                      cancel_error=cancel_error, out=out)
@@ -549,15 +546,15 @@ def build_tasks(args, chosen: Plan, token: str = '', cid_dir: Path | None = None
     return tasks
 
 
-def _finish(result: Result, out) -> int:
+def _finish(result: Result) -> int:
     """Map a pool result to an exit status: 0, 1 for a failure, 130 for cancellation."""
     if result.cancelled:
-        print('cancelled; child process groups terminated and reaped', file=out, flush=True)
+        print('cancelled; child process groups terminated and reaped', file=sys.stderr, flush=True)
         return CANCELLED_STATUS
     return 0 if result.ok else 1
 
 
-def run_command(args, out=sys.stderr) -> int:
+def run_command(args) -> int:
     """Run the pool for parsed ARGS and return its exit status."""
     if not args.items or not args.command:
         raise SystemExit('pool run needs --items and a command after --')
@@ -570,15 +567,15 @@ def run_command(args, out=sys.stderr) -> int:
     cpus = allowed if args.cpus is None else min(allowed, args.cpus)
     chosen = plan(len(args.items), cpus, args.workers)
     print(f'{args.label}: {" ".join(args.items)} with {chosen.workers} at once, make -j{chosen.jobs} each '
-          f'({cpus} CPUs)', file=out, flush=True)
+          f'({cpus} CPUs)', file=sys.stderr, flush=True)
     with tempfile.TemporaryDirectory(prefix='oxpinyin-pool-') as cid_directory:
         try:
             with slot.cancellation_handlers():
                 result = run_pool(build_tasks(args, chosen, token, Path(cid_directory)), chosen.workers,
-                                  ProcessLauncher(), cancelled=slot.CANCELLED.is_set, out=out)
+                                  ProcessLauncher(), cancelled=slot.CANCELLED.is_set)
         except slot.Cancelled:
-            return _finish(Result(cancelled=True), out)
-    return _finish(result, out)
+            return _finish(Result(cancelled=True))
+    return _finish(result)
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:

@@ -394,9 +394,9 @@ def render(source=SOURCE):
     return {path: BANNER + text for path, text in output.items()}
 
 
-def regenerate(*, check=True, root=ROOT, source=SOURCE):
-    outputs = render(source)
-    verify_acceptance(outputs, source)
+def regenerate(*, check):
+    outputs = render()
+    verify_acceptance(outputs)
     with tempfile.TemporaryDirectory(prefix='oxpinyin-rust-tables-') as temp:
         staging = Path(temp)
         different = []
@@ -404,7 +404,7 @@ def regenerate(*, check=True, root=ROOT, source=SOURCE):
             candidate = staging / name
             candidate.parent.mkdir(parents=True, exist_ok=True)
             candidate.write_text(text, encoding='utf-8', newline='\n')
-            destination = root / name
+            destination = ROOT / name
             if not destination.exists() or candidate.read_bytes() != destination.read_bytes():
                 different.append(name)
             if not check:

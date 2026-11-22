@@ -118,8 +118,8 @@ bigram row supplies two strings on false. The test releases both. It stops
 the unigram iterator at exhaustion, where another read would abort.
 
 The test runs with the nightly in `fuzz/rust-toolchain.toml`,
-`-Zsanitizer=address` and `ASAN_OPTIONS=detect_leaks=1`. Negative controls
-run the same test executable in child processes. The parent requires a
+`-Zsanitizer=address` and `ASAN_OPTIONS=detect_leaks=1`. The original negative controls
+ran the same test executable in child processes. The parent recorded a
 nonzero exit and the corresponding LeakSanitizer or AddressSanitizer
 diagnostic for a missing free or an invalid free.
 
