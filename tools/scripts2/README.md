@@ -148,7 +148,7 @@ downloads. It uses only committed upstream sources and the accepted fixture.
 
 For the parser witness with the `content-ni-initial` mutation (change `initial: 11` to `initial: 1` in the generated `ni` row):
 
-1. Build the mutated subject with `just cell-artifacts`.
+1. Build the mutated subject with the ordinary Cargo command for its backend.
 2. Run the existing Rust contract test `default_option_single_key` against the unchanged
    pin.
 3. Restore with `just rust-tables --write` and rebuild.

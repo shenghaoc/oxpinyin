@@ -326,15 +326,6 @@ abi *args:
 abi *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.abi @forwarded; exit $LASTEXITCODE
 
-# Build or describe the registry's selected cell artifacts.
-[unix]
-cell-artifacts *args:
-    @uv run --managed-python python -X utf8 -m tools.dev.cell "$@"
-
-[windows]
-cell-artifacts *args:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.cell @forwarded; exit $LASTEXITCODE
-
 # Run Valgrind recipes under the shared cancellation and failure handlers.
 [linux]
 measure-callgrind-control *args:
