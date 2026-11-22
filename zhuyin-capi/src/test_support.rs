@@ -64,6 +64,7 @@ pub unsafe fn with_store<R>(
 }
 
 /// Hand-built `PhraseIndexLogger` records for the journal-replay tests
+#[path = "../../tests/support/c_harness_tests.rs"]
 mod tests;
 
 #[cfg(feature = "tkrzw")]
