@@ -144,15 +144,9 @@ downloads. It uses only committed upstream sources and the accepted fixture.
 
 ## Verification
 
-`just test-tools tools/dev/rust_tables.test.py` adds these checks to the existing Python tooling test job:
-source hashes, header
-round trips, exact Rust values, offline checks, hash-seed stability and drift
-rejection. No CI job is added.
+`just rust-tables --check` verifies source and acceptance digests and compares the generated Rust with the tracked files. CI runs it offline.
 
-The named mutation `content-ni-initial` changes `initial: 11` to `initial: 1` in the generated `ni` content row.
-The tool test verifies two results: `--check` rejects the mutation
-without rewriting the altered file, and the acceptance digests reject it.
-For the parser witness:
+For the parser witness with the `content-ni-initial` mutation (change `initial: 11` to `initial: 1` in the generated `ni` row):
 
 1. Build the mutated subject with `just cell-artifacts`.
 2. Run the existing Rust contract test `default_option_single_key` against the unchanged

@@ -278,12 +278,6 @@ No measurement path is exempt as never-tkrzw. The profiling and packaging
 launches, and the Python contract, gcov, training and ordering tools, share
 the same implementation. A refusal is a failed run, never MATCH or SKIP.
 
-The loader fixtures run with:
-
-```sh
-just test-tools tools/tkrzw/runtime.test.py
-```
-
 ## What it does
 
 `just provision` runs steps 0 and 3b. `just provision-oracle` runs `just provision`, then
@@ -475,20 +469,11 @@ side.
   `oracle-pin.txt` of that prefix, or with the current pin and recipe. They stay
   in the oracle root. The recorded values are not edited to match.
 
-### Provisioning implementation and fixture checks
+### Provisioning implementation
 
 `tools.dev.provision` is the single provisioning service. `just provision` runs
 the same module through `uv run`, which provisions the interpreter first.
 `just provision-oracle` runs its `oracle` and `oracle-env` subcommands.
 
-The synthetic provisioning fixtures run through normal Python discovery:
-
-```sh
-just test-tools tools/dev/provision.test.py
-```
-
-The fixtures run the documented `uv run ... -m tools.dev.provision` command with
-fake host tools, pins, data, proxy CA and generated environment paths, and source
-the environment file in sh. Missing option values return status 1
-with an `--option: requires an argument` diagnostic. Interpreter overrides are
-refused before the native prerequisite checks.
+Missing option values return status 1 with an `--option: requires an argument` diagnostic.
+Interpreter overrides are refused before the native prerequisite checks.

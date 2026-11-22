@@ -34,18 +34,6 @@ rust-tables *args:
 rust-tables *args:
     @{{windows_args}} uv run --offline --no-python-downloads --managed-python python -X utf8 -m tools.dev.rust_tables @forwarded; exit $LASTEXITCODE
 
-# Data-only transport target for the real-just smoke tests; never starts work.
-[unix]
-[private]
-_test-argv status *args:
-    @uv run --managed-python python -X utf8 -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' "$@"
-
-[windows]
-[private]
-_test-argv status *args:
-    @{{windows_args}} uv run --managed-python python -X utf8 -c 'import json, sys; print(json.dumps(sys.argv[2:])); sys.exit(int(sys.argv[1]))' @forwarded; exit $LASTEXITCODE
-
-
 # Native provisioning after `uv python install`; uv itself must already be installed.
 # It never starts a container: `just provision-oracle` provisions the pin oracle.
 [unix]
@@ -156,15 +144,6 @@ test *args:
 [windows]
 test *args:
     @{{windows_args}} cargo nextest run --profile local @forwarded; exit $LASTEXITCODE
-
-# Run the CI Python harness discovery and exclusions (Linux, macOS and Windows).
-[unix]
-test-tools *args:
-    @uv run --managed-python python -X utf8 -m tools.dev.test_runner "$@"
-
-[windows]
-test-tools *args:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.test_runner @forwarded; exit $LASTEXITCODE
 
 # Build the workspace.
 [unix]

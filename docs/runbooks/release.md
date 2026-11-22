@@ -12,8 +12,7 @@ Each of these conditions holds before a release is tagged:
 
 1. `main` is green on `CI` and `Store backends`, and on every job of the last
    `verify-nightly`.
-2. `verify-nightly.yml` was dispatched manually on the release commit with
-   `tools_harness` set ([verification rule 10](verification.md#10-ci-merge-conditions)).
+2. `verify-nightly.yml` was dispatched manually on the release commit ([verification rule 10](verification.md#10-ci-merge-conditions)).
    A release is published only if its macOS, Windows, fuzz soak and overflow lane jobs pass on
    that commit; a green run of another commit does not count.
 3. The ABI gate passed on the tip. The Linux sanitizer job runs `just abi` to check exports, C++ header consumers and the allocation registers.

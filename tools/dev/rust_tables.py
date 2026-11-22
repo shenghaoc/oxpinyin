@@ -390,7 +390,7 @@ def render(source=SOURCE):
             text += f'#[rustfmt::skip]\nconst {name}_TABLE: &[{type_}] = &[\n' + ''.join('    (' + ', '.join(map(string, row)) + '),\n' for row in selected) + '];\n'
         output['src/engine/session/split_tables.rs'] = text
     # Formatting belongs to this emitter: check mode never invokes rustup or
-    # downloads a toolchain, including in the Python-only CI harness job.
+    # downloads a toolchain.
     return {path: BANNER + text for path, text in output.items()}
 
 

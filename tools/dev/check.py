@@ -14,6 +14,7 @@ import argparse
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,43 @@ import sys
 from . import cell, native
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+REQUEST = re.compile(r'cpython@\d|uv python (?:install|find|pin)[^\n]*? ["\']?\d\.\d|--python[ =]["\']?\d\.\d'
+                     r'|requires-python\s*=\s*["\'][^"\'\n]*\d')
+# The one permitted declaration besides .python-version: this line of the project file, and the
+# copy of it that uv writes at the top level of the lockfile.
+DECLARATION = re.compile(r'requires-python = ">=\d+\.\d+"')
+DECLARED_IN = ('pyproject.toml', 'uv.lock')
+
+
+def lint_python_request():
+    """Check the repository's single Python request and its minimum-version declaration."""
+    if not re.fullmatch(r'\d+\.\d+', (ROOT / '.python-version').read_text().strip()):
+        print('invalid series in .python-version', file=sys.stderr)
+        return 1
+    paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode().split('\0')
+    status = 0
+    for name in filter(None, paths):
+        path = ROOT / name
+        if name == '.python-version' or name.startswith('docs/findings/') or path.is_symlink() or not path.is_file():
+            continue
+        try:
+            lines = path.read_text().splitlines()
+        except UnicodeDecodeError:
+            continue
+        matches = [line for line in lines if REQUEST.search(line)]
+        if name in DECLARED_IN:
+            declared = [line for line in matches if DECLARATION.fullmatch(line)]
+            if len(declared) == 1:
+                matches.remove(declared[0])
+            elif name == 'pyproject.toml':
+                print(f'{name}: expected one minimum-version declaration', file=sys.stderr)
+                status = 1
+        for line in matches:
+            print(f'{name}: unexpected Python version request: {line}', file=sys.stderr)
+            status = 1
+    return status
 
 
 def lookup(env, name):

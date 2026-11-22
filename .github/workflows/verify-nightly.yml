@@ -25,10 +25,6 @@ on:
         description: Run only the macOS workspace job
         type: boolean
         default: false
-      tools_harness:
-        description: Also run the tools Python harness on Windows and macOS
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -331,17 +327,8 @@ jobs:
       - name: Provide the pinned system data
         uses: ./.github/actions/contract-data
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace
-      # The tools Python harness, on a dispatch that asks for it: a tooling
-      # change that can behave differently on Windows, and before a release
-      # (docs/runbooks/verification.md, section 10). The schedule does not
-      # run it.
-      - name: Run tools Python harness tests
-        if: ${{ inputs.tools_harness }}
-        run: just test-tools
-
   # macOS links Homebrew's tkrzw. The full workspace runs here;
-  # shipped macOS libraries are also built and checked separately. The tools
-  # Python harness runs after the Rust steps on a dispatch that asks for it.
+  # shipped macOS libraries are also built and checked separately.
   #
   # Platforms other than Linux are unstable but usable, so the job runs every
   # night and on manual dispatch; section 10 makes it best-effort and never a
@@ -389,7 +376,3 @@ jobs:
         uses: ./.github/actions/contract-data
       - run: >
           cargo nextest run --locked --profile ci --status-level skip --workspace
-      - name: Run tools Python harness tests
-        if: ${{ inputs.tools_harness }}
-        shell: bash
-        run: just test-tools
