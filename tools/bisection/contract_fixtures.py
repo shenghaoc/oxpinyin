@@ -8,8 +8,9 @@ which the container reader needs, is a parameter.
 import ctypes as C
 import os
 import subprocess
+import tempfile
 
-from contract_abi import B, I, P, S, U, Z
+from contract_abi import B, I, P, S, Z
 
 
 def _write_user_conf(k):
@@ -118,77 +119,26 @@ def _craft_tkrzw(path, rows, kind, keep=False):
     assert tk.tkrzw_dbm_close(db)
 
 
-def _craft_bdb(path, rows, dbtype, keep=False, read_keys=(), allow_missing=False):
-    """A Berkeley DB `dbtype` container; `keep=True` adds to existing rows.
+def _craft_bdb(path, rows):
+    """Replace a native Berkeley DB hash file with exact binary key/value pairs.
 
-    rows=None opens read-only; other rows values enable creation and unlink
-    an existing file unless keep is true. Store byte pairs, then return copied
-    values for read_keys in order. With allow_missing, any nonzero get status
-    becomes None, not just not-found; otherwise assert success. Assert create,
-    open, put and close results. Handles close only on the success path, and
-    libdb must expose the dynamically resolved __db_*_pp entry points."""
-    import ctypes.util
-
-    class DBT(C.Structure):
-        """Mirror the native DBT record passed to Berkeley DB's get and put entry points.
-
-        Include app_data before flags so pointer alignment matches the C layout;
-        data points to buffers whose lifetime is managed separately by the caller."""
-        # 40 bytes on x86_64: the `app_data` pointer between `doff` and
-        # `flags` (omitting it misaligns `flags`, and `__db_put_pp` then
-        # rejects the flag argument).
-        _fields_ = [
-            ('data', C.c_void_p),
-            ('size', C.c_uint),
-            ('ulen', C.c_uint),
-            ('dlen', C.c_uint),
-            ('doff', C.c_uint),
-            ('app_data', C.c_void_p),
-            ('flags', C.c_uint),
-        ]
-
-    db = C.CDLL(ctypes.util.find_library('db'))
-    db.db_create.argtypes = [C.POINTER(C.c_void_p), C.c_void_p, C.c_uint]
-    db.db_create.restype = C.c_int
-    db.__db_open_pp.argtypes = [C.c_void_p, C.c_void_p, C.c_char_p, C.c_char_p,
-                                C.c_int, C.c_uint, C.c_int]
-    db.__db_open_pp.restype = C.c_int
-    db.__db_put_pp.argtypes = [C.c_void_p, C.c_void_p, C.POINTER(DBT), C.POINTER(DBT), C.c_uint]
-    db.__db_put_pp.restype = C.c_int
-    db.__db_close_pp.argtypes = [C.c_void_p, C.c_uint]
-    db.__db_close_pp.restype = C.c_int
-    db.__db_get_pp.argtypes = [P, P, C.POINTER(DBT), C.POINTER(DBT), U]
-    db.__db_get_pp.restype = I
-    if rows is not None and os.path.exists(path) and not keep:
+    Use db_dump's bytevalue format with default database tuning and no named
+    subdatabase. Clear DB_HOME and use an empty working directory so the loader
+    cannot join an ambient Berkeley DB environment. Loader failures propagate.
+    """
+    path = os.path.abspath(path)
+    if os.path.exists(path):
         os.unlink(path)
-    handle = C.c_void_p()
-    assert db.db_create(C.byref(handle), None, 0) == 0
-    # DB_CREATE == 0x1; the pin opens its tables the same way
-    # (`chewing_large_table2_bdb.cpp:90`, `ngram_bdb.cpp:56`).
-    flags = 0x1 if rows is not None else 0x400  # DB_CREATE / DB_RDONLY
-    assert db.__db_open_pp(handle, None, path.encode(), None, dbtype, flags, 0o600) == 0
-    live = []
-    for key, value in rows or ():
-        kbuf = C.create_string_buffer(key)
-        vbuf = C.create_string_buffer(value)
-        live += [kbuf, vbuf]
-        kd = DBT(C.cast(kbuf, C.c_void_p), len(key), 0, 0, 0, None, 0)
-        vd = DBT(C.cast(vbuf, C.c_void_p), len(value), 0, 0, 0, None, 0)
-        assert db.__db_put_pp(handle, None, C.byref(kd), C.byref(vd), 0) == 0
-    values = []
-    for key in read_keys:
-        kbuf = C.create_string_buffer(key)
-        kd = DBT(C.cast(kbuf, P), len(key), 0, 0, 0, None, 0)
-        vd = DBT()
-        status = db.__db_get_pp(handle, None, C.byref(kd), C.byref(vd), 0)
-        if status != 0 and allow_missing:
-            values.append(None)
-            continue
-        assert status == 0
-        values.append(C.string_at(vd.data, vd.size))
-    assert db.__db_close_pp(handle, 0) == 0
-    del live
-    return values
+    lines = ['VERSION=3', 'format=bytevalue', 'type=hash', 'HEADER=END']
+    for key, value in rows:
+        lines.extend((' ' + key.hex(), ' ' + value.hex()))
+    lines.append('DATA=END')
+    dump = ('\n'.join(lines) + '\n').encode('ascii')
+    environment = dict(os.environ)
+    environment.pop('DB_HOME', None)
+    with tempfile.TemporaryDirectory(prefix='bdb-load-') as scratch:
+        subprocess.run(['db5.3_load', path], input=dump, check=True,
+                       capture_output=True, env=environment, cwd=scratch)
 
 
 def index_file_rows(path, *, cell, kind='tree', allow_empty=False, library=None):

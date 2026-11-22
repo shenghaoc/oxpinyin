@@ -19,18 +19,24 @@ class CommandTests(unittest.TestCase):
                 reverse_cross_open.main(argv)
         return raised.exception.code, stderr.getvalue()
 
-    def test_the_tkrzw_cell_requires_the_package_data(self):
-        code, stderr = self.main(['--cell', 'tkrzw', '/subject.so'])
-        self.assertEqual(code, 2)
-        self.assertIn('--data', stderr)
+    def test_every_cell_requires_its_system_data(self):
+        for cell, source in (('bdb', 'PREFIX/lib/libpinyin/data'),
+                             ('kc', 'PREFIX/lib/libpinyin/data'),
+                             ('tkrzw', 'just fetch-contract-data')):
+            with self.subTest(cell=cell):
+                code, stderr = self.main(['--cell', cell, '--pin-prefix', '/pin',
+                                          '/pinyin.so', '/zhuyin.so'])
+                self.assertEqual(code, 2)
+                self.assertIn('--data', stderr)
+                self.assertIn(source, stderr)
 
     def test_the_handoff_check_requires_a_pin_prefix(self):
-        code, stderr = self.main(['--cell', 'bdb', '/subject.so'])
+        code, stderr = self.main(['--cell', 'bdb', '--data', '/data', '/subject.so'])
         self.assertEqual(code, 2)
         self.assertIn('--pin-prefix', stderr)
 
     def test_the_handoff_check_requires_both_subject_libraries(self):
-        code, stderr = self.main(['--cell', 'bdb', '--pin-prefix', '/pin', '/pinyin.so'])
+        code, stderr = self.main(['--cell', 'bdb', '--data', '/data', '--pin-prefix', '/pin', '/pinyin.so'])
         self.assertEqual(code, 2)
         self.assertIn('--zhuyin-so', stderr)
 

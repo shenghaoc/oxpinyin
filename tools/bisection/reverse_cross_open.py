@@ -1,11 +1,16 @@
 """Local-only cross-open checks for the user profile formats.
 
-    reverse_cross_open.py --cell tkrzw --pin-prefix PREFIX --data DIR \
+    reverse_cross_open.py --cell CELL --pin-prefix PREFIX --data DIR \
         target/debug/liboxpinyin_capi.so target/debug/liboxzhuyin_capi.so
 
-The four handoff cases run oxpinyin first, then the pin, in fresh workers. The
+Every cell needs --data. The tkrzw cell reads the pinned package data
+(just fetch-contract-data). The bdb and kc cells read their oracle prefix's
+verified data, PREFIX/lib/libpinyin/data.
+
+The handoff cases run oxpinyin first, then the pin, in fresh workers. The
 pin reads the profile oxpinyin wrote and re-saves it; the case asserts the rows
-and the saved bytes. No workflow or just recipe calls this module.
+and the saved bytes. Run it with the local just reverse-cross-open recipe.
+No workflow runs it.
 """
 import argparse
 import ctypes as C
@@ -37,6 +42,13 @@ check_tkrzw = runpy.run_path(str(ROOT / 'tools/tkrzw/runtime.py'))['check']
 CELL = 'tkrzw'
 PIN_LIBRARIES = {'pinyin': 'libpinyin.so', 'zhuyin': 'libzhuyin.so'}
 TIMEOUT = 300
+# Where each cell's system data comes from. The tkrzw cell reads the pinned
+# package data; the bdb and kc cells read the verified data of their oracle prefix.
+DATA_SOURCES = {
+    'bdb': 'PREFIX/lib/libpinyin/data',
+    'kc': 'PREFIX/lib/libpinyin/data',
+    'tkrzw': 'just fetch-contract-data',
+}
 
 
 def index_file_rows(path, *, kind='tree', allow_empty=False):
@@ -53,7 +65,8 @@ def _craft_db(path, rows, dbtype, keep=False, *, system_index=False):
         return _craft_kc(path, rows, keep=keep)
     if CELL == 'tkrzw':
         return _craft_tkrzw(path, rows, 'HashDBM' if dbtype == 2 else 'TreeDBM', keep=keep)
-    return _craft_bdb(path, rows, dbtype, keep=keep)
+    assert dbtype == 2 and not keep, 'BDB fixtures are fresh hash databases'
+    return _craft_bdb(path, rows)
 
 
 def _craft_hash(path, rows):
@@ -272,16 +285,16 @@ def main(argv):
         os._exit(0)
 
     CELL = args.cell
-    if args.cell == 'tkrzw' and args.data is None:
-        parser.error('the tkrzw cell reads the package data: pass --data DIR (just fetch-contract-data)')
-    data = args.data or Path('/nonexistent-contract-data')
+    if args.data is None:
+        source = DATA_SOURCES[args.cell]
+        parser.error(f'the {args.cell} cell reads its system data: pass --data DIR ({source})')
+    data = args.data
     if args.pin_prefix is None:
         parser.error('the reverse cross-open check runs the pin: pass --pin-prefix PREFIX')
     if args.pinyin_so is None:
         parser.error('missing input: PINYIN_SO')
     if args.zhuyin_so is None:
         parser.error('missing input: --zhuyin-so')
-    failures = 0
     shapes = {
         'issue1114': ('CONTRACT_1114_PROFILE', 'CONTRACT_1114_RELOAD'),
         'save-929': ('CONTRACT_929_PROFILE', 'CONTRACT_929_RELOAD'),
@@ -298,12 +311,11 @@ def main(argv):
                 subject_out, pin_out = cross_open(case, subject, pin, data, Path(root) / case, environment_case=shape)
                 ok = True
             except (AssertionError, RuntimeError, subprocess.TimeoutExpired) as error:
-                failures += 1
                 print(json.dumps(dict(case=case, cell=CELL, ok=False, reason=str(error)[:300])))
-                continue
+                return 1
             print(json.dumps(dict(case=case, cell=CELL, ok=ok, direction='oxpinyin-to-pin',
                                   saved=subject_out.get('saved_bigram') or subject_out.get('rows'))))
-    return 1 if failures else 0
+    return 0
 
 
 if __name__ == '__main__':
