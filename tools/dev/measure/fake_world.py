@@ -42,7 +42,7 @@ class World(unittest.TestCase):
         self.log = []
         self.worker_status = {}        # nth worker launch (1-based) -> exit status
         self.workers = 0
-        fakes = dict(capture=self.fake_capture, run=self.fake_run, check=self.fake_check,
+        fakes = dict(build_harness=self.fake_build_harness, capture=self.fake_capture, run=self.fake_run, check=self.fake_check,
                      report=self.fake_report, utc_now=lambda: '2026-10-27T00:00:00Z')
         for name, fake in fakes.items():
             self.enterContext(mock.patch.object(bench, name, fake))
@@ -67,6 +67,11 @@ class World(unittest.TestCase):
                                   b'worker diagnostics\n')
         self.log.append(('capture', command))
         return pool.Completed(0, b'', b'')
+
+    def fake_build_harness(self, output, *, binary='bisect', env=None):
+        self.fake_run(bench.harness_build(binary=binary), env=env)
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_bytes(b'\x7fELF harness')
 
     def fake_run(self, command, *, env=None, cwd=None, stdout=None, check_status=True):
         command = [str(part) for part in command]

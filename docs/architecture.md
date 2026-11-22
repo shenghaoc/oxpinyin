@@ -13,7 +13,15 @@ The library holds the behaviour; the other crates hold only their own interfaces
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, through the library's `tools` feature (`docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS | never |
 | oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable mini data; no timing loops. | forbid | Linux, macOS | never |
 
-Every crate links GLib, because the library links it ([native libraries](#native-libraries-and-unsafe-code)).
+The measurement package is independent of the product crates.
+`tools/measurement` owns the nonshipping `bisect` and `system-import-profile`
+binaries. They load either subject through the C ABI with `libloading`.
+Shared workloads contain no OS or CPU selection. Whole platform modules own
+Linux profiling and allocator diagnostics, macOS process counters and image
+identity, and Windows process counters, file and dependency identity.
+Only module declarations select platforms.
+
+Every product crate links GLib, because the library links it ([native libraries](#native-libraries-and-unsafe-code)).
 
 ## Library modules
 

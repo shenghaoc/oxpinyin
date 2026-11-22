@@ -3,7 +3,7 @@
 callgrind-differential answers one question: does oxpinyin execute more
 instructions than libpinyin on the keystroke path, or the same instructions more
 slowly? One harness binary runs under callgrind against each library in turn;
-because bisect.c drives both through the same C ABI the totals are comparable,
+because the Rust driver drives both through the same C ABI the totals are comparable,
 and because the collection anchors live in the harness the collected region is the
 same. Nothing here interprets the numbers; the decision rule lives in the
 findings document.
@@ -31,7 +31,7 @@ CALLGRIND = 'just measure-callgrind-differential'
 SYSTEM_IMPORT = 'system-import-profile'
 ANCHOR = 'bisect_perf_steady_unit'
 # The tool options of every callgrind run; the output file is added per run.
-# The steady anchor switches collection on and off itself (CALLGRIND_TOGGLE_COLLECT in bisect.c).
+# The steady anchor switches collection on and off itself (the Rust collection guard).
 CALLGRIND_OPTIONS = ('valgrind', '--tool=callgrind', '--collect-atstart=no',
                      '--cache-sim=yes', '--branch-sim=yes', '--separate-threads=no')
 
@@ -315,7 +315,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
     # 5. hardware instruction counters: the interception distortion. Callgrind's Ir counts allocation
     # against valgrind's simplified allocator, an understatement whose size differs per engine and so
-    # biases the Ir ratio. bisect.c brackets the same steady cycles with a PERF_COUNT_HW_INSTRUCTIONS
+    # biases the Ir ratio. The Rust driver brackets the same steady cycles with a PERF_COUNT_HW_INSTRUCTIONS
     # counter (exclude_kernel) in native processes, real glibc malloc included; the ratio of the two
     # engines' medians is the hardware counterpart of the Ir ratio, and the difference is the measured
     # distortion. Needs a host whose perf_event_paranoid, SELinux and seccomp settings permit perf_event_open.
@@ -381,8 +381,7 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
     except OSError as error:
         fail(f"mkdir: cannot create directory '{out}': {error.strerror}")
     out = os.path.realpath(out)
-    bench.run(['cc', *bench.STRICT_FLAGS, bench.BISECT / 'system-import-profile.c', '-ldl', '-o',
-               Path(out) / 'driver'])
+    bench.build_harness(Path(out) / 'driver', binary='system-import-profile', env=env)
     relative = 'tools/bisection/system_import_profile.py'
     module = bench.script(relative)
     try:

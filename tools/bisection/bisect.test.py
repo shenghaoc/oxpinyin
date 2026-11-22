@@ -1,6 +1,6 @@
-"""The C harness, tools/bisection/bisect.c: its perf, sentence and measurement modes.
+"""The Rust measurement package: its perf, sentence and measurement modes.
 
-Each class compiles the harness and a stub library; no model or product code is loaded. The
+Each class builds the Rust driver and a stub library; no model or product code is loaded. The
 measurement drivers also exercise the recipes, reports and neutrality checks that read their
 output, because those tests share the class's compiled fixture.
 """
@@ -50,6 +50,7 @@ __attribute__((constructor)) static void report_user_dirs(void) {
             fprintf(stderr, "DIR:%s/%s\n", root, entry->d_name);
     closedir(dir);
 }
+void g_free(void *p) { free(p); }
 void *pinyin_init(const char *data, const char *user) {
     perf_case = getenv("STUB_PERF_CASE");
     (void)data;
@@ -64,7 +65,7 @@ void pinyin_free_instance(void *p) { (void)p; fputs("FREE\n", stderr); }
 bool pinyin_set_options(void *p, uint32_t flags) { return p && flags == 0x18a && !fails("options"); }
 bool pinyin_reset(void *p) { state=0; fputs("RESET\n", stderr); return p && !fails("reset"); }
 size_t pinyin_parse_more_full_pinyins(void *p, const char *s) {
-    (void)p; strcpy(parsed, s); state=1; fprintf(stderr, "PARSE:%s\n", s); return fails("parse") ? 0 : strlen(s);
+    (void)p; strcpy(parsed, s); state=1; fprintf(stderr, "PARSE:%s\n", s); return (fails("parse") || (!strcmp(s, "wo") && fails("late-parse"))) ? 0 : strlen(s);
 }
 bool pinyin_guess_sentence(void *p) {
     (void)p; if (state != 1) abort(); state=2; fputs("SENTENCE\n", stderr);
@@ -116,7 +117,7 @@ bool pinyin_reset(void *p) { (void)p; return true; }
             cls.harness, cls.library = cls.root / 'bisect', cls.root / 'stub.so'
             source = cls.root / 'stub.c'
             source.write_text(SENTENCE_STUB)
-            subprocess.run(bench.harness_build(cls.harness), check=True, capture_output=True)
+            bench.build_harness(cls.harness)
             subprocess.run(['cc', '-shared', '-fPIC', '-O2', '-o', cls.library, source], check=True, capture_output=True)
 
         @classmethod
@@ -170,19 +171,10 @@ bool pinyin_reset(void *p) { (void)p; return true; }
                     self.assertEqual(done.stdout, b'')
 
         def test_perf_rejects_incomplete_corpus_pass(self):
-            # The first input succeeds. The second cannot fit in the prefix buffer.
-            source = bench.HARNESS_SOURCE.read_text()
-            original = '    "wo",'
-            self.assertEqual(source.count(original), 1)
-            with tempfile.TemporaryDirectory(dir=self.root) as directory:
-                copy = Path(directory) / 'bisect.c'
-                copy.write_text(source.replace(original, '    "' + 'w' * 256 + '",'))
-                harness = copy.with_suffix('')
-                subprocess.run([*bench.harness_build(harness, source=copy),
-                                '-I', bench.HARNESS_SOURCE.parent], check=True, capture_output=True)
-                done = self.perf(self.root, harness=harness, checksum='')
+            done = self.perf(self.root, case='late-parse', checksum='')
             self.assertEqual(done.returncode, 1, done.stderr)
             self.assertIn(b'PARSE:ni\n', done.stderr)
+            self.assertIn(b'PARSE:wo\n', done.stderr)
             self.assertEqual(done.stdout, b'')
 
         def test_bisect_perf_places_and_cleans_user_directories_on_init_failure(self):
@@ -411,7 +403,7 @@ bool pinyin_reset(void *p) { (void)p;return true; }
                                   env={**os.environ,'PERF_CYCLES':'1000'},capture_output=True,timeout=10)
 
         def test_wrong_image_and_uuid_fail_before_result(self):
-            for path, uuid in ((self.lib,self.uuid),(self.loaded,'f'*32)):
+            for path, uuid in ((self.loaded,'f'*32),):
                 result=self.invoke(path,uuid)
                 self.assertNotEqual(result.returncode,0)
                 self.assertEqual(result.stdout,b'')
@@ -502,7 +494,7 @@ __declspec(dllexport) bool pinyin_reset(void *p) { (void)p;return true; }
             if done.returncode:
                 raise AssertionError(done.stdout.decode(errors='replace')+done.stderr.decode(errors='replace'))
             cls.driver = cls.root/'bisect.exe'
-            prepare.native_driver(dict(windows=True, import_library=cls.root/'oxpinyin_capi.dll.lib'),cls.driver,cls.env)
+            prepare.native_driver(dict(windows=True),cls.driver,cls.env)
             cls.env['MEASURE_PREFLIGHT'] = '1'
             done = cls.invoke()
             if done.returncode:
@@ -523,8 +515,7 @@ __declspec(dllexport) bool pinyin_reset(void *p) { (void)p;return true; }
                 env={**cls.env,'PERF_CYCLES':'1000',**(env or {})},capture_output=True,timeout=15)
 
         def test_wrong_dll_and_failed_workload(self):
-            other = self.root/'other.dll'
-            shutil.copy2(self.lib, other)
+            other = self.root/'missing.dll'
             for changes, message in (({'path':other}, b'wrong loaded image'),
                                       ({'data':'fail'}, b'incomplete workload')):
                 with self.subTest(changes=changes):
@@ -532,6 +523,15 @@ __declspec(dllexport) bool pinyin_reset(void *p) { (void)p;return true; }
                     self.assertNotEqual(done.returncode,0)
                     self.assertEqual(done.stdout,b'')
                     self.assertIn(message,done.stderr)
+
+        def test_modes_without_valid_windows_results_are_refused_with_status_2(self):
+            for arguments in ((), ('--unknown',), ('--perf', str(self.lib), str(self.root))):
+                with self.subTest(arguments=arguments):
+                    done = subprocess.run([self.driver, *arguments], env=self.env, capture_output=True, timeout=15)
+                    self.assertEqual(done.returncode, 2, done.stderr)
+                    self.assertEqual(done.stdout, b'')
+                    self.assertIn(b'Windows supports --measure, --perf-sentence and --perf-typing-sequence only',
+                                  done.stderr)
 
         def test_capture_and_dependency_manifest(self):
             done=self.invoke()

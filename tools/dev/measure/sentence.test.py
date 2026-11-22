@@ -126,7 +126,7 @@ class CampaignTests(unittest.TestCase):
             return types.SimpleNamespace(status=0, stdout=json.dumps(row).encode(), stderr=b'')
 
         with mock.patch.object(sentence, 'prepare', return_value=libraries), \
-                mock.patch.object(bench, 'run'), mock.patch.object(bench, 'guard') as guard, \
+                mock.patch.object(bench, 'build_harness'), mock.patch.object(bench, 'guard') as guard, \
                 mock.patch.object(bench, 'capture', side_effect=capture), \
                 mock.patch.object(sentence.identity, 'cpu_model', return_value='test'), \
                 contextlib.redirect_stdout(io.StringIO()):

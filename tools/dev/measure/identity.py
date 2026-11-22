@@ -154,7 +154,7 @@ def verify_modules(paths, expected):
 
 
 def windows_preflight(arms, data, env, installed):
-    """Resolve each implicitly linked arm before the measured schedule."""
+    """Load each selected arm before the measured schedule."""
     import json
     expected = None
     for arm in arms.values():
