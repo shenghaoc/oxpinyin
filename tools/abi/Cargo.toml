@@ -30,6 +30,14 @@ glib-sys.workspace = true
 tempfile.workspace = true
 libloading = "0.8.9"
 
+[package.metadata.cargo-shear]
+ignored = [
+    # `tests/abi.rs` includes bindgen's `OUT_DIR` loader, which names `::libloading::Library`.
+    "libloading",
+    # Backend features forward through `oxpinyin?/…`; dev-dependencies cannot be optional.
+    "oxpinyin",
+]
+
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
 pkg-config = { version = "0.3", optional = true }

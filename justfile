@@ -203,6 +203,12 @@ deny:
     @cargo deny --locked --all-features --log-level error check
     @cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check
 
+# Check unused and misplaced dependencies, unlinked files, and empty test targets.
+# The root workspace runs first, then fuzz's separate workspace and lockfile.
+shear:
+    @cargo shear --locked --deny-warnings --check-test-targets
+    @cd fuzz && cargo shear --locked --deny-warnings --check-test-targets
+
 # Check tools/ Python with ruff's pyflakes rules (F) only. upstream/ holds
 # unmodified pin copies (tools/scripts2/README.md), so it is excluded.
 [unix]

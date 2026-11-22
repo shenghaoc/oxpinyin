@@ -7,9 +7,9 @@ description: |-
   optional install of the toolchain and components that
   rust-toolchain.toml names (minimal profile), optional CI tools (uv
   through astral-sh/setup-uv, with the managed Python and its build
-  check; just, cargo-nextest and cargo-deny through
-  taiki-e/install-action, just and cargo-deny at exact versions and
-  cargo-nextest at the latest version that the pinned action carries,
+  check; just, cargo-nextest, cargo-deny and cargo-shear through
+  taiki-e/install-action, just, cargo-deny and cargo-shear at exact
+  versions and cargo-nextest at the latest version that the pinned action carries,
   and cargo-c from its
   upstream macOS release archive), and an optional Swatinem/rust-cache
   restore/save of the registry and build artifacts (its post step runs
@@ -78,6 +78,12 @@ inputs:
   cargo-deny:
     description: >-
       Install cargo-deny with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-shear:
+    description: >-
+      Install cargo-shear with taiki-e/install-action. String 'true'/'false'
       (composite-action inputs are strings).
     required: false
     default: 'false'
@@ -180,17 +186,18 @@ runs:
         assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()
         PYTHON
 
-    # just uses the justfile's minimum-version; cargo-deny uses the version
-    # file beside this action. `latest` for cargo-nextest is the version in
-    # the manifest of the pinned install-action commit.
+    # just uses the justfile's minimum-version; cargo-deny and cargo-shear use
+    # the version files beside this action. `latest` for cargo-nextest is the
+    # version in the manifest of the pinned install-action commit.
     - name: Resolve the install-action tools
       id: tools
-      if: inputs.just == 'true' || inputs.cargo-nextest == 'true' || inputs.cargo-deny == 'true'
+      if: inputs.just == 'true' || inputs.cargo-nextest == 'true' || inputs.cargo-deny == 'true' || inputs.cargo-shear == 'true'
       shell: bash
       env:
         JUST: ${{ inputs.just }}
         CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
         CARGO_DENY: ${{ inputs.cargo-deny }}
+        CARGO_SHEAR: ${{ inputs.cargo-shear }}
       run: |
         set -euo pipefail
         wanted=()
@@ -206,6 +213,7 @@ runs:
         resolve just "$(sed -n 's/^set minimum-version := "\([^"]*\)"$/\1/p' justfile)" "$JUST"
         resolve cargo-nextest latest "$CARGO_NEXTEST"
         resolve cargo-deny "$(cat .github/actions/bootstrap/cargo-deny-version.txt)" "$CARGO_DENY"
+        resolve cargo-shear "$(cat .github/actions/bootstrap/cargo-shear-version.txt)" "$CARGO_SHEAR"
         if [ "${#wanted[@]}" -gt 0 ]; then
           printf 'wanted=%s\n' "${wanted[*]}" >> "$GITHUB_OUTPUT"
         fi

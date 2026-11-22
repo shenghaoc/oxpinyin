@@ -47,7 +47,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Jobs after the gate:
-#   rust — rustfmt, cargo-deny, Clippy, fuzz-target Clippy, the Lizard
+#   rust — rustfmt, cargo-deny, cargo-shear, Clippy, fuzz-target Clippy, the Lizard
 #          complexity limit and the workspace tests on Linux under Kyoto
 #          Cabinet, the one Linux cell; the default tkrzw backend runs on
 #          macOS and Windows in verify-nightly.yml
@@ -133,6 +133,7 @@ jobs:
           just: 'true'
           cargo-nextest: 'true'
           cargo-deny: 'true'
+          cargo-shear: 'true'
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # libkyotocabinet-dev: the library the kyotocabinet backend links and
@@ -149,6 +150,7 @@ jobs:
       # holds the policy. The justfile's deny recipe holds the checks and their
       # order.
       - run: just deny
+      - run: just shear
       # Placement gate for crate-level `#![cfg(...)]`. A gate that evaluates
       # false discards the crate attributes after it, so one above a `//!`
       # block removes the docs and `missing_docs` fires on the excluded
