@@ -216,40 +216,27 @@ mutants *args:
     @{{windows_args}} cargo mutants @forwarded; exit $LASTEXITCODE
 
 # The afl version of fuzz/Cargo.lock is the cargo-afl version, and the LLVM
-# plugins build against the LLVM of the fuzz nightly. tools/dev/fuzz.py states the rules; on any host
-# other than Linux it refuses with one message.
+# plugins build against the LLVM of the fuzz nightly. tools/dev/fuzz.py states the rules. The fuzz
+# recipes exist on Linux only; run directly, tools/dev/fuzz.py refuses on any other host.
 # Install cargo-afl and the AFL++ release that it bundles, with the LLVM plugins (Linux only).
-[unix]
+[linux]
 fuzz-setup:
     @uv run --managed-python python -X utf8 -m tools.dev.fuzz setup
 
-[windows]
-fuzz-setup:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz setup; exit $LASTEXITCODE
-
-# Prepare one target's corpus, or every corpus with no target: the restored
-# inputs and the curated inputs, each curated input replayed, then afl-cmin
-# (Linux only).
-[unix]
+# The restored inputs and the curated inputs, each curated input replayed, then afl-cmin. A failed
+# target leaves its corpus as it was.
+# Prepare one target's corpus, or every corpus with no target (Linux only).
+[linux]
 fuzz-minimize *targets:
     @uv run --managed-python python -X utf8 -m tools.dev.fuzz minimize "$@"
 
-[windows]
-fuzz-minimize *targets:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz minimize @forwarded; exit $LASTEXITCODE
-
-# Each run writes a new directory under fuzz/out/<target>/. Arguments after the
-# target go to afl-fuzz, for example `-V 60`. FUZZ_CMPLOG=1 adds CmpLog;
-# FUZZ_GUARD_SECONDS limits the wall time. tools/dev/fuzz.py states the rules;
-# on any host other than Linux it refuses with one message.
+# Each run writes a new directory under fuzz/out/<target>/. Arguments after the target go to
+# afl-fuzz, for example `-V 60`; `--` and any argument that is not an option or an option's value
+# are refused. FUZZ_CMPLOG=1 adds CmpLog; FUZZ_GUARD_SECONDS limits the wall time.
 # Fuzz one target with AFL++ and ASan, and fail on any finding (Linux only).
-[unix]
+[linux]
 fuzz target *args:
     @uv run --managed-python python -X utf8 -m tools.dev.fuzz run "$@"
-
-[windows]
-fuzz target *args:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz run @forwarded; exit $LASTEXITCODE
 
 # Run native coverage with temporary state; run and report in one invocation.
 # cargo llvm-cov runs the tests under nextest, the only supported test runner.
