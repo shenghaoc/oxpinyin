@@ -439,8 +439,11 @@ fn init_aborts_on_an_unknown_user_conf_database_format() {
         },
     );
     let conf = std::fs::read_to_string(run.user_dir.join("user.conf")).expect("user.conf");
-    assert!(conf.contains("database format:LMDB\n"), "{conf}");
-    assert!(conf.ends_with("open counter:0\n"), "{conf}");
+    assert!(
+        conf.contains(&format!("database format:LMDB{NL}")),
+        "{conf}"
+    );
+    assert!(conf.ends_with(&format!("open counter:0{NL}")), "{conf}");
 }
 
 /// The open counter `user.conf` records, as the next init reads it.
