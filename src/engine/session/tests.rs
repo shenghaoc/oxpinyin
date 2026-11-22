@@ -4391,6 +4391,7 @@ pub(super) mod session_lifecycle {
         // After a reset, the same input must convert exactly as the first
         // time, under the configuration set before the reset.
         let mut session = session();
+        assert!(!session.is_composing());
         session
             .set_options(session.options() - OptionBits::PINYIN_INCOMPLETE)
             .expect("the option toggles");

@@ -10,10 +10,9 @@ use crate::{
 };
 use std::cell::RefCell;
 
-use crate::engine::SessionSettings;
 use crate::engine::error::EngineError;
 use crate::engine::session::build_scan_matrix;
-use crate::fixture_doubles::{FixtureDictionary, FixtureLanguageModel};
+use crate::fixture_doubles::FixtureDictionary;
 
 struct TextDictionary;
 
@@ -1263,15 +1262,4 @@ fn the_zhuyin_shape_keeps_one_tail_with_batch_ties() {
         "earlier batch position wins ties"
     );
     assert_eq!(NbestShape::default(), NbestShape::PINYIN);
-}
-
-/// Session-level smoke: the public types compose.
-#[test]
-fn session_types_compose() {
-    let session = crate::engine::Session::<FixtureDictionary, FixtureLanguageModel>::new(
-        SessionSettings::default(),
-        FixtureDictionary::default(),
-        FixtureLanguageModel::default(),
-    );
-    assert!(!session.is_composing());
 }
