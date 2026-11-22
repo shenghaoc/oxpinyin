@@ -57,8 +57,7 @@ Section: libs
 Priority: optional
 Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
-Depends: $DEPS
-Recommends: libpinyin-data
+Depends: $DEPS, libpinyin-data (>= 2.11.91-1~exp1)
 Provides: libpinyin15 (= $PCVER), libzhuyin15 (= $PCVER)
 Conflicts: libpinyin15, libzhuyin15
 Replaces: libpinyin15, libzhuyin15
@@ -96,6 +95,7 @@ Summary:        Library to deal with pinyin — oxpinyin drop-in, $BACKEND store
 License:        GPL-3.0-or-later
 URL:            https://github.com/shenghaoc/oxpinyin
 Source0:        staged-tree.tar.gz
+Requires:       libpinyin-data%{?_isa} >= 2.8.1-5.fc39
 Obsoletes:      libpinyin libzhuyin
 Provides:       libpinyin = $PCVER libzhuyin = $PCVER
 
