@@ -12,10 +12,6 @@ use std::io::Write;
 
 use oxpinyin::data::phrase_library::PhraseLibrary;
 
-fn scratch_path() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("oxpinyin-fuzz-dict-loader-{}", std::process::id()))
-}
-
 fn walk(library: &PhraseLibrary) -> Vec<(u32, usize, usize)> {
     let _ = library.total_freq();
     let _ = library.token_range();
@@ -25,18 +21,32 @@ fn walk(library: &PhraseLibrary) -> Vec<(u32, usize, usize)> {
         .collect()
 }
 
+/// Inputs per child: AFL++'s suggested start
+/// (`instrumentation/README.persistent_mode.md`), which bounds a child's
+/// lifetime. `AFL_FUZZER_LOOPCOUNT` overrides it.
+const LOOP_COUNT: usize = 1000;
+
+/// Valid chunk files: the first open of one builds `memmap2`'s page size.
+const WARM_UP: &[&[u8]] = &[
+    include_bytes!("../../fixtures/w3/kct/art.bin"),
+    include_bytes!("../../fixtures/w3/kct/opengram.bin"),
+];
+
 fn main() {
-    oxpinyin_fuzz::run_once(run);
+    oxpinyin_fuzz::fuzz(LOOP_COUNT, WARM_UP, run);
 }
 
-/// Runs one input.
+/// Runs one input. The input's file exists only while it runs.
 fn run(data: &[u8]) {
-    let path = scratch_path();
-    let mut file = std::fs::File::create(&path).expect("scratch file");
+    let mut file = tempfile::Builder::new()
+        .prefix("oxpinyin-fuzz-dict-loader-")
+        .tempfile()
+        .expect("scratch file");
     file.write_all(data).expect("scratch write");
-    drop(file);
-    let first = PhraseLibrary::open(&path).map(|library| walk(&library));
-    let second = PhraseLibrary::open(&path).map(|library| walk(&library));
+    file.flush().expect("scratch flush");
+    let path = file.path();
+    let first = PhraseLibrary::open(path).map(|library| walk(&library));
+    let second = PhraseLibrary::open(path).map(|library| walk(&library));
     match (first, second) {
         (Ok(a), Ok(b)) => assert_eq!(a, b, "decode must be deterministic"),
         (Err(_), Err(_)) => {}

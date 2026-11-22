@@ -109,7 +109,7 @@ jobs:
       # (apport on the runner), which delays crash reports past its waitpid.
       - name: Let crashes reach afl-fuzz directly
         run: echo core | sudo tee /proc/sys/kernel/core_pattern
-      # cargo-afl at the version of fuzz/tool-versions.env and the AFL++ it
+      # cargo-afl at the afl version of fuzz/Cargo.lock and the AFL++ it
       # bundles, with the LLVM plugins.
       - run: just fuzz-setup
       # Fuzzing memory, half one: the corpora persist across nightly runs
@@ -194,7 +194,8 @@ jobs:
         # status is the step's exit code. just fuzz builds the target with
         # the AFL++ LLVM plugins (CmpLog off), prints the instrumentation and
         # LSAN_OPTIONS, runs afl-fuzz for FUZZ_SECONDS of fuzzing under the
-        # FUZZ_GUARD_SECONDS limit, prints afl-fuzz's statistics, and fails
+        # FUZZ_GUARD_SECONDS limit, prints afl-fuzz's statistics (stability
+        # and execs_per_sec among them), and fails
         # when afl-fuzz fails, stops on a seed issue, ran no input or saved a
         # crash or a hang. New queue entries join fuzz/corpus, which the cache
         # saves. actions/cache saves only when the job passes (post-if:

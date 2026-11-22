@@ -121,11 +121,20 @@
 //! directory, so the library writes what a first session leaves there
 //! (`check_format` and `mark_version`, `pinyin.cpp:170-234`: `user.conf`
 //! with the system versions, the database format and the open counter).
-//! An input copies the template, as a later session of that profile finds
-//! it. Directory byte 255 starts from an empty directory: the pin's first
-//! run, which writes one `open %s failed.` line (`table_info.cpp:332`).
-//! The template directory is inside the scratch directory of
-//! `oxpinyin_fuzz::run_once`, which removes it when the input ends.
+//! An input writes the template's files into its own directory, as a later
+//! session of that profile finds it. Directory byte 255 starts from an empty
+//! directory: the pin's first run, which writes one `open %s failed.` line
+//! (`table_info.cpp:332`).
+//!
+//! `main` builds the template before the input: it runs the `pinyin_init`
+//! and `pinyin_fini`, reads the files into memory and removes the template
+//! directory. The input's own user directory is removed when its session
+//! closes.
+//!
+//! The target runs one input per child (`LOOP_COUNT`): in a persistent
+//! child, the same input covered different edges depending on the input
+//! before it, although each input opens a new context, instance and user
+//! directory. LeakSanitizer checks at exit.
 
 #![expect(
     clippy::undocumented_unsafe_blocks,
@@ -137,7 +146,7 @@
 
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
 
@@ -147,6 +156,7 @@ use oxpinyin_capi::candidates::{
 };
 use oxpinyin_capi::config::pinyin_set_double_pinyin_scheme;
 use oxpinyin_capi::context::{pinyin_fini, pinyin_init};
+// The three abort checks are reachable only through `fuzz_api`.
 use oxpinyin_capi::fuzz_api::{
     oxpinyin_choose_aborts, oxpinyin_import_aborts, oxpinyin_train_aborts,
 };
@@ -196,9 +206,10 @@ const FIRST_RUN: u8 = u8::MAX;
 struct Fixture {
     /// The system directory, as `pinyin_init` takes it.
     system_dir: CString,
-    /// A user directory after one `pinyin_init` and `pinyin_fini`: the
-    /// files the library leaves for a profile that holds no user data.
-    template: TempDir,
+    /// The files and directories that one `pinyin_init` and `pinyin_fini`
+    /// leave in a new user directory, by relative path, parents first: the
+    /// state of a profile that holds no user data. `None` is a directory.
+    template: Vec<(PathBuf, Option<Vec<u8>>)>,
 }
 
 /// A new directory under the system temporary directory.
@@ -214,16 +225,32 @@ fn c_path(path: &Path) -> CString {
     CString::new(path.to_str().expect("UTF-8 path")).expect("no NUL")
 }
 
-/// Copies the files and directories of `from` into the directory `to`.
-fn copy_dir(from: &Path, to: &Path) {
-    for entry in std::fs::read_dir(from).expect("read the template directory") {
-        let entry = entry.expect("a template entry");
-        let target = to.join(entry.file_name());
+/// The files and directories under `root`, below `relative`, parents first.
+fn snapshot(root: &Path, relative: &Path, into: &mut Vec<(PathBuf, Option<Vec<u8>>)>) {
+    let mut entries: Vec<_> = std::fs::read_dir(root.join(relative))
+        .expect("read the template directory")
+        .map(|entry| entry.expect("a template entry"))
+        .collect();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = relative.join(entry.file_name());
         if entry.file_type().expect("a template entry type").is_dir() {
-            std::fs::create_dir(&target).expect("create a template subdirectory");
-            copy_dir(&entry.path(), &target);
+            into.push((path.clone(), None));
+            snapshot(root, &path, into);
         } else {
-            std::fs::copy(entry.path(), &target).expect("copy a template file");
+            let bytes = std::fs::read(entry.path()).expect("read a template file");
+            into.push((path, Some(bytes)));
+        }
+    }
+}
+
+/// Writes the template into the empty directory `to`.
+fn write_template(template: &[(PathBuf, Option<Vec<u8>>)], to: &Path) {
+    for (path, bytes) in template {
+        let target = to.join(path);
+        match bytes {
+            Some(bytes) => std::fs::write(&target, bytes).expect("write a template file"),
+            None => std::fs::create_dir(&target).expect("create a template subdirectory"),
         }
     }
 }
@@ -234,6 +261,8 @@ fn copy_dir(from: &Path, to: &Path) {
 /// backend under its `DEFAULT_STORE_EXT` subdirectory, and the runtime
 /// opens only that backend's files. Passing the fixtures/w3 root asks for
 /// DBMs that live one level down, so init answers NULL.
+///
+/// `main` calls this before the first input.
 fn fixture() -> &'static Fixture {
     static FIXTURE: OnceLock<Fixture> = OnceLock::new();
     FIXTURE.get_or_init(|| {
@@ -243,8 +272,8 @@ fn fixture() -> &'static Fixture {
             .join("w3")
             .join(oxpinyin::data::DEFAULT_STORE_EXT);
         let system_dir = c_path(&dir);
-        let template = new_dir("oxpinyin-fuzz-capi-template-");
-        let user = c_path(template.path());
+        let template_dir = new_dir("oxpinyin-fuzz-capi-template-");
+        let user = c_path(template_dir.path());
         // SAFETY: both paths are live C strings; the context is closed
         // before either directory goes away.
         let context = unsafe { pinyin_init(system_dir.as_ptr(), user.as_ptr()) };
@@ -255,6 +284,9 @@ fn fixture() -> &'static Fixture {
         );
         // SAFETY: the live context above, with no instance or iterator.
         unsafe { pinyin_fini(context) };
+        let mut template = Vec::new();
+        snapshot(template_dir.path(), Path::new(""), &mut template);
+        drop(template_dir);
         Fixture {
             system_dir,
             template,
@@ -272,12 +304,12 @@ struct Session {
 
 impl Session {
     /// Opens a session over a new user directory: empty for a first run,
-    /// else a copy of the template.
+    /// else holding the template's files.
     fn open(first_run: bool) -> Self {
         let fixture = fixture();
         let user_dir = new_dir("oxpinyin-fuzz-capi-");
         if !first_run {
-            copy_dir(fixture.template.path(), user_dir.path());
+            write_template(&fixture.template, user_dir.path());
         }
         let user = c_path(user_dir.path());
         // SAFETY: both paths are live C strings; the committed mini tables
@@ -302,7 +334,7 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         // SAFETY: both handles are live and this is their one release; no
-        // iterator outlives its command, and each process runs one input on
+        // iterator outlives its command, and the inputs run one at a time on
         // one thread.
         unsafe {
             pinyin_free_instance(self.instance);
@@ -411,8 +443,15 @@ fn walk_and_choose(instance: *mut PinyinInstance, pick: u8) {
     }
 }
 
+/// One input per child: in a persistent child, the same input covered
+/// different edges depending on the input before it, although each input
+/// opens a new session and user directory. LeakSanitizer's check at exit then
+/// names that input. `AFL_FUZZER_LOOPCOUNT` overrides it.
+const LOOP_COUNT: usize = 1;
+
 fn main() {
-    oxpinyin_fuzz::run_once(run);
+    fixture();
+    oxpinyin_fuzz::fuzz(LOOP_COUNT, &[], run);
 }
 
 /// Runs one input.

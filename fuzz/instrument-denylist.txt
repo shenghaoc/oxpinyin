@@ -1,0 +1,5 @@
+# AFL_LLVM_DENYLIST for the fuzz targets (tools/dev/fuzz.py). AFL++ matches
+# each entry against a function's mangled name, with a leading "*".
+# The persistent loop of fuzz/src/lib.rs, with the afl crate's loop inlined:
+# its edges differ between the first input of a child and the others.
+fun: oxpinyin_fuzz*persistent*

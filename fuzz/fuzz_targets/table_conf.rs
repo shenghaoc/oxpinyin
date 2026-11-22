@@ -3,29 +3,33 @@
 //! what they answered. The load must answer on every input, never panic,
 //! and be deterministic; a refusal is a legitimate answer, not a failure.
 
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::io::Write;
 
 use oxpinyin::data::TableConf;
 
-/// One scratch file per fuzzing process: the scanner reads a `FILE *`.
-fn scratch() -> &'static Path {
-    static PATH: OnceLock<PathBuf> = OnceLock::new();
-    PATH.get_or_init(|| {
-        std::env::temp_dir().join(format!("oxpinyin-fuzz-table-conf-{}", std::process::id()))
-    })
-}
+/// Inputs per child: AFL++'s suggested start
+/// (`instrumentation/README.persistent_mode.md`), which bounds a child's
+/// lifetime. `AFL_FUZZER_LOOPCOUNT` overrides it.
+const LOOP_COUNT: usize = 1000;
 
 fn main() {
-    oxpinyin_fuzz::run_once(run);
+    oxpinyin_fuzz::fuzz(
+        LOOP_COUNT,
+        &[include_bytes!("../../fixtures/w3/kct/table.conf")],
+        run,
+    );
 }
 
-/// Runs one input.
+/// Runs one input. The scanner reads a `FILE *`, so the input is written to
+/// a file of its own, which exists only while the input runs.
 fn run(data: &[u8]) {
-    let path = scratch();
-    if std::fs::write(path, data).is_err() {
-        return;
-    }
+    let mut file = tempfile::Builder::new()
+        .prefix("oxpinyin-fuzz-table-conf-")
+        .tempfile()
+        .expect("scratch file");
+    file.write_all(data).expect("scratch write");
+    file.flush().expect("scratch flush");
+    let path = file.path();
     let first = TableConf::load_path(path);
     let second = TableConf::load_path(path);
     // Compared through `Debug`: a NaN λ is not equal to itself.

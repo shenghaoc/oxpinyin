@@ -136,8 +136,9 @@ CI_INPUTS = {
     # tools/ and what its tests read outside it: the workflow, the manifests
     # and the lockfile, the files directly in each crate's directory (version
     # scripts, headers, allocator registers, build scripts), the generated Rust
-    # tables, the fixtures, the table-conf template, the sanitizer nightly, and
-    # the lockfile of the dependency group that holds Ruff. No harness test
+    # tables, the fixtures, the table-conf template, the sanitizer nightly, the
+    # fuzz lockfile (its afl version is the cargo-afl version), and the
+    # lockfile of the dependency group that holds Ruff. No harness test
     # reads any other Rust source, so the files under a crate's src, tests,
     # examples and benches do not select the job.
     # The Python version request rule reads every tracked file, so it is a step
@@ -145,7 +146,7 @@ CI_INPUTS = {
     "harness": Inputs((*SHARED, "uv.lock",
                        "tools", "Cargo.toml", "Cargo.lock",
                        *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
-                       "fuzz/tool-versions.env"),
+                       "fuzz/Cargo.lock"),
                       tuple(f"{prefix}{section}/*.rs"
                             for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
                             for section in ("src", "tests", "examples", "benches")),

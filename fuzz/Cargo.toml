@@ -11,8 +11,10 @@ edition = "2024"
 [lints.rust]
 unsafe_code = "deny"
 
-# Every target is an ordinary executable that AFL++ runs once per input
-# (`just fuzz`, cargo-afl). src/lib.rs is their shared entry point.
+# Every target is an ordinary executable. With the `afl` feature, which
+# `just fuzz` selects for its cargo-afl builds, AFL++ runs it in persistent
+# mode; without it, it reads one input from standard input. src/lib.rs is
+# their shared entry point.
 [lib]
 name = "oxpinyin_fuzz"
 path = "src/lib.rs"
@@ -35,6 +37,10 @@ default = ["tkrzw"]
 bdb = ["oxpinyin/bdb", "oxpinyin-capi/bdb"]
 kyotocabinet = ["oxpinyin/kyotocabinet", "oxpinyin-capi/kyotocabinet"]
 tkrzw = ["oxpinyin/tkrzw", "oxpinyin-capi/tkrzw"]
+# AFL++ persistent mode and shared-memory input (src/lib.rs). Only a cargo-afl
+# build links the AFL++ runtime that the `afl` crate calls, so an ordinary
+# build leaves the feature off.
+afl = ["dep:afl"]
 
 [dependencies]
 # test-hooks: the test-only library items the targets read.
@@ -45,6 +51,9 @@ oxpinyin = { path = "..", default-features = false, features = ["test-hooks"] }
 # and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
 oxpinyin-capi = { path = "../capi", default-features = false, features = ["fuzz-api"] }
 tempfile = "3.27"
+# The version that fuzz/Cargo.lock resolves is the one cargo-afl version:
+# tools/dev/fuzz.py installs and requires that cargo-afl.
+afl = { version = "0.18", optional = true }
 
 [[bin]]
 name = "dict-loader"

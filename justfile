@@ -224,8 +224,8 @@ mutants *args:
 mutants *args:
     @{{windows_args}} cargo mutants @forwarded; exit $LASTEXITCODE
 
-# fuzz/tool-versions.env pins cargo-afl, and the LLVM plugins build against the
-# LLVM of the fuzz nightly. tools/dev/fuzz.py states the rules; on any host
+# The afl version of fuzz/Cargo.lock is the cargo-afl version, and the LLVM
+# plugins build against the LLVM of the fuzz nightly. tools/dev/fuzz.py states the rules; on any host
 # other than Linux it refuses with one message.
 # Install cargo-afl and the AFL++ release that it bundles, with the LLVM plugins (Linux only).
 [unix]

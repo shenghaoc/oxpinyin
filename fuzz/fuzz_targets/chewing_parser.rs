@@ -29,8 +29,13 @@ const SCHEMES: &[ZhuyinScheme] = &[
     ZhuyinScheme::DachenCp26,
 ];
 
+/// Inputs per child: AFL++'s suggested start
+/// (`instrumentation/README.persistent_mode.md`), which bounds a child's
+/// lifetime. `AFL_FUZZER_LOOPCOUNT` overrides it.
+const LOOP_COUNT: usize = 1000;
+
 fn main() {
-    oxpinyin_fuzz::run_once(run);
+    oxpinyin_fuzz::fuzz(LOOP_COUNT, &[], run);
 }
 
 /// Runs one input.

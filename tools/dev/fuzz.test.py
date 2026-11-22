@@ -315,9 +315,20 @@ class ToolsRuleTests(unittest.TestCase):
         self.data = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.data)
         self.environ = {'PATH': '/tools', 'XDG_DATA_HOME': str(self.data)}
-        self.pin = fuzz.read_tool_versions()['CARGO_AFL_VERSION']
+        self.pin = fuzz.cargo_afl_version()
 
-    def test_the_build_drops_encoded_rustflags(self):
+    def test_the_cargo_afl_version_is_the_afl_version_of_the_fuzz_lockfile(self):
+        lock = self.data / 'Cargo.lock'
+        package = '[[package]]\nname = "{}"\nversion = "{}"\n'
+        lock.write_text(package.format('afl', '9.8.7') + package.format('libc', '0.2.1'))
+        self.assertEqual(fuzz.cargo_afl_version(lock), '9.8.7')
+        for text in (package.format('libc', '0.2.1'), package.format('afl', '1.0.0') + package.format('afl', '2.0.0')):
+            lock.write_text(text)
+            with self.subTest(text=text), self.assertRaisesRegex(fuzz.FuzzError, 'exactly one version of the afl'):
+                fuzz.cargo_afl_version(lock)
+        self.assertRegex(self.pin, r'^\d+\.\d+\.\d+$')
+
+    def test_the_build_selects_persistent_mode_and_drops_encoded_rustflags(self):
         calls = []
         environ = dict(self.environ, CARGO_ENCODED_RUSTFLAGS='-Cfoo', RUSTFLAGS='-Cbar')
         with mock.patch.object(fuzz, 'rustc_facts',
@@ -327,9 +338,21 @@ class ToolsRuleTests(unittest.TestCase):
                 mock.patch.object(fuzz, '_call', side_effect=lambda command, env, what: calls.append((command, env))):
             built = fuzz.build_target('probe', environ, f'cargo-afl {self.pin} (AFL++ version 4.40c with plugins)')
         (command, env), = calls
+        self.assertEqual(command[command.index('afl') + 1:command.index('afl') + 2], ['build'])
+        self.assertIn(['--features', 'afl'], [command[i:i + 2] for i in range(len(command))])
         for checked in (env, built.env):
             self.assertNotIn('CARGO_ENCODED_RUSTFLAGS', checked)
             self.assertEqual(checked['RUSTFLAGS'], '-Zsanitizer=address -Cbar')
+            # Each target states its loop count (fuzz/src/lib.rs); the variable is only an override.
+            self.assertNotIn('AFL_FUZZER_LOOPCOUNT', checked)
+        with mock.patch.object(fuzz, 'rustc_facts',
+                               return_value={'host': 'h', 'release': '1.0.0', 'commit': 'abc'}), \
+                mock.patch.object(fuzz, 'target_directory', return_value=self.data / 'target'), \
+                mock.patch.object(fuzz, 'backend_flags', return_value=[]), \
+                mock.patch.object(fuzz, '_call'):
+            built = fuzz.build_target('probe', dict(self.environ, AFL_FUZZER_LOOPCOUNT='7'),
+                                      f'cargo-afl {self.pin} (AFL++ version 4.40c with plugins)')
+        self.assertEqual(built.env['AFL_FUZZER_LOOPCOUNT'], '7')
 
     def test_the_pinned_cargo_afl_with_plugins_is_accepted(self):
         line = f'cargo-afl {self.pin} (AFL++ version 4.40c with plugins)'
