@@ -87,11 +87,10 @@ BELOW_RESOLUTION = ('a sample read 0: below the 1/64-second GetProcessTimes reso
                     ' no B/A ratio this session')
 
 
-def observation(raw, *, cycles, operations, fingerprint=None, child_rss=True, windows=False):
+def observation(row, *, cycles, operations, fingerprint=None, child_rss=True, windows=False):
     """Validate one complete driver result; an unread required metric is an error."""
     import math
     import re
-    row = json.loads(raw)
     if (row.get('cycles') != cycles or row.get('operations') != operations
             or not isinstance(row.get('pid'), int) or row['pid'] <= 0):
         raise ValueError('incomplete workload')

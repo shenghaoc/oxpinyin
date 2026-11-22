@@ -148,16 +148,9 @@ def loader_path(directory, inherited: str | None) -> str:
     return str(directory) + (':' + inherited if inherited else '')
 
 
-def pinned(command: Sequence, cpu, *, required: bool = True,
-           which: Callable[[str], str | None] | None = None) -> list[str]:
-    """Prefix COMMAND with `taskset -c CPU`.
-
-    REQUIRED always pins, so a missing taskset fails the run; otherwise the
-    command is pinned only when taskset exists, as on images without util-linux.
-    WHICH finds an executable (default shutil.which); tests supply their own.
-    """
-    prefix = ['taskset', '-c', str(cpu)] if required or (which or shutil.which)('taskset') else []
-    return [*prefix, *map(str, command)]
+def pinned(command: Sequence, cpu) -> list[str]:
+    """Launch COMMAND on the selected CPU."""
+    return ['taskset', '-c', str(cpu), *map(str, command)]
 
 
 def find_named(root, name: str) -> Path | None:
@@ -316,8 +309,7 @@ class Bench:
     """How a runner launches the `bisect --perf` harness (one per recipe run).
 
     LABEL is the legacy script name that still names the runner in every refusal;
-    CELL is the runtime check's advisory backend; REQUIRED says whether taskset
-    must exist or pins only when it does. Every launch is checked first, in the
+    CELL is the runtime check's advisory backend. Every launch is checked in the
     environment and directory it will have, and runs alone.
     """
     label: str
@@ -325,7 +317,6 @@ class Bench:
     harness: Path
     cpu: str
     cell: str = 'auto'
-    required: bool = True
 
     def environment(self, arm: Arm, mode: str, cycles, repeats=None, extra: Mapping[str, str] | None = None) -> dict:
         """The worker's environment: the caller's plus the loader path and the PERF_* settings."""
@@ -369,7 +360,7 @@ class Bench:
             except Finished:
                 append(diagnostics, refusal.getvalue().encode())
                 raise
-        command = pinned(command, self.cpu, required=self.required)
+        command = pinned(command, self.cpu)
         if deadline is not None:
             import subprocess
             # The check above took time: the worker gets what the campaign has left, not more.

@@ -13,15 +13,15 @@ a fresh work directory and the compiled driver) and hands
 it the collections, which already run as units of one pool.
 """
 import contextlib
-from functools import partial
 import io
 import os
+import platform
 from pathlib import Path
 import re
 import sys
 from collections.abc import Mapping, Sequence
 
-from .. import pool, slot
+from .. import host, pool, slot
 from ..cell import LOCAL_CELL
 from ..runners import Finished, emit, write
 from . import bench, identity, instructions, prepare, reports
@@ -78,34 +78,34 @@ def libraries(env: Mapping[str, str]) -> dict:
     return found
 
 
-def environment_table(artifacts: Sequence[Path], pin: Path, data: Path, run=None) -> str:
+def environment_table(artifacts: Sequence[Path], pin: Path, data: Path, env: Mapping[str, str]) -> str:
     """Stage 0: what the numbers depend on, written before any is taken.
 
     PIN is the pin's prefix and DATA the data directory every arm reads.
     """
-    lines = ['=== environment ===', f'captured_utc: {bench.utc_now()}', f'arch: {identity.uname("m")}',
-             f'kernel: {identity.uname("srvm")}', f'nproc: {identity.processors()}', f'cpu: {identity.cpu_model()}',
+    lines = ['=== environment ===', f'captured_utc: {bench.utc_now()}', f'arch: {platform.machine()}',
+             f'kernel: {identity.kernel()}', f'nproc: {host.processors()}', f'cpu: {identity.cpu_model()}',
              f'memtotal: {identity.memory_total()}',
-             f'gcc: {identity.first_output_line(["gcc", "--version"], run=run)}',
-             f'rustc: {identity.first_output_line(["rustc", "--version"], run=run)}',
-             f'cargo: {identity.first_output_line(["cargo", "--version"], run=run)}',
-             f'valgrind: {identity.first_output_line(["valgrind", "--version"], run=run)}',
+             f'gcc: {identity.first_output_line(["gcc", "--version"], env=env)}',
+             f'rustc: {identity.first_output_line(["rustc", "--version"], env=env)}',
+             f'cargo: {identity.first_output_line(["cargo", "--version"], env=env)}',
+             f'valgrind: {identity.first_output_line(["valgrind", "--version"], env=env)}',
              f'perf_event_paranoid: {identity.perf_event_paranoid()}',
              f'libpinyin_pkgversion: {identity.pc_version(pin / "lib/pkgconfig/libpinyin.pc")}',
-             f'libkyotocabinet: {identity.package_version("kyotocabinet", run=run)}']
+             f'libkyotocabinet: {identity.package_version("kyotocabinet", env=env)}']
     # `stat -c%s` on the path as found: for a symlink, the size of the link and not of its target.
     lines += [f'artifact: {identity.sha256(path)}  {path} {os.lstat(path).st_size} bytes' for path in artifacts]
     lines.append(f'data_dir: {data}')
     return '\n'.join(lines) + '\n'
 
 
-def anchors_table(harness: Path, run=None) -> tuple[int, str]:
+def anchors_table(harness: Path) -> tuple[int, str]:
     """Stage 1: the two collection anchors are distinct symbols, or the cold cycle would be collected.
 
     Return the status and the collection-anchor table.
     """
     lines = ['=== collection anchors ===']
-    done = (run or bench.capture)(['nm', harness])
+    done = bench.capture(['nm', harness])
     write(done.stderr, error=True)
     if done.status:
         lines.append(f'FAIL: nm exited with status {done.status}')
@@ -258,7 +258,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     lp, ox, nodebug = (found[key] for key in ('lp', 'ox', 'nodebug'))
     data = data_dir(env)
     harness = prepare.harness_path(env)
-    worker = Bench(label, env, harness, cpu, cell=LOCAL_CELL, required=True)
+    worker = Bench(label, env, harness, cpu, cell=LOCAL_CELL)
     arms = {'lp': Arm(f'libpinyin-{LOCAL_CELL}', lp, data, lp.parent),
             'ox': Arm(f'oxpinyin-{LOCAL_CELL}', ox, data, ox.parent),
             'nodebug': Arm('oxpinyin-nodebug', nodebug, data, nodebug.parent)}
@@ -267,9 +267,8 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     pair = [(arms['lp'], 'speed'), (arms['ox'], 'speed')]
 
     # 0. environment
-    metadata_run = partial(bench.capture, env=env)
     bench.tee(out / 'environment.txt',
-              environment_table([lp, ox, nodebug], prepare.pin_prefix(env, LOCAL_CELL), data, run=metadata_run))
+              environment_table([lp, ox, nodebug], prepare.pin_prefix(env, LOCAL_CELL), data, env))
 
     # 1. collection anchors
     code, text = anchors_table(harness)
