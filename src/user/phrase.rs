@@ -127,7 +127,7 @@ pub const fn is_user_token(token: PhraseToken) -> bool {
 /// bump in `_add_phrase` (`pinyin.cpp:592-594`) is a no-op on that value
 /// because the low 24 bits are already non-zero. Starting `range_end` at 0
 /// would hit the bump and land on the same token.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub const FIRST_USER_TOKEN: PhraseToken = phrase_index_make_token(USER_DICTIONARY, 1);
 
 /// The token `_add_phrase` allocates from a sub-index whose `get_range` end

@@ -20,7 +20,10 @@ use crate::types::PinyinInstance;
 
 use crate::user_data::pinyin_remember_user_input;
 
-use oxpinyin::user::{FIRST_USER_TOKEN, UserStore};
+use oxpinyin::user::UserStore;
+use oxpinyin::vocab::{USER_DICTIONARY, phrase_index_make_token};
+
+const FIRST_USER_TOKEN: u32 = phrase_index_make_token(USER_DICTIONARY, 1);
 
 /// Imports `phrase` into library 7 once per reading and returns its token.
 ///

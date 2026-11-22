@@ -53,7 +53,7 @@ pub use persistence::{
     MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals, UserConfLaw,
     system_originals,
 };
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub use phrase::FIRST_USER_TOKEN;
 #[cfg(test)]
 pub use phrase::key_syllable;
