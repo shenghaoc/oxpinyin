@@ -31,7 +31,11 @@ fn write_chunk(path: &std::path::Path, payload: &[u8]) {
     file.write_all(&bytes).expect("scratch write");
 }
 
-fn walk(library: &PhraseLibrary) -> Vec<(u32, Option<Vec<u32>>, usize, usize, u64)> {
+/// One item as the walk reads it: token, text, length, readings and the sum
+/// of their frequencies and key counts.
+type ItemRow = (u32, Option<Vec<u32>>, usize, usize, u64);
+
+fn walk(library: &PhraseLibrary) -> Vec<ItemRow> {
     let mut rows = Vec::new();
     let _ = library.total_freq();
     let _ = library.token_range();
