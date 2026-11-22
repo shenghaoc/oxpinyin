@@ -1,17 +1,21 @@
 """Install AFL++, minimize corpora, and fuzz targets with the `just fuzz` recipes.
 
 AFL++ fuzzing is supported on Linux only, as in libchewing
-(docs/runbooks/setup.md#fuzzing). fuzz/tool-versions.env pins cargo-afl, and
-the AFL++ release follows from it: cargo-afl bundles it. The tools rule,
-stated once in `tools_rule`, decides which installation `run` accepts, and
-`just doctor` asks the same function.
+(docs/runbooks/setup.md#fuzzing). The version of the `afl` crate that
+fuzz/Cargo.lock resolves is the cargo-afl version, stated once: the crate and
+cargo-afl must match. The AFL++ release follows from it: cargo-afl bundles it.
+That release is Apache-2.0; cargo-afl builds it from source into the user's
+data directory, and no shipping crate depends on it. The tools rule, stated
+once in `tools_rule`, decides which installation `run` accepts, and `just
+doctor` asks the same function.
 
 `setup` installs cargo-afl and builds its bundled AFL++ with the LLVM plugins,
 against the LLVM of the fuzz nightly. `run` builds one target with
-AddressSanitizer and the plugins, runs afl-fuzz in a new run directory and
-fails on any finding (docs/testing/upstream-test-coverage.md#fuzz-harness).
-Each target builds the host's cell (`backend_flags`): Kyoto Cabinet on Linux,
-the one host that fuzzes (tools/dev/cell.py).
+AddressSanitizer, the plugins and AFL++ persistent mode, runs afl-fuzz in a
+new run directory and fails on any finding
+(docs/testing/upstream-test-coverage.md#fuzz-harness). Each target builds the
+host's cell (`backend_flags`): Kyoto Cabinet on Linux, the one host that
+fuzzes (tools/dev/cell.py).
 """
 
 if __name__ == '__main__':
@@ -33,12 +37,15 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[2]
 FUZZ = ROOT / 'fuzz'
-TOOL_VERSIONS = FUZZ / 'tool-versions.env'
+LOCKFILE = FUZZ / 'Cargo.lock'
 SETUP = 'just fuzz-setup'
+
+DENYLIST = FUZZ / 'instrument-denylist.txt'
 
 # afl-fuzz's option string in AFL++ 4.40c (src/afl-fuzz.c, the getopt call in
 # main). A letter followed by ':' takes a value. '+' stops at the first
@@ -60,6 +67,8 @@ ASAN_OPTIONS = 'abort_on_error=1:symbolize=0:detect_leaks=1:detect_odr_violation
 LSAN_OPTIONS = 'detect_leaks=1:fast_unwind_on_malloc=1:malloc_context_size=30:print_suppressions=0:symbolize=0'
 PLUGINS = 'afl-llvm-dict2file, split-switches, SanitizerCoveragePCGUARD, afl-llvm-ijon'
 TIMEOUT_MS = '15000'
+# MAP_SIZE of AFL++ 4.40c (include/config.h), the runtime's default map size.
+CMIN_MAP_SIZE = '65536'
 GUARD_GRACE_SECONDS = 30
 OUTPUT_CLOSE_SECONDS = 2
 # afl-fuzz names a seed issue in "Test case '<entry>' results in a crash" or
@@ -75,15 +84,13 @@ class FuzzError(RuntimeError):
     """A refused installation, option or run; the message states the problem and the step."""
 
 
-def read_tool_versions(path=TOOL_VERSIONS):
-    """The KEY=VALUE pins of fuzz/tool-versions.env."""
-    pins = {}
-    for line in Path(path).read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith('#'):
-            key, _, value = line.partition('=')
-            pins[key.strip()] = value.strip()
-    return pins
+def cargo_afl_version(path=LOCKFILE):
+    """The cargo-afl version: the `afl` crate version that fuzz/Cargo.lock resolves."""
+    versions = {package['version'] for package in tomllib.loads(Path(path).read_text()).get('package', ())
+                if package.get('name') == 'afl'}
+    if len(versions) != 1:
+        raise FuzzError(f'{path} must resolve exactly one version of the afl crate, not {sorted(versions)}.')
+    return versions.pop()
 
 
 def data_home(environ):
@@ -118,11 +125,11 @@ def refuse_checkout(environ, cargo_afl_version):
 def tools_rule(environ, run=subprocess.run):
     """The rule for the fuzzing tools, stated once; return the accepted version line.
 
-    cargo-afl must be the version of fuzz/tool-versions.env, with the AFL++ LLVM
+    cargo-afl must be the `afl` version of fuzz/Cargo.lock, with the AFL++ LLVM
     plugins, and its AFL++ must be the release that it bundles: the AFL++ version
     follows from the cargo-afl pin and is not compared. `run` applies this rule
     first, and `just doctor` reports its answer."""
-    version = read_tool_versions()['CARGO_AFL_VERSION']
+    version = cargo_afl_version()
     try:
         result = run(['cargo', 'afl', '--version'], capture_output=True, text=True, env=environ, cwd=FUZZ,
                      check=False)
@@ -293,7 +300,7 @@ class TargetBuild(NamedTuple):
 
 def build_target(target, environ, found):
     """Build one target with the instrumentation shared by cmin and fuzzing."""
-    version = read_tool_versions()['CARGO_AFL_VERSION']
+    version = cargo_afl_version()
     afl_version = found.split('AFL++ version ', 1)[1].split(' ', 1)[0]
     rustc = rustc_facts(environ)
     host = rustc['host']
@@ -310,9 +317,13 @@ def build_target(target, environ, found):
                # A crashing or timed-out seed must stop the soak.
                AFL_EXIT_ON_SEED_ISSUES='1',
                AFLRS_REQUIRE_PLUGINS='1',
+               # The persistent loop stays uninstrumented (fuzz/src/lib.rs).
+               AFL_LLVM_DENYLIST=str(DENYLIST),
                # --target keeps build scripts and proc macros out of ASan.
                RUSTFLAGS=' '.join(filter(None, ('-Zsanitizer=address', environ.get('RUSTFLAGS')))))
-    command = ['cargo', 'afl', 'build', '--release', '--locked', '--target', host, *backend_flags()]
+    # The afl feature selects the persistent-mode entry point (fuzz/src/lib.rs).
+    command = ['cargo', 'afl', 'build', '--release', '--locked', '--target', host, *backend_flags(),
+               '--features', 'afl']
     _call([*command, '--target-dir', str(target_dir), '--bin', target], dict(env, AFLRS_NO_CMPLOG='1'),
           f'{target}: cargo afl build')
     binary = target_dir / host / 'release' / target
@@ -357,7 +368,7 @@ def setup(environ):
     or the LLVM_CONFIG you set. AFL++ goes to cargo-afl's data directory;
     nothing is installed system-wide."""
     require_linux()
-    version = read_tool_versions()['CARGO_AFL_VERSION']
+    version = cargo_afl_version()
     refuse_checkout(environ, version)
     major = rustc_facts(environ)['llvm_major']
     llvm_config = environ.get('LLVM_CONFIG') or f'llvm-config-{major}'
@@ -488,6 +499,14 @@ def minimize_corpus(target, corpus, run_directory, built):
                    '-i', str(source), '-o', str(minimized), '--crash-dir', str(issues),
                    '-t', TIMEOUT_MS, '-m', 'none', '--', str(built.binary)]
         cmin_env = dict(built.env, AFL_PATH=str(built.afl_bin))
+        # afl-cmin otherwise passes afl-showmap the map size that the binary
+        # reports, and afl-showmap makes its shared memory that size. A
+        # persistent-mode child is larger: the AFL++ 4.40c runtime maps the
+        # shared memory before the coverage guards are counted, so
+        # __afl_set_map_size stays MAP_SIZE (afl-compiler-rt.o.c:534), and the
+        # first pass of __afl_persistent_loop clears that many bytes (:1389),
+        # past the end of the smaller map. MAP_SIZE is the smallest safe size.
+        cmin_env.setdefault('AFL_MAP_SIZE', CMIN_MAP_SIZE)
         # These make afl-showmap hide failures or discard normal inputs.
         cmin_env.pop('AFL_CMIN_ALLOW_ANY', None)
         cmin_env.pop('AFL_CMIN_CRASHES_ONLY', None)
@@ -561,8 +580,9 @@ def check_fuzz_status(target, status, guard_stopped, guard_value, stats_path):
 def run(target, args, environ):
     """Fuzz TARGET with AFL++; return the exit status of the recipe.
 
-    The target is built with AddressSanitizer and the AFL++ LLVM plugins
-    (cargo-afl fails if the plugins are absent). FUZZ_CMPLOG=1 adds a CmpLog
+    The target is built with AddressSanitizer, the AFL++ LLVM plugins
+    (cargo-afl fails if the plugins are absent) and the persistent-mode entry
+    point. FUZZ_CMPLOG=1 adds a CmpLog
     binary, run through afl-fuzz -c. afl-fuzz reads corpus/<target> and writes a
     new run directory, out/<target>/<UTC time>-<pid>, so a run never deletes an
     earlier run's findings. ARGS go to afl-fuzz. FUZZ_GUARD_SECONDS stops
@@ -618,7 +638,7 @@ def run(target, args, environ):
     print(f'fuzz: {target}: afl_version {stat("afl_version")}, execs_done {stat("execs_done")}, '
           f'calibration_time {stat("calibration_time")} s, fuzz_time {stat("fuzz_time")} s, '
           f'cmplog_time {stat("cmplog_time")} s, edges_found {stat("edges_found")}/{stat("total_edges")}, '
-          f'stability {stat("stability")}')
+          f'stability {stat("stability")}, execs_per_sec {stat("execs_per_sec")}')
     failed = False
     if stats.get('execs_done', '0') == '0':
         print(f'fuzz: {target}: afl-fuzz ran no input.', file=sys.stderr)

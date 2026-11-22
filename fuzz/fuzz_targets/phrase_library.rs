@@ -14,21 +14,20 @@ use std::io::Write;
 use oxpinyin::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
 use oxpinyin::data::phrase_library::PhraseLibrary;
 
-fn scratch_path() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "oxpinyin-fuzz-phrase-library-{}",
-        std::process::id()
-    ))
-}
-
-fn write_chunk(path: &std::path::Path, payload: &[u8]) {
+/// Writes the chunk to a new file, which is removed when the result drops.
+fn write_chunk(payload: &[u8]) -> tempfile::NamedTempFile {
     let mut bytes = Vec::with_capacity(CHUNK_HEADER_SIZE + payload.len());
     let len = u32::try_from(payload.len()).expect("fuzz inputs fit a u32 length word");
     bytes.extend_from_slice(&len.to_le_bytes());
     bytes.extend_from_slice(&chunk_checksum(payload).to_le_bytes());
     bytes.extend_from_slice(payload);
-    let mut file = std::fs::File::create(path).expect("scratch file");
+    let mut file = tempfile::Builder::new()
+        .prefix("oxpinyin-fuzz-phrase-library-")
+        .tempfile()
+        .expect("scratch file");
     file.write_all(&bytes).expect("scratch write");
+    file.flush().expect("scratch flush");
+    file
 }
 
 /// One item as the walk reads it: token, text, length, readings and the sum
@@ -58,16 +57,24 @@ fn walk(library: &PhraseLibrary) -> Vec<ItemRow> {
     rows
 }
 
+/// Inputs per child: AFL++'s suggested start
+/// (`instrumentation/README.persistent_mode.md`), which bounds a child's
+/// lifetime. `AFL_FUZZER_LOOPCOUNT` overrides it.
+const LOOP_COUNT: usize = 1000;
+
+/// `art.bin`, whose payload follows its 8-byte header.
+const ART: &[u8] = include_bytes!("../../fixtures/w3/kct/art.bin");
+
 fn main() {
-    oxpinyin_fuzz::run_once(run);
+    oxpinyin_fuzz::fuzz(LOOP_COUNT, &[&ART[CHUNK_HEADER_SIZE..]], run);
 }
 
-/// Runs one input.
+/// Runs one input. The input's file exists only while it runs.
 fn run(payload: &[u8]) {
-    let path = scratch_path();
-    write_chunk(&path, payload);
-    let first = PhraseLibrary::open(&path).map(|lib| walk(&lib));
-    let second = PhraseLibrary::open(&path).map(|lib| walk(&lib));
+    let file = write_chunk(payload);
+    let path = file.path();
+    let first = PhraseLibrary::open(path).map(|lib| walk(&lib));
+    let second = PhraseLibrary::open(path).map(|lib| walk(&lib));
     match (first, second) {
         (Ok(a), Ok(b)) => assert_eq!(a, b, "decode must be deterministic"),
         (Err(_), Err(_)) => {}

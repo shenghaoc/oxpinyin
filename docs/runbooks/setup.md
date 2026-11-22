@@ -391,9 +391,10 @@ only be a smoke test. AFL++ does not support Windows. `just fuzz-setup` and
 `just fuzz` exist on every platform, and on any host other than Linux they
 refuse with one message that names this section.
 
-`just fuzz-setup` installs cargo-afl at the version of `fuzz/tool-versions.env`
-and the AFL++ release that it bundles, with its LLVM plugins. The plugins build
-against an LLVM of the fuzz nightly's major version, LLVM 22: the
+`just fuzz-setup` installs cargo-afl at the version that `fuzz/Cargo.lock`
+resolves for the `afl` crate, and the AFL++ release that it bundles, with
+its LLVM plugins. The plugins build against an LLVM of the fuzz nightly's
+major version, LLVM 22: the
 `llvm-config-22` of `llvm-22-dev`, which Ubuntu 26.04's archive carries and
 which needs no clang, or the `llvm-config` that `LLVM_CONFIG` names.
 afl-fuzz refuses a `core_pattern` that pipes crashes to a handler, so set it to

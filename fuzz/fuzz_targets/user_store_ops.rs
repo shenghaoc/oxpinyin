@@ -8,6 +8,11 @@
 //! the input; the session and its user directory are closed and removed when
 //! the input ends.
 //!
+//! The target runs one input per child (`LOOP_COUNT`): in
+//! a persistent child, the same input covered different edges depending on
+//! the input before it, although each input opens a new session over a new
+//! user directory. LeakSanitizer checks at exit.
+//!
 //! # Input format
 //!
 //! An input is a sequence of commands. Each command is one selector byte,
@@ -503,9 +508,15 @@ fn holds_foreign_token(store: &UserStore, text: &str) -> bool {
     }
 }
 
+/// One input per child: in a persistent child, the same input covered
+/// different edges depending on the input before it, although each input
+/// opens a new session and user directory. LeakSanitizer's check at exit then
+/// names that input. `AFL_FUZZER_LOOPCOUNT` overrides it.
+const LOOP_COUNT: usize = 1;
+
 fn main() {
     system();
-    oxpinyin_fuzz::run_once(run);
+    oxpinyin_fuzz::fuzz(LOOP_COUNT, &[], run);
 }
 
 /// Adds `text` under `keys`; a refusal is legal only where

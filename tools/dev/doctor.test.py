@@ -294,7 +294,7 @@ class ToolMinimumTests(ToolCase):
         def test_doctor_and_just_fuzz_refuse_the_same_cargo_afl(self):
             # The real rule, with a stub cargo that prints a chosen version line. `fuzz run`
             # applies the rule before it builds anything, so a refusal ends it at once.
-            pin = doctor.fuzz.read_tool_versions()['CARGO_AFL_VERSION']
+            pin = doctor.fuzz.cargo_afl_version()
             with tempfile.TemporaryDirectory() as directory:
                 stub = Path(directory) / 'bin'
                 stub.mkdir()

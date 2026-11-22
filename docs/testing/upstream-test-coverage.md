@@ -174,12 +174,32 @@ and the refusals where one does (the target's "Bigram rows").
 
 ### Engine
 
-The targets run under AFL++, as libchewing's fuzzer does: each target is an
-ordinary executable that reads one input from standard input, runs once and
-exits, and AFL++ starts it once per input through its forkserver. So a
-target holds no fuzzing-engine code, the fuzz workspace depends on no engine
-crate, and an input reproduces by running the executable with that input on
-standard input.
+The targets run under AFL++, as libchewing's fuzzer does, in persistent
+mode. Each target is an ordinary executable. Its `main` builds the state
+that every input shares, then calls `oxpinyin_fuzz::fuzz`
+(`fuzz/src/lib.rs`) with its body. With the fuzz workspace's `afl` feature,
+which the recipes select, the `afl` crate takes the body: the forkserver
+forks, and each child runs up to its loop count of inputs, which AFL++
+delivers in shared memory. Each target states its count (`LOOP_COUNT`): 1000
+for the parsers and the file readers, and 1 for `capi-commands` and
+`user-store-ops`. `AFL_FUZZER_LOOPCOUNT` overrides it; `tools/dev/fuzz.py`
+does not set it, so a standalone replay with no environment takes the same
+path as a fuzzing run. In a persistent child, the same input of those two covered
+different edges depending on the input before it, although each input opens
+a new session and user directory. With a count of 1, a child runs one input
+and exits, as a process per input does. With a count above 1, the body first
+runs on the empty input and on the target's warm-up inputs (committed
+fixtures and command streams), so state that the code builds on first use,
+such as `memmap2`'s cached page size, exists before the forkserver starts.
+The first input of a child enters the crate's loop from
+another call than the later inputs, so the loop's own edges would differ:
+the recipe leaves that loop uninstrumented (`AFL_LLVM_DENYLIST`,
+`fuzz/instrument-denylist.txt`), and the body, a separate function, stays
+instrumented. The fuzz package's build script (`fuzz/build.rs`) reruns when
+that file changes, so a change to it rebuilds the targets. An ordinary build leaves the feature off and links no
+AFL++ runtime. Either build reads one input from standard input when afl-fuzz
+does not run it, so an input reproduces by running the executable with that
+input on standard input.
 
 - **Tooling.** `tools/dev/fuzz.py` holds the fuzz logic, and `just fuzz-setup`
   and `just fuzz` are one-line recipes that call it
@@ -197,7 +217,7 @@ standard input.
   cargo-afl appends its own flags. `--target` keeps build scripts and proc
   macros out of the sanitizer. Cargo prefers `CARGO_ENCODED_RUSTFLAGS` to
   `RUSTFLAGS`, so the recipe removes an inherited one from both builds. The
-  build and the launch take the executable
+  build selects the `afl` feature. The build and the launch take the executable
   from one place: cargo's target directory as `cargo metadata` reports it
   (so `CARGO_TARGET_DIR` and `build.target-dir` apply), passed to the build
   as `--target-dir`, with cargo's layout `<host>/release/<target>` below it.
@@ -205,6 +225,12 @@ standard input.
 - **Crashes.** The fuzz workspace's release profile sets `panic = "abort"`, so
   a panic, a failed assertion included, is a signal that AFL++ records as a
   crash. A hang is an input that runs longer than the 15 s timeout.
+- **Minimization.** `just fuzz-minimize` runs afl-cmin with
+  `AFL_MAP_SIZE=65536` unless set. afl-showmap makes its shared memory the
+  size that afl-cmin passes, which is otherwise the size the binary reports.
+  The AFL++ 4.40c runtime maps that memory before the coverage guards are
+  counted, so the first pass of a persistent child's loop clears `MAP_SIZE`
+  (65536) bytes, past the end of a smaller map.
 - **Seed issues.** By default afl-fuzz skips an initial input that crashes,
   or one that times out when `-t` is given, and fuzzes on from the other
   inputs, so the run passes. `just fuzz` sets `AFL_EXIT_ON_SEED_ISSUES=1`:
@@ -230,13 +256,25 @@ standard input.
   arguments with afl-fuzz 4.40c's option string, so a value such as
   `-x -f` is not taken for an option.
 - **Sanitizers.** `ASAN_OPTIONS` sets `abort_on_error=1`, so an ASan error
-  and a LeakSanitizer report at exit are both an abort, which AFL++ records
-  as a crash. `just fuzz` sets `LSAN_OPTIONS` explicitly. Without it,
-  afl-fuzz exports `fast_unwind_on_malloc=0` and `malloc_context_size=30`,
-  and every allocation takes the slow unwinder. LeakSanitizer is on.
-- **Isolation.** Each input is a new process. `oxpinyin_fuzz::run_once`
-  (`fuzz/src/lib.rs`) gives it a scratch `TMPDIR` and removes it afterwards,
-  so only an input that crashes leaves files behind.
+  and a LeakSanitizer report are both an abort, which AFL++ records as a
+  crash. `just fuzz` sets `LSAN_OPTIONS` explicitly. Without it, afl-fuzz
+  exports `fast_unwind_on_malloc=0` and `malloc_context_size=30`, and every
+  allocation takes the slow unwinder. LeakSanitizer is on. A child of the
+  persistent forkserver runs many inputs, so a check at exit alone would
+  blame a later input: `oxpinyin_fuzz::fuzz` calls
+  `__lsan_do_recoverable_leak_check` after each input, on the shared-memory
+  and the standard-input paths alike, and aborts on a leak. With a loop count
+  of 1, a child runs one input, so its check at exit names that input, and
+  the per-input check is skipped.
+- **Isolation.** An input leaves no state that a later input of the same
+  child can observe. A file reader writes its input to a file of its own and
+  removes it; `user-store-ops` and `capi-commands` open a new session over a
+  new user directory and close and remove both when the input ends. The
+  state that `main` builds before the input runs is read-only:
+  `user-store-ops` opens over the committed system fixture
+  `fuzz/fixtures/user-store-ops/`, and `capi-commands` holds the files of its
+  template user directory in memory and removes the directory before the
+  input runs. So only an input that crashes leaves files behind.
 - **Runs.** Each run writes a new directory, `fuzz/out/<target>/<UTC
   time>-<pid>/`, so a run never deletes the findings of an earlier one. In
   a reused output directory, afl-fuzz deletes the earlier run's output,
@@ -250,9 +288,11 @@ standard input.
   it over the old one: an earlier run's queue entry keeps its bytes. A run
   directory holds afl-fuzz's output in `afl-fuzz.log`; through that pipe
   afl-fuzz prints status lines, not its terminal UI.
-- **Versions.** `fuzz/tool-versions.env` states the cargo-afl version once.
-  AFL++ is the release that this cargo-afl bundles (4.40c for cargo-afl
-  0.18.2), so its version follows from the cargo-afl pin. `just fuzz-setup`
+- **Versions.** The `afl` crate and cargo-afl must match, so the version that
+  `fuzz/Cargo.lock` resolves for the `afl` crate is the cargo-afl version,
+  stated once; `fuzz/Cargo.toml` names no exact version. AFL++ is the release
+  that this cargo-afl bundles (4.40c for cargo-afl 0.18.2), so its version
+  follows from the cargo-afl pin. `just fuzz-setup`
   installs cargo-afl and builds that AFL++ with the plugins against an LLVM
   of the fuzz nightly's major version (LLVM 22, `fuzz/rust-toolchain.toml`).
   An AFL++ git checkout that `cargo afl config --update` left in cargo-afl's
@@ -274,8 +314,9 @@ The nightly soak runs every target for 180 s of fuzzing (`afl-fuzz -V`,
 counted from the end of the start-up run that calibrates the corpus) with a
 per-target input limit, then fails on any crash or hang, on a target that ran
 no input, on a seed issue, and on a run that does not end within its time
-limit. On a failure it uploads each run's crashes, hangs, statistics,
-`seed-issues/` and `afl-fuzz.log`.
+limit. It prints each run's `stability` and `execs_per_sec`. On a failure it
+uploads each run's crashes, hangs, statistics, `seed-issues/` and
+`afl-fuzz.log`.
 `just fuzz <target> [afl-fuzz arguments]` runs one target locally: it fuzzes
 `fuzz/corpus/<target>`, copies the target's `fuzz/seeds/` into it, and
 writes findings to `fuzz/out/<target>/<run>/default/`.
