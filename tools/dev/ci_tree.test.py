@@ -107,7 +107,7 @@ class GateTests(unittest.TestCase):
             'tools/dev/abi.py': {'rust', 'harness'},
             'tools/dev/new_module.py': {'rust', 'harness'},
             'tools/oracle/oracle-pin.txt': {'rust', 'harness', 'ship'},
-            'tools/bisection/bisect.c': {'rust', 'harness'},
+            'tools/measurement/src/workload.rs': {'rust', 'harness'},
             # A Rust-only change does not select the harness. Only the root library and the
             # two C API crates ship.
             'repl/src/lib.rs': {'rust'},

@@ -114,7 +114,7 @@ CI_INPUTS = {
                       tuple(f"{prefix}{section}/*.rs"
                             for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
                             for section in ("src", "tests", "examples", "benches")),
-                      GENERATED_TABLES),
+                      (*GENERATED_TABLES, "tools/measurement/src")),
     # This job runs without Cargo, and ship_sizes keys the base result on the same crates.
     "ship": Inputs(SHIP, tuple(f"{directory}/tests" for directory in SHIP_CRATES)),
 }

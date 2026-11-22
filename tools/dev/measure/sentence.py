@@ -206,7 +206,7 @@ def native_campaign(args, env, harness):
 def campaign(args, env):
     libraries = prepare(args, env)
     harness = args.out / 'bisect'
-    bench.run(bench.harness_build(harness, flags=(*bench.STRICT_FLAGS, '-g')), env=env)
+    bench.build_harness(harness, env=env)
     nm = bench.capture(['nm', harness], env=env)
     symbols = {fields[2]: fields[0] for line in nm.stdout.splitlines()
                if len(fields := line.decode().split()) == 3}

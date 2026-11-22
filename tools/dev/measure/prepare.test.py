@@ -277,7 +277,7 @@ if sys.platform == 'win32':
                     arm,run,read,_=self.build(directory,target)
                     release=Path(directory)/'build/target/release'
                     self.assertEqual(arm['dylib'],release/(target+'.dll'))
-                    self.assertEqual(arm['import_library'],release/(target+'.dll.lib'))
+                    self.assertNotIn('import_library', arm)
                     # The metadata is read once, in the product source, before the build.
                     self.assertEqual([call.args[0] for call in read.call_args_list],[Path(directory)/'build/source'])
 

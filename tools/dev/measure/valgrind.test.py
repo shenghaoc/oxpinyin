@@ -391,8 +391,10 @@ class SystemImportProfileTests(World):
         self.assertEqual(self.calls, [['--', str(self.pin.resolve()), str(self.ox.resolve()), str(self.data.resolve()),
                                        str(self.out.resolve()), '1000']])
         compile_command = self.kinds('run')[0][1]
-        self.assertEqual(compile_command[:6], ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2'])
-        self.assertEqual(compile_command[-3:], ['-ldl', '-o', str(self.out.resolve() / 'driver')])
+        self.assertEqual(compile_command, ['cargo', 'build', '--locked', '--release', '-p',
+                                            'oxpinyin-measurement', '--bin', 'system-import-profile',
+                                            '--message-format=json-render-diagnostics'])
+        self.assertTrue((self.out / 'driver').is_file())
 
     def test_missing_operands_are_named_with_the_runner(self):
         for given, name in ((0, 'pin-so'), (1, 'ox-so'), (2, 'system-data-dir')):

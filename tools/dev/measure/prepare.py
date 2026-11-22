@@ -158,7 +158,7 @@ def prepare(argv, env):
         stages[name] = stage
     harness = harness_path(env)
     harness.parent.mkdir(parents=True, exist_ok=True)
-    bench.run(bench.harness_build(harness, flags=(*bench.STRICT_FLAGS, '-g')))
+    bench.build_harness(harness, env=env)
     from . import valgrind
     status = valgrind.callgrind_control([str(stages[LOCAL_CELL]), str(stages['nodebug'])], env)
     if status:
@@ -220,7 +220,6 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
         package = packaging.capi_package(source, 'pinyin', build_env)
         library = next(item['name'] for item in package['targets']
                        if 'cdylib' in item['crate_types']).replace('-', '_')
-        import_library = target / f'release/{library}.dll.lib'
         if windows:
             bench.run(['cargo', 'build', '--locked', '--release', '-p', package['name']],
                       cwd=source, env=build_env)
@@ -246,7 +245,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
                     fail('packaged dylib and dSYM UUID differ')
         return dict(revision=revision, prefix=prefix, dylib=dylib, uuid=uuid,
                     **(dict(linux=True, backend=backend) if linux else {}),
-                    windows=windows, import_library=import_library,
+                    windows=windows,
                     default_features=package['features']['default'],
                     cold_build_seconds=time.monotonic() - started,
                     build_options={'profile': 'release', 'features': features[2:],
@@ -281,30 +280,13 @@ def windows_environment(env, installed):
 
 
 def native_driver(arm, output, env):
-    """Build one linked driver; Darwin also rewrites and signs its load command."""
+    """Build the dynamically loaded driver; Darwin signs it for Instruments."""
     from . import identity
     output.parent.mkdir(parents=True, exist_ok=True)
-    if arm.get('linux'):
-        # The existing dlopen driver, built as the Callgrind recipes build it.
-        bench.run(bench.harness_build(output, compiler='cc', flags=(*bench.STRICT_FLAGS, '-g')), env=env)
-        return identity.sha256(output)
-    if arm.get('windows'):
-        from tools.dev.check import msvc_environment, lookup
-        toolenv = msvc_environment(env)
-        compiler = shutil.which('cl', path=lookup(toolenv, 'PATH'))
-        bench.run([compiler, '/nologo', '/std:c11', '/O2', '/MD', '/W3', '/DMEASURE_LINKED',
-                   '/Fe:' + str(output), '/Fo:' + str(output.with_suffix('.obj')),
-                   bench.HARNESS_SOURCE, arm['import_library'], 'psapi.lib'], env=toolenv)
+    bench.build_harness(output, env=env)
+    if arm.get('linux') or arm.get('windows'):
         return identity.sha256(output)
 
-    bench.run(bench.harness_build(output, compiler='cc',
-        flags=(*bench.STRICT_FLAGS, '-g', '-DMEASURE_LINKED'),
-        libraries=(str(arm['dylib']), '-Wl,-rpath,@executable_path/../lib')), env=env)
-    listing = bench.capture(['otool', '-D', arm['dylib']])
-    if listing.status or len(listing.stdout.decode().splitlines()) != 2:
-        fail('cannot read packaged install name')
-    name = listing.stdout.decode().splitlines()[1].strip()
-    bench.run(['install_name_tool', '-change', name, '@rpath/' + arm['dylib'].name, output])
     import plistlib
     import tempfile
     import re

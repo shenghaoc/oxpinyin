@@ -81,11 +81,23 @@ The sampling loops are serial and interleave the arms one process at a time.
 A timed or resident-set sample belongs to its arm only if nothing runs
 beside it.
 
+The drivers are one nonshipping Rust workspace package.
+They load the selected C library with `libloading`. Linux builds require the
+Valgrind development headers for `valgrind-requests`; other targets do not
+compile that dependency. `perf-event` supplies the Linux hardware counters.
+Native memory counters use libc on macOS and windows-sys on Windows.
+The macOS driver also links CoreFoundation. The subject reaches it through
+GLib's gettext, and dyld loads that closure of about 400 images at launch for a
+linked driver. `dlopen` loads it after launch and adds about 4 MB of resident
+file-backed pages and 0.3 MB of footprint, which would show in `peak_rss_bytes`
+and `lifetime_max_phys_footprint_bytes`.
+
 A plain timing needs no recipe. It builds the `bisect` driver and runs its `--perf`
 mode once for each library. Each run prints one JSON line:
 
 ```sh
-cc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$WORK/bisect" tools/bisection/bisect.c -ldl
+cargo build --locked --release -p oxpinyin-measurement --bin bisect
+cp target/release/bisect "$WORK/bisect"
 PERF_MODE=speed "$WORK/bisect" --perf "$SO" "$DATA"
 ```
 
@@ -226,13 +238,18 @@ time equality. This phase measures no heap usage.
 
 ## BDB guess, training, and import profiles
 
-`tools/bisection/system-import-profile.c` extends the import driver with
+`tools/measurement` provides the `system-import-profile` binary with
 three full-process workloads. The driver is built in the measurement
 environment:
 
 ```sh
-cc -std=gnu11 -Wall -Wextra -Werror -O2 tools/bisection/system-import-profile.c -o "$HARNESS" -ldl
+cargo build --locked --release -p oxpinyin-measurement --bin system-import-profile
+cp target/release/system-import-profile "$HARNESS"
 ```
+
+The default import workload prints four Callgrind dumps. `open` runs from just before the library
+load through `pinyin_init`, so it holds `dlopen` relocation, symbol lookup and context
+initialization, and not the process or driver start-up; `import`, `save` and `close` follow.
 
 Through a comparison, the BDB system data, a fresh empty user directory, the CPU, pin SO and
 subject SO stay the same. Each comparison identifies the subject build and uses
@@ -442,7 +459,7 @@ checkout, so a comparison needs only the interpreter of the checkout.
 recipe. Each revision’s `.python-version` and `uv.toml` determine its interpreter and uv requirement. See
 [comparing against another revision](setup.md#comparing-against-another-revision).
 
-These commands use the same typing corpus in `bisect.c`. Schedule defaults
+These commands use the same typing corpus in `tools/measurement/src/workload.rs`. Schedule defaults
 live in `tools/dev/measure/recipes.py`; `just measure --help` lists overrides.
 The budget bounds the measured schedule, excluding preparation. An exhausted
 budget fails the campaign and preserves completed runs. Keystrokes are work
@@ -556,6 +573,9 @@ size of default SYSTEM_FILE chunks named by the inputs. It is not a measured
 allocation counter or subtracted from peak commit. Required unread metrics fail.
 
 Windows refuses profile and neutrality modes; attribution is done on macOS.
+The Windows `bisect` driver runs `--measure`, `--perf-sentence` and `--perf-typing-sequence`.
+It exits with status 2 on `--perf`, which has no per-cycle CPU time finer than the
+1/64-second process tick and no memory readings there, and on any unknown mode.
 
 A short same-head smoke, under normal host load:
 

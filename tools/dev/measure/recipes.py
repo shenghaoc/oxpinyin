@@ -83,7 +83,7 @@ VALGRIND_TEMPLATES = ('Callgrind', 'Massif')
 def stage_arm(prefix, built_arm, driver, digest, *, windows=False):
     """Copy one built product and the driver into a private prefix.
 
-    Windows resolves the implicitly linked DLL beside the driver and has no dSYM.
+    Windows loads the selected DLL beside the driver and has no dSYM.
     Linux has no dSYM either: its driver opens the staged library by path.
     """
     import shutil
@@ -128,7 +128,7 @@ def workload_operations():
     import re
     from . import bench
     source = bench.HARNESS_SOURCE.read_text()
-    corpus = source.split('static const char *PERF_CYCLE_INPUTS[] = {', 1)[1].split('};', 1)[0]
+    corpus = source.split('const CYCLE_INPUTS: &[&str] = &[', 1)[1].split('];', 1)[0]
     return sum(len(value) for value in re.findall(r'"([a-z\']+)"', corpus))
 
 
@@ -254,7 +254,7 @@ def linux_sample(arm, cycles, env, deadline, *, source, fingerprint=None, profil
         return reports.linux_observation(done.stdout, cycles=cycles, library=arm['dylib'],
                                          source=source, fingerprint=fingerprint), None
     # The sentence campaign's Ir-only collection, on the keystroke cycle's steady anchor.
-    # The anchor switches collection on and off itself (CALLGRIND_TOGGLE_COLLECT in bisect.c).
+    # The anchor switches collection on and off itself (the Rust collection guard).
     prefix = ['valgrind', '--tool=callgrind', '--collect-atstart=no',
               '--cache-sim=no', '--branch-sim=no', '--separate-threads=no', '--callgrind-out-file=' + str(profile)]
     done = worker.launch(cell, 'speed', cycles, extra=extra, prefix=prefix, deadline=deadline)

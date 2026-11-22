@@ -185,6 +185,32 @@ class BenchTests(Scratch):
                                 ('tkrzw', 'run-x.sh', 'subject', library, loader)])
 
 
+class BuiltExecutableTests(unittest.TestCase):
+    """The driver path comes from Cargo's compiler-artifact messages, never from a guessed layout."""
+
+    @staticmethod
+    def artifact(name, kind, executable):
+        return json.dumps({'reason': 'compiler-artifact', 'target': {'name': name, 'kind': kind},
+                           'executable': executable})
+
+    def test_the_executable_is_read_from_the_messages_when_found_and_fails_when_missing_or_ambiguous(self):
+        elsewhere = '/t/x86_64-unknown-linux-gnu/release/bisect'  # the layout of a CARGO_BUILD_TARGET build
+        wanted = self.artifact('bisect', ['bin'], elsewhere)
+        others = [self.artifact('oxpinyin-measurement', ['lib'], None),
+                  self.artifact('system-import-profile', ['bin'], '/t/release/system-import-profile'),
+                  'not a message', json.dumps({'reason': 'build-finished', 'success': True})]
+        for lines in ([*others, wanted], [wanted, *others, wanted]):
+            with self.subTest(found=len(lines)):
+                self.assertEqual(bench.built_executable('\n'.join(lines), 'bisect'), Path(elsewhere))
+        _, status, _, err = stopped(bench.built_executable, '\n'.join(others), 'bisect')
+        self.assertEqual(status, 1)
+        self.assertIn('no executable for the bisect binary', err)
+        second = self.artifact('bisect', ['bin'], '/t/release/bisect')
+        _, status, _, err = stopped(bench.built_executable, '\n'.join([wanted, second]), 'bisect')
+        self.assertEqual(status, 1)
+        self.assertIn('several executables for the bisect binary', err)
+
+
 class ProcessTests(Scratch):
     """Real children, all plain Python, through the launchers the runners use."""
 

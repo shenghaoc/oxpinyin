@@ -33,9 +33,8 @@ from tools.tkrzw.runtime import RuntimeRefused, check
 
 ROOT = Path(__file__).resolve().parents[3]
 BISECT = ROOT / 'tools/bisection'
-HARNESS_SOURCE = BISECT / 'bisect.c'
-# The flags every harness build uses; recipes add -g or drop -Werror as their script did.
-STRICT_FLAGS = ('-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2')
+DRIVER_PACKAGE = ROOT / 'tools/measurement'
+HARNESS_SOURCE = DRIVER_PACKAGE / 'src/workload.rs'
 MACH_O_MAGIC = (b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xfe\xed\xfa\xce')
 
 
@@ -256,10 +255,48 @@ def heavy(command: Sequence, *, env: Mapping[str, str] | None = None, stdout=Non
     return code
 
 
-def harness_build(output, *, source=HARNESS_SOURCE, compiler: str = 'gcc',
-                  flags: Sequence[str] = STRICT_FLAGS, libraries: Sequence[str] = ('-ldl',)) -> list[str]:
-    """The compile command for the `bisect` harness: COMPILER FLAGS -o OUTPUT SOURCE LIBRARIES."""
-    return [compiler, *flags, '-o', str(output), str(source), *libraries]
+def harness_build(*, binary='bisect') -> list[str]:
+    """Build the nonshipping Rust driver; build_harness reads its path from the JSON messages."""
+    return ['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-measurement', '--bin', binary,
+            '--message-format=json-render-diagnostics']
+
+
+def built_executable(messages: str, binary: str) -> Path:
+    """The executable that Cargo's JSON compiler-artifact messages report for the bin target BINARY.
+
+    A build with `CARGO_BUILD_TARGET` or another target directory layout puts it elsewhere than
+    `target/release`, so the path is read, not assumed. No report, or two different paths, fails.
+    """
+    import json
+    found = set()
+    for line in messages.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        target = message.get('target') or {}
+        if (message.get('reason') == 'compiler-artifact' and target.get('name') == binary
+                and 'bin' in target.get('kind', ()) and message.get('executable')):
+            found.add(message['executable'])
+    if not found:
+        fail(f'cargo reported no executable for the {binary} binary')
+    if len(found) > 1:
+        fail(f'cargo reported several executables for the {binary} binary: ' + ', '.join(sorted(found)))
+    return Path(found.pop())
+
+
+def build_harness(output, *, binary='bisect', env=None):
+    """Build once and copy the executable that Cargo reports to OUTPUT."""
+    import shutil
+    import tempfile
+    with tempfile.TemporaryFile() as messages:
+        # Cargo's JSON messages go to the file; its rendered diagnostics stay on the console.
+        run(harness_build(binary=binary), env=env, stdout=messages)
+        messages.seek(0)
+        source = built_executable(messages.read().decode(errors='replace'), binary)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, output)
 
 
 @dataclasses.dataclass(frozen=True)
