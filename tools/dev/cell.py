@@ -168,13 +168,9 @@ class Settings:
     expected_pin: str
     target: Path
     environment: Mapping[str, str]
-    # Cargo features beside the one backend that `feature` names.
-    extra_features: tuple[str, ...] = ()
 
     def feature_args(self) -> list[str]:
-        """The backend's explicit flags, then any extra Cargo features."""
-        extra = ['--features', ','.join(self.extra_features)] if self.extra_features else []
-        return [*feature_flags(self.feature), *extra]
+        return feature_flags(self.feature)
 
     @classmethod
     def read(cls, environment: Mapping[str, str], root: Path = ROOT) -> 'Settings':
