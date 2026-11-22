@@ -93,10 +93,9 @@ env:
 jobs:
   package:
     name: ${{ matrix.distro }} (${{ matrix.backend }} store)
-    # The one Linux runner label in this workflow; the other Linux jobs
-    # alias it (*ubuntu). Pinned, not ubuntu-latest, so a runner-image
-    # move (26.04: actions/runner-images#14748) happens here under review.
-    runs-on: &ubuntu ubuntu-26.04
+    # Pinned, not ubuntu-latest, so a runner-image move
+    # (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: ubuntu-26.04
     container:
       image: ${{ matrix.image }}
     timeout-minutes: 90
@@ -352,7 +351,7 @@ jobs:
   attach:
     name: Collect the release assets
     needs: package
-    runs-on: *ubuntu
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -382,7 +381,7 @@ jobs:
     name: Attach packages to the release
     needs: attach
     if: github.event_name == 'release'
-    runs-on: *ubuntu
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
