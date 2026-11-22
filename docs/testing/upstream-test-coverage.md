@@ -203,7 +203,8 @@ input on standard input.
 
 - **Tooling.** `tools/dev/fuzz.py` holds the fuzz logic, and `just fuzz-setup`
   and `just fuzz` are one-line recipes that call it
-  (`python -m tools.dev.fuzz setup` and `run`). Its tests,
+  (`python -m tools.dev.fuzz setup` and `run`); `just fuzz-minimize` calls
+  `minimize`, and the nightly calls `archive`. Its tests,
   `tools/dev/fuzz.test.py`, check the option refusals, the corpus rules and
   the finding count without a fuzzer build.
 - **Build.** `just fuzz <target>` builds the target with cargo-afl,
@@ -225,12 +226,30 @@ input on standard input.
 - **Crashes.** The fuzz workspace's release profile sets `panic = "abort"`, so
   a panic, a failed assertion included, is a signal that AFL++ records as a
   crash. A hang is an input that runs longer than the 15 s timeout.
-- **Minimization.** `just fuzz-minimize` runs afl-cmin with
+- **Curated inputs.** `tools/dev/fuzz.py` names each target's curated
+  inputs: `fuzz/seeds/<target>`, plus the five MemoryChunk files of
+  `fixtures/w3/kct/` for `dict-loader`, `art.bin` without its 8-byte header
+  for `phrase-library`, and `table.conf` for `table-conf`. A missing one
+  fails. In the corpus, a curated input has its own name and every other
+  input its content name, so no two distinct inputs share a name.
+  `just fuzz-minimize` stages the restored corpus with them, one file per
+  content: a restored file goes under its content name, so one that has a
+  curated input's name but other content is kept. It then runs each curated
+  input
+  alone through the target's standard input, then runs afl-cmin, and puts
+  back a curated input that afl-cmin dropped. afl-cmin runs with
   `AFL_MAP_SIZE=65536` unless set. afl-showmap makes its shared memory the
   size that afl-cmin passes, which is otherwise the size the binary reports.
   The AFL++ 4.40c runtime maps that memory before the coverage guards are
   counted, so the first pass of a persistent child's loop clears `MAP_SIZE`
-  (65536) bytes, past the end of a smaller map.
+  (65536) bytes, past the end of a smaller map. A curated input that fails
+  alone stays in the run's `seed-issues/` with its output, and the message
+  names its source. Any failure leaves the corpus as it was. `just fuzz`
+  writes the curated inputs into the corpus before each run; a corpus file
+  with a curated input's name and other content first moves to its content
+  name. `dict-loader`
+  reads whole files, so its input limit (`-G`) admits its largest curated
+  input. An explicit `-G` replaces it.
 - **Seed issues.** By default afl-fuzz skips an initial input that crashes,
   or one that times out when `-t` is given, and fuzzes on from the other
   inputs, so the run passes. `just fuzz` sets `AFL_EXIT_ON_SEED_ISSUES=1`:
@@ -314,11 +333,16 @@ The nightly soak runs every target for 180 s of fuzzing (`afl-fuzz -V`,
 counted from the end of the start-up run that calibrates the corpus) with a
 per-target input limit, then fails on any crash or hang, on a target that ran
 no input, on a seed issue, and on a run that does not end within its time
-limit. It prints each run's `stability` and `execs_per_sec`. On a failure it
-uploads each run's crashes, hangs, statistics, `seed-issues/` and
+limit. It prints each run's `stability` and `execs_per_sec`. The corpus
+cache saves only when the job passes. So on a failure the nightly packs the
+queue, crashes, hangs and `seed-issues/` of every run directory, the runs of
+targets that passed and runs that stopped early included, into
+`fuzz/out/fuzz-inputs.tar.gz` (`python -m tools.dev.fuzz archive`): AFL++
+names inputs with `:`, which an artifact's file name cannot hold. It
+uploads that file with each run's statistics, `afl-cmin.log` and
 `afl-fuzz.log`.
 `just fuzz <target> [afl-fuzz arguments]` runs one target locally: it fuzzes
-`fuzz/corpus/<target>`, copies the target's `fuzz/seeds/` into it, and
+`fuzz/corpus/<target>`, writes the target's curated inputs into it, and
 writes findings to `fuzz/out/<target>/<run>/default/`.
 
 ### Postconditions

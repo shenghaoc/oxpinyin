@@ -236,7 +236,9 @@ fuzz-setup:
 fuzz-setup:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.fuzz setup; exit $LASTEXITCODE
 
-# Minimize one target's corpus, or every corpus with no target (Linux only).
+# Prepare one target's corpus, or every corpus with no target: the restored
+# inputs and the curated inputs, each curated input replayed, then afl-cmin
+# (Linux only).
 [unix]
 fuzz-minimize *targets:
     @uv run --managed-python python -X utf8 -m tools.dev.fuzz minimize "$@"
