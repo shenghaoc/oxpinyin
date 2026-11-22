@@ -19,7 +19,7 @@ use crate::data::FileName;
 use crate::input::config::{
     Scanned, UserTableInfoFields, UserTableInfoReader, save_user_table_info,
 };
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 use crate::store::DEFAULT_STORE_DB_FORMAT;
 
 /// Strips and verifies a `MemoryChunk` file frame, returning the payload
@@ -248,7 +248,7 @@ pub struct SystemVersions {
 impl SystemVersions {
     /// This build's identity — the versions of the system `table.conf`
     /// it opens, paired with its own backend token.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     #[must_use]
     pub const fn for_this_build(binary_format_version: u32, model_data_version: u32) -> Self {
         Self {

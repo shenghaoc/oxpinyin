@@ -87,13 +87,15 @@ use std::sync::OnceLock;
 use oxpinyin::data::TableConf;
 use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin::user::{
-    CEILING_SEED, FIRST_USER_TOKEN, INITIAL_SEED, LibraryLoopRows, PinyinKey, SystemOriginals,
+    CEILING_SEED, INITIAL_SEED, LibraryLoopRows, PinyinKey, SystemOriginals,
     UserConfLaw, UserStore, UserStoreError,
 };
 use oxpinyin::vocab::{
     NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseText, SyllableKey,
     USER_DICTIONARY, phrase_index_library_index, phrase_index_make_token,
 };
+
+const FIRST_USER_TOKEN: u32 = phrase_index_make_token(USER_DICTIONARY, 1);
 
 /// The complete frozen syllables, the whole inventory the oracle fixtures
 /// exercise; a two-byte selector indexes this list to build a valid key.
@@ -233,7 +235,11 @@ fn system() -> &'static (&'static Path, TableConf) {
 fn open_session(dir: &Path) -> UserStore {
     let (system, conf) = system();
     let layout = UserFileLayout::from_conf(conf);
-    let versions = SystemVersions::for_this_build(7, 14);
+    let versions = SystemVersions {
+        binary_format_version: 7,
+        model_data_version: 14,
+        database_format: oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
+    };
     let check = UserStore::check_profile(dir, &versions, &layout, UserConfLaw::Pinyin);
     let rows = LibraryLoopRows::new(system, conf, Some(dir));
     let mut originals = SystemOriginals::new(Default::default(), layout);

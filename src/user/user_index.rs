@@ -16,6 +16,7 @@
 
 use crate::store::StoreError;
 
+#[cfg(test)]
 use std::collections::BTreeSet;
 
 use crate::data::phrase_library::CHEWING_KEY_SIZE;
@@ -500,7 +501,7 @@ impl UserIndex {
 
     /// The `(token, toned keys)` readings the records carry, deduplicated:
     /// the value model's `indexed` set.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn indexed_set(&self) -> BTreeSet<(u32, Vec<u16>)> {
         let mut set = BTreeSet::new();
         let Ok(()) = self
