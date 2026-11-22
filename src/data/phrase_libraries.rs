@@ -214,6 +214,7 @@ impl PhraseLibraries {
 
     /// Installs an already opened library, transferring its byte ownership.
     /// The path is retained for operations that remap the loaded file.
+    #[doc(hidden)]
     pub fn insert_mapping(&mut self, nibble: u8, path: PathBuf, library: PhraseLibrary) {
         let Some(slot) = self.by_nibble.get_mut(usize::from(nibble)) else {
             return;

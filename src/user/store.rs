@@ -733,6 +733,7 @@ impl UserStore {
     /// # Errors
     /// Returns the native write error.
     #[cfg(any(test, feature = "test-hooks"))]
+    #[doc(hidden)]
     pub fn plant_raw_bigram(
         &mut self,
         token: PhraseToken,

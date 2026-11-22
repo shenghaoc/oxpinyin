@@ -112,6 +112,7 @@ impl BdbStore {
     ///
     /// # Errors
     /// Returns failures that occur before the native open.
+    #[doc(hidden)]
     pub fn try_open_native(
         path: &Path,
         hash: bool,
@@ -432,7 +433,6 @@ impl WriteStore for BdbStore {
     /// 198-214`, `:224-235` at 074a2219): the `DB->put` or `DB->del` alone,
     /// its answer the pin's. `reset()` makes the one `DB->sync`
     /// (`:51-57`), which [`WriteStore::flush`] is.
-    #[cfg(test)]
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,

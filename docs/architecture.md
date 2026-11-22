@@ -81,6 +81,8 @@ They use `data::row_format` for DBM keys and index and punctuation values, `sing
 Readers and writers share one layout definition per format.
 Implementation files are private by default. Owners re-export the items callers need. Public submodules name subsystems, formats, backends or command boundaries.
 
+The private tool-support crate calls shared engine, storage and native I/O operations through `oxpinyin::__internal`. Rustdoc hides this unsupported workspace interface. Any Rust crate can still import it. The split follows libpinyin’s separation of internal archives and utility code.
+
 The fixture `Dictionary`/`LanguageModel` doubles are one source file, `tests/common/fixture_doubles.rs`.
 Each test target that needs them includes the file with `#[path]`, so no shared test crate can close a dependency cycle through the library.
 The production build graph carries no test doubles.

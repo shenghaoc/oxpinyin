@@ -27,112 +27,120 @@ pub(crate) const fn opens_directories() -> bool {
     cfg!(unix)
 }
 
-/// The header and bytes returned by the single payload read.
-pub struct LoadedChunk {
-    /// The declared payload length, in the file's native header bytes.
-    #[cfg(test)]
-    length: [u8; 4],
-    /// The stored checksum, in the file's native header bytes.
-    checksum: [u8; 4],
-    /// The actual bytes returned by the one payload read.
-    payload: Vec<u8>,
-    source: MappingSource,
-}
+pub(crate) use read::{ChunkLoadError, load, load_for_mask_prefetch};
+#[cfg(test)]
+use read::{load_header, load_with};
 
-impl LoadedChunk {
-    /// Check the returned bytes, close the descriptor, and return the payload.
-    /// A checksum mismatch rejects the chunk while its descriptor is still open.
-    #[must_use]
-    pub fn finish(self, checksum: impl FnOnce(&[u8]) -> u32) -> Option<Vec<u8>> {
-        if checksum(&self.payload) != u32::from_le_bytes(self.checksum) {
-            return None;
-        }
-        let Self {
-            payload, source, ..
-        } = self;
-        drop(source);
-        Some(payload)
-    }
-}
+pub(crate) mod read {
+    use super::{MappingSource, Path, available_payload_length, io, native};
 
-/// A failure to obtain the bytes of a chunk.
-#[derive(Debug)]
-pub enum ChunkLoadError {
-    /// Open, seek, allocation or payload read failed.
-    Io(io::Error),
-    /// The file is shorter than its header.
-    ShortHeader,
-    /// One of the pin's two header read assertions failed.
-    Header,
-}
-
-/// Read a chunk using the descriptor, seeks and single reads of
-/// `MemoryChunk::load` (074a2219 `memory_chunk.h:420-463`). Domain
-/// validation remains with the caller.
-///
-/// # Errors
-/// Returns a short-header error when the file has fewer than eight bytes.
-/// Also returns open, seek, allocation, or payload read failures.
-pub fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
-    load_with(path, false, |source, payload| {
-        source.read_payload(payload, None)
-    })
-}
-
-/// Prefetch for a mask walk whose caller must first replay preceding libraries.
-pub(crate) fn load_for_mask_prefetch(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
-    load_with(path, true, |source, payload| {
-        source.read_payload(payload, None)
-    })
-}
-
-fn load_with(
-    path: &Path,
-    defer_header_fault: bool,
-    read_payload: impl FnOnce(&mut native::ReadChunk, &mut Vec<u8>) -> io::Result<usize>,
-) -> Result<LoadedChunk, ChunkLoadError> {
-    let mut source = MappingSource::open(path).map_err(ChunkLoadError::Io)?;
-    let file_size = source.file_size();
-    let (length, checksum) = load_header(file_size, defer_header_fault, || source.read_word())?;
-    let available = available_payload_length(file_size);
-    let declared = u32::from_le_bytes(length);
-    if declared != available {
-        return Err(ChunkLoadError::Io(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "chunk length does not match file size",
-        )));
-    }
-    let mut payload = Vec::new();
-    payload
-        .try_reserve_exact(available as usize)
-        .map_err(|error| ChunkLoadError::Io(io::Error::other(error)))?;
-    read_payload(&mut source.source, &mut payload).map_err(ChunkLoadError::Io)?;
-    Ok(LoadedChunk {
+    /// The header and bytes returned by the single payload read.
+    pub struct LoadedChunk {
+        /// The declared payload length, in the file's native header bytes.
         #[cfg(test)]
-        length,
-        checksum,
-        payload,
-        source,
-    })
-}
-
-fn load_header(
-    file_size: u64,
-    defer_header_fault: bool,
-    mut read_word: impl FnMut() -> io::Result<[u8; 4]>,
-) -> Result<([u8; 4], [u8; 4]), ChunkLoadError> {
-    if file_size < 8 {
-        return Err(ChunkLoadError::ShortHeader);
+        pub(super) length: [u8; 4],
+        /// The stored checksum, in the file's native header bytes.
+        pub(super) checksum: [u8; 4],
+        /// The actual bytes returned by the one payload read.
+        pub(super) payload: Vec<u8>,
+        source: MappingSource,
     }
-    // MemoryChunk::load asserts on a failed header read (memory_chunk.h:433-438).
-    let mut read = || match read_word() {
-        Ok(word) => Ok(word),
-        Err(_) if defer_header_fault => Err(ChunkLoadError::Header),
-        Err(_) => std::process::abort(),
-    };
-    let length = read()?;
-    let checksum = read()?;
-    Ok((length, checksum))
+
+    impl LoadedChunk {
+        /// Check the returned bytes, close the descriptor, and return the payload.
+        /// A checksum mismatch rejects the chunk while its descriptor is still open.
+        #[must_use]
+        pub fn finish(self, checksum: impl FnOnce(&[u8]) -> u32) -> Option<Vec<u8>> {
+            if checksum(&self.payload) != u32::from_le_bytes(self.checksum) {
+                return None;
+            }
+            let Self {
+                payload, source, ..
+            } = self;
+            drop(source);
+            Some(payload)
+        }
+    }
+
+    /// A failure to obtain the bytes of a chunk.
+    #[derive(Debug)]
+    pub enum ChunkLoadError {
+        /// Open, seek, allocation or payload read failed.
+        Io(io::Error),
+        /// The file is shorter than its header.
+        ShortHeader,
+        /// One of the pin's two header read assertions failed.
+        Header,
+    }
+
+    /// Read a chunk using the descriptor, seeks and single reads of
+    /// `MemoryChunk::load` (074a2219 `memory_chunk.h:420-463`). Domain
+    /// validation remains with the caller.
+    ///
+    /// # Errors
+    /// Returns a short-header error when the file has fewer than eight bytes.
+    /// Also returns open, seek, allocation, or payload read failures.
+    pub fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
+        load_with(path, false, |source, payload| {
+            source.read_payload(payload, None)
+        })
+    }
+
+    /// Prefetch for a mask walk whose caller must first replay preceding libraries.
+    pub(crate) fn load_for_mask_prefetch(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
+        load_with(path, true, |source, payload| {
+            source.read_payload(payload, None)
+        })
+    }
+
+    pub(super) fn load_with(
+        path: &Path,
+        defer_header_fault: bool,
+        read_payload: impl FnOnce(&mut native::ReadChunk, &mut Vec<u8>) -> io::Result<usize>,
+    ) -> Result<LoadedChunk, ChunkLoadError> {
+        let mut source = MappingSource::open(path).map_err(ChunkLoadError::Io)?;
+        let file_size = source.file_size();
+        let (length, checksum) = load_header(file_size, defer_header_fault, || source.read_word())?;
+        let available = available_payload_length(file_size);
+        let declared = u32::from_le_bytes(length);
+        if declared != available {
+            return Err(ChunkLoadError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "chunk length does not match file size",
+            )));
+        }
+        let mut payload = Vec::new();
+        payload
+            .try_reserve_exact(available as usize)
+            .map_err(|error| ChunkLoadError::Io(io::Error::other(error)))?;
+        read_payload(&mut source.source, &mut payload).map_err(ChunkLoadError::Io)?;
+        Ok(LoadedChunk {
+            #[cfg(test)]
+            length,
+            checksum,
+            payload,
+            source,
+        })
+    }
+
+    pub(super) fn load_header(
+        file_size: u64,
+        defer_header_fault: bool,
+        mut read_word: impl FnMut() -> io::Result<[u8; 4]>,
+    ) -> Result<([u8; 4], [u8; 4]), ChunkLoadError> {
+        if file_size < 8 {
+            return Err(ChunkLoadError::ShortHeader);
+        }
+        // MemoryChunk::load asserts on a failed header read (memory_chunk.h:433-438).
+        let mut read = || match read_word() {
+            Ok(word) => Ok(word),
+            Err(_) if defer_header_fault => Err(ChunkLoadError::Header),
+            Err(_) => std::process::abort(),
+        };
+        let length = read()?;
+        let checksum = read()?;
+        Ok((length, checksum))
+    }
 }
 
 // The caller has rejected a size below the header. C narrows the remainder

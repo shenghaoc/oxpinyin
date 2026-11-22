@@ -34,6 +34,9 @@
 extern crate self as oxpinyin;
 
 #[forbid(unsafe_code)]
+#[doc(hidden)]
+pub mod __internal;
+#[forbid(unsafe_code)]
 mod chewing_key;
 #[forbid(unsafe_code)]
 mod chewing_key_data;

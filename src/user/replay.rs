@@ -21,7 +21,8 @@ use crate::vocab::PHRASE_MASK;
 
 #[cfg(test)]
 use crate::user::SystemLibrary;
-use crate::user::{SystemLibraryRef, journal_item_bytes};
+use crate::user::SystemLibraryRef;
+use crate::user::persistence::journal_item_bytes;
 
 /// Why the merge ended at a record.
 pub(crate) enum Stop {

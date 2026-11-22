@@ -30,9 +30,9 @@ mod library_table;
 mod live_system;
 mod lookup;
 mod model;
-mod persistence;
+pub(crate) mod persistence;
 mod records;
-mod replay;
+pub(crate) mod replay;
 mod store;
 pub(crate) mod store_libpinyin;
 mod system_items;
@@ -66,9 +66,6 @@ pub use replay::{JournalFault, UnigramAdd};
 pub use store::{
     MaskCheck, TrainingCheck, TrainingFault, UserStore, UserStoreError, add_system_reading,
 };
-
-pub use persistence::journal_item_bytes;
-pub use replay::ReplayedLibrary;
 
 #[cfg(test)]
 #[path = "../../tests/support/native_fixture.rs"]

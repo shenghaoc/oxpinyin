@@ -463,13 +463,31 @@ pub trait WriteStore: RawReadStore {
     ///
     /// # Errors
     /// Returns a backend error on failure, including a read-only store.
+    #[doc(hidden)]
     fn remove_raw(&self, key: &[u8]) -> Result<bool, StoreError>;
 
     /// Whether writes are disabled for the native handle.
+    #[doc(hidden)]
     fn is_read_only(&self) -> bool;
 
-    /// Applies buffered raw operations without a sync for backend unit tests.
-    #[cfg(test)]
+    /// The pin's `FlexibleBigram` writes: the closure's puts and removes,
+    /// applied as one native `set` or `remove` each when the closure
+    /// returns `Ok`, with no transaction and no sync. An `Err` from the
+    /// closure applies nothing. [`WriteStore::flush`] is the one sync, at
+    /// the owner's reset (`flexible_ngram_bdb.h:51-57`,
+    /// `flexible_ngram_kyotodb.h:86-92`, `flexible_ngram_tkrzwdb.h:84-90`).
+    ///
+    /// The flag aggregates the applied removals: true unless one of them
+    /// found no record, and true when the closure removes nothing. It is
+    /// not one native result. `FlexibleBigram::remove` is its only reader,
+    /// and its closure holds exactly one removal, so there the flag is that
+    /// removal's native answer, which the pin's `remove` returns.
+    /// A store that holds no such container refuses with
+    /// [`StoreError::InvalidInput`].
+    ///
+    /// # Errors
+    ///
+    /// As [`WriteStore::write`].
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,

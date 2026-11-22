@@ -162,7 +162,6 @@ impl<L, T: std::borrow::Borrow<BigramTables>, M> std::ops::Deref for BigramLangu
 impl BigramTables {
     /// Open only the bigram table; readers borrow phrase storage separately.
     #[cfg(test)]
-    #[cfg(test)]
     pub fn open(bigram_path: &Path, lambda: f32) -> Result<Self, LmError> {
         Ok(Self::with_table(BigramTable::attach(bigram_path)?, lambda))
     }
@@ -227,7 +226,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, M: std::borrow::Borrow<Cell<u32>>>
     /// # Errors
     ///
     /// Returns [`LmError`] when the bigram file cannot be opened.
-    #[cfg(test)]
     #[cfg(test)]
     pub fn open_with_mask(
         bigram_path: &Path,

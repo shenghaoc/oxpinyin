@@ -805,7 +805,6 @@ impl WriteStore for TkrzwStore {
     /// 236-246`, `:259-263` at 074a2219): the `Set` or `Remove` alone, its
     /// status the answer. The pin's `reset()` makes the one
     /// `Synchronize(false)` (`:84-90`), which [`WriteStore::flush`] is.
-    #[cfg(test)]
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
@@ -834,6 +833,7 @@ impl WriteStore for TkrzwStore {
 impl TkrzwStore {
     /// Allocates one native tree or hash object without opening a file.
     #[must_use]
+    #[doc(hidden)]
     pub fn allocate_native(hash: bool, read_only: bool) -> Self {
         let class = if hash { Class::Hash } else { Class::Tree };
         Self {
@@ -846,6 +846,7 @@ impl TkrzwStore {
     ///
     /// # Errors
     /// Returns failures that occur before the native open.
+    #[doc(hidden)]
     pub fn try_open_native(&mut self, path: &Path, create: bool) -> Result<bool, StoreError> {
         let options = if create { OPEN_DEFAULT } else { OPEN_NO_CREATE };
         let status = self.db.open(path, !self.read_only, options)?;

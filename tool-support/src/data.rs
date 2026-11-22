@@ -1,13 +1,14 @@
 //! Data adapters for the standalone lookup, table, and training commands.
 
-use oxpinyin::data::chunk_format::chunk_checksum;
-use oxpinyin::data::phrase_library::{LibraryBytes, LibraryError, PhraseLibrary, RowFault};
-use oxpinyin::data::{
-    BigramTable, ChewingTable, DefaultDbm, DictError, PhraseLibraries, PhraseTable, RawChewingDbm,
-    SystemTables, TableError, visit_matching_items,
+use oxpinyin::__internal::{
+    ChewingTable, ChunkLoadError, DefaultDbm, LibraryBytes, PhraseTable, RawChewingDbm,
+    is_complete, load_chunk, visit_matching_items,
 };
+use oxpinyin::data::chunk_format::chunk_checksum;
+use oxpinyin::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
+use oxpinyin::data::{BigramTable, DictError, PhraseLibraries, SystemTables, TableError};
 use oxpinyin::parser::ChewingKey;
-use oxpinyin::single_gram::{SingleGramRecord, get_total_freq, is_complete, retrieve_all};
+use oxpinyin::single_gram::{SingleGramRecord, get_total_freq, retrieve_all};
 use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore};
 use std::path::Path;
 
@@ -208,14 +209,10 @@ pub fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<DefaultStore
 /// # Errors
 /// Returns a read, checksum, or layout error.
 pub fn load_heap(path: &Path) -> Result<PhraseLibrary, LibraryError> {
-    let loaded = oxpinyin::input::chunk::load(path).map_err(|error| match error {
-        oxpinyin::input::chunk::ChunkLoadError::Header => {
-            LibraryError::Row(RowFault::ChunkHeaderRead)
-        }
-        oxpinyin::input::chunk::ChunkLoadError::Io(error) => LibraryError::Io(error),
-        oxpinyin::input::chunk::ChunkLoadError::ShortHeader => {
-            LibraryError::Format("chunk shorter than its header".into())
-        }
+    let loaded = load_chunk(path).map_err(|error| match error {
+        ChunkLoadError::Header => LibraryError::Row(RowFault::ChunkHeaderRead),
+        ChunkLoadError::Io(error) => LibraryError::Io(error),
+        ChunkLoadError::ShortHeader => LibraryError::Format("chunk shorter than its header".into()),
     })?;
     let payload = loaded
         .finish(chunk_checksum)

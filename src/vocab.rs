@@ -192,54 +192,60 @@ impl SyllableKey {
     }
 }
 
-/// Initial swaps only; the matrix applies these to its column snapshot.
-#[must_use]
-pub fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
-    let mut initials = Vec::new();
-    for (bit, a, b) in [
-        (OptionBits::PINYIN_AMB_C_CH, "c", "ch"),
-        (OptionBits::PINYIN_AMB_Z_ZH, "z", "zh"),
-        (OptionBits::PINYIN_AMB_S_SH, "s", "sh"),
-        (OptionBits::PINYIN_AMB_L_R, "l", "r"),
-        (OptionBits::PINYIN_AMB_L_N, "l", "n"),
-        (OptionBits::PINYIN_AMB_F_H, "f", "h"),
-        (OptionBits::PINYIN_AMB_G_K, "g", "k"),
-    ] {
-        if !options.contains(bit) {
-            continue;
-        }
-        if let (Some(a), Some(b)) = (ChewingKey::from_pinyin(a), ChewingKey::from_pinyin(b)) {
-            for (from, to) in [(a.initial, b.initial), (b.initial, a.initial)] {
-                if key.initial == from {
-                    let mut alternate = key;
-                    alternate.initial = to;
-                    if alternate.table_index() != 0 {
-                        initials.push(alternate);
+pub(crate) use fuzzy::{fuzzy_chewing_finals, fuzzy_chewing_initials};
+
+pub(crate) mod fuzzy {
+    use super::{ChewingKey, FUZZY_FINALS, OptionBits};
+
+    /// Initial swaps only; the matrix applies these to its column snapshot.
+    #[must_use]
+    pub fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+        let mut initials = Vec::new();
+        for (bit, a, b) in [
+            (OptionBits::PINYIN_AMB_C_CH, "c", "ch"),
+            (OptionBits::PINYIN_AMB_Z_ZH, "z", "zh"),
+            (OptionBits::PINYIN_AMB_S_SH, "s", "sh"),
+            (OptionBits::PINYIN_AMB_L_R, "l", "r"),
+            (OptionBits::PINYIN_AMB_L_N, "l", "n"),
+            (OptionBits::PINYIN_AMB_F_H, "f", "h"),
+            (OptionBits::PINYIN_AMB_G_K, "g", "k"),
+        ] {
+            if !options.contains(bit) {
+                continue;
+            }
+            if let (Some(a), Some(b)) = (ChewingKey::from_pinyin(a), ChewingKey::from_pinyin(b)) {
+                for (from, to) in [(a.initial, b.initial), (b.initial, a.initial)] {
+                    if key.initial == from {
+                        let mut alternate = key;
+                        alternate.initial = to;
+                        if alternate.table_index() != 0 {
+                            initials.push(alternate);
+                        }
                     }
                 }
             }
         }
+        initials
     }
-    initials
-}
 
-/// Final swaps only, including combinations with no syllable-table row.
-#[must_use]
-pub fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
-    let mut out = Vec::new();
-    for (bit, a, b) in FUZZY_FINALS {
-        if !options.contains(bit) {
-            continue;
-        }
-        for (from, to) in [(a, b), (b, a)] {
-            if source.final_ == from {
-                let mut alternate = source;
-                alternate.final_ = to;
-                out.push(alternate);
+    /// Final swaps only, including combinations with no syllable-table row.
+    #[must_use]
+    pub fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+        let mut out = Vec::new();
+        for (bit, a, b) in FUZZY_FINALS {
+            if !options.contains(bit) {
+                continue;
+            }
+            for (from, to) in [(a, b), (b, a)] {
+                if source.final_ == from {
+                    let mut alternate = source;
+                    alternate.final_ = to;
+                    out.push(alternate);
+                }
             }
         }
+        out
     }
-    out
 }
 
 /// The final swaps of `fuzzy_syllable_step`
@@ -399,8 +405,13 @@ impl PhraseEntry {
     /// unset.
     #[must_use]
     pub const fn with_pronunciation_possibility(mut self, matched: u64, total: u64) -> Self {
-        self.pronunciation = Some((matched, total));
+        self.set_pronunciation_possibility(matched, total);
         self
+    }
+
+    /// Replaces the pronunciation possibility of an existing entry.
+    pub const fn set_pronunciation_possibility(&mut self, matched: u64, total: u64) {
+        self.pronunciation = Some((matched, total));
     }
 
     /// Consumes the entry and returns its phrase text.

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use libc::FILE;
 
-use oxpinyin::input::c_stderr;
+use oxpinyin::__internal::c_stderr;
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
@@ -568,7 +568,7 @@ impl OutputStream {
     pub fn open_write(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: `filename` and the mode are NUL-terminated and outlive the
         // call.
-        oxpinyin::input::fopen(filename, c"w").map(|stream| Self {
+        oxpinyin::__internal::fopen(filename, c"w").map(|stream| Self {
             stream,
             owned: true,
         })
@@ -818,7 +818,7 @@ pub mod gen_pinyin_table {
         pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode are NUL-terminated and outlive
             // the call.
-            oxpinyin::input::fopen(filename, c"r").map(|stream| Self {
+            oxpinyin::__internal::fopen(filename, c"r").map(|stream| Self {
                 stream,
                 phrase: Box::new([0; FIELD]),
                 pinyin: Box::new([0; FIELD]),
@@ -1244,7 +1244,7 @@ pub mod storage {
         pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode literal are NUL-terminated and
             // outlive the call.
-            oxpinyin::input::fopen(filename, c"r").map(|stream| Self { stream })
+            oxpinyin::__internal::fopen(filename, c"r").map(|stream| Self { stream })
         }
 
         /// `fseek(tablefile, 0L, SEEK_SET)` (`gen_binary_files.cpp:69`,
@@ -1369,7 +1369,7 @@ pub mod storage {
     #[cfg(windows)]
     unsafe fn errno_location() -> *mut c_int {
         // SAFETY: as the Linux definition.
-        unsafe { oxpinyin::input::errno_location() }
+        unsafe { oxpinyin::__internal::errno_location() }
     }
 
     /// The C call converts size_t to unsigned int modulo 2^32 on Windows.
@@ -1421,7 +1421,7 @@ pub mod storage {
         checksum: u32,
         payload: &[u8],
     ) -> bool {
-        let filename = oxpinyin::input::wide_path(&filename.as_path());
+        let filename = oxpinyin::__internal::wide_path(&filename.as_path());
         use libc::wopen as open;
         let flags = libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | O_BINARY;
         // The CRT descriptor is not inherited by children.
