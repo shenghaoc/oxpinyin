@@ -297,7 +297,7 @@ These rules govern the CI gates. This section is the only place that states them
    The generated Rust tables are such files.
    Within a job, no step depends on the changed paths, so a job's success always means the same checks.
    The Python version request rule reads every tracked file, so it runs on every change.
-   A later run of the same tree reuses a pull request run only when that run passed every job the later run selects, within 24 hours.
+   Pushes to main run the normal path-selected checks.
 6. **Linux CI runs natively.** Every Linux job of `ci.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
    Every system package, the store backends included, comes from Ubuntu's apt.
    Containers serve only the pin oracle, which is local work and never runs in CI, and the distribution packaging of `release-packages.yml`.

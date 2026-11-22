@@ -397,7 +397,6 @@ The job also runs when its own files change.
 `tools/dev/ship_sizes.py` holds the path list.
 The job is skipped in other cases, for example a documentation-only change.
 `ci-aggregate` requires the job when it applies and accepts `skipped` only when it does not apply.
-Tree reuse does not skip the job: a reused tree proves the tests, not the sizes against this base.
 
 **What it builds.**
 For the PR head and for its base, the job exports the commit with `git archive`.
