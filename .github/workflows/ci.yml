@@ -31,8 +31,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
-  pull-requests: read
 
 defaults:
   run:
@@ -98,9 +96,6 @@ jobs:
       harness: ${{ steps.gate.outputs.harness }}
       ship: ${{ steps.gate.outputs.ship }}
       store: ${{ steps.gate.outputs.store }}
-      reuse: ${{ steps.evidence.outputs.reuse }}
-      tree: ${{ steps.evidence.outputs.tree }}
-      source_run: ${{ steps.evidence.outputs.source_run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -118,20 +113,11 @@ jobs:
       # change. The file's other test class runs with the harness.
       - name: Python version request is written once
         run: uv run --managed-python python -X utf8 tools/dev/python-request.test.py RequestLiteralTests
-      # After the gate: evidence must cover every lane the gate selects.
-      - name: Look up successful PR evidence for this tree
-        id: evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GATE_FLAGS: ${{ toJSON(steps.gate.outputs) }}
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree evidence
 
-  # The Linux Rust lane: every check that reads the workspace, under the Linux
-  # cell. On a reused tree a push to main still compiles here to refresh the
-  # main Rust cache.
+  # The Linux Rust lane: every check that reads the workspace, under the Linux cell.
   rust:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
+    if: needs.changes.outputs.rust == 'true'
     runs-on: *ubuntu
     timeout-minutes: 120
     steps:
@@ -143,11 +129,10 @@ jobs:
           rust-toolchain: 'true'
           rust-cache: 'true'
           rust-cache-key: rust-job
-          # Every run: the cache refresh runs on reuse too.
           uv: 'true'
-          just: ${{ needs.changes.outputs.reuse != 'true' }}
-          cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
-          cargo-deny: ${{ needs.changes.outputs.reuse != 'true' }}
+          just: 'true'
+          cargo-nextest: 'true'
+          cargo-deny: 'true'
       - run: rustup show active-toolchain
       - name: Install build dependencies (apt)
         # libkyotocabinet-dev: the library the kyotocabinet backend links and
@@ -159,14 +144,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libglib2.0-dev libkyotocabinet-dev
       - run: cargo fmt --all --check
-        if: needs.changes.outputs.reuse != 'true'
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
-        if: needs.changes.outputs.reuse != 'true'
       # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
       # holds the policy. The justfile's deny recipe holds the checks and their
       # order.
       - run: just deny
-        if: needs.changes.outputs.reuse != 'true'
       # Placement gate for crate-level `#![cfg(...)]`. A gate that evaluates
       # false discards the crate attributes after it, so one above a `//!`
       # block removes the docs and `missing_docs` fires on the excluded
@@ -174,22 +156,17 @@ jobs:
       # reads placement, not cfg outcomes. Its harness runs first, so a
       # defect in the checker cannot pass.
       - name: Crate cfg-placement harness
-        if: needs.changes.outputs.reuse != 'true'
         run: uv run --managed-python python -X utf8 -m tools.dev.test_runner tools/dev/lint-crate-cfg-placement.test.py
       - name: Crate cfg-placement gate
-        if: needs.changes.outputs.reuse != 'true'
         run: uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_crate_cfg_placement; raise SystemExit(lint_crate_cfg_placement(sys.argv[1:]))'
       # Drop-in version agreement: the capi manifests' header subdirectory
       # and pkg_config version against the pin record. The full
       # installed-tree diff (just packaging check-pc-metadata) needs the
       # pin-built libpinyin, which CI does not have.
       - run: uv run --managed-python python -X utf8 -m tools.dev.packaging check-pc-version
-        if: needs.changes.outputs.reuse != 'true'
       # `--features kyotocabinet` at `--workspace` scope enables the peer on
       # every member that declares it (the store job's comment gives the mechanism).
       - run: cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings
-        if: needs.changes.outputs.reuse != 'true'
-      # Run on every selected rust job, including the main cache refresh.
       # The directory selects the nightly in fuzz/rust-toolchain.toml.
       # No AFL++, corpus, sanitizer run or model data is needed. The fuzz
       # crate forwards the backend features; the soak selects the same one.
@@ -202,12 +179,10 @@ jobs:
       # Complexity limit: the recipe states it; pyproject.toml and uv.lock
       # name the Lizard release.
       - name: Lizard complexity limit
-        if: needs.changes.outputs.reuse != 'true'
         run: just complexity
       # Kyoto Cabinet rustdoc, warnings denied; Berkeley DB's runs in the
       # `store` job and tkrzw's on the nightly macOS and Windows jobs.
       - name: Rustdoc (kyotocabinet)
-        if: needs.changes.outputs.reuse != 'true'
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --no-deps --workspace --no-default-features --features kyotocabinet
@@ -215,9 +190,7 @@ jobs:
       # pinned libpinyin-data package) are tkrzw-only, so this lane fetches no
       # contract data; the nightly macOS job runs them.
       - run: cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features kyotocabinet
-        if: needs.changes.outputs.reuse != 'true'
       - name: Build Cargo packages from their archives
-        if: needs.changes.outputs.reuse != 'true'
         run: |
           set -euo pipefail
           scratch=$(mktemp -d)
@@ -256,16 +229,13 @@ jobs:
               --no-default-features --features kyotocabinet \
               --target-dir "$target" --manifest-path "$name-$version/Cargo.toml"
           done <<< "$packages"
-      - name: Refresh the main Rust cache using the lane's compile mode
-        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh rust
 
   # The Python harness tests of tools/, all of them whenever the gate selects
   # the job. Some of them run cargo metadata, a C compiler or GLib, so the job
   # takes the toolchain and the build packages.
   harness:
     needs: changes
-    if: needs.changes.outputs.harness == 'true' && needs.changes.outputs.reuse != 'true'
+    if: needs.changes.outputs.harness == 'true'
     runs-on: *ubuntu
     timeout-minutes: 30
     defaults:
@@ -313,9 +283,6 @@ jobs:
   # that misses saves its own base result, so its later pushes hit.
   # The pull request side builds the PR head, not the merge ref: the table
   # compares the PR's own change with its base.
-  #
-  # The job runs whenever `ship` is true, reuse or not: a reused tree proves
-  # the tests, not the sizes of this PR against this base.
   shipping-sizes:
     needs: changes
     if: needs.changes.outputs.ship == 'true'
@@ -426,7 +393,7 @@ jobs:
   # no sanitizer-flavoured artifact enters the cache.
   store:
     needs: changes
-    if: needs.changes.outputs.store == 'true' && (needs.changes.outputs.reuse != 'true' || github.event_name == 'push')
+    if: needs.changes.outputs.store == 'true'
     runs-on: *ubuntu
     timeout-minutes: 150
     steps:
@@ -439,9 +406,8 @@ jobs:
           rust-cache: 'true'
           rust-cache-key: store-job
           uv: 'true'
-          just: ${{ needs.changes.outputs.reuse != 'true' }}
-          # The tests and the sanitizer service run nextest; a reuse run skips both.
-          cargo-nextest: ${{ needs.changes.outputs.reuse != 'true' }}
+          just: 'true'
+          cargo-nextest: 'true'
       - name: Install build dependencies (apt)
         # Both backends' packages, once. libdb-dev resolves to libdb5.3-dev, the
         # system libdb the bdb backend links and whose db.h bindgen reads.
@@ -456,15 +422,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends util-linux libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
 
       - name: Clippy (bdb)
-        if: needs.changes.outputs.reuse != 'true'
         run: cargo clippy --locked --workspace --all-targets --no-default-features --features bdb -- -D warnings
       - name: Rustdoc (bdb)
-        if: needs.changes.outputs.reuse != 'true'
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --no-deps --workspace --no-default-features --features bdb
       - name: Test the workspace (bdb)
-        if: needs.changes.outputs.reuse != 'true'
         id: test-bdb
         run: |
           set -euo pipefail
@@ -475,7 +438,6 @@ jobs:
       # The sanitizer runs go through the sanitizer service in
       # tools/dev/test_runner.py, which `just sanitize` also uses.
       - name: Install the sanitizer nightly
-        if: needs.changes.outputs.reuse != 'true'
         working-directory: fuzz
         run: rustup toolchain install
       # The Berkeley DB feature's own suite under ASan. The hazards are the DBT
@@ -483,7 +445,6 @@ jobs:
       # instrumented. On a BerkeleyDB distro the system bigram.db is BDB and
       # every session opens it through this FFI.
       - name: Sanitizers (bdb)
-        if: needs.changes.outputs.reuse != 'true'
         id: sanitize-bdb
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
@@ -499,7 +460,6 @@ jobs:
       # not reach Kyoto Cabinet as address 1. The store's build script
       # instruments the adapter and cxx's generated glue under address.
       - name: Sanitizers (kyotocabinet store and C ABI)
-        if: needs.changes.outputs.reuse != 'true'
         id: sanitize-kyotocabinet
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
@@ -510,7 +470,7 @@ jobs:
           just abi
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
       - name: Report
-        if: ${{ !cancelled() && needs.changes.outputs.reuse != 'true' }}
+        if: ${{ !cancelled() }}
         env:
           JOB_STATUS: ${{ job.status }}
           TEST_BDB: ${{ steps.test-bdb.outcome }} ${{ steps.test-bdb.outputs.elapsed }}
@@ -532,14 +492,10 @@ jobs:
             row 'bdb sanitizers (address)' "$SANITIZE_BDB"
             row 'kyotocabinet store and ABI sanitizers (address, leak)' "$SANITIZE_KYOTOCABINET"
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Refresh the main Rust cache using the lane's compile mode
-        if: github.event_name == 'push' && needs.changes.outputs.reuse == 'true'
-        run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree refresh store
 
-  # The required aggregate checks each job against its flag and `reuse`,
-  # and shipping-sizes against `ship` alone. Every applicable job must
-  # succeed, and every other job must be skipped. It runs after failures and
-  # can be cancelled.
+  # The required aggregate checks each job against its path flag. Selected
+  # jobs must succeed and unselected jobs must be skipped. It runs after
+  # failures and can be cancelled.
   ci-aggregate:
     needs: [changes, rust, harness, shipping-sizes, store]
     if: ${{ !cancelled() }}
@@ -554,27 +510,4 @@ jobs:
       - name: Require every applicable lane to succeed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          EVENT_NAME: ${{ github.event_name }}
         run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree aggregate
-
-  # The marker says the aggregate passed: every lane the gate selected
-  # succeeded and every other lane was skipped. A later run reads the lanes'
-  # own results from this run, and reuses it only when each lane that run
-  # selects succeeded here (tools/dev/ci_tree.py). So a lane's success must
-  # mean the same checks in every run: no step of a lane may depend on a
-  # path flag, only on `reuse`.
-  tree-evidence:
-    name: tested tree ${{ needs.changes.outputs.tree }}
-    needs: [changes, ci-aggregate]
-    if: ${{ !cancelled() && needs.changes.outputs.reuse == 'false' && needs.changes.result == 'success' && needs.ci-aggregate.result == 'success' }}
-    runs-on: *ubuntu
-    steps:
-      - run: echo 'Every selected verification lane passed for this checkout tree.'
-
-  reused-tree-evidence:
-    name: reused tree ${{ needs.changes.outputs.tree }} from run ${{ needs.changes.outputs.source_run }}
-    needs: [changes, ci-aggregate]
-    if: ${{ !cancelled() && needs.changes.outputs.reuse == 'true' && needs.ci-aggregate.result == 'success' }}
-    runs-on: *ubuntu
-    steps:
-      - run: echo 'The original PR run was revalidated for this exact tree.'
