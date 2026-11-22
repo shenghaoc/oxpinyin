@@ -251,23 +251,14 @@ pub fn mask_out(gram: &mut Vec<u8>, mask: u32, value: u32) -> u32 {
         return 0;
     };
     let mut removed = 0_u32;
-    let mut index = 0;
-    while index < get_length(gram) {
-        let (Some(item), Some(freq), Some(offset)) = (
-            item_token(gram, index),
-            item_freq(gram, index),
-            item_offset(index),
-        ) else {
-            break;
-        };
-        if item & mask != value {
-            index += 1;
-            continue;
+    crate::packed_records::retain_records(gram, TOTAL_LEN, ITEM_LEN, |record| {
+        if word(record, 0) & mask != value {
+            return true;
         }
-        total = total.wrapping_sub(freq);
-        gram.drain(offset..offset.saturating_add(ITEM_LEN));
+        total = total.wrapping_sub(word(record, 4));
         removed = removed.wrapping_add(1);
-    }
+        false
+    });
     set_total_freq(gram, total);
     removed
 }

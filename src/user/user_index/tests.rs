@@ -474,3 +474,15 @@ fn an_overlong_index_key_without_its_prefix_is_not_walked() {
         super::UserIndex::from_entries(vec![(ni.to_packed().to_le_bytes().repeat(17), Vec::new())]);
     assert!(index.suggest(&[ni]).is_empty());
 }
+
+#[test]
+fn dense_mask_keeps_record_padding_and_partial_tail() {
+    // One key per record: four token bytes, two key bytes, two padding bytes.
+    let record = |token: u8| [token, 0, 0, 0, token, 1, 0xff, token];
+    let mut bytes: Vec<_> = (0..8).flat_map(record).collect();
+    bytes.extend([0xaa, 0xbb]);
+    Entry::new(&mut bytes, 1).mask_out(1, 0);
+    let mut expected = [record(1), record(3), record(5), record(7)].concat();
+    expected.extend([0xaa, 0xbb]);
+    assert_eq!(bytes, expected);
+}
