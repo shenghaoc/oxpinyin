@@ -234,8 +234,6 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           rust-toolchain: 'true'
-          rust-cache: 'true'
-          rust-cache-key: shipping-sizes-job
           uv: 'true'
           just: 'true'
       - run: rustup show active-toolchain

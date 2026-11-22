@@ -379,12 +379,8 @@ A layout change must preserve exported symbols, symbol versions, the C ABI, outp
 The `shipping-sizes` job in `.github/workflows/ci.yml` produces them; [verification rule 5](runbooks/verification.md#5-local-test-gate) states how a PR reports them.
 
 **When the job runs.**
-It runs on a pull request or a push to main when a file that can change a shipping library changes.
-Those files are the twelve crates in the dependency graph of `oxpinyin-capi` and `oxzhuyin-capi`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/` and the packaging tooling.
-The job also runs when its own files change.
-`tools/dev/ship_sizes.py` holds the path list.
-The job is skipped in other cases, for example a documentation-only change.
-`ci-aggregate` requires the job when it applies and accepts `skipped` only when it does not apply.
+It runs on every pull request and push to main.
+`ci-aggregate` requires it on every pull request.
 
 **What it builds.**
 For the PR head and for its base, the job exports the commit with `git archive`.
@@ -395,26 +391,12 @@ It writes a table to the job summary: base bytes, PR bytes, difference and ratio
 A failed build, install or export check fails the job.
 A size increase does not fail the job: §2 requires a report, not a limit.
 
-The PR side builds the PR head, not the merge ref.
+The PR side builds the PR head, not the merge ref; a push compares its head
+with the preceding pushed revision.
 Both sides build from the same source path, with the same path remapping, in one shared target directory.
 A path therefore never changes a byte, and the dependencies compile once.
-The job restores the dependency cache that main saves, and a pull request never saves it.
-
-**Where base sizes come from.**
-A second full build on every PR is the largest cost, so the base result is cached.
-The cache key is `ship-sizes-v2-` plus a hash of two things:
-
-- the Git object IDs of the revision’s shipping sources, Cargo manifests, toolchain pins and install recipe;
-- the comparison tooling, build flags and toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the Linux cell's package (`libkyotocabinet-dev`, so a package update changes the key).
-
-The key names no commit.
-Every main commit with the same inputs shares one result.
-On a push to main the job builds the head and saves its sizes under its key, unless its cached record matches the build.
-On a pull request the job restores the key of the base commit.
-A hit costs one build.
-A miss costs two builds and is correct: the job builds the base, reports it as "built in this run", and saves it under the key for later pushes to the same pull request.
-An Ubuntu package update changes the fingerprint and causes one miss.
-An unresolved shipping input fails the command. Reuse requires the current schema, recipe key and backend, a full source commit ID, and a positive integer size for each library.
+The job restores no shipping-size cache: each run builds both libraries from
+source and publishes no size record.
 
 **Reproduce the table locally.**
 The recipe is Linux-only.
@@ -424,10 +406,8 @@ It runs on Linux, on committed work, on the Linux cell, Kyoto Cabinet ([verifica
 just packaging sizes run --base origin/main
 ```
 
-`run` builds the base commit and `HEAD`, then prints the same table.
-`--base-cache FILE` reuses a base result, and `--work DIR` and `--target DIR` keep the build directories.
-`just packaging sizes build --commit REV --out FILE` writes one side as JSON.
-`just packaging sizes key --commit REV` prints the cache key.
+`run` rebuilds the base commit and `HEAD`, then prints the same table.
+`--work DIR` and `--target DIR` keep the build directories.
 The local command is for debugging a CI failure, not for collecting sizes for a PR.
 
 ## Release artifacts (`release-packages.yml`)
