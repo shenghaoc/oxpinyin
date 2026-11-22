@@ -66,6 +66,9 @@ CURATED_FIXTURES = {
 # is cut, and the chunk length check then refuses the file before any
 # decoding, so its default limit (-G) admits its largest curated input.
 LIMIT_FROM_CURATED = {'dict-loader'}
+# The three header prefixes of table.conf are matched inside libc's scanner,
+# outside the instrumented comparisons, so this target gets a dictionary.
+DICTIONARIES = {'table-conf': FUZZ / 'dictionaries' / 'table-conf.dict'}
 DENYLIST = FUZZ / 'instrument-denylist.txt'
 
 # afl-fuzz's option string in AFL++ 4.40c (src/afl-fuzz.c, the getopt call in
@@ -87,8 +90,11 @@ REFUSED_OPTIONS = {
 ASAN_OPTIONS = 'abort_on_error=1:symbolize=0:detect_leaks=1:detect_odr_violation=0'
 LSAN_OPTIONS = 'detect_leaks=1:fast_unwind_on_malloc=1:malloc_context_size=30:print_suppressions=0:symbolize=0'
 PLUGINS = 'afl-llvm-dict2file, split-switches, SanitizerCoveragePCGUARD, afl-llvm-ijon'
-TIMEOUT_MS = '15000'
-# The curated replay's limit per input, the same as afl-cmin's.
+# afl-fuzz takes no -t: it derives each run's timeout from its calibration of
+# the corpus on this host and build. The forkserver's start-up, which builds
+# each target's shared state, has its own limit, and afl-cmin and the curated
+# replay, which run before any calibration, have a fixed one.
+FORKSRV_INIT_TIMEOUT_MS = '60000'
 REPLAY_TIMEOUT_MS = 15000
 # MAP_SIZE of AFL++ 4.40c (include/config.h), the runtime's default map size.
 CMIN_MAP_SIZE = '65536'
@@ -225,9 +231,12 @@ def given_options(args):
 
 
 def default_options(target, args, fuzz=FUZZ):
-    """afl-fuzz options that TARGET gets unless ARGS set them: its input limit."""
+    """afl-fuzz options that TARGET gets unless ARGS set them: its dictionary and its input limit."""
     given = given_options(args)
     added = []
+    dictionary = DICTIONARIES.get(target)
+    if dictionary is not None and 'x' not in given:
+        added += ['-x', str(dictionary)]
     if target in LIMIT_FROM_CURATED and 'G' not in given:
         added += ['-G', str(max(len(data) for _, _, data in curated_inputs(target, fuzz)))]
     return added
@@ -406,6 +415,7 @@ def build_target(target, environ, found):
                # A crashing or timed-out seed must stop the soak.
                AFL_EXIT_ON_SEED_ISSUES='1',
                AFLRS_REQUIRE_PLUGINS='1',
+               AFL_FORKSRV_INIT_TMOUT=environ.get('AFL_FORKSRV_INIT_TMOUT') or FORKSRV_INIT_TIMEOUT_MS,
                # The persistent loop stays uninstrumented (fuzz/src/lib.rs).
                AFL_LLVM_DENYLIST=str(DENYLIST),
                # --target keeps build scripts and proc macros out of ASan.
@@ -735,7 +745,8 @@ def run(target, args, environ):
 
     The target is built with AddressSanitizer, the AFL++ LLVM plugins
     (cargo-afl fails if the plugins are absent) and the persistent-mode entry
-    point. A target's input limit applies unless ARGS set -G
+    point. afl-fuzz sets each input's timeout from its calibration, and a
+    target's dictionary and input limit apply unless ARGS set -x or -G
     (`default_options`). FUZZ_CMPLOG=1 adds a CmpLog
     binary, run through afl-fuzz -c. afl-fuzz reads corpus/<target> and writes a
     new run directory, out/<target>/<UTC time>-<pid>, so a run never deletes an
@@ -770,7 +781,7 @@ def run(target, args, environ):
     log = run_directory / 'afl-fuzz.log'
     defaults = default_options(target, args)
     status, guard_stopped, startup = _tee([*aslr, str(built.afl_bin / 'afl-fuzz'), '-i', str(corpus), '-o',
-                                           str(run_directory), '-t', TIMEOUT_MS, '-m', 'none', *cmplog, *defaults, *args,
+                                           str(run_directory), '-m', 'none', *cmplog, *defaults, *args,
                                            '--', str(built.binary)], built.env, log, guard=guard)
     if startup is not None:
         print(f'fuzz: {target}: startup {startup:.1f} s')
@@ -793,7 +804,8 @@ def run(target, args, environ):
     print(f'fuzz: {target}: afl_version {stat("afl_version")}, execs_done {stat("execs_done")}, '
           f'calibration_time {stat("calibration_time")} s, fuzz_time {stat("fuzz_time")} s, '
           f'cmplog_time {stat("cmplog_time")} s, edges_found {stat("edges_found")}/{stat("total_edges")}, '
-          f'stability {stat("stability")}, execs_per_sec {stat("execs_per_sec")}')
+          f'stability {stat("stability")}, execs_per_sec {stat("execs_per_sec")}, '
+          f'exec_timeout {stat("exec_timeout")} ms')
     failed = False
     if stats.get('execs_done', '0') == '0':
         print(f'fuzz: {target}: afl-fuzz ran no input.', file=sys.stderr)

@@ -50,7 +50,13 @@ class OptionTests(unittest.TestCase):
             with self.subTest(args=args):
                 fuzz.refuse_options(args)
 
-    def test_a_target_gets_its_input_limit_unless_given(self):
+    def test_a_target_gets_its_dictionary_and_input_limit_unless_given(self):
+        dictionary = str(fuzz.FUZZ / 'dictionaries' / 'table-conf.dict')
+        self.assertTrue(Path(dictionary).is_file())
+        self.assertEqual(fuzz.default_options('table-conf', ['-V', '60']), ['-x', dictionary])
+        for args in (['-x', 'other.dict'], ['-dxother.dict']):
+            with self.subTest(args=args):
+                self.assertEqual(fuzz.default_options('table-conf', args), [])
         largest = max(len(data) for _, _, data in fuzz.curated_inputs('dict-loader'))
         self.assertEqual(fuzz.default_options('dict-loader', []), ['-G', str(largest)])
         self.assertEqual(fuzz.default_options('dict-loader', ['-G', '4096']), [])

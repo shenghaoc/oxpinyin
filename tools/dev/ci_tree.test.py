@@ -627,6 +627,7 @@ class GateTests(unittest.TestCase):
             'fuzz/Cargo.lock': {'rust', 'harness'},
             'fuzz/fuzz_targets/x.rs': {'rust'},
             'fuzz/seeds/capi-commands/choose': {'rust', 'harness'},
+            'fuzz/dictionaries/table-conf.dict': {'rust', 'harness'},
             'fuzz/rust-toolchain.toml': {'rust', 'harness'},
             'deny.toml': {'rust'},
             'clippy.toml': {'rust'},
