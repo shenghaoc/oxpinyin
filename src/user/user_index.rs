@@ -67,10 +67,6 @@ impl<'a> Entry<'a> {
         }
     }
 
-    fn count(&self) -> usize {
-        self.bytes.len() / self.stride
-    }
-
     fn token(&self, index: usize) -> u32 {
         record_token(&self.bytes[index * self.stride..])
     }
@@ -130,15 +126,9 @@ impl<'a> Entry<'a> {
 
     /// `ChewingTableEntry::mask_out`.
     fn mask_out(&mut self, mask: u32, value: u32) {
-        let mut at = 0;
-        while at < self.count() {
-            if (self.token(at) & mask) == value {
-                let offset = at * self.stride;
-                self.bytes.drain(offset..offset + self.stride);
-            } else {
-                at += 1;
-            }
-        }
+        crate::packed_records::retain_records(self.bytes, 0, self.stride, |record| {
+            record_token(record) & mask != value
+        });
     }
 }
 

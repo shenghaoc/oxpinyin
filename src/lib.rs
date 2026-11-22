@@ -64,6 +64,8 @@ pub mod model;
 #[forbid(unsafe_code)]
 mod options;
 #[forbid(unsafe_code)]
+mod packed_records;
+#[forbid(unsafe_code)]
 pub mod parser;
 #[cfg(test)]
 #[path = "../tests/common/parser_rows.rs"]

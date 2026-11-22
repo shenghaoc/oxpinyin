@@ -296,3 +296,13 @@ fn merge_copies_one_side_and_sums_both() {
     assert_eq!(get_total_freq(&merged), Some(2));
     assert_eq!(items(&merged), [(1, 4), (2, 8)]);
 }
+
+#[test]
+fn dense_mask_subtracts_removed_frequencies_and_keeps_partial_tail() {
+    let mut bytes = gram(3, &[(0, 2), (1, 9), (2, 5), (3, 4), (4, 7), (1, 8)]);
+    bytes.extend([0xaa, 0xbb]);
+    assert_eq!(mask_out(&mut bytes, 1, 0), 3);
+    let mut expected = gram(3_u32.wrapping_sub(14), &[(1, 9), (3, 4), (1, 8)]);
+    expected.extend([0xaa, 0xbb]);
+    assert_eq!(bytes, expected);
+}
