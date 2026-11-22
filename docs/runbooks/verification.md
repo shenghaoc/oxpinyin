@@ -139,7 +139,8 @@ A shell script stays only for one of these reasons:
 
 Each retained script states the reason at its top, with its caller and boundary.
 A `just` recipe, a workflow `run:` block, a Docker `CMD`, a sourced helper or an existing file name is not a reason to keep shell: the caller is updated instead.
-Each `just` recipe is one line that delegates: under `sh -cu` on Unix, and under the `pwsh` shell that the `justfile` sets on Windows.
+Recipes run under `sh -cu` on Unix and the configured `pwsh` shell on Windows.
+Most delegate to one command. Recipes such as `deny` and `shear` run several checks in sequence.
 
 ### Independent work in parallel
 

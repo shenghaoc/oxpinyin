@@ -1153,7 +1153,7 @@ def metadata(argv, tools):
             def compare(label, texts):
                 nonlocal differences
                 paths = [Path(work) / 'pin', Path(work) / 'subject']
-                for path, text in zip(paths, texts):
+                for path, text in zip(paths, texts, strict=True):
                     path.write_bytes(text)
                 done = tools.capture(['diff', '-u', '--label', 'pin: ' + label, '--label', 'oxpinyin: ' + label, '--', *paths])
                 write(done.stdout)

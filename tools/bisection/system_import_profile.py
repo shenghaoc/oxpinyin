@@ -78,7 +78,7 @@ def report(side, mode, workload, stderr):
         phases = ('cold-open',) if workload == '--cold-open' else ('open', 'import', 'save', 'close')
         if len(counts) != len(phases):
             raise Failure(f'{side}: expected {len(phases)} Callgrind dumps, got {len(counts)}')
-        return [*(f'{side} {phase}: {count} instructions' for phase, count in zip(phases, counts)),
+        return [*(f'{side} {phase}: {count} instructions' for phase, count in zip(phases, counts, strict=True)),
                 f'{side} total: {sum(counts)} instructions']
     values = [int(value) for value in re.findall(rb'^mem_heap_B=(\d+)\s*$', stderr, re.M)]
     if not values:

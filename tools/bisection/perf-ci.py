@@ -162,9 +162,9 @@ def main(argv=None):
     else:
         widths = [max(len(header[i]), *(len(r[i]) for r in rows))
                   for i in range(len(header))]
-        print("  ".join(h.ljust(w) for h, w in zip(header, widths)).rstrip())
+        print("  ".join(h.ljust(w) for h, w in zip(header, widths, strict=True)).rstrip())
         for row in rows:
-            print("  ".join(c.ljust(w) for c, w in zip(row, widths)).rstrip())
+            print("  ".join(c.ljust(w) for c, w in zip(row, widths, strict=True)).rstrip())
     print(f"\n# whole-run percentile bootstrap; {args.resamples} resamples; "
           f"seed {args.seed}", file=sys.stderr)
     return 0

@@ -583,7 +583,7 @@ class Provision:
                      'provisioning checks run in the deps image there')
             return
         if missing:
-            tools, packages = map(list, zip(*missing))
+            tools, packages = map(list, zip(*missing, strict=True))
             if os.geteuid() == 0:
                 self.log(f'installing {" ".join(packages)} from the distribution archive')
                 if not self.apt(packages):

@@ -148,7 +148,7 @@ def check_alloc_failure(settings: Settings, argv: Sequence[str]) -> int:
             if result.returncode:
                 return result.returncode
         status = 0
-        for mode, subject in zip(('pinyin', 'zhuyin'), subjects):
+        for mode, subject in zip(('pinyin', 'zhuyin'), subjects, strict=True):
             user = work / ('user-' + mode)
             user.mkdir()
             data = str(Path(prefix) / 'lib/libpinyin/data')

@@ -63,14 +63,14 @@ def print_version(component):
     """Return the installed package version or a command fallback for --print."""
     try:
         return package_version(component['package'])
-    except LookupError as error:
+    except LookupError:
         fallback = PRINT_FALLBACKS.get(component['name'])
-        if fallback is None:
-            raise
-        try:
-            return command_version(fallback)
-        except LookupError:
-            raise error
+        if fallback is not None:
+            try:
+                return command_version(fallback)
+            except LookupError:
+                pass
+        raise
 
 
 def load_manifest(path):
