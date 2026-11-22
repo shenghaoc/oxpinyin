@@ -225,7 +225,11 @@ input on standard input.
   The CmpLog binary is built and found the same way, under `cmplog/`.
 - **Crashes.** The fuzz workspace's release profile sets `panic = "abort"`, so
   a panic, a failed assertion included, is a signal that AFL++ records as a
-  crash. A hang is an input that runs longer than the 15 s timeout.
+  crash. A hang is an input that runs longer than the timeout that afl-fuzz
+  derives from its calibration of the corpus: `just fuzz` passes no `-t`.
+  The forkserver's start-up has its own limit (`AFL_FORKSRV_INIT_TMOUT`,
+  60 s unless set). afl-cmin and the curated replay run before any
+  calibration, with a fixed 15 s limit per input.
 - **Curated inputs.** `tools/dev/fuzz.py` names each target's curated
   inputs: `fuzz/seeds/<target>`, plus the five MemoryChunk files of
   `fixtures/w3/kct/` for `dict-loader`, `art.bin` without its 8-byte header
@@ -249,7 +253,9 @@ input on standard input.
   with a curated input's name and other content first moves to its content
   name. `dict-loader`
   reads whole files, so its input limit (`-G`) admits its largest curated
-  input. An explicit `-G` replaces it.
+  input, and `table-conf` takes `fuzz/dictionaries/table-conf.dict`: libc's
+  scanner matches the header prefixes outside the instrumented comparisons.
+  An explicit `-G` or `-x` replaces them.
 - **Seed issues.** By default afl-fuzz skips an initial input that crashes,
   or one that times out when `-t` is given, and fuzzes on from the other
   inputs, so the run passes. `just fuzz` sets `AFL_EXIT_ON_SEED_ISSUES=1`:
