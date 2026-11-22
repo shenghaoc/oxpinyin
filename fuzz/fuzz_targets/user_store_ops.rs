@@ -2,42 +2,107 @@
 //! (`docs/testing/upstream-test-coverage.md`, "Fuzz harnesses"): no target mutated `UserStore`, so the
 //! add/remove/train/mask algebra had no hostile-sequence evidence.
 //!
-//! Each input drives a fresh libpinyin session over a fresh user
-//! directory, the session the shipped libraries open (the previous
-//! input's directory is removed at the start of the next one, so at most
-//! one orphan remains per process — the same footprint `capi_commands`
-//! leaves). The command stream mirrors `capi_commands`: one byte
-//! selects the op, the remaining bytes feed it.
+//! Each input drives a fresh libpinyin session over a new user directory,
+//! the session the shipped libraries open. The system directory is the
+//! read-only fixture `fuzz/fixtures/user-store-ops`, parsed in `main` before
+//! the input; the session and its user directory are closed and removed when
+//! the input ends.
 //!
-//! Invariants, checked after **every** op:
+//! # Input format
 //!
-//! - no panic on any op sequence (constitution rule 4) — invalid
-//!   phrases are the typed `UserStoreError::InvalidPhrase`, never a
-//!   crash;
-//! - the totals law the semantics suite pins for curated sequences
-//!   holds after hostile ones too: for every bigram left-hand token the
-//!   stream touched, `bigram_total(prev)` equals the sum of
-//!   `bigram_successors(prev)` counts;
+//! An input is a sequence of commands. Each command is one selector byte,
+//! reduced modulo 8, then its own arguments. A command consumes its
+//! arguments, so no argument byte is also read as a selector. An argument
+//! past the end of the input reads as zero bytes.
+//!
+//! - A *byte* is one byte.
+//! - A *count* is one width byte, reduced modulo 4, that selects 1, 2, 4 or
+//!   8 little-endian bytes. The 8-byte form reaches past `u32::MAX`.
+//! - An *optional count* is one width byte: modulo 5, 4 is no count (the
+//!   default count) and 0 to 3 select a count's width as above.
+//! - A *reading* of `n` characters is `n` little-endian `u16` syllable
+//!   selectors, each reduced modulo the 375 syllables of [`SYLLABLES`].
+//! - A *phrase* is one length byte, reduced modulo 15, plus one: 1 to 15
+//!   characters. Each character is a three-byte little-endian scalar,
+//!   reduced modulo `0x11_0000` (a surrogate becomes U+FFFD), then its
+//!   syllable selector.
+//!
+//! | Selector | Command | Arguments |
+//! |---|---|---|
+//! | 0 | add a phrase with the default count | phrase |
+//! | 1 | add a phrase with a count | phrase, count |
+//! | 2 | add a tracked phrase again, under a new reading | byte (token pick), reading, optional count |
+//! | 3 | the two typed `InvalidPhrase` refusals | none |
+//! | 4 | remove a tracked phrase, then an absent token | byte (token pick) |
+//! | 5 | bigram writes | byte (mode), byte (left token), byte (right token), count if the mode sets |
+//! | 6 | `mask_out` | byte (mode), byte (mask), byte (token pick) |
+//! | 7 | save | none |
+//!
+//! Command 2 picks a tracked phrase and reads one selector per character of
+//! its text; with no tracked phrase it reads no reading and adds nothing.
+//!
+//! The bigram mode byte, modulo 4, selects `set_bigram_count`, a training
+//! observation, a prediction observation, or all three in that order. The
+//! left token is the byte modulo 8 above `FIRST_USER_TOKEN`; the right
+//! token is one above that.
+//!
+//! # Invariants
+//!
+//! Checked after **every** command:
+//!
+//! - no panic on any command sequence (constitution rule 4) — invalid
+//!   phrases are the typed `UserStoreError::InvalidPhrase`, never a crash;
+//! - the bigram contracts of the store, per left-hand token the stream
+//!   touched (see "Bigram rows");
 //! - the phrase index stays self-consistent: `token_for_phrase` and
 //!   `phrase` are inverse on the live rows (checked in full while the
 //!   store is small, on the freshest token once it grows).
+//!
+//! # Bigram rows
+//!
+//! Each tracked row has a law, decided from what the stream did to it:
+//!
+//! - *exact*: the total equals the sum of the successor counts. A new row
+//!   starts exact, and an empty row with a zero total is exact again.
+//! - *modular*: the total equals that sum modulo 2^32. An exact row becomes
+//!   modular when a prediction wraps its total; the store documents that
+//!   both fields wrap there.
+//! - *free*: no relation is stated. A row becomes free when a set reaches
+//!   the total's cap, or when a set meets a modular row.
+//!
+//! Each write is checked against its documented contract:
+//!
+//! - `set_bigram_count` stores the count capped at `u32::MAX`, and leaves
+//!   the other successors unchanged. On an exact row whose new sum fits a
+//!   `u32` the row stays exact; when the new sum does not fit, the total is
+//!   `u32::MAX`, the documented cap.
+//! - A training observation answers a seed of at most `CEILING_SEED`, and
+//!   `INITIAL_SEED` for an absent pair. It adds the seed to the count and
+//!   the total, or, when the total cannot take the seed, changes nothing.
+//! - A prediction observation answers `INITIAL_SEED` and adds it to the
+//!   count and the total, both wrapping, or refuses with
+//!   `UnigramTotalOverflow` and changes no bigram.
+//! - `mask_out` keeps each row's law. It may refuse with
+//!   `ResidualUserBigramGram` only while a free row exists, and then it
+//!   changes no tracked row.
 
-use std::sync::{Mutex, OnceLock};
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::OnceLock;
 
 use oxpinyin::data::TableConf;
 use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin::user::{
-    FIRST_USER_TOKEN, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw, UserStore,
-    UserStoreError,
+    CEILING_SEED, FIRST_USER_TOKEN, INITIAL_SEED, LibraryLoopRows, PinyinKey, SystemOriginals,
+    UserConfLaw, UserStore, UserStoreError,
 };
 use oxpinyin::vocab::{
-    NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, SyllableKey, USER_DICTIONARY,
-    phrase_index_library_index, phrase_index_make_token,
+    NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseText, SyllableKey,
+    USER_DICTIONARY, phrase_index_library_index, phrase_index_make_token,
 };
-use tempfile::TempDir;
 
-/// Real frozen syllables (a slice of the inventory the oracle fixtures
-/// exercise); fuzz bytes index into this list to build valid keys.
+/// The complete frozen syllables, the whole inventory the oracle fixtures
+/// exercise; a two-byte selector indexes this list to build a valid key.
 const SYLLABLES: &[&str] = &[
     "a", "ai", "an", "ang", "ao", "ba", "bai", "ban", "bang", "bao", "bei", "ben", "beng", "bi",
     "bian", "biao", "bie", "bin", "bing", "bo", "bu", "cha", "chai", "chan", "chang", "chao",
@@ -84,53 +149,85 @@ const MASKS: [u32; 6] = [
     0xF000_0000,
 ];
 
-/// The syllable a byte selects, as a store key.
-fn key_for(byte: u8) -> PinyinKey {
-    let text = SYLLABLES[usize::from(byte) % SYLLABLES.len()];
+/// The key for a syllable selector.
+fn key_for(selector: u16) -> PinyinKey {
+    let text = SYLLABLES[usize::from(selector) % SYLLABLES.len()];
     let index = SyllableKey::from_text(text)
         .unwrap_or_else(|| panic!("{text:?} must be a frozen syllable"))
         .index();
     PinyinKey::try_from(index).unwrap_or_else(|_| panic!("{text:?} index must fit u16"))
 }
 
-/// The previous input's user directory, removed with the pin's file set
-/// it holds when the next input takes its own. One orphan directory can
-/// remain at process exit.
-static LAST_PATH: Mutex<Option<TempDir>> = Mutex::new(None);
-
-/// A user directory no earlier run can have written: a fresh unique
-/// name, never a reused one, so the open loads no profile.
-fn fresh_dir() -> TempDir {
-    if let Ok(mut last) = LAST_PATH.lock() {
-        drop(last.take());
-    }
-    tempfile::Builder::new()
-        .prefix("oxpinyin-fuzz-user-store-")
-        .tempdir()
-        .expect("a fresh user directory")
+/// The bytes of one input the commands have not consumed.
+struct Input<'a> {
+    rest: &'a [u8],
 }
 
-/// The system directory every session opens over: a `table.conf` whose
-/// only rows are the stock layout's addon, network and user libraries, so
-/// the library loop maps no system chunk.
-fn system() -> &'static (TempDir, TableConf) {
-    static SYSTEM: OnceLock<(TempDir, TableConf)> = OnceLock::new();
+impl Input<'_> {
+    /// The next byte, or `None` at the end of the input.
+    fn selector(&mut self) -> Option<u8> {
+        let (&byte, rest) = self.rest.split_first()?;
+        self.rest = rest;
+        Some(byte)
+    }
+
+    /// A byte argument, 0 past the end.
+    fn byte(&mut self) -> u8 {
+        self.selector().unwrap_or(0)
+    }
+
+    /// `width` little-endian bytes, zero past the end.
+    fn little_endian(&mut self, width: usize) -> u64 {
+        (0..width).fold(0, |value, shift| {
+            value | (u64::from(self.byte()) << (8 * shift))
+        })
+    }
+
+    /// A count of 1, 2, 4 or 8 bytes.
+    fn count(&mut self) -> u64 {
+        let width = 1 << (self.byte() % 4);
+        self.little_endian(width)
+    }
+
+    /// A count, or `None` for the default count.
+    fn optional_count(&mut self) -> Option<u64> {
+        match self.byte() % 5 {
+            4 => None,
+            width => Some(self.little_endian(1 << width)),
+        }
+    }
+
+    /// One syllable selector.
+    fn key(&mut self) -> PinyinKey {
+        key_for(self.little_endian(2) as u16)
+    }
+
+    /// A phrase of 1 to 15 characters with one key per character.
+    fn phrase(&mut self) -> (String, Vec<PinyinKey>) {
+        let len = usize::from(self.byte()) % 15 + 1;
+        let mut text = String::new();
+        let mut keys = Vec::with_capacity(len);
+        for _ in 0..len {
+            let scalar = (self.little_endian(3) % 0x11_0000) as u32;
+            text.push(char::from_u32(scalar).unwrap_or(char::REPLACEMENT_CHARACTER));
+            keys.push(self.key());
+        }
+        (text, keys)
+    }
+}
+
+/// The system directory every session opens over, with its parsed
+/// `table.conf`: a committed, read-only fixture whose only rows are the
+/// stock layout's addon, network and user libraries, so the library loop
+/// maps no system chunk. `main` builds it before the first input.
+fn system() -> &'static (&'static Path, TableConf) {
+    static SYSTEM: OnceLock<(&'static Path, TableConf)> = OnceLock::new();
     SYSTEM.get_or_init(|| {
-        let dir = tempfile::Builder::new()
-            .prefix("oxpinyin-fuzz-user-store-system-")
-            .tempdir()
-            .expect("a system directory");
-        std::fs::write(
-            dir.path().join("table.conf"),
-            "binary format version:7\nmodel data version:14\n\
-             lambda parameter:0.312699\n\nsource table format:pinyin\n\
-             database format:BerkeleyDB\n\n\
-             default ADDON_DICTIONARY NULL NULL addon.bin USER_FILE\n\
-             default NETWORK_DICTIONARY NULL NULL network.bin USER_FILE\n\
-             default USER_DICTIONARY NULL NULL user.bin USER_FILE\n",
-        )
-        .expect("write table.conf");
-        let conf = TableConf::load_from_dir(dir.path()).expect("a table.conf");
+        let dir = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/user-store-ops"
+        ));
+        let conf = TableConf::load_from_dir(dir).expect("a table.conf");
         (dir, conf)
     })
 }
@@ -139,12 +236,12 @@ fn system() -> &'static (TempDir, TableConf) {
 /// one: the profile check, then the library loop over the layout's user,
 /// network and addon rows. `save` writes the pin's file set there, so the
 /// dirty flag clears as the pin's does.
-fn open_session(dir: &std::path::Path) -> UserStore {
+fn open_session(dir: &Path) -> UserStore {
     let (system, conf) = system();
     let layout = UserFileLayout::from_conf(conf);
     let versions = SystemVersions::for_this_build(7, 14);
     let check = UserStore::check_profile(dir, &versions, &layout, UserConfLaw::Pinyin);
-    let rows = LibraryLoopRows::new(system.path(), conf, Some(dir));
+    let rows = LibraryLoopRows::new(system, conf, Some(dir));
     let mut originals = SystemOriginals::new(Default::default(), layout);
     UserStore::open_libpinyin_checked(
         dir,
@@ -157,17 +254,182 @@ fn open_session(dir: &std::path::Path) -> UserStore {
     .expect("a fresh session opens")
 }
 
-/// The totals law: a left-hand token's recorded total equals the sum of
-/// its live successor counts.
-fn check_totals(store: &UserStore, lefts: &[u32]) {
-    for &prev in lefts {
-        let successors = store.bigram_successors(prev).expect("successors read");
-        let sum: u64 = successors.iter().map(|&(_, count)| count).sum();
-        let total = store.bigram_total(prev).expect("total read");
+/// What a tracked bigram row is known to satisfy ("Bigram rows").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Law {
+    Exact,
+    Modular,
+    Free,
+}
+
+/// One left-hand token's stored row: its total and its successors in
+/// stored order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Row {
+    total: u64,
+    successors: Vec<(u32, u64)>,
+}
+
+impl Row {
+    fn read(store: &UserStore, prev: u32) -> Self {
+        Row {
+            total: store.bigram_total(prev).expect("total read"),
+            successors: store.bigram_successors(prev).expect("successors read"),
+        }
+    }
+
+    fn sum(&self) -> u64 {
+        self.successors.iter().map(|&(_, count)| count).sum()
+    }
+
+    /// The count the store reads for `cur`: the first match.
+    fn count(&self, cur: u32) -> Option<u64> {
+        self.successors
+            .iter()
+            .find(|&&(token, _)| token == cur)
+            .map(|&(_, count)| count)
+    }
+
+    /// The successors other than `cur`, in stored order.
+    fn others(&self, cur: u32) -> Vec<(u32, u64)> {
+        self.successors
+            .iter()
+            .copied()
+            .filter(|&(token, _)| token != cur)
+            .collect()
+    }
+}
+
+const U32_MAX: u64 = u32::MAX as u64;
+
+/// Checks each tracked row against its law, and makes an empty row with a
+/// zero total exact again.
+fn check_laws(store: &UserStore, laws: &mut BTreeMap<u32, Law>) {
+    for (&prev, law) in laws.iter_mut() {
+        let row = Row::read(store, prev);
+        match law {
+            Law::Exact => assert_eq!(
+                row.sum(),
+                row.total,
+                "an exact row's total must equal the sum of its successor counts (prev {prev})"
+            ),
+            Law::Modular => assert_eq!(
+                row.sum() % (U32_MAX + 1),
+                row.total,
+                "a modular row's total must equal the sum of its counts modulo 2^32 (prev {prev})"
+            ),
+            Law::Free => {}
+        }
+        if row.successors.is_empty() && row.total == 0 {
+            *law = Law::Exact;
+        }
+    }
+}
+
+/// `set_bigram_count`'s contract on one row.
+fn set_bigram(store: &mut UserStore, law: &mut Law, prev: u32, cur: u32, count: u64) {
+    let before = Row::read(store, prev);
+    store
+        .set_bigram_count(prev, cur, count)
+        .expect("bigram set");
+    let after = Row::read(store, prev);
+    let stored = count.min(U32_MAX);
+    assert_eq!(
+        after.count(cur),
+        Some(stored),
+        "a set stores the count capped at u32::MAX (prev {prev}, cur {cur}, count {count})"
+    );
+    assert_eq!(
+        after.others(cur),
+        before.others(cur),
+        "a set leaves the other successors unchanged (prev {prev})"
+    );
+    *law = match *law {
+        Law::Exact if after.sum() <= U32_MAX => Law::Exact,
+        Law::Exact => {
+            assert_eq!(
+                after.total, U32_MAX,
+                "a set past u32::MAX caps the total (prev {prev}, cur {cur}, count {count})"
+            );
+            Law::Free
+        }
+        Law::Modular | Law::Free => Law::Free,
+    };
+}
+
+/// The training observation's contract on one row.
+fn observe_selection(store: &mut UserStore, prev: u32, cur: u32) {
+    let before = Row::read(store, prev);
+    let seed = store
+        .observe_selection(prev, cur)
+        .expect("selection observation");
+    let after = Row::read(store, prev);
+    assert!(
+        seed <= CEILING_SEED,
+        "a training seed is at most CEILING_SEED, not {seed}"
+    );
+    let Some(count) = before.count(cur) else {
+        assert_eq!(seed, INITIAL_SEED, "an absent pair trains the initial seed");
+        if before.total + seed > U32_MAX {
+            assert_eq!(after, before, "a refused training changes nothing");
+        } else {
+            assert_eq!(after.count(cur), Some(seed));
+            assert_eq!(after.total, before.total + seed);
+            assert_eq!(after.others(cur), before.others(cur));
+        }
+        return;
+    };
+    if seed == 0 || before.total + seed > U32_MAX {
         assert_eq!(
-            sum, total,
-            "bigram totals must equal the sum of successor counts (prev {prev})"
+            after, before,
+            "a training that the total cannot take, or a zero seed, changes nothing"
         );
+    } else {
+        assert_eq!(
+            after.count(cur),
+            Some((count + seed) % (U32_MAX + 1)),
+            "training adds the seed to the count (prev {prev}, cur {cur})"
+        );
+        assert_eq!(
+            after.total,
+            before.total + seed,
+            "training adds the seed to the total"
+        );
+        assert_eq!(after.others(cur), before.others(cur));
+    }
+}
+
+/// The prediction observation's contract on one row.
+fn observe_predicted(store: &mut UserStore, law: &mut Law, prev: u32, cur: u32) {
+    let before = Row::read(store, prev);
+    match store.observe_predicted(prev, cur) {
+        Ok(seed) => {
+            assert_eq!(seed, INITIAL_SEED, "a prediction trains the flat seed");
+            let after = Row::read(store, prev);
+            let wrap = |value: u64| (value + seed) % (U32_MAX + 1);
+            assert_eq!(
+                after.count(cur),
+                Some(wrap(before.count(cur).unwrap_or(0))),
+                "a prediction adds the seed to the count, wrapping (prev {prev}, cur {cur})"
+            );
+            assert_eq!(
+                after.total,
+                wrap(before.total),
+                "a prediction adds the seed to the total, wrapping"
+            );
+            assert_eq!(after.others(cur), before.others(cur));
+            if *law == Law::Exact && before.total + seed > U32_MAX {
+                *law = Law::Modular;
+            }
+        }
+        Err(UserStoreError::UnigramTotalOverflow) => {
+            assert_eq!(
+                Row::read(store, prev),
+                before,
+                "a refused prediction trains no bigram"
+            );
+        }
+        Err(err) => panic!("prediction observation: {err:?}"),
     }
 }
 
@@ -242,56 +504,69 @@ fn holds_foreign_token(store: &UserStore, text: &str) -> bool {
 }
 
 fn main() {
+    system();
     oxpinyin_fuzz::run_once(run);
+}
+
+/// Adds `text` under `keys`; a refusal is legal only where
+/// [`holds_foreign_token`] says the pin asserts.
+fn add(
+    store: &mut UserStore,
+    added: &mut Vec<u32>,
+    text: &str,
+    keys: &[PinyinKey],
+    count: Option<u64>,
+) {
+    let refusable = holds_foreign_token(store, text);
+    match store.add_phrase(&PhraseText::from(text), keys, count) {
+        Ok(token) => {
+            if !added.contains(&token) {
+                added.push(token);
+            }
+        }
+        Err(UserStoreError::InvalidPhrase) if refusable => {}
+        Err(err) => panic!("valid add (count {count:?}): {err:?}"),
+    }
 }
 
 /// Runs one input.
 fn run(data: &[u8]) {
-    let dir = fresh_dir();
+    let dir = tempfile::Builder::new()
+        .prefix("oxpinyin-fuzz-user-store-")
+        .tempdir()
+        .expect("a fresh user directory");
     let mut store = open_session(dir.path());
 
+    let mut input = Input { rest: data };
     let mut added: Vec<u32> = Vec::new();
-    let mut lefts: Vec<u32> = Vec::new();
+    let mut laws: BTreeMap<u32, Law> = BTreeMap::new();
     // Set once a mask_out has run: tracked tokens may legitimately be
     // gone from that point on.
     let mut masked_out = false;
-    let mut cursor = 0;
-    while cursor < data.len() {
-        let command = data[cursor];
-        cursor += 1;
-        let payload = &data[cursor..];
+    while let Some(command) = input.selector() {
         match command % 8 {
-            // add a phrase: 1..=15 chars from the payload, one key per
-            // char (valid by construction)
-            0 | 1 => {
-                let len = usize::from(payload.first().copied().unwrap_or(1)) % 15 + 1;
-                let text: String = payload
-                    .iter()
-                    .skip(1)
-                    .take(len)
-                    .map(|&byte| char::from_u32(u32::from(byte)).expect("byte is a scalar"))
-                    .collect();
-                let keys: Vec<PinyinKey> = (0..text.chars().count())
-                    .map(|index| key_for(index as u8))
-                    .collect();
-                if text.chars().count() == keys.len() && !text.is_empty() {
-                    let refusable = holds_foreign_token(&store, &text);
-                    match store.add_phrase(&oxpinyin::vocab::PhraseText::from(&text), &keys, None) {
-                        Ok(token) => added.push(token),
-                        Err(UserStoreError::InvalidPhrase) if refusable => {}
-                        Err(err) => panic!("valid add: {err:?}"),
-                    }
-                }
+            0 => {
+                let (text, keys) = input.phrase();
+                add(&mut store, &mut added, &text, &keys, None);
             }
-            // add with an explicit count derived from the payload
+            1 => {
+                let (text, keys) = input.phrase();
+                let count = input.count();
+                add(&mut store, &mut added, &text, &keys, Some(count));
+            }
+            // the same text under another reading: the merge path
             2 => {
-                let count = u64::from(payload.first().copied().unwrap_or(0)) % 1000;
-                let keys = vec![key_for(payload.first().copied().unwrap_or(0))];
-                let refusable = holds_foreign_token(&store, "词");
-                match store.add_phrase(&"词".into(), &keys, Some(count)) {
-                    Ok(token) => added.push(token),
-                    Err(UserStoreError::InvalidPhrase) if refusable => {}
-                    Err(err) => panic!("valid add with count: {err:?}"),
+                let pick = usize::from(input.byte());
+                let token = added.get(pick % added.len().max(1)).copied();
+                let text = token
+                    .and_then(|token| store.phrase(token))
+                    .and_then(|row| row.phrase_text())
+                    .and_then(|text| text.as_str().map(str::to_owned));
+                let length = text.as_ref().map_or(0, |text| text.chars().count());
+                let keys: Vec<PinyinKey> = (0..length).map(|_| input.key()).collect();
+                let count = input.optional_count();
+                if let Some(text) = text {
+                    add(&mut store, &mut added, &text, &keys, count);
                 }
             }
             // the typed invalid-phrase refusal: length ceiling violated
@@ -300,11 +575,7 @@ fn run(data: &[u8]) {
                 let over_limit: String = std::iter::repeat_n('词', 16).collect();
                 let keys16: Vec<PinyinKey> = (0..16).map(key_for).collect();
                 assert!(matches!(
-                    store.add_phrase(
-                        &oxpinyin::vocab::PhraseText::from(&over_limit),
-                        &keys16,
-                        None
-                    ),
+                    store.add_phrase(&PhraseText::from(&over_limit), &keys16, None),
                     Err(UserStoreError::InvalidPhrase)
                 ));
                 assert!(matches!(
@@ -315,7 +586,7 @@ fn run(data: &[u8]) {
             // remove: an allocated token first, then an absurd one —
             // absent removal is Ok(false), never a panic
             4 => {
-                let pick = payload.first().copied().unwrap_or(0) as usize % added.len().max(1);
+                let pick = usize::from(input.byte()) % added.len().max(1);
                 if let Some(&token) = added.get(pick) {
                     // A phrase is removable only while every reading is
                     // indexed (`pinyin.cpp:3759`): a second reading merged
@@ -375,42 +646,38 @@ fn run(data: &[u8]) {
                         .expect("absent remove is Ok(false)")
                 );
             }
-            // bigram writes: explicit set, then the two observation
-            // flavors (train-shaped)
+            // bigram writes, each against its contract ("Bigram rows")
             5 => {
-                let prev = u32::from(payload.first().copied().unwrap_or(0)) % 8
-                    + oxpinyin::user::FIRST_USER_TOKEN;
-                let cur = u32::from(payload.get(1).copied().unwrap_or(0)) % 8
-                    + oxpinyin::user::FIRST_USER_TOKEN
-                    + 1;
-                let count = u64::from(payload.get(2).copied().unwrap_or(0)) % 100;
-                store
-                    .set_bigram_count(prev, cur, count)
-                    .expect("bigram set");
-                store
-                    .observe_selection(prev, cur)
-                    .expect("selection observation");
-                store
-                    .observe_predicted(prev, cur)
-                    .expect("prediction observation");
-                if !lefts.contains(&prev) {
-                    lefts.push(prev);
+                let mode = input.byte() % 4;
+                let prev = u32::from(input.byte()) % 8 + FIRST_USER_TOKEN;
+                let cur = u32::from(input.byte()) % 8 + FIRST_USER_TOKEN + 1;
+                let law = laws.entry(prev).or_insert(Law::Exact);
+                if mode == 0 || mode == 3 {
+                    let count = input.count();
+                    set_bigram(&mut store, law, prev, cur, count);
+                }
+                if mode == 1 || mode == 3 {
+                    observe_selection(&mut store, prev, cur);
+                }
+                if mode == 2 || mode == 3 {
+                    observe_predicted(&mut store, law, prev, cur);
                 }
             }
-            // mask_out; the totals law must survive the rewrite, so `lefts`
-            // is kept. The pin accepts any mask and value: the facade tests
-            // the library through the four-bit library index of both, and
-            // the sub-index tests each token under their low 24 bits
+            // mask_out; each row's law must survive the rewrite. The pin
+            // accepts any mask and value: the facade tests the library
+            // through the four-bit library index of both, and the sub-index
+            // tests each token under their low 24 bits
             // (`phrase_index.cpp:677-717` at 074a2219).
             //
-            // Byte 0 selects the mode, byte 1 the mask and byte 2 a tracked
-            // token. The value comes from that token, so the matching mode
-            // removes a live phrase; a value from one payload byte is 0
-            // under every mask with clear low bits.
+            // The mode byte selects the library, the mask byte the mask and
+            // the pick byte a tracked token. The value comes from that
+            // token, so the matching mode removes a live phrase; a value
+            // from one argument byte is 0 under every mask with clear low
+            // bits.
             6 => {
-                let other_library = payload.first().copied().unwrap_or(0) & 1 == 1;
-                let mask = MASKS[usize::from(payload.get(1).copied().unwrap_or(0)) % MASKS.len()];
-                let pick = usize::from(payload.get(2).copied().unwrap_or(0));
+                let other_library = input.byte() & 1 == 1;
+                let mask = MASKS[usize::from(input.byte()) % MASKS.len()];
+                let pick = usize::from(input.byte());
                 let token = added
                     .get(pick % added.len().max(1))
                     .copied()
@@ -430,7 +697,26 @@ fn run(data: &[u8]) {
                     // `token & mask == value` holds for the token itself.
                     (mask, token & mask)
                 };
-                store.mask_out(mask, value).expect("mask_out");
+                let rows: Vec<Row> = laws.keys().map(|&prev| Row::read(&store, prev)).collect();
+                match store.mask_out(mask, value) {
+                    Ok(()) => {}
+                    Err(UserStoreError::ResidualUserBigramGram) => {
+                        assert!(
+                            laws.values().any(|&law| law == Law::Free),
+                            "only a free row can leave a residual total"
+                        );
+                        let after: Vec<Row> =
+                            laws.keys().map(|&prev| Row::read(&store, prev)).collect();
+                        assert_eq!(after, rows, "a refused mask changes no row");
+                        assert_eq!(
+                            store.phrase(token).is_some(),
+                            was_live,
+                            "a refused mask changes no phrase"
+                        );
+                        continue;
+                    }
+                    Err(err) => panic!("mask_out: {err:?}"),
+                }
                 masked_out = true;
                 if other_library {
                     assert!(
@@ -452,14 +738,13 @@ fn run(data: &[u8]) {
                 assert!(!store.is_modified(), "save clears the dirty flag");
             }
         }
-        check_totals(&store, &lefts);
+        check_laws(&store, &mut laws);
         // Read after the mutation so a fresh add is the row checked.
         let freshest = added.last().copied();
         check_phrase_index(&store, freshest);
     }
-    // The fini guard writes `user.conf` on drop, inside the directory.
+    // The fini guard writes `user.conf` on drop, inside the directory; the
+    // directory goes after it.
     drop(store);
-    if let Ok(mut last) = LAST_PATH.lock() {
-        *last = Some(dir);
-    }
+    drop(dir);
 }
