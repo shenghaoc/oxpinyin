@@ -434,6 +434,14 @@ fn contract_slots_reject_without_mutation() {
 }
 
 #[test]
+fn customized_slot_keeps_the_default_double_pinyin_scheme() {
+    let mut parser = DoublePinyinParser::new();
+    assert_eq!(parser.scheme(), DoublePinyinScheme::Ms);
+    assert!(!parser.set_scheme(DoublePinyinScheme::Customized));
+    assert_eq!(parser.scheme(), DoublePinyinScheme::Ms);
+}
+
+#[test]
 fn apostrophe_keys_follow_the_pinned_tables() {
     // The two keyboards whose tables use the escaped-quote key.
     assert_eq!(key_for_symbol(ZhuyinScheme::Ginyieh, "ㄥ"), b'\'');

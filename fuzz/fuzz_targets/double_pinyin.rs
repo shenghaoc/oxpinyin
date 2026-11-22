@@ -1,7 +1,5 @@
 //! Every compiled double-pinyin scheme over arbitrary byte input: parse
-//! must be total and deterministic. Also pins the setter contract shared
-//! with the C ABI (contract_tests.rs): `Customized` is rejected and leaves
-//! the effective scheme unchanged.
+//! must be total and deterministic.
 
 use oxpinyin::OptionBits;
 use oxpinyin::parser::{DoublePinyinParser, DoublePinyinScheme};
@@ -40,10 +38,4 @@ fn run(data: &[u8]) {
             "consumed length must be deterministic"
         );
     }
-
-    // Setter contract: Customized is rejected with state preserved.
-    let mut parser = DoublePinyinParser::new();
-    let before = parser.scheme();
-    assert!(!parser.set_scheme(DoublePinyinScheme::Customized));
-    assert_eq!(parser.scheme(), before);
 }
