@@ -317,6 +317,20 @@ class ToolsRuleTests(unittest.TestCase):
         self.environ = {'PATH': '/tools', 'XDG_DATA_HOME': str(self.data)}
         self.pin = fuzz.read_tool_versions()['CARGO_AFL_VERSION']
 
+    def test_the_build_drops_encoded_rustflags(self):
+        calls = []
+        environ = dict(self.environ, CARGO_ENCODED_RUSTFLAGS='-Cfoo', RUSTFLAGS='-Cbar')
+        with mock.patch.object(fuzz, 'rustc_facts',
+                               return_value={'host': 'x86_64-unknown-linux-gnu', 'release': '1.0.0', 'commit': 'abc'}), \
+                mock.patch.object(fuzz, 'target_directory', return_value=self.data / 'target'), \
+                mock.patch.object(fuzz, 'backend_flags', return_value=['--features', 'kyotocabinet']), \
+                mock.patch.object(fuzz, '_call', side_effect=lambda command, env, what: calls.append((command, env))):
+            built = fuzz.build_target('probe', environ, f'cargo-afl {self.pin} (AFL++ version 4.40c with plugins)')
+        (command, env), = calls
+        for checked in (env, built.env):
+            self.assertNotIn('CARGO_ENCODED_RUSTFLAGS', checked)
+            self.assertEqual(checked['RUSTFLAGS'], '-Zsanitizer=address -Cbar')
+
     def test_the_pinned_cargo_afl_with_plugins_is_accepted(self):
         line = f'cargo-afl {self.pin} (AFL++ version 4.40c with plugins)'
         run = mock.Mock(return_value=completed(line + '\n'))

@@ -195,7 +195,9 @@ standard input.
   sanitizer: `just fuzz` sets `RUSTFLAGS=-Zsanitizer=address`, so rustc
   instruments the crates and links its ASan runtime into the executable, and
   cargo-afl appends its own flags. `--target` keeps build scripts and proc
-  macros out of the sanitizer. The build and the launch take the executable
+  macros out of the sanitizer. Cargo prefers `CARGO_ENCODED_RUSTFLAGS` to
+  `RUSTFLAGS`, so the recipe removes an inherited one from both builds. The
+  build and the launch take the executable
   from one place: cargo's target directory as `cargo metadata` reports it
   (so `CARGO_TARGET_DIR` and `build.target-dir` apply), passed to the build
   as `--target-dir`, with cargo's layout `<host>/release/<target>` below it.
