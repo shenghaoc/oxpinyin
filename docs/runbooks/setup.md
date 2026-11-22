@@ -186,6 +186,13 @@ rustup only for a tool that it must install; without that program it exits 1 and
 names the tool. `--python-only` alone installs none of these tools and needs
 neither program. See [cloud setup](cloud.md#python-only-toolsdev-hosts).
 
+Install cargo-shear locally at CI's pinned version before `just shear`:
+
+```sh
+cargo install --locked cargo-shear --version \
+  "$(cat .github/actions/bootstrap/cargo-shear-version.txt)"
+```
+
 Repository Python uses the managed CPython named in `.python-version`.
 
 `just doctor` reports the tools it finds, including their paths and versions.
