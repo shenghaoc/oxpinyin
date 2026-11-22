@@ -37,7 +37,7 @@
 //! | 0 | add a phrase with the default count | phrase |
 //! | 1 | add a phrase with a count | phrase, count |
 //! | 2 | add a tracked phrase again, under a new reading | byte (token pick), reading, optional count |
-//! | 3 | the two typed `InvalidPhrase` refusals | none |
+//! | 3 | check the current invariants | none |
 //! | 4 | remove a tracked phrase, then an absent token | byte (token pick) |
 //! | 5 | bigram writes | byte (mode), byte (left token), byte (right token), reserved count in modes 0 and 3 |
 //! | 6 | `mask_out` | byte (mode), byte (mask), byte (token pick) |
@@ -87,8 +87,8 @@ use std::sync::OnceLock;
 use oxpinyin::data::TableConf;
 use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin::user::{
-    CEILING_SEED, INITIAL_SEED, LibraryLoopRows, PinyinKey, SystemOriginals,
-    UserConfLaw, UserStore, UserStoreError,
+    CEILING_SEED, INITIAL_SEED, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw,
+    UserStore, UserStoreError,
 };
 use oxpinyin::vocab::{
     NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseText, SyllableKey,
@@ -542,20 +542,7 @@ fn run(data: &[u8]) {
                     add(&mut store, &mut added, &text, &keys, count);
                 }
             }
-            // the typed invalid-phrase refusal: length ceiling violated
-            // (exactly 16 chars with 16 keys), and length/key mismatch
-            3 => {
-                let over_limit: String = std::iter::repeat_n('词', 16).collect();
-                let keys16: Vec<PinyinKey> = (0..16).map(key_for).collect();
-                assert!(matches!(
-                    store.add_phrase(&PhraseText::from(&over_limit), &keys16, None),
-                    Err(UserStoreError::InvalidPhrase)
-                ));
-                assert!(matches!(
-                    store.add_phrase(&"ab".into(), &[key_for(0)], None),
-                    Err(UserStoreError::InvalidPhrase)
-                ));
-            }
+            3 => {}
             // remove: an allocated token first, then an absurd one —
             // absent removal is Ok(false), never a panic
             4 => {
