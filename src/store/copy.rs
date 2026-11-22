@@ -36,8 +36,7 @@ pub(crate) fn copy(
     .unwrap_or_else(|_| std::process::abort());
 }
 
-/// Fault injection for the store copy operations used by cross-crate death tests. These
-/// controls select a record at which the read or write fails.
+/// Fault injection for callers that reach copy through the store or C facade.
 #[cfg(any(test, feature = "test-hooks"))]
 pub(super) mod faults {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -107,37 +106,56 @@ pub(super) mod faults {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::io::{self, Write as _};
 
-    fn two_records() {
-        copy(
-            |sink| {
-                sink(b"one", b"1")?;
-                sink(b"two", b"2")
-            },
-            |_, _| Ok(()),
-        )
-    }
+    use super::*;
 
     #[test]
     fn source_walk_failure_aborts() {
-        crate::store::death_test::assert_aborts(
+        let stderr = crate::store::death_test::assert_aborts(
             "store::copy::tests::source_walk_failure_aborts",
             || {
-                faults::fail_source_read_after(1);
-                two_records();
+                copy(
+                    |sink| {
+                        sink(b"one", b"1")?;
+                        writeln!(io::stderr(), "read two failed").unwrap();
+                        Err(StoreError::Io(io::Error::other("source walk failed")))
+                    },
+                    |key, value| {
+                        assert_eq!((key, value), (b"one".as_slice(), b"1".as_slice()));
+                        writeln!(io::stderr(), "wrote one").unwrap();
+                        Ok(())
+                    },
+                );
             },
         );
+        assert_eq!(stderr, b"wrote one\nread two failed\n");
     }
 
     #[test]
     fn destination_write_failure_aborts() {
-        crate::store::death_test::assert_aborts(
+        let stderr = crate::store::death_test::assert_aborts(
             "store::copy::tests::destination_write_failure_aborts",
             || {
-                faults::fail_destination_write_after(1);
-                two_records();
+                copy(
+                    |sink| {
+                        sink(b"one", b"1")?;
+                        sink(b"two", b"2")
+                    },
+                    |key, value| match (key, value) {
+                        (b"one", b"1") => {
+                            writeln!(io::stderr(), "wrote one").unwrap();
+                            Ok(())
+                        }
+                        (b"two", b"2") => {
+                            writeln!(io::stderr(), "write two failed").unwrap();
+                            Err(StoreError::Io(io::Error::other("destination write failed")))
+                        }
+                        _ => panic!("unexpected record: {key:?}, {value:?}"),
+                    },
+                );
             },
         );
+        assert_eq!(stderr, b"wrote one\nwrite two failed\n");
     }
 }

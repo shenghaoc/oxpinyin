@@ -268,8 +268,8 @@ impl DoublePinyinParser {
 
     /// Selects a compiled scheme. `Customized` returns `false` and leaves
     /// the parser unchanged. A successful switch clears the suppressed-fallback flag.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub fn set_scheme(&mut self, scheme: DoublePinyinScheme) -> bool {
+    #[cfg(test)]
+    fn set_scheme(&mut self, scheme: DoublePinyinScheme) -> bool {
         if scheme == DoublePinyinScheme::Customized {
             return false;
         }
@@ -279,9 +279,9 @@ impl DoublePinyinParser {
     }
 
     /// The scheme in force.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     #[must_use]
-    pub const fn scheme(self) -> DoublePinyinScheme {
+    const fn scheme(self) -> DoublePinyinScheme {
         self.scheme
     }
 
