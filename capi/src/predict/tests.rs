@@ -4,6 +4,7 @@
 )]
 
 // Nextest isolates the process-wide read-fault key by running each test in its own process.
+use crate::test_support::seed_bigram;
 use crate::test_support::{PREDICTED_BIGRAM, PREDICTED_PREFIX, predicted_texts};
 
 use crate::test_support::{close, open_at, wrap_facade_total_to_zero};
@@ -174,8 +175,7 @@ fn predicted_rows_ignore_dynamic_adjust_and_the_bigram_counts() {
         // SAFETY: the live context has no reader retained across this write.
         let ctx = unsafe { crate::state::context_mut(context) };
         let store = ctx.core.user_store_mut();
-        store.set_bigram_count(ni, hao, hao_count).expect("set");
-        store.set_bigram_count(ni, zhong, zhong_count).expect("set");
+        seed_bigram(store, ni, &[(hao, hao_count), (zhong, zhong_count)]);
         for dynamic in [0, DYNAMIC_ADJUST] {
             assert!(unsafe { pinyin_set_options(context, OPTIONS | dynamic) });
             // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
@@ -254,59 +254,6 @@ fn a_system_library_import_ranks_by_its_live_count() {
     unsafe { close(context, instance) };
 }
 
-/// Overwrites a user-bigram successor count by phrase text.
-///
-/// Public `pinyin_train` first-seeds 69 (`23 * 3`), so
-/// the prediction filter edge (`pinyin.cpp:2311`, `:2349-2350`) cannot be
-/// reached through the C ABI. Looks up `prev` and `cur` in the user
-/// phrase index.
-///
-/// # Safety
-///
-/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
-/// it.
-///
-/// `prev` is a NUL-terminated string that stays valid for the call.
-///
-/// `cur` is a NUL-terminated string that stays valid for the call.
-///
-/// Calls are serial across the context, its sibling instances and its iterators: no other call
-/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
-/// rule).
-unsafe fn set_user_bigram(
-    context: *mut crate::types::PinyinContext,
-    prev: *const std::os::raw::c_char,
-    cur: *const std::os::raw::c_char,
-    count: u64,
-) -> bool {
-    if context.is_null() {
-        return false;
-    }
-
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
-    let ctx = unsafe { crate::state::context_mut(context) };
-    let user = ctx.core.user_store_mut();
-    let prev_text = oxpinyin::marshal::scalar_text(
-        // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
-        // Strings. The borrow ends in this statement.
-        unsafe { crate::ffi::borrow_c_string(prev) },
-    )
-    .unwrap_or_default();
-    let cur_text = oxpinyin::marshal::scalar_text(
-        // SAFETY: The fixture owns the `cstr` temporaries for this call, meeting
-        // Strings. The borrow ends in this statement.
-        unsafe { crate::ffi::borrow_c_string(cur) },
-    )
-    .unwrap_or_default();
-    let Some(prev_tok) = user.token_for_phrase(&prev_text).ok().flatten() else {
-        return false;
-    };
-    let Some(cur_tok) = user.token_for_phrase(&cur_text).ok().flatten() else {
-        return false;
-    };
-    user.set_bigram_count(prev_tok, cur_tok, count).is_ok()
-}
-
 #[test]
 fn predicted_bigram_filter_drops_9_keeps_10() {
     let user_dir = TempUserDir::new("predict-edge");
@@ -324,18 +271,18 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
     });
     unsafe { pinyin_end_add_phrases(iter) };
 
-    // SAFETY: `context` was opened above and is not yet freed; `cstr("测测").as_ptr()` is a
-    // NUL-terminated string that outlives the call; `cstr("甲甲").as_ptr()` is a NUL-terminated
-    // string that outlives the call; only this thread calls into it.
-    assert!(unsafe {
-        set_user_bigram(context, cstr("测测").as_ptr(), cstr("甲甲").as_ptr(), 9)
+    // SAFETY: the live context has no reader retained across this write.
+    let store = unsafe { crate::state::context_mut(context) }
+        .core
+        .user_store_mut();
+    let [prev, nine, ten] = ["测测", "甲甲", "乙乙"].map(|text| {
+        store
+            .token_for_phrase(text)
+            .expect("read")
+            .expect("imported")
     });
-    // SAFETY: `context` was opened above and is not yet freed; `cstr("测测").as_ptr()` is a
-    // NUL-terminated string that outlives the call; `cstr("乙乙").as_ptr()` is a NUL-terminated
-    // string that outlives the call; only this thread calls into it.
-    assert!(unsafe {
-        set_user_bigram(context, cstr("测测").as_ptr(), cstr("乙乙").as_ptr(), 10)
-    });
+    // Training starts at 69. Use the exact stored counts around the filter at 10.
+    seed_bigram(store, prev, &[(nine, 9), (ten, 10)]);
 
     let prefix = cstr("测测");
     assert!(unsafe {

@@ -13,7 +13,10 @@ fn an_empty_table_answers_nothing() {
 fn lookup_finds_punctuation() {
     let dbm = MemoryDbm::new();
     let token: u32 = 0x0100_0295;
-    let value = encode_puncts(&["，", "。"]);
+    let value = [0xff0c_u32, 0, 0x3002, 0]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>();
     dbm.put(token.to_le_bytes().to_vec(), value);
 
     let table = PunctTable::new(dbm);

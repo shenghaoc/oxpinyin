@@ -149,15 +149,12 @@ fn phrase_tokens_round_trip() {
 }
 
 #[test]
-fn punct_stream_round_trip() {
-    use punct::{decode_puncts, encode_puncts};
-    let encoded = encode_puncts(&["，", "。"]);
-    // ， = U+FF0C, 。 = U+3002, each zero-terminated as u32.
-    assert_eq!(encoded, words(&[0xFF0C, 0, 0x3002, 0]));
-    assert_eq!(decode_puncts(&encoded), ["，", "。"]);
-    // Owned strings encode identically to borrowed ones.
-    assert_eq!(encoded, encode_puncts(&["，".to_owned(), "。".to_owned()]));
-    assert!(decode_puncts(b"").is_empty());
+fn punct_stream_reads_zero_terminated_words() {
+    assert_eq!(
+        punct::decode_puncts(&words(&[0xff0c, 0, 0x3002, 0])),
+        ["，", "。"]
+    );
+    assert!(punct::decode_puncts(b"").is_empty());
 }
 
 fn words(words: &[u32]) -> Vec<u8> {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::store::{DefaultStore, StoreError, WriteStore};
 use crate::user::SystemLibrary;
+use crate::user::native_fixture::seed_bigram;
 use crate::user::test_session::tempdir;
 
 /// The container's gram under `key`, owned: `None` on a miss.
@@ -825,11 +826,10 @@ fn open_with_payload(
         crate::data::chunk_format::build_memory_chunk(payload).expect("chunk"),
     )
     .expect("write log");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let store = crate::user::test_session::open(&dir, originals, versions(), UserConfLaw::Pinyin)
         .expect("open");
     (dir, store)
@@ -1166,11 +1166,10 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
 
     // No journal, no overrides.
     let dir = tempdir("owned-overrides-none");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let store = crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
         .expect("open");
     assert!(store.live_system_changes(&originals()).is_empty());
@@ -1193,11 +1192,10 @@ fn partial_bigram_reads_complete_items_and_refuses_unsafe_mask() {
         &[(key.to_vec(), value.clone())],
     )
     .expect("write gram");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
 
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1268,11 +1266,10 @@ fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
         &[(key.to_vec(), value.clone())],
     )
     .expect("write gram");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
 
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1328,11 +1325,10 @@ fn a_short_predecessor_value_is_the_fault_of_both_training_paths() {
         &[(1_u32.to_le_bytes().to_vec(), short.clone())],
     )
     .expect("write gram");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
@@ -1363,11 +1359,10 @@ fn a_short_predecessor_value_is_the_fault_of_both_training_paths() {
 #[test]
 fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
     let dir = tempdir("reload-keeps-grams");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
@@ -1394,11 +1389,10 @@ fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
 #[test]
 fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
     let dir = tempdir("set-freq-miss");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
@@ -1413,7 +1407,7 @@ fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
             (token(4), 1),
         ],
     );
-    store.plant_raw_bigram(2, &gram);
+    store.plant_raw_bigram(2, &gram).expect("plant raw bigram");
     let generation = store.generation();
     let mut check = crate::user::TrainingCheck::default();
     store
@@ -1457,17 +1451,18 @@ fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
 #[test]
 fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
     let dir = tempdir("unsorted-gram-train");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     let (high, low) = (0x0100_0009_u32, 0x0100_0001_u32);
     let gram = crate::single_gram::encode_single_gram;
-    store.plant_raw_bigram(2, &gram(10, &[(high, 4), (low, 6)]));
+    store
+        .plant_raw_bigram(2, &gram(10, &[(high, 4), (low, 6)]))
+        .expect("plant raw bigram");
     assert_eq!(store.bigram_count(2, low).expect("miss"), 0);
     assert_eq!(store.observe_selection(2, low).expect("train"), 69);
     assert_eq!(
@@ -1487,11 +1482,10 @@ fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
 #[test]
 fn a_partial_tail_created_in_session_refuses_training() {
     let dir = tempdir("partial-gram-in-session");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
@@ -1507,7 +1501,7 @@ fn a_partial_tail_created_in_session_refuses_training() {
     value.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
     value.extend_from_slice(&(total as u32).to_le_bytes());
     value.push(0x01);
-    store.plant_raw_bigram(1, &value);
+    store.plant_raw_bigram(1, &value).expect("plant raw bigram");
     assert!(store.has_oob_bigram_value_for(1));
     assert!(matches!(
         store.observe_selection(1, 0x0100_0002),
@@ -1520,7 +1514,9 @@ fn a_partial_tail_created_in_session_refuses_training() {
     assert_eq!(store.bigram_total(1).expect("unchanged"), total);
     assert_eq!(store.bigram_count(1, 0x0100_0002).expect("cur"), 0);
     // Overwriting the value with a whole gram clears the refusal.
-    store.plant_raw_bigram(1, &value[..value.len() - 1]);
+    store
+        .plant_raw_bigram(1, &value[..value.len() - 1])
+        .expect("plant raw bigram");
     assert!(!store.has_oob_bigram_value_for(1));
     store
         .observe_selection(1, 0x0100_0002)
@@ -1538,7 +1534,9 @@ fn a_removal_assert_comes_before_the_bigram_fault() {
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
-    store.plant_raw_bigram(1, &[1, 0, 0]);
+    store
+        .plant_raw_bigram(1, &[1, 0, 0])
+        .expect("plant raw bigram");
     let absent = crate::vocab::phrase_index_make_token(crate::vocab::USER_DICTIONARY, 0x0000_0042);
     assert!(matches!(store.remove_user_phrase(absent), Ok(false)));
     drop(store);
@@ -1557,11 +1555,10 @@ fn partial_tail_guard_tracks_an_in_session_mask_result() {
     .concat();
     DefaultStore::write_user_bigram(&dir.join("user_bigram.db"), &[(key.to_vec(), value)])
         .expect("write valid gram");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
 
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1599,20 +1596,6 @@ fn partial_tail_guard_tracks_an_in_session_mask_result() {
     }
     drop(raw);
 
-    // The hook updates that value in place (Q5): the item is inserted,
-    // the total moves by the difference, and a partial tail the
-    // backend kept stays.
-    let total = live
-        .as_deref()
-        .and_then(crate::single_gram::get_total_freq)
-        .unwrap_or(0);
-    store.set_bigram_count(1, 10, 5).expect("overwrite gram");
-    assert_eq!(store.has_oob_bigram_value_for(1), live_after_mask);
-    assert_eq!(
-        store.bigram_total(1).expect("new total"),
-        (u64::from(total) + 5).min(u64::from(u32::MAX))
-    );
-    assert_eq!(store.bigram_count(1, 10).expect("new item"), 5);
     drop(store);
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
@@ -1639,11 +1622,10 @@ fn a_non_token_bigram_key_is_the_masks_first_fault() {
         ],
     )
     .expect("write grams");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
 
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1670,11 +1652,10 @@ fn short_bigram_guard_reads_the_live_raw_value() {
         &[(key.to_vec(), vec![0xa5, 0x5a, 0x01])],
     )
     .expect("write short gram");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
 
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1697,9 +1678,8 @@ fn short_bigram_guard_reads_the_live_raw_value() {
     );
     drop(raw);
 
-    // The test hook replaces a value too short for a total with a fresh
-    // gram (Q5). The guard follows the live container.
-    store.set_bigram_count(1, 9, 7).expect("replace gram");
+    // A complete replacement row clears the guard in the live container.
+    seed_bigram(&mut store, 1, &[(9, 7)]);
     assert!(!store.has_short_bigram_value_for(1));
     assert_eq!(store.bigram_total(1).expect("new total"), 7);
     assert_eq!(store.bigram_count(1, 9).expect("new item"), 7);
@@ -3541,7 +3521,7 @@ fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
         .token();
     let ni = dict.tokens_for_text("你").unwrap()[0];
     let mut store = crate::user::test_session::open_w3(user.path());
-    store.set_bigram_count(ni, gbk, 10).unwrap();
+    seed_bigram(&mut store, ni, &[(gbk, 10)]);
     store.reset_system_library(2);
     let total = store.unigram_total();
     let before = store.bigram_count(ni, gbk).unwrap();

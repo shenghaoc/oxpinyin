@@ -199,19 +199,6 @@ impl BigramTables {
         self.bigram.attachment_finished()
     }
 
-    /// Borrow all loaded phrase libraries for a model operation.
-    #[cfg(feature = "tools")]
-    pub(crate) fn read_all<'a>(
-        &'a self,
-        libraries: &'a PhraseLibraries,
-    ) -> BigramLanguageModel<&'a PhraseLibraries, &'a Self> {
-        BigramLanguageModel {
-            tables: self,
-            libraries,
-            library_mask: Cell::new(0),
-        }
-    }
-
     /// Bind a model read to the owner's current library state.
     pub fn read<'a>(
         &'a self,

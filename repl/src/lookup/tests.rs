@@ -1,15 +1,4 @@
-//! Real-model witnesses migrated from the nonshipping upstream lookup driver.
-//! The `tool` module, and with it these tests, requires the `tools` feature.
-
-use crate::OptionBits;
-
-use crate::data::TableConf;
-
-use crate::engine::tool::prepare_lookup;
-
-use crate::runtime::tool::Lookup;
-
-use std::path::PathBuf;
+use super::*;
 
 /// 074a2219 tests/lookup/test_pinyin_lookup.cpp:84-111 passes the explicit
 /// parsed length through fill_matrix into n-best lookup. The frozen six- and
@@ -20,9 +9,9 @@ use std::path::PathBuf;
 #[test]
 fn embedded_nul_lookup_keeps_the_original_terminal_column() {
     let data = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("fixtures/w3")
-        .join(crate::data::DEFAULT_STORE_EXT);
-    let conf_path = crate::input::c_path(&data.join("table.conf")).unwrap();
+        .join("../fixtures/w3")
+        .join(oxpinyin::store::DEFAULT_STORE_EXT);
+    let conf_path = oxpinyin::input::c_path(&data.join("table.conf")).unwrap();
     let conf = TableConf::load(&conf_path).unwrap();
     let lookup = Lookup::open(&data, &conf, true, true).unwrap_or_else(|_| panic!("W3 lookup"));
     for (input, key_end, consumed) in [

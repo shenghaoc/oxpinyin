@@ -95,13 +95,8 @@ version = "0"
 # selects kyotocabinet (LOCAL_CELL in tools/dev/cell.py;
 # docs/runbooks/setup.md#linux).
 default = ["tkrzw"]
-# Nonshipping tool calls; never enabled by the C libraries.
-tools = []
-# Test-only items and fault points for other crates' tests and the fuzz
-# harness (`copy_faults`, `read_faults`). Three things turn it on: the
-# [dev-dependencies] entries of the C crates, the utilities and the REPL;
-# the fuzz crate's dependency; and oxpinyin-capi's `fuzz-api` feature. None
-# is part of a normal or shipped build.
+# Test-only operations and fault points for the C crates and fuzz workspace.
+# Normal and shipped builds leave this feature off.
 test-hooks = []
 # tkrzw binds the pin's concrete classes through cxx; it needs a C++17
 # compiler and tkrzw's headers, not libclang; `cc` is named for the compiler probe.

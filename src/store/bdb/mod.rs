@@ -112,22 +112,6 @@ pub(crate) fn open_system(
 }
 
 impl BdbStore {
-    /// The tools' plain native `DB->put`, without syncing. Matches
-    /// `ngram_bdb.cpp:161` and `punct_table_bdb.cpp:176` at 074a2219, the
-    /// peers' `KcStore::tool_set` and `TkrzwStore::tool_set` (each exists
-    /// only under its own feature, so neither is linked, #1129). The shipping
-    /// transaction and durability path is unchanged.
-    ///
-    /// # Errors
-    /// Returns the native write error, or an error for a read-only handle.
-    #[cfg(feature = "tools")]
-    pub fn tool_set(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        if self.db.is_read_only() {
-            return Err(StoreError::ReadOnly);
-        }
-        self.db.put(key, value)
-    }
-
     /// Applies a finished transaction's buffer and syncs. Not generic, so
     /// the many `write` closures share one copy of it.
     #[inline(never)]
@@ -555,7 +539,7 @@ fn copy_bdb(
     src: &Db,
     set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     crate::store::copy::faults::make_iterator()?;
     let mut cursor = src.cursor()?;
     crate::store::copy::copy(

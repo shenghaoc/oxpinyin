@@ -7,6 +7,7 @@ use crate::candidates::{
     zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate, zhuyin_get_n_candidate,
     zhuyin_train,
 };
+use oxpinyin::model::Dictionary as _;
 
 use crate::context::{zhuyin_fini, zhuyin_save};
 
@@ -186,7 +187,12 @@ fn reparse_keeps_the_reanchored_candidates_selection(
             .iter()
             .position(|row| row.text_str() == Ok("好"))
             .expect("好 at offset 3");
-        (index, inst.core.dict.tokens_for_text("好")[0])
+        (
+            index,
+            inst.core
+                .dict
+                .tokens_for_ucs4(&"好".chars().map(u32::from).collect::<Vec<_>>())[0],
+        )
     };
     let mut original = ptr::null_mut();
     assert!(unsafe {

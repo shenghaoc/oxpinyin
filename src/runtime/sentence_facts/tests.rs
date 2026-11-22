@@ -3,7 +3,7 @@ use super::*;
 fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::data::DEFAULT_STORE_EXT)
+        .join(crate::store::DEFAULT_STORE_EXT)
 }
 fn opened() -> Runtime {
     Runtime::open(&fixture(), None).unwrap()
@@ -214,14 +214,12 @@ fn replayed(
         crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
-    std::fs::write(
-        dir.path().join("user.conf"),
+    assert!(
         crate::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
             runtime.table_conf(),
         ))
-        .to_text(),
-    )
-    .unwrap();
+        .save(dir.path().join("user.conf").as_path())
+    );
     drop(runtime);
     let runtime = Runtime::open(&fixture(), Some(dir.path())).unwrap();
     (dir, runtime, token)

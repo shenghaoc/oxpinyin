@@ -100,9 +100,9 @@ where
     ///
     /// Under `Session::set_defer_list_builds`, call
     /// `Session::refresh_candidates` first.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     #[must_use]
-    pub fn candidates(&self) -> &CandidateList {
+    pub(crate) fn candidates(&self) -> &CandidateList {
         &self.lookup.candidates
     }
 

@@ -1,8 +1,7 @@
 //! A fault point in the point reads of the read-only stores, for other
 //! crates' tests: no input makes an attached system file fail one chosen
 //! read after an earlier read of the same row succeeded. Test-only: the
-//! module exists only with the `test-hooks` feature, which no normal or
-//! shipped build enables (see the feature's comment in `Cargo.toml`).
+//! module exists in core tests and with `test-hooks` for dependent tests.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};

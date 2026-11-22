@@ -987,28 +987,6 @@ impl RuntimeDict<'_> {
         Ok(user.phrase_prefix_exists(syllables))
     }
 
-    /// Exact-text token lookup across the system and user seams, in that
-    /// order — the merge order `Self::lookup_into` established. The
-    /// phrase-segment span DP consumes this per character span.
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[must_use]
-    pub fn tokens_for_text(&self, text: &str) -> Vec<PhraseToken> {
-        let mut tokens: Vec<u32> = self.system.tokens_for_text(text).unwrap_or_default();
-        // The pin probes the user phrase table directly (074a2219
-        // pinyin.cpp:2652-2667, storage/facade_phrase_table3.h:120-126).
-        // Read only this text's row. A phrase write must not make this
-        // query rebuild the full pronunciation and phrase indices.
-        tokens.extend(
-            self.user
-                .phrase_table_tokens_for_text(text)
-                .unwrap_or_default(),
-        );
-        tokens.retain(|token| self.phrase_table_token_enabled(*token));
-        // reduce_tokens groups the system and user table results by library.
-        crate::model::sort_tokens_by_library(&mut tokens);
-        tokens.into_iter().collect()
-    }
-
     /// The addon facade's entries for `syllables`.
     ///
     /// # Errors
@@ -1100,7 +1078,7 @@ impl Dictionary for RuntimeDict<'_> {
         ))
     }
 
-    /// `Self::tokens_for_text` over raw UCS-4 spans, including
+    /// Exact-text token lookup over raw UCS-4 spans, including
     /// surrogate or above-Unicode words. The system and user phrase
     /// tables compare the stored raw keys; no `char` or `str` is built
     /// from a non-scalar.
@@ -2028,7 +2006,3 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests;
-
-/// The standalone pin test programs use the same data and model readers.
-#[cfg(feature = "tools")]
-pub mod tool;

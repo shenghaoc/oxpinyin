@@ -601,7 +601,7 @@ A comparison normalises those eight bytes only, for named cases only, and only w
 A later case on the same path names its files.
 Every other byte and file is compared exactly, and equal observations stay `MATCH`; this is not a `POLICY-ACCEPTED` difference.
 A saved user-bigram comparison may differ in the same eight bytes and nowhere else, and its bucket-chain order must match.
-The native setter these test programs use (`tool_set`, `tools` feature) is tools-only; shipping `WriteStore::write` and its durability do not change.
+These programs call `WriteStore::set_raw` for a plain native write. `WriteStore::write` retains its transaction and durability rules.
 
 ## What is not an exception
 

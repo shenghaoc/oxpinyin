@@ -879,8 +879,8 @@ the surface stays minimal.
 ## Boundary notes
 
 Every exported `pinyin_*` symbol is in scope and implemented live, with
-no placeholder bodies. Shipping recipes do not enable the `fuzz-api`
-helpers; no build exports a test hook.
+no placeholder bodies. The fuzz workspace enables `test-hooks` for its Rust decision queries.
+Shipping builds omit those queries and the fault injection code.
 
 Every C-ABI symbol requires:
 

@@ -1,8 +1,5 @@
 use super::*;
-use oxpinyin::data::{
-    PunctTable,
-    row_format::punct::{decode_puncts, encode_puncts},
-};
+use oxpinyin::data::{PunctTable, row_format::punct::decode_puncts};
 use oxpinyin::store::{DefaultStore, RawReadStore, WriteStore};
 use std::ops::Bound;
 
@@ -23,7 +20,15 @@ fn punctuation_keeps_its_order_in_a_snapshot_and_the_empty_row_is_readable() {
     for punctuation in [c"……", c"…", c"？"] {
         append_punctuation(&tree, token, punctuation);
     }
-    assert_eq!(tree.get(&key), Some(encode_puncts(&["……", "…", "？"])));
+    assert_eq!(
+        tree.get(&key),
+        Some(
+            [0x2026_u32, 0x2026, 0, 0x2026, 0, 0xff1f, 0]
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>()
+        )
+    );
     drop(tree);
 
     let source = DefaultStore::open_read_only(&path).unwrap();
@@ -49,7 +54,7 @@ fn punctuation_keeps_its_order_in_a_snapshot_and_the_empty_row_is_readable() {
     let mut entry = Vec::new();
     assert!(copy.get_raw(&key, &mut entry).unwrap());
     assert_eq!(decode_puncts(&entry), ["……", "…", "？"]);
-    let table = PunctTable::open(&path).unwrap();
+    let table = PunctTable::attach(&path).unwrap();
     assert_eq!(table.punctuations(token).unwrap(), ["……", "…", "？"]);
     drop(table);
     drop(source);
@@ -58,6 +63,6 @@ fn punctuation_keeps_its_order_in_a_snapshot_and_the_empty_row_is_readable() {
     tree.put(&key, &[]).unwrap();
     assert_eq!(tree.get(&key), Some(Vec::new()));
     drop(tree);
-    let table = PunctTable::open(&path).unwrap();
+    let table = PunctTable::attach(&path).unwrap();
     assert!(table.punctuations(token).unwrap().is_empty());
 }

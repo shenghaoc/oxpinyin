@@ -11,9 +11,9 @@
     )
 )]
 
+use crate::tables::Index;
 use oxpinyin::data::{FileType, TableConf};
 use oxpinyin::input::tool::{self, storage::TableFile};
-use oxpinyin::user::tool::Index;
 use std::path::{Path, PathBuf};
 
 mod lookup;

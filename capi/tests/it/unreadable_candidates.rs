@@ -49,7 +49,7 @@ mod fixture {
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/w3")
-            .join(oxpinyin::data::DEFAULT_STORE_EXT);
+            .join(oxpinyin::store::DEFAULT_STORE_EXT);
         for name in [
             "table.conf",
             "phrase_index.bin",
@@ -96,11 +96,10 @@ mod fixture {
         let index_path = if matches!(case, Case::Fallback) {
             let conf = oxpinyin::data::TableConf::load_from_dir(dir).unwrap();
             let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
-            fs::write(
-                user.join("user.conf"),
-                oxpinyin::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
-            )
-            .unwrap();
+            assert!(
+                oxpinyin::data::user_files::UserTableInfo::conform_to(&versions)
+                    .save(user.join("user.conf").as_path())
+            );
             user.join("user_pinyin_index.bin")
         } else {
             dir.join("pinyin_index.bin")

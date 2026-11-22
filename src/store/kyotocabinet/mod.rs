@@ -57,15 +57,6 @@ pub(crate) fn open_system(
 }
 
 impl KcStore {
-    /// A test tool's plain native set without a transaction or synchronization.
-    ///
-    /// # Errors
-    /// Returns the native write error.
-    #[cfg(feature = "tools")]
-    pub fn tool_set(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.db.set(key, value)
-    }
-
     /// Ends the open transaction by committing it. Not generic, so the many
     /// `write` closures share one copy of it.
     #[inline(never)]

@@ -39,20 +39,29 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
             "{reading:?}"
         );
         unsafe { zhuyin_end_add_phrases(iter) };
-        let rows =
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { with_store(instance, |store| store.export_phrases_in(USER_DICTIONARY)) };
-        let expected: Vec<oxpinyin::user::ExportedPhrase> = if added {
-            vec![oxpinyin::user::ExportedPhrase {
-                text: phrase.chars().map(u32::from).collect(),
-                pinyin: "ni3'hao3".to_owned(),
-                count: 5,
-            }]
-        } else {
-            Vec::new()
-        };
-        assert_eq!(rows, expected, "{reading:?}");
+        // SAFETY: `instance` is live and the store borrow ends before close.
+        let phrases = unsafe { with_store(instance, |store| store.phrases()) };
+        let mut rows = phrases.iter().filter(|row| {
+            oxpinyin::vocab::phrase_index_library_index(row.token()) == USER_DICTIONARY
+        });
+        if added {
+            let row = rows.next().expect("stored phrase");
+            assert_eq!(
+                row.words(),
+                phrase.chars().map(u32::from).collect::<Vec<_>>()
+            );
+            let [reading] = row.pronunciations() else {
+                panic!("expected one stored reading");
+            };
+            let keys: Vec<_> = reading
+                .keys()
+                .iter()
+                .map(|&key| oxpinyin::user::key_pinyin_string(key).expect("stored key"))
+                .collect();
+            assert_eq!(keys, ["ni3", "hao3"]);
+            assert_eq!(reading.count(), 5);
+        }
+        assert!(rows.next().is_none(), "{reading:?}");
         // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and
         // is not yet freed; nothing uses either handle after this call; only this thread calls into
         // them.

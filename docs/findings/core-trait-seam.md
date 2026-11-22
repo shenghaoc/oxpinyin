@@ -49,7 +49,7 @@ The trait does not prescribe storage or ranking; the entry type is the core's `P
 Three types implement `Dictionary` directly:
 
 - `RuntimeDict` (`src/runtime/mod.rs`), the production dictionary: the system table, then the user table, with the addon facade beside them.
-- `SystemDictionary` (`src/data/dict.rs`), the system table alone. The nonshipping REPL lookup (`src/runtime/tool.rs`, `tools` feature) gives it to the engine.
+- `SystemDictionary` (`src/data/dict.rs`), the system table alone. The nonshipping REPL lookup (`repl/src/lookup.rs`) gives it to the engine.
 - Every `PhraseList` implementor, through the blanket implementation.
 
 The other reads of `RuntimeDict` and `SystemDictionary` are inherent methods, for example `lookup`, `trellis_records`, `trellis_ranges`, `trellis_item`, `lookup_into_flagged` and `phrase_prefix_exists`.

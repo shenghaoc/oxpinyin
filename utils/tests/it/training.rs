@@ -24,7 +24,7 @@ fn root() -> PathBuf {
 fn fixture() -> PathBuf {
     root()
         .join("fixtures/w3")
-        .join(oxpinyin::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin::store::DEFAULT_STORE_EXT)
 }
 
 /// A private copy of [`fixture`].

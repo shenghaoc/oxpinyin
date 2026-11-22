@@ -1,12 +1,13 @@
 //! tests/storage/test_{phrase,chewing}_table.cpp at 074a2219.
 use crate::{load_text_tables, present};
 use oxpinyin::OptionBits;
+use oxpinyin::data::phrase_library::ChunkItem;
 use oxpinyin::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
 use oxpinyin::data::{chewing_index_key as index_key, search_chewing_row as search_row};
 use oxpinyin::input::tool;
 use oxpinyin::input::tool::table_tests as output;
 use oxpinyin::parser::ChewingKey;
-use oxpinyin::user::tool::Index;
+use oxpinyin::user::{ReplayedLibrary, SystemLibrary, journal_item_bytes};
 use oxpinyin::vocab::phrase_index_library_index;
 use oxpinyin_utils::storage::Tree;
 use std::ops::Range;
@@ -181,7 +182,7 @@ pub fn chewing_main(data: &Path) {
         if input.line() == b"quit" {
             break;
         }
-        let parsed = oxpinyin::engine::tool::parse_full(
+        let parsed = crate::parser::parse_full(
             input.line(),
             OptionBits::USE_TONE | OptionBits::PINYIN_INCOMPLETE,
         );
@@ -203,6 +204,32 @@ pub fn chewing_main(data: &Path) {
         tables.dump_ranges(&ranges);
     }
     tables.table.mask_all();
+}
+
+/// One heap-loaded SubPhraseIndex, using the same item storage as journal replay.
+pub(crate) struct Index {
+    live: ReplayedLibrary,
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        Self {
+            live: ReplayedLibrary::pristine(SystemLibrary::failed(0).view()),
+        }
+    }
+}
+
+impl Index {
+    /// Read a complete phrase item.
+    #[must_use]
+    pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
+        self.live.item(slot)
+    }
+
+    /// Set the slot and add the item's unigram to the total.
+    pub(crate) fn add(&mut self, slot: u32, item: &ChunkItem) {
+        self.live.add_item(slot, &journal_item_bytes(item));
+    }
 }
 
 #[cfg(test)]

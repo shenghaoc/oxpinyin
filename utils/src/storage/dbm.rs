@@ -74,7 +74,7 @@ impl Tree {
     /// `m_db->put(m_db, NULL, &key, &data, 0)`.
     pub fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         if self.plain_set {
-            return self.store.tool_set(key, value);
+            return self.store.set_raw(key, value);
         }
         self.store.write(|txn| {
             txn.put_raw(key, value)?;

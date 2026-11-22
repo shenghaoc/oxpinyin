@@ -19,9 +19,9 @@ kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin/kyotocabinet", "oxpinyi
 
 [dependencies]
 oxpinyin-utils = { path = "../utils", version = "=0.1.0-alpha.2", default-features = false }
-oxpinyin = { workspace = true, features = ["tools"] }
-oxpinyin-capi = { path = "../capi", version = "=0.1.0-alpha.2", default-features = false, features = ["tools"] }
-oxzhuyin-capi = { path = "../zhuyin-capi", version = "=0.1.0-alpha.2", default-features = false, features = ["tools"] }
+oxpinyin = { workspace = true }
+oxpinyin-capi = { path = "../capi", version = "=0.1.0-alpha.2", default-features = false }
+oxzhuyin-capi = { path = "../zhuyin-capi", version = "=0.1.0-alpha.2", default-features = false }
 
 [dev-dependencies]
 assert_cmd.workspace = true
@@ -30,6 +30,5 @@ regex.workspace = true
 rstest.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-# Dev-only: the test-only library items the tests read; a dev-dependency
-# feature never reaches the normal build.
+# The tests use the native text newline and the fixture store extension.
 oxpinyin = { workspace = true, features = ["test-hooks"] }

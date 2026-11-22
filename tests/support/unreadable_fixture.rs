@@ -29,7 +29,7 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         } else {
             "../fixtures/w3"
         })
-        .join(oxpinyin::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin::store::DEFAULT_STORE_EXT);
     for name in [
         "table.conf",
         "phrase_index.bin",
@@ -64,11 +64,10 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
     let index_path = if matches!(case, Case::Fallback) {
         let conf = oxpinyin::data::TableConf::load_from_dir(dir.path()).unwrap();
         let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
-        fs::write(
-            user.path().join("user.conf"),
-            oxpinyin::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
-        )
-        .unwrap();
+        assert!(
+            oxpinyin::data::user_files::UserTableInfo::conform_to(&versions)
+                .save(user.path().join("user.conf").as_path())
+        );
         user.path().join("user_pinyin_index.bin")
     } else {
         dir.path().join("pinyin_index.bin")

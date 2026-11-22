@@ -316,22 +316,6 @@ pub mod phrase_index {
 pub mod punct {
     use crate::vocab::PhraseText;
 
-    #[cfg(any(test, feature = "test-hooks"))]
-    use super::append_u32_le;
-
-    /// Encodes punctuation strings as a UCS-4 stream with `u32` zero
-    /// terminators — `PunctTableEntry::escape`'s layout.
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[must_use]
-    pub fn encode_puncts<S: AsRef<str>>(puncts: &[S]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        for punct in puncts {
-            append_u32_le(&mut buf, punct.as_ref().chars().map(u32::from));
-            buf.extend_from_slice(&0_u32.to_le_bytes());
-        }
-        buf
-    }
-
     /// Decodes a punctuation value as the pin walks it: the stored words
     /// of each punctuation, which the C boundary encodes
     /// (`PunctTableEntry::unescape` and `get_all_punctuations`,

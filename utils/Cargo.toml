@@ -24,7 +24,7 @@ workspace = true
 
 [dependencies]
 rustc-hash.workspace = true
-oxpinyin = { workspace = true, features = ["tools"] }
+oxpinyin = { workspace = true }
 
 [dev-dependencies]
 assert_cmd.workspace = true

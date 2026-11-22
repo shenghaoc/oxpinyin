@@ -231,7 +231,7 @@ pub(crate) fn system_dir_cstr() -> CString {
         .join("..")
         .join("fixtures")
         .join("w3")
-        .join(oxpinyin::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin::store::DEFAULT_STORE_EXT);
     CString::new(dir.to_str().expect("UTF-8 path")).expect("no interior NUL")
 }
 

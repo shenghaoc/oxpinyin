@@ -83,7 +83,7 @@ fn repo_root() -> PathBuf {
 fn fixture_dir() -> PathBuf {
     let dir = repo_root()
         .join("fixtures/w3")
-        .join(oxpinyin::data::DEFAULT_STORE_EXT);
+        .join(oxpinyin::store::DEFAULT_STORE_EXT);
     assert!(
         dir.is_dir(),
         "missing W3 fixture directory {}",

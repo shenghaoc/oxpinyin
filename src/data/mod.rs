@@ -36,8 +36,6 @@ pub use crate::model::UserCountDelta;
 // fuzz targets) name fixture directories and check `table.conf` against the
 // backend the build selected without naming `store` themselves.
 pub use crate::store::DEFAULT_STORE_DB_FORMAT;
-#[cfg(any(test, feature = "test-hooks"))]
-pub use crate::store::DEFAULT_STORE_EXT;
 // Native row decoding for the pin test-program tools.
 pub use chewing_table::{index_key as chewing_index_key, search_row as search_chewing_row};
 

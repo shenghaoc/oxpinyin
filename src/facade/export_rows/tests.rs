@@ -3,6 +3,7 @@ use super::{
     SENTENCE_START,
 };
 use crate::ucs4::PhraseTextConcat;
+use crate::user::native_fixture::seed_bigram;
 use crate::vocab::PhraseText;
 use std::collections::HashMap;
 
@@ -310,7 +311,7 @@ use crate::vocab::{SyllableKey, USER_DICTIONARY};
 /// store is in memory, #642).
 fn open() -> ContextCore {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let extension = crate::data::DEFAULT_STORE_EXT;
+    let extension = crate::store::DEFAULT_STORE_EXT;
     ContextCore::open(
         &root.join(extension),
         None,
@@ -333,7 +334,7 @@ fn an_empty_bigram_export_stays_empty_after_the_first_write() {
     store.mask_out(u32::MAX, 0x0700_0001).unwrap();
     let mut walk = ctx.bigram_export_walk().unwrap();
     assert!(!walk.has_next(&ctx).unwrap());
-    ctx.user_store_mut().set_bigram_count(1, 2, 69).unwrap();
+    seed_bigram(ctx.user_store_mut(), 1, &[(2, 69)]);
     assert_eq!(ctx.user_store().bigram_count(1, 2).unwrap(), 69);
     assert_eq!(ctx.user_store().bigram_predecessors().unwrap(), [1]);
     assert!(!walk.has_next(&ctx).unwrap());
@@ -398,6 +399,38 @@ fn drain(ctx: &ContextCore, cursor: &mut PhraseExportCursor) -> Option<Vec<Row>>
 }
 
 #[test]
+fn export_phrases_render_the_pinned_triples() {
+    use crate::vocab::USER_DICTIONARY;
+    let user = crate::user::native_fixture::TempUserDir::new("export-stored-triples");
+    let mut context = crate::facade::test_fixture::native_context(
+        &crate::user::native_fixture::system_dir(),
+        &user.path,
+        crate::user::UserConfLaw::Pinyin,
+    );
+    for (text, pinyin, count) in [
+        ("你好", "ni'hao", None),
+        ("你好", "ni'hao", Some(7)),
+        ("世界", "shi'jie", Some(3)),
+    ] {
+        let keys = crate::facade::test_fixture::native_keys(pinyin);
+        context
+            .user_store_mut()
+            .add_phrase(&text.into(), &keys, count)
+            .unwrap();
+    }
+    let mut cursor = context.phrase_export_cursor(u32::from(USER_DICTIONARY));
+    assert_eq!(
+        next_row(&context, &mut cursor),
+        Some(row("你好", "ni'hao", 12))
+    );
+    assert_eq!(
+        next_row(&context, &mut cursor),
+        Some(row("世界", "shi'jie", 3))
+    );
+    assert!(!cursor.has_next());
+}
+
+#[test]
 fn begin_probes_one_token_and_the_guint8_alias_drains_like_library_1() {
     let ctx = open();
     let mut cursor = ctx.phrase_export_cursor(257);
@@ -431,7 +464,7 @@ fn an_unused_nibble_and_the_pins_asserts_are_reported() {
 fn an_addon_promoted_into_a_missing_library_is_exported() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::data::DEFAULT_STORE_EXT);
+        .join(crate::store::DEFAULT_STORE_EXT);
     let system = tempfile::tempdir().unwrap();
     for entry in std::fs::read_dir(root).unwrap() {
         let entry = entry.unwrap();

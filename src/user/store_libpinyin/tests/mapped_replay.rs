@@ -63,11 +63,10 @@ impl Profile {
             crate::data::chunk_format::build_memory_chunk(log).expect("log chunk"),
         )
         .expect("write log");
-        std::fs::write(
-            dir.join("user.conf"),
-            crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-        )
-        .expect("write marker");
+        assert!(
+            crate::data::user_files::UserTableInfo::conform_to(&versions())
+                .save(dir.join("user.conf").as_path())
+        );
         Self { dir, chunk }
     }
 

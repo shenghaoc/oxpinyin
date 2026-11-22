@@ -157,7 +157,7 @@ const GBK: u8 = 2;
 /// with a user directory of its own.
 fn open(user: &Path) -> ContextCore {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let extension = crate::data::DEFAULT_STORE_EXT;
+    let extension = crate::store::DEFAULT_STORE_EXT;
     ContextCore::open(&root.join(extension), Some(user), WORD, UserConfLaw::Pinyin)
         .expect("committed backend fixtures")
 }
@@ -350,7 +350,7 @@ fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
 /// SYSTEM_FILE`.
 fn system_with_gbk_naming_no_user_file(scratch: &Path) -> std::path::PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let committed = root.join(crate::data::DEFAULT_STORE_EXT);
+    let committed = root.join(crate::store::DEFAULT_STORE_EXT);
     let system = scratch.join("system");
     std::fs::create_dir_all(&system).expect("system dir");
     for entry in std::fs::read_dir(committed).expect("committed fixtures") {
@@ -445,7 +445,7 @@ mod failed_attachment_fini {
     use crate::user::UserConfLaw;
 
     fn fixture_dir() -> PathBuf {
-        let extension = crate::data::DEFAULT_STORE_EXT;
+        let extension = crate::store::DEFAULT_STORE_EXT;
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures")
             .join("w3")
@@ -517,7 +517,7 @@ mod library_directory {
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        let extension = crate::data::DEFAULT_STORE_EXT;
+        let extension = crate::store::DEFAULT_STORE_EXT;
         root.join(extension)
     }
 
@@ -611,7 +611,7 @@ mod library_directory {
         let mut marker =
             crate::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
         marker.open_counter = 1;
-        std::fs::write(user.join("user.conf"), marker.to_text()).expect("write the marker");
+        assert!(marker.save(user.join("user.conf").as_path()));
     }
 
     #[test]
@@ -856,7 +856,7 @@ mod library_totals {
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        root.join(crate::data::DEFAULT_STORE_EXT)
+        root.join(crate::store::DEFAULT_STORE_EXT)
     }
 
     /// A private system directory under `parent`: every fixture file copied in,

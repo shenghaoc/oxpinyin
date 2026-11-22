@@ -40,8 +40,8 @@ pub struct ChewingKey {
 
 impl ChewingKey {
     /// The zero key: every element `CHEWING_ZERO_*`.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub const ZERO: Self = Self {
+    #[cfg(test)]
+    pub(crate) const ZERO: Self = Self {
         initial: 0,
         middle: 0,
         final_: 0,

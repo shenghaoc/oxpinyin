@@ -7,22 +7,9 @@ use crate::{
     vocab::SyllableKey,
 };
 
-/// Reuse the C API's graph, fewest-key selection and trailing-apostrophe
-/// computation (`Session::full_parsed_len`). The standalone parser does not
-/// perform the later scan-matrix resplit/divide steps: the pin disables its
-/// parser post-processing at `pinyin_parser2.cpp:377-379` (074a2219).
+/// Converts a selected path into the consumed byte prefix and key spans.
 #[must_use]
-pub fn parse_full(input: &[u8], options: OptionBits) -> Parse {
-    let input = full_input(input);
-    let input = input.as_ref();
-    let Some(graph) = SegmentGraph::build_with_options(input, options) else {
-        return Parse::default();
-    };
-    let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
-    selected_parse(input, &path)
-}
-
-fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
+pub fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
     Parse {
         consumed: super::apostrophe_extended(input, path.last().map_or(0, Edge::to)),
         keys: path
@@ -32,60 +19,6 @@ fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
             })
             .collect(),
     }
-}
-
-// PhoneticKeyMatrix construction, phonetic_key_matrix.cpp:30–83. The utility does not
-// enable resplit or divided-table processing here.
-/// Builds physical matrix columns from the supplied key spans. Gaps and the terminal
-/// position have zero keys. For a nonempty parse, use ordered byte spans inside the
-/// consumed prefix and leave room for the terminal column.
-///
-/// # Panics
-///
-/// Panics when a key starts past `parsed.consumed`.
-/// A nonempty parse also requires a representable column count of `consumed + 1`.
-#[must_use]
-pub fn physical_matrix(parsed: &Parse, options: OptionBits) -> Vec<Vec<Key>> {
-    use crate::parser::ChewingKey;
-    use crate::vocab::SyllableKey;
-    if parsed.keys.is_empty() {
-        return Vec::new();
-    }
-    let mut columns = vec![Vec::new(); parsed.consumed + 1];
-    for key in &parsed.keys {
-        columns[key.span.start].push(key.clone());
-    }
-    columns[parsed.consumed].push(Key {
-        key: ChewingKey::default(),
-        span: parsed.consumed..parsed.consumed + 1,
-    });
-    for (i, key) in parsed.keys.iter().enumerate() {
-        let next = parsed
-            .keys
-            .get(i + 1)
-            .map_or(parsed.consumed, |key| key.span.start);
-        for (fill, column) in columns.iter_mut().enumerate().take(next).skip(key.span.end) {
-            column.push(Key {
-                key: ChewingKey::default(),
-                span: fill..fill + 1,
-            });
-        }
-    }
-    for column in &mut columns {
-        let Some(origin) = column.first().cloned() else {
-            continue;
-        };
-        let spelling = origin.key.with_tone(0).pinyin_string();
-        if let Some(key) = SyllableKey::from_canonical_text(&spelling) {
-            for alternate in key.fuzzy_alternatives(options) {
-                column.push(Key {
-                    key: alternate.chewing_key().with_tone(origin.key.tone),
-                    span: origin.span.clone(),
-                });
-            }
-        }
-    }
-    columns
 }
 
 /// One native n-best result, with non-null MatchResult positions.
@@ -146,9 +79,7 @@ pub fn prepare_lookup(
     input: &[u8],
     options: OptionBits,
 ) -> Result<PreparedLookup, crate::engine::EngineError> {
-    let input = full_input(input);
-    let graph = SegmentGraph::build_with_options(input.as_ref(), options)
-        .ok_or(crate::engine::EngineError::Failure)?;
+    let (input, graph) = full_graph(input, options).ok_or(crate::engine::EngineError::Failure)?;
     let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     let parsed = selected_parse(input.as_ref(), &path);
     let scan = super::matrix::ScanMatrix::from_columns(super::build_scan_matrix_over(
@@ -221,6 +152,17 @@ where
     crate::engine::phrase::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)
 }
 
+/// Builds the full-pinyin graph over the explicit-length bytes.
+#[must_use]
+pub fn full_graph(
+    input: &[u8],
+    options: OptionBits,
+) -> Option<(std::borrow::Cow<'_, [u8]>, SegmentGraph)> {
+    let input = full_input(input);
+    let graph = SegmentGraph::build_with_options(input.as_ref(), options)?;
+    Some((input, graph))
+}
+
 // FullPinyinParser2 duplicates the whole explicit-length input with
 // g_strndup. Its documented contract pads the n+1 buffer with NULs
 // when strlen(str) < n (GLib gstrfuncs.c:397-407 at 2.86.1).
@@ -232,6 +174,3 @@ fn full_input(input: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     padded[nul..].fill(0);
     std::borrow::Cow::Owned(padded)
 }
-
-#[cfg(test)]
-mod tests;
