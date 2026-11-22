@@ -39,11 +39,27 @@ fn opened_system_attachments_synchronize_before_close() {
     // (ngram_kyotodb.cpp:43-50, chewing_large_table2_kyotodb.cpp:65-74).
     for hash in [false, true] {
         let file = Temp::new(&format!("opened-system-{hash}"), "db");
-        if hash {
-            drop(KcStore::create_hash(&file.0).unwrap());
-        } else {
-            drop(KcStore::create(&file.0).unwrap());
-        }
+        let SystemAttachment::Open(store) = SystemAttachment::attach(&file.0, hash, false).unwrap()
+        else {
+            panic!("{hash}: writable attach failed");
+        };
+        let handle = store.db.address();
+        take_native_calls();
+        store.set_raw(b"first", b"1").unwrap();
+        store.set_raw(b"second", b"2").unwrap();
+        drop(store);
+        assert_eq!(
+            take_native_calls(),
+            [
+                (handle, NativeCall::Set),
+                (handle, NativeCall::Set),
+                (handle, NativeCall::Synchronize(false)),
+                (handle, NativeCall::Close),
+                (handle, NativeCall::Delete),
+            ],
+            "writable hash: {hash}"
+        );
+
         let SystemAttachment::Open(store) = SystemAttachment::open(&file.0, hash).unwrap() else {
             panic!("{hash}: an existing file did not open");
         };
