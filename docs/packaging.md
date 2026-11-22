@@ -495,7 +495,8 @@ The makers are:
   Its existing `glib2` dependency already includes the GLib headers.
 
 Data: Debian and Fedora keep `libpinyin-data`.
-It is a separate package on those distributions, stays installed through the takeover, and is only a Recommends of the oxpinyin package.
+It is a separate package on those distributions and stays installed through the takeover.
+Each oxpinyin runtime package requires `libpinyin-data` with a minimum version set by the distribution's most recent switch to the matching backend.
 Arch has no data package: the model is inside the libpinyin package that the takeover removes.
 So the Arch lane downloads that package (`pacman -Sw`) and ships its `usr/lib/libpinyin/data` inside the oxpinyin package.
 These are the same KyotoCabinet-format files, under the same licence, at the same path, `${pkgdatadir}/data`.
