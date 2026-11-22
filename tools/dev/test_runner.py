@@ -198,27 +198,7 @@ def sanitize_abi(settings, environment):
     return native.shell_status(slot.run_command(command, env=child, cwd=settings.root))
 
 
-def _run_bdb(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
-    display = backend.display[sanitizer]
-    child = _sanitizer_options(backend, sanitizer, host_os, environment)
-    test_environment = dict(child, RUSTFLAGS=backend.flags[sanitizer])
-    command = _cargo_test(backend, nightly, target)
-    if sanitizer == 'address':
-        suffix = ('(LeakSanitizer off on Darwin)' if host_os == 'Darwin'
-                  else '(+ LeakSanitizer)')
-        print(f'--- Rust under {display} {suffix} ---', file=out, flush=True)
-    else:
-        print(f'--- Rust under {display} ---', file=out, flush=True)
-    result = _launch(tools, command, environment=test_environment, err=err,
-                     stdout=None, stderr=None)
-    if result.returncode:
-        return native.shell_status(result.returncode)
-    print('', file=out, flush=True)
-    print("sanitizers: clean (libdb's own internals are NOT instrumented)", file=out, flush=True)
-    return 0
-
-
-def _run_kc(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
+def _run_system_backend(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
     display = backend.display[sanitizer]
     child = _sanitizer_options(backend, sanitizer, host_os, environment)
     test_environment = dict(child, RUSTFLAGS=backend.flags[sanitizer])
@@ -233,13 +213,13 @@ def _run_kc(backend, sanitizer, *, environment, out, err, tools, host_os, nightl
     if result.returncode:
         return native.shell_status(result.returncode)
     print('', file=out, flush=True)
-    print("sanitizers: clean (libkyotocabinet's own internals are NOT instrumented)",
+    library = "libdb" if backend.name == "bdb" else "libkyotocabinet"
+    print(f"sanitizers: clean ({library}'s own internals are NOT instrumented)",
           file=out, flush=True)
     return 0
 
 
-def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target,
-               check_object=None):
+def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
     display = backend.display[sanitizer]
     if host_os != 'Darwin':
         # tkrzw is no Linux cell (tools/dev/cell.py): Linux runs no tkrzw code.
@@ -277,16 +257,12 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
             executable = record.get('executable')
             if executable is not None:
                 executables.append(executable)
-    package = ROOT
-    if check_object is None:
-        def check_object(obj):
-            return tools.tkrzw(obj, runner='run-sanitizers', side='subject',
-                               cwd=package, environment=child)
     checked = 0
     library = None
     for executable in executables:
         try:
-            resolved = check_object(Path(executable))
+            resolved = tools.tkrzw(Path(executable), runner='run-sanitizers', side='subject',
+                                   cwd=ROOT, environment=child)
         except native.NativeRefused as error:
             print(f'REFUSED: {error}', file=err, flush=True)
             print('ERROR: the sanitizer gate did NOT run.', file=err, flush=True)
@@ -338,25 +314,23 @@ def _run_sanitizer_backend(backend, sanitizer, *, environment, out, err, tools, 
             tools, environment, nightly)
     else:
         target = environment.get('OXPINYIN_SANITIZER_TARGET') or _rustc_host(tools, environment)
-    if backend.name == 'bdb':
-        return _run_bdb(backend, sanitizer, environment=environment, out=out, err=err,
-                        tools=tools, host_os=host_os, nightly=nightly, target=target)
-    if backend.name == 'kc':
-        return _run_kc(backend, sanitizer, environment=environment, out=out, err=err,
-                       tools=tools, host_os=host_os, nightly=nightly, target=target)
+    if backend.name in ('bdb', 'kc'):
+        return _run_system_backend(backend, sanitizer, environment=environment, out=out, err=err,
+                                   tools=tools, host_os=host_os, nightly=nightly, target=target)
     return _run_tkrzw(backend, sanitizer, environment=environment, out=out, err=err,
                       tools=tools, host_os=host_os, nightly=nightly, target=target)
 
 
-def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, tools=None):
+def sanitize(argv):
     """Select and run one sanitizer gate, preserving the old entry grammar.
 
     Return the backend's shell-style status; for `all`, 0 when every gate
     succeeded and 1 otherwise; 2 on a usage error. `--check` validates and
     prints the selection without running a gate.
     """
-    arguments = list(sys.argv[1:] if argv is None else argv)
-    environment = dict(os.environ if environment is None else environment)
+    arguments = list(argv)
+    out, err = sys.stdout, sys.stderr
+    environment = dict(os.environ)
     check = False
     if arguments[:1] == ['--check']:
         check = True
@@ -379,21 +353,17 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
     except FileNotFoundError:
         print(_toolchain_file_missing('sanitize'), file=err, flush=True)
         return 1
-    selection_os = environment.get('OXPINYIN_SANITIZER_HOST_OS') or platform.system()
-    selection_arch = environment.get('OXPINYIN_SANITIZER_HOST_ARCH') or platform.machine()
-    # The backend scripts read the real host; the override only selects and
-    # refuses in the dispatcher, as the earlier sanitizer entry point did.
     host_os = platform.system()
     if sanitizer == 'memory':
-        if selection_os == 'Darwin':
+        if host_os == 'Darwin':
             print('sanitize: MemorySanitizer is unsupported on macOS: rustc has no Darwin '
                   'MSan target.', file=err, flush=True)
         else:
             print('sanitize: MemorySanitizer has no in-tree wrapper; use address, thread '
                   'or leak.', file=err, flush=True)
         return 1
-    gates = SANITIZER_BACKENDS if selection_os == 'Darwin' else (cell.LOCAL_CELL,)
-    if backend_name == 'tkrzw' and selection_os != 'Darwin':
+    gates = SANITIZER_BACKENDS if host_os == 'Darwin' else (cell.LOCAL_CELL,)
+    if backend_name == 'tkrzw' and host_os != 'Darwin':
         print(f'sanitize: {TKRZW_NOT_LINUX}', file=err, flush=True)
         return 1
     if sanitizer == 'leak':
@@ -402,7 +372,7 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
                   'process-lifetime allocations that LSan reports as leaks; use address '
                   'or thread.', file=err, flush=True)
             return 1
-        if selection_os == 'Darwin' and selection_arch == 'arm64':
+        if host_os == 'Darwin' and platform.machine() == 'arm64':
             print('sanitize: standalone LeakSanitizer is unsupported on macOS arm64; '
                   'use address (leak detection off on Darwin) or an x86_64 host.',
                   file=err, flush=True)
@@ -410,9 +380,9 @@ def sanitize(argv=None, *, out=sys.stdout, err=sys.stderr, environment=None, too
     environment['OXPINYIN_SANITIZER'] = sanitizer
     if check:
         print(f'sanitize: check backend={backend_name} sanitizer={sanitizer} '
-              f'host={selection_os}/{selection_arch}', file=out, flush=True)
+              f'host={host_os}/{platform.machine()}', file=out, flush=True)
         return 0
-    tools = native.Tools(environment=environment) if tools is None else tools
+    tools = native.Tools(environment=environment)
     if backend_name != 'all':
         return _run_sanitizer_backend(
             BACKEND_DATA[backend_name], sanitizer, environment=environment,

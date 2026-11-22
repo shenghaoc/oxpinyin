@@ -67,7 +67,6 @@ class Result:
     started: list[str] = dataclasses.field(default_factory=list)
     failed: dict[str, int] = dataclasses.field(default_factory=dict)
     cancelled: bool = False
-    errors: dict[str, BaseException] = dataclasses.field(default_factory=dict)    # units that raised
 
     @property
     def ok(self) -> bool:
@@ -126,7 +125,7 @@ class ProcessLauncher:
 
 
 class Handle:
-    """The pool's view of a started task; tests substitute a fake with the same methods."""
+    """The pool's view of a started process."""
 
     def __init__(self, process: subprocess.Popen, job=None):
         """Wrap PROCESS, the leader of its own process group, or JOB, the Windows Job Object it runs in."""
@@ -207,9 +206,6 @@ def run_pool(tasks: Sequence[Task], workers: int, launcher, *, cancelled: Callab
             del running[name]
             if status:
                 result.failed[name] = status
-                error = getattr(handle, 'error', None)
-                if error is not None:
-                    result.errors[name] = error
                 print(f'{name}: failed with status {status}', file=out, flush=True)
                 _tail(task.log, out)
 
@@ -561,7 +557,7 @@ def _finish(result: Result, out) -> int:
     return 0 if result.ok else 1
 
 
-def run_command(args, out=sys.stderr, launcher_factory=ProcessLauncher) -> int:
+def run_command(args, out=sys.stderr) -> int:
     """Run the pool for parsed ARGS and return its exit status."""
     if not args.items or not args.command:
         raise SystemExit('pool run needs --items and a command after --')
@@ -579,7 +575,7 @@ def run_command(args, out=sys.stderr, launcher_factory=ProcessLauncher) -> int:
         try:
             with slot.cancellation_handlers():
                 result = run_pool(build_tasks(args, chosen, token, Path(cid_directory)), chosen.workers,
-                                  launcher_factory(), cancelled=slot.CANCELLED.is_set, out=out)
+                                  ProcessLauncher(), cancelled=slot.CANCELLED.is_set, out=out)
         except slot.Cancelled:
             return _finish(Result(cancelled=True), out)
     return _finish(result, out)

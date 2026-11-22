@@ -1,6 +1,6 @@
 """Shared compiler and C-driver execution, private fixtures and comparisons."""
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,13 +15,6 @@ from tools.tkrzw.runtime import RuntimeRefused, check, launched
 class DriverServices:
     settings: Settings
     context: UnitContext | None = None
-    stdout: Callable[[bytes], None] | None = None
-    stderr: Callable[[bytes], None] | None = None
-
-    def fork(self, settings: Settings, context: UnitContext,
-             stdout: Callable[[bytes], None], stderr: Callable[[bytes], None]) -> 'DriverServices':
-        return replace(self, settings=settings, context=context, stdout=stdout, stderr=stderr)
-
     def command(self, argv: Sequence[str], *, cwd: Path | None = None,
                 environment: Mapping[str, str] | None = None, capture: bool = False,
                 merged: bool = False, umask: int = -1) -> subprocess.CompletedProcess:
@@ -34,14 +27,8 @@ class DriverServices:
                                          env=self.settings.environment if environment is None else environment,
                                          merge_stderr=merged, umask=umask)
             if not capture:
-                if self.stdout is None:
-                    sys.stdout.buffer.write(result.stdout)
-                else:
-                    self.stdout(result.stdout)
-                if self.stderr is None:
-                    sys.stderr.buffer.write(result.stderr)
-                else:
-                    self.stderr(result.stderr)
+                sys.stdout.buffer.write(result.stdout)
+                sys.stderr.buffer.write(result.stderr)
                 sys.stdout.flush()
                 sys.stderr.flush()
             return subprocess.CompletedProcess(argv, result.status,
