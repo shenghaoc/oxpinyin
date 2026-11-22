@@ -47,7 +47,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Jobs after the gate:
-#   rust — rustfmt, cargo-deny, Clippy, the fuzz-target compile, the Lizard
+#   rust — rustfmt, cargo-deny, Clippy, fuzz-target Clippy, the Lizard
 #          complexity limit and the workspace tests on Linux under Kyoto
 #          Cabinet, the one Linux cell; the default tkrzw backend runs on
 #          macOS and Windows in verify-nightly.yml
@@ -173,9 +173,14 @@ jobs:
       - name: Install the fuzz toolchain
         working-directory: fuzz
         run: rustup toolchain install
-      - name: Compile all fuzz targets
+      - name: Lint all fuzz targets
         working-directory: fuzz
-        run: cargo check --locked --bins --no-default-features --features kyotocabinet
+        run: cargo clippy --locked --bins --no-default-features --features kyotocabinet -- -D warnings
+      # Also lint the persistent entry point. This reuses the dependencies
+      # and type-checks the afl feature without linking the AFL++ runtime.
+      - name: Lint all fuzz targets with AFL
+        working-directory: fuzz
+        run: cargo clippy --locked --bins --no-default-features --features kyotocabinet,afl -- -D warnings
       # Complexity limit: the recipe states it; pyproject.toml and uv.lock
       # name the Lizard release.
       - name: Lizard complexity limit
