@@ -2,7 +2,6 @@
 //! utilities and checks their arguments, standard streams, exit status and
 //! files. `support` holds the helpers more than one module uses.
 
-#[cfg(unix)]
 #[path = "support/fixtures.rs"]
 mod fixtures;
 mod gen_pinyin_table;

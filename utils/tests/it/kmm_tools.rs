@@ -4,6 +4,7 @@
 //! fixture corpus `fixtures/w9/segmenter-spseg-w3.txt`; the native DBM walk
 //! order is never asserted, only the set of records it emits.
 
+use crate::fixtures::w3;
 use oxpinyin_tool_support::input as tool;
 
 /// Format independently with libc's `%f`, as the utility's printf family does.
@@ -76,41 +77,6 @@ const MERGED_BIGRAMS: &[&str] = &[
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
-}
-
-/// `fixtures/w3/<the compiled backend's directory>`; a missing directory
-/// fails the test, never skips it.
-fn fixture_dir() -> PathBuf {
-    let dir = repo_root()
-        .join("fixtures/w3")
-        .join(oxpinyin::__internal::DEFAULT_STORE_EXT);
-    assert!(
-        dir.is_dir(),
-        "missing W3 fixture directory {}",
-        dir.display()
-    );
-    dir
-}
-
-fn copy_tree(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).unwrap();
-        }
-    }
-}
-
-/// A scratch copy of the fixture directory: cwd-relative `table.conf` and
-/// chunk names, exactly as the utilities open them.
-fn scratch() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    copy_tree(&fixture_dir(), dir.path());
-    dir
 }
 
 fn binary(name: &str) -> PathBuf {
@@ -232,7 +198,7 @@ fn block(export: &str, header: &str, until: &str) -> Vec<String> {
 }
 #[test]
 fn merge_sums_the_same_model_and_refuses_a_missing_result_file() {
-    let dir = scratch();
+    let dir = w3();
     let document = repo_root().join(DOCUMENT);
     let out = run(
         dir.path(),
@@ -283,7 +249,7 @@ fn merge_sums_the_same_model_and_refuses_a_missing_result_file() {
 
 #[test]
 fn prune_with_zero_k_and_cdf_keeps_the_model_and_prints_one_star_per_row() {
-    let dir = scratch();
+    let dir = w3();
     let document = repo_root().join(DOCUMENT);
     let out = run(
         dir.path(),
@@ -315,7 +281,7 @@ fn prune_attaches_without_create_and_leaves_a_missing_model_missing() {
     // `prune_k_mixture_model.cpp:129` attaches ATTACH_READWRITE without
     // ATTACH_CREATE, so a missing model is not created and its magic
     // header is missing (`:131-134`).
-    let dir = scratch();
+    let dir = w3();
     let out = run(dir.path(), "prune_k_mixture_model", &["absent.db"], None);
     assert_eq!(out.status.code(), Some(tool::ENODATA));
     assert_eq!(
@@ -326,7 +292,7 @@ fn prune_attaches_without_create_and_leaves_a_missing_model_missing() {
 }
 #[test]
 fn the_committed_kmm_fixtures_are_the_pin_records() {
-    let dir = scratch();
+    let dir = w3();
     // The valid model validates and exports with the source-derived header
     // and record set.
     let out = run(
