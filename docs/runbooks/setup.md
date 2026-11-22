@@ -240,7 +240,7 @@ Inside the checkout, `uv run --managed-python python` and
 first, or a container build, copies the file in or passes its contents on; it
 does not write the version again. `pyproject.toml` declares the minimum
 supported version in its `requires-python` field; uv refuses to run when the
-request does not satisfy it. `tools/dev/python-request.test.py` fails when a
+request does not satisfy it. The CI Python version check fails when a
 version request or a second declaration appears anywhere else, outside
 `docs/findings/`.
 A `tools.dev` module runs from the checkout with the managed interpreter and
@@ -272,42 +272,7 @@ just clippy --locked -p oxpinyin --all-targets -- -D warnings
 just fmt --all --check
 ```
 
-### Registry listing and test entry points
-
-`just test-tools` runs every non-excluded Python harness file, concurrently up
-to the allowed CPU count of the host. Each file has private temporary and lock
-directories. Output appears as complete blocks in path order, and failures do
-not stop the remaining files. The same managed interpreter runs
-the controller and each file.
-
-For iteration, pass files and, optionally, a unittest name pattern:
-
-```sh
-just test-tools tools/dev/test_runner.test.py
-just test-tools tools/dev/test_runner.test.py -k HarnessTests
-just test-tools --changed
-just test-tools --changed origin/main
-```
-
-These rules apply to the selection:
-
-- `--changed [BASE]` compares tracked files against BASE (HEAD by default),
-  including staged and unstaged edits, and includes untracked files.
-- Changed test
-  files select themselves. `HARNESS_DEPENDENCIES` in `tools/dev/test_runner.py`
-  maps known modules to their tests.
-- Any unknown path or missing mapped test
-  selects the full suite. An empty diff selects no files.
-- Explicit files and `--changed` cannot be
-  combined.
-- Every mode keeps the credential filter and the
-  existing exclusions.
-
-`--changed` is iteration feedback only: `HARNESS_DEPENDENCIES` is maintained by hand
-and can select too few tests. The full `just test-tools` stays the completion gate.
-With `-k` and no explicit FILE, the runner reports files with no matching tests as
-unselected. A named file with no matches stays a failure, as does a pattern
-that matches no tests across all selected files.
+### Native test entry points
 
 A full test run needs one `just fetch-contract-data` beforehand: the
 `candidate_surface` test of `oxpinyin` reads the pinned data that it
@@ -565,8 +530,6 @@ cargo clippy --locked -p oxpinyin --all-targets -- -D warnings
 ```
 
 Repository Python tooling on Windows runs through the pwsh recipes.
-The Python-backed `_test-argv` recipe verifies argument and exit-status transport.
-Job Object lifetime, coverage and full tooling acceptance stay unverified.
 AFL++ does not support Windows: `just fuzz-setup` and `just fuzz` exist on
 Windows and refuse with the Linux-only message ([fuzzing](#fuzzing)).
 Install uv with its native Windows installer, then just (`cargo install just
@@ -581,8 +544,7 @@ environment and toolchain; no project-specific IDE is required.
 
 **Storage-dependent native Windows scope:** the Windows CI job runs clippy,
 `cargo nextest run --profile ci` over the portable
-workspace on the [default backend](backends.md). It also runs the tools Python
-harness (`just test-tools`).
+workspace on the [default backend](backends.md).
 
 - GLib and pkgconf come from vcpkg. Nothing packages tkrzw for Windows, so
   the repository builds it: `just tkrzw` (`tools/tkrzw/windows.py`) fetches the pinned

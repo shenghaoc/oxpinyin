@@ -62,13 +62,7 @@ reach; specified handling of malformed external input stays testable. The REPL
 has one session per mode, plus tests of the decisions it makes itself. The
 crates have no doc tests (`doctest = false`).
 
-A Python tooling test protects a consequential observable contract: a result,
-an exit status, argument transport or a file effect. A test that only repeats
-the calls the code makes is not kept. For non-shipping tooling, retain tests for
-failures that could silently invalidate results, cause damage or leak resources,
-require expensive recovery, or compromise automated consumers; failures reliably
-detected before consequential work during ordinary manual use need no dedicated
-test.
+The project tests product behaviour. Internal development tools have no automated test suite.
 
 ## Candidate capture
 

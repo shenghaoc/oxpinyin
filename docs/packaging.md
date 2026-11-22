@@ -81,17 +81,6 @@ All 15 are ported.
 The six additional staged pin utilities are storage `gen_pinyin_table`, `gen_zhuyin_table` and `export_interpolation`, and training `gen_ngram`, `gen_deleted_ngram` and `import_k_mixture_model`.
 No utility port in this inventory is missing; the trainer's own Python scripts stay external.
 
-`just test-tools` runs the packaging fixtures.
-After the build above, the explicit real-tool integration test runs from the same Python test file:
-
-```sh
-uv run --managed-python python -X utf8 tools/dev/packaging.test.py TrainerLayoutTests.check_real_tools
-```
-
-It checks every reached path and runs `../utils/training/gen_unigram --help` from the created `data/`.
-`OXPINYIN_TRAINER_BIN_DIR` selects another binary directory.
-A missing tool fails this test; the test does not substitute fixtures.
-
 ## Why cargo-c
 
 `oxpinyin-capi` is a `cdylib` that must be installed like any other C library: a versioned `.so`, an unversioned linker symlink, `pinyin.h` and a `pkg-config` file.
@@ -335,7 +324,6 @@ On Linux and macOS, setting `OXPINYIN_CAPI_SO` and `OXPINYIN_ZHUYIN_SO` selects 
 On Linux the sanitizer job runs the gate against the development cdylibs by default. It checks their exported names.
 On macOS, the gate stages each library without an override in a temporary directory using `just packaging install --prefix=/usr/local`, `--release --locked` and the cell's backend features.
 It checks the relinked `lib<name>.15.0.0.dylib`. The nightly `test-macos` job runs this check.
-The packaging and ABI tests in `tools/dev/packaging.test.py` and `tools/dev/abi.test.py` cover identity preservation, failure atomicity and leak detection.
 
 The cxx bridges of the tkrzw and Kyoto Cabinet backends link the `cxx` crate.
 Its Rust runtime defines `#[export_name]` symbols (`cxxbridge1$slice$*`, `cxxbridge1$string$*`, `cxxbridge1$exception`, ...), and each bridge defines its own (`oxpinyin$tkrzw$cxxbridge1$*`).

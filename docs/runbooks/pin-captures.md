@@ -168,8 +168,4 @@ asks for it.
 
 The capture is done when the approved values are in the Rust tests.
 
-`tools/oracle/pin_capture.test.py` tests each refusal of step 2, a capture without a provision
-cache and a capture that would write outside its staging directory. It also checks what a utility run
-stages, and that the run writes only inside its private copy.
-
 A new observation goes in `OBSERVATIONS` in `pin_capture.py`.

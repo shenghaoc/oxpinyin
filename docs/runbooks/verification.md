@@ -64,7 +64,6 @@ Before a push for review or merge and after each rebase, one `cargo clippy --loc
 - `just deny` when a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed. The recipe runs the cargo-deny checks of CI's `deny` job.
 - `just shear` when a `Cargo.toml` changed or a Rust file was added, moved or removed.
 - `just complexity` when Rust functions changed: the [complexity limit](#complexity-limit).
-- `just test-tools` when `tools/` changed.
 - `just ruff` when Python under `tools/` changed.
 
 WIP checkpoint pushes: `cargo fmt --all --check` only.
@@ -280,8 +279,7 @@ These rules govern the CI gates. This section is the only place that states them
 
 1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which also requires the `store` job when the store gate selects it.
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
-   The nightly runs their Rust checks. It runs the tools Python harness on those platforms only on a manual dispatch of `verify-nightly.yml` with `tools_harness` set.
-   It is dispatched on the branch for a tooling change that can behave differently there (process control, command forwarding, cleanup), and on the release commit before a release.
+   The nightly runs their Rust checks. Dispatch it on the release commit before tagging.
    A lane never dispatches a workflow.
 2. **Linux CI runs the one Linux cell: Kyoto Cabinet, from Ubuntu's packages.**
    tkrzw stays the Cargo default, and every Linux job selects Kyoto Cabinet with the backend flag instead: the `rust` lane (clippy, rustdoc, nextest, the archive build and the fuzz check), the cell gates, `shipping-sizes`, whose size table is therefore the Kyoto Cabinet libraries', and the nightly fuzz soak.
@@ -293,11 +291,9 @@ These rules govern the CI gates. This section is the only place that states them
 3. **Fuzz execution runs nightly.** The PR `rust` job compiles every fuzz target with `cargo check --locked --bins` in `fuzz/`, under its path gate.
    The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
-5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust`, `harness` and `shipping-sizes`. In the same file, `STORE_GATE_ARGUMENTS` adds the ABI inputs and job infrastructure to the backend selection for `store`.
-   A Rust-only change does not run the Python harness: that job runs when `tools/` or a file its tests read changed, and then runs every harness test.
-   The generated Rust tables are such files.
+5. **A job runs when its inputs changed.** `CI_INPUTS` in `tools/dev/ci_tree.py` holds the paths of `rust` and `shipping-sizes`. In the same file, `STORE_GATE_ARGUMENTS` adds the ABI inputs and job infrastructure to the backend selection for `store`.
    Within a job, no step depends on the changed paths, so a job's success always means the same checks.
-   The Python version request rule reads every tracked file, so it runs on every change.
+   The changes job runs the Python version request check, Ruff and the offline generated-table comparison.
    Pushes to main run the normal path-selected checks.
 6. **Linux CI runs natively.** Every Linux job of `ci.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
    Every system package, the store backends included, comes from Ubuntu's apt.

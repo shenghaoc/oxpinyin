@@ -204,9 +204,7 @@ input on standard input.
 - **Tooling.** `tools/dev/fuzz.py` holds the fuzz logic, and `just fuzz-setup`
   and `just fuzz` are one-line recipes that call it
   (`python -m tools.dev.fuzz setup` and `run`); `just fuzz-minimize` calls
-  `minimize`, and the nightly calls `archive`. Its tests,
-  `tools/dev/fuzz.test.py`, check the option refusals, the corpus rules and
-  the finding count without a fuzzer build.
+  `minimize`, and the nightly calls `archive`.
 - **Build.** `just fuzz <target>` builds the target with cargo-afl,
   AddressSanitizer and the AFL++ LLVM plugins (`afl-llvm-dict2file`,
   `split-switches`, `SanitizerCoveragePCGUARD` and `afl-llvm-ijon`). CmpLog

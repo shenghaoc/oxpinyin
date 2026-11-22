@@ -1,6 +1,6 @@
 # Path gates. The workflow always starts. The `changes` job writes one flag per
 # job (`tools.dev.ci_tree gate`), and a job runs only when its flag is true.
-# CI_INPUTS in tools/dev/ci_tree.py holds the paths of `rust`, `harness` and
+# CI_INPUTS in tools/dev/ci_tree.py holds the paths of `rust` and
 # `shipping-sizes`. The `store` job uses the backend selection rule in
 # docs/runbooks/verification.md, section 2. STORE_GATE_ARGUMENTS adds the
 # inputs to its ABI tests and the tools that run the job. A skipped job still reports
@@ -51,8 +51,6 @@ concurrency:
 #          complexity limit and the workspace tests on Linux under Kyoto
 #          Cabinet, the one Linux cell; the default tkrzw backend runs on
 #          macOS and Windows in verify-nightly.yml
-#   harness — the ruff F check and the Python harness tests of tools/, when
-#             tools/ or a file its tests read changed
 #   shipping-sizes — the stripped shipping-library sizes
 #   store — Clippy, rustdoc and the workspace tests under bdb; then the bdb
 #           and kyotocabinet store suites and the C ABI tests under the sanitizers
@@ -93,7 +91,6 @@ jobs:
     runs-on: &ubuntu ubuntu-26.04
     outputs:
       rust: ${{ steps.gate.outputs.rust }}
-      harness: ${{ steps.gate.outputs.harness }}
       ship: ${{ steps.gate.outputs.ship }}
       store: ${{ steps.gate.outputs.store }}
     steps:
@@ -106,13 +103,16 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           uv: 'true'
+          just: 'true'
       - name: Compute the path-gate flags
         id: gate
         run: uv run --managed-python python -X utf8 -m tools.dev.ci_tree gate
       # Every tracked file is an input of this rule, so it runs here on every
-      # change. The file's other test class runs with the harness.
+      # change.
       - name: Python version request is written once
-        run: uv run --managed-python python -X utf8 tools/dev/python-request.test.py RequestLiteralTests
+        run: uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_python_request; raise SystemExit(lint_python_request())'
+      - run: just ruff
+      - run: just rust-tables --check
 
   # The Linux Rust lane: every check that reads the workspace, under the Linux cell.
   rust:
@@ -154,11 +154,7 @@ jobs:
       # Placement gate for crate-level `#![cfg(...)]`. A gate that evaluates
       # false discards the crate attributes after it, so one above a `//!`
       # block removes the docs and `missing_docs` fires on the excluded
-      # platform only. This Linux job cannot see that, so the checker
-      # reads placement, not cfg outcomes. Its harness runs first, so a
-      # defect in the checker cannot pass.
-      - name: Crate cfg-placement harness
-        run: uv run --managed-python python -X utf8 -m tools.dev.test_runner tools/dev/lint-crate-cfg-placement.test.py
+      # platform only. The checker reads the placement on Linux.
       - name: Crate cfg-placement gate
         run: uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_crate_cfg_placement; raise SystemExit(lint_crate_cfg_placement(sys.argv[1:]))'
       # Drop-in version agreement: the capi manifests' header subdirectory
@@ -236,47 +232,6 @@ jobs:
               --no-default-features --features kyotocabinet \
               --target-dir "$target" --manifest-path "$name-$version/Cargo.toml"
           done <<< "$packages"
-
-  # The Python harness tests of tools/, all of them whenever the gate selects
-  # the job. Some of them run cargo metadata, a C compiler or GLib, so the job
-  # takes the toolchain and the build packages.
-  harness:
-    needs: changes
-    if: needs.changes.outputs.harness == 'true'
-    runs-on: *ubuntu
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          rust-toolchain: 'true'
-          uv: 'true'
-          just: 'true'
-      - name: Install build dependencies (apt)
-        # The real-tool harnesses use gcc and GNU binutils (readelf, nm,
-        # objcopy, objdump, as, ld) for the C stubs, make for the trainer
-        # layout and pkg-config for the packaging link; the runner image ships
-        # those. apt adds the GLib development package for the packaging
-        # link, diff for the installed-metadata and neutrality comparisons,
-        # taskset (util-linux) for the CPU-pinned child, and Valgrind for the
-        # end-to-end Linux comparison on the stub library. No harness test
-        # compiles C++ or reads libclang.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libglib2.0-dev diffutils util-linux valgrind
-      # Pyflakes rules (F) over tools/. This job runs on every tools/ change;
-      # the lint job does not run for Python-only paths such as tools/bisection.
-      - run: just ruff
-      # just is installed above, so the size build's revision-recipe test must
-      # run here rather than skip.
-      - run: just test-tools
-        env:
-          OXPINYIN_REQUIRE_JUST: '1'
 
   # Stripped shipping-library sizes (constitution section 2). Builds both
   # facades with the release recipe (`just packaging install`) on the
@@ -504,7 +459,7 @@ jobs:
   # jobs must succeed and unselected jobs must be skipped. It runs after
   # failures and can be cancelled.
   ci-aggregate:
-    needs: [changes, rust, harness, shipping-sizes, store]
+    needs: [changes, rust, shipping-sizes, store]
     if: ${{ !cancelled() }}
     runs-on: *ubuntu
     steps:

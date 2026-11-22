@@ -14,7 +14,7 @@ import tomllib
 from typing import Any
 
 
-JOB_FLAGS = {"rust": "rust", "harness": "harness", "store": "store", "shipping-sizes": "ship"}
+JOB_FLAGS = {"rust": "rust", "store": "store", "shipping-sizes": "ship"}
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ CRATE_INPUTS = (*CRATE_DIRS, "src", "tests", "codegen", "build.rs", "benches", "
 RUST = (*SHARED, *CRATE_INPUTS, "Cargo.toml", "Cargo.lock", "clippy.toml", "fixtures", "tools")
 # The tools/ paths that no Rust lane imports, runs or reads. `python -m tools.dev`
 # imports every other tools/dev module, so a change there still selects the Rust lanes.
-PYTHON_ONLY = ("tools/*.test.py", "tools/bisection/*.py",
+PYTHON_ONLY = ("tools/bisection/*.py",
                "tools/oracle", "tools/scripts2")
 # The exceptions: `python -m tools.dev` imports these modules, and the Rust lanes read the pin records.
 RUST_READS = (
@@ -71,50 +71,13 @@ SHIP = ("src", "codegen", "build.rs", *SHIP_CRATES, "Cargo.toml", "Cargo.lock", 
         "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
         "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
         ".github/workflows/ci.yml", ".github/actions")
-# The Rust files `python -m tools.dev.rust_tables` writes. A harness test regenerates them and
-# compares, so a change to one selects the harness. The same test holds this list to the generator's.
-GENERATED_TABLES = (
-    "src/chewing_key_tables.rs",
-    "src/content_table_source.rs",
-    "src/tone_symbols.rs",
-    "src/table_data/double_pinyin.rs",
-    "src/table_data/full_pinyin_counts.rs",
-    "src/table_data/full_pinyin_indexes.rs",
-    "src/table_data/full_pinyin_syllables.rs",
-    "src/table_data/syllable_inventory.rs",
-    "src/table_data/tone_symbols.rs",
-    "src/table_data/zhuyin_indexes.rs",
-    "src/table_data/zhuyin_keyboards.rs",
-    "src/table_data/zhuyin_tones.rs",
-    "src/engine/session/split_tables.rs",
-)
 CI_INPUTS = {
     # cargo fmt and fuzz Clippy read the fuzz workspace. The
     # complexity check runs Lizard from a dependency group, so the lockfile is
     # an input. `just deny` runs cargo deny, which reads the manifests, the
     # lockfiles and deny.toml.
     "rust": Inputs((*RUST, "fuzz", "uv.lock", ".config/nextest.toml", "deny.toml"), PYTHON_ONLY,
-                   (*RUST_READS, "tools/dev/lint-crate-cfg-placement.test.py")),
-    # tools/ and what its tests read outside it: the workflow, the manifests
-    # and the lockfile, the files directly in each crate's directory (version
-    # scripts, headers, allocator registers, build scripts), the generated Rust
-    # tables, the fixtures, the table-conf template, the sanitizer nightly, the
-    # fuzz lockfile (its afl version is the cargo-afl version), the fuzz seeds
-    # and dictionaries (the fuzz tests read the curated inputs and the
-    # table-conf dictionary), and the lockfile of the dependency group that
-    # holds Ruff. No harness test
-    # reads any other Rust source, so the files under a crate's src, tests,
-    # examples and benches do not select the job.
-    # The Python version request rule reads every tracked file, so it is a step
-    # of the `changes` job, not an input here.
-    "harness": Inputs((*SHARED, "uv.lock",
-                       "tools", "Cargo.toml", "Cargo.lock",
-                       *CRATE_INPUTS, "fixtures", "data/table.conf.in", "fuzz/rust-toolchain.toml",
-                       "fuzz/Cargo.lock", "fuzz/seeds", "fuzz/dictionaries"),
-                      tuple(f"{prefix}{section}/*.rs"
-                            for prefix in ("", *(f"{directory}/" for directory in CRATE_DIRS))
-                            for section in ("src", "tests", "examples", "benches")),
-                      (*GENERATED_TABLES, "tools/measurement/src")),
+                   RUST_READS),
     # This job runs without Cargo, and ship_sizes keys the base result on the same crates.
     "ship": Inputs(SHIP, tuple(f"{directory}/tests" for directory in SHIP_CRATES)),
 }
@@ -161,7 +124,7 @@ STORE_GATE_ARGUMENTS = ("--run-flag", "--run-without-base", *(argument for path 
     "tools/dev/abi.py", "tools/dev/abi_headers.py", "tools/dev/cell.py", "tools/dev/drivers.py",
     "tools/dev/entry.py", "tools/dev/host.py", "tools/dev/native.py", "tools/dev/pool.py",
     "tools/dev/slot.py", "tools/dev/runners.py", "tools/dev/packaging.py", "tools/oracle/oracle-pin.txt",
-    "tools/dev/ci_tree.py", "tools/dev/ci_tree.test.py", "tools/bisection/cells-for-diff.py",
+    "tools/dev/ci_tree.py", "tools/bisection/cells-for-diff.py",
     "tools/tkrzw", "tools/dev/check.py",
     "tools/dev/test_runner.py", "fuzz/rust-toolchain.toml",
     "clippy.toml", ".config/nextest.toml") for argument in ("--also", path)))

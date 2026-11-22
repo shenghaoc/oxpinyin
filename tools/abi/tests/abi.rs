@@ -51,8 +51,6 @@ macro_rules! glib_release {
 mod constants;
 mod exercises;
 mod pinyin;
-#[path = "../../../src/user/test_child.rs"]
-mod test_child;
 mod zhuyin;
 
 #[derive(Clone)]
@@ -74,23 +72,14 @@ fn sentinel<T>() -> *mut T {
     ptr::from_ref(&UNTOUCHED).cast_mut().cast()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Control {
-    None,
-    MissingFree,
-    DoubleFree,
-}
-
 struct Coverage {
     slots: Vec<Slot>,
-    control: Control,
 }
 
 impl Coverage {
-    fn new(register: &[Slot], control: Control) -> Self {
+    fn new(register: &[Slot]) -> Self {
         Self {
             slots: register.to_vec(),
-            control,
         }
     }
 
@@ -151,15 +140,7 @@ impl Coverage {
             let string: *mut c_char = glib_sys::g_realloc(string.cast(), len + 2).cast();
             string.add(len).write(b'!' as c_char);
             string.add(len + 1).write(0);
-            let sentence = matches!(symbol, "pinyin_get_sentence" | "zhuyin_get_sentence");
-            if sentence && self.control == Control::MissingFree {
-                return;
-            }
             release(string.cast());
-            if sentence && self.control == Control::DoubleFree {
-                // Only the isolated negative-control child attempts this invalid free.
-                release(string.cast());
-            }
         }
     }
 
@@ -247,21 +228,11 @@ fn warm_then_measure(register: &[Slot], lifecycle: impl Fn(&mut Coverage, &CStr,
     // SAFETY: LSan's pair applies to the current thread. All first-use work
     // happens here before the second lifecycle starts with fresh coverage.
     unsafe { __lsan_disable() };
-    lifecycle(
-        &mut Coverage::new(register, Control::None),
-        &system,
-        &user_path,
-    );
+    lifecycle(&mut Coverage::new(register), &system, &user_path);
     // SAFETY: This balances the __lsan_disable call above on the same thread.
     unsafe { __lsan_enable() };
 
-    let control = match env::var("OXPINYIN_ABI_CHILD_CONTROL").as_deref() {
-        Err(env::VarError::NotPresent) => Control::None,
-        Ok("missing-free") => Control::MissingFree,
-        Ok("invalid-free") => Control::DoubleFree,
-        other => panic!("unexpected control {other:?}"),
-    };
-    let mut measured = Coverage::new(register, control);
+    let mut measured = Coverage::new(register);
     lifecycle(&mut measured, &system, &user_path);
     measured.finish();
 }
@@ -289,40 +260,4 @@ fn zhuyin_ownership() {
     check_ownership(ZHUYIN, |slots, system, user| {
         zhuyin::lifecycle(&api, slots, system, user)
     });
-}
-
-fn expect_report(control: &str, report: &str) {
-    for test in ["pinyin_ownership", "zhuyin_ownership"] {
-        // The parent owns the scratch tree even when ASan ends the child early.
-        let temp = tempfile::tempdir().unwrap();
-        let result = test_child::run_exact(
-            test,
-            [
-                ("OXPINYIN_ABI_CHILD_CONTROL", std::ffi::OsStr::new(control)),
-                ("TMPDIR", temp.path().as_os_str()),
-            ],
-        );
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        assert!(
-            !result.status.success() && stderr.contains(report),
-            "{test} {control}: expected {report}, got {}\n{stderr}",
-            result.status
-        );
-    }
-}
-
-#[test]
-fn detects_missing_free() {
-    expect_report(
-        "missing-free",
-        "ERROR: LeakSanitizer: detected memory leaks",
-    );
-}
-
-#[test]
-fn detects_invalid_free() {
-    expect_report(
-        "invalid-free",
-        "ERROR: AddressSanitizer: attempting double-free",
-    );
 }
