@@ -16,6 +16,28 @@ pub fn system_dir() -> PathBuf {
         .join(oxpinyin::__internal::DEFAULT_STORE_EXT)
 }
 
+/// W3 under CJK directory and file names, with a fresh CJK user directory.
+#[cfg(windows)]
+pub fn cjk_system_and_user() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let root = tempfile::tempdir().unwrap();
+    let system = root.path().join("系统");
+    let user = root.path().join("用户");
+    std::fs::create_dir(&system).unwrap();
+    std::fs::create_dir(&user).unwrap();
+    for entry in std::fs::read_dir(system_dir()).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), system.join(entry.file_name())).unwrap();
+    }
+    std::fs::rename(system.join("gb_char.bin"), system.join("汉字.bin")).unwrap();
+    let conf = std::fs::read_to_string(system.join("table.conf")).unwrap();
+    std::fs::write(
+        system.join("table.conf"),
+        conf.replace("gb_char.bin", "汉字.bin"),
+    )
+    .unwrap();
+    (root, system, user)
+}
+
 /// A uniquely named scratch dir, removed when the owning guard drops.
 fn scratch_dir(prefix: &str, what: &str) -> (PathBuf, tempfile::TempDir) {
     let dir = tempfile::Builder::new()
