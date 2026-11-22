@@ -300,6 +300,9 @@ def build_target(target, environ, found):
     afl_bin = (data_home(environ) / f'afl.rs/rustc-{rustc["release"]}-{rustc["commit"]}'
                / f'afl.rs-{version}/afl/bin')
     target_dir = target_directory(environ)
+    # Cargo prefers CARGO_ENCODED_RUSTFLAGS to RUSTFLAGS: an inherited value
+    # would drop AddressSanitizer and the flags that cargo-afl adds.
+    environ = {name: value for name, value in environ.items() if name != 'CARGO_ENCODED_RUSTFLAGS'}
     env = dict(environ,
                ASAN_OPTIONS=ASAN_OPTIONS,
                LSAN_OPTIONS=LSAN_OPTIONS,
