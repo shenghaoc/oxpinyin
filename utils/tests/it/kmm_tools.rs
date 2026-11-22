@@ -4,7 +4,7 @@
 //! fixture corpus `fixtures/w9/segmenter-spseg-w3.txt`; the native DBM walk
 //! order is never asserted, only the set of records it emits.
 
-use oxpinyin::input::tool;
+use oxpinyin_tool_support::input as tool;
 
 /// Format independently with libc's `%f`, as the utility's printf family does.
 #[expect(unsafe_code, reason = "libc snprintf formats the expected text")]

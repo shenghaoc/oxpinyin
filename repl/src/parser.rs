@@ -3,9 +3,9 @@
 use std::ffi::{CString, OsString};
 
 use oxpinyin::OptionBits;
-use oxpinyin::input::tool::{self, OptionArg, OptionEntry, OptionValue};
 use oxpinyin::parser::{DoublePinyinParser, ZhuyinParser, ZhuyinScheme};
-use oxpinyin::tool::{Key, Parse, parse_direct};
+use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry, OptionValue};
+use oxpinyin_tool_support::parser::{Key, Parse, parse_direct};
 
 enum Parser {
     Full,
@@ -128,11 +128,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
 /// parser post-processing at `pinyin_parser2.cpp:377-379` (074a2219).
 #[must_use]
 pub(crate) fn parse_full(input: &[u8], options: OptionBits) -> Parse {
-    let Some((input, graph)) = oxpinyin::engine::tool::full_graph(input, options) else {
+    let Some((input, graph)) = oxpinyin_tool_support::lookup::full_graph(input, options) else {
         return Parse::default();
     };
     let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
-    oxpinyin::engine::tool::selected_parse(&input, &path)
+    oxpinyin_tool_support::lookup::selected_parse(&input, &path)
 }
 
 #[cfg(test)]

@@ -16,15 +16,15 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, OsString, c_int};
 
 use oxpinyin::OptionBits;
-use oxpinyin::data::exact_compare2;
 use oxpinyin::graph::SegmentGraph;
-use oxpinyin::input::tool::gen_pinyin_table::{self as edge, TableInput};
-use oxpinyin::input::tool::{
-    self, OptionArg, OptionEntry, OptionValue, OutputStream, ucs4_to_utf8, utf8_to_ucs4,
-};
 use oxpinyin::parser::ChewingKey;
 use oxpinyin::vocab::{
     MAX_PHRASE_LENGTH, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token,
+};
+use oxpinyin_tool_support::data::exact_compare2;
+use oxpinyin_tool_support::input::gen_pinyin_table::{self as edge, TableInput};
+use oxpinyin_tool_support::input::{
+    self as tool, OptionArg, OptionEntry, OptionValue, OutputStream, ucs4_to_utf8, utf8_to_ucs4,
 };
 
 /// The pin's `static GOptionEntry entries[]` (`:38-43`): `phrase_index`

@@ -9,10 +9,40 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::NonNull;
 use std::ffi::{CStr, CString, OsString};
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 
 use libc::FILE;
 
-use crate::input::native::{c_stderr, c_stdout};
+use oxpinyin::input::c_stderr;
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    static mut stdout: *mut FILE;
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    #[link_name = "__stdoutp"]
+    static mut stdout: *mut FILE;
+}
+
+#[cfg(windows)]
+unsafe extern "C" {
+    fn __acrt_iob_func(index: core::ffi::c_uint) -> *mut FILE;
+}
+
+/// The pointer `<stdio.h>`'s `stdout` expands to.
+fn c_stdout() -> *mut FILE {
+    #[cfg(not(windows))]
+    // SAFETY: the C library initialises `stdout` before `main` and nothing
+    // here assigns it; the read copies the pointer.
+    let stream = unsafe { stdout };
+    #[cfg(windows)]
+    // SAFETY: index 1 is the UCRT's standard output stream, which the
+    // runtime keeps for the process's lifetime.
+    let stream = unsafe { __acrt_iob_func(1) };
+    stream
+}
 
 /// The target's `EINVAL`, the pin's exit status for a refused option or
 /// argument (`ngseg.cpp:119`).
@@ -535,10 +565,10 @@ impl OutputStream {
 
     /// `fopen(filename, "w")` (`ngseg.cpp:122`); `None` for NULL.
     #[must_use]
-    pub fn open_write(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
+    pub fn open_write(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
         // SAFETY: `filename` and the mode are NUL-terminated and outlive the
         // call.
-        crate::input::native::fopen(filename, c"w").map(|stream| Self {
+        oxpinyin::input::fopen(filename, c"w").map(|stream| Self {
             stream,
             owned: true,
         })
@@ -606,7 +636,7 @@ impl LineReader<BufReader<std::fs::File>> {
     /// Opens an input file and returns a reader in its failed state if the open fails.
     /// [`Self::is_open`] distinguishes that state.
     #[must_use]
-    pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Self {
+    pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Self {
         let (file, open_errno) = match std::fs::File::open(filename.as_path()) {
             Ok(file) => (Some(file), None),
             Err(error) => (None, error.raw_os_error()),
@@ -785,10 +815,10 @@ pub mod gen_pinyin_table {
     impl TableInput {
         /// `fopen(filename, "r")` (`:138`); `None` for NULL.
         #[must_use]
-        pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
+        pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode are NUL-terminated and outlive
             // the call.
-            crate::input::native::fopen(filename, c"r").map(|stream| Self {
+            oxpinyin::input::fopen(filename, c"r").map(|stream| Self {
                 stream,
                 phrase: Box::new([0; FIELD]),
                 pinyin: Box::new([0; FIELD]),
@@ -1211,10 +1241,10 @@ pub mod storage {
     impl TableFile {
         /// `fopen(filename, "r")` (`gen_binary_files.cpp:61`, `:97`).
         #[must_use]
-        pub fn open(filename: &(impl crate::input::FileName + ?Sized)) -> Option<Self> {
+        pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
             // SAFETY: `filename` and the mode literal are NUL-terminated and
             // outlive the call.
-            crate::input::native::fopen(filename, c"r").map(|stream| Self { stream })
+            oxpinyin::input::fopen(filename, c"r").map(|stream| Self { stream })
         }
 
         /// `fseek(tablefile, 0L, SEEK_SET)` (`gen_binary_files.cpp:69`,
@@ -1339,7 +1369,7 @@ pub mod storage {
     #[cfg(windows)]
     unsafe fn errno_location() -> *mut c_int {
         // SAFETY: as the Linux definition.
-        unsafe { crate::input::native::errno_location() }
+        unsafe { oxpinyin::input::errno_location() }
     }
 
     /// The C call converts size_t to unsigned int modulo 2^32 on Windows.
@@ -1386,12 +1416,12 @@ pub mod storage {
     #[cfg(all(test, windows))]
     #[must_use]
     pub fn save_chunk(
-        filename: &(impl crate::input::FileName + ?Sized),
+        filename: &(impl oxpinyin::input::FileName + ?Sized),
         length: u32,
         checksum: u32,
         payload: &[u8],
     ) -> bool {
-        let filename = crate::input::native::wide_path(&filename.as_path());
+        let filename = oxpinyin::input::wide_path(&filename.as_path());
         use libc::wopen as open;
         let flags = libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | O_BINARY;
         // The CRT descriptor is not inherited by children.
@@ -2351,5 +2381,24 @@ pub mod lookup_tests {
                 c"Error: Un-segmentable sentence encountered!\n".as_ptr(),
             )
         };
+    }
+}
+
+/// A pin byte path as the Rust path that opens it, `None` where the
+/// platform cannot represent the bytes.
+///
+/// Unix accepts every byte. Windows requires UTF-8, as the pin's tools do
+/// for a `CStr` filename; invalid input names no path. "Checked" refers to
+/// the encoding alone: NULs, existence and filename validity are not
+/// examined.
+#[must_use]
+pub fn path_from_bytes_checked(bytes: &[u8]) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        Some(oxpinyin::input::path_from_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        std::str::from_utf8(bytes).ok().map(PathBuf::from)
     }
 }

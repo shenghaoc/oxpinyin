@@ -20,15 +20,16 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use oxpinyin::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin::data::{DictError, PhraseLibraries, PinyinIndexTable};
-use oxpinyin::input::tool;
-use oxpinyin::input::tool::LineReader;
+use oxpinyin::data::{DictError, PhraseLibraries};
 use oxpinyin::model::PhraseList;
 use oxpinyin::parser::ChewingKey;
 use oxpinyin::vocab::{
     NULL_TOKEN, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, PhraseEntry, PhraseToken, SyllableKey,
     phrase_index_library_index, phrase_index_make_token,
 };
+use oxpinyin_tool_support::data::PinyinIndexTable;
+use oxpinyin_tool_support::input as tool;
+use oxpinyin_tool_support::input::LineReader;
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
 use crate::training::{all_tokens, load_gram, load_table_conf, parse_segmented_line};
@@ -74,7 +75,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     // `system_bigram.attach(SYSTEM_BIGRAM, ATTACH_READONLY)`: ignored.
     let bigram = Some(
         crate::storage::Hash::open_read_only(Path::new("bigram.db"))
-            .unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error)),
+            .unwrap_or_else(|error| oxpinyin_tool_support::input::exit_on_store_error(&error)),
     );
 
     // `system_table_info.get_lambda()`, the `gfloat` the pin passes to

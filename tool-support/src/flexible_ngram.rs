@@ -45,7 +45,7 @@
 //! (`flexible_ngram_bdb.h:110-114`), Kyoto Cabinet `HashDB`
 //! (`flexible_ngram_kyotodb.h:143-155`) and tkrzw `HashDBM`
 //! (`flexible_ngram_tkrzwdb.h:145-159`). [`FlexibleBigram::attach`] opens
-//! it through [`WriteStore::attach_hash`], which runs that backend's own
+//! it through [`attach_hash`], which runs that backend's own
 //! open, retry and signature-write sequence. The object it leaves and the
 //! attach answer are kept apart, as the pin keeps `m_db` and `attach`'s
 //! return value apart.
@@ -81,10 +81,66 @@
 use std::marker::PhantomData;
 use std::path::Path;
 
-use crate::store::{
-    AttachMode, BackendError, DefaultStore, HashAttach, RawReadStore, StoreError, WriteStore,
-    WriteTxn,
-};
+use oxpinyin::store::{BackendError, DefaultStore, RawReadStore, StoreError, WriteStore};
+
+/// The pin's `attach` flags for a hash container: `ATTACH_READONLY`,
+/// `ATTACH_READWRITE`, or `ATTACH_READWRITE | ATTACH_CREATE`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttachMode {
+    /// `ATTACH_READONLY`.
+    ReadOnly,
+    /// `ATTACH_READWRITE`, without `ATTACH_CREATE`.
+    ReadWrite,
+    /// `ATTACH_READWRITE | ATTACH_CREATE`.
+    ReadWriteCreate,
+}
+
+/// What a `FlexibleBigram` attach leaves, before its signature check:
+/// the backend's own open and retry sequence
+/// ([`attach_hash`]).
+pub enum HashAttach<B> {
+    /// The native open failed.
+    Closed,
+    /// The open failed, but walking the keys succeeds with no entries.
+    EmptyWalk,
+    /// An existing container opened; the caller checks its signature.
+    Opened(B),
+    /// The CREATE retry created the container and wrote the signature.
+    /// The flag is the attach answer.
+    Created(B, bool),
+}
+
+/// Failure reading or decoding a FlexibleBigram row.
+#[derive(Debug)]
+pub enum LoadError {
+    /// The value is shorter than the flexible array header.
+    ShortArrayHeader,
+    /// The native read or fixed-record decode failed.
+    Store(StoreError),
+}
+impl From<StoreError> for LoadError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ShortArrayHeader => {
+                f.write_str("flexible bigram single gram is shorter than its array header")
+            }
+            Self::Store(error) => error.fmt(f),
+        }
+    }
+}
+impl std::error::Error for LoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ShortArrayHeader => None,
+            Self::Store(error) => Some(error),
+        }
+    }
+}
 
 /// The magic record's eight-byte key: two `null_token` `phrase_token_t`s
 /// (`flexible_ngram_bdb.h:118-121`, `flexible_ngram_kyotodb.h:157-158`,
@@ -300,12 +356,10 @@ impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
 
 /// The pin's `FlexibleBigram` over the compiled-in store backend.
 ///
-/// `S` names the three record types and the magic number; `B` is the store
-/// backend (`DefaultStore` through [`DefaultFlexibleBigram`], or an
-/// explicitly named peer for a cross-backend caller).
-pub struct FlexibleBigram<B: WriteStore, S> {
+/// `S` names the three record types and the magic number.
+pub struct FlexibleBigram<S> {
     /// The container, when its native open succeeded.
-    db: Option<B>,
+    db: Option<DefaultStore>,
     /// Whether a failed attach still reports a successful empty key walk.
     empty_walk: bool,
     /// `attach`'s answer, kept apart from the object it leaves.
@@ -314,7 +368,7 @@ pub struct FlexibleBigram<B: WriteStore, S> {
     _spec: PhantomData<fn() -> S>,
 }
 
-impl<B: WriteStore, S> Drop for FlexibleBigram<B, S> {
+impl<S> Drop for FlexibleBigram<S> {
     /// `~FlexibleBigram` is `reset()` (`flexible_ngram_tkrzwdb.h:84-90,
     /// 111-113`): synchronize the deferred writes before dropping the handle.
     fn drop(&mut self) {
@@ -328,18 +382,14 @@ impl<B: WriteStore, S> Drop for FlexibleBigram<B, S> {
 pub type SpecGram<S> =
     SingleGram<<S as FlexibleGramSpec>::ArrayHeader, <S as FlexibleGramSpec>::ArrayItem>;
 
-/// [`FlexibleBigram`] on the backend this build selected.
-pub type DefaultFlexibleBigram<S> = FlexibleBigram<DefaultStore, S>;
-
-impl<B, S> FlexibleBigram<B, S>
+impl<S> FlexibleBigram<S>
 where
-    B: RawReadStore + WriteStore,
     S: FlexibleGramSpec,
 {
     /// The pin's `attach(filename, flags)` (`flexible_ngram_bdb.h:94-153`,
     /// `flexible_ngram_kyotodb.h:129-180`, `flexible_ngram_tkrzwdb.h:
     /// 128-187` at 074a2219). A null filename leaves no object. Otherwise
-    /// the backend opens the hash container ([`WriteStore::attach_hash`]),
+    /// the backend opens the hash container ([`attach_hash`]),
     /// and an existing container is checked against
     /// [`FlexibleGramSpec::MAGIC_NUMBER`]. [`Self::attached`] is the
     /// answer. A container that opened stays accessible even when the
@@ -359,7 +409,7 @@ where
         let Some(path) = path else {
             return Ok(this);
         };
-        match B::attach_hash(path, mode, (&MAGIC_KEY, &S::MAGIC_NUMBER))? {
+        match attach_hash(path, mode, (&MAGIC_KEY, &S::MAGIC_NUMBER))? {
             HashAttach::Closed => {}
             HashAttach::EmptyWalk => this.empty_walk = true,
             HashAttach::Created(db, answer) => {
@@ -391,12 +441,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError::ShortArrayHeader`] when the stored value is
+    /// Returns [`LoadError::ShortArrayHeader`] when the stored value is
     /// shorter than the array header. The pin's `load` succeeds on it and
     /// reads outside the record later (`flexible_single_gram.h:88-105`,
     /// `:232-257`, `:300-306`). Returns another [`StoreError`] when the
     /// record read fails or the value's item tail is not whole.
-    pub fn load(&self, token: u32) -> Result<Option<SpecGram<S>>, StoreError> {
+    pub fn load(&self, token: u32) -> Result<Option<SpecGram<S>>, LoadError> {
         let Some(value) = self.read_gram(&token.to_ne_bytes())? else {
             return Ok(None);
         };
@@ -451,7 +501,7 @@ where
         // method's (`flexible_ngram_bdb.h:224-235`,
         // `flexible_ngram_kyotodb.h:246-252`, `flexible_ngram_tkrzwdb.h:
         // 257-263`).
-        let ((), found) = db.write_deferred(|txn| txn.remove_raw(&token.to_ne_bytes()))?;
+        let found = db.remove_raw(&token.to_ne_bytes())?;
         Ok(found)
     }
 
@@ -713,7 +763,10 @@ where
         if self.read_only {
             return Ok(false);
         }
-        db.write_deferred(|txn| txn.put_raw(key, value))?;
+        if db.is_read_only() {
+            return Err(StoreError::ReadOnly);
+        }
+        db.set_raw(key, value)?;
         Ok(true)
     }
 }
@@ -735,22 +788,23 @@ fn encode_value<H: FixedRecord, I: FixedRecord>(
 
 /// [`encode_value`]'s inverse, with the pin's length check made explicit so
 /// a truncated record is a `Result` instead of an out-of-bounds read: a
-/// value shorter than the header is [`StoreError::ShortArrayHeader`], and a
+/// value shorter than the header is [`LoadError::ShortArrayHeader`], and a
 /// partial item tail is a backend error.
 fn decode_value<H: FixedRecord, I: FixedRecord>(
     value: &[u8],
-) -> Result<(H, Vec<ArrayItemWithToken<I>>), StoreError> {
+) -> Result<(H, Vec<ArrayItemWithToken<I>>), LoadError> {
     let header_len = H::LEN;
     let item_len = TOKEN_LEN + I::LEN;
     if value.len() < header_len {
-        return Err(StoreError::ShortArrayHeader);
+        return Err(LoadError::ShortArrayHeader);
     }
     if !(value.len() - header_len).is_multiple_of(item_len) {
         return Err(StoreError::Backend(BackendError::from(format!(
             "flexible bigram value is {} bytes: a {header_len}-byte header plus whole \
              {item_len}-byte item records expected",
             value.len(),
-        ))));
+        )))
+        .into());
     }
     let header = H::decode(&value[..header_len])?;
     let mut items = Vec::with_capacity((value.len() - header_len) / item_len);
@@ -779,3 +833,102 @@ fn training_db_error() -> ! {
 
 #[cfg(test)]
 mod tests;
+
+/// `FlexibleBigram::attach` (`flexible_ngram_bdb.h:94-153` at
+/// 074a2219) with Berkeley DB's documented handle sequence. The pin
+/// retries `DB->open` on its failed handle (`:110-115`) and reads the
+/// signature through a handle whose open failed (`:134-146`). Berkeley
+/// DB requires `DB->close` after a failed `DB->open`, and no other call
+/// on that handle (`dbopen.html`, `dbclose.html`, 5.3.28). So each
+/// failed open closes its handle, the CREATE retry uses a new one, and
+/// a failed attach keeps nothing. The difference is libdb's missing
+/// `BDB1565` lines (compatibility register, Berkeley DB failed handles).
+///
+/// # Errors
+/// Returns failures before a native open.
+#[cfg(feature = "bdb")]
+pub fn attach_hash(
+    path: &Path,
+    mode: AttachMode,
+    signature: (&[u8], &[u8]),
+) -> Result<HashAttach<DefaultStore>, StoreError> {
+    let read_only = mode == AttachMode::ReadOnly;
+    // `Ok(None)`: the native `DB->open` failed and its handle is closed.
+    let open = |create| DefaultStore::try_open_native(path, true, read_only, create);
+    if let Some(store) = open(false)? {
+        return Ok(HashAttach::Opened(store));
+    }
+    if mode != AttachMode::ReadWriteCreate {
+        return Ok(HashAttach::Closed);
+    }
+    let Some(store) = open(true)? else {
+        return Ok(HashAttach::Closed);
+    };
+    // The pin's `DB_DBT_PARTIAL` put at offset 0 of a new record stores
+    // the same four bytes; its answer is the attach answer (`:118-131`).
+    let (key, value) = signature;
+    let written = store.set_raw(key, value).is_ok();
+    Ok(HashAttach::Created(store, written))
+}
+
+/// `FlexibleBigram::attach` (`flexible_ngram_kyotodb.h:129-180` at
+/// 074a2219): a `HashDB` opened without `OCREATE`, and with
+/// `ATTACH_CREATE` opened again with it. After a failed CREATE retry,
+/// the pin's key walk succeeds with no entries because it ignores the
+/// `iterate` result (`:154-155,262-272`). The retry's signature `set`
+/// is ignored (`:157-162`).
+///
+/// The retry is a second `open` of the same object with the pin's
+/// mode, `OREADER | OWRITER | OCREATE`, so it reads the state the
+/// first open left (`FFATAL` from `set_error`).
+///
+/// # Errors
+/// Returns failures before a native open.
+#[cfg(feature = "kyotocabinet")]
+pub fn attach_hash(
+    path: &Path,
+    mode: AttachMode,
+    signature: (&[u8], &[u8]),
+) -> Result<HashAttach<DefaultStore>, StoreError> {
+    let read_only = mode == AttachMode::ReadOnly;
+    let mut store = DefaultStore::allocate_native(true, read_only)?;
+    if store.try_open_native(path, false)? {
+        return Ok(HashAttach::Opened(store));
+    }
+    if mode != AttachMode::ReadWriteCreate {
+        return Ok(HashAttach::Closed);
+    }
+    if !store.try_open_native(path, true)? {
+        return Ok(HashAttach::EmptyWalk);
+    }
+    let (key, value) = signature;
+    let _ = store.set_raw(key, value);
+    Ok(HashAttach::Created(store, true))
+}
+
+/// `FlexibleBigram::attach` (`flexible_ngram_tkrzwdb.h:128-187` at
+/// 074a2219): one `HashDBM`, opened with `OPEN_NO_CREATE`, and with
+/// `ATTACH_CREATE` opened again without it. A failed open without
+/// CREATE, or a failed retry, deletes the object with no `Close`
+/// (`:148-158`). The retry's signature `Set` is ignored (`:161-167`).
+///
+/// # Errors
+/// Returns failures before a native open.
+#[cfg(feature = "tkrzw")]
+pub fn attach_hash(
+    path: &Path,
+    mode: AttachMode,
+    signature: (&[u8], &[u8]),
+) -> Result<HashAttach<DefaultStore>, StoreError> {
+    let read_only = mode == AttachMode::ReadOnly;
+    let mut store = DefaultStore::allocate_native(true, read_only);
+    if store.try_open_native(path, false)? {
+        return Ok(HashAttach::Opened(store));
+    }
+    if mode != AttachMode::ReadWriteCreate || !store.try_open_native(path, true)? {
+        return Ok(HashAttach::Closed);
+    }
+    let (key, value) = signature;
+    let _ = store.set_raw(key, value);
+    Ok(HashAttach::Created(store, true))
+}

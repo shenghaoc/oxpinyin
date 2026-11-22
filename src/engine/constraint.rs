@@ -49,8 +49,8 @@ pub enum Cell {
 /// start position; the interior positions it covers are null upstream).
 #[derive(Clone, Debug)]
 pub struct PhraseSpan {
-    pub(crate) start: usize,
-    pub(crate) token: PhraseToken,
+    pub start: usize,
+    pub token: PhraseToken,
     /// The phrase's text; training reads its stored length
     /// ([`PhraseText::phrase_length`]).
     pub(crate) text: PhraseText,

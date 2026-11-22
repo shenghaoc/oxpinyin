@@ -18,9 +18,12 @@
 //! [`KmmGram`] its `KMixtureModelSingleGram`. The `KMMP` magic number is
 //! the pin's `K_MIXTURE_MODEL_MAGIC_NUMBER` (`k_mixture_model.h:115`).
 
-use oxpinyin::store::{BackendError, DefaultFlexibleBigram, SpecGram, StoreError};
+use oxpinyin::store::{BackendError, StoreError};
+use oxpinyin_tool_support::flexible_ngram::{FlexibleBigram, SpecGram};
 
-pub use oxpinyin::store::{ArrayItemWithToken, FixedRecord, FlexibleGramSpec};
+pub use oxpinyin_tool_support::flexible_ngram::{
+    ArrayItemWithToken, FixedRecord, FlexibleGramSpec,
+};
 
 /// `KMixtureModelMagicHeader` (`k_mixture_model.h:117-124`).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -178,7 +181,7 @@ impl FlexibleGramSpec for KmmSpec {
 }
 
 /// The working model on the backend this build selected.
-pub type KmmBigram = DefaultFlexibleBigram<KmmSpec>;
+pub type KmmBigram = FlexibleBigram<KmmSpec>;
 
 /// The pin's `KMixtureModelSingleGram`.
 pub type KmmGram = SpecGram<KmmSpec>;

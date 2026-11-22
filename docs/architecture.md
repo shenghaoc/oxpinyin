@@ -2,16 +2,18 @@
 
 ## Crates
 
-The workspace has one library crate and four crates that use it.
-The library holds the behaviour; the other crates hold only their own interfaces.
+Three workspace crates are published. The core library holds the engine and the two C crates expose the C interfaces. The three private crates supply the command-line tools.
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
 | oxpinyin | The library. Its modules are in the [module table](#library-modules). | deny, with scoped exceptions in `input` and `store` | yes | yes |
 | oxpinyin-capi | `libpinyin.so.15`, all 79 `pinyin_*` exports, and the SONAME/header/pkg-config through cargo-c. | allow | Linux | yes |
 | oxzhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
+| oxpinyin-tool-support | Native command-line I/O, DBM adapters and C-facade drivers shared by the utilities and REPL. | deny, with scoped exceptions in `input`, `pinyin` and `zhuyin` | Linux, macOS | never |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, using the library's native I/O and storage operations (`docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid | Linux, macOS | never |
 | oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable mini data; no timing loops. | forbid | Linux, macOS | never |
+
+The utilities and REPL depend on `oxpinyin-tool-support`. It depends on the core library and both C crates. The published crates have no dependency on any private crate, including for tests.
 
 The measurement package is independent of the product crates.
 `tools/measurement` owns the nonshipping `bisect` and `system-import-profile`
@@ -36,13 +38,12 @@ The next section states which modules it may depend on.
 | `model`, `sentence_facts`, `single_gram` | The dictionary and language-model contracts, the sentence facts the facades share and the `SingleGram` value layout and operations. |
 | `engine` | Session state, candidate construction, selection, constraints, training plans and decoding. It is storage-free: it reads the system and user models only through the `model` traits. |
 | `store` | The ordered key–value store traits and the three DBM backends, `DefaultStore` included. |
-| `input` | The external-I/O boundary: the pin's C-library and GLib calls for configuration, locale, chunk files, the save path, diagnostics and the utilities' calls. |
+| `input` | The external-I/O boundary: the pin's C-library and GLib calls for configuration, locale, chunk files, the save path and diagnostics. |
 | `data` | The shared on-disk formats and the system-data readers: the row and chunk formats, the pinyin and phrase tables, the phrase libraries, the bigram, punctuation, `table.conf` and the user-file names. |
 | `user` | The user overlays, the learning state and the profile persistence of one session: the user phrase arenas, the user pinyin index and phrase table, the user bigram, the live system items and the save cycle. |
 | `runtime` | The engine assembly: it opens a system data directory and a user store, and hands out sessions over the merged models. |
 | `facade` | The orchestration that the two C crates share: the context and instance state machines, the parse modes, the candidate snapshots, the cursor and offset laws, import, export and prediction. |
 | `marshal` | Safe conversions between C-facing bytes and Rust values. |
-| `tool` | The pin test programs' parser surface for the REPL and the utilities. |
 
 `fixture_doubles` and `parser_rows` are test-only modules.
 
@@ -64,7 +65,6 @@ The table states the rule for production code.
 | `runtime` | `engine`, `user`, `data`, `input`. |
 | `facade` | `runtime`, `engine`, `user`, `data`, `input`, `marshal`. |
 | `marshal` | The base only. |
-| `tool` | The base only. |
 
 The rules that follow from the table:
 
@@ -99,9 +99,9 @@ Unsafe code is confined by module:
 
 - The crate root denies `unsafe_code`.
 - Each top-level module that needs no unsafe code carries `#[forbid(unsafe_code)]` on its `mod` line in the crate root. Only `input` and `store` do not.
-- In `input`'s production code, only the `native` and `tool` modules carry a scoped `#[expect(unsafe_code)]`. The one test-only exception is `input::config::tests::numeric_locale`, which queries and restores the process numeric locale.
+- In `input`'s production code, only the `native` module carries a scoped `#[expect(unsafe_code)]`. The one test-only exception is `input::config::tests::numeric_locale`, which queries and restores the process numeric locale.
 - In `store`, only each backend's binding modules carry one: `bdb::ffi`, `kyotocabinet::bridge`, `kyotocabinet::ffi` and `tkrzw::bridge`.
-- Every unsafe block carries a `// SAFETY:` comment, and no raw pointer leaves these modules.
+- Every unsafe block carries a `// SAFETY:` comment. The private tool I/O module shares the core FILE and CRT primitives.
 - Each C crate defines its own unsafe ABI marshalling helpers. Clippy checks their blocks for safety comments, and review checks the reasons. The core `marshal` module forbids unsafe code.
 
 ### Chewing keys
@@ -116,8 +116,7 @@ No symbol is feature-gated, so a bopomofo-only facade would be additive: a new f
 ### Facades
 
 Both C crates use the shared context and instance state machines in `facade`.
-Their Rust `tool` modules own the C-facade drivers used by the REPL. The REPL forbids unsafe code.
-The REPL owns standalone parser and lookup assembly and uses the core graph, matrix and decoder operations.
+The private support crate owns the C-facade drivers and the parser and lookup adapters. It calls the existing C entry points and core graph, matrix and decoder operations. The utilities and REPL forbid unsafe code.
 `runtime` assembles the dictionary, language-model and user handles for each session.
 Each C crate forwards its backend selection to the library.
 
@@ -164,9 +163,7 @@ The facades import 68 `kyotocabinet::` names, 67 among the pin's 77.
 On Linux, the cargo cdylibs hide the cxx runtime symbols of both bridges through `--exclude-libs`; on macOS, the cargo cdylibs export them and the shipped relink does not ([export gate](packaging.md#export-gate)).
 
 `input` calls the C library through the `libc` crate, with no build step; the [C-library call and macro-check rules](findings/compatibility-policy.md#external-io) apply.
-It declares in Rust, per platform and in one place, the C library's `stdout` and `stderr` objects, which `libc` does not name.
-It calls GLib through `glib-sys` in every build.
-Its `tool` module supplies the utilities' GLib option calls and reads the C++ streams' lines with `std::io`.
+The core declares the C library's `stderr` and the private support crate declares `stdout`, which `libc` does not name. Both crates call GLib through `glib-sys`. The private crate supplies the utilities' GLib option calls and reads the C++ streams' lines with `std::io`.
 
 ### Dependency decisions
 

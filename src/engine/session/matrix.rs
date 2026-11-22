@@ -11,7 +11,7 @@ use super::*;
 /// are the scan matrix's own records, shared with it; this view holds only
 /// where each placed column starts.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ParsedMatrix {
+pub struct ParsedMatrix {
     keys: std::sync::Arc<[ScanKey]>,
     /// `keys[starts[column]..starts[column + 1]]` is the placed column; one
     /// more entry than there are columns, or none for the empty matrix.
@@ -28,7 +28,7 @@ pub(crate) struct ParsedMatrix {
 /// smaller syllable start: the buffer is also the keys in the pin's column
 /// order, which the key getters read as it stands.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ScanMatrix {
+pub struct ScanMatrix {
     keys: std::sync::Arc<[ScanKey]>,
     /// `keys[starts[column]..starts[column + 1]]` is the column; one more
     /// entry than there are columns, or none for the empty matrix.
@@ -37,7 +37,7 @@ pub(crate) struct ScanMatrix {
 
 impl ScanMatrix {
     /// Lays out `columns`, keeping each column's own order.
-    pub(crate) fn from_columns(columns: Vec<Vec<ScanKey>>) -> Self {
+    pub fn from_columns(columns: Vec<Vec<ScanKey>>) -> Self {
         let mut starts = Vec::with_capacity(columns.len() + 1);
         starts.push(0);
         let mut keys = Vec::with_capacity(columns.iter().map(Vec::len).sum());
@@ -83,15 +83,23 @@ pub(crate) struct RetainedParse {
 
 impl ParsedMatrix {
     /// Placed column `column`, or `None` past the bound.
-    pub(crate) fn get(&self, column: usize) -> Option<&[ScanKey]> {
+    #[must_use]
+    pub fn get(&self, column: usize) -> Option<&[ScanKey]> {
         let start = *self.starts.get(column)?;
         let end = *self.starts.get(column + 1)?;
         Some(&self.keys[start..end])
     }
 
     /// The number of placed columns: the bound and one more, or none.
-    pub(crate) fn len(&self) -> usize {
+    #[must_use]
+    pub fn column_count(&self) -> usize {
         self.starts.len().saturating_sub(1)
+    }
+
+    /// Whether the placed column contains a zero key.
+    #[must_use]
+    pub fn has_zero(&self, column: usize) -> bool {
+        self.zeros.get(column).copied().unwrap_or(false)
     }
 
     /// Places the scan's keys without copying them. A key is placed at the
@@ -102,7 +110,8 @@ impl ParsedMatrix {
     /// the order the pin's matrix holds: the keys that ride in from earlier
     /// columns, then the column's own. A key placed past the bound is in no
     /// column.
-    pub(crate) fn from_scan(scan: &ScanMatrix, bound: usize, physical: bool) -> Self {
+    #[must_use]
+    pub fn from_scan(scan: &ScanMatrix, bound: usize, physical: bool) -> Self {
         let placed = |key: &ScanKey| {
             if physical && key.crosses_separator {
                 key.syllable_start

@@ -134,7 +134,7 @@ use std::pin::Pin;
 use cxx::{CxxString, CxxVector, UniquePtr, let_cxx_string};
 
 use crate::store::common::{in_bounds, validate_path};
-use crate::store::{AttachMode, Flow, HashAttach, StoreError, WriteStore, WriteTxn};
+use crate::store::{Flow, StoreError, WriteStore, WriteTxn};
 use bridge::ffi;
 
 /// `Status::SUCCESS` — pinned by number, with `adapter.cc`'s `static_assert`
@@ -561,23 +561,13 @@ pub(crate) fn open_system(
     hash: bool,
     read_only: bool,
 ) -> Result<Option<TkrzwStore>, StoreError> {
-    let class = if hash { Class::Hash } else { Class::Tree };
-    let mut db = Db::new(class);
-    let options = if read_only {
-        OPEN_NO_CREATE
-    } else {
-        OPEN_DEFAULT
-    };
-    let status = db.open(path, !read_only, options)?;
-    Ok(if status.code == STATUS_SUCCESS {
-        // The Tree owners' reset synchronizes before it closes; the
-        // bigram's `HashDBM` is closed with no explicit sync
-        // (`ngram_tkrzwdb.cpp:36-45`).
-        db.sync_before_close = class == Class::Tree;
-        Some(TkrzwStore { db, read_only })
-    } else {
-        None
-    })
+    let mut store = TkrzwStore::allocate_native(hash, read_only);
+    if !store.try_open_native(path, !read_only)? {
+        return Ok(None);
+    }
+    // The Tree owners reset with Synchronize(false); hash owners close without it.
+    store.db.sync_before_close = !hash;
+    Ok(Some(store))
 }
 
 // ── engine-level operations ───────────────────────────────────────
@@ -759,42 +749,19 @@ impl WriteStore for TkrzwStore {
         open_hash_create(path)
     }
 
-    /// `FlexibleBigram::attach` (`flexible_ngram_tkrzwdb.h:128-187` at
-    /// 074a2219): one `HashDBM`, opened with `OPEN_NO_CREATE`, and with
-    /// `ATTACH_CREATE` opened again without it. A failed open without
-    /// CREATE, or a failed retry, deletes the object with no `Close`
-    /// (`:148-158`). The retry's signature `Set` is ignored (`:161-167`).
-    fn attach_hash(
-        path: &Path,
-        mode: AttachMode,
-        signature: (&[u8], &[u8]),
-    ) -> Result<HashAttach<Self>, StoreError> {
-        let writable = mode != AttachMode::ReadOnly;
-        let mut db = Db::new(Class::Hash);
-        if db.open(path, writable, OPEN_NO_CREATE)?.code == STATUS_SUCCESS {
-            return Ok(HashAttach::Opened(TkrzwStore {
-                db,
-                read_only: !writable,
-            }));
-        }
-        if mode != AttachMode::ReadWriteCreate
-            || db.open(path, writable, OPEN_DEFAULT)?.code != STATUS_SUCCESS
-        {
-            return Ok(HashAttach::Closed);
-        }
-        let (key, value) = signature;
-        let _ = db.set(key, value);
-        Ok(HashAttach::Created(
-            TkrzwStore {
-                db,
-                read_only: false,
-            },
-            true,
-        ))
-    }
-
     fn set_raw(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.db.set(key, value)
+    }
+
+    fn remove_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
+        if self.read_only {
+            return Err(StoreError::ReadOnly);
+        }
+        self.db.remove(key)
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     fn rewrite_raw(&self, rewrite: &mut crate::store::RecordRewrite<'_>) -> Result<(), StoreError> {
@@ -838,6 +805,7 @@ impl WriteStore for TkrzwStore {
     /// 236-246`, `:259-263` at 074a2219): the `Set` or `Remove` alone, its
     /// status the answer. The pin's `reset()` makes the one
     /// `Synchronize(false)` (`:84-90`), which [`WriteStore::flush`] is.
+    #[cfg(test)]
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
@@ -864,6 +832,26 @@ impl WriteStore for TkrzwStore {
 }
 
 impl TkrzwStore {
+    /// Allocates one native tree or hash object without opening a file.
+    #[must_use]
+    pub fn allocate_native(hash: bool, read_only: bool) -> Self {
+        let class = if hash { Class::Hash } else { Class::Tree };
+        Self {
+            db: Db::new(class),
+            read_only,
+        }
+    }
+
+    /// Attempts one native open on the same object, retaining it on failure.
+    ///
+    /// # Errors
+    /// Returns failures that occur before the native open.
+    pub fn try_open_native(&mut self, path: &Path, create: bool) -> Result<bool, StoreError> {
+        let options = if create { OPEN_DEFAULT } else { OPEN_NO_CREATE };
+        let status = self.db.open(path, !self.read_only, options)?;
+        Ok(status.code == STATUS_SUCCESS)
+    }
+
     /// [`WriteStore::write`], with the end-of-commit soft sync when `sync`.
     fn write_with<R>(
         &self,

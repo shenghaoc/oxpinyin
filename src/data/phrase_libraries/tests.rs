@@ -126,7 +126,12 @@ fn a_failed_layout_keeps_its_local_total_out_of_the_facade_total() {
     // 074a2219 load sub-index 1 twice. Reattaching the same failed chunk
     // also subtracts the previous sub-index total and declines to add
     // the refused replacement.
-    libs.load_heap(4, &dir.path().join("merged.bin")).unwrap();
+    let path = dir.path().join("merged.bin");
+    libs.insert_mapping(
+        4,
+        path.clone(),
+        PhraseLibrary::open_retaining_layout(&path).unwrap(),
+    );
     assert_eq!(libs.unigram_total(), 0_u32.wrapping_sub(123));
     // The pin's `FacadePhraseIndex::unload` subtracts the local total
     // whether or not the failed load added it.

@@ -1,7 +1,5 @@
-//! Native I/O for the library and its command-line tools. This module owns configuration
+//! Native I/O for the library. This module owns configuration
 //! reads and writes, diagnostics, [`chunk`] mappings and writes, and path operations.
-//! The `tool` module holds native utility input and output. The calling modules
-//! interpret the records and apply their failure policies.
 //!
 //! [`c_path`] converts a whole path for a C call. [`c_string`] converts the prefix
 //! ending at its first NUL.
@@ -17,15 +15,13 @@ pub(crate) mod diagnostic;
 )]
 mod native;
 mod path;
+pub use native::{c_stderr, fopen};
+#[cfg(windows)]
+pub use native::{errno_location, wide_path};
 pub use path::{
     build_filename, build_path, c_string, decode_filename, filename, path_from_bytes,
-    path_from_bytes_checked, path_to_bytes, rename, unlink,
+    path_to_bytes, rename, unlink,
 };
-#[expect(
-    unsafe_code,
-    reason = "the pin utilities' libc and glib-sys calls; every block carries a SAFETY comment"
-)]
-pub mod tool;
 
 use std::ffi::CString;
 use std::path::Path;

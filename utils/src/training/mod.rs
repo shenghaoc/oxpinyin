@@ -19,10 +19,11 @@ use std::ffi::{CStr, CString};
 
 use oxpinyin::data::row_format::encode_token_key;
 use oxpinyin::data::{FileType, TableConf, TableConfError};
-use oxpinyin::single_gram::{decode_single_gram, encode_single_gram};
+use oxpinyin::single_gram::encode_single_gram;
+use oxpinyin_tool_support::data::decode_single_gram;
 
-use oxpinyin::input::tool;
-use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
+use oxpinyin_tool_support::input as tool;
+use oxpinyin_tool_support::input::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
 
 use crate::storage::Hash;
 

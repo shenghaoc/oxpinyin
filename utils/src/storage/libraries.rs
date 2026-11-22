@@ -18,8 +18,8 @@ use oxpinyin::data::phrase_library::build_chunk;
 use oxpinyin::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary};
 use oxpinyin::data::{FileType, TableConf};
 
-use oxpinyin::input::tool;
 use oxpinyin::vocab::{PHRASE_MASK, phrase_index_library_index};
+use oxpinyin_tool_support::input as tool;
 
 use crate::storage::name_c_string;
 use crate::utils_helper::{
@@ -97,7 +97,7 @@ impl Libraries {
         let mut total = 0_u32;
         let loaded = load_library_rows(conf, addon, types, |index, name| {
             let c_name = name_c_string(name.as_ref());
-            let library = PhraseLibrary::load_heap(Path::new(name.as_ref()))?;
+            let library = oxpinyin_tool_support::data::load_heap(Path::new(name.as_ref()))?;
             if !library.is_layout_failed() {
                 total = total.wrapping_add(library.total_freq());
             }

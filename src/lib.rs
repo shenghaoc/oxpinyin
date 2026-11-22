@@ -78,8 +78,6 @@ pub mod single_gram;
 mod static_strings;
 pub mod store;
 #[forbid(unsafe_code)]
-pub mod tool;
-#[forbid(unsafe_code)]
 mod ucs4;
 #[forbid(unsafe_code)]
 pub mod user;

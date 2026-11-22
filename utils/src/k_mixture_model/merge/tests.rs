@@ -52,9 +52,9 @@ fn a_short_target_row_aborts_at_the_targets_header() {
 #[test]
 fn a_short_source_row_the_target_lacks_is_copied_unchanged() {
     use crate::k_mixture_model::database::tests::{SHORT, TOKEN, plant};
-    use oxpinyin::store::{
-        AttachMode, DefaultStore, HashAttach, MAGIC_KEY, RawReadStore as _, WriteStore as _,
-    };
+
+    use oxpinyin::store::RawReadStore as _;
+    use oxpinyin_tool_support::flexible_ngram::{AttachMode, HashAttach, MAGIC_KEY, attach_hash};
     let dir = tempfile::tempdir().expect("scratch directory");
     let target = plant(dir.path(), "target.db", &[]);
     let source = plant(dir.path(), "source.db", &[(TOKEN, SHORT)]);
@@ -63,7 +63,7 @@ fn a_short_source_row_the_target_lacks_is_copied_unchanged() {
         let source = crate::k_mixture_model::database::Database::open_read_only(Some(&source));
         assert!(super::merge_array_items(&target, &source));
     }
-    let HashAttach::Opened(db) = DefaultStore::attach_hash(
+    let HashAttach::Opened(db) = attach_hash(
         &dir.path().join("target.db"),
         AttachMode::ReadOnly,
         (&MAGIC_KEY, b"KMMP"),

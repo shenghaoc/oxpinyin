@@ -14,7 +14,7 @@
 
 use std::ffi::CStr;
 
-use oxpinyin::input::tool::{self, k_mixture_model as edge};
+use oxpinyin_tool_support::input::{self as tool, k_mixture_model as edge};
 
 use super::database::Database;
 use super::math::compute_pr_g_3_with_count;
@@ -35,7 +35,10 @@ pub const DEFAULT_CDF: f64 = 0.99;
 pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
     // `attach(bigram_filename, ATTACH_READWRITE)`, without ATTACH_CREATE
     // (`prune_k_mixture_model.cpp:129`).
-    let db = Database::attach(filename, oxpinyin::store::AttachMode::ReadWrite);
+    let db = Database::attach(
+        filename,
+        oxpinyin_tool_support::flexible_ngram::AttachMode::ReadWrite,
+    );
     let Some(mut magic_header) = db.get_magic_header() else {
         edge::report_no_magic();
         tool::exit(tool::ENODATA);

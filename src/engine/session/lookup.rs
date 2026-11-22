@@ -630,12 +630,10 @@ where
         end: usize,
         buf: &mut ScanBuf<'_>,
     ) -> Result<(), EngineError> {
-        if matrix.get(end).is_none_or(<[ScanKey]>::is_empty)
-            && !matrix.zeros.get(end).copied().unwrap_or(false)
-        {
+        if matrix.get(end).is_none_or(<[ScanKey]>::is_empty) && !matrix.has_zero(end) {
             return Ok(());
         }
-        if node < end && matrix.zeros.get(node).copied().unwrap_or(false) {
+        if node < end && matrix.has_zero(node) {
             return self.scan_parsed_paths(matrix, node + 1, end, buf);
         }
         let Some(column) = matrix.get(node) else {
@@ -1222,9 +1220,7 @@ where
             // `SEARCH_NONE` start (`search_matrix`,
             // `phonetic_key_matrix.cpp:416-418`): the span contributes
             // nothing and the walk skips it.
-            if matrix.get(start).is_none_or(<[ScanKey]>::is_empty)
-                && !matrix.zeros.get(start).copied().unwrap_or(false)
-            {
+            if matrix.get(start).is_none_or(<[ScanKey]>::is_empty) && !matrix.has_zero(start) {
                 continue;
             }
             let mut continued = false;

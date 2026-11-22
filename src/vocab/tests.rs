@@ -78,51 +78,6 @@ fn unknown_spellings_have_no_key() {
 }
 
 #[test]
-fn fuzzy_alternatives_compose_an_initial_bit_then_a_final_bit() {
-    use crate::OptionBits;
-
-    let can = SyllableKey::from_text("can").expect("can");
-    let both = OptionBits::PINYIN_AMB_C_CH | OptionBits::PINYIN_AMB_AN_ANG;
-    let texts: Vec<&str> = can
-        .fuzzy_alternatives(both)
-        .iter()
-        .map(|k| k.text())
-        .collect();
-    assert!(
-        texts.contains(&"chan") && texts.contains(&"cang") && texts.contains(&"chang"),
-        "can under C_CH+AN_ANG must yield chan, cang, and chained chang, got {texts:?}"
-    );
-
-    let lan = SyllableKey::from_text("lan").expect("lan");
-    let ln_an = OptionBits::PINYIN_AMB_L_N | OptionBits::PINYIN_AMB_AN_ANG;
-    let texts: Vec<&str> = lan
-        .fuzzy_alternatives(ln_an)
-        .iter()
-        .map(|k| k.text())
-        .collect();
-    assert!(
-        texts.contains(&"nan") && texts.contains(&"lang") && texts.contains(&"nang"),
-        "lan under L_N+AN_ANG must yield nan, lang, and chained nang, got {texts:?}"
-    );
-}
-
-#[test]
-fn fuzzy_alternatives_swap_in_and_ing() {
-    use crate::OptionBits;
-
-    let in_ing = OptionBits::PINYIN_AMB_IN_ING;
-    for (from, to) in [("jin", "jing"), ("jing", "jin"), ("bin", "bing")] {
-        let key = SyllableKey::from_text(from).expect(from);
-        let texts: Vec<&str> = key
-            .fuzzy_alternatives(in_ing)
-            .iter()
-            .map(|k| k.text())
-            .collect();
-        assert_eq!(texts, [to], "{from} under AMB_IN_ING");
-    }
-}
-
-#[test]
 fn option_text_resolves_correction_aliases_under_their_bits() {
     use crate::OptionBits;
 

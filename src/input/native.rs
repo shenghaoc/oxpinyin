@@ -21,8 +21,11 @@ unsafe extern "C" {
 }
 
 /// UCRT errno.h's int* __cdecl _errno(void).
+///
+/// # Safety
+/// The caller must use the cell only on this thread.
 #[cfg(windows)]
-pub(crate) unsafe fn errno_location() -> *mut c_int {
+pub unsafe fn errno_location() -> *mut c_int {
     // SAFETY: UCRT returns this thread's live errno cell.
     unsafe { _errno() }
 }
@@ -49,7 +52,7 @@ fn clear_crt_os_error() {
 
 /// A native Windows path, terminated at the pin's first NUL.
 #[cfg(windows)]
-pub(crate) fn wide_path(path: &std::path::Path) -> Vec<u16> {
+pub fn wide_path(path: &std::path::Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt as _;
     path.as_os_str()
         .encode_wide()
@@ -59,7 +62,7 @@ pub(crate) fn wide_path(path: &std::path::Path) -> Vec<u16> {
 }
 
 /// The pin's fopen, with a native wide filename on Windows.
-pub(crate) fn fopen(
+pub fn fopen(
     filename: &(impl crate::input::FileName + ?Sized),
     mode: &CStr,
 ) -> Option<NonNull<libc::FILE>> {
@@ -227,24 +230,21 @@ pub(crate) const WORD_SIZE: usize = 256;
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
-    // `extern FILE *stdout, *stderr;` (glibc and musl `stdio.h`).
-    static mut stdout: *mut File;
+    // `extern FILE *stderr;` (glibc and musl `stdio.h`).
     static mut stderr: *mut File;
 }
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    // `#define stdout __stdoutp` and `#define stderr __stderrp` (macOS
+    // `#define stderr __stderrp` (macOS
     // `stdio.h`, Apple Libc).
-    #[link_name = "__stdoutp"]
-    static mut stdout: *mut File;
     #[link_name = "__stderrp"]
     static mut stderr: *mut File;
 }
 
 #[cfg(windows)]
 unsafe extern "C" {
-    // `#define stdout (__acrt_iob_func(1))` and `#define stderr
+    // `#define stderr
     // (__acrt_iob_func(2))` (UCRT `corecrt_wstdio.h`).
     fn __acrt_iob_func(index: core::ffi::c_uint) -> *mut File;
 }
@@ -255,23 +255,11 @@ compile_error!(
      for this target; add its per-platform `extern` block in src/native.rs"
 );
 
-/// The pointer `<stdio.h>`'s `stdout` expands to.
-pub(crate) fn c_stdout() -> *mut File {
-    #[cfg(not(windows))]
-    // SAFETY: the C library initialises `stdout` before `main` and nothing
-    // here assigns it; the read copies the pointer.
-    let stream = unsafe { stdout };
-    #[cfg(windows)]
-    // SAFETY: index 1 is the UCRT's standard output stream, which the
-    // runtime keeps for the process's lifetime.
-    let stream = unsafe { __acrt_iob_func(1) };
-    stream
-}
-
 /// The pointer `<stdio.h>`'s `stderr` expands to.
-pub(crate) fn c_stderr() -> *mut File {
+#[must_use]
+pub fn c_stderr() -> *mut File {
     #[cfg(not(windows))]
-    // SAFETY: as `c_stdout`: the C library initialises `stderr` before
+    // SAFETY: the C library initialises `stderr` before
     // `main` and nothing here assigns it.
     let stream = unsafe { stderr };
     #[cfg(windows)]

@@ -12,7 +12,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use oxpinyin::data::FileType;
-use oxpinyin::input::tool;
+use oxpinyin_tool_support::input as tool;
 
 use crate::storage::Hash;
 use crate::storage::Libraries;
@@ -79,7 +79,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     let unigram = Libraries::load_rows(&conf, false, &[FileType::SystemFile], tool::ENOENT);
     let attach = |name: &str| {
         Hash::open_read_only(Path::new(name))
-            .unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error))
+            .unwrap_or_else(|error| oxpinyin_tool_support::input::exit_on_store_error(&error))
     };
     let bigram = Some(attach("bigram.db"));
     let deleted_bigram = Some(attach("deleted_bigram.db"));

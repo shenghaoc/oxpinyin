@@ -88,8 +88,6 @@ pub mod text;
 pub mod types;
 pub mod user_data;
 
-pub mod tool;
-
 // C publication and conversion tests live in sibling tests.rs files and tests/it.
 // The shared test helpers name the exported functions through the library's
 // own name, as the verification tests do.

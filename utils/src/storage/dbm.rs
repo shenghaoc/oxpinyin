@@ -11,9 +11,7 @@
 
 use std::path::Path;
 
-use oxpinyin::store::{
-    DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore, WriteTxn as _,
-};
+use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, WriteStore, WriteTxn as _};
 
 /// One writable tree container.
 pub struct Tree {
@@ -122,10 +120,7 @@ impl Hash {
     /// The store's `Bigram::attach`.
     fn attach(path: &Path, read_only: bool) -> Result<Self, StoreError> {
         Ok(Self {
-            store: match SystemAttachment::attach_bigram(path, read_only)? {
-                SystemAttachment::Open(store) => Some(store),
-                SystemAttachment::Unopened => None,
-            },
+            store: oxpinyin_tool_support::data::attach_bigram(path, read_only)?,
         })
     }
 

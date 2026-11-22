@@ -611,7 +611,7 @@ fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() 
 /// the store/load round trip, the 0.75 possibility (`:54`) and 0.5 after
 /// the increase, on the item (`:62`) and on a fresh read (`:70`).
 #[test]
-fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
+fn a_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     use crate::data::PhraseLibraries;
 
     fn possibility(item: &ChunkItem, key: crate::parser::ChewingKey) -> (u64, u64) {
@@ -620,19 +620,30 @@ fn a_heap_loaded_item_keeps_reading_order_when_training_matches_the_first() {
         let path = dir.path().join("gb_char.bin");
         crate::input::chunk::save(&path, &frame).unwrap();
         let mut libraries = PhraseLibraries::empty();
-        assert!(libraries.load_heap(0, &path).unwrap());
+        assert!(libraries.load(0, &path).unwrap());
         libraries.pronunciation_possibility(1, &[key]).unwrap()
     }
 
     let cheng = crate::parser::ChewingKey::from_pinyin("cheng").unwrap();
     let shang = crate::parser::ChewingKey::from_pinyin("shang").unwrap();
-    let mut stored = item(&[2], 0, &[]);
-    crate::user::add_system_reading(&mut stored, &[cheng.to_packed()], 100);
-    crate::user::add_system_reading(&mut stored, &[shang.to_packed()], 300);
+    let stored = item(
+        &[2],
+        0,
+        &[
+            (vec![cheng.to_packed()], 100),
+            (vec![shang.to_packed()], 300),
+        ],
+    );
     // `:54`: 300 of 400 is the pin's 0.75.
     assert_eq!(possibility(&stored, shang), (300, 400));
     let frame = crate::data::phrase_library::build_chunk(&[(1, stored.clone())]).unwrap();
-    let library = PhraseLibrary::from_payload(frame[8..].to_vec()).unwrap();
+    let end = frame.len();
+    let library = PhraseLibrary::from_bytes(
+        crate::data::phrase_library::LibraryBytes::from(frame),
+        8..end,
+        None,
+    )
+    .unwrap();
     let baseline = SystemLibrary::from_library(library);
     let mut live = ReplayedLibrary::pristine(baseline.view());
     assert_eq!(live.item(1), Some(stored));

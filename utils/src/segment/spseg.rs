@@ -10,7 +10,7 @@
 
 use std::ffi::OsString;
 
-use oxpinyin::input::tool::{self, OutputStream};
+use oxpinyin_tool_support::input::{self as tool, OutputStream};
 
 use crate::segment::data;
 use crate::segment::input::Input;
@@ -123,7 +123,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let search = PhraseSearch::new(tables.phrase.as_ref(), &tables.libraries);
     let gen_extra_enter = matches!(
         parsed.values[1],
-        oxpinyin::input::tool::OptionValue::Flag(true)
+        oxpinyin_tool_support::input::OptionValue::Flag(true)
     );
 
     while input.getline() {

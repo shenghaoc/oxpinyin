@@ -13,7 +13,7 @@
 
 use crate::tables::Index;
 use oxpinyin::data::{FileType, TableConf};
-use oxpinyin::input::tool::{self, storage::TableFile};
+use oxpinyin_tool_support::input::{self as tool, storage::TableFile};
 use std::path::{Path, PathBuf};
 
 mod lookup;

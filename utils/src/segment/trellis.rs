@@ -143,7 +143,7 @@ fn load_row(bigram: Option<&BigramTable>, token: u32) -> Option<Vec<u8>> {
         Ok(row) => row,
         // Bigram::load asserts after a successful size check (ngram_kyotodb.cpp:131-139).
         Err(DictError::Table(TableError::Store(StoreError::ReadAfterCheck))) => {
-            oxpinyin::input::tool::abort()
+            oxpinyin_tool_support::input::abort()
         }
         Err(_) => None,
     }

@@ -25,6 +25,7 @@ pub mod row_format;
 pub(crate) mod support;
 mod system_files;
 mod table;
+#[cfg(test)]
 mod table_entries;
 mod table_info;
 pub mod user_files;
@@ -37,15 +38,16 @@ pub use crate::model::UserCountDelta;
 // backend the build selected without naming `store` themselves.
 pub use crate::store::DEFAULT_STORE_DB_FORMAT;
 // Native row decoding for the pin test-program tools.
-pub use chewing_table::{index_key as chewing_index_key, search_row as search_chewing_row};
+pub use chewing_table::{
+    ChewingTable, DefaultDbm, RawChewingDbm, index_key as chewing_index_key, visit_matching_items,
+};
+pub use phrase_table::PhraseTable;
 
 pub use bigram_table::BigramTable;
 
 pub use c_stderr::{path_bytes, table_conf_load_failed};
 
-pub use dict::{
-    AddonDictionary, DictError, PhraseIndexTable, PinyinIndexTable, SystemDictionary, SystemTables,
-};
+pub use dict::{AddonDictionary, DictError, SystemDictionary, SystemTables};
 
 pub use lm::{BigramLanguageModel, BigramTables, LmError, merge_bigram};
 
@@ -56,8 +58,6 @@ pub use punct::PunctTable;
 pub use system_files::{ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_NAMES, SystemDbm};
 
 pub use table::TableError;
-
-pub use table_entries::exact_compare2;
 
 pub use table_info::{
     DatabaseFormat, FileName, FileType, PhoneticType, TableConf, TableConfError, TableConfSite,

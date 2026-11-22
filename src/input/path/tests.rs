@@ -97,14 +97,9 @@ fn rename_and_unlink_are_the_pins() {
 /// lossy through `path_from_bytes`. This is not a lossless Windows path
 /// codec.
 #[test]
-fn paths_round_trip_and_the_checked_form_follows_the_platform() {
+fn paths_round_trip() {
     let path = Path::new("/u/name");
     assert_eq!(path_from_bytes(path_to_bytes(path)), path.to_path_buf());
-    let bytes = b"/u/m\xff";
-    #[cfg(unix)]
-    assert_eq!(path_from_bytes_checked(bytes), Some(path_from_bytes(bytes)));
-    #[cfg(not(unix))]
-    assert_eq!(path_from_bytes_checked(bytes), None);
 }
 
 #[cfg(windows)]

@@ -89,7 +89,7 @@ const NBEAM: usize = 32;
 pub struct NbestRow {
     /// Concatenated phrase texts. `None` represents a NULL string when no
     /// phrase converts.
-    pub(crate) text: Option<PhraseText>,
+    pub text: Option<PhraseText>,
     /// The phrase tokens in order — the selection record a chosen row
     /// contributes (upstream keeps the whole `MatchResult` on the
     /// instance; the engine records tokens instead).
@@ -98,11 +98,11 @@ pub struct NbestRow {
     /// shape `diff_result` constraints and the constraint-aware train
     /// walk read. Walk-local coordinates; `Session::guess_sentence`
     /// absolutizes them when it stores the rows.
-    pub(crate) spans: Vec<PhraseSpan>,
+    pub spans: Vec<PhraseSpan>,
     /// Keys the sentence covers.
     pub(crate) keys: usize,
     /// Bytes of the input the sentence spans.
-    pub(crate) span: usize,
+    pub span: usize,
 }
 
 /// `m_last_step` of the seed: the pin's `-1` (074a2219 `phonetic_lookup.h:59`).
@@ -811,7 +811,11 @@ where
     )
 }
 
-pub(super) fn nbest_sentences_generation<D, L>(
+/// Decodes a prepared scan matrix with the requested generation shape.
+///
+/// # Errors
+/// Returns an engine error when dictionary or model access fails.
+pub fn nbest_sentences_generation<D, L>(
     input: GenerationInput<'_>,
     dictionary: &D,
     model: &L,
@@ -1013,11 +1017,16 @@ where
     Ok(rows)
 }
 
-pub(super) struct GenerationInput<'a> {
-    pub(super) matrix: &'a ScanMatrix,
-    pub(super) bound: usize,
-    pub(super) physical_separators: bool,
-    pub(super) topology: Option<&'a crate::engine::session::matrix::ParsedMatrix>,
+/// Scan data and separator policy for one decoder invocation.
+pub struct GenerationInput<'a> {
+    /// Packed scan edges.
+    pub matrix: &'a ScanMatrix,
+    /// Last byte column reached by the decode.
+    pub bound: usize,
+    /// Whether separator columns occupy positions in the result.
+    pub physical_separators: bool,
+    /// Previously placed columns, when available.
+    pub topology: Option<&'a crate::engine::session::matrix::ParsedMatrix>,
 }
 
 #[derive(Default)]
@@ -1094,7 +1103,7 @@ impl GenerationView<'_> {
             return Ok(false);
         }
         // search_matrix's empty-end-column gate is independent of paths.
-        if end + 1 < self.columns.len()
+        if end + 1 < self.columns.column_count()
             && self.columns.get(end).is_none_or(<[ScanKey]>::is_empty)
             && !self.zeros[end]
         {
@@ -1291,7 +1300,7 @@ impl<'a> ConstraintSpelling<'a> {
         };
         let parsed = self.parsed;
         let columns = parsed;
-        if end >= columns.len()
+        if end >= columns.column_count()
             || column_is_empty(columns, &parsed.zeros, start)
             || column_is_empty(columns, &parsed.zeros, end)
         {

@@ -141,7 +141,8 @@ enum DbmState<S> {
 }
 
 impl<S> RawChewingDbm<S> {
-    pub(crate) const fn new(store: S) -> Self {
+    /// Wraps an open store as a phonetic index.
+    pub const fn new(store: S) -> Self {
         Self {
             state: DbmState::Open(store),
         }
@@ -155,12 +156,16 @@ impl<S> RawChewingDbm<S> {
     }
 }
 
-/// The production [`ChewingDbm`]: the compiled-in backend read through
+/// The production index store: the compiled-in backend read through
 /// its raw (unframed) keyspace.
 pub type DefaultDbm = RawChewingDbm<crate::store::DefaultStore>;
 
 impl DefaultDbm {
-    pub(crate) fn attach(path: &std::path::Path, hash: bool) -> Result<Self, DictError> {
+    /// Attaches a native system DBM.
+    ///
+    /// # Errors
+    /// Returns the open or backend error.
+    pub fn attach(path: &std::path::Path, hash: bool) -> Result<Self, DictError> {
         use crate::store::SystemAttachment;
         Ok(
             match SystemAttachment::open(path, hash).map_err(|e| DictError::Table(e.into()))? {
@@ -188,8 +193,7 @@ fn failed_read_is_a_miss(
             crate::store::StoreError::Io(_)
             | crate::store::StoreError::Backend(_)
             | crate::store::StoreError::ReadOnly
-            | crate::store::StoreError::InvalidInput(_)
-            | crate::store::StoreError::ShortArrayHeader,
+            | crate::store::StoreError::InvalidInput(_),
         ) => {
             value.clear();
             Ok(false)
@@ -331,7 +335,8 @@ pub struct ChewingTable<D = DefaultDbm> {
 }
 
 impl<D: ChewingDbm> ChewingTable<D> {
-    pub(crate) const fn new(dbm: D) -> Self {
+    /// Constructs the phonetic index over its row store.
+    pub const fn new(dbm: D) -> Self {
         Self { dbm }
     }
 
@@ -368,7 +373,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
     ///   marker, or no record matches. Upstream additionally requires the
     ///   record's library to be loaded; the dictionary layer applies that
     ///   when it resolves tokens.
-    pub(crate) fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
+    pub fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
         self.search_continued(keys, &mut Vec::new())
             .map(|(_, tokens)| tokens)
     }
@@ -404,7 +409,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
     ///
     /// The value is read into `value`, the caller's buffer, which the
     /// decode loop passes to every search of a guess.
-    pub(crate) fn search_continued(
+    pub fn search_continued(
         &self,
         keys: &[ChewingKey],
         value: &mut Vec<u8>,
@@ -416,7 +421,7 @@ impl<D: ChewingDbm> ChewingTable<D> {
 
     /// Whether the query's index key exists at all — `SEARCH_CONTINUED`
     /// without the record decode or a value copy, for the widen probe.
-    pub(crate) fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
+    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
         if keys.is_empty() {
             return Ok(false);
         }
@@ -535,31 +540,11 @@ pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
         .all(|(q, s)| q.matches_with_tones(*s))
 }
 
-// ChewingLargeTable2::search, chewing_large_table2.cpp:161–174; SEARCH_CONTINUED is
-// independent of the filtered tokens.
-/// Returns whether a row was present for a nonempty query and its matching tokens in
-/// stored order. A present empty prefix marker or a row with no matching readings still
-/// reports presence.
+/// Visits matching token records in stored order.
 ///
 /// # Errors
-///
-/// Propagates a row-decoding error.
-pub fn search_row(
-    keys: &[ChewingKey],
-    value: Option<&[u8]>,
-) -> Result<(bool, Vec<u32>), DictError> {
-    if keys.is_empty() {
-        return Ok((false, Vec::new()));
-    }
-    let Some(value) = value else {
-        return Ok((false, Vec::new()));
-    };
-    let mut tokens = Vec::new();
-    visit_matching_items(keys, value, |token| tokens.push(token))?;
-    Ok((true, tokens))
-}
-
-fn visit_matching_items(
+/// Returns a row-decoding error.
+pub fn visit_matching_items(
     keys: &[ChewingKey],
     value: &[u8],
     mut visit: impl FnMut(u32),

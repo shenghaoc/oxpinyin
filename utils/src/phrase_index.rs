@@ -20,7 +20,7 @@ use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_t
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::LibraryError;
 use oxpinyin::data::{FileName, TableConf, TableConfError};
-use oxpinyin::input::tool::{self, k_mixture_model as edge};
+use oxpinyin_tool_support::input::{self as tool, k_mixture_model as edge};
 
 /// One loaded phrase index.
 pub struct SystemPhraseIndex {

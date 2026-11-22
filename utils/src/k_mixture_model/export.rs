@@ -12,7 +12,7 @@
 use std::ffi::CStr;
 use std::io::Write as _;
 
-use oxpinyin::input::tool::{self, OutputStream, k_mixture_model as edge};
+use oxpinyin_tool_support::input::{self as tool, OutputStream, k_mixture_model as edge};
 
 use super::database::Database;
 use super::phrase::PhraseIndex;

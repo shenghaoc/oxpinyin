@@ -116,8 +116,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
 
 [workspace]
 resolver = "3"
-members = ["capi", "zhuyin-capi", "utils", "repl", "tools/abi", "tools/measurement"]
-default-members = [".", "capi", "zhuyin-capi", "utils", "repl"]
+members = ["capi", "zhuyin-capi", "utils", "repl", "tool-support", "tools/abi", "tools/measurement"]
+default-members = [".", "capi", "zhuyin-capi", "utils", "repl", "tool-support"]
 
 [workspace.package]
 # Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 2.

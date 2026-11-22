@@ -504,7 +504,7 @@ An entry holds nothing else.
 ### FlexibleBigram unsorted-record search
 
 - **Pin:** `FlexibleSingleGram` searches with the standard lower bound on the unsigned token order (`src/storage/flexible_single_gram.h:63-65`, `:118-139`), and backend loads do not check the order (`flexible_ngram_bdb.h:165-187`, `flexible_ngram_kyotodb.h:192-215`, `flexible_ngram_tkrzwdb.h:196-219`); on an unsorted value the result is unspecified.
-- **oxpinyin:** `SingleGram::lower_bound` (`src/store/flexible_ngram.rs`) uses `slice::partition_point` and does not sort or clean loaded records.
+- **oxpinyin:** `SingleGram::lower_bound` (`tool-support/src/flexible_ngram.rs`) uses `slice::partition_point` and does not sort or clean loaded records.
 - **Decision:** accepted under the [no-ported-internals ruling](compatibility-policy.md#no-ported-external-library-internals) (policy row 156): no contract fixes a result on unpartitioned input; sorted records match.
 - **Tests:** `kmm_estimate_good` (unsorted Kyoto Cabinet fixture, sorted Berkeley DB and tkrzw controls).
 

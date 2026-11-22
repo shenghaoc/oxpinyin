@@ -125,19 +125,6 @@ impl SyllableKey {
         Self::from_canonical_text(canonical).map(|key| (key, 1))
     }
 
-    /// Matrix-level fuzzy alternates, upstream append order.
-    ///
-    /// `fuzzy_syllable_step` applies initials, re-fetches the column, then
-    /// finals (`phonetic_key_matrix.cpp:238-306`), so an initial bit and a
-    /// final bit compose (`can` → `chang` under `AMB_C_CH` + `AMB_AN_ANG`).
-    #[must_use]
-    pub fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
-        fuzzy_chewing_alternatives(self.chewing_key(), options)
-            .into_iter()
-            .map(Self::from_matrix_key)
-            .collect()
-    }
-
     /// Returns the key with dense id `index`, or `None` when out of range.
     #[must_use]
     pub fn from_index(index: usize) -> Option<Self> {
@@ -205,23 +192,9 @@ impl SyllableKey {
     }
 }
 
-// fuzzy_syllable_step, phonetic_key_matrix.cpp:238–306.
-/// Returns the enabled initial and final substitutions in matrix order, preserving tone.
-/// The original key is omitted. Final substitutions apply to the original and to each
-/// admitted initial alternative, even when the resulting final has no spelling row.
-#[must_use]
-fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
-    let initials = fuzzy_chewing_initials(key, options);
-    let mut out = initials.clone();
-    for source in std::iter::once(key).chain(initials) {
-        out.extend(fuzzy_chewing_finals(source, options));
-    }
-    out
-}
-
 /// Initial swaps only; the matrix applies these to its column snapshot.
 #[must_use]
-pub(crate) fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+pub fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let mut initials = Vec::new();
     for (bit, a, b) in [
         (OptionBits::PINYIN_AMB_C_CH, "c", "ch"),
@@ -252,7 +225,7 @@ pub(crate) fn fuzzy_chewing_initials(key: ChewingKey, options: OptionBits) -> Ve
 
 /// Final swaps only, including combinations with no syllable-table row.
 #[must_use]
-pub(crate) fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
+pub fn fuzzy_chewing_finals(source: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let mut out = Vec::new();
     for (bit, a, b) in FUZZY_FINALS {
         if !options.contains(bit) {
@@ -428,11 +401,6 @@ impl PhraseEntry {
     pub const fn with_pronunciation_possibility(mut self, matched: u64, total: u64) -> Self {
         self.pronunciation = Some((matched, total));
         self
-    }
-
-    /// Replace the pronunciation possibility of an existing entry.
-    pub const fn set_pronunciation_possibility(&mut self, matched: u64, total: u64) {
-        self.pronunciation = Some((matched, total));
     }
 
     /// Consumes the entry and returns its phrase text.

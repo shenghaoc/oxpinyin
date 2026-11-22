@@ -768,10 +768,8 @@ pub fn parse_zhuyin_direct(input: &str, options: OptionBits) -> Vec<(SyllableKey
 /// `zhuyin_index` spelling admitted by `check_chewing_options` with the
 /// ambiguity bits cleared. `FORCE_TONE` never refuses: the default tone
 /// is already non-zero.
-pub(crate) fn parse_zhuyin_direct_key(
-    segment: &str,
-    options: OptionBits,
-) -> Option<(SyllableKey, u8)> {
+#[must_use]
+pub fn parse_zhuyin_direct_key(segment: &str, options: OptionBits) -> Option<(SyllableKey, u8)> {
     let options = options - OptionBits::PINYIN_AMB_ALL;
     let last = segment.chars().last()?;
     let mut tone = 1_u8;

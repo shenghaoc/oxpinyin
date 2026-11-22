@@ -169,7 +169,6 @@ fn a_malformed_user_index_snapshot_keeps_its_valid_prefix() {
 #[test]
 fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_releases_it() {
     use super::ffi::{NativeCall as Call, take_native_calls};
-    use crate::store::{AttachMode, HashAttach};
 
     // `flexible_ngram_kyotodb.h:143-155`: one `new HashDB`, then
     // `open(mode)` and, with ATTACH_CREATE, `open(mode | OCREATE)` on
@@ -178,10 +177,10 @@ fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_releases_it() {
     let path = dir.0.join("model.db");
     let bytes = path.as_os_str().as_encoded_bytes().to_vec();
     take_native_calls();
-    assert!(matches!(
-        KcStore::attach_hash(&path, AttachMode::ReadWriteCreate, (b"k", b"v")).unwrap(),
-        HashAttach::EmptyWalk
-    ));
+    let mut store = KcStore::allocate_native(true, false).unwrap();
+    assert!(!store.try_open_native(&path, false).unwrap());
+    assert!(!store.try_open_native(&path, true).unwrap());
+    drop(store);
     let calls = take_native_calls();
     let handle = calls.first().expect("native open").0;
     assert_eq!(
@@ -197,11 +196,9 @@ fn a_create_retry_reopens_the_same_hashdb_and_a_failed_open_releases_it() {
     );
 
     take_native_calls();
-    let HashAttach::Closed =
-        KcStore::attach_hash(&path, AttachMode::ReadWrite, (b"k", b"v")).unwrap()
-    else {
-        panic!("a failed open without CREATE keeps no object");
-    };
+    let mut store = KcStore::allocate_native(true, false).unwrap();
+    assert!(!store.try_open_native(&path, false).unwrap());
+    drop(store);
     let calls = take_native_calls();
     let handle = calls.first().expect("native open").0;
     assert_eq!(

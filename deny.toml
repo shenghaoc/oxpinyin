@@ -30,8 +30,9 @@ deny = [
   { crate = "cxx", wrappers = ["oxpinyin"] },
   { crate = "cxx-build", wrappers = ["cxx", "oxpinyin"] },
   { crate = "bindgen", wrappers = ["oxpinyin", "valgrind-requests"] },
-  { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-repl"] },
-  { crate = "oxzhuyin-capi", wrappers = ["oxpinyin-repl"] },
+  { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-tool-support"] },
+  { crate = "oxzhuyin-capi", wrappers = ["oxpinyin-tool-support"] },
+  { crate = "oxpinyin-tool-support", wrappers = ["oxpinyin-utils", "oxpinyin-repl"] },
   # The REPL is the utilities' only dependent: it uses their table builders.
   { crate = "oxpinyin-utils", wrappers = ["oxpinyin-repl"] },
   # Leaves: nothing may depend on them. The wrapper names the crate itself,
