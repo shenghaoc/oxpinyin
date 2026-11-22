@@ -157,7 +157,7 @@ const GBK: u8 = 2;
 /// with a user directory of its own.
 fn open(user: &Path) -> ContextCore {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let extension = crate::store::DEFAULT_STORE_EXT;
+    let extension = crate::__internal::DEFAULT_STORE_EXT;
     ContextCore::open(&root.join(extension), Some(user), WORD, UserConfLaw::Pinyin)
         .expect("committed backend fixtures")
 }
@@ -350,7 +350,7 @@ fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
 /// SYSTEM_FILE`.
 fn system_with_gbk_naming_no_user_file(scratch: &Path) -> std::path::PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let committed = root.join(crate::store::DEFAULT_STORE_EXT);
+    let committed = root.join(crate::__internal::DEFAULT_STORE_EXT);
     let system = scratch.join("system");
     std::fs::create_dir_all(&system).expect("system dir");
     for entry in std::fs::read_dir(committed).expect("committed fixtures") {
@@ -445,7 +445,7 @@ mod failed_attachment_fini {
     use crate::user::UserConfLaw;
 
     fn fixture_dir() -> PathBuf {
-        let extension = crate::store::DEFAULT_STORE_EXT;
+        let extension = crate::__internal::DEFAULT_STORE_EXT;
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("fixtures")
             .join("w3")
@@ -517,7 +517,7 @@ mod library_directory {
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        let extension = crate::store::DEFAULT_STORE_EXT;
+        let extension = crate::__internal::DEFAULT_STORE_EXT;
         root.join(extension)
     }
 
@@ -856,7 +856,7 @@ mod library_totals {
     /// The committed fixture set the compiled backend opens.
     fn fixture_dir() -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        root.join(crate::store::DEFAULT_STORE_EXT)
+        root.join(crate::__internal::DEFAULT_STORE_EXT)
     }
 
     /// A private system directory under `parent`: every fixture file copied in,
@@ -1035,7 +1035,7 @@ mod native {
                 .join("system")
                 .join("merged.bin")
                 .display(),
-            crate::input::TEXT_NEWLINE
+            crate::__internal::TEXT_NEWLINE
         );
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
@@ -1078,7 +1078,7 @@ mod native {
                 .join("system")
                 .join("gbk_char.bin")
                 .display(),
-            crate::input::TEXT_NEWLINE
+            crate::__internal::TEXT_NEWLINE
         );
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
@@ -1104,7 +1104,7 @@ mod native {
                 .join("system")
                 .join("gb_char.bin")
                 .display(),
-            crate::input::TEXT_NEWLINE
+            crate::__internal::TEXT_NEWLINE
         );
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
@@ -1397,7 +1397,7 @@ mod native {
                     .join("system")
                     .join("gb_char.bin")
                     .display(),
-                crate::input::TEXT_NEWLINE
+                crate::__internal::TEXT_NEWLINE
             )
         );
     }
@@ -1838,7 +1838,7 @@ mod native_files {
             assert_eq!(sizes[name], size, "{name}");
         }
         let marker = std::fs::read_to_string(user.join("user.conf")).unwrap();
-        let nl = crate::input::TEXT_NEWLINE;
+        let nl = crate::__internal::TEXT_NEWLINE;
         assert!(
             marker.starts_with(&format!(
                 "binary format version:7{nl}model data version:14{nl}"
@@ -1856,7 +1856,7 @@ mod native_files {
             return;
         };
         let sep = std::path::MAIN_SEPARATOR;
-        let nl = crate::input::TEXT_NEWLINE;
+        let nl = crate::__internal::TEXT_NEWLINE;
         let user = user.display();
         assert_eq!(
             String::from_utf8_lossy(&run.stderr),

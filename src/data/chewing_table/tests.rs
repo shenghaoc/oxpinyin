@@ -354,9 +354,10 @@ fn suggestion_walk_matches_the_separate_probes() {
 fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
     use crate::store::{DefaultStore, RawReadStore as _, WriteStore as _, WriteTxn as _};
     let dir = tempfile::tempdir().expect("scratch directory");
-    let path = dir
-        .path()
-        .join(format!("walk_stop.{}", crate::store::DEFAULT_STORE_EXT));
+    let path = dir.path().join(format!(
+        "walk_stop.{}",
+        crate::__internal::DEFAULT_STORE_EXT
+    ));
     let store = DefaultStore::create(&path).unwrap();
     store
         .write(|txn| {

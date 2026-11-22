@@ -29,5 +29,3 @@ regex.workspace = true
 rstest.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-# The tests use the native text newline and the fixture store extension.
-oxpinyin = { workspace = true, features = ["test-hooks"] }

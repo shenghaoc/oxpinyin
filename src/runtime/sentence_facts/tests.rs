@@ -3,7 +3,7 @@ use super::*;
 fn fixture() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::store::DEFAULT_STORE_EXT)
+        .join(crate::__internal::DEFAULT_STORE_EXT)
 }
 fn opened() -> Runtime {
     Runtime::open(&fixture(), None).unwrap()

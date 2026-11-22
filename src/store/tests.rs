@@ -1071,7 +1071,8 @@ mod backend_files {
     //! DB opens without an environment, and Kyoto Cabinet's only companion is
     //! its `<file>.wal`. The guard below removes the store's own path on drop.
 
-    use crate::store::{DEFAULT_STORE_EXT, DefaultStore, RawReadStore, WriteStore, WriteTxn};
+    use crate::__internal::DEFAULT_STORE_EXT;
+    use crate::store::{DefaultStore, RawReadStore, WriteStore, WriteTxn};
 
     /// Owns a temporary store path and removes the data file or directory
     /// when it drops — including on panic, so a failed law leaves nothing

@@ -10,7 +10,7 @@ fn prediction_reads_imports_after_its_first_query() {
     let user = tempfile::tempdir().unwrap();
     let system = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::store::DEFAULT_STORE_EXT);
+        .join(crate::__internal::DEFAULT_STORE_EXT);
     let mut ctx = ContextCore::open(
         &system,
         Some(user.path()),

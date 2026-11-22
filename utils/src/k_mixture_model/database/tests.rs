@@ -103,7 +103,7 @@ pub(crate) fn assert_short_single_gram_exit(name: &str) {
         format!(
             "{}{}",
             LoadError::ShortArrayHeader,
-            oxpinyin::input::TEXT_NEWLINE
+            oxpinyin::__internal::TEXT_NEWLINE
         ),
         "{name}"
     );

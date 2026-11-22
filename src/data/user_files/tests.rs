@@ -67,7 +67,7 @@ fn user_conf_round_trips_and_conforms() {
     let path = dir.path().join("user.conf");
     let filename = crate::input::c_path(&path).expect("c path");
     assert!(conform.save(&filename));
-    let newline = crate::input::TEXT_NEWLINE;
+    let newline = crate::__internal::TEXT_NEWLINE;
     let expected = format!(
         "binary format version:7{newline}model data version:14{newline}database format:{DEFAULT_STORE_DB_FORMAT}{newline}open counter:0{newline}"
     );
@@ -265,7 +265,10 @@ fn a_negative_counter_conforms() {
     };
     assert!(negative.is_conform(&versions));
     let text = save_and_read(&negative);
-    assert!(text.ends_with(&format!("open counter:-3{}", crate::input::TEXT_NEWLINE)));
+    assert!(text.ends_with(&format!(
+        "open counter:-3{}",
+        crate::__internal::TEXT_NEWLINE
+    )));
     assert_eq!(parse(text.as_bytes()).expect("parse"), negative);
 }
 
@@ -276,7 +279,7 @@ fn an_out_of_int_version_is_written_signed() {
     let versions = SystemVersions::for_this_build(u32::MAX, 0x8000_0000);
     let info = UserTableInfo::conform_to(&versions);
     let text = save_and_read(&info);
-    let newline = crate::input::TEXT_NEWLINE;
+    let newline = crate::__internal::TEXT_NEWLINE;
     assert!(
         text.starts_with(&format!(
             "binary format version:-1{newline}model data version:-2147483648{newline}"

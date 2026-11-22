@@ -28,5 +28,4 @@ libc.workspace = true
 glib-sys.workspace = true
 
 [dev-dependencies]
-oxpinyin = { workspace = true, features = ["test-hooks"] }
 tempfile.workspace = true

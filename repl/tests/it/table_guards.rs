@@ -34,7 +34,7 @@ fn run(mode: &str, input: &[u8]) -> std::process::Output {
 /// 074a2219 tests/storage/test_phrase_table.cpp:45-59.
 #[test]
 fn invalid_phrase_query_keeps_the_previous_result() {
-    let newline = oxpinyin::input::TEXT_NEWLINE;
+    let newline = oxpinyin::__internal::TEXT_NEWLINE;
     let result = run("phrase_table", b"\xe4\xbd\xa0\n\xff\n");
     assert_eq!(result.status.code(), Some(22));
     assert!(result.stderr.is_empty());
@@ -48,7 +48,7 @@ fn invalid_phrase_query_keeps_the_previous_result() {
 /// at 074a2219 tests/storage/test_chewing_table.cpp:71-102.
 #[test]
 fn overlong_chewing_query_keeps_the_previous_result() {
-    let newline = oxpinyin::input::TEXT_NEWLINE;
+    let newline = oxpinyin::__internal::TEXT_NEWLINE;
     let input = format!("ni3\n{}\n", ["ni3"; 17].join("'"));
     let result = run("chewing_table", input.as_bytes());
     assert_eq!(result.status.code(), Some(22));

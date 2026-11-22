@@ -268,7 +268,7 @@ fn fixture() -> &'static Fixture {
             .join("..")
             .join("fixtures")
             .join("w3")
-            .join(oxpinyin::store::DEFAULT_STORE_EXT);
+            .join(oxpinyin::__internal::DEFAULT_STORE_EXT);
         let system_dir = c_path(&dir);
         let template_dir = new_dir("oxpinyin-fuzz-capi-template-");
         let user = c_path(template_dir.path());

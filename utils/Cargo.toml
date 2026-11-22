@@ -35,6 +35,3 @@ regex.workspace = true
 rstest.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-# Dev-only: the test-only library items the tests read; a dev-dependency
-# feature never reaches the normal build.
-oxpinyin = { workspace = true, features = ["test-hooks"] }
