@@ -98,7 +98,7 @@ Homebrew's `berkeley-db@5` is keg-only and ships no `.pc`. The macOS
 `SYSTEM_DEPS_BDB_NO_PKG_CONFIG=1`, `SYSTEM_DEPS_BDB_LIB=db`,
 `SYSTEM_DEPS_BDB_SEARCH_NATIVE=<prefix>/lib` and
 `SYSTEM_DEPS_BDB_INCLUDE=<prefix>/include`. A hand-run
-`cargo` or `just check bdb` needs the same four exported. The build script never calls `brew`.
+`cargo` needs the same four exported. The build script never calls `brew`.
 
 `BINDGEN_EXTRA_CLANG_ARGS` reaches bindgen as usual. A change to any of these variables
 regenerates the declarations, so no stale set stays behind.

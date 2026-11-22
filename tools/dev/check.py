@@ -1,39 +1,27 @@
-"""Native setup and lint checks.
+"""Small correctness checks for CI, and the Visual Studio environment lookup that the Windows builds use.
 
-These are setup and gate checks, not oracle or pin comparisons. The old
-optional oracle-directory display is intentionally absent: the native boundary
-does not probe an oracle installation or pass its variables to tests.
-"""
+The Windows tkrzw build (tools/tkrzw/windows.py) and the measurement builds import `lookup` and
+`msvc_environment`."""
 
-if __name__ == '__main__':
-    from .entry import require_utf8_mode
-
-    require_utf8_mode()
-
-import argparse
 import os
 from pathlib import Path
 import platform
 import re
-import shutil
 import subprocess
 import sys
 
-from . import cell, native
-
 ROOT = Path(__file__).resolve().parents[2]
 
-
+# The request-literal gate deliberately permits only the repository's one
+# managed-Python declaration.
 REQUEST = re.compile(r'cpython@\d|uv python (?:install|find|pin)[^\n]*? ["\']?\d\.\d|--python[ =]["\']?\d\.\d'
                      r'|requires-python\s*=\s*["\'][^"\'\n]*\d')
-# The one permitted declaration besides .python-version: this line of the project file, and the
-# copy of it that uv writes at the top level of the lockfile.
 DECLARATION = re.compile(r'requires-python = ">=\d+\.\d+"')
 DECLARED_IN = ('pyproject.toml', 'uv.lock')
 
 
 def lint_python_request():
-    """Check the repository's single Python request and its minimum-version declaration."""
+    """Check that the managed-Python version is requested only once."""
     if not re.fullmatch(r'\d+\.\d+', (ROOT / '.python-version').read_text().strip()):
         print('invalid series in .python-version', file=sys.stderr)
         return 1
@@ -62,29 +50,27 @@ def lint_python_request():
 
 
 def lookup(env, name):
-    """NAME's value in ENV, ignoring case: os.environ upper-cases Windows names."""
+    """Return NAME's value in ENV, ignoring case for Windows environments."""
     return next((value for key, value in env.items() if key.upper() == name.upper()), '')
 
 
 def msvc_environment(env):
-    """The Visual Studio developer environment: the caller's, or vcvars' via vswhere."""
+    """Return the caller's VS environment, or load one through vswhere."""
     if lookup(env, 'VCToolsInstallDir'):
         return env
     root = lookup(env, 'ProgramFiles(x86)') or r'C:\Program Files (x86)'
     vswhere = Path(root) / 'Microsoft Visual Studio' / 'Installer' / 'vswhere.exe'
     found = subprocess.run([str(vswhere), '-latest', '-products', '*', '-requires',
-                     'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'],
-                    env=env, capture_output=True, text=True)
+                            'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'],
+                           env=env, capture_output=True, text=True)
     installation = found.stdout.strip().splitlines()[0] if found.returncode == 0 and found.stdout.strip() else ''
     if not installation:
         raise ValueError('no Visual Studio with the C++ tools found; run from a Developer PowerShell for VS')
     script = 'vcvarsarm64.bat' if platform.machine().upper() == 'ARM64' else 'vcvars64.bat'
     vcvars = Path(installation) / 'VC' / 'Auxiliary' / 'Build' / script
-    # cmd /s keeps the outer quotes literal, so the batch path may hold spaces.
     done = subprocess.run(f'cmd /d /s /c ""{vcvars}" >nul && set"', env=env, capture_output=True, text=True)
     if done.returncode:
         raise ValueError(f'{vcvars} failed with status {done.returncode}')
-    # `set` also lists cmd's hidden per-drive "=C:=C:\\..." entries; skip them.
     loaded = dict(line.split('=', 1) for line in done.stdout.splitlines()
                   if '=' in line and not line.startswith('='))
     if not lookup(loaded, 'VCToolsInstallDir'):
@@ -92,142 +78,8 @@ def msvc_environment(env):
     return loaded
 
 
-USAGE = 'usage: just check [' + '|'.join(cell.BACKENDS) + ']'
-
-
-def windows_compiler(env):
-    """Whether the MSVC compiler the Windows build uses is available through ENV.
-
-    A developer shell has cl on PATH or has loaded the developer environment;
-    otherwise the Visual Studio found through vswhere is used.
-    The Rust and C++ bridge builds use MSVC, never cc.
-    """
-    if shutil.which('cl', path=lookup(env, 'PATH')):
-        return True
-    try:
-        msvc_environment(env)
-    except (ValueError, OSError):
-        return False
-    return True
-
-
-def pkg_config_program(env):
-    """The program that answers pkg-config queries: PKG_CONFIG on Windows, else pkg-config.
-
-    Windows has no pkg-config; the setup names a pkgconf.exe in PKG_CONFIG.
-    """
-    if sys.platform == 'win32':
-        return lookup(env, 'PKG_CONFIG') or 'pkg-config'
-    return 'pkg-config'
-
-
-def missing_tool(tools):
-    """Name the first tool this host's checks need and TOOLS cannot find, or None.
-
-    POSIX needs cargo, rustup, cc and pkg-config. Windows needs cargo, rustup,
-    MSVC and the pkg-config program: cc is a Unix compiler driver, and the one
-    call of it (the Berkeley DB header) has no Windows build.
-    """
-    windows = sys.platform == 'win32'
-    for tool in ('cargo', 'rustup', 'msvc' if windows else 'cc', pkg_config_program(tools.environment)):
-        if tool == 'msvc':
-            if not windows_compiler(tools.environment):
-                return 'MSVC (cl, or the Visual Studio C++ tools)'
-        elif tools.which(tool) is None:
-            return tool
-    return None
-
-
-def run(backend=None):
-    """Check native prerequisites, then build and run the selected backend tests.
-
-    With no backend named, use the host's cell (tools/dev/cell.py host_cell):
-    Kyoto Cabinet on Linux, the Cargo default elsewhere. Include the C API
-    tests on Linux. Print tool and backend diagnostics; return 2 for an
-    unknown backend, 1 for missing tools or launch errors, or the failing
-    child status.
-    """
-    out, err = sys.stdout, sys.stderr
-    backend = backend or cell.CELL_TO_BACKEND[cell.host_cell()]
-    if backend not in cell.BACKENDS:
-        print(USAGE, file=err, flush=True)
-        return 2
-    tools = native.Tools()
-    missing = missing_tool(tools)
-    if missing is not None:
-        print(f'missing {missing}; see docs/runbooks/setup.md', file=err, flush=True)
-        return 1
-    pkg_config = pkg_config_program(tools.environment)
-    print(f'System: {platform.system()} {platform.machine()}', file=out, flush=True)
-    result = tools.run(['rustup', 'show', 'active-toolchain'])
-    out.write(result.stdout)
-    out.flush()
-    err.write(result.stderr)
-    err.flush()
-    if result.returncode:
-        return result.returncode
-    result = tools.run(['rustc', '-vV'])
-    out.write(result.stdout)
-    out.flush()
-    err.write(result.stderr)
-    err.flush()
-    if result.returncode:
-        return result.returncode
-    target = os.environ.get('CARGO_TARGET_DIR') or 'target'
-    print(f'Backend: {backend}; target directory: {target}', file=out, flush=True)
-    result = tools.run([pkg_config, '--modversion', 'libclang'])
-    if result.returncode == 0:
-        out.write(result.stdout)
-        out.flush()
-    else:
-        print('libclang: discovered by bindgen during build (a .pc file is optional)', file=out, flush=True)
-    if backend == 'bdb':
-        if sys.platform == 'win32':
-            print('bdb: reading db.h needs cc, which the MSVC build does not use; see docs/runbooks/setup.md',
-                  file=err, flush=True)
-            return 1
-        command = ['cc']
-        command += native.path_list_flags(os.environ, 'SYSTEM_DEPS_BDB_INCLUDE', '-I')
-        command += ['-E', '-P', '-']
-        result = tools.run(command, input='#include <db.h>\nDB_VERSION_STRING\n')
-        if result.returncode:
-            err.write(result.stderr)
-            err.flush()
-            return result.returncode
-        lines = result.stdout.rstrip().splitlines()
-        print('Berkeley DB header: ' + (lines[-1] if lines else ''), file=out, flush=True)
-    else:
-        result = tools.run([pkg_config, '--modversion', backend])
-        out.write(result.stdout)
-        out.flush()
-        err.write(result.stderr)
-        err.flush()
-        if result.returncode:
-            print(f'{backend}: pkg-config could not report a version', file=err, flush=True)
-            return result.returncode
-    args = ['--locked', *cell.feature_flags(backend), '-p', 'oxpinyin']
-    if platform.system() == 'Linux':
-        result = tools.run([pkg_config, '--modversion', 'glib-2.0'])
-        out.write(result.stdout)
-        out.flush()
-        err.write(result.stderr)
-        err.flush()
-        if result.returncode:
-            return result.returncode
-        args += ['-p', 'oxpinyin-capi']
-    try:
-        rc = tools.supervised(['cargo', 'nextest', 'run', *args],
-                              environment=tools.environment)
-    except Exception as exc:
-        print(f'FAIL: {exc}', file=err, flush=True)
-        return 1
-    if rc:
-        return rc
-    print('\nSetup check passed: native backend tests linked and ran. This is not oracle parity.', file=out, flush=True)
-    return 0
-
-
-LINT_USAGE = ('usage: python -c "from tools.dev.check import lint_crate_cfg_placement; import sys; sys.exit(lint_crate_cfg_placement(sys.argv[1:]))" [file...]\n'
+LINT_USAGE = ('usage: python -c "from tools.dev.check import lint_crate_cfg_placement; import sys; '
+              'sys.exit(lint_crate_cfg_placement(sys.argv[1:]))" [file...]\n'
               '       with no arguments, lints every tracked *.rs file\n')
 LINT_VIOLATION_HEADER = ('crate-cfg-placement: a crate-level `#![cfg(...)]` must sit BELOW '
                          'its `//!` docs.\n\n')
@@ -239,7 +91,7 @@ LINT_VIOLATION_FOOTER = (
 
 
 def _placement_hit(path):
-    """Return (gate line, doc line) for the first crate-level ///! after a gate."""
+    """Return (gate line, doc line) for the first crate-level docs after a gate."""
     gate = 0
     with path.open('rb') as source:
         for number, line in enumerate(source, 1):
@@ -251,17 +103,12 @@ def _placement_hit(path):
 
 
 def lint_crate_cfg_placement(argv):
-    """Lint crate-level `#![cfg(...)]` placement and return 0, 1 or 2.
-
-    No arguments scan every tracked Rust file; named paths must be readable
-    regular files. Exit 2 is a usage or environment error, never a violation.
-    """
+    """Lint crate-level cfg placement and return 0, 1 or 2."""
     out, err = sys.stdout, sys.stderr
     args = list(argv)
     if args[:1] in (['-h'], ['--help']):
         err.write(LINT_USAGE)
         return 2
-    tools = native.Tools()
     if args:
         unreadable = [f'  {name}\n' for name in args if not Path(name).is_file()]
         if unreadable:
@@ -270,7 +117,8 @@ def lint_crate_cfg_placement(argv):
         files = args
     else:
         try:
-            result = tools.run(['git', 'ls-files', '--', '*.rs'], text=False, stdout=subprocess.PIPE)
+            result = subprocess.run(['git', 'ls-files', '--', '*.rs'], cwd=ROOT,
+                                    capture_output=True, check=False)
         except OSError:
             result = None
         if result is None or result.returncode:
@@ -288,9 +136,8 @@ def lint_crate_cfg_placement(argv):
         hit = _placement_hit(path)
         if hit:
             gate, doc = hit
-            violations.append(
-                f'  {name}:{doc}: `//!` doc comment below the crate-level '
-                f'`#![cfg(...)]` on line {gate}\n')
+            violations.append(f'  {name}:{doc}: `//!` doc comment below the crate-level '
+                              f'`#![cfg(...)]` on line {gate}\n')
     if violations:
         err.write(LINT_VIOLATION_HEADER)
         err.write(''.join(violations))
@@ -299,8 +146,3 @@ def lint_crate_cfg_placement(argv):
         return 1
     print(f'crate-cfg-placement: {checked} file(s) checked, no violations', file=out)
     return 0
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Run native setup checks.')
-    parser.add_argument('backend', nargs='?')
-    raise SystemExit(run(parser.parse_args().backend))
