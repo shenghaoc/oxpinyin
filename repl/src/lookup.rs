@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 use oxpinyin::OptionBits;
 use oxpinyin::data::{BigramTables, PhraseLibraries, SystemTables, TableConf};
 use oxpinyin::engine::EngineError;
-use oxpinyin::engine::tool::{LookupRow, PreparedLookup, lookup, phrase_lookup, prepare_lookup};
-use oxpinyin::input::tool::{self, lookup_tests as output};
 use oxpinyin::parser::ChewingKey;
-use oxpinyin::tool::{Key, Parse};
 use oxpinyin::vocab::{PhraseText, PhraseToken, SyllableKey};
+use oxpinyin_tool_support::input::{self as tool, lookup_tests as output};
+use oxpinyin_tool_support::lookup::{
+    LookupRow, PreparedLookup, lookup, phrase_lookup, prepare_lookup,
+};
+use oxpinyin_tool_support::parser::{Key, Parse};
 
 use crate::{conf, parser::parse_full, present};
 
@@ -225,7 +227,7 @@ fn physical_matrix(parsed: &Parse, options: OptionBits) -> Vec<Vec<Key>> {
         };
         let spelling = origin.key.with_tone(0).pinyin_string();
         if let Some(key) = SyllableKey::from_canonical_text(&spelling) {
-            for alternate in key.fuzzy_alternatives(options) {
+            for alternate in oxpinyin_tool_support::parser::fuzzy_alternatives(key, options) {
                 column.push(Key {
                     key: alternate.chewing_key().with_tone(origin.key.tone),
                     span: origin.span.clone(),
@@ -268,7 +270,8 @@ impl Lookup {
         } else {
             "phrase_index.bin"
         });
-        let tables = SystemTables::for_lookup(&path, phonetic).unwrap_or_else(|_| tool::abort());
+        let tables = oxpinyin_tool_support::data::lookup_tables(&path, phonetic)
+            .unwrap_or_else(|_| tool::abort());
         let mut libraries = PhraseLibraries::empty();
         for (index, row) in conf.system_libraries() {
             let name = row.system.as_ref().map(|name| PathBuf::from(name.as_ref()));
@@ -276,8 +279,7 @@ impl Lookup {
                 data,
                 name.as_deref().unwrap_or(Path::new("")).as_os_str(),
             );
-            libraries
-                .load_heap(index, &path)
+            oxpinyin_tool_support::data::load_heap_library(&mut libraries, index, &path)
                 .map_err(|_| LoadError { name })?;
         }
         let model = bigram.then(|| {
@@ -294,8 +296,7 @@ impl Lookup {
     /// Reports whether the index has a continuation row for `keys`.
     #[must_use]
     fn key_exists(&self, keys: &[ChewingKey]) -> bool {
-        self.tables
-            .key_exists(keys)
+        oxpinyin_tool_support::data::system_key_exists(&self.tables, keys)
             .unwrap_or_else(|_| tool::abort())
     }
     /// Runs n-best lookup with no user overlay. Returns an empty result when

@@ -11,7 +11,7 @@
 use std::ffi::CString;
 use std::ffi::OsString;
 
-use oxpinyin::input::tool::{self, OptionValue, OutputStream};
+use oxpinyin_tool_support::input::{self as tool, OptionValue, OutputStream};
 
 use crate::segment::data;
 use crate::segment::input::Input;

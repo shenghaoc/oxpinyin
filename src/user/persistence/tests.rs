@@ -662,7 +662,9 @@ fn check_format_then_the_profile_read_is_load() {
 /// both load and save byte-for-byte.
 #[test]
 fn phrase_index_records_round_trip_verbatim() {
-    use crate::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
+    use crate::data::row_format::phrase_index::{
+        encode_ucs4_key, test_encode_tokens as encode_tokens,
+    };
 
     let dir = tempdir("phrase-index-records");
     let originals = originals();

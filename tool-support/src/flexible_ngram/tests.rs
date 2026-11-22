@@ -1,4 +1,4 @@
-use super::{ArrayItemWithToken, FixedRecord, MAGIC_KEY, SingleGram, StoreError};
+use super::{ArrayItemWithToken, AttachMode, FixedRecord, MAGIC_KEY, SingleGram, StoreError};
 
 /// A stand-in for the KMM magic header.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -93,7 +93,7 @@ impl super::FlexibleGramSpec for Spec {
 
 #[test]
 fn magic_header_reads_follow_backend_sizes() {
-    use crate::store::{AttachMode, WriteStore, WriteTxn};
+    use oxpinyin::store::WriteStore;
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
     use std::process::Command;
@@ -102,9 +102,8 @@ fn magic_header_reads_follow_backend_sizes() {
     const DIR: &str = "OXPINYIN_MAGIC_READ_DIR";
     if let Ok(mode) = std::env::var(MODE) {
         let path = std::path::PathBuf::from(std::env::var_os(DIR).unwrap()).join("model.db");
-        let model =
-            super::DefaultFlexibleBigram::<Spec>::attach(Some(&path), AttachMode::ReadWriteCreate)
-                .unwrap();
+        let model = super::FlexibleBigram::<Spec>::attach(Some(&path), AttachMode::ReadWriteCreate)
+            .unwrap();
         assert!(model.attached());
         // Change the already-attached record so attach's own signature
         // check cannot hide the getter contract being tested.
@@ -118,12 +117,7 @@ fn magic_header_reads_follow_backend_sizes() {
             _ => {}
         }
         if mode == "missing" {
-            model
-                .db
-                .as_ref()
-                .unwrap()
-                .write_deferred(|txn| txn.remove_raw(&MAGIC_KEY))
-                .unwrap();
+            model.db.as_ref().unwrap().remove_raw(&MAGIC_KEY).unwrap();
         } else {
             model.write_value(&MAGIC_KEY, &value).unwrap();
         }
@@ -142,7 +136,7 @@ fn magic_header_reads_follow_backend_sizes() {
         let output = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "store::flexible_ngram::tests::magic_header_reads_follow_backend_sizes",
+                "flexible_ngram::tests::magic_header_reads_follow_backend_sizes",
             ])
             .env(MODE, mode)
             .env(DIR, &dir)
@@ -154,7 +148,7 @@ fn magic_header_reads_follow_backend_sizes() {
         if aborts {
             #[cfg(unix)]
             assert_eq!(output.status.signal(), Some(6), "{mode}: {output:?}");
-            // Rust's abort fast-fails on Windows (`crate::store::death_test`).
+            // Rust's abort fast-fails on Windows (`crate::death_test`).
             #[cfg(windows)]
             assert_eq!(
                 output.status.code(),
@@ -220,7 +214,7 @@ fn a_truncated_single_gram_is_refused_by_length() {
         assert!(
             matches!(
                 super::decode_value::<Header, Item>(value),
-                Err(StoreError::ShortArrayHeader)
+                Err(super::LoadError::ShortArrayHeader)
             ),
             "{value:?}"
         );
@@ -229,7 +223,7 @@ fn a_truncated_single_gram_is_refused_by_length() {
         assert!(
             matches!(
                 super::decode_value::<Header, Item>(value),
-                Err(StoreError::Backend(_))
+                Err(super::LoadError::Store(StoreError::Backend(_)))
             ),
             "{value:?}"
         );
@@ -248,10 +242,11 @@ mod flexible_bigram {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use crate::store::{
-        ArrayItemWithToken, AttachMode, DefaultFlexibleBigram, DefaultStore, FixedRecord,
-        FlexibleGramSpec, MAGIC_KEY, RawReadStore, SingleGram, StoreError, WriteStore, WriteTxn,
+    use super::super::{
+        ArrayItemWithToken, AttachMode, FixedRecord, FlexibleBigram, FlexibleGramSpec, MAGIC_KEY,
+        SingleGram,
     };
+    use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, WriteStore, WriteTxn};
 
     // ── the k-mixture-model records ────────────────────────────────────
 
@@ -376,7 +371,7 @@ mod flexible_bigram {
         type ArrayItem = Item;
     }
 
-    type Model = DefaultFlexibleBigram<Kmm>;
+    type Model = FlexibleBigram<Kmm>;
 
     // ── fixtures and scratch directories ───────────────────────────────
 
@@ -393,6 +388,7 @@ mod flexible_bigram {
 
     fn w3_cell() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
             .join("fixtures/w3")
             .join(cell_dir())
     }
@@ -682,8 +678,8 @@ mod flexible_bigram {
     #[test]
     fn a_short_array_header_aborts_at_the_getter() {
         let before = std::cell::RefCell::new(Vec::new());
-        crate::store::death_test::assert_aborts_in_tempdir(
-            "store::flexible_ngram::tests::flexible_bigram::a_short_array_header_aborts_at_the_getter",
+        crate::death_test::assert_aborts_in_tempdir(
+            "flexible_ngram::tests::flexible_bigram::a_short_array_header_aborts_at_the_getter",
             |scratch| {
                 let path = scratch.join("short.db");
                 {

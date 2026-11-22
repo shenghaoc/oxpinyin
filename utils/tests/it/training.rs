@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::single_gram::decode_single_gram;
 use oxpinyin::store::{DefaultStore, RawReadStore};
+use oxpinyin_tool_support::data::decode_single_gram;
 
 /// The repository root.
 fn root() -> PathBuf {

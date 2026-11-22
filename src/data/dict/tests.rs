@@ -32,7 +32,9 @@ mod system_dictionary {
     // The fixtures are written with the crate's own row schema, not a copy of
     // it: a layout change has to break the reader's behaviour here, never pass
     // because the test harness drifted along with it.
-    use crate::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
+    use crate::data::row_format::phrase_index::{
+        encode_ucs4_key, test_encode_tokens as encode_tokens,
+    };
 
     use crate::data::row_format::pinyin_index::{
         encode_complete_key as encode_complete, encode_incomplete_key as encode_incomplete,

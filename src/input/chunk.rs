@@ -28,7 +28,7 @@ pub(crate) const fn opens_directories() -> bool {
 }
 
 /// The header and bytes returned by the single payload read.
-pub(crate) struct LoadedChunk {
+pub struct LoadedChunk {
     /// The declared payload length, in the file's native header bytes.
     #[cfg(test)]
     length: [u8; 4],
@@ -43,7 +43,7 @@ impl LoadedChunk {
     /// Check the returned bytes, close the descriptor, and return the payload.
     /// A checksum mismatch rejects the chunk while its descriptor is still open.
     #[must_use]
-    pub(crate) fn finish(self, checksum: impl FnOnce(&[u8]) -> u32) -> Option<Vec<u8>> {
+    pub fn finish(self, checksum: impl FnOnce(&[u8]) -> u32) -> Option<Vec<u8>> {
         if checksum(&self.payload) != u32::from_le_bytes(self.checksum) {
             return None;
         }
@@ -57,7 +57,7 @@ impl LoadedChunk {
 
 /// A failure to obtain the bytes of a chunk.
 #[derive(Debug)]
-pub(crate) enum ChunkLoadError {
+pub enum ChunkLoadError {
     /// Open, seek, allocation or payload read failed.
     Io(io::Error),
     /// The file is shorter than its header.
@@ -73,7 +73,7 @@ pub(crate) enum ChunkLoadError {
 /// # Errors
 /// Returns a short-header error when the file has fewer than eight bytes.
 /// Also returns open, seek, allocation, or payload read failures.
-pub(crate) fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
+pub fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
     load_with(path, false, |source, payload| {
         source.read_payload(payload, None)
     })

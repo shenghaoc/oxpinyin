@@ -9,7 +9,7 @@
 use std::ffi::OsString;
 
 use oxpinyin::data::{FileType, TableConf};
-use oxpinyin::input::tool;
+use oxpinyin_tool_support::input as tool;
 
 use crate::storage::Libraries;
 use crate::training::{UNIGRAM_FILE_TYPES, load_table_conf};

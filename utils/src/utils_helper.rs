@@ -6,7 +6,7 @@ use std::path::Path;
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::{LibraryError, PhraseLibrary};
 use oxpinyin::data::{FileName, FileType, TableConf};
-use oxpinyin::input::tool;
+use oxpinyin_tool_support::input as tool;
 
 pub mod taglib;
 
@@ -110,7 +110,11 @@ pub(crate) fn load_system_libraries(
 ) -> Result<PhraseLibraries, SystemLibraryError<'_>> {
     let mut libraries = PhraseLibraries::empty();
     load_library_rows(conf, false, &[FileType::SystemFile], |index, name| {
-        libraries.load_heap(index, Path::new(name.as_ref()))?;
+        oxpinyin_tool_support::data::load_heap_library(
+            &mut libraries,
+            index,
+            Path::new(name.as_ref()),
+        )?;
         Ok(())
     })?;
     Ok(libraries)
@@ -126,7 +130,8 @@ pub(crate) fn save_and_reload_library(name: &CStr, file: &[u8]) -> PhraseLibrary
         tool::storage::report_save_failed(name);
         tool::exit(tool::ENOENT);
     }
-    PhraseLibrary::from_payload(file[8..].to_vec()).unwrap_or_else(|_| tool::abort())
+    oxpinyin_tool_support::data::library_from_payload(file[8..].to_vec())
+        .unwrap_or_else(|_| tool::abort())
 }
 
 /// `taglib_token_to_string` (`tag_utility.cpp:384-405`). A missing item

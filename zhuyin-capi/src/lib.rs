@@ -76,8 +76,6 @@ pub mod sentence;
 mod state;
 pub mod types;
 
-pub mod tool;
-
 // C publication and conversion tests live in sibling tests.rs files and tests/it.
 // The shared test helpers name the exported functions through the library's
 // service modules, as the verification tests do.

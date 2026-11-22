@@ -15,14 +15,15 @@ doctest = false
 # The data layer's backend selection, forwarded to every backend-sensitive
 # edge the utilities use.
 default = ["tkrzw"]
-kyotocabinet = ["oxpinyin/kyotocabinet"]
-bdb = ["oxpinyin/bdb"]
-tkrzw = ["oxpinyin/tkrzw"]
+kyotocabinet = ["oxpinyin-tool-support/kyotocabinet", "oxpinyin/kyotocabinet"]
+bdb = ["oxpinyin-tool-support/bdb", "oxpinyin/bdb"]
+tkrzw = ["oxpinyin-tool-support/tkrzw", "oxpinyin/tkrzw"]
 
 [lints]
 workspace = true
 
 [dependencies]
+oxpinyin-tool-support = { path = "../tool-support", default-features = false }
 rustc-hash.workspace = true
 oxpinyin = { workspace = true }
 

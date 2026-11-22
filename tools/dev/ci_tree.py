@@ -156,7 +156,7 @@ def gate(base: str, inputs: dict[str, Inputs] = CI_INPUTS, root: Path | None = N
 # select the store job, the over-trigger direction.
 STORE_GATE_SCRIPT = Path(__file__).resolve().parents[1] / "bisection" / "cells-for-diff.py"
 STORE_GATE_ARGUMENTS = ("--run-flag", "--run-without-base", *(argument for path in (
-    *SHARED, "utils/", "fixtures/w3/kct/", "fixtures/w3/db/",
+    *SHARED, "utils/", "tool-support/", "fixtures/w3/kct/", "fixtures/w3/db/",
     "src/", "codegen/", "capi/", "zhuyin-capi/", "Cargo.toml", "tools/abi/",
     "tools/dev/abi.py", "tools/dev/abi_headers.py", "tools/dev/cell.py", "tools/dev/drivers.py",
     "tools/dev/entry.py", "tools/dev/host.py", "tools/dev/native.py", "tools/dev/pool.py",

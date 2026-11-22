@@ -15,7 +15,10 @@ mod error;
 mod nbest;
 mod phrase;
 mod session;
-pub use session::tool;
+pub use nbest::{GenerationInput, NbestRow, nbest_sentences_generation};
+pub use phrase::phrase_segment_ucs4;
+pub use session::matrix::{ParsedMatrix, ScanMatrix};
+pub use session::{ScanKey, apostrophe_extended, build_scan_matrix_over};
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
 pub use char_offset::{

@@ -7,7 +7,7 @@
 //! prints the pin's `k mixture model validation failed.` line and exits
 //! `ENODATA` on the first failed half rows answer.
 
-use oxpinyin::input::tool::{self, k_mixture_model as edge};
+use oxpinyin_tool_support::input::{self as tool, k_mixture_model as edge};
 
 use super::database::Database;
 

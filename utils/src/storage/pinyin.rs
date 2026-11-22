@@ -14,11 +14,15 @@ use oxpinyin::parser::ChewingKey;
 /// `pinyin_index` (`:618-621,655`), not the wider `content_table`.
 #[must_use]
 pub(crate) fn parse(pinyin: &CStr) -> Vec<ChewingKey> {
-    oxpinyin::tool::parse_direct(pinyin.to_bytes(), oxpinyin::OptionBits::USE_TONE, false)
-        .keys
-        .into_iter()
-        .map(|key| key.key)
-        .collect()
+    oxpinyin_tool_support::parser::parse_direct(
+        pinyin.to_bytes(),
+        oxpinyin::OptionBits::USE_TONE,
+        false,
+    )
+    .keys
+    .into_iter()
+    .map(|key| key.key)
+    .collect()
 }
 
 /// `ZhuyinDirectParser2::parse` with `USE_TONE | FORCE_TONE`

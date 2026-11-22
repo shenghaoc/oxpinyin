@@ -8,10 +8,10 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxpinyin::input::tool;
-use oxpinyin::input::tool::OutputStream;
-use oxpinyin::single_gram::decode_single_gram;
 use oxpinyin::vocab::{PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token};
+use oxpinyin_tool_support::data::decode_single_gram;
+use oxpinyin_tool_support::input as tool;
+use oxpinyin_tool_support::input::OutputStream;
 
 use crate::storage::Hash;
 use crate::storage::load_table_conf;
@@ -25,7 +25,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     // not checked; a failed attach leaves `m_db` without records.
     let bigram = Some(
         Hash::open_read_only(Path::new("bigram.db"))
-            .unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error)),
+            .unwrap_or_else(|error| oxpinyin_tool_support::input::exit_on_store_error(&error)),
     );
 
     let Some(output) = OutputStream::stdout() else {

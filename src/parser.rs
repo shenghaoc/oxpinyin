@@ -7,7 +7,9 @@
 //! describes the alternate-index parse and its selection rules.
 
 pub use crate::chewing_key::{ChewingKey, KeyText};
+pub use crate::direct::parse as scan_direct;
 pub use crate::full_pinyin_index::{FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse};
+pub use crate::scheme::parse_zhuyin_direct_key;
 pub use crate::scheme::{
     DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
     ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,

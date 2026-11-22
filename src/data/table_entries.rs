@@ -1,4 +1,4 @@
-//! Ordering for index records. [`exact_compare2`] compares stored phonetic keys.
+//! Builds native index fixture rows.
 //! [`crate::data::row_format`] defines the byte encodings.
 
 // Fixture entry-set builders below use ChewingLargeTable2 and PhraseLargeTable3 prefix
@@ -12,7 +12,9 @@ use crate::parser::ChewingKey;
 #[cfg(test)]
 use crate::data::phrase_library::CHEWING_KEY_SIZE;
 #[cfg(test)]
-use crate::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key_scalars};
+use crate::data::row_format::phrase_index::{
+    encode_ucs4_key_scalars, test_encode_tokens as encode_tokens,
+};
 #[cfg(test)]
 use crate::data::row_format::pinyin_index::{
     PinyinIndexItem, encode_complete_key, encode_incomplete_key, encode_item,
@@ -23,41 +25,6 @@ use crate::data::row_format::pinyin_index::{
 pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 
 // pinyin_exact_compare2, pinyin_phrase3.h:33–66.
-/// Compares two equal-length key sequences by initial, then middle and final, then tone.
-/// Only positions in `lhs` participate.
-///
-/// # Panics
-///
-/// Panics if a comparison indexes beyond `rhs`. Pass a right slice at least as long as
-/// `lhs`.
-#[must_use]
-pub fn exact_compare2(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> std::cmp::Ordering {
-    let len = lhs.len();
-    for i in 0..len {
-        match lhs[i].initial.cmp(&rhs[i].initial) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-    }
-    for i in 0..len {
-        match lhs[i].middle.cmp(&rhs[i].middle) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-        match lhs[i].final_.cmp(&rhs[i].final_) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-    }
-    for i in 0..len {
-        match lhs[i].tone.cmp(&rhs[i].tone) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-    }
-    std::cmp::Ordering::Equal
-}
-
 /// One keyspace's accumulated rows: packed key bytes → the records in
 /// arrival order.
 #[cfg(test)]
@@ -125,7 +92,16 @@ pub(crate) fn pinyin_index_entries(rows: &[PinyinIndexItem]) -> Entries {
         }
     }
     for (key, mut records) in merged {
-        records.sort_by(|a, b| exact_compare2(&a.keys, &b.keys).then(a.token.cmp(&b.token)));
+        records.sort_by_cached_key(|row| {
+            let initials: Vec<_> = row.keys.iter().map(|key| key.initial).collect();
+            let finals: Vec<_> = row
+                .keys
+                .iter()
+                .map(|key| (key.middle, key.final_))
+                .collect();
+            let tones: Vec<_> = row.keys.iter().map(|key| key.tone).collect();
+            (initials, finals, tones, row.token)
+        });
         let mut value = Vec::with_capacity(
             records.len()
                 * crate::data::row_format::pinyin_index::item2_stride(

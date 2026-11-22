@@ -7,13 +7,10 @@
 
 use std::path::Path;
 
-use crate::store::{DefaultStore, RawReadStore};
-
 use crate::data::DictError;
-use crate::data::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
+use crate::data::chewing_table::{ChewingDbm, DefaultDbm};
 // The key layout (`crate::data::row_format`) and the value layout
 // (`crate::single_gram`) have one owner each.
-use crate::data::TableError;
 use crate::data::row_format::encode_token_key;
 #[cfg(test)]
 use crate::single_gram::encode_single_gram;
@@ -32,22 +29,11 @@ impl BigramTable {
     pub(crate) fn attach(path: &Path) -> Result<Self, DictError> {
         Ok(Self::new(DefaultDbm::attach(path, true)?))
     }
-
-    /// Opens a bigram DBM lazily (no scan). libpinyin's `bigram.db` is
-    /// a KC **`HashDB`** / Tkrzw **`HashDBM`**, so the open goes through
-    /// `RawReadStore::open_hash_read_only`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the file cannot be opened read-only.
-    pub fn open(path: &Path) -> Result<Self, DictError> {
-        let store = DefaultStore::open_hash_read_only(path).map_err(TableError::from)?;
-        Ok(Self::new(RawChewingDbm::new(store)))
-    }
 }
 
 impl<D: ChewingDbm> BigramTable<D> {
-    pub(crate) const fn new(dbm: D) -> Self {
+    /// Wraps an open native DBM.
+    pub const fn new(dbm: D) -> Self {
         Self { dbm }
     }
 

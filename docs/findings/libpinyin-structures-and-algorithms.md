@@ -162,7 +162,7 @@ The differences are deliberate:
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`src/data/bigram_table.rs`) | same / follows |
 | User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`src/store/mod.rs`): the pin's container per backend through the real library | same / follows |
-| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` and `tests/storage/test_flexible_ngram.cpp` | `SingleGram` / `FlexibleBigram` in `src/store/flexible_ngram.rs`, native DBM records consumed by nonshipping `oxpinyin-utils` | same container layout; attach, magic-header reads and tools-only KC mutation follow backend twins ([record](upstream-divergences.md#utility-check-macros-write-no-message)) |
+| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` and `tests/storage/test_flexible_ngram.cpp` | `SingleGram` / `FlexibleBigram` in `tool-support/src/flexible_ngram.rs`, native DBM records consumed by nonshipping `oxpinyin-utils` | same container layout; attach, magic-header reads and tools-only KC mutation follow backend twins ([record](upstream-divergences.md#utility-check-macros-write-no-message)) |
 
 For a correctly projected row, each retrieved record falls in the pin's
 `equal_range`. Both filters keep the same entries, including duplicates, in
@@ -590,7 +590,7 @@ relative to the repository root.
 | Token slot mask and allocation wrap | `0x00ffffff`. After the last slot, import uses slot 1 and addon promotion uses slot 0 | `include/novel_types.h:41-46`, `storage/phrase_index.cpp:620`, `pinyin.cpp:589-594,2541-2545` | `src/vocab.rs:317,368-378`, `src/user/store_arena.rs:425-429` |
 | `OPEN_COUNTER_LIMIT` | 6 | `storage/table_info.cpp:32,409,423` | `src/data/user_files.rs:298,307,506` |
 | Configuration scanner | 6 conversions per library row, at most 255 bytes per `%s` field | `storage/table_info.cpp:228,232,255-259,352` | `src/input/native.rs:384,396,415-422`, `src/input/config.rs:160` |
-| Table-text scanner | First 4 fields. At most 4095 bytes per read and 255 bytes per copied string. Decimal tokens fit `u32` and counts fit `size_t` | `storage/table_text_parser.h:34-49,54-90,99-114` | `utils/src/storage/table_text.rs:38-41,69-86`, `src/input/tool.rs:1260,1312-1334` |
+| Table-text scanner | First 4 fields. At most 4095 bytes per read and 255 bytes per copied string. Decimal tokens fit `u32` and counts fit `size_t` | `storage/table_text_parser.h:34-49,54-90,99-114` | `utils/src/storage/table_text.rs:38-41,69-86`, `TableFile::read_line`, `ascii_strtoull` and `strlcpy_256` in `tool-support/src/input.rs` |
 | MemoryChunk header and checksum | 8-byte minimum header. Four-byte little-endian checksum words and eight-bit shifts for remaining bytes | `include/memory_chunk.h:69,136-160,427-438,486-496` | `src/input/chunk.rs:108-118`, `src/data/chunk_format.rs:29,66-78` |
 | SingleGram header and record stride | 4-byte minimum header, 8-byte item stride | `storage/ngram.cpp:37-38,48-70`, `include/novel_types.h:105-108` | `src/single_gram.rs:20-23`, `src/user/store.rs:1454-1467` |
 | Journal ADD item header and mask-out header count | ADD needs at least 6 bytes. Mask-out needs one journal header and asserts on a second | `storage/phrase_index.h:56,124-126`, `storage/phrase_index.cpp:457,721-747` | `src/user/replay.rs:911-917`, `src/user/persistence.rs:1931-1942` |
@@ -1013,7 +1013,7 @@ frequency, and rows 125-127. No crash or lost buffered output is emulated.
 `gen_pinyin_table` reads with `fscanf("%1023s %1023s %u")` and `feof`
 (`gen_pinyin_table.cpp:134-157`): a last row without a trailing newline is
 dropped. `TableInput` keeps the same persistent buffers and calls
-(`src/input/tool.rs:777-984`). The full-pinyin parse runs with
+(`tool-support/src/input.rs`). The full-pinyin parse runs with
 `PINYIN_CORRECT_ALL | USE_TONE` (`gen_pinyin_table.cpp:176-182`).
 
 **Equivalence: argued.** The scanner, `g_utf8_strlen`, the UCS-4

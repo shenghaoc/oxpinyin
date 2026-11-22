@@ -557,16 +557,25 @@ impl ItemBounds {
     }
 }
 
-enum LibraryBytes {
+/// Owned or mapped input to the common phrase-library layout reader.
+pub struct LibraryBytes(LibraryBacking);
+
+enum LibraryBacking {
     Mapped(crate::input::chunk::Mapping),
     Owned(Vec<u8>),
 }
 
+impl From<Vec<u8>> for LibraryBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(LibraryBacking::Owned(bytes))
+    }
+}
+
 impl LibraryBytes {
     fn as_slice(&self) -> &[u8] {
-        match self {
-            Self::Mapped(mapping) => mapping.as_slice(),
-            Self::Owned(payload) => payload,
+        match &self.0 {
+            LibraryBacking::Mapped(mapping) => mapping.as_slice(),
+            LibraryBacking::Owned(payload) => payload,
         }
     }
 }
@@ -671,46 +680,18 @@ impl PhraseLibrary {
         path: &Path,
         defer_header_fault: bool,
     ) -> Result<Self, LibraryError> {
-        let file = LibraryBytes::Mapped(map_chunk(path, defer_header_fault)?);
+        let file = LibraryBytes(LibraryBacking::Mapped(map_chunk(path, defer_header_fault)?));
         let bytes = file.as_slice();
         let payload = CHUNK_HEADER_SIZE
             ..CHUNK_HEADER_SIZE + ((bytes.len() - CHUNK_HEADER_SIZE) as u32 as usize);
         Self::from_bytes(file, payload, Some(path.to_path_buf()))
     }
 
-    /// Read and validate a utility chunk through `MemoryChunk::load`'s calls.
+    /// Validates the phrase-library layout over the selected payload.
     ///
     /// # Errors
-    /// Returns a read, checksum, or layout error.
-    pub fn load_heap(path: &Path) -> Result<Self, LibraryError> {
-        let loaded = crate::input::chunk::load(path).map_err(|error| match error {
-            crate::input::chunk::ChunkLoadError::Header => {
-                LibraryError::Row(RowFault::ChunkHeaderRead)
-            }
-            crate::input::chunk::ChunkLoadError::Io(error) => LibraryError::Io(error),
-            crate::input::chunk::ChunkLoadError::ShortHeader => {
-                LibraryError::Format("chunk shorter than its header".into())
-            }
-        })?;
-        let payload = loaded
-            .finish(chunk_checksum)
-            .ok_or_else(|| LibraryError::Format("chunk checksum mismatch".into()))?;
-        Self::from_payload(payload)
-    }
-
-    /// Constructs a library from an owned chunk payload. A missing first
-    /// separator or a wrong separator byte leaves a library with no accessible
-    /// items and the stored total, or zero if the total is unavailable.
-    ///
-    /// # Errors
-    /// Returns an error for an out-of-bounds later separator, sections out of
-    /// order, or an offset array without a whole number of entries.
-    pub fn from_payload(payload: Vec<u8>) -> Result<Self, LibraryError> {
-        let len = payload.len();
-        Self::from_bytes(LibraryBytes::Owned(payload), 0..len, None)
-    }
-
-    fn from_bytes(
+    /// Returns an error when the layout exceeds the supplied bytes.
+    pub fn from_bytes(
         file: LibraryBytes,
         payload: Range<usize>,
         source_path: Option<PathBuf>,
@@ -916,10 +897,10 @@ impl PhraseLibrary {
             return None;
         }
         let range_end = self.token_range().end;
-        let Some(LibraryBytes::Mapped(_)) = self.file.as_ref() else {
+        let Some(LibraryBytes(LibraryBacking::Mapped(_))) = self.file.as_ref() else {
             return None;
         };
-        let LibraryBytes::Mapped(mapping) = self.file.take()? else {
+        let LibraryBytes(LibraryBacking::Mapped(mapping)) = self.file.take()? else {
             return None;
         };
         self.detached_range_end = Some(range_end);

@@ -6,7 +6,7 @@
 //! names included (`src/include/pinyin_internal.h:55-66`); `ngseg` also
 //! attaches `bigram.db`. Their edge calls — the GLib option parser,
 //! `std::getline`'s contract, `fprintf`, `perror`, `exit` and `abort` —
-//! live in `oxpinyin::input::tool`; this module owns what each line means.
+//! live in `oxpinyin_tool_support::input`; this module owns what each line means.
 //!
 //! The phrase table is the pin's DBM (`FacadePhraseTable3`), not an
 //! inverted index over the chunk files: `phrase::PhraseSearch` filters
@@ -21,8 +21,10 @@
 
 use std::ffi::{CStr, CString, OsString};
 
-use oxpinyin::input::tool;
-use oxpinyin::input::tool::{OptionArg, OptionEntry, OptionValue, OutputStream, ParsedOptions};
+use oxpinyin_tool_support::input as tool;
+use oxpinyin_tool_support::input::{
+    OptionArg, OptionEntry, OptionValue, OutputStream, ParsedOptions,
+};
 
 mod data;
 mod input;

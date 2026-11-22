@@ -15,9 +15,10 @@ use std::ffi::CString;
 use std::path::Path;
 
 use oxpinyin::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin::data::{BigramTable, PhraseIndexTable, PhraseLibraries};
+use oxpinyin::data::{BigramTable, PhraseLibraries};
 use oxpinyin::data::{TableConf, TableConfError};
-use oxpinyin::input::tool;
+use oxpinyin_tool_support::data::PhraseIndexTable;
+use oxpinyin_tool_support::input as tool;
 
 /// The loaded system data.
 pub(crate) struct Tables {
@@ -59,7 +60,11 @@ pub(crate) fn load(with_bigram: bool) -> Result<Tables, TablesError> {
             return Err(TablesError::Chunk(None));
         };
         let c_name = oxpinyin::input::c_path(Path::new(name.as_ref()));
-        match libraries.load_heap(index, Path::new(name.as_ref())) {
+        match oxpinyin_tool_support::data::load_heap_library(
+            &mut libraries,
+            index,
+            Path::new(name.as_ref()),
+        ) {
             // A second row for one nibble is the pin's
             // `ERROR_ALREADY_EXISTS`, whose answer the loop ignores.
             Ok(_) => {}
@@ -76,7 +81,7 @@ pub(crate) fn load(with_bigram: bool) -> Result<Tables, TablesError> {
         }
     }
     let bigram = with_bigram
-        .then(|| BigramTable::open(Path::new("bigram.db")).ok())
+        .then(|| oxpinyin_tool_support::data::open_bigram(Path::new("bigram.db")).ok())
         .flatten();
     Ok(Tables {
         conf,

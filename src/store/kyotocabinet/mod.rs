@@ -25,12 +25,13 @@
 mod bridge;
 mod ffi;
 
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::path::Path;
 
 use crate::store::common::in_bounds;
-use crate::store::{AttachMode, Flow, HashAttach, StoreError, WriteStore, WriteTxn};
+use crate::store::{Flow, StoreError, WriteStore, WriteTxn};
 
 use ffi::{Db, DbType};
 
@@ -57,6 +58,31 @@ pub(crate) fn open_system(
 }
 
 impl KcStore {
+    /// Allocates one native tree or hash object without opening a file.
+    ///
+    /// # Errors
+    /// Returns an unsupported Kyoto Cabinet runtime version.
+    pub fn allocate_native(hash: bool, read_only: bool) -> Result<Self, StoreError> {
+        let kind = if hash { DbType::Hash } else { DbType::Tree };
+        Ok(Self {
+            db: Db::new_unopened(kind, read_only)?,
+        })
+    }
+
+    /// Attempts one native open on the same object, retaining it on failure.
+    ///
+    /// # Errors
+    /// Returns failures that occur before the native open.
+    pub fn try_open_native(&mut self, path: &Path, create: bool) -> Result<bool, StoreError> {
+        let flags = if self.db.is_read_only() {
+            ffi::OREADER
+        } else {
+            ffi::OREADER | ffi::OWRITER
+        };
+        let flags = if create { flags | ffi::OCREATE } else { flags };
+        self.db.open_mode(path, flags)
+    }
+
     /// Ends the open transaction by committing it. Not generic, so the many
     /// `write` closures share one copy of it.
     #[inline(never)]
@@ -312,42 +338,6 @@ impl WriteStore for KcStore {
         })
     }
 
-    /// `FlexibleBigram::attach` (`flexible_ngram_kyotodb.h:129-180` at
-    /// 074a2219): a `HashDB` opened without `OCREATE`, and with
-    /// `ATTACH_CREATE` opened again with it. After a failed CREATE retry,
-    /// the pin's key walk succeeds with no entries because it ignores the
-    /// `iterate` result (`:154-155,262-272`). The retry's signature `set`
-    /// is ignored (`:157-162`).
-    ///
-    /// The retry is a second `open` of the same object with the pin's
-    /// mode, `OREADER | OWRITER | OCREATE`, so it reads the state the
-    /// first open left (`FFATAL` from `set_error`).
-    fn attach_hash(
-        path: &Path,
-        mode: AttachMode,
-        signature: (&[u8], &[u8]),
-    ) -> Result<HashAttach<Self>, StoreError> {
-        let read_only = mode == AttachMode::ReadOnly;
-        let flags = if read_only {
-            ffi::OREADER
-        } else {
-            ffi::OREADER | ffi::OWRITER
-        };
-        let mut db = Db::new_unopened(DbType::Hash, read_only)?;
-        if db.open_mode(path, flags)? {
-            return Ok(HashAttach::Opened(Self { db }));
-        }
-        if mode != AttachMode::ReadWriteCreate {
-            return Ok(HashAttach::Closed);
-        }
-        if !db.open_mode(path, flags | ffi::OCREATE)? {
-            return Ok(HashAttach::EmptyWalk);
-        }
-        let (key, value) = signature;
-        let _ = db.set(key, value);
-        Ok(HashAttach::Created(Self { db }, true))
-    }
-
     /// The pin's own in-memory ordered container, `ProtoTreeDB` (what its
     /// user indexes live in between loads and saves,
     /// `chewing_large_table2_kyotodb.cpp:124-130`): no file, no WAL, no
@@ -355,6 +345,14 @@ impl WriteStore for KcStore {
     /// [`WriteStore::write`]'s begin/commit/rollback keep their meaning.
     fn set_raw(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.db.set(key, value)
+    }
+
+    fn remove_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
+        self.db.remove(key)
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.db.is_read_only()
     }
 
     fn rewrite_raw(&self, rewrite: &mut crate::store::RecordRewrite<'_>) -> Result<(), StoreError> {
@@ -440,6 +438,7 @@ impl WriteStore for KcStore {
         self.db.begin_transaction()?;
         let mut txn = KcTxn {
             store: self,
+            #[cfg(test)]
             buffer: None,
         };
         match f(&mut txn) {
@@ -459,6 +458,7 @@ impl WriteStore for KcStore {
     /// transaction and no sync, its answer the pin's. The closure's writes
     /// are buffered, so an `Err` from it applies nothing. `reset()` makes
     /// the one `synchronize()` (`:86-92`), which [`WriteStore::flush`] is.
+    #[cfg(test)]
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
@@ -507,17 +507,17 @@ impl WriteStore for KcStore {
 /// Under [`WriteStore::write`] every method writes straight through to the
 /// database inside Kyoto Cabinet's transaction, so read-your-writes is the
 /// database's semantics and rollback is the library's. Under
-/// [`WriteStore::write_deferred`] the writes wait in `buffer`, keyed as
-/// they will be stored (a `None` slot is a pending removal), and reads
-/// look there first.
+/// the deferred-write tests the writes wait in the buffer.
 pub struct KcTxn<'store> {
     store: &'store KcStore,
+    #[cfg(test)]
     buffer: Option<BTreeMap<Vec<u8>, Option<Vec<u8>>>>,
 }
 
 impl KcTxn<'_> {
     /// Applies one write now, or buffers it under `write_deferred`.
     fn apply(&mut self, key: Vec<u8>, value: Option<&[u8]>) -> Result<(), StoreError> {
+        #[cfg(test)]
         if let Some(buffer) = self.buffer.as_mut() {
             buffer.insert(key, value.map(<[u8]>::to_vec));
             return Ok(());

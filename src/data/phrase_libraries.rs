@@ -196,34 +196,6 @@ impl PhraseLibraries {
         Ok(true)
     }
 
-    /// Load one utility library using `MemoryChunk::load` and owned payload bytes.
-    ///
-    /// # Errors
-    /// Returns a read, checksum, or layout error.
-    pub fn load_heap(&mut self, nibble: u8, path: &Path) -> Result<bool, LibraryError> {
-        let library = PhraseLibrary::load_heap(path)?;
-        let slot = self
-            .by_nibble
-            .get_mut(usize::from(nibble))
-            .ok_or_else(|| LibraryError::Format("library nibble out of range".into()))?;
-        if let Some(old) = slot.take() {
-            self.total = self.total.wrapping_sub(old.library.total_freq());
-        }
-        if !library.is_layout_failed() {
-            self.total = self.total.wrapping_add(library.total_freq());
-        }
-        if library.has_items() {
-            self.stocked |= 1 << nibble;
-        } else {
-            self.stocked &= !(1 << nibble);
-        }
-        *slot = Some(Loaded {
-            library,
-            path: path.to_path_buf(),
-        });
-        Ok(true)
-    }
-
     /// Drops library `nibble` — `FacadePhraseIndex::unload`. `true` when
     /// a library was loaded there.
     pub fn unload(&mut self, nibble: u8) -> bool {
@@ -242,7 +214,7 @@ impl PhraseLibraries {
 
     /// Installs an already opened library, transferring its byte ownership.
     /// The path is retained for operations that remap the loaded file.
-    pub(crate) fn insert_mapping(&mut self, nibble: u8, path: PathBuf, library: PhraseLibrary) {
+    pub fn insert_mapping(&mut self, nibble: u8, path: PathBuf, library: PhraseLibrary) {
         let Some(slot) = self.by_nibble.get_mut(usize::from(nibble)) else {
             return;
         };

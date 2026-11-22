@@ -152,14 +152,14 @@ where
     phrase_segment_ucs4(dictionary, model, &words)
 }
 
-/// [`phrase_segment`] over raw UCS-4 words, including surrogate or
+/// Segments raw UCS-4 words, including surrogate or
 /// above-Unicode values. The phrase table compares the stored raw keys;
 /// no `char` or `str` is built from a non-scalar word.
 ///
 /// # Errors
 ///
 /// Propagates the model's step-cost failures.
-pub(crate) fn phrase_segment_ucs4<D, L>(
+pub fn phrase_segment_ucs4<D, L>(
     dictionary: &D,
     model: &L,
     sentence: &[u32],

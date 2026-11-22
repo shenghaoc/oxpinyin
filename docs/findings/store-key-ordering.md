@@ -85,7 +85,7 @@ defect pass unseen.
 
 ## FlexibleBigram: the pin's hash training container
 
-`src/store/flexible_ngram.rs` carries libpinyin's
+`tool-support/src/flexible_ngram.rs` carries libpinyin's
 `FlexibleBigram` training container (`src/storage/flexible_ngram*.h`,
 `src/storage/flexible_single_gram.h` at 074a2219) on all three backends. It
 is **not** an ordered table, and the one rule above deliberately does not
@@ -173,7 +173,7 @@ Within one single gram the items ascend by **numeric token**, the pin's
 
 ### Tests that pin this
 
-The `flexible_bigram` tests in `src/store/flexible_ngram/tests.rs` round-trip every
+The `flexible_bigram` tests in `tool-support/src/flexible_ngram/tests.rs` round-trip every
 operation on the backend that the build selects. Their last case,
 `a_pin_written_file_is_read_in_the_pins_native_order`, reads the committed
 `fixtures/w3/{db,kct,tkt}/k_mixture_model.db`. It compares every header, item

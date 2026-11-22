@@ -256,13 +256,15 @@ where
     entries.sort_by_key(|entry| entry.token());
     // The search carries tokens only; each step prices its item
     // (`compute_pronunciation_possibility`, `phonetic_lookup.h:646-656`).
-    for entry in &mut entries {
+    let mut priced = Vec::with_capacity(entries.len());
+    for entry in entries {
         let item = dictionary.trellis_item(span, &[], entry.token()).ok()?;
-        if let Some((matched, total)) = item.and_then(|item| item.pronunciation) {
-            entry.set_pronunciation_possibility(matched, total);
-        }
+        priced.push(match item.and_then(|item| item.pronunciation) {
+            Some((matched, total)) => entry.with_pronunciation_possibility(matched, total),
+            None => entry,
+        });
     }
-    Some(entries)
+    Some(priced)
 }
 
 /// The token path ending at the last step's best node (`get_tails` and `extract_result`).

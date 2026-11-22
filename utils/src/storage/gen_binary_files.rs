@@ -13,17 +13,17 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, OsString};
 use std::path::PathBuf;
 
-use oxpinyin::data::exact_compare2;
 use oxpinyin::data::phrase_library::ChunkItem;
-use oxpinyin::data::row_format::phrase_index::encode_tokens;
 use oxpinyin::data::row_format::pinyin_index::{
     PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key, encode_item,
 };
 use oxpinyin::data::{FileType, PhoneticType, TableConf, TableRow};
-use oxpinyin::input::tool;
-use oxpinyin::input::tool::OptionValue;
-use oxpinyin::input::tool::storage::TableFile;
 use oxpinyin::vocab::{PHRASE_MASK, phrase_index_library_index};
+use oxpinyin_tool_support::data::encode_tokens;
+use oxpinyin_tool_support::data::exact_compare2;
+use oxpinyin_tool_support::input as tool;
+use oxpinyin_tool_support::input::OptionValue;
+use oxpinyin_tool_support::input::storage::TableFile;
 
 use crate::storage::Tree;
 use crate::storage::items_of;

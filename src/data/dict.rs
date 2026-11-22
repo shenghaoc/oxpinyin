@@ -23,6 +23,7 @@ use crate::vocab::phrase_index_library_index;
 use std::fmt;
 use std::path::Path;
 
+#[cfg(test)]
 use crate::store::{DefaultStore, RawReadStore};
 use crate::{
     model::{Dictionary, PhraseIndexRanges, PhraseItemRead, TokenPhrase, TrellisItem},
@@ -37,7 +38,9 @@ use crate::data::PhraseLibraries;
 use crate::data::SYSTEM_LIBRARY_FILES;
 use crate::data::SystemDbm;
 use crate::data::TableError;
-use crate::data::chewing_table::{ChewingTable, RawChewingDbm, prefix_keys_match};
+#[cfg(test)]
+use crate::data::chewing_table::RawChewingDbm;
+use crate::data::chewing_table::{ChewingTable, prefix_keys_match};
 use crate::data::phrase_library::LibraryError;
 use crate::data::phrase_library::RowFault;
 use crate::data::phrase_table::PhraseTable;
@@ -86,16 +89,6 @@ impl From<crate::data::phrase_library::LibraryError> for DictError {
     }
 }
 
-fn open_tree(path: &Path) -> Result<ChewingTable, DictError> {
-    let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
-    Ok(ChewingTable::new(RawChewingDbm::new(store)))
-}
-
-fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
-    let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
-    Ok(PhraseTable::new(RawChewingDbm::new(store)))
-}
-
 /// `token`'s entry: its text, priced against `keys`; `None` when the
 /// library is unloaded or the item cannot be read.
 ///
@@ -129,107 +122,6 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
-// ── the phrase DBM alone ─────────────────────────────────────────
-
-/// The phrase DBM alone (`phrase_index.bin`), as
-/// `FacadePhraseTable3::load` opens it for the segmentation utilities:
-/// no pinyin DBM and no phrase libraries.
-///
-/// [`Self::search_ucs4`] answers `FacadePhraseTable3::search`'s presence
-/// bit — `None` is "no key" (no `SEARCH_CONTINUED`), `Some` is "key
-/// present" — and the stored token bytes as the pin iterates them
-/// (`floor(len / 4)` tokens; a trailing partial word is not a token).
-/// `SEARCH_OK` and the library filter stay with the caller: it owns the
-/// loaded-library set.
-pub struct PhraseIndexTable {
-    phrase: PhraseTable,
-}
-
-impl PhraseIndexTable {
-    /// Opens `phrase_index.bin` read-only.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the backend cannot open the file.
-    pub fn open(phrase_index: &Path) -> Result<Self, DictError> {
-        Ok(Self {
-            phrase: open_phrase_table(phrase_index)?,
-        })
-    }
-
-    /// `PhraseLargeTable3::search`: `None` when the key is absent,
-    /// `Some(tokens)` when it is present, empty for a continuation marker.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM read fails.
-    pub fn search_ucs4(&self, words: &[u32]) -> Result<Option<Vec<u32>>, DictError> {
-        if words.is_empty() {
-            return Ok(None);
-        }
-        let key = crate::data::row_format::phrase_index::encode_ucs4_key_scalars(words);
-        let Some(value) = self.phrase.present_key(&key)? else {
-            return Ok(None);
-        };
-        Ok(Some(
-            value
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|word| u32::from_le_bytes(*word))
-                .collect(),
-        ))
-    }
-}
-
-// ── the pinyin DBM alone ─────────────────────────────────────────
-
-/// The pinyin DBM alone (`pinyin_index.bin`): the `ChewingLargeTable2`
-/// a caller needs when it has no phrase table. `eval_correction_rate`
-/// opens `FacadeChewingTable2` and resolves every surviving token through
-/// the loaded phrase libraries alone
-/// (`utils/training/eval_correction_rate.cpp:143-163`).
-///
-/// [`Self::search`] answers the tokens whose stored pronunciation matches
-/// the query, in stored order; [`Self::key_exists`] answers
-/// `SEARCH_CONTINUED`.
-pub struct PinyinIndexTable {
-    pinyin: ChewingTable,
-}
-
-impl PinyinIndexTable {
-    /// Opens `pinyin_index.bin` read-only.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the backend cannot open the file.
-    pub fn open(pinyin_index: &Path) -> Result<Self, DictError> {
-        Ok(Self {
-            pinyin: open_tree(pinyin_index)?,
-        })
-    }
-
-    /// `ChewingLargeTable2::search` without the caller's library filter:
-    /// the matching records' tokens, empty when the index key is absent or
-    /// no record matches.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM read or a record decode fails.
-    pub fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
-        self.pinyin.search(keys)
-    }
-
-    /// `SEARCH_CONTINUED`: whether the query's index key exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM read fails.
-    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
-        self.pinyin.key_exists(keys)
-    }
-}
-
 // ── the default facade ───────────────────────────────────────────
 
 /// The default dictionary's pinyin index, phrase index and phrase libraries selected by
@@ -258,38 +150,20 @@ impl<L, T: std::borrow::Borrow<SystemTables>> std::ops::Deref for SystemDictiona
 }
 
 impl SystemTables {
-    /// SEARCH_CONTINUED after decoding a physical-matrix path, including
-    /// the pin search's malformed-row checks.
-    ///
-    /// # Errors
-    /// Returns native table errors.
-    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
-        self.pinyin
-            .search_continued(keys, &mut Vec::new())
-            .map(|(continued, _)| continued)
+    /// Combines the native table handles and the configured user-library bits.
+    #[must_use]
+    pub const fn new(pinyin: ChewingTable, phrase: PhraseTable, user_nibbles: u32) -> Self {
+        Self {
+            pinyin,
+            phrase,
+            user_nibbles,
+        }
     }
 
-    /// Attach the one index read by a standalone pin lookup program.
-    /// The other table is transient and is never read by that program.
-    ///
-    /// # Errors
-    /// Returns a native DBM construction error.
-    pub fn for_lookup(path: &Path, phonetic: bool) -> Result<Self, DictError> {
-        let attached = crate::data::chewing_table::DefaultDbm::attach(path, false)?;
-        let empty = crate::data::chewing_table::DefaultDbm::new(
-            <crate::store::DefaultStore as crate::store::WriteStore>::create_in_memory()
-                .map_err(|error| DictError::Table(error.into()))?,
-        );
-        let (pinyin, phrase) = if phonetic {
-            (attached, empty)
-        } else {
-            (empty, attached)
-        };
-        Ok(Self {
-            pinyin: ChewingTable::new(pinyin),
-            phrase: PhraseTable::new(phrase),
-            user_nibbles: 0,
-        })
+    /// Borrows the native pinyin index for phonetic reads.
+    #[must_use]
+    pub const fn pinyin(&self) -> &ChewingTable {
+        &self.pinyin
     }
 
     /// Whether the main pinyin-table attach failed.
@@ -429,17 +303,17 @@ impl SystemDictionary {
         conf: &TableConf,
         pinyin: ChewingTable,
     ) -> Result<SystemTables, DictError> {
-        Ok(SystemTables {
+        Ok(SystemTables::new(
             pinyin,
-            phrase: PhraseTable::new(crate::data::chewing_table::DefaultDbm::attach(
+            PhraseTable::new(crate::data::chewing_table::DefaultDbm::attach(
                 &crate::input::build_path(
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
                 ),
                 false,
             )?),
-            user_nibbles: user_nibbles(conf),
-        })
+            user_nibbles(conf),
+        ))
     }
 
     #[cfg(test)]
@@ -451,8 +325,12 @@ impl SystemDictionary {
     ) -> Result<Self, DictError> {
         Ok(Self {
             tables: SystemTables {
-                pinyin: open_tree(pinyin_index)?,
-                phrase: open_phrase_table(phrase_index)?,
+                pinyin: ChewingTable::new(RawChewingDbm::new(
+                    DefaultStore::open_read_only(pinyin_index).map_err(TableError::from)?,
+                )),
+                phrase: PhraseTable::new(RawChewingDbm::new(
+                    DefaultStore::open_read_only(phrase_index).map_err(TableError::from)?,
+                )),
                 user_nibbles: 0,
             },
             libraries: PhraseLibraries::open(library_dir, stems)?,
@@ -708,7 +586,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
             .enumerate()
             .map(|(index, key)| key.with_tone(tones.get(index).copied().unwrap_or(0)))
             .collect();
-        let (continued, tokens) = self.pinyin.search_continued(&query, scratch)?;
+        let (continued, tokens) = self.pinyin().search_continued(&query, scratch)?;
         ranges.convert(
             tokens
                 .into_iter()

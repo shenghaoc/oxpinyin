@@ -19,7 +19,7 @@
 
 | 路径 | 内容 |
 |---|---|
-| `src/`、`capi/`、`zhuyin-capi/`、`utils/`、`repl/` | 工作区包；见 [crate 映射](docs/architecture.md#crates) |
+| `src/`、`capi/`、`zhuyin-capi/`、`utils/`、`repl/`、`tool-support/` | 工作区包；见 [crate 映射](docs/architecture.md#crates) |
 | `ROADMAP.md` | 当前阶段、pin 与待完成的工作 |
 | [docs/constitution.md](docs/constitution.md) | 项目规则与受支持的外部接口 |
 | [docs/source-policy.md](docs/source-policy.md) | 源码阅读方法、兼容性决策与阶段规则 |

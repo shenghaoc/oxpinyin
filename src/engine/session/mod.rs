@@ -527,16 +527,19 @@ struct ScanBuf<'a> {
 /// `from + len` exactly when the key rides over an apostrophe separator.
 #[derive(Clone, Copy, Debug)]
 pub struct ScanKey {
-    pub(crate) key: SyllableKey,
+    /// The syllable represented by this scan edge.
+    pub key: SyllableKey,
     pub(crate) from: usize,
-    pub(crate) to: usize,
-    pub(crate) syllable_start: usize,
+    /// The destination byte column.
+    pub to: usize,
+    /// The first byte of the syllable after separators.
+    pub syllable_start: usize,
     pub(crate) crosses_separator: bool,
     /// The tone consumed with this key under `USE_TONE` (`Edge::tone`).
     /// Rides the fuzzy alternates and locks the resplit/divided tables,
     /// which compare full `ChewingKey` equality against zero-tone structs
     /// (`chewing_key.h:81-91`) and therefore never match a toned key.
-    pub(crate) tone: u8,
+    pub tone: u8,
 }
 
 impl ScanKey {
@@ -570,7 +573,7 @@ pub(crate) fn build_scan_matrix(
 ///
 /// `selected_edges` is the selected parse the caller already holds: it must be
 /// `graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE))`.
-pub(crate) fn build_scan_matrix_over(
+pub fn build_scan_matrix_over(
     graph: &SegmentGraph,
     selected_edges: &[Edge],
     options: OptionBits,
@@ -1140,11 +1143,11 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[(RankKey, u32)]) {
 /// consistent-chain length, so bytes of a trailing or standalone run are
 /// consumed even though no key covers them (`ni'` parses to 3, `'''` to
 /// 3, `nihao'` to 6).
-fn apostrophe_extended(input: &[u8], mut end: usize) -> usize {
+/// Includes the immediately following apostrophe separators in the parsed length.
+#[must_use]
+pub fn apostrophe_extended(input: &[u8], mut end: usize) -> usize {
     while input.get(end) == Some(&b'\'') {
         end += 1;
     }
     end
 }
-
-pub mod tool;

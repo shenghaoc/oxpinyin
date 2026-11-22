@@ -388,26 +388,9 @@ pub fn encode_single_gram(total: u32, records: &[SingleGramRecord]) -> Vec<u8> {
 }
 
 /// Whether the value holds a total and only whole records.
-pub(crate) const fn is_complete(gram: &[u8]) -> bool {
-    gram.len() >= TOTAL_LEN && (gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
-}
-
-/// Decodes a `SingleGram` blob into `(total_freq, records)`.
-///
-/// Returns `None` for a short total or a partial 8-byte record.
 #[must_use]
-pub fn decode_single_gram(bytes: &[u8]) -> Option<(u32, Vec<SingleGramRecord>)> {
-    if !is_complete(bytes) {
-        return None;
-    }
-    let (total, rest) = bytes.split_first_chunk::<TOTAL_LEN>()?;
-    let records = rest
-        .as_chunks::<ITEM_LEN>()
-        .0
-        .iter()
-        .map(|record| (record_token(record), record_freq(record)))
-        .collect();
-    Some((u32::from_le_bytes(*total), records))
+pub const fn is_complete(gram: &[u8]) -> bool {
+    gram.len() >= TOTAL_LEN && (gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
 }
 
 #[cfg(test)]

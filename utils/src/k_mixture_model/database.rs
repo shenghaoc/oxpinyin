@@ -13,7 +13,8 @@
 use std::ffi::CStr;
 use std::path::PathBuf;
 
-use oxpinyin::store::{AttachMode, StoreError};
+use oxpinyin::store::StoreError;
+use oxpinyin_tool_support::flexible_ngram::{AttachMode, LoadError};
 
 use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};
 
@@ -21,7 +22,7 @@ use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigr
 /// Windows takes its UTF-8 and refuses bytes that are not UTF-8.
 #[must_use]
 pub fn open_path(filename: &CStr) -> Option<PathBuf> {
-    oxpinyin::input::path_from_bytes_checked(filename.to_bytes())
+    oxpinyin_tool_support::input::path_from_bytes_checked(filename.to_bytes())
 }
 
 /// A single gram that [`Database::load`] found.
@@ -38,7 +39,7 @@ pub enum Loaded {
 /// outside of (`upstream-divergences.md#flexiblebigram-malformed-record-lengths`): one
 /// stderr line, then status 1. The pin's work before that read is done.
 pub fn exit_on_short_single_gram() -> ! {
-    oxpinyin::input::tool::exit_on_store_error(&StoreError::ShortArrayHeader)
+    oxpinyin_tool_support::input::exit_on_store_error(&LoadError::ShortArrayHeader)
 }
 
 /// One `KMixtureModelBigram` after its `attach`.
@@ -130,17 +131,17 @@ impl Database {
     pub fn load(&self, token: u32) -> Option<Loaded> {
         match self.inner.as_ref()?.load(token) {
             Ok(gram) => gram.map(Loaded::Gram),
-            Err(StoreError::ShortArrayHeader) => Some(Loaded::Short),
+            Err(LoadError::ShortArrayHeader) => Some(Loaded::Short),
             // A failed record copy is a pin assert too (`tkrzwdb_utils.h:65`,
             // `:72`; `bdb_utils.h:61`, `:67`); the flexible bigram does not
             // copy, so it never reaches here.
-            Err(StoreError::ReadAfterCheck) => abort(),
-            Err(
+            Err(LoadError::Store(StoreError::ReadAfterCheck)) => abort(),
+            Err(LoadError::Store(
                 StoreError::Io(_)
                 | StoreError::Backend(_)
                 | StoreError::ReadOnly
                 | StoreError::InvalidInput(_),
-            ) => None,
+            )) => None,
         }
     }
 
@@ -239,7 +240,7 @@ impl Database {
 /// an unsupported library or a rejected path, is reported by the utility
 /// before it creates or writes anything.
 fn attached(result: Result<KmmBigram, StoreError>) -> KmmBigram {
-    result.unwrap_or_else(|error| oxpinyin::input::tool::exit_on_store_error(&error))
+    result.unwrap_or_else(|error| oxpinyin_tool_support::input::exit_on_store_error(&error))
 }
 
 /// The pin's abort at a `check_result` or `assert` site; the macro's text is

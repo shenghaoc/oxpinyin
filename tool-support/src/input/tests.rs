@@ -14,7 +14,7 @@ fn prefix_prompt_writes_the_pins_exact_bytes() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "input::tool::tests::prefix_prompt_writes_the_pins_exact_bytes",
+            "input::tests::prefix_prompt_writes_the_pins_exact_bytes",
             "--quiet",
         ])
         .env(CHILD, "1")
@@ -44,7 +44,7 @@ fn exit_on_store_error_prints_one_line_and_exits_with_status_1() {
     let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
         .args([
             "--exact",
-            "input::tool::tests::exit_on_store_error_prints_one_line_and_exits_with_status_1",
+            "input::tests::exit_on_store_error_prints_one_line_and_exits_with_status_1",
             "--test-threads=1",
         ])
         .env(STORE_ERROR_CHILD, "1")
@@ -87,10 +87,10 @@ fn a_file_opens_and_a_missing_one_does_not() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("in.txt");
     std::fs::write(&path, b"x\n").unwrap();
-    let mut input = LineReader::open(&crate::input::c_path(&path).unwrap());
+    let mut input = LineReader::open(&oxpinyin::input::c_path(&path).unwrap());
     assert!(input.is_open() && input.getline());
     assert_eq!(input.line(), b"x");
-    let missing = LineReader::open(&crate::input::c_path(&dir.path().join("absent")).unwrap());
+    let missing = LineReader::open(&oxpinyin::input::c_path(&dir.path().join("absent")).unwrap());
     assert!(!missing.is_open());
 }
 
@@ -212,4 +212,16 @@ fn text_calls_keep_their_format_contracts() {
     assert!(unichar_isspace(0x3000));
     assert!(!unichar_isgraph(0x200B));
     assert!(unichar_isgraph(u32::from('a')));
+}
+
+#[test]
+fn invalid_utf8_in_a_tool_path_follows_the_platform() {
+    let bytes = b"invalid-\xff";
+    #[cfg(unix)]
+    assert_eq!(
+        path_from_bytes_checked(bytes),
+        Some(oxpinyin::input::path_from_bytes(bytes))
+    );
+    #[cfg(not(unix))]
+    assert_eq!(path_from_bytes_checked(bytes), None);
 }

@@ -6,8 +6,8 @@
 
 use core::ops::Range;
 
-use crate::parser::{ChewingKey, FullPinyinParser};
-use crate::vocab::SyllableKey;
+use oxpinyin::parser::{ChewingKey, FullPinyinParser};
+use oxpinyin::vocab::SyllableKey;
 
 /// A key and its `ChewingKeyRest`, retained together so their counts agree.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,14 +53,14 @@ pub struct Parse {
 /// set. Each segment must spell one key. After a match, separator runs count toward the
 /// consumed byte prefix. A leading separator or a rejected segment stops the parse.
 #[must_use]
-pub fn parse_direct(input: &[u8], options: crate::OptionBits, zhuyin: bool) -> Parse {
+pub fn parse_direct(input: &[u8], options: oxpinyin::OptionBits, zhuyin: bool) -> Parse {
     let mut keys = Vec::new();
-    let consumed = crate::direct::parse(
+    let consumed = oxpinyin::parser::scan_direct(
         input,
         |span| {
             let segment = &input[span];
             if zhuyin {
-                let (key, tone) = crate::scheme::parse_zhuyin_direct_key(
+                let (key, tone) = oxpinyin::parser::parse_zhuyin_direct_key(
                     core::str::from_utf8(segment).ok()?,
                     options,
                 )?;
@@ -76,3 +76,30 @@ pub fn parse_direct(input: &[u8], options: crate::OptionBits, zhuyin: bool) -> P
 
 #[cfg(test)]
 mod tests;
+
+/// Matrix-level fuzzy alternates, upstream append order.
+///
+/// `fuzzy_syllable_step` applies initials, re-fetches the column, then
+/// finals (`phonetic_key_matrix.cpp:238-306`), so an initial bit and a
+/// final bit compose (`can` → `chang` under `AMB_C_CH` + `AMB_AN_ANG`).
+#[must_use]
+pub fn fuzzy_alternatives(key: SyllableKey, options: oxpinyin::OptionBits) -> Vec<SyllableKey> {
+    fuzzy_chewing_alternatives(key.chewing_key(), options)
+        .into_iter()
+        .map(SyllableKey::from_matrix_key)
+        .collect()
+}
+
+// fuzzy_syllable_step, phonetic_key_matrix.cpp:238–306.
+/// Returns the enabled initial and final substitutions in matrix order, preserving tone.
+/// The original key is omitted. Final substitutions apply to the original and to each
+/// admitted initial alternative, even when the resulting final has no spelling row.
+#[must_use]
+fn fuzzy_chewing_alternatives(key: ChewingKey, options: oxpinyin::OptionBits) -> Vec<ChewingKey> {
+    let initials = oxpinyin::vocab::fuzzy_chewing_initials(key, options);
+    let mut out = initials.clone();
+    for source in std::iter::once(key).chain(initials) {
+        out.extend(oxpinyin::vocab::fuzzy_chewing_finals(source, options));
+    }
+    out
+}

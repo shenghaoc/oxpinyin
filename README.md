@@ -25,7 +25,7 @@ The [setup guide](docs/runbooks/setup.md) builds and tests oxpinyin natively on 
 
 | Path | What |
 |---|---|
-| `src/`, `capi/`, `zhuyin-capi/`, `utils/`, `repl/` | Workspace packages; see the [crate map](docs/architecture.md#crates) |
+| `src/`, `capi/`, `zhuyin-capi/`, `utils/`, `repl/`, `tool-support/` | Workspace packages; see the [crate map](docs/architecture.md#crates) |
 | `ROADMAP.md` | Current stage, pin and open work |
 | [docs/constitution.md](docs/constitution.md) | Project rules and supported external interfaces |
 | [docs/source-policy.md](docs/source-policy.md) | Source-reading method, compatibility decisions and stage rules |

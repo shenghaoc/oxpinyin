@@ -24,7 +24,7 @@ use crate::data::chewing_table::{ChewingDbm, DefaultDbm, prefix_upper_bound};
 // The key and value layouts this reader shares with
 // `gen_binary_files`'s writer: one written copy (`crate::data::row_format`).
 #[cfg(test)]
-use crate::data::row_format::phrase_index::encode_tokens;
+use crate::data::row_format::phrase_index::test_encode_tokens as encode_tokens;
 use crate::data::row_format::phrase_index::{
     decode_tokens, encode_ucs4_key, encode_ucs4_key_scalars,
 };
@@ -41,7 +41,8 @@ pub struct PhraseTable<D = DefaultDbm> {
 }
 
 impl<D: ChewingDbm> PhraseTable<D> {
-    pub(crate) const fn new(dbm: D) -> Self {
+    /// Constructs the phrase index over its row store.
+    pub const fn new(dbm: D) -> Self {
         Self { dbm }
     }
 
@@ -84,17 +85,14 @@ impl<D: ChewingDbm> PhraseTable<D> {
     }
 
     fn search_key(&self, key: &[u8]) -> Result<Vec<u32>, DictError> {
-        let mut value = Vec::new();
-        if !self.dbm.get_phrase_row(key, &mut value)? {
-            return Ok(Vec::new());
-        }
-        decode_tokens(&value)
+        self.present_key(key)?
+            .map_or_else(|| Ok(Vec::new()), |value| decode_tokens(&value))
     }
 
     /// `PhraseLargeTable3::search`'s answer without decoding: `None` when
     /// the key is absent, `Some(value)` when it is present, a prefix marker
     /// with an empty value included.
-    pub(crate) fn present_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
+    pub fn present_key(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
         let mut value = Vec::new();
         if !self.dbm.get_phrase_row(key, &mut value)? {
             return Ok(None);

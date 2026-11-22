@@ -88,7 +88,7 @@ use std::ops::Bound;
 use std::path::Path;
 
 use crate::store::common::{Row, in_bounds};
-use crate::store::{AttachMode, Flow, HashAttach, RawReadStore, StoreError, WriteStore, WriteTxn};
+use crate::store::{Flow, RawReadStore, StoreError, WriteStore, WriteTxn};
 
 use ffi::{Db, Seek};
 
@@ -104,14 +104,27 @@ pub(crate) fn open_system(
     hash: bool,
     read_only: bool,
 ) -> Result<Option<BdbStore>, StoreError> {
-    let db_type = if hash { ffi::DB_HASH } else { ffi::DB_BTREE };
-    Ok(
-        Db::open_attach(path, db_type, read_only, !read_only, ffi::SYSTEM_FILE_MODE)?
-            .map(|db| BdbStore { db }),
-    )
+    BdbStore::try_open_native(path, hash, read_only, !read_only)
 }
 
 impl BdbStore {
+    /// Attempts one native open with the supplied DB type and access mode.
+    ///
+    /// # Errors
+    /// Returns failures that occur before the native open.
+    pub fn try_open_native(
+        path: &Path,
+        hash: bool,
+        read_only: bool,
+        create: bool,
+    ) -> Result<Option<Self>, StoreError> {
+        let db_type = if hash { ffi::DB_HASH } else { ffi::DB_BTREE };
+        Ok(
+            Db::open_attach(path, db_type, read_only, create, ffi::SYSTEM_FILE_MODE)?
+                .map(|db| Self { db }),
+        )
+    }
+
     /// Applies a finished transaction's buffer and syncs. Not generic, so
     /// the many `write` closures share one copy of it.
     #[inline(never)]
@@ -327,47 +340,19 @@ impl WriteStore for BdbStore {
         })
     }
 
-    /// `FlexibleBigram::attach` (`flexible_ngram_bdb.h:94-153` at
-    /// 074a2219) with Berkeley DB's documented handle sequence. The pin
-    /// retries `DB->open` on its failed handle (`:110-115`) and reads the
-    /// signature through a handle whose open failed (`:134-146`). Berkeley
-    /// DB requires `DB->close` after a failed `DB->open`, and no other call
-    /// on that handle (`dbopen.html`, `dbclose.html`, 5.3.28). So each
-    /// failed open closes its handle, the CREATE retry uses a new one, and
-    /// a failed attach keeps nothing. The difference is libdb's missing
-    /// `BDB1565` lines (compatibility register, Berkeley DB failed handles).
-    fn attach_hash(
-        path: &Path,
-        mode: AttachMode,
-        signature: (&[u8], &[u8]),
-    ) -> Result<HashAttach<Self>, StoreError> {
-        let read_only = mode == AttachMode::ReadOnly;
-        // `Ok(None)`: the native `DB->open` failed and its handle is closed.
-        let open = |create| {
-            Db::open_attach(path, ffi::DB_HASH, read_only, create, ffi::SYSTEM_FILE_MODE)
-                .map(|db| db.map(|db| Self { db }))
-        };
-        if let Some(store) = open(false)? {
-            return Ok(HashAttach::Opened(store));
-        }
-        if mode != AttachMode::ReadWriteCreate {
-            return Ok(HashAttach::Closed);
-        }
-        let Some(store) = open(true)? else {
-            return Ok(HashAttach::Closed);
-        };
-        // The pin's `DB_DBT_PARTIAL` put at offset 0 of a new record stores
-        // the same four bytes; its answer is the attach answer (`:118-131`).
-        let (key, value) = signature;
-        let written = store.db.put(key, value).is_ok();
-        Ok(HashAttach::Created(store, written))
-    }
-
     /// libdb's in-memory database (`DB->open` with a null file name, the
     /// form `ngram_bdb.cpp:51-56` uses for the user bigram), as a
     /// `DB_BTREE` so the ordered raw walks hold.
     fn set_raw(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         self.db.put(key, value)
+    }
+
+    fn remove_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
+        self.db.del(key)
+    }
+
+    fn is_read_only(&self) -> bool {
+        self.db.is_read_only()
     }
 
     fn rewrite_raw(&self, rewrite: &mut crate::store::RecordRewrite<'_>) -> Result<(), StoreError> {
@@ -447,6 +432,7 @@ impl WriteStore for BdbStore {
     /// 198-214`, `:224-235` at 074a2219): the `DB->put` or `DB->del` alone,
     /// its answer the pin's. `reset()` makes the one `DB->sync`
     /// (`:51-57`), which [`WriteStore::flush`] is.
+    #[cfg(test)]
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,

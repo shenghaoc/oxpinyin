@@ -347,7 +347,7 @@ where
             // trips it), then a filled end column (`:664` — the internal
             // apostrophe can leave the start column non-empty while the
             // stale end still lands on an empty column).
-            if end >= matrix.len()
+            if end >= matrix.column_count()
                 || column_is_empty(matrix, zeros, span.start)
                 || column_is_empty(matrix, zeros, end)
             {

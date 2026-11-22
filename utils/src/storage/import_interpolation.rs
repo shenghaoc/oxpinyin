@@ -9,9 +9,10 @@
 
 use std::ffi::{CStr, CString, OsString};
 
-use oxpinyin::input::tool;
-use oxpinyin::input::tool::LineReader;
-use oxpinyin::single_gram::{decode_single_gram, encode_single_gram};
+use oxpinyin::single_gram::encode_single_gram;
+use oxpinyin_tool_support::data::decode_single_gram;
+use oxpinyin_tool_support::input as tool;
+use oxpinyin_tool_support::input::LineReader;
 
 use crate::storage::Hash;
 use crate::storage::Libraries;

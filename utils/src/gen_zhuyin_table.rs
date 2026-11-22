@@ -3,10 +3,10 @@
 //! numbering are shared with `gen_pinyin_table` (:90-98, :197-237, :241-334).
 use crate::gen_pinyin_table::{Table, entries};
 use oxpinyin::OptionBits;
-use oxpinyin::input::tool::gen_pinyin_table as common;
-use oxpinyin::input::tool::gen_zhuyin_table as edge;
-use oxpinyin::input::tool::{self, LineReader, OptionValue, OutputStream};
 use oxpinyin::parser::{ChewingKey, parse_zhuyin_direct};
+use oxpinyin_tool_support::input::gen_pinyin_table as common;
+use oxpinyin_tool_support::input::gen_zhuyin_table as edge;
+use oxpinyin_tool_support::input::{self as tool, LineReader, OptionValue, OutputStream};
 use std::ffi::{CString, OsString};
 
 /// `ZhuyinDirectParser2::parse` (:187-188; zhuyin_parser2.cpp:858-958).

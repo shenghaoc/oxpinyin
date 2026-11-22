@@ -1,9 +1,9 @@
 //! The full-pinyin parser result before scan-matrix transformations.
 
-use crate::{
+use crate::parser::{Key, Parse};
+use oxpinyin::{
     OptionBits,
     graph::{Edge, SegmentGraph},
-    tool::{Key, Parse},
     vocab::SyllableKey,
 };
 
@@ -11,7 +11,7 @@ use crate::{
 #[must_use]
 pub fn selected_parse(input: &[u8], path: &[Edge]) -> Parse {
     Parse {
-        consumed: super::apostrophe_extended(input, path.last().map_or(0, Edge::to)),
+        consumed: oxpinyin::engine::apostrophe_extended(input, path.last().map_or(0, Edge::to)),
         keys: path
             .iter()
             .map(|edge| {
@@ -26,7 +26,7 @@ pub struct LookupRow {
     /// Phrase-start column and token, in result-vector order.
     pub tokens: Vec<(usize, u32)>,
     /// Concatenated phrase text, retaining raw UCS-4 words.
-    pub text: crate::vocab::PhraseText,
+    pub text: oxpinyin::vocab::PhraseText,
     /// Bytes the row spans: the bound of the decode, the pin's
     /// `MatchResult` length less its terminal column.
     pub span: usize,
@@ -37,8 +37,8 @@ pub struct PreparedLookup {
     /// Consumed input-prefix length and keys captured when the lookup was prepared. Editing
     /// this field does not rebuild the stored lookup matrix.
     pub parsed: Parse,
-    scan: super::matrix::ScanMatrix,
-    matrix: super::matrix::ParsedMatrix,
+    scan: oxpinyin::engine::ScanMatrix,
+    matrix: oxpinyin::engine::ParsedMatrix,
 }
 
 impl PreparedLookup {
@@ -49,11 +49,11 @@ impl PreparedLookup {
         let columns = if self.parsed.keys.is_empty() {
             0
         } else {
-            self.matrix.len()
+            self.matrix.column_count()
         };
         (0..columns).flat_map(|position| {
-            let zero = self.matrix.zeros[position].then(|| Key {
-                key: crate::parser::ChewingKey::default(),
+            let zero = self.matrix.has_zero(position).then(|| Key {
+                key: oxpinyin::parser::ChewingKey::default(),
                 span: position..position + 1,
             });
             let keys = self
@@ -78,14 +78,15 @@ impl PreparedLookup {
 pub fn prepare_lookup(
     input: &[u8],
     options: OptionBits,
-) -> Result<PreparedLookup, crate::engine::EngineError> {
-    let (input, graph) = full_graph(input, options).ok_or(crate::engine::EngineError::Failure)?;
+) -> Result<PreparedLookup, oxpinyin::engine::EngineError> {
+    let (input, graph) =
+        full_graph(input, options).ok_or(oxpinyin::engine::EngineError::Failure)?;
     let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
     let parsed = selected_parse(input.as_ref(), &path);
-    let scan = super::matrix::ScanMatrix::from_columns(super::build_scan_matrix_over(
-        &graph, &path, options, false,
-    ));
-    let matrix = super::matrix::ParsedMatrix::from_scan(&scan, parsed.consumed, true);
+    let scan = oxpinyin::engine::ScanMatrix::from_columns(
+        oxpinyin::engine::build_scan_matrix_over(&graph, &path, options, false),
+    );
+    let matrix = oxpinyin::engine::ParsedMatrix::from_scan(&scan, parsed.consumed, true);
     Ok(PreparedLookup {
         parsed,
         scan,
@@ -101,13 +102,13 @@ pub fn lookup<D, L>(
     prepared: &PreparedLookup,
     dictionary: &D,
     model: &L,
-) -> Result<Vec<LookupRow>, crate::engine::EngineError>
+) -> Result<Vec<LookupRow>, oxpinyin::engine::EngineError>
 where
-    D: crate::model::Dictionary<Syllable = SyllableKey>,
-    L: crate::model::LanguageModel,
+    D: oxpinyin::model::Dictionary<Syllable = SyllableKey>,
+    L: oxpinyin::model::LanguageModel,
 {
-    crate::engine::nbest::nbest_sentences_generation(
-        crate::engine::nbest::GenerationInput {
+    oxpinyin::engine::nbest_sentences_generation(
+        oxpinyin::engine::GenerationInput {
             matrix: &prepared.scan,
             bound: prepared.parsed.consumed,
             physical_separators: true,
@@ -117,7 +118,7 @@ where
         model,
         &[1],
         None,
-        crate::engine::NbestShape::PINYIN,
+        oxpinyin::engine::NbestShape::PINYIN,
     )
     .map(|rows| {
         rows.into_iter()
@@ -144,12 +145,12 @@ pub fn phrase_lookup<D, L>(
     words: &[u32],
     dictionary: &D,
     model: &L,
-) -> Result<Vec<crate::vocab::PhraseToken>, crate::engine::EngineError>
+) -> Result<Vec<oxpinyin::vocab::PhraseToken>, oxpinyin::engine::EngineError>
 where
-    D: crate::model::Dictionary<Syllable = SyllableKey>,
-    L: crate::model::LanguageModel,
+    D: oxpinyin::model::Dictionary<Syllable = SyllableKey>,
+    L: oxpinyin::model::LanguageModel,
 {
-    crate::engine::phrase::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)
+    oxpinyin::engine::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)
 }
 
 /// Builds the full-pinyin graph over the explicit-length bytes.

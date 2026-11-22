@@ -1,6 +1,6 @@
 //! The utilities' shared pin punctuation append operation.
 use super::dbm::Tree;
-use oxpinyin::input::tool;
+use oxpinyin_tool_support::input as tool;
 use std::ffi::CStr;
 
 /// `PunctTable::append_punctuation` / `PunctTableEntry::append_punctuation`

@@ -639,12 +639,23 @@ dependencies = [
  "assert_cmd",
  "assert_fs",
  "oxpinyin",
- "oxpinyin-capi",
+ "oxpinyin-tool-support",
  "oxpinyin-utils",
- "oxzhuyin-capi",
  "regex",
  "rstest",
  "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "oxpinyin-tool-support"
+version = "0.1.0-alpha.2"
+dependencies = [
+ "glib-sys",
+ "libc",
+ "oxpinyin",
+ "oxpinyin-capi",
+ "oxzhuyin-capi",
  "tempfile",
 ]
 
@@ -656,6 +667,7 @@ dependencies = [
  "assert_fs",
  "libc",
  "oxpinyin",
+ "oxpinyin-tool-support",
  "regex",
  "rstest",
  "rustc-hash",

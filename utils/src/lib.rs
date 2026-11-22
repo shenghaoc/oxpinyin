@@ -1,7 +1,6 @@
 //! libpinyin's utilities under their own names, options, messages, inputs
-//! and outputs. Each utility's edge calls are
-//! the pin's, made through `oxpinyin`'s `tools` boundary; its own
-//! logic is here.
+//! and outputs. The utility logic lives here. `oxpinyin-tool-support` provides
+//! native I/O and adapters and uses `oxpinyin::__internal` for engine access.
 
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]

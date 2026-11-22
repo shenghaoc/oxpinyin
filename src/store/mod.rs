@@ -104,15 +104,6 @@ pub enum StoreError {
     /// (`ngram_kyotodb.cpp:131-139` at the pin).
     #[error("store read failed after its size check")]
     ReadAfterCheck,
-    /// A `FlexibleBigram` single gram is shorter than its array header.
-    /// From `get_array_header` it is the pin's assert
-    /// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371` and
-    /// `flexible_ngram_tkrzwdb.h:388` at the pin), and the K-mixture tools
-    /// abort. From `load` it is a value the pin later reads outside of
-    /// (`upstream-divergences.md#flexiblebigram-malformed-record-lengths`), and the
-    /// tools report it as a store error.
-    #[error("flexible bigram single gram is shorter than its array header")]
-    ShortArrayHeader,
 }
 
 /// A non-I/O failure the storage backend reported: its message, and the
@@ -229,33 +220,6 @@ pub trait WriteTxn {
     ///
     /// Returns [`StoreError`] when the backend write fails.
     fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError>;
-}
-
-/// The pin's `attach` flags for a hash container: `ATTACH_READONLY`,
-/// `ATTACH_READWRITE`, or `ATTACH_READWRITE | ATTACH_CREATE`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AttachMode {
-    /// `ATTACH_READONLY`.
-    ReadOnly,
-    /// `ATTACH_READWRITE`, without `ATTACH_CREATE`.
-    ReadWrite,
-    /// `ATTACH_READWRITE | ATTACH_CREATE`.
-    ReadWriteCreate,
-}
-
-/// What a `FlexibleBigram` attach leaves, before its signature check:
-/// the backend's own open and retry sequence
-/// ([`WriteStore::attach_hash`]).
-pub enum HashAttach<B> {
-    /// The native open failed.
-    Closed,
-    /// The open failed, but walking the keys succeeds with no entries.
-    EmptyWalk,
-    /// An existing container opened; the caller checks its signature.
-    Opened(B),
-    /// The CREATE retry created the container and wrote the signature.
-    /// The flag is the attach answer.
-    Created(B, bool),
 }
 
 /// The write tier: creation, raw writes, and compaction.
@@ -495,52 +459,23 @@ pub trait WriteStore: RawReadStore {
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError>;
 
-    /// Attaches the hash container of a `FlexibleBigram` with the pin's
-    /// own open sequence for this backend, and writes `signature` (key,
-    /// value) when the CREATE retry creates the file. The per-backend
-    /// rule is the FlexibleBigram failed-attach rule in
-    /// `docs/findings/compatibility-policy.md`. A store that holds no
-    /// such container refuses with [`StoreError::InvalidInput`].
+    /// Removes one raw record without a transaction or a sync.
     ///
     /// # Errors
-    ///
-    /// Returns [`StoreError`] for a failure before the native open, such
-    /// as a path that contains NUL.
-    fn attach_hash(
-        path: &Path,
-        mode: AttachMode,
-        signature: (&[u8], &[u8]),
-    ) -> Result<HashAttach<Self>, StoreError>
-    where
-        Self: Sized;
+    /// Returns a backend error on failure, including a read-only store.
+    fn remove_raw(&self, key: &[u8]) -> Result<bool, StoreError>;
 
-    /// The pin's `FlexibleBigram` writes: the closure's puts and removes,
-    /// applied as one native `set` or `remove` each when the closure
-    /// returns `Ok`, with no transaction and no sync. An `Err` from the
-    /// closure applies nothing. [`WriteStore::flush`] is the one sync, at
-    /// the owner's reset (`flexible_ngram_bdb.h:51-57`,
-    /// `flexible_ngram_kyotodb.h:86-92`, `flexible_ngram_tkrzwdb.h:84-90`).
-    ///
-    /// The flag aggregates the applied removals: true unless one of them
-    /// found no record, and true when the closure removes nothing. It is
-    /// not one native result. `FlexibleBigram::remove` is its only reader,
-    /// and its closure holds exactly one removal, so there the flag is that
-    /// removal's native answer, which the pin's `remove` returns.
-    /// A store that holds no such container refuses with
-    /// [`StoreError::InvalidInput`].
-    ///
-    /// # Errors
-    ///
-    /// As [`WriteStore::write`].
+    /// Whether writes are disabled for the native handle.
+    fn is_read_only(&self) -> bool;
+
+    /// Applies buffered raw operations without a sync for backend unit tests.
+    #[cfg(test)]
     fn write_deferred<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<(R, bool), StoreError>;
 
-    /// Flushes a store written through [`WriteStore::write_deferred`]: the
-    /// one sync at the `FlexibleBigram` owner's reset. A store that holds
-    /// no such container refuses with [`StoreError::InvalidInput`].
-    ///
+    /// Synchronizes the native container.
     /// # Errors
     ///
     /// Returns [`StoreError`] when the flush fails.
@@ -1088,12 +1023,7 @@ pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
 pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
 
-mod flexible_ngram;
 mod system_attach;
-pub use flexible_ngram::{
-    ArrayItemWithToken, DefaultFlexibleBigram, FixedRecord, FlexibleBigram, FlexibleGramSpec,
-    MAGIC_KEY, SingleGram, SpecGram,
-};
 pub use system_attach::SystemAttachment;
 
 // ── tests ──────────────────────────────────────────────────────────

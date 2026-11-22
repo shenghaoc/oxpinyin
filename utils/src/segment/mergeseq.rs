@@ -12,7 +12,7 @@
 
 use std::ffi::{CStr, OsString};
 
-use oxpinyin::input::tool::{self, OutputStream};
+use oxpinyin_tool_support::input::{self as tool, OutputStream};
 
 use crate::segment::data;
 use crate::segment::input::Input;

@@ -13,15 +13,14 @@ workspace = true
 
 [features]
 default = ["tkrzw"]
-tkrzw = ["oxpinyin-utils/tkrzw", "oxpinyin/tkrzw", "oxpinyin-capi/tkrzw", "oxzhuyin-capi/tkrzw"]
-bdb = ["oxpinyin-utils/bdb", "oxpinyin/bdb", "oxpinyin-capi/bdb", "oxzhuyin-capi/bdb"]
-kyotocabinet = ["oxpinyin-utils/kyotocabinet", "oxpinyin/kyotocabinet", "oxpinyin-capi/kyotocabinet", "oxzhuyin-capi/kyotocabinet"]
+tkrzw = ["oxpinyin-tool-support/tkrzw", "oxpinyin-utils/tkrzw", "oxpinyin/tkrzw"]
+bdb = ["oxpinyin-tool-support/bdb", "oxpinyin-utils/bdb", "oxpinyin/bdb"]
+kyotocabinet = ["oxpinyin-tool-support/kyotocabinet", "oxpinyin-utils/kyotocabinet", "oxpinyin/kyotocabinet"]
 
 [dependencies]
+oxpinyin-tool-support = { path = "../tool-support", default-features = false }
 oxpinyin-utils = { path = "../utils", version = "=0.1.0-alpha.2", default-features = false }
 oxpinyin = { workspace = true }
-oxpinyin-capi = { path = "../capi", version = "=0.1.0-alpha.2", default-features = false }
-oxzhuyin-capi = { path = "../zhuyin-capi", version = "=0.1.0-alpha.2", default-features = false }
 
 [dev-dependencies]
 assert_cmd.workspace = true

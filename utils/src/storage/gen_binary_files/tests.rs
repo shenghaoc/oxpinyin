@@ -1,5 +1,4 @@
 use super::*;
-use oxpinyin::data::phrase_library::PhraseLibrary;
 use std::{ffi::OsStr, path::Path};
 
 fn open_table(path: &Path) -> TableFile {
@@ -30,7 +29,7 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
     let items: Vec<_> = libraries[1].take().unwrap().into_iter().collect();
     let frame = oxpinyin::data::phrase_library::build_chunk(&items).unwrap();
     oxpinyin::input::chunk::save(&chunk, &frame).unwrap();
-    let library = PhraseLibrary::load_heap(&chunk).unwrap();
+    let library = oxpinyin_tool_support::data::load_heap(&chunk).unwrap();
     let single = library.item(16777222).unwrap();
     assert_eq!(single.phrase_text().unwrap(), "你");
     assert_eq!(
@@ -51,7 +50,7 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
     let mut libraries = crate::storage::Libraries::load(&conf);
     libraries.add_unigram(16870553, 3);
     libraries.save(&conf);
-    let library = PhraseLibrary::load_heap(&chunk).unwrap();
+    let library = oxpinyin_tool_support::data::load_heap(&chunk).unwrap();
     assert_eq!(library.item(16870553).unwrap().unigram(), 3);
 }
 

@@ -1,6 +1,6 @@
 //! Builds filenames, converts path encodings, and renames or unlinks files.
 //! [`path_from_bytes`] preserves Unix path bytes and replaces malformed UTF-8 on Windows.
-//! [`path_from_bytes_checked`] requires representable bytes. [`crate::input::c_path`]
+//! [`crate::input::c_path`]
 //! rejects an interior NUL. [`c_string`] stops at it.
 
 // The native calls are g_build_filename, g_rename and unlink. On Unix g_rename maps to
@@ -40,25 +40,6 @@ pub fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     #[cfg(not(unix))]
     {
         PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
-    }
-}
-
-/// A pin byte path as the Rust path that opens it, `None` where the
-/// platform cannot represent the bytes.
-///
-/// Unix accepts every byte. Windows requires UTF-8, as the pin's tools do
-/// for a `CStr` filename; invalid input names no path. "Checked" refers to
-/// the encoding alone: NULs, existence and filename validity are not
-/// examined.
-#[must_use]
-pub fn path_from_bytes_checked(bytes: &[u8]) -> Option<PathBuf> {
-    #[cfg(unix)]
-    {
-        Some(path_from_bytes(bytes))
-    }
-    #[cfg(not(unix))]
-    {
-        std::str::from_utf8(bytes).ok().map(PathBuf::from)
     }
 }
 

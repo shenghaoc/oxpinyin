@@ -1,5 +1,5 @@
 use super::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader, KmmSpec};
-use oxpinyin::store::{FixedRecord, FlexibleGramSpec};
+use oxpinyin_tool_support::flexible_ngram::{FixedRecord, FlexibleGramSpec};
 
 #[test]
 fn the_record_sizes_and_magic_number_are_the_pins() {

@@ -276,7 +276,8 @@ pub mod phrase_index {
     /// Encodes a slice of tokens into a DBM value: a flat array of `u32`
     /// LE, 4 bytes each.
     #[must_use]
-    pub fn encode_tokens(tokens: &[u32]) -> Vec<u8> {
+    #[cfg(test)]
+    pub(crate) fn test_encode_tokens(tokens: &[u32]) -> Vec<u8> {
         let mut buf = Vec::with_capacity(tokens.len() * 4);
         append_u32_le(&mut buf, tokens.iter().copied());
         buf

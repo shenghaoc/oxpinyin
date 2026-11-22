@@ -170,8 +170,7 @@ impl From<StoreError> for UserStoreError {
             other @ (StoreError::Backend(_)
             | StoreError::ReadOnly
             | StoreError::InvalidInput(_)
-            | StoreError::ReadAfterCheck
-            | StoreError::ShortArrayHeader) => Self::Store(other),
+            | StoreError::ReadAfterCheck) => Self::Store(other),
         }
     }
 }

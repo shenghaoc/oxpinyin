@@ -76,7 +76,11 @@ fn the_row_filter_follows_the_three_upstream_comparisons() {
             token: 7,
             keys: stored.to_vec(),
         }]);
-        search_row(query, Some(&row)).unwrap() == (true, vec![7])
+        {
+            let mut tokens = Vec::new();
+            visit_matching_items(query, &row, |token| tokens.push(token)).unwrap();
+            tokens == [7]
+        }
     };
     assert!(keys_match(&[ni], &[ni3]), "zero tone matches any tone");
     assert!(keys_match(&[ni3], &[ni]), "either side zero");

@@ -139,7 +139,7 @@ fn ucs4_key_round_trip() {
 
 #[test]
 fn phrase_tokens_round_trip() {
-    use phrase_index::{decode_tokens, encode_tokens};
+    use phrase_index::{decode_tokens, test_encode_tokens as encode_tokens};
     let tokens = vec![0x0100_0001, 0x0200_0042];
     let encoded = encode_tokens(&tokens);
     assert_eq!(encoded.len(), 8);

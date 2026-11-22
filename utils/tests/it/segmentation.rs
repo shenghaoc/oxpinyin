@@ -7,7 +7,7 @@
 //! (`utils/segment/*.cpp` at 074a2219) and its committed segmentation goldens, not
 //! from a live run.
 
-use oxpinyin::input::tool;
+use oxpinyin_tool_support::input as tool;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -108,10 +108,11 @@ fn the_output_file_receives_the_stream() {
 #[test]
 fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
     use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
-    use oxpinyin::data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
+    use oxpinyin::data::row_format::phrase_index::encode_ucs4_key;
     use oxpinyin::single_gram::encode_single_gram;
     use oxpinyin::store::{DefaultStore, WriteStore as _, WriteTxn as _};
     use oxpinyin::vocab::{SENTENCE_START, phrase_index_make_token};
+    use oxpinyin_tool_support::data::encode_tokens;
 
     let (_directory, data) = data_dir();
     let items = [(1, 2), (2, 1)].map(|(slot, unigram)| {
