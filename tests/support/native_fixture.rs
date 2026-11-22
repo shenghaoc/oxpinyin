@@ -13,7 +13,7 @@ pub fn system_dir() -> PathBuf {
         })
         .join("fixtures")
         .join("w3")
-        .join(oxpinyin::data::DEFAULT_STORE_EXT)
+        .join(oxpinyin::store::DEFAULT_STORE_EXT)
 }
 
 /// A uniquely named scratch dir, removed when the owning guard drops.
@@ -121,11 +121,10 @@ pub mod logs {
 pub fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
     let conf = oxpinyin::data::TableConf::load_from_dir(system).expect("system table.conf");
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
-    std::fs::write(
-        user_dir.join("user.conf"),
-        oxpinyin::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
-    )
-    .expect("write user.conf");
+    assert!(
+        oxpinyin::data::user_files::UserTableInfo::conform_to(&versions)
+            .save(user_dir.join("user.conf").as_path())
+    );
 }
 
 /// A tree DBM of the running backend at `path` that holds exactly `rows`,
@@ -247,11 +246,10 @@ pub fn modify_header(token: u32, old: u32, new: u32) -> Vec<u8> {
 pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
     let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
-    std::fs::write(
-        user_dir.join("user.conf"),
-        oxpinyin::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
-    )
-    .expect("write user.conf");
+    assert!(
+        oxpinyin::data::user_files::UserTableInfo::conform_to(&versions)
+            .save(user_dir.join("user.conf").as_path())
+    );
     std::fs::write(
         user_dir.join(file),
         oxpinyin::data::chunk_format::build_memory_chunk(payload).expect("frame"),
@@ -268,7 +266,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
     let mut marker = oxpinyin::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
-    std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
+    assert!(marker.save(user_dir.join("user.conf").as_path()));
     oxpinyin::store::DefaultStore::write_user_bigram(
         &user_dir.join(oxpinyin::data::user_files::UserDbm::Bigram.file_name()),
         &rows,
@@ -289,7 +287,7 @@ pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[
         let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
         let mut marker = oxpinyin::data::user_files::UserTableInfo::conform_to(&versions);
         marker.open_counter = 1;
-        std::fs::write(user_dir.join("user.conf"), marker.to_text()).expect("write user.conf");
+        assert!(marker.save(user_dir.join("user.conf").as_path()));
     }
     let path = user_dir.join(oxpinyin::data::user_files::UserDbm::PhraseIndex.file_name());
     let mut rows = std::collections::BTreeMap::new();
@@ -676,4 +674,17 @@ pub fn replace_with_failed_layout(library: &std::path::Path, total: u32) {
     )
     .unwrap();
     std::fs::rename(staged, library).unwrap();
+}
+
+/// Seeds a complete row, sorting its successor tokens as the native writer does.
+pub fn seed_bigram(store: &mut oxpinyin::user::UserStore, prev: u32, rows: &[(u32, u32)]) {
+    let mut rows = rows.to_vec();
+    rows.sort_unstable_by_key(|&(token, _)| token);
+    let total = rows.iter().map(|&(_, count)| count).sum();
+    store
+        .plant_raw_bigram(
+            prev,
+            &oxpinyin::single_gram::encode_single_gram(total, &rows),
+        )
+        .expect("plant the fixture gram");
 }

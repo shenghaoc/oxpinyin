@@ -131,8 +131,7 @@ impl SyllableKey {
     /// finals (`phonetic_key_matrix.cpp:238-306`), so an initial bit and a
     /// final bit compose (`can` → `chang` under `AMB_C_CH` + `AMB_AN_ANG`).
     #[must_use]
-    #[cfg(any(test, feature = "tools"))]
-    pub(crate) fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
+    pub fn fuzzy_alternatives(self, options: OptionBits) -> Vec<Self> {
         fuzzy_chewing_alternatives(self.chewing_key(), options)
             .into_iter()
             .map(Self::from_matrix_key)
@@ -211,7 +210,6 @@ impl SyllableKey {
 /// The original key is omitted. Final substitutions apply to the original and to each
 /// admitted initial alternative, even when the resulting final has no spelling row.
 #[must_use]
-#[cfg(any(test, feature = "tools"))]
 fn fuzzy_chewing_alternatives(key: ChewingKey, options: OptionBits) -> Vec<ChewingKey> {
     let initials = fuzzy_chewing_initials(key, options);
     let mut out = initials.clone();

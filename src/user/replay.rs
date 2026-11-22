@@ -404,7 +404,7 @@ fn journal_slot(bytes: &[u8]) -> Slot {
 }
 
 /// A live sub-index's mapped baseline and independently owned slot changes.
-pub(crate) struct ReplayedLibrary {
+pub struct ReplayedLibrary {
     baseline: Baseline,
     baseline_end: u32,
     changes: BTreeMap<u32, Slot>,
@@ -440,7 +440,9 @@ impl ReplayedLibrary {
         Self::new(Baseline::Mapped(mapping), total, end)
     }
 
-    pub(crate) fn pristine(original: SystemLibraryRef<'_>) -> Self {
+    /// Builds a fresh mutable index from a library baseline.
+    #[must_use]
+    pub fn pristine(original: SystemLibraryRef<'_>) -> Self {
         let items: BTreeMap<_, _> = match original.mapped {
             Some(mapped) => mapped
                 .offset_array()
@@ -494,7 +496,8 @@ impl ReplayedLibrary {
         Some(PhraseItemView::from_bytes(self.fields(slot)?)?.as_bytes())
     }
 
-    pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
+    /// Decodes a complete item at the supplied slot.
+    pub fn item(&self, slot: u32) -> Option<ChunkItem> {
         decode_phrase_item(self.complete_item(slot)?)
     }
 
@@ -541,7 +544,8 @@ impl ReplayedLibrary {
         UnigramAdd::Accepted
     }
 
-    pub(crate) fn add_item(&mut self, slot: u32, payload: &[u8]) {
+    /// Installs the item bytes and adds their unigram count to the index total.
+    pub fn add_item(&mut self, slot: u32, payload: &[u8]) {
         self.changes.insert(slot, journal_slot(payload));
         self.total = self.total.wrapping_add(raw_unigram(payload));
     }
@@ -670,6 +674,3 @@ pub(crate) type Finished = (Option<u32>, BTreeSet<u32>, Option<ReplayedLibrary>)
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(feature = "tools")]
-pub mod tool;

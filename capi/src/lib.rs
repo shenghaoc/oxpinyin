@@ -68,15 +68,6 @@
 
 mod ffi;
 
-/// Read-only abort checks for the in-tree fuzz harness.
-///
-/// Enabled only by `fuzz-api`. These Rust helpers are internal interfaces.
-#[cfg(feature = "fuzz-api")]
-pub mod fuzz_api {
-    pub use crate::candidates::fuzz_checks::{oxpinyin_choose_aborts, oxpinyin_train_aborts};
-    pub use crate::iterators::fuzz_checks::oxpinyin_import_aborts;
-}
-
 mod aux_matrix;
 mod live;
 mod state;
@@ -97,7 +88,6 @@ pub mod text;
 pub mod types;
 pub mod user_data;
 
-#[cfg(feature = "tools")]
 pub mod tool;
 
 // C publication and conversion tests live in sibling tests.rs files and tests/it.

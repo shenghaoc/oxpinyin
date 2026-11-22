@@ -1147,5 +1147,4 @@ fn apostrophe_extended(input: &[u8], mut end: usize) -> usize {
     end
 }
 
-#[cfg(feature = "tools")]
 pub mod tool;

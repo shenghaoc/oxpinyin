@@ -567,7 +567,7 @@ fn non_conform_profile_wipes_and_resets() {
         database_format: Some(foreign_token.to_owned()),
         open_counter: 0,
     };
-    std::fs::write(dir.join(USER_CONF), foreign.to_text()).expect("write");
+    assert!(foreign.save(dir.join(USER_CONF).as_path()));
 
     let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
     assert!(loaded.wiped);
@@ -907,9 +907,11 @@ fn stray_identity_bytes_follow_the_native_scanner() {
             let dir = tempdir("stray-byte");
             let originals = originals();
             save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
-            let mut marker = UserTableInfo::conform_to(&versions())
-                .to_text()
-                .into_bytes();
+            let identity = versions();
+            let mut marker = format!(
+                "binary format version:{}\nmodel data version:{}\ndatabase format:{}\nopen counter:0\n",
+                identity.binary_format_version, identity.model_data_version, identity.database_format,
+            ).into_bytes();
             let after_version = marker
                 .iter()
                 .position(|&byte| byte == b'\n')
@@ -959,10 +961,11 @@ fn a_hand_written_counter_is_the_scanners_int() {
     // as well as many. Values outside `int` take the host conversion and
     // are left to the differential's reference host (`user-conf-920-*`).
     let originals = originals();
-    let conform = UserTableInfo::conform_to(&versions()).to_text();
-    let head = conform
-        .strip_suffix("open counter:0\n")
-        .expect("the marker ends with its counter");
+    let identity = versions();
+    let head = format!(
+        "binary format version:{}\nmodel data version:{}\ndatabase format:{}\n",
+        identity.binary_format_version, identity.model_data_version, identity.database_format,
+    );
     for (line, raised, lowered, wiped) in [
         (&b"open counter:-3\n"[..], -2, 0, false),
         (b"open counter:+3\n", 4, 3, false),
@@ -1098,7 +1101,7 @@ fn reporting_save_aborts_at_a_chunk_header_write() {
             let system = crate::user::native_fixture::system_dir();
             let conf = crate::data::TableConf::load_from_dir(&system).expect("table.conf");
             let marker = UserTableInfo::conform_to(&SystemVersions::from_conf(&conf));
-            std::fs::write(dir.join(USER_CONF), marker.to_text()).expect("marker");
+            assert!(marker.save(dir.join(USER_CONF).as_path()));
             std::os::unix::fs::symlink("/dev/full", dir.join("gb_char.dbin.tmp")).expect("symlink");
         },
         |dir| {
@@ -1518,11 +1521,9 @@ fn replay_over_mapped_originals_matches_replay_over_inline_ones() {
                 build_memory_chunk(&encode_log_records(records).expect("log")).expect("chunk"),
             )
             .expect("write log");
-            std::fs::write(
-                run_dir.join("user.conf"),
-                UserTableInfo::conform_to(&versions()).to_text(),
-            )
-            .expect("marker");
+            assert!(
+                UserTableInfo::conform_to(&versions()).save(run_dir.join("user.conf").as_path())
+            );
             let loaded = load(
                 &run_dir,
                 &originals_of(inline),
@@ -1566,11 +1567,7 @@ fn replay_masks_high_token_bits_like_the_subindex() {
         build_memory_chunk(&payload).expect("chunk"),
     )
     .expect("write");
-    std::fs::write(
-        dir.join("user.conf"),
-        UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("marker");
+    assert!(UserTableInfo::conform_to(&versions()).save(dir.join("user.conf").as_path()));
     let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
     assert!(loaded.skipped.is_empty());
     assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
@@ -1585,11 +1582,7 @@ fn load_with_log(name: &str, payload: &[u8]) -> Loaded {
         build_memory_chunk(payload).expect("frame"),
     )
     .expect("write");
-    std::fs::write(
-        dir.join(USER_CONF),
-        UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("marker");
+    assert!(UserTableInfo::conform_to(&versions()).save(dir.join(USER_CONF).as_path()));
     let loaded = load(&dir, &originals(), &versions(), UserConfLaw::Pinyin).expect("load");
     std::fs::remove_dir_all(&dir).expect("cleanup");
     loaded
@@ -2480,15 +2473,11 @@ mod save_semantics_929 {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
             let dir = tempfile::tempdir().unwrap();
             let mut store = seed(dir.path(), law);
-            store
-                .set_bigram_count(0x0100_0001, 0x0200_0001, 37)
-                .unwrap();
+            crate::user::native_fixture::seed_bigram(&mut store, 0x0100_0001, &[(0x0200_0001, 37)]);
             store.mark_modified();
             store.save_reporting().unwrap();
             let saved_bytes = data_bytes(dir.path());
-            store
-                .set_bigram_count(0x0100_0001, 0x0200_0001, 91)
-                .unwrap();
+            crate::user::native_fixture::seed_bigram(&mut store, 0x0100_0001, &[(0x0200_0001, 91)]);
             drop(store); // fini is not an implicit save (both facades).
             let mut reopened = open(dir.path(), law);
             assert_eq!(
@@ -2544,7 +2533,7 @@ mod save_semantics_929 {
                 session.save_reporting().unwrap();
                 assert!(!session.is_modified());
             }
-            let phrases = store.export_phrases_in(7);
+            let phrases = crate::user::test_session::stored_phrase_rows(&store, 7);
             let system_unigram = store.system_unigram(SYSTEM).expect("live system item");
             let unigram = store.user_unigram_frequency(USER);
             let gram = store.bigram_row(SYSTEM).unwrap();
@@ -2562,7 +2551,9 @@ mod save_semantics_929 {
                     .collect();
                 (
                     session.phrases(),
-                    [5, 6, 7].map(|library| session.export_phrases_in(library)),
+                    [5, 6, 7].map(|library| {
+                        crate::user::test_session::stored_phrase_rows(&session, library)
+                    }),
                     grams,
                     session.unigram_total(),
                     session
@@ -2578,7 +2569,10 @@ mod save_semantics_929 {
                     .all(|path| { path.is_file() && !staged_path(path).exists() })
             );
             let reopened = open(dir.path(), law);
-            assert_eq!(reopened.export_phrases_in(7), phrases);
+            assert_eq!(
+                crate::user::test_session::stored_phrase_rows(&reopened, 7),
+                phrases
+            );
             assert_eq!(reopened.system_unigram(SYSTEM), Some(system_unigram));
             assert_eq!(reopened.user_unigram_frequency(USER), unigram);
             assert_eq!(reopened.bigram_row(SYSTEM).unwrap(), gram);
@@ -2797,9 +2791,7 @@ mod save_boundaries_929 {
                 .add_phrase_in(library, &"你".into(), &[key], Some(17))
                 .unwrap();
         }
-        store
-            .set_bigram_count(0x0700_0001, 0x0600_0001, 37)
-            .unwrap();
+        crate::user::native_fixture::seed_bigram(store, 0x0700_0001, &[(0x0600_0001, 37)]);
         store.mark_modified();
     }
 

@@ -98,7 +98,7 @@ pub fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> CString {
 /// `OsString` unchanged; elsewhere GLib returns UTF-8 and the path takes
 /// that text.
 #[must_use]
-pub(crate) fn build_path(dir: &Path, name: &OsStr) -> PathBuf {
+pub fn build_path(dir: &Path, name: &OsStr) -> PathBuf {
     let joined = build_filename(Some(&c_string(dir.as_os_str())), Some(&c_string(name)));
     path_from_c_string(joined)
 }

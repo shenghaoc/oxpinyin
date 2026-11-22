@@ -971,7 +971,7 @@ fn copy_tkrzwdb(
     src: &Db,
     set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     crate::store::copy::faults::make_iterator()?;
     let mut cursor = src.cursor()?;
     crate::store::copy::copy(
@@ -1097,22 +1097,6 @@ fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
         let _ = copy_tkrzwdb(db, |key, value| file.db.set(key, value));
     }
     file.db.synchronize(false)
-}
-
-impl TkrzwStore {
-    /// The tools' plain native `Set`, without synchronizing. Matches
-    /// `ngram_tkrzwdb.cpp:124-132` and `punct_table_tkrzwdb.cpp:139-148`
-    /// at 074a2219. The shipping transaction and durability path is unchanged.
-    ///
-    /// # Errors
-    /// Returns the native write error, or an error for a read-only handle.
-    #[cfg(feature = "tools")]
-    pub fn tool_set(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        if self.read_only {
-            return Err(StoreError::ReadOnly);
-        }
-        self.db.set(key, value)
-    }
 }
 
 #[cfg(test)]

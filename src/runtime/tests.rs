@@ -353,14 +353,12 @@ fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
         crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
     )
     .unwrap();
-    std::fs::write(
-        dir.path().join("user.conf"),
+    assert!(
         crate::data::user_files::UserTableInfo::conform_to(&SystemVersions::from_conf(
             runtime.table_conf(),
         ))
-        .to_text(),
-    )
-    .unwrap();
+        .save(dir.path().join("user.conf").as_path())
+    );
     drop(runtime);
     let runtime = Runtime::open(&system_dir(), Some(dir.path())).unwrap();
     assert_eq!(runtime.user_store().system_unigram(token), None);
@@ -414,7 +412,12 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
             .add_phrase_in(5, &"你鎄".into(), &keys, Some(5))
             .unwrap();
         assert_eq!(token >> 24, 5);
-        assert!(zhuyin.dict().tokens_for_text("你鎄").contains(&token));
+        assert!(
+            zhuyin
+                .dict()
+                .tokens_for_ucs4(&"你鎄".chars().map(u32::from).collect::<Vec<_>>())
+                .contains(&token)
+        );
     }
 
     // A table.conf whose addon 4 names a non-stock chunk: the stock
@@ -459,7 +462,12 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
     let mut runtime = Runtime::open(&system_dir(), Some(dir.path())).unwrap();
 
     let phrase = "你鎄";
-    assert!(runtime.dict().tokens_for_text(phrase).is_empty());
+    assert!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>())
+            .is_empty()
+    );
 
     // Each operation re-borrows the same storage owner. Exact-text
     // queries still read their live rows after writes.
@@ -473,7 +481,12 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
         .user_store_mut()
         .add_phrase(&crate::vocab::PhraseText::from(phrase), &keys, None)
         .unwrap();
-    assert_eq!(runtime.dict().tokens_for_text(phrase), [token]);
+    assert_eq!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>()),
+        [token]
+    );
     let syllables = [
         SyllableKey::from_text("ni").unwrap(),
         SyllableKey::from_text("hao").unwrap(),
@@ -497,9 +510,19 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
             .unwrap(),
         token
     );
-    assert_eq!(runtime.dict().tokens_for_text(phrase), [token]);
+    assert_eq!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>()),
+        [token]
+    );
     assert!(runtime.user_store_mut().remove_user_phrase(token).unwrap());
-    assert!(runtime.dict().tokens_for_text(phrase).is_empty());
+    assert!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>())
+            .is_empty()
+    );
 
     // A later operation re-borrows the owner without rebuilding query state.
 
@@ -507,12 +530,22 @@ fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
         .user_store_mut()
         .add_phrase_in(7, &crate::vocab::PhraseText::from(phrase), &keys, Some(5))
         .unwrap();
-    assert_eq!(runtime.dict().tokens_for_text(phrase), [imported]);
+    assert_eq!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>()),
+        [imported]
+    );
     runtime
         .user_store_mut()
         .mask_out(u32::MAX, imported)
         .unwrap();
-    assert!(runtime.dict().tokens_for_text(phrase).is_empty());
+    assert!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&phrase.chars().map(u32::from).collect::<Vec<_>>())
+            .is_empty()
+    );
     assert!(
         runtime
             .dict()
@@ -527,7 +560,9 @@ fn tokens_for_text_reads_the_row_after_a_system_reading_merge() {
     let dir = tempfile::tempdir().unwrap();
     let mut runtime = Runtime::open(&system_dir(), Some(dir.path())).unwrap();
 
-    let tokens = runtime.dict().tokens_for_text("你好");
+    let tokens = runtime
+        .dict()
+        .tokens_for_ucs4(&"你好".chars().map(u32::from).collect::<Vec<_>>());
     let token = tokens[0];
     let library = u8::try_from(token >> 24).unwrap();
     let keys: Vec<_> = ["ni", "hao"]
@@ -539,12 +574,22 @@ fn tokens_for_text_reads_the_row_after_a_system_reading_merge() {
         .user_store_mut()
         .add_system_phrase_in(library, Some(token), &"你好".into(), &keys, Some(5))
         .unwrap();
-    assert_eq!(runtime.dict().tokens_for_text("你好"), tokens);
+    assert_eq!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&"你好".chars().map(u32::from).collect::<Vec<_>>()),
+        tokens
+    );
     let added = runtime
         .user_store_mut()
         .add_system_phrase_in(library, None, &"你鎄".into(), &keys, Some(5))
         .unwrap();
-    assert_eq!(runtime.dict().tokens_for_text("你鎄"), [added]);
+    assert_eq!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&"你鎄".chars().map(u32::from).collect::<Vec<_>>()),
+        [added]
+    );
 }
 
 #[test]
@@ -1283,10 +1328,11 @@ mod backend_files {
             .user_store_mut()
             .add_phrase(&"你鎬".into(), &keys, Some(5))
             .unwrap();
-        runtime
-            .user_store_mut()
-            .set_bigram_count(SENTENCE_START, other, 1000)
-            .unwrap();
+        crate::user::native_fixture::seed_bigram(
+            runtime.user_store_mut(),
+            SENTENCE_START,
+            &[(other, 1000)],
+        );
         let prev = SENTENCE_START;
         let fresh = |runtime: &Runtime| {
             let actual = runtime
@@ -1306,10 +1352,11 @@ mod backend_files {
             .unwrap();
         let trained = fresh(&runtime);
         assert_ne!(trained, before);
-        runtime
-            .user_store_mut()
-            .set_bigram_count(SENTENCE_START, token, 1000)
-            .unwrap();
+        crate::user::native_fixture::seed_bigram(
+            runtime.user_store_mut(),
+            SENTENCE_START,
+            &[(other, 1000), (token, 1000)],
+        );
         let written = fresh(&runtime);
         assert_ne!(written, trained);
         runtime.user_store_mut().mask_out(u32::MAX, token).unwrap();
@@ -1332,7 +1379,7 @@ mod backend_files {
         let user = runtime.user_store_mut();
         let prev = user.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap();
         let next = user.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
-        user.set_bigram_count(prev, next, 7).unwrap();
+        crate::user::native_fixture::seed_bigram(user, prev, &[(next, 7)]);
         // A user phrase has no row in the system table: `Bigram::load` leaves
         // the system gram NULL, and `merge_single_gram` takes the user's alone
         // (`ngram.cpp:286-290` at 074a2219).
@@ -1366,10 +1413,11 @@ mod backend_files {
             .user_store_mut()
             .add_phrase(&"你鎬".into(), &keys, Some(5))
             .unwrap();
-        runtime
-            .user_store_mut()
-            .set_bigram_count(SENTENCE_START, other, 1000)
-            .unwrap();
+        crate::user::native_fixture::seed_bigram(
+            runtime.user_store_mut(),
+            SENTENCE_START,
+            &[(other, 1000)],
+        );
         let prev = SENTENCE_START;
         let mut row = NbestStepRow::default();
         // One span load's merged row: whether it carries `successor`, and the
@@ -1554,10 +1602,11 @@ mod backend_files {
             .user_store_mut()
             .add_phrase(&"你鎄".into(), &keys, Some(5))
             .unwrap();
-        runtime
-            .user_store_mut()
-            .set_bigram_count(SENTENCE_START, token, 1000)
-            .unwrap();
+        crate::user::native_fixture::seed_bigram(
+            runtime.user_store_mut(),
+            SENTENCE_START,
+            &[(token, 1000)],
+        );
         assert_eq!(
             guess(&runtime),
             "你鎄",
@@ -1671,11 +1720,10 @@ mod backend_files {
         let user = user_tmp.path().to_path_buf();
         let conf = crate::data::TableConf::load_from_dir(&system).expect("conf");
         let versions = crate::data::user_files::SystemVersions::from_conf(&conf);
-        std::fs::write(
-            user.join("user.conf"),
-            crate::data::user_files::UserTableInfo::conform_to(&versions).to_text(),
-        )
-        .expect("user.conf");
+        assert!(
+            crate::data::user_files::UserTableInfo::conform_to(&versions)
+                .save(user.join("user.conf").as_path())
+        );
         // A MODIFY_HEADER whose token is not `null_token` (`phrase_index_logger.h:202`).
         let mut header = 4_u32.to_le_bytes().to_vec();
         header.extend_from_slice(&0x0300_0001_u32.to_le_bytes());
@@ -1917,7 +1965,7 @@ mod pin_data {
         let _ = dict.lookup(&[lone]).expect("lookup");
 
         // Phrase DBM: text → tokens, and token → text back through the chunks.
-        let tokens = dict.tokens_for_text("中国");
+        let tokens = dict.tokens_for_ucs4(&"中国".chars().map(u32::from).collect::<Vec<_>>());
         assert!(!tokens.is_empty());
         for token in &tokens {
             assert_eq!(
@@ -1950,7 +1998,7 @@ mod pin_data {
         );
 
         // Punctuation through punct.bin.
-        let de = dict.tokens_for_text("的");
+        let de = dict.tokens_for_ucs4(&"的".chars().map(u32::from).collect::<Vec<_>>());
         assert!(de.iter().any(|token| !dict.punctuations(*token).is_empty()));
 
         // The addon facade: addon_pinyin_index.bin + art.bin on demand.
@@ -2277,7 +2325,7 @@ fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
     for &(text, reading, count) in rows {
         let original = runtime
             .dict()
-            .tokens_for_text(text)
+            .tokens_for_ucs4(&text.chars().map(u32::from).collect::<Vec<_>>())
             .into_iter()
             .find(|token| crate::vocab::phrase_index_library_index(*token) == library);
         let keys = native_keys(reading);
@@ -2362,7 +2410,9 @@ fn repeated_prefix_tokens_keep_duplicate_sentence_rows() {
     let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("ba1").unwrap();
-    let prefixes = runtime.dict().tokens_for_text("丙");
+    let prefixes = runtime
+        .dict()
+        .tokens_for_ucs4(&"丙".chars().map(u32::from).collect::<Vec<_>>());
     assert_eq!(prefixes.to_vec(), [0x0100_0003, 0x0100_0003]);
     assert!(
         runtime
@@ -2510,7 +2560,12 @@ fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] in
     let user = TempUserDir::new("segment-ieee");
     let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    let tokens = |text| runtime.dict().tokens_for_text(text).to_vec();
+    let tokens = |text: &str| {
+        runtime
+            .dict()
+            .tokens_for_ucs4(&text.chars().map(u32::from).collect::<Vec<_>>())
+            .to_vec()
+    };
     assert_eq!(tokens("你"), [NI]);
     assert!(tokens("你你").is_empty());
 
@@ -2908,7 +2963,9 @@ fn unigram_get_and_add_ignore_the_token_tag() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     let tokens = [
-        runtime.dict().tokens_for_text("你")[0],
+        runtime
+            .dict()
+            .tokens_for_ucs4(&"你".chars().map(u32::from).collect::<Vec<_>>())[0],
         runtime
             .user_store()
             .token_for_phrase("龘龘")
@@ -2944,7 +3001,7 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
     }
     let token = runtime
         .dict()
-        .tokens_for_text("龘")
+        .tokens_for_ucs4(&"龘".chars().map(u32::from).collect::<Vec<_>>())
         .iter()
         .find(|token| **token >> 24 == 7)
         .copied()
@@ -2962,7 +3019,13 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
             vec![(1_u32.to_le_bytes().to_vec(), gram.clone())],
         );
         let runtime = Runtime::open_with_law(&system_dir(), Some(&user.path), law).unwrap();
-        assert_eq!(runtime.dict().tokens_for_text("龘").to_vec(), [token]);
+        assert_eq!(
+            runtime
+                .dict()
+                .tokens_for_ucs4(&"龘".chars().map(u32::from).collect::<Vec<_>>())
+                .to_vec(),
+            [token]
+        );
         let mut state = native_session(&runtime, OptionBits::USE_TONE);
         let (matched, tokens) = runtime.session(&mut state).phrase_segment("龘").unwrap();
         assert_eq!(
@@ -2993,11 +3056,19 @@ fn the_phrase_and_reading_getters_ignore_the_high_bits_of_a_token() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     runtime.user_store_mut().save_reporting().unwrap();
-    let dada = runtime.dict().tokens_for_text("龘龘")[0];
+    let dada = runtime
+        .dict()
+        .tokens_for_ucs4(&"龘龘".chars().map(u32::from).collect::<Vec<_>>())[0];
     drop(runtime);
     let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     let dict = runtime.dict();
-    for (token, text) in [(dict.tokens_for_text("你")[0], "你"), (dada, "龘龘")] {
+    for (token, text) in [
+        (
+            dict.tokens_for_ucs4(&"你".chars().map(u32::from).collect::<Vec<_>>())[0],
+            "你",
+        ),
+        (dada, "龘龘"),
+    ] {
         assert_eq!(dict.token_phrase(token).unwrap().text.unwrap(), text);
         assert_eq!(
             dict.token_phrase(token | 0x8000_0000)
@@ -3042,7 +3113,9 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     runtime.user_store_mut().save_reporting().unwrap();
-    let token = runtime.dict().tokens_for_text("龘龘")[0];
+    let token = runtime
+        .dict()
+        .tokens_for_ucs4(&"龘龘".chars().map(u32::from).collect::<Vec<_>>())[0];
     drop(runtime);
     let path = user.path.join("user_pinyin_index.bin");
     let mut rows = native_fixture::store_rows(&path, false);
@@ -3436,7 +3509,13 @@ fn ordinary_training_reorders_the_nbest_rows() {
     let trained = (127, augmented, vec!["你好".to_owned(), "你浩".to_owned()]);
     assert_eq!(surface(&runtime, &mut state), trained);
 
-    assert!(runtime.user_store().export_phrases_in(7).is_empty());
+    assert!(
+        runtime
+            .user_store()
+            .phrases()
+            .iter()
+            .all(|phrase| crate::vocab::phrase_index_library_index(phrase.token()) != 7)
+    );
     runtime.user_store_mut().save_reporting().unwrap();
     drop(runtime);
     let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
@@ -3514,7 +3593,9 @@ fn a_raw_user_key_predicts_its_live_item() {
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     import_rows(&mut runtime, 7, &[("龘龘", "da2'da2", 5)]);
     runtime.user_store_mut().save_reporting().unwrap();
-    let token = runtime.dict().tokens_for_text("龘龘")[0];
+    let token = runtime
+        .dict()
+        .tokens_for_ucs4(&"龘龘".chars().map(u32::from).collect::<Vec<_>>())[0];
     drop(runtime);
     native_fixture::craft_user_index(
         &user.path.join("user_phrase_index.bin"),
@@ -3560,7 +3641,12 @@ fn rows_of_a_never_loaded_library_are_filtered() {
     );
     native_fixture::write_user_conf(&user.path, &system_dir());
     let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-    assert!(runtime.dict().tokens_for_text("龘龘").is_empty());
+    assert!(
+        runtime
+            .dict()
+            .tokens_for_ucs4(&"龘龘".chars().map(u32::from).collect::<Vec<_>>())
+            .is_empty()
+    );
     assert!(!runtime.dict().phrase_table_token_enabled(token));
     let suggestions = runtime
         .user_store()

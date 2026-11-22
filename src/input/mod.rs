@@ -1,6 +1,6 @@
 //! Native I/O for the library and its command-line tools. This module owns configuration
 //! reads and writes, diagnostics, [`chunk`] mappings and writes, and path operations.
-//! The `tools` feature adds native utility input and output. The calling modules
+//! The `tool` module holds native utility input and output. The calling modules
 //! interpret the records and apply their failure policies.
 //!
 //! [`c_path`] converts a whole path for a C call. [`c_string`] converts the prefix
@@ -18,10 +18,9 @@ pub(crate) mod diagnostic;
 mod native;
 mod path;
 pub use path::{
-    build_filename, c_string, decode_filename, filename, path_from_bytes, path_from_bytes_checked,
-    path_to_bytes, rename, unlink,
+    build_filename, build_path, c_string, decode_filename, filename, path_from_bytes,
+    path_from_bytes_checked, path_to_bytes, rename, unlink,
 };
-#[cfg(feature = "tools")]
 #[expect(
     unsafe_code,
     reason = "the pin utilities' libc and glib-sys calls; every block carries a SAFETY comment"
@@ -89,4 +88,4 @@ impl FileName for CString {
     }
 }
 
-pub(crate) use path::{build_bytes, build_chunk_path, build_path};
+pub(crate) use path::{build_bytes, build_chunk_path};

@@ -438,25 +438,6 @@ impl UserTableInfo {
         !crate::input::path_to_bytes(path).contains(&0) && self.save(path)
     }
 
-    /// The four lines [`Self::save`] writes, in its order, for composing
-    /// fixtures; the save itself prints them with the pin's `fprintf`.
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[must_use]
-    pub fn to_text(&self) -> String {
-        let database_format = self.database_format.as_deref().unwrap_or("UNKNOWN");
-        // `UserTableInfo::save` uses `%d`, not `%u`: the pin's fields are
-        // `int m_binary_format_version` / `int m_model_data_version`
-        // (`table_info.h:99-100`). A `table.conf` value outside `int` is
-        // stored as its C cast and written back signed.
-        format!(
-            "binary format version:{}\nmodel data version:{}\ndatabase format:{}\nopen counter:{}\n",
-            i32::from_ne_bytes(self.binary_format_version.to_ne_bytes()),
-            i32::from_ne_bytes(self.model_data_version.to_ne_bytes()),
-            database_format,
-            self.open_counter
-        )
-    }
-
     /// `UserTableInfo::is_conform`: every identity line matches the
     /// system's, and the open counter has not passed the rebuild limit.
     /// A missing or unknown `database format:` line never conforms

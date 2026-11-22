@@ -24,7 +24,7 @@ pub(crate) fn copy(
     mut set: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
 ) {
     walk(&mut |key, value| {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         faults::source_read().unwrap_or_else(|_| std::process::abort());
         #[cfg(any(test, feature = "test-hooks"))]
         let written = faults::destination_write().and_then(|()| set(key, value));
@@ -46,10 +46,12 @@ pub(super) mod faults {
 
     /// The source reads left before each later read fails; `usize::MAX`
     /// never fails.
+    #[cfg(test)]
     static SOURCE_READS: AtomicUsize = AtomicUsize::new(usize::MAX);
     /// The destination writes left before each later write fails.
     static DESTINATION_WRITES: AtomicUsize = AtomicUsize::new(usize::MAX);
     /// The iterator creations left before each later one fails.
+    #[cfg(test)]
     static ITERATORS: AtomicUsize = AtomicUsize::new(usize::MAX);
 
     /// Lets the next `reads` source records of every later copy in this
@@ -87,6 +89,7 @@ pub(super) mod faults {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn source_read() -> Result<(), StoreError> {
         take(&SOURCE_READS)
     }
@@ -96,6 +99,7 @@ pub(super) mod faults {
     }
 
     /// The fault point before a copy's source iterator is made.
+    #[cfg(test)]
     pub(crate) fn make_iterator() -> Result<(), StoreError> {
         take(&ITERATORS)
     }

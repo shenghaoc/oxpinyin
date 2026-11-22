@@ -17,7 +17,7 @@ enum Parser {
 impl Parser {
     fn parse(&self, input: &[u8], options: OptionBits) -> Parse {
         match *self {
-            Self::Full => oxpinyin::engine::tool::parse_full(input, options),
+            Self::Full => parse_full(input, options),
             Self::Double => {
                 let parsed = DoublePinyinParser::new().parse_with_options(input, options);
                 Parse {
@@ -121,3 +121,19 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         tool::parser::print_newline();
     }
 }
+
+/// Reuse the C API's graph, fewest-key selection and trailing-apostrophe
+/// computation (`Session::full_parsed_len`). The standalone parser does not
+/// perform the later scan-matrix resplit/divide steps: the pin disables its
+/// parser post-processing at `pinyin_parser2.cpp:377-379` (074a2219).
+#[must_use]
+pub(crate) fn parse_full(input: &[u8], options: OptionBits) -> Parse {
+    let Some((input, graph)) = oxpinyin::engine::tool::full_graph(input, options) else {
+        return Parse::default();
+    };
+    let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
+    oxpinyin::engine::tool::selected_parse(&input, &path)
+}
+
+#[cfg(test)]
+mod tests;

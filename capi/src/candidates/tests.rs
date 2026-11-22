@@ -3,9 +3,11 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::test_support::seed_bigram;
 use crate::test_support::{
     IBUS_DEFAULT_SORT, NORMAL, PREDICTED_PUNCTUATION, Pair, user_row_of_dada,
 };
+use oxpinyin::model::Dictionary as _;
 
 use crate::test_support::packed_key;
 use crate::test_support::{alloc, close, init_at, open_at, parse, token_of};
@@ -474,7 +476,9 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
     let ni = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
-        inst.core.dict.tokens_for_text("你")[0]
+        inst.core
+            .dict
+            .tokens_for_ucs4(&"你".chars().map(u32::from).collect::<Vec<_>>())[0]
     };
 
     // A prefix choice raises only its unigram. Seed an existing bigram
@@ -494,11 +498,13 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         0
     );
     // SAFETY: the live context has no reader retained across this write.
-    unsafe { crate::state::instance_context_mut(instance) }
-        .core
-        .user_store_mut()
-        .set_bigram_count(ni, word, 10)
-        .unwrap();
+    seed_bigram(
+        unsafe { crate::state::instance_context_mut(instance) }
+            .core
+            .user_store_mut(),
+        ni,
+        &[(word, 10)],
+    );
 
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, prefix.as_ptr()) });
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
@@ -819,8 +825,8 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
         // SAFETY: the live context has no reader retained across this write.
         let context = unsafe { crate::state::instance_context_mut(instance) };
         let store = context.core.user_store_mut();
-        store.set_bigram_count(ni, word, 10).unwrap();
-        store.set_bigram_count(hao, word, 20).unwrap();
+        seed_bigram(store, ni, &[(word, 10)]);
+        seed_bigram(store, hao, &[(word, 20)]);
     }
     assert!(unsafe { pinyin_guess_predicted_candidates(pair.producer(), cstr("你").as_ptr()) });
     // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when

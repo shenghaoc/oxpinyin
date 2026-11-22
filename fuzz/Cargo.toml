@@ -43,13 +43,12 @@ tkrzw = ["oxpinyin/tkrzw", "oxpinyin-capi/tkrzw"]
 afl = ["dep:afl"]
 
 [dependencies]
-# test-hooks: the test-only library items the targets read.
-oxpinyin = { path = "..", default-features = false, features = ["test-hooks"] }
+oxpinyin = { path = "..", default-features = false }
 # dict-loader: hostile bytes through the system chunk loader.
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
 # and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
-oxpinyin-capi = { path = "../capi", default-features = false, features = ["fuzz-api"] }
+oxpinyin-capi = { path = "../capi", default-features = false, features = ["test-hooks"] }
 tempfile = "3.27"
 # The version that fuzz/Cargo.lock resolves is the one cargo-afl version:
 # tools/dev/fuzz.py installs and requires that cargo-afl.

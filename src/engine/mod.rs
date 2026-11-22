@@ -15,7 +15,6 @@ mod error;
 mod nbest;
 mod phrase;
 mod session;
-#[cfg(feature = "tools")]
 pub use session::tool;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};

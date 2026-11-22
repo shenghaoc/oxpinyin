@@ -36,23 +36,6 @@ use crate::vocab::{
 #[path = "store_arena.rs"]
 mod arena;
 
-/// One §9 export row for a user phrase: the phrase text, one pronunciation's
-/// `'`-joined pinyin spelling, and that pronunciation's stored count.
-///
-/// This is the `(phrase, pinyin, count)` triple
-/// `pinyin_iterator_get_next_phrase` yields upstream
-/// (`docs/findings/user-store.md` §9).
-#[cfg(any(test, feature = "test-hooks"))]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ExportedPhrase {
-    /// Exact stored phrase words.
-    pub text: Vec<u32>,
-    /// One pronunciation, syllables joined by `'` (e.g. `ni'hao`).
-    pub pinyin: String,
-    /// The pronunciation's stored count.
-    pub count: u64,
-}
-
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
 enum SeedPolicy {
@@ -746,15 +729,19 @@ impl UserStore {
         Ok(ContainerGrams(self.container()).keys()?)
     }
 
-    /// Store `value` raw under `token` in the session's container, as a
-    /// value the writer never produces, for the tests.
-    #[cfg(test)]
-    pub(crate) fn plant_raw_bigram(&self, token: PhraseToken, value: &[u8]) {
-        self.container()
-            .store(&token.to_le_bytes(), value)
-            .expect("plant raw value");
-        // A stored gram is user data, as after any gram write.
-        self.inner.has_user_data.set(true);
+    /// Installs fixture bytes in the live bigram container and invalidates cached reads.
+    ///
+    /// # Errors
+    /// Returns the native write error.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn plant_raw_bigram(
+        &mut self,
+        token: PhraseToken,
+        value: &[u8],
+    ) -> Result<(), UserStoreError> {
+        self.store_gram(token, value)?;
+        self.mark_committed_write(true);
+        Ok(())
     }
 
     /// Whether the gram stored under `token` is shorter than a `guint32`
@@ -799,7 +786,7 @@ impl UserStore {
     /// (`ngram_tkrzwdb.cpp:161-172` and its Kyoto Cabinet and Berkeley DB
     /// twins at 074a2219). A mask takes it once and hands it to both its
     /// fault check and its walk. The mask takes `&mut self`, so no other
-    /// handle's `set_bigram_count` adds a gram the walk missed.
+    /// handle adds a gram the walk missed.
     fn container_keys(&self) -> Result<Vec<Option<PhraseToken>>, StoreError> {
         ContainerGrams(self.container()).keys()
     }
@@ -1002,44 +989,6 @@ impl UserStore {
             .bigram_row(prev)?
             .and_then(|gram| single_gram::get_total_freq(&gram))
             .map_or(0, u64::from))
-    }
-
-    /// Overwrite the raw `(prev -> cur)` user-bigram count, a test hook
-    /// with no pin counterpart: the first match walking from `lower_bound`
-    /// is set, or the item inserted; the total moves by the difference,
-    /// `min(total − old + new, u32::MAX)`; the count saturates at
-    /// `u32::MAX`; a value too short for a total is replaced by a fresh
-    /// gram.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when the gram cannot be written.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub fn set_bigram_count(
-        &mut self,
-        prev: PhraseToken,
-        cur: PhraseToken,
-        count: u64,
-    ) -> Result<(), UserStoreError> {
-        let mut gram = self
-            .gram_in(prev)?
-            .filter(|gram| gram.len() >= single_gram::TOTAL_LEN)
-            .unwrap_or_else(single_gram::new_gram);
-        let count32 = u32::try_from(count).unwrap_or(u32::MAX);
-        let total = single_gram::get_total_freq(&gram).unwrap_or(0);
-        let old = single_gram::get_freq(&gram, cur);
-        match old {
-            Some(_) => single_gram::set_freq(&mut gram, cur, count32),
-            None => single_gram::insert_freq(&mut gram, cur, count32),
-        };
-        let new_total = u64::from(total)
-            .saturating_sub(u64::from(old.unwrap_or(0)))
-            .saturating_add(u64::from(count32))
-            .min(u64::from(u32::MAX));
-        single_gram::set_total_freq(&mut gram, new_total as u32);
-        self.store_gram(prev, &gram)?;
-        self.mark_committed_write(true);
-        Ok(())
     }
 
     /// `Bigram::store(prev, gram)` on the pin's container.
@@ -1628,12 +1577,7 @@ impl UserStore {
         &self,
         text: &str,
     ) -> Result<Vec<PhraseToken>, UserStoreError> {
-        self.inner
-            .libpinyin
-            .phrases()
-            .phrase_table
-            .tokens(&phrase_table::key(text))
-            .map_err(|_| UserStoreError::Persistence)
+        self.phrase_table_tokens_for_ucs4(&text.chars().map(u32::from).collect::<Vec<_>>())
     }
 
     /// The pin's user phrase-table search over raw UCS-4 words, preserving
@@ -1681,53 +1625,6 @@ impl UserStore {
     /// Arm `m_modified` without a data write.
     pub fn mark_modified(&mut self) {
         self.inner.dirty.set(true);
-    }
-
-    /// Export rows for one `USER_FILE` nibble.
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[must_use]
-    pub fn export_phrases_in(&self, library: u8) -> Vec<ExportedPhrase> {
-        use crate::data::phrase_library::ITEM_HEADER_SIZE;
-
-        let phrases = self.inner.libpinyin.phrases();
-        let mut out = Vec::new();
-        if let Some(items) = phrases.libraries.get(&library) {
-            for (_, item) in items.items() {
-                for reading in item.pronunciations() {
-                    let pinyin = reading.keys.as_chunks::<2>().0.iter().enumerate().try_fold(
-                        String::new(),
-                        |mut text, (position, bytes)| {
-                            let key = ChewingKey::from_packed(u16::from_le_bytes(*bytes));
-                            let syllable = crate::vocab::SyllableKey::from_chewing_key(key)?;
-                            crate::user::toned_key(syllable.index(), key.tone)?;
-                            if position != 0 {
-                                text.push('\'');
-                            }
-                            text.push_str(syllable.text());
-                            if key.tone != 0 {
-                                text.push(char::from(b'0' + key.tone));
-                            }
-                            Some(text)
-                        },
-                    );
-                    if let Some(pinyin) = pinyin {
-                        let text_end = ITEM_HEADER_SIZE + 4 * item.phrase_length();
-                        let text = item.as_bytes()[ITEM_HEADER_SIZE..text_end]
-                            .as_chunks::<4>()
-                            .0
-                            .iter()
-                            .map(|b| u32::from_le_bytes(*b))
-                            .collect();
-                        out.push(ExportedPhrase {
-                            text,
-                            pinyin,
-                            count: u64::from(reading.freq),
-                        });
-                    }
-                }
-            }
-        }
-        out
     }
 
     /// Every stored phrase (user and network) with pronunciations.
@@ -1788,7 +1685,10 @@ impl UserStore {
     /// aborts at the failed operation.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
-        self.save_reporting_compacted(&[])
+        self.save_reporting_inner(
+            &[],
+            None::<fn(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline>,
+        )
     }
 
     // FacadePhraseIndex::compact, phrase_index.cpp:648–675.
@@ -1803,15 +1703,18 @@ impl UserStore {
     /// # Aborts
     ///
     /// As [`Self::save_reporting`].
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub fn save_reporting_compacted(&mut self, compacted: &[u8]) -> Result<(), UserStoreError> {
+    #[cfg(test)]
+    pub(crate) fn save_reporting_compacted(
+        &mut self,
+        compacted: &[u8],
+    ) -> Result<(), UserStoreError> {
         self.save_reporting_inner(
             compacted,
             None::<fn(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline>,
         )
     }
 
-    /// [`Self::save_reporting_compacted`] with the current-on-disk baseline
+    /// Saves with the current-on-disk baseline
     /// hook. The store calls it once per selected system library, in the
     /// pin's `_write_files` order, immediately before that library's log is
     /// staged; the hook maps the current chunk and emits any layout

@@ -3,7 +3,9 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::test_support::seed_bigram;
 use crate::test_support::{Fixture, n_candidate};
+use oxpinyin::model::Dictionary as _;
 
 use crate::test_support::{alloc, open_at, parse, wrap_facade_total_to_zero};
 
@@ -158,7 +160,11 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
     let (short, long, hao, number) = {
         // SAFETY: the newly allocated instance is live; no mutation overlaps.
         let inst = unsafe { crate::state::instance_ref(instance) };
-        let token = |text| inst.core.dict.tokens_for_text(text)[0];
+        let token = |text: &str| {
+            inst.core
+                .dict
+                .tokens_for_ucs4(&text.chars().map(u32::from).collect::<Vec<_>>())[0]
+        };
         (token("好"), token("你好"), token("好"), token("号"))
     };
     {
@@ -170,9 +176,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
             (short, hao),
             (long, number),
         ] {
-            store
-                .set_bigram_count(previous, next, 1_000_000)
-                .expect("seed real bigram row");
+            seed_bigram(store, previous, &[(next, 1_000_000)]);
         }
     }
     assert!(unsafe {

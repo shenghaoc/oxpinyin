@@ -150,17 +150,15 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use std::sync::OnceLock;
 
+use oxpinyin_capi::candidates::{oxpinyin_choose_aborts, oxpinyin_train_aborts};
 use oxpinyin_capi::candidates::{
     pinyin_choose_candidate, pinyin_clear_constraint, pinyin_get_candidate,
     pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_train,
 };
 use oxpinyin_capi::config::pinyin_set_double_pinyin_scheme;
 use oxpinyin_capi::context::{pinyin_fini, pinyin_init};
-// The three abort checks are reachable only through `fuzz_api`.
-use oxpinyin_capi::fuzz_api::{
-    oxpinyin_choose_aborts, oxpinyin_import_aborts, oxpinyin_train_aborts,
-};
 use oxpinyin_capi::instance::{pinyin_alloc_instance, pinyin_free_instance, pinyin_reset};
+use oxpinyin_capi::iterators::oxpinyin_import_aborts;
 use oxpinyin_capi::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
     pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase,
@@ -270,7 +268,7 @@ fn fixture() -> &'static Fixture {
             .join("..")
             .join("fixtures")
             .join("w3")
-            .join(oxpinyin::data::DEFAULT_STORE_EXT);
+            .join(oxpinyin::store::DEFAULT_STORE_EXT);
         let system_dir = c_path(&dir);
         let template_dir = new_dir("oxpinyin-fuzz-capi-template-");
         let user = c_path(template_dir.path());

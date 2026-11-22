@@ -61,15 +61,6 @@ fn user_conf_round_trips_and_conforms() {
     let conform = UserTableInfo::conform_to(&versions);
     assert!(conform.is_conform(&versions));
 
-    let text = conform.to_text();
-    assert_eq!(
-        text,
-        format!(
-            "binary format version:7\nmodel data version:14\ndatabase format:{DEFAULT_STORE_DB_FORMAT}\nopen counter:0\n"
-        )
-    );
-    let parsed = parse(text.as_bytes()).expect("parse");
-    assert_eq!(parsed, conform);
     // `save` uses the pin's `fopen("w")` and `fprintf`: the host C
     // runtime writes CRLF on Windows and LF on Linux/macOS.
     let dir = tempfile::tempdir().expect("tempdir");
@@ -258,6 +249,13 @@ fn unmatched_database_format_directive_aborts_at_scanner() {
     );
 }
 
+fn save_and_read(info: &UserTableInfo) -> String {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("user.conf");
+    assert!(info.save(path.as_path()));
+    std::fs::read_to_string(path).expect("read the saved marker")
+}
+
 #[test]
 fn a_negative_counter_conforms() {
     let versions = SystemVersions::for_this_build(7, 14);
@@ -266,11 +264,9 @@ fn a_negative_counter_conforms() {
         ..UserTableInfo::conform_to(&versions)
     };
     assert!(negative.is_conform(&versions));
-    assert!(negative.to_text().ends_with("open counter:-3\n"));
-    assert_eq!(
-        parse(negative.to_text().as_bytes()).expect("parse"),
-        negative
-    );
+    let text = save_and_read(&negative);
+    assert!(text.ends_with(&format!("open counter:-3{}", crate::input::TEXT_NEWLINE)));
+    assert_eq!(parse(text.as_bytes()).expect("parse"), negative);
 }
 
 #[test]
@@ -279,9 +275,12 @@ fn an_out_of_int_version_is_written_signed() {
     // `INT_MAX` therefore appears as its two's-complement value.
     let versions = SystemVersions::for_this_build(u32::MAX, 0x8000_0000);
     let info = UserTableInfo::conform_to(&versions);
-    let text = info.to_text();
+    let text = save_and_read(&info);
+    let newline = crate::input::TEXT_NEWLINE;
     assert!(
-        text.starts_with("binary format version:-1\nmodel data version:-2147483648\n"),
+        text.starts_with(&format!(
+            "binary format version:-1{newline}model data version:-2147483648{newline}"
+        )),
         "{text}"
     );
     assert_eq!(parse(text.as_bytes()).expect("parse"), info);

@@ -274,8 +274,7 @@ impl SystemTables {
     ///
     /// # Errors
     /// Returns a native DBM construction error.
-    #[cfg(feature = "tools")]
-    pub(crate) fn for_lookup(path: &Path, phonetic: bool) -> Result<Self, DictError> {
+    pub fn for_lookup(path: &Path, phonetic: bool) -> Result<Self, DictError> {
         let attached = crate::data::chewing_table::DefaultDbm::attach(path, false)?;
         let empty = crate::data::chewing_table::DefaultDbm::new(
             <crate::store::DefaultStore as crate::store::WriteStore>::create_in_memory()

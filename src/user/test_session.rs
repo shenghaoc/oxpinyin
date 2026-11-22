@@ -470,18 +470,35 @@ pub(crate) fn native_exports(store: &UserStore, library: u8) -> Vec<(String, Str
             .collect();
     }
 
-    store
-        .export_phrases_in(library)
+    stored_phrase_rows(store, library)
         .into_iter()
-        .map(|row| {
-            (
-                row.text
-                    .into_iter()
-                    .map(|word| char::from_u32(word).unwrap())
-                    .collect(),
-                row.pinyin,
-                row.count,
-            )
+        .map(|(words, reading, count)| {
+            let text = words
+                .into_iter()
+                .map(|word| char::from_u32(word).unwrap())
+                .collect();
+            (text, reading, count)
+        })
+        .collect()
+}
+
+pub(crate) fn stored_phrase_rows(store: &UserStore, library: u8) -> Vec<(Vec<u32>, String, u64)> {
+    store
+        .phrases()
+        .into_iter()
+        .filter(|phrase| crate::vocab::phrase_index_library_index(phrase.token()) == library)
+        .flat_map(|phrase| {
+            phrase
+                .pronunciations()
+                .iter()
+                .filter_map(|reading| {
+                    Some((
+                        phrase.words().to_vec(),
+                        reading.render_pinyin()?,
+                        reading.count(),
+                    ))
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }

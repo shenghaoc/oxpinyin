@@ -76,7 +76,6 @@ pub mod sentence;
 mod state;
 pub mod types;
 
-#[cfg(feature = "tools")]
 pub mod tool;
 
 // C publication and conversion tests live in sibling tests.rs files and tests/it.

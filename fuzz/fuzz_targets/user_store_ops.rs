@@ -39,15 +39,15 @@
 //! | 2 | add a tracked phrase again, under a new reading | byte (token pick), reading, optional count |
 //! | 3 | the two typed `InvalidPhrase` refusals | none |
 //! | 4 | remove a tracked phrase, then an absent token | byte (token pick) |
-//! | 5 | bigram writes | byte (mode), byte (left token), byte (right token), count if the mode sets |
+//! | 5 | bigram writes | byte (mode), byte (left token), byte (right token), reserved count in modes 0 and 3 |
 //! | 6 | `mask_out` | byte (mode), byte (mask), byte (token pick) |
 //! | 7 | save | none |
 //!
 //! Command 2 picks a tracked phrase and reads one selector per character of
 //! its text; with no tracked phrase it reads no reading and adds nothing.
 //!
-//! The bigram mode byte, modulo 4, selects `set_bigram_count`, a training
-//! observation, a prediction observation, or all three in that order. The
+//! The bigram mode byte, modulo 4, selects training (0 or 1), prediction
+//! (2), or training followed by prediction (3). The
 //! left token is the byte modulo 8 above `FIRST_USER_TOKEN`; the right
 //! token is one above that.
 //!
@@ -72,24 +72,13 @@
 //! - *modular*: the total equals that sum modulo 2^32. An exact row becomes
 //!   modular when a prediction wraps its total; the store documents that
 //!   both fields wrap there.
-//! - *free*: no relation is stated. A row becomes free when a set reaches
-//!   the total's cap, or when a set meets a modular row.
-//!
-//! Each write is checked against its documented contract:
-//!
-//! - `set_bigram_count` stores the count capped at `u32::MAX`, and leaves
-//!   the other successors unchanged. On an exact row whose new sum fits a
-//!   `u32` the row stays exact; when the new sum does not fit, the total is
-//!   `u32::MAX`, the documented cap.
 //! - A training observation answers a seed of at most `CEILING_SEED`, and
 //!   `INITIAL_SEED` for an absent pair. It adds the seed to the count and
 //!   the total, or, when the total cannot take the seed, changes nothing.
 //! - A prediction observation answers `INITIAL_SEED` and adds it to the
 //!   count and the total, both wrapping, or refuses with
 //!   `UnigramTotalOverflow` and changes no bigram.
-//! - `mask_out` keeps each row's law. It may refuse with
-//!   `ResidualUserBigramGram` only while a free row exists, and then it
-//!   changes no tracked row.
+//! - `mask_out` keeps each row's law.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -264,7 +253,6 @@ fn open_session(dir: &Path) -> UserStore {
 enum Law {
     Exact,
     Modular,
-    Free,
 }
 
 /// One left-hand token's stored row: its total and its successors in
@@ -323,43 +311,11 @@ fn check_laws(store: &UserStore, laws: &mut BTreeMap<u32, Law>) {
                 row.total,
                 "a modular row's total must equal the sum of its counts modulo 2^32 (prev {prev})"
             ),
-            Law::Free => {}
         }
         if row.successors.is_empty() && row.total == 0 {
             *law = Law::Exact;
         }
     }
-}
-
-/// `set_bigram_count`'s contract on one row.
-fn set_bigram(store: &mut UserStore, law: &mut Law, prev: u32, cur: u32, count: u64) {
-    let before = Row::read(store, prev);
-    store
-        .set_bigram_count(prev, cur, count)
-        .expect("bigram set");
-    let after = Row::read(store, prev);
-    let stored = count.min(U32_MAX);
-    assert_eq!(
-        after.count(cur),
-        Some(stored),
-        "a set stores the count capped at u32::MAX (prev {prev}, cur {cur}, count {count})"
-    );
-    assert_eq!(
-        after.others(cur),
-        before.others(cur),
-        "a set leaves the other successors unchanged (prev {prev})"
-    );
-    *law = match *law {
-        Law::Exact if after.sum() <= U32_MAX => Law::Exact,
-        Law::Exact => {
-            assert_eq!(
-                after.total, U32_MAX,
-                "a set past u32::MAX caps the total (prev {prev}, cur {cur}, count {count})"
-            );
-            Law::Free
-        }
-        Law::Modular | Law::Free => Law::Free,
-    };
 }
 
 /// The training observation's contract on one row.
@@ -664,10 +620,10 @@ fn run(data: &[u8]) {
                 let cur = u32::from(input.byte()) % 8 + FIRST_USER_TOKEN + 1;
                 let law = laws.entry(prev).or_insert(Law::Exact);
                 if mode == 0 || mode == 3 {
-                    let count = input.count();
-                    set_bigram(&mut store, law, prev, cur, count);
+                    // Consume the count field already present in the corpus.
+                    let _ = input.count();
                 }
-                if mode == 1 || mode == 3 {
+                if mode != 2 {
                     observe_selection(&mut store, prev, cur);
                 }
                 if mode == 2 || mode == 3 {
@@ -708,24 +664,8 @@ fn run(data: &[u8]) {
                     // `token & mask == value` holds for the token itself.
                     (mask, token & mask)
                 };
-                let rows: Vec<Row> = laws.keys().map(|&prev| Row::read(&store, prev)).collect();
                 match store.mask_out(mask, value) {
                     Ok(()) => {}
-                    Err(UserStoreError::ResidualUserBigramGram) => {
-                        assert!(
-                            laws.values().any(|&law| law == Law::Free),
-                            "only a free row can leave a residual total"
-                        );
-                        let after: Vec<Row> =
-                            laws.keys().map(|&prev| Row::read(&store, prev)).collect();
-                        assert_eq!(after, rows, "a refused mask changes no row");
-                        assert_eq!(
-                            store.phrase(token).is_some(),
-                            was_live,
-                            "a refused mask changes no phrase"
-                        );
-                        continue;
-                    }
                     Err(err) => panic!("mask_out: {err:?}"),
                 }
                 masked_out = true;

@@ -55,11 +55,7 @@ impl Fixture {
             user,
         };
         let versions = SystemVersions::from_conf(&this.conf());
-        std::fs::write(
-            this.user.join("user.conf"),
-            UserTableInfo::conform_to(&versions).to_text(),
-        )
-        .expect("user.conf");
+        assert!(UserTableInfo::conform_to(&versions).save(this.user.join("user.conf").as_path()));
         this
     }
 

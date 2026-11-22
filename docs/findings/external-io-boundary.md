@@ -420,7 +420,7 @@ implemented:
    warnings stay the facades' `g_log` in the pin's domain; the pin has no
    call there.
 5. **Tools.** The tool-only stream and GLib option/text boundary
-   (`oxpinyin::input` `tools` feature) and all 21 utilities; KMM working
+   (`oxpinyin::input::tool`) and all 21 utilities; KMM working
    files are native backend DBMs through store. A change touching backend
    code follows the three-cell path rule.
 

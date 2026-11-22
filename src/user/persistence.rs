@@ -1953,7 +1953,8 @@ fn retained_records(
 /// An item serialised as the pin stores it (`PhraseItem`: the two length
 /// bytes, the unigram, the phrase, then each reading's keys and count),
 /// without judging its shape: the bytes of an item as it is.
-pub(crate) fn journal_item_bytes(item: &ChunkItem) -> Vec<u8> {
+#[must_use]
+pub fn journal_item_bytes(item: &ChunkItem) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(ITEM_HEADER_SIZE + 4 * item.phrase.len());
     bytes.push(u8::try_from(item.phrase.len()).unwrap_or(u8::MAX));
     bytes.push(u8::try_from(item.prons.len()).unwrap_or(u8::MAX));

@@ -45,11 +45,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
     let versions = SystemVersions::for_this_build(7, 14);
     let user = dir.path().join("user");
     std::fs::create_dir(&user).unwrap();
-    std::fs::write(
-        user.join("user.conf"),
-        UserTableInfo::conform_to(&versions).to_text(),
-    )
-    .unwrap();
+    assert!(UserTableInfo::conform_to(&versions).save(user.join("user.conf").as_path()));
     std::fs::write(
         user.join("gb_char.dbin"),
         crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
@@ -118,11 +114,7 @@ fn session_over_system_library(
     let versions = SystemVersions::for_this_build(7, 14);
     let user = dir.join("user");
     std::fs::create_dir(&user).unwrap();
-    std::fs::write(
-        user.join("user.conf"),
-        UserTableInfo::conform_to(&versions).to_text(),
-    )
-    .unwrap();
+    assert!(UserTableInfo::conform_to(&versions).save(user.join("user.conf").as_path()));
     let store =
         crate::user::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
     (libraries, store)
@@ -245,11 +237,7 @@ fn live_items_distinguish_found_absent_and_unloaded() {
         crate::data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
     )
     .expect("write log");
-    std::fs::write(
-        user.join("user.conf"),
-        UserTableInfo::conform_to(&versions).to_text(),
-    )
-    .expect("write marker");
+    assert!(UserTableInfo::conform_to(&versions).save(user.join("user.conf").as_path()));
     let store = crate::user::test_session::open(&user, originals, versions, UserConfLaw::Pinyin)
         .expect("open");
 

@@ -63,14 +63,12 @@ pub use phrase::{
     key_tone, toned_key,
 };
 pub use replay::{JournalFault, UnigramAdd};
-#[cfg(any(test, feature = "test-hooks"))]
-pub use store::ExportedPhrase;
 pub use store::{
     MaskCheck, TrainingCheck, TrainingFault, UserStore, UserStoreError, add_system_reading,
 };
 
-#[cfg(feature = "tools")]
-pub use replay::tool;
+pub use persistence::journal_item_bytes;
+pub use replay::ReplayedLibrary;
 
 #[cfg(test)]
 #[path = "../../tests/support/native_fixture.rs"]
@@ -89,17 +87,15 @@ pub use seed::{
     unigram_delta,
 };
 
-#[cfg(any(test, feature = "test-hooks"))]
-pub use phrase_table::key as phrase_key;
 pub use phrase_table::{
     PhraseTableEntry, key_ucs4 as phrase_key_ucs4, search_bytes as search_phrase_bytes,
 };
 
 pub(crate) use persistence::{
     LiveSubIndex, LoadedPinyinIndex, LoadedProfile, MaskStop, SaveReporting, SaveSource,
-    SessionProfile, check_format, journal_item_bytes, load_library_logs_live,
-    load_masked_logs_live, load_session_in_loop, load_user_bigram_db, load_user_library,
-    read_mask_log, record_skip, save_reporting,
+    SessionProfile, check_format, load_library_logs_live, load_masked_logs_live,
+    load_session_in_loop, load_user_bigram_db, load_user_library, read_mask_log, record_skip,
+    save_reporting,
 };
 
 #[cfg(test)]

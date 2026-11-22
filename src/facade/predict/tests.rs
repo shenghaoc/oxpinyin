@@ -10,7 +10,7 @@ fn prediction_reads_imports_after_its_first_query() {
     let user = tempfile::tempdir().unwrap();
     let system = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::data::DEFAULT_STORE_EXT);
+        .join(crate::store::DEFAULT_STORE_EXT);
     let mut ctx = ContextCore::open(
         &system,
         Some(user.path()),
@@ -72,10 +72,11 @@ mod native {
             (short, hao),
             (long, number),
         ] {
-            context
-                .user_store_mut()
-                .set_bigram_count(previous, next, 1_000_000)
-                .unwrap();
+            crate::user::native_fixture::seed_bigram(
+                context.user_store_mut(),
+                previous,
+                &[(next, 1_000_000)],
+            );
         }
         context.set_options(OptionBits::DYNAMIC_ADJUST);
         assert!(!prefix_guess(&context, &mut instance, "你好"));

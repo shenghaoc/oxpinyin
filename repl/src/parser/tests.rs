@@ -1,5 +1,4 @@
 use super::*;
-use crate::OptionBits;
 #[test]
 fn explicit_nul_spans_keep_the_pin_length_and_zero_pad_the_tail() {
     for options in [

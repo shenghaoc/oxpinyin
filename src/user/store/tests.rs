@@ -287,10 +287,16 @@ mod session {
     fn mask_out_leaves_an_itemless_gram_untouched() {
         let mut store = transient();
         let user = phrase_index_make_token(USER_DICTIONARY, 1);
-        store.plant_raw_bigram(1, &17_u32.to_le_bytes());
-        store.plant_raw_bigram(2, &0_u32.to_le_bytes());
+        store
+            .plant_raw_bigram(1, &17_u32.to_le_bytes())
+            .expect("plant raw bigram");
+        store
+            .plant_raw_bigram(2, &0_u32.to_le_bytes())
+            .expect("plant raw bigram");
         let emptied = [9_u32.to_le_bytes(), user.to_le_bytes(), 9_u32.to_le_bytes()].concat();
-        store.plant_raw_bigram(3, &emptied);
+        store
+            .plant_raw_bigram(3, &emptied)
+            .expect("plant raw bigram");
 
         store
             .mask_out(
@@ -369,16 +375,6 @@ mod session {
     }
 
     #[test]
-    fn set_bigram_count_plants_filter_edge() {
-        let mut store = transient();
-        store.set_bigram_count(1, 10, 9).unwrap();
-        store.set_bigram_count(1, 11, 10).unwrap();
-        assert_eq!(store.bigram_count(1, 10).unwrap(), 9);
-        assert_eq!(store.bigram_count(1, 11).unwrap(), 10);
-        assert_eq!(store.bigram_total(1).unwrap(), 19);
-    }
-
-    #[test]
     fn predicted_path_is_flat_69() {
         let mut store = transient();
         let cur = bare_token(&mut store, "你", &[key("ni")]);
@@ -393,7 +389,7 @@ mod session {
     fn predicted_prefix_invalidates_counts_without_training_a_bigram() {
         let mut store = transient();
         let cur = bare_token(&mut store, "你", &[key("ni")]);
-        store.set_bigram_count(1, cur, 10).unwrap();
+        crate::user::native_fixture::seed_bigram(&mut store, 1, &[(cur, 10)]);
         assert_eq!(store.count_delta(Some(1), cur).unwrap().unigram_delta, 0);
         let generation = store.generation();
         for _ in 0..2 {
@@ -480,8 +476,14 @@ mod session {
         assert_ne!(user, net);
         assert_eq!(crate::vocab::phrase_index_library_index(user), 7);
         assert_eq!(crate::vocab::phrase_index_library_index(net), 6);
-        assert_eq!(store.export_phrases_in(USER_DICTIONARY).len(), 1);
-        assert_eq!(store.export_phrases_in(6).len(), 1);
+        assert_eq!(
+            crate::user::test_session::stored_phrase_rows(&store, USER_DICTIONARY).len(),
+            1
+        );
+        assert_eq!(
+            crate::user::test_session::stored_phrase_rows(&store, 6).len(),
+            1
+        );
         assert_eq!(next_user_token(&store), user + 1);
     }
 
@@ -617,36 +619,6 @@ mod session {
         let store = transient();
         assert!(store.phrase(FIRST_USER_TOKEN).is_none());
         assert!(store.phrase(0x0100_0001).is_none());
-    }
-
-    #[test]
-    fn export_phrases_render_the_pinned_triples() {
-        let mut store = transient();
-        store
-            .add_phrase(&"你好".into(), &[key("ni"), key("hao")], None)
-            .unwrap();
-        store
-            .add_phrase(&"你好".into(), &[key("ni"), key("hao")], Some(7))
-            .unwrap();
-        store
-            .add_phrase(&"世界".into(), &[key("shi"), key("jie")], Some(3))
-            .unwrap();
-
-        assert_eq!(
-            store.export_phrases_in(USER_DICTIONARY),
-            vec![
-                ExportedPhrase {
-                    text: "你好".chars().map(u32::from).collect(),
-                    pinyin: "ni'hao".to_owned(),
-                    count: 12,
-                },
-                ExportedPhrase {
-                    text: "世界".chars().map(u32::from).collect(),
-                    pinyin: "shi'jie".to_owned(),
-                    count: 3,
-                },
-            ]
-        );
     }
 
     const SYSTEM_A: PhraseToken = 0x0100_0001;
@@ -846,7 +818,7 @@ mod session {
                     (3, gram(0, &[(token, 0)])),
                 ];
                 for (p, value) in &planted {
-                    store.plant_raw_bigram(*p, value);
+                    store.plant_raw_bigram(*p, value).expect("plant raw bigram");
                 }
                 if remove_phrase {
                     assert!(store.remove_user_phrase(token).unwrap());
@@ -1294,7 +1266,7 @@ mod backend_files {
     //!   coexistence, multi-reading phrases and the phrase-length ceiling.
     //!
     //! Divergences are asserted as the oxpinyin contract where the upstream
-    //! shape has no equivalent: `set_bigram_count` unifies upstream's
+    //! shape has no equivalent: the fixtures combine upstream's
     //! `insert_freq`/`set_freq` duality into one overwrite, and totals are
     //! store-maintained (upstream makes the caller maintain `total_freq`).
     //! `remove_user_phrase` models `pinyin_remove_user_candidate` and drops a
@@ -1381,25 +1353,6 @@ mod backend_files {
     // ── libpinyin test_ngram.cpp: bigram count semantics ─────────────────
 
     #[test]
-    fn a_bigram_count_overwrites_and_the_total_tracks_it() {
-        // Upstream: get_freq then set/insert; the last write for a pair wins
-        // and `total_freq` reads back what the caller recorded.
-        let mut store = session();
-
-        let (a, b, c) = (FIRST_USER_TOKEN, FIRST_USER_TOKEN + 1, FIRST_USER_TOKEN + 2);
-        store.set_bigram_count(a, b, 4).unwrap();
-        assert_eq!(store.bigram_count(a, b).unwrap(), 4);
-        assert_eq!(store.bigram_total(a).unwrap(), 4);
-
-        store.set_bigram_count(a, b, 32).unwrap();
-        assert_eq!(store.bigram_count(a, b).unwrap(), 32, "last write wins");
-        assert_eq!(store.bigram_total(a).unwrap(), 32, "no double count");
-
-        store.set_bigram_count(a, c, 8).unwrap();
-        assert_eq!(store.bigram_total(a).unwrap(), 40, "totals accumulate");
-    }
-
-    #[test]
     fn a_bigram_table_roundtrips_through_the_store_file() {
         // Upstream: `bigram.store` → reopen → `gram->search` reproduces the
         // items; the snapshot save/load roundtrip reads back what was written.
@@ -1409,7 +1362,7 @@ mod backend_files {
         let (a, b) = (FIRST_USER_TOKEN, FIRST_USER_TOKEN + 1);
         {
             let mut store = session_in(dir.path());
-            store.set_bigram_count(a, b, 16).unwrap();
+            crate::user::native_fixture::seed_bigram(&mut store, a, &[(b, 16)]);
             let (count_before, total_before) = (
                 store.bigram_count(a, b).unwrap(),
                 store.bigram_total(a).unwrap(),
@@ -1450,7 +1403,7 @@ mod backend_files {
         let a = bare_token(&mut store, "甲", "jia");
         let b = bare_token(&mut store, "乙", "yi");
 
-        store.set_bigram_count(a, b, 4).unwrap();
+        crate::user::native_fixture::seed_bigram(&mut store, a, &[(b, 4)]);
         store.observe_selection(SENTENCE_START, a).unwrap();
         store.observe_selection(a, b).unwrap();
         assert!(store.bigram_total(a).unwrap() > 0);
@@ -1479,8 +1432,8 @@ mod backend_files {
         let user = FIRST_USER_TOKEN;
         let system: PhraseToken = 0x0100_0001;
         let seed = |store: &mut UserStore| {
-            store.set_bigram_count(user, system, 100).unwrap();
-            store.set_bigram_count(system, user, 100).unwrap();
+            crate::user::native_fixture::seed_bigram(store, user, &[(system, 100)]);
+            crate::user::native_fixture::seed_bigram(store, system, &[(user, 100)]);
         };
         let rows = |store: &UserStore| {
             let mut rows: Vec<(PhraseToken, PhraseToken, u64)> = Vec::new();

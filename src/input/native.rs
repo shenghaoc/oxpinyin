@@ -228,7 +228,6 @@ pub(crate) const WORD_SIZE: usize = 256;
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
     // `extern FILE *stdout, *stderr;` (glibc and musl `stdio.h`).
-    #[cfg(feature = "tools")]
     static mut stdout: *mut File;
     static mut stderr: *mut File;
 }
@@ -237,7 +236,6 @@ unsafe extern "C" {
 unsafe extern "C" {
     // `#define stdout __stdoutp` and `#define stderr __stderrp` (macOS
     // `stdio.h`, Apple Libc).
-    #[cfg(feature = "tools")]
     #[link_name = "__stdoutp"]
     static mut stdout: *mut File;
     #[link_name = "__stderrp"]
@@ -258,7 +256,6 @@ compile_error!(
 );
 
 /// The pointer `<stdio.h>`'s `stdout` expands to.
-#[cfg(feature = "tools")]
 pub(crate) fn c_stdout() -> *mut File {
     #[cfg(not(windows))]
     // SAFETY: the C library initialises `stdout` before `main` and nothing

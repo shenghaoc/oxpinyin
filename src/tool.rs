@@ -1,6 +1,6 @@
 //! Parser records for the pin's nonshipping `test_parser2` program.
 //!
-//! Enabled by the `tools` feature. [`Key`] pairs a phonetic key with its input
+//! [`Key`] pairs a phonetic key with its input
 //! byte span. [`Parse`] retains those keys and the consumed prefix.
 //! [`parse_direct`] parses direct full-pinyin or Zhuyin input for the REPL.
 

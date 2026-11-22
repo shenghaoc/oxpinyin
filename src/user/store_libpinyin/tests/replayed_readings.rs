@@ -103,11 +103,10 @@ fn open_over(name: &str, base: &SystemOriginals, records: &[LogRecord]) -> (Path
         crate::data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
     )
     .expect("write log");
-    std::fs::write(
-        dir.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("write marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(dir.join("user.conf").as_path())
+    );
     let store = open(&dir, base);
     (dir, store)
 }
@@ -403,11 +402,10 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     let view = user_view(&dir);
     drop(store);
     let control = tempdir("user-library-control");
-    std::fs::write(
-        control.join("user.conf"),
-        crate::data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
-    )
-    .expect("marker");
+    assert!(
+        crate::data::user_files::UserTableInfo::conform_to(&versions())
+            .save(control.join("user.conf").as_path())
+    );
     let mut plain = open(&control, &base);
     user_session(&mut plain);
     assert_eq!(view, user_view(&control));
@@ -417,12 +415,10 @@ fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
     // Both the user arena and the replayed item own their reading counts.
     assert_eq!(counts(&store, 1), [130]);
     assert_eq!(view, user_view(&dir));
-    let phrases = store.export_phrases_in(crate::vocab::USER_DICTIONARY);
+    let phrases =
+        crate::user::test_session::stored_phrase_rows(&store, crate::vocab::USER_DICTIONARY);
     assert_eq!(phrases.len(), 1);
-    assert_eq!(
-        (phrases[0].text.as_slice(), phrases[0].count),
-        (&[0x9f98][..], 20)
-    );
+    assert_eq!((phrases[0].0.as_slice(), phrases[0].2), (&[0x9f98][..], 20));
     train(&mut store, 1, key("ni", 3), 1);
     assert_eq!(counts(&store, 1), [199]);
     store.save_reporting().expect("save again");
@@ -643,7 +639,7 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
         Some(kept)
     );
     assert_eq!(
-        store.export_phrases_in(crate::vocab::USER_DICTIONARY).len(),
+        crate::user::test_session::stored_phrase_rows(&store, crate::vocab::USER_DICTIONARY).len(),
         1
     );
     assert!(store.bigram_row(LIBRARY | 1).expect("gram").is_some());
@@ -882,7 +878,9 @@ fn live_appended_item_accepts_import_after_failed_mask() {
     let token = LIBRARY | 5;
     store.mask_out(u32::MAX, 0).expect("mask other token");
     assert!(store.with_live_item(token, |_| ()).is_some());
-    store.plant_raw_bigram(1, &[0, 0, 0, 0, 1]);
+    store
+        .plant_raw_bigram(1, &[0, 0, 0, 0, 1])
+        .expect("plant raw bigram");
     assert!(matches!(
         store.mask_out(u32::MAX, 0),
         Err(crate::user::UserStoreError::PartialUserBigramTail)
@@ -915,7 +913,9 @@ fn live_new_import_keeps_text_and_accepts_another_reading_after_failed_mask() {
     store.mask_out(u32::MAX, 0).expect("mask other token");
     assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(store.lookup().phrase_text(token), Some("五".into()));
-    store.plant_raw_bigram(1, &[0, 0, 0, 0, 1]);
+    store
+        .plant_raw_bigram(1, &[0, 0, 0, 0, 1])
+        .expect("plant raw bigram");
     assert!(matches!(
         store.mask_out(u32::MAX, 0),
         Err(crate::user::UserStoreError::PartialUserBigramTail)

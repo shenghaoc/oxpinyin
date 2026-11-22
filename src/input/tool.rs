@@ -1,6 +1,6 @@
 //! Native input, output, and argument parsing for the command-line utilities. The helpers
 //! own C string and stream lifetimes, typed formatting arguments, and the reusable
-//! [`LineReader`] buffer. They are available with the `tools` feature.
+//! [`LineReader`] buffer.
 
 // The native boundary is described in docs/findings/external-io-boundary.md. GLib
 // supplies the option parser; libc supplies the streams.

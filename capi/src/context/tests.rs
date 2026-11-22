@@ -26,8 +26,6 @@ use crate::instance::pinyin_reset;
 
 use crate::sentence::pinyin_guess_sentence;
 
-use crate::state::instance_mut;
-
 use crate::test_support::TempUserDir;
 use crate::test_support::candidate;
 use crate::test_support::open;
@@ -189,22 +187,26 @@ fn save_aborts_on_a_directory_library() {
 /// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
 /// rule).
 unsafe fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String)> {
-    // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-    let mut inst = unsafe { instance_mut(instance) };
-    // The facade defers the parse's list build to its first reader.
-    inst.core
-        .session
-        .refresh_candidates()
-        .expect("deferred candidate build");
-    inst.core
-        .session
-        .candidates()
-        .iter()
-        .filter_map(|candidate| {
-            Some((
-                candidate.token()?,
-                candidate.text().as_str().unwrap_or_default().to_owned(),
-            ))
+    use crate::candidates::{
+        pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
+    };
+    use std::{ffi::CStr, ptr};
+
+    let mut count = 0;
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
+    (0..count)
+        .filter_map(|index| {
+            let mut candidate = ptr::null_mut();
+            assert!(unsafe { pinyin_get_candidate(instance, index, &raw mut candidate) });
+            let token = unsafe { crate::state::candidate_ref(candidate) }
+                .token
+                .get()?;
+            let mut text = ptr::null();
+            assert!(unsafe { pinyin_get_candidate_string(instance, candidate, &raw mut text) });
+            let text = unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned();
+            Some((token, text))
         })
         .collect()
 }
