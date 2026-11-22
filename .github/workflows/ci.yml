@@ -274,8 +274,7 @@ jobs:
           just: 'true'
       - run: rustup show active-toolchain
       # cargo-c is the distribution's own package, as in release-packages.yml.
-      # The backend packages are the Linux cell's (BACKEND_PACKAGES in
-      # tools/dev/ship_sizes.py): libkyotocabinet-dev. Only the bdb feature
+      # The size recipe names the Linux cell's package. Only the bdb feature
       # runs bindgen, so the build needs no libclang.
       - name: Install build dependencies (apt)
         run: |
@@ -306,9 +305,9 @@ jobs:
           just packaging sizes run --base "$BASE_SHA" --base-cache .ship-sizes/sizes.json
           --work "$RUNNER_TEMP/ship-sizes" --target target
       - name: Build main and cache its sizes
-        if: github.event_name == 'push' && steps.cached.outputs.cache-hit != 'true'
+        if: github.event_name == 'push'
         run: >
-          just packaging sizes build --commit HEAD --out .ship-sizes/sizes.json
+          just packaging sizes build --reuse --commit HEAD --out .ship-sizes/sizes.json
           --work "$RUNNER_TEMP/ship-sizes" --target target
       - name: Save the sizes under the recipe key
         if: success() && steps.cached.outputs.cache-hit != 'true'

@@ -402,19 +402,19 @@ The job restores the dependency cache that main saves, and a pull request never 
 
 **Where base sizes come from.**
 A second full build on every PR is the largest cost, so the base result is cached.
-The cache key is `ship-sizes-v1-` plus a hash of two things:
+The cache key is `ship-sizes-v2-` plus a hash of two things:
 
-- the Git tree ids of every input that can change a library byte;
-- the toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the Linux cell's package (`BACKEND_PACKAGES` in `tools/dev/ship_sizes.py`: `libkyotocabinet-dev`, so a package update changes the key).
+- the Git object IDs of the revision’s shipping sources, Cargo manifests, toolchain pins and install recipe;
+- the comparison tooling, build flags and toolchain fingerprint: `rustc -vV`, the first line of `cc --version`, `strip --version` and `cargo cinstall --version`, the versions of `binutils`, `gcc`, `g++`, `libc6`, `libglib2.0-dev` and the Linux cell's package (`libkyotocabinet-dev`, so a package update changes the key).
 
 The key names no commit.
 Every main commit with the same inputs shares one result.
-On a push to main the job builds the head and saves its sizes under its key, unless the key exists.
+On a push to main the job builds the head and saves its sizes under its key, unless its cached record matches the build.
 On a pull request the job restores the key of the base commit.
 A hit costs one build.
 A miss costs two builds and is correct: the job builds the base, reports it as "built in this run", and saves it under the key for later pushes to the same pull request.
 An Ubuntu package update changes the fingerprint and causes one miss.
-A stale base can never match: a changed input or toolchain changes the key.
+An unresolved shipping input fails the command. Reuse requires the current schema, recipe key and backend, a full source commit ID, and a positive integer size for each library.
 
 **Reproduce the table locally.**
 The recipe is Linux-only.
