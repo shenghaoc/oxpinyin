@@ -36,11 +36,7 @@ from tools.oracle.image import digest_file, runtime_command
 from tools.tkrzw import runtime
 
 CELLS = backend_cell.CELLS
-# The first line of every environment file this module writes. A file without it, such as
-# one from the retired shell setup or one with an earlier header, is regenerated, never parsed.
 ENV_HEADER = '# Written by tools.dev.provision; source it from sh; do not edit it.'
-_EXPORT = re.compile(r"export ([A-Za-z_][A-Za-z_0-9]*)=((?:'[^']*'|\\')+)")
-_QUOTED = re.compile(r"'([^']*)'|\\(')")
 
 
 def quote(value):
@@ -51,25 +47,6 @@ def quote(value):
     if any(ord(char) < 32 or ord(char) == 127 for char in value):
         raise ValueError(f'environment file value has a control character: {value!r}')
     return "'" + value.replace("'", "'\\''") + "'"
-
-
-def read_env(path):
-    """Return the single-quoted exports of an environment file this module wrote.
-
-    Only lines that start `export NAME='...'` count; the first assignment of a name wins.
-    An absent file, or one without ENV_HEADER, yields {}."""
-    path = Path(path)
-    if not path.is_file():
-        return {}
-    lines = path.read_text().splitlines()
-    if lines[:1] != [ENV_HEADER]:
-        return {}
-    values = {}
-    for line in lines[1:]:
-        match = _EXPORT.match(line)
-        if match:
-            values.setdefault(match[1], ''.join(a or b for a, b in _QUOTED.findall(match[2])))
-    return values
 
 
 def check_manifest(manifest, cwd):
@@ -328,19 +305,17 @@ class Provision:
             self.log('installing valgrind from the distribution archive')
             if not self.apt(['valgrind'], sudo):
                 self.die('could not install valgrind with apt-get')
-            if not acceptable(found()):
-                self.die(f'valgrind {tool.minimum} or newer required; the distribution archive provides: {found() or "none"}')
-        self.valgrind_version = found()
+            value = found()
+            if not acceptable(value):
+                self.die(f'valgrind {tool.minimum} or newer required; the distribution archive provides: {value or "none"}')
+        self.valgrind_version = value
 
     def accepted(self, tool):
-        """Whether TOOL is on PATH and meets its requirement, by the doctor's own check."""
-        if not self.which(tool.executable):
-            return False
+        """The accepted tool's version report, or None if installation is needed."""
         try:
-            doctor.check_tool(tool, self.env)
+            return doctor.check_tool(tool, self.env)
         except doctor.DoctorError:
-            return False
-        return True
+            return None
 
     def cargo_tools(self):
         """Keep tools at their floors or install their crates.io fallbacks: a pinned version, or the newest release."""
@@ -348,17 +323,19 @@ class Provision:
             tool = doctor.cargo_tool(crate, self.root)
             if self.accepted(tool):
                 continue
-            if not self.which('cargo'):
+            cargo = self.which('cargo')
+            if not cargo:
                 self.die(f'installing {crate} needs cargo; follow docs/runbooks/setup.md')
             version = ['--version', pin] if pin else []
             self.log(f'installing {" ".join([crate, *version[1:]])} with cargo (requires {doctor.requirement(tool)})')
-            if run([self.which('cargo'), 'install', crate, *version, '--locked', '--quiet'], env=self.env, cwd=self.root, check=False):
+            if run([cargo, 'install', crate, *version, '--locked', '--quiet'], env=self.env, cwd=self.root, check=False):
                 self.die(f'cargo install {crate} failed; allow index.crates.io and static.crates.io '
                          '(docs/runbooks/cloud.md)')
-            if not self.accepted(tool):
+            report = self.accepted(tool)
+            if report is None:
                 self.die(f'{crate} does not meet {doctor.requirement(tool)} after cargo install; '
                          'put $CARGO_HOME/bin on PATH')
-            self.log('installed ' + doctor.check_tool(tool, self.env))
+            self.log('installed ' + report)
         # The setup entry does not start from a just recipe, so it asks just for the cache root
         # that the recipes export (docs/runbooks/setup.md#cache-directory). Without an answer the
         # variable stays unset: a run that needs the cache refuses, and --python-only needs none.
@@ -514,44 +491,21 @@ class Provision:
         sys.stderr.write(output)
         return not status
 
-    def write_oracle_env(self):
-        """Retain only verified cells and atomically publish one sourceable file."""
+    def write_oracle_env(self, cell, prefix):
+        """Publish the verified prefix of this Linux cache atomically."""
         path = self.env_file
-        env_cells = list(self.cells)
-        prefixes = {cell: str(self.oracle_root / cell) for cell in env_cells}
-        previous = read_env(path)
-        if path.is_file() and not previous:
-            self.log(f'{path}: not written by this provisioner; regenerated with the cells of this run')
-        # The one Linux cell is the only entry the file can carry forward.
-        for cell in (backend_cell.LOCAL_CELL,):
-            prefix = previous.get(f'OXPINYIN_ORACLE_PREFIX_{cell.upper()}', '')
-            if cell in prefixes or not prefix:
-                continue
-            if not self.libs_ok(cell, prefix):
-                self.log(f'{cell}: removed from environment file; current pin/recipe or recorded library bytes failed validation')
-            elif not self.data_ok(cell, prefix):
-                self.log(f'{cell}: removed from environment file; data manifest check failed')
-            else:
-                prefixes[cell] = prefix
-                env_cells.append(cell)
-        if not env_cells:
-            self.die('no verified Linux cell for the environment file; run just provision-oracle')
-        # The Linux cell is the default (docs/runbooks/setup.md#linux).
-        default = backend_cell.LOCAL_CELL
+        data = quote(prefix / 'lib/libpinyin/data')
+        prefix = quote(prefix)
         lines = [ENV_HEADER,
                  'export PINYIN_MODEL_DIR=' + quote(self.model_cache / 'extracted'),
-                 'export PATH=' + quote(self.uv_dir) + ':"$PATH"']
-        for cell in env_cells:
-            lines += [f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}=' + quote(prefixes[cell]),
-                      f'export OXPINYIN_ORACLE_DATA_{cell.upper()}=' + quote(prefixes[cell] + '/lib/libpinyin/data')]
-        # One arm per provisioned cell, its values computed here; no shell expansion selects them.
-        lines += ['export PINYIN_ORACLE_DBM="${PINYIN_ORACLE_DBM:-' + default + '}"',
-                  'case "$PINYIN_ORACLE_DBM" in']
-        lines += [f'{cell}) export PINYIN_ORACLE_PREFIX={quote(prefixes[cell])} '
-                  f'OXPINYIN_LIBPINYIN_DATA_DIR={quote(prefixes[cell] + "/lib/libpinyin/data")} ;;'
-                  for cell in env_cells]
-        lines += ["*) printf '%s\\n' \"cell $PINYIN_ORACLE_DBM was not provisioned by this environment file\" >&2; return 1 ;;",
-                  'esac']
+                 'export PATH=' + quote(self.uv_dir) + ':"$PATH"',
+                 f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}={prefix}',
+                 f'export OXPINYIN_ORACLE_DATA_{cell.upper()}={data}',
+                 'export PINYIN_ORACLE_DBM="${PINYIN_ORACLE_DBM:-' + cell + '}"',
+                 'case "$PINYIN_ORACLE_DBM" in',
+                 f'{cell}) export PINYIN_ORACLE_PREFIX={prefix} OXPINYIN_LIBPINYIN_DATA_DIR={data} ;;',
+                 "*) printf '%s\\n' \"cell $PINYIN_ORACLE_DBM was not provisioned by this environment file\" >&2; return 1 ;;",
+                 'esac']
         staging = Path(str(path) + '.new')
         try:
             staging.write_text('\n'.join(lines) + '\n')
@@ -938,22 +892,15 @@ class Provision:
             self.log(f'{self.env_file}: not written; host runners load the oracle only on Linux')
             return 0
         self.model_cache = images.model_cache(self.env).resolve()
-        self.cells = []
-        for cell in (backend_cell.LOCAL_CELL,):
-            prefix = self.oracle_root / cell
-            if not prefix.is_dir():
-                continue
-            if self.data_ok(cell):
-                self.cells.append(cell)
-            else:
+        cell = backend_cell.LOCAL_CELL
+        prefix = self.oracle_root / cell
+        if not prefix.is_dir() or not self.data_ok(cell):
+            if prefix.is_dir():
                 self.log(f'{cell}: left out of the environment file; {prefix} failed validation')
-        if not self.cells:
             self.die(f'no verified oracle cell in {self.oracle_root}; run just provision-oracle')
-        for cell in self.cells:
-            prefix = self.oracle_root / cell
-            for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):
-                pc.write_text(re.sub(r'^prefix=.*$', lambda _: 'prefix=' + str(prefix), pc.read_text(), flags=re.M))
-        self.write_oracle_env()
+        for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):
+            pc.write_text(re.sub(r'^prefix=.*$', lambda _: 'prefix=' + str(prefix), pc.read_text(), flags=re.M))
+        self.write_oracle_env(cell, prefix)
         return 0
 
 
