@@ -20,7 +20,7 @@ fn run(dir: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn rows_follow_length_then_first_reading_then_phrase_bytes() {
-    let newline = oxpinyin::input::TEXT_NEWLINE;
+    let newline = oxpinyin::__internal::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("in.txt"),
@@ -67,7 +67,7 @@ fn rows_follow_length_then_first_reading_then_phrase_bytes() {
 #[case::first(b"", 1)]
 #[case::after_longer_phrase("你好 nihao 5\n".as_bytes(), 2)]
 fn a_truncated_phrase_is_refused(#[case] prefix: &[u8], #[case] nodes: usize) {
-    let newline = oxpinyin::input::TEXT_NEWLINE;
+    let newline = oxpinyin::__internal::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     let input = [prefix, b"\xe3 a 1\n"].concat();
     std::fs::write(dir.path().join("in.txt"), input).unwrap();
@@ -88,7 +88,7 @@ fn a_truncated_phrase_is_refused(#[case] prefix: &[u8], #[case] nodes: usize) {
 /// The frozen case `pinyin-phrase-index-131` holds the defined range.
 #[test]
 fn a_phrase_index_outside_the_int_shift_range_wraps_into_the_library_nibble() {
-    let newline = oxpinyin::input::TEXT_NEWLINE;
+    let newline = oxpinyin::__internal::TEXT_NEWLINE;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("in.txt"), "你 ni 5\n").unwrap();
     let cases: [(&[&str], u32); 2] = [

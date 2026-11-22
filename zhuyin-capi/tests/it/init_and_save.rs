@@ -469,7 +469,7 @@ fn zhuyin_launches_never_move_the_open_counter() {
     unsafe { zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY)) };
     assert!(unsafe { zhuyin_save(context) });
     let saved = std::fs::read(&marker).expect("zhuyin_save writes user.conf");
-    let newline = oxpinyin::input::TEXT_NEWLINE;
+    let newline = oxpinyin::__internal::TEXT_NEWLINE;
     assert!(
         String::from_utf8_lossy(&saved).ends_with(&format!("open counter:0{newline}")),
         "zhuyin_save's marker carries a fresh counter"

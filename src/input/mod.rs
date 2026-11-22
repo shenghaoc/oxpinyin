@@ -23,11 +23,6 @@ pub use path::{
 use std::ffi::CString;
 use std::path::Path;
 
-/// The newline a native text-mode `fopen("w")` writes: CRLF on Windows,
-/// LF on Unix. The pin's `user.conf` and generated text tables inherit it.
-#[cfg(any(test, feature = "test-hooks"))]
-pub const TEXT_NEWLINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
-
 /// `path` as the C string `fopen` receives: its bytes as the platform
 /// encodes them, or `None` when they hold a NUL, which no C path can.
 #[must_use]

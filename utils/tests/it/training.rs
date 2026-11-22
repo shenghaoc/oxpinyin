@@ -24,7 +24,7 @@ fn root() -> PathBuf {
 fn fixture() -> PathBuf {
     root()
         .join("fixtures/w3")
-        .join(oxpinyin::store::DEFAULT_STORE_EXT)
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT)
 }
 
 /// A private copy of [`fixture`].
@@ -88,7 +88,7 @@ fn exit_word(outcome: &Output) -> i32 {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', oxpinyin::input::TEXT_NEWLINE)
+    text.replace('\n', oxpinyin::__internal::TEXT_NEWLINE)
 }
 /// One `SingleGram` row as `(total, records)`; the row must exist.
 fn bigram_row(path: &Path, token: u32) -> (u32, Vec<(u32, u32)>) {

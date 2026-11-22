@@ -49,7 +49,7 @@ mod fixture {
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../fixtures/w3")
-            .join(oxpinyin::store::DEFAULT_STORE_EXT);
+            .join(oxpinyin::__internal::DEFAULT_STORE_EXT);
         for name in [
             "table.conf",
             "phrase_index.bin",

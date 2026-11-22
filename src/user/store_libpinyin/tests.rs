@@ -2980,8 +2980,11 @@ fn train_save_reopen_carries_the_learning() {
     // The user dir now holds the pin's files, not user_store.<ext>.
     assert!(dir.join("user.conf").exists());
     assert!(
-        !dir.join(format!("user_store.{}", crate::store::DEFAULT_STORE_EXT))
-            .exists()
+        !dir.join(format!(
+            "user_store.{}",
+            crate::__internal::DEFAULT_STORE_EXT
+        ))
+        .exists()
     );
 
     {

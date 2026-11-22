@@ -311,7 +311,7 @@ use crate::vocab::{SyllableKey, USER_DICTIONARY};
 /// store is in memory, #642).
 fn open() -> ContextCore {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-    let extension = crate::store::DEFAULT_STORE_EXT;
+    let extension = crate::__internal::DEFAULT_STORE_EXT;
     ContextCore::open(
         &root.join(extension),
         None,
@@ -464,7 +464,7 @@ fn an_unused_nibble_and_the_pins_asserts_are_reported() {
 fn an_addon_promoted_into_a_missing_library_is_exported() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/w3")
-        .join(crate::store::DEFAULT_STORE_EXT);
+        .join(crate::__internal::DEFAULT_STORE_EXT);
     let system = tempfile::tempdir().unwrap();
     for entry in std::fs::read_dir(root).unwrap() {
         let entry = entry.unwrap();

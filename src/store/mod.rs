@@ -944,8 +944,7 @@ pub(crate) fn sibling_temp(path: &Path) -> std::path::PathBuf {
 
 // Each `cfg(feature = ...)` block below is exclusive — the exactly-one-
 // backend guards at the top of this file refuse builds where more than
-// one feature is enabled — so a build compiles at most one `DefaultStore`
-// alias and one `DEFAULT_STORE_EXT` constant.
+// one feature is enabled — so a build compiles at most one `DefaultStore` alias.
 
 /// The default store backend — Kyoto Cabinet, on
 /// `--no-default-features --features kyotocabinet`.
@@ -971,25 +970,6 @@ pub(crate) type DefaultUserBigramDb = TkrzwUserBigramDb;
 /// The compiled-in backend's [`UserBigramDb`].
 #[cfg(feature = "bdb")]
 pub(crate) type DefaultUserBigramDb = BdbUserBigramDb;
-
-/// File extension for [`DefaultStore`]'s native tables — one per peer;
-/// the store forces its database type through open parameters, so the
-/// extension is naming, not detection.
-#[cfg(any(test, feature = "test-hooks"))]
-#[cfg(feature = "kyotocabinet")]
-pub const DEFAULT_STORE_EXT: &str = "kct";
-/// File extension for [`DefaultStore`]'s native tables (tkrzw `TreeDBM`).
-#[cfg(any(test, feature = "test-hooks"))]
-#[cfg(feature = "tkrzw")]
-pub const DEFAULT_STORE_EXT: &str = "tkt";
-/// File extension for [`DefaultStore`]'s native tables (Berkeley DB).
-/// The DBM files libpinyin itself uses carry its own names
-/// (`bigram.db`, `pinyin_index.bin`, …); this extension names this
-/// backend's session-scratch containers and the `fixtures/w3`
-/// directory of this backend.
-#[cfg(any(test, feature = "test-hooks"))]
-#[cfg(feature = "bdb")]
-pub const DEFAULT_STORE_EXT: &str = "db";
 
 /// The backend's `database format:` token — the string `user.conf`'s
 /// conformance check compares (`table_info.cpp`'s

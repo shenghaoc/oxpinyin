@@ -20,7 +20,7 @@ fn repo_root() -> PathBuf {
 fn w3_dir() -> PathBuf {
     repo_root()
         .join("fixtures/w3")
-        .join(oxpinyin::store::DEFAULT_STORE_EXT)
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT)
 }
 
 fn copy_tree(source: &Path, destination: &Path) {
@@ -163,7 +163,7 @@ fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
     assert_eq!(output.stderr, b"");
     assert_eq!(
         String::from_utf8(output.stdout).expect("UTF-8 output"),
-        format!("{bigram_choice} 甲\n0 \n").replace('\n', oxpinyin::input::TEXT_NEWLINE),
+        format!("{bigram_choice} 甲\n0 \n").replace('\n', oxpinyin::__internal::TEXT_NEWLINE),
     );
 }
 

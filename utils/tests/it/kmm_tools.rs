@@ -83,7 +83,7 @@ fn repo_root() -> PathBuf {
 fn fixture_dir() -> PathBuf {
     let dir = repo_root()
         .join("fixtures/w3")
-        .join(oxpinyin::store::DEFAULT_STORE_EXT);
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT);
     assert!(
         dir.is_dir(),
         "missing W3 fixture directory {}",
@@ -211,7 +211,7 @@ fn unknown_table_conf_tokens_abort_before_the_model_opens() {
 }
 
 fn expected_text(text: &str) -> String {
-    text.replace('\n', oxpinyin::input::TEXT_NEWLINE)
+    text.replace('\n', oxpinyin::__internal::TEXT_NEWLINE)
 }
 
 fn block(export: &str, header: &str, until: &str) -> Vec<String> {

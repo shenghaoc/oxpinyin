@@ -13,7 +13,7 @@ pub fn system_dir() -> PathBuf {
         })
         .join("fixtures")
         .join("w3")
-        .join(oxpinyin::store::DEFAULT_STORE_EXT)
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT)
 }
 
 /// A uniquely named scratch dir, removed when the owning guard drops.

@@ -705,7 +705,7 @@ fn an_apostrophe_only_parse_matches_the_pin(
 fn luoma_left_offset_reads_the_unsplit_matrix() {
     let system = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures/w3")
-        .join(oxpinyin::store::DEFAULT_STORE_EXT);
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT);
     let system = CString::new(system.as_os_str().as_encoded_bytes()).expect("fixture path");
     let context = unsafe { zhuyin_init(system.as_ptr(), ptr::null()) };
     assert!(!context.is_null());

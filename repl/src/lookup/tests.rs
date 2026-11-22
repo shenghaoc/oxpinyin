@@ -10,7 +10,7 @@ use super::*;
 fn embedded_nul_lookup_keeps_the_original_terminal_column() {
     let data = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures/w3")
-        .join(oxpinyin::store::DEFAULT_STORE_EXT);
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT);
     let conf_path = oxpinyin::input::c_path(&data.join("table.conf")).unwrap();
     let conf = TableConf::load(&conf_path).unwrap();
     let lookup = Lookup::open(&data, &conf, true, true).unwrap_or_else(|_| panic!("W3 lookup"));

@@ -29,7 +29,7 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         } else {
             "../fixtures/w3"
         })
-        .join(oxpinyin::store::DEFAULT_STORE_EXT);
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT);
     for name in [
         "table.conf",
         "phrase_index.bin",
