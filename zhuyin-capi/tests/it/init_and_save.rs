@@ -426,22 +426,7 @@ fn an_unknown_user_database_format_aborts_and_keeps_user_conf() {
 #[cfg(windows)]
 #[test]
 fn utf8_c_api_paths_open_cjk_directories_and_files() {
-    let root = tempfile::tempdir().unwrap();
-    let system = root.path().join("系统");
-    let user = root.path().join("用户");
-    std::fs::create_dir(&system).unwrap();
-    std::fs::create_dir(&user).unwrap();
-    for entry in std::fs::read_dir(crate::support::system_dir()).unwrap() {
-        let entry = entry.unwrap();
-        std::fs::copy(entry.path(), system.join(entry.file_name())).unwrap();
-    }
-    std::fs::rename(system.join("gb_char.bin"), system.join("汉字.bin")).unwrap();
-    let conf = std::fs::read_to_string(system.join("table.conf")).unwrap();
-    std::fs::write(
-        system.join("table.conf"),
-        conf.replace("gb_char.bin", "汉字.bin"),
-    )
-    .unwrap();
+    let (_root, system, user) = crate::support::cjk_system_and_user();
     let system = crate::support::cstr(system.to_str().unwrap());
     let user_name = crate::support::cstr(user.to_str().unwrap());
     let context = unsafe { crate::support::zhuyin_init(system.as_ptr(), user_name.as_ptr()) };
