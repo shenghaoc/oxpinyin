@@ -15,6 +15,7 @@ from tools.tkrzw.runtime import RuntimeRefused, check, launched
 class DriverServices:
     settings: Settings
     context: UnitContext | None = None
+
     def command(self, argv: Sequence[str], *, cwd: Path | None = None,
                 environment: Mapping[str, str] | None = None, capture: bool = False,
                 merged: bool = False, umask: int = -1) -> subprocess.CompletedProcess:

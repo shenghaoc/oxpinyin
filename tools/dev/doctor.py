@@ -559,11 +559,8 @@ def cargo_tool(name, root=ROOT):
     return next(tool for tool in TOOLS if tool.name == name)._replace(required=True)
 
 
-def main(argv=None):
-    """Print the collected capability report and return its aggregate status.
-
-    The argv parameter is unused.
-    """
+def main():
+    """Print the capability report and return its aggregate status."""
     lines, status = collect()
     for line in lines:
         print(line)

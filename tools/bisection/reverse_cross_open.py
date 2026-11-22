@@ -18,7 +18,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import runpy
 import shutil
 import subprocess
 import sys
@@ -37,7 +36,6 @@ from contract_fixtures import (  # noqa: E402
 from contract_fixtures import index_file_rows as _index_file_rows  # noqa: E402
 from contract_kit import Kit  # noqa: E402
 
-check_tkrzw = runpy.run_path(str(ROOT / 'tools/tkrzw/runtime.py'))['check']
 
 CELL = 'tkrzw'
 PIN_LIBRARIES = {'pinyin': 'libpinyin.so', 'zhuyin': 'libzhuyin.so'}
@@ -277,7 +275,7 @@ def main(argv):
         CELL = os.environ.get('CONTRACT_CELL', 'tkrzw')
         contract_fixtures.FACADE = str(args.library)
         kit = Kit(args.mode, str(args.library), args.data, str(args.scratch),
-                  cell=CELL, check_tkrzw=check_tkrzw)
+                  cell=CELL)
         result = CASES[args.worker][1](kit)
         result['logs'] = kit.logs
         result['profile'] = kit.user

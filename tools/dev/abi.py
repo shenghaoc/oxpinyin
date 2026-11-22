@@ -6,7 +6,7 @@ if __name__ == '__main__':
     require_utf8_mode()
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 import os
 import platform
@@ -25,15 +25,6 @@ from .packaging import Finished, Tools, crate_dir, install, linux_exports, versi
 def driver_services(settings: Settings) -> DriverServices:
     context = pool.UnitContext('ABI gate', slot.CANCELLED, environment=dict(settings.environment))
     return DriverServices(settings, context)
-
-
-@dataclass(frozen=True)
-class HostFacts:
-    system: str
-
-    @classmethod
-    def current(cls) -> 'HostFacts':
-        return cls(platform.system())
 
 
 def darwin_exported_symbols(text: str) -> set[str]:
@@ -76,28 +67,28 @@ def shipped_library(settings: Settings, name: str, stage: Path) -> Path:
     return stage / 'usr/local/lib' / f'{name}.15.0.0.dylib'
 
 
-def check_exports(settings: Settings, facts: HostFacts) -> int:
-    if facts.system not in ('Linux', 'Darwin'):
-        print(f'fatal: unsupported host {facts.system}', file=sys.stderr)
+def check_exports(settings: Settings, system: str) -> int:
+    if system not in ('Linux', 'Darwin'):
+        print(f'fatal: unsupported host {system}', file=sys.stderr)
         return 2
     with tempfile.TemporaryDirectory(prefix='abi-exports.') as scratch:
-        return check_export_sets(settings, facts, Path(scratch))
+        return check_export_sets(settings, system, Path(scratch))
 
 
-def check_export_sets(settings: Settings, facts: HostFacts, scratch: Path) -> int:
-    extension = 'so' if facts.system == 'Linux' else 'dylib'
+def check_export_sets(settings: Settings, system: str, scratch: Path) -> int:
+    extension = 'so' if system == 'Linux' else 'dylib'
     libraries = [('libpinyin', 'OXPINYIN_CAPI_SO', f'liboxpinyin_capi.{extension}', 'oxpinyin-capi',
                   settings.root / 'capi/libpinyin.ver'),
                  ('libzhuyin', 'OXPINYIN_ZHUYIN_SO', f'liboxzhuyin_capi.{extension}', 'oxzhuyin-capi',
                   settings.root / 'zhuyin-capi/libzhuyin.ver')]
     status = 0
     for name, variable, filename, package, version in libraries:
-        if facts.system == 'Darwin' and not settings.environment.get(variable):
+        if system == 'Darwin' and not settings.environment.get(variable):
             library = shipped_library(settings, name, scratch / 'stage')
         else:
             library = settings.artifact(variable, filename, package)
         print(f'--- {name}: {library} against {version.relative_to(settings.root)} ---')
-        flags = ['-D', '--defined-only'] if facts.system == 'Linux' else ['-gU']
+        flags = ['-D', '--defined-only'] if system == 'Linux' else ['-gU']
         result = subprocess.run(['nm', *flags, str(library)], env=settings.environment,
                                 capture_output=True, text=True)
         if result.returncode:
@@ -105,7 +96,7 @@ def check_export_sets(settings: Settings, facts: HostFacts, scratch: Path) -> in
             return result.returncode
         node, names = version_exports(version)
         expected = set(names)
-        if facts.system == 'Linux':
+        if system == 'Linux':
             symbols = set(linux_exports(result.stdout, node))
         else:
             symbols = darwin_exported_symbols(result.stdout)
@@ -179,7 +170,7 @@ def dispatch(argv: Sequence[str]) -> int:
     try:
         settings = Settings.read(os.environ)
         if not argv:
-            status = check_abi(settings, HostFacts.current())
+            status = check_abi(settings, platform.system())
         elif argv[0] == 'alloc-failure':
             status = check_alloc_failure(settings, argv[1:])
         else:
@@ -330,16 +321,16 @@ def check_static(settings: Settings, abi: str, header: str) -> int:
     return status
 
 
-def check_abi(settings: Settings, facts: HostFacts) -> int:
+def check_abi(settings: Settings, system: str) -> int:
     for name in ('pinyin', 'zhuyin'):
         status = check_static(settings, 'lib' + name, name + '.h')
         if status:
             return status
-    if facts.system == 'Windows':
+    if system == 'Windows':
         print('PASS: allocation registers match the headers and version scripts (Windows).')
         return 0
-    if facts.system != 'Linux':
-        return check_exports(settings, facts)
+    if system != 'Linux':
+        return check_exports(settings, system)
 
     from .abi_headers import check_headers
     from .test_runner import sanitize_abi
@@ -349,7 +340,7 @@ def check_abi(settings: Settings, facts: HostFacts) -> int:
     pinyin = settings.artifact('OXPINYIN_CAPI_SO', 'liboxpinyin_capi.so', 'oxpinyin-capi')
     zhuyin = settings.artifact('OXPINYIN_ZHUYIN_SO', 'liboxzhuyin_capi.so', 'oxzhuyin-capi')
     env = dict(settings.environment, OXPINYIN_CAPI_SO=str(pinyin), OXPINYIN_ZHUYIN_SO=str(zhuyin))
-    status = check_exports(replace(settings, environment=env), facts)
+    status = check_exports(replace(settings, environment=env), system)
     if status:
         return status
     with tempfile.TemporaryDirectory(prefix='abi-') as directory:

@@ -18,7 +18,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -31,13 +30,13 @@ def executable(root):
     return None
 
 
-def runner_checkout(env, *, which=shutil.which):
+def runner_checkout(env):
     """A CI job's vcpkg checkout: the image's named root, an explicit VCPKG_ROOT, or the `vcpkg` on PATH."""
     named = env.get('VCPKG_INSTALLATION_ROOT') or env.get('VCPKG_ROOT')
     if named:
         root = Path(named)
     else:
-        found = which('vcpkg', path=env.get('PATH'))
+        found = shutil.which('vcpkg', path=env.get('PATH'))
         if not found:
             raise ValueError('no vcpkg checkout: VCPKG_INSTALLATION_ROOT and VCPKG_ROOT are unset '
                              'and vcpkg is not on PATH')
@@ -47,16 +46,20 @@ def runner_checkout(env, *, which=shutil.which):
     return root
 
 
-def revision(root, *, capture):
+def revision(root):
     """The checkout's commit, or a digest of its baseline when it carries no Git metadata."""
-    done = capture(['git', '-C', str(root), 'rev-parse', 'HEAD'])
-    if not done.status and done.stdout.strip():
-        return done.stdout.decode().strip()
+    try:
+        done = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'],
+                              capture_output=True, text=True)
+        if done.returncode == 0 and done.stdout.strip():
+            return done.stdout.strip()
+    except OSError:
+        pass
     baseline = hashlib.sha256((root / 'versions/baseline.json').read_bytes()).hexdigest()[:40]
     return 'baseline-' + baseline
 
 
-def binary_cache(env, triplet, packages='', *, capture, which=shutil.which):
+def binary_cache(env, triplet, packages=''):
     """The environment and step outputs that select the binary cache for TRIPLET.
 
     The key changes with the checkout revision and with the toolchain, which
@@ -70,9 +73,9 @@ def binary_cache(env, triplet, packages='', *, capture, which=shutil.which):
     for name in ('ImageOS', 'ImageVersion', 'RUNNER_TEMP'):
         if not env.get(name):
             raise ValueError(f'runner variable {name} is unset')
-    root = runner_checkout(env, which=which)
+    root = runner_checkout(env)
     directory = (Path(env['RUNNER_TEMP']) / 'vcpkg-binary-cache').as_posix()
-    name = revision(root, capture=capture)
+    name = revision(root)
     prefix = f"vcpkg-bin-{env['ImageOS']}-{triplet}-"
     key = f"{prefix}{name}-{env['ImageOS']}-{env['ImageVersion']}"
     outputs = {'dir': directory, 'prefix': prefix, 'key': key}
@@ -92,7 +95,7 @@ def publish(path, values):
             stream.write(f'{name}={value}\n')
 
 
-def runner_install(env, triplet, packages, *, run, root=ROOT):
+def runner_install(env, triplet, packages):
     """Install PACKAGES for TRIPLET, check GLib, and return what later steps need.
 
     PACKAGES is the job's space-separated port[features]:triplet specs. The
@@ -109,32 +112,20 @@ def runner_install(env, triplet, packages, *, run, root=ROOT):
     program = executable(vcpkg)
     if program is None:
         raise ValueError(f"no vcpkg checkout at '{vcpkg}'")
-    run([program, 'install', *packages.split()], env=env, cwd=root)
+    subprocess.run([program, 'install', *packages.split()], env=env, cwd=ROOT, check=True)
     installed = vcpkg / 'installed' / triplet
     own = (installed / 'lib/pkgconfig').as_posix()
     # vcpkg's own pkgconf answers for the installed tree; GLib's DLLs load from its bin.
     pkg_config = installed / 'tools/pkgconf/pkgconf.exe'
-    run([pkg_config, '--modversion', '--cflags', '--libs', 'glib-2.0'],
-        env=dict(env, PKG_CONFIG_PATH=own), cwd=root)
+    subprocess.run([pkg_config, '--modversion', '--cflags', '--libs', 'glib-2.0'],
+                   env=dict(env, PKG_CONFIG_PATH=own), cwd=ROOT, check=True)
     return dict(environment={'PKG_CONFIG': pkg_config.as_posix(), 'PKG_CONFIG_PATH': own},
                 path=[(installed / 'bin').as_posix()])
 
 
-def _run(command, *, env=None, cwd=None):
-    subprocess.run([str(part) for part in command], env=env, cwd=cwd, check=True)
-
-
-def _capture(command):
-    try:
-        done = subprocess.run([str(part) for part in command], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    except OSError:
-        return SimpleNamespace(status=127, stdout=b'')
-    return SimpleNamespace(status=done.returncode, stdout=done.stdout)
-
-
-def main(argv=None, env=None, *, run=_run, capture=_capture):
+def main(argv=None):
     # Not a copy: on Windows only os.environ itself finds ImageOS under that spelling.
-    env = os.environ if env is None else env
+    env = os.environ
     parser = argparse.ArgumentParser(prog='python -m tools.dev.vcpkg')
     parser.add_argument('command', choices=('cache-key', 'install', 'cache-report'))
     parser.add_argument('--triplet')
@@ -144,7 +135,7 @@ def main(argv=None, env=None, *, run=_run, capture=_capture):
         parser.error(f'{args.command} requires --triplet')
     try:
         if args.command == 'cache-key':
-            selected = binary_cache(env, args.triplet, args.packages, capture=capture)
+            selected = binary_cache(env, args.triplet, args.packages)
             Path(selected['outputs']['dir']).mkdir(parents=True, exist_ok=True)
             publish(env['GITHUB_ENV'], selected['environment'])
             publish(env['GITHUB_OUTPUT'], selected['outputs'])
@@ -152,7 +143,7 @@ def main(argv=None, env=None, *, run=_run, capture=_capture):
             if args.packages.split():
                 print(f"vcpkg packages: {args.packages} (key component {selected['outputs']['packages']})")
         elif args.command == 'install':
-            result = runner_install(env, args.triplet, args.packages, run=run)
+            result = runner_install(env, args.triplet, args.packages)
             publish(env['GITHUB_ENV'], result['environment'])
             with open(env['GITHUB_PATH'], 'a', encoding='utf-8') as stream:
                 stream.writelines(f'{directory}\n' for directory in result['path'])

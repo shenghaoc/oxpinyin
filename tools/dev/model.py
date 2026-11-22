@@ -224,10 +224,9 @@ def _fetch_locked(cache, url, archive, force, env):
     return extracted
 
 
-def main(argv=None, env=None):
+def main(argv=None):
     """Parse the fetch options, run the fetch and print the extracted directory."""
     args = list(sys.argv[1:] if argv is None else argv)
-    env = dict(os.environ if env is None else env)
     options = {'url': None, 'archive': None, 'force': False}
     valued = {'--url': 'url', '--archive': 'archive'}
     while args:
@@ -246,7 +245,7 @@ def main(argv=None, env=None):
             return 2
 
     def call():
-        print(fetch(env=env, **options))
+        print(fetch(**options))
         return 0
     return guarded(call)
 

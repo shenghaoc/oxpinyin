@@ -200,15 +200,6 @@ class WindowsJob:
         while self._members:
             self._kernel32.CloseHandle(self._wintypes.HANDLE(self._members.pop()))
 
-    def __enter__(self):
-        """Return the already-created job for context-managed cleanup."""
-        return self
-
-    def __exit__(self, *exc):
-        """Close the job without suppressing an exception from the context body."""
-        self.close()
-        return False
-
 
 CANCELLED = threading.Event()
 CANCELLED_SIGNAL = None

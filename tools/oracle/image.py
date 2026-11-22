@@ -215,14 +215,12 @@ def image_field(engine, field, image, *, env=None, platform=None):
     return text([engine, 'image', 'inspect', '--format', '{{.' + field + '}}', image], env=env)
 
 
-def container_owner(engine, container, label, *, run=None):
+def container_owner(engine, container, label, *, run):
     """A container's ID and its LABEL value, as `ID VALUE`, or None when inspect fails.
 
     docker and podman print a Go template; wslc prints docker-shaped JSON and Apple's container
     its own (configuration.id, configuration.labels). RUN takes the argv and answers a
     CompletedProcess with text output."""
-    run = run or (lambda argv: subprocess.run(list(argv), stdin=subprocess.DEVNULL, capture_output=True,
-                                              text=True, check=False, timeout=60))
     if not (is_wslc(engine[0]) or is_apple(engine[0])):
         template = '{{.Id}} {{index .Config.Labels "%s"}}' % label
         found = run([*engine, 'container', 'inspect', '--format', template, container])
@@ -240,14 +238,12 @@ def container_owner(engine, container, label, *, run=None):
         return None
 
 
-def container_ids(engine, label, value, *, run=None):
+def container_ids(engine, label, value, *, run):
     """The IDs of the containers that carry LABEL=VALUE, or [] when the runtime cannot list them.
 
     docker, podman and wslc filter the listing; Apple's container lists JSON and the labels are
     read here. The listing only names candidates: the caller checks each with container_owner.
     RUN is as there."""
-    run = run or (lambda argv: subprocess.run(list(argv), stdin=subprocess.DEVNULL, capture_output=True,
-                                              text=True, check=False, timeout=60))
     if is_apple(engine[0]):
         found = run(runtime_command([*engine, 'container', 'ls', '-a', '--format', 'json']))
         if found.returncode:
@@ -352,7 +348,7 @@ def valid_platform(value):
 PIN_FIELD_USAGE = 'usage: pin-field [--platform linux/amd64|linux/arm64] KEY'
 
 
-def pin_field(argv, *, root=ROOT):
+def pin_field(argv):
     """Print one platform-keyed field of oracle-pin.txt; an absent field prints nothing."""
     values = parse_options(argv, ('--platform',), positional=True)
     if values.get('help'):
@@ -363,7 +359,7 @@ def pin_field(argv, *, root=ROOT):
     if not key:
         fail(PIN_FIELD_USAGE, 2)
     platform = valid_platform(values.get('platform', 'linux/amd64'))
-    value = platform_field(Path(root) / 'tools/oracle/oracle-pin.txt', platform, key)
+    value = platform_field(Path(ROOT) / 'tools/oracle/oracle-pin.txt', platform, key)
     if value:
         print(value)
     return 0
@@ -597,9 +593,9 @@ with verify-image, and its reference printed last. Nothing is pushed.
 '''
 
 
-def build_image(argv, *, root=ROOT, env=None):
+def build_image(argv):
     """Build Dockerfile.oracle on the host architecture, check it and verify it."""
-    environment = os.environ if env is None else env
+    environment = os.environ
     if argv[:1] in (['-h'], ['--help']):
         print(BUILD_IMAGE_USAGE, end='')
         return 0
@@ -610,14 +606,14 @@ def build_image(argv, *, root=ROOT, env=None):
         fail('FAIL: the oracle image build supports only native x86_64 and aarch64', 2)
     runtime = select_runtime(override=environment.get('OXPINYIN_CAPTURE_RUNTIME', ''), env=environment)
     expected = selected.split('/', 1)[1]
-    image = f'{REGISTRY}:{image_tag(root)}' + ('-arm64' if expected == 'arm64' else '')
+    image = f'{REGISTRY}:{image_tag(ROOT)}' + ('-arm64' if expected == 'arm64' else '')
     flags = environment.get('OXPINYIN_CAPTURE_BUILD_FLAGS', '').split()
     run(runtime_command([runtime, 'build', *container_resources(runtime), '--platform', selected, '--build-arg', f'ORACLE_PLATFORM={selected}',
-                      *flags, '-f', 'tools/oracle/Dockerfile.oracle', '-t', image, '.']), cwd=root, env=environment)
+                      *flags, '-f', 'tools/oracle/Dockerfile.oracle', '-t', image, '.']), cwd=ROOT, env=environment)
     actual = image_field(runtime, 'Architecture', image, env=environment, platform=selected)
     if actual != expected:
         fail(f'FAIL: built {image} for {actual}, expected {expected}')
-    status = verify_image(['--engine', runtime, '--platform', selected, image], root=root)
+    status = verify_image(['--engine', runtime, '--platform', selected, image], root=ROOT)
     if status:
         return status
     print(image)
@@ -734,7 +730,7 @@ def run_in_capture_image(out, command, *, root=ROOT, env=None):
 CAPTURE_PIN_USAGE = 'usage: capture-pin RUN'
 
 
-def capture_pin(argv, *, root=ROOT, env=None):
+def capture_pin(argv):
     """Capture one run of the proposed pin observations (docs/runbooks/pin-captures.md).
 
     RUN names the run (1, 2, ...). The C API observations run on the image's tkrzw cell on the
@@ -745,7 +741,7 @@ def capture_pin(argv, *, root=ROOT, env=None):
     fetched into, mounted read-only at /model20. tools/oracle/pin_capture.py checks the prefixes,
     the loaded libraries, the utility builds and the data, then stages the proposed observations
     and capture.json in target/pin-observations/RUN/. Nothing else is written."""
-    environment = os.environ if env is None else env
+    environment = os.environ
     if argv[:1] in (['-h'], ['--help']):
         print(CAPTURE_PIN_USAGE)
         return 0
@@ -754,7 +750,7 @@ def capture_pin(argv, *, root=ROOT, env=None):
     name = argv[0]
     if not RUN_NAME.fullmatch(name):
         fail(f'FAIL: a run name uses letters, digits, _ and -: {name}', 2)
-    provision = provision_cache(environment, root)
+    provision = provision_cache(environment, ROOT)
     if not provision.is_dir():
         fail(f'FAIL: {provision} is not a directory; run `just provision-oracle` with this OXPINYIN_CACHE', 2)
     model = model_cache(environment)
@@ -766,13 +762,13 @@ def capture_pin(argv, *, root=ROOT, env=None):
     return run_in_capture_image('target/pin-observations', [
         'tools/oracle/pin_capture.py', 'capture', name, '--prefix', '/opt/reference/tkrzw', '--data', '/data',
         '--provision-cache', '/provision', '--model-dir', '/model20/extracted',
-        '--staging', '/work/target/pin-observations'], root=root, env=child)
+        '--staging', '/work/target/pin-observations'], root=ROOT, env=child)
 
 
-def select_runtime(override='', *, env=None, host=None, output=print):
+def select_runtime(override='', *, env=None, output=print):
     """Preserve platform runtime order and an explicit override; wslc is preferred on Windows."""
     environment = os.environ if env is None else env
-    host = host or ('Windows' if os.name == 'nt' else text(['uname', '-s'], env=environment))
+    host = 'Windows' if os.name == 'nt' else text(['uname', '-s'], env=environment)
     if host == 'Darwin':
         candidates = ['container', 'podman', 'docker']
     elif host.startswith(('Windows', 'MINGW', 'MSYS', 'CYGWIN')) or environment.get('WSL_DISTRO_NAME'):
@@ -825,7 +821,7 @@ def model_cache(env):
     return model.default_cache(env)
 
 
-def check_reproducible(argv, *, root=ROOT):
+def check_reproducible(argv):
     """Build twice in distinct paths and compare only those two builds."""
     from tools.dev.measure.recipes import require_local_measurement
     require_local_measurement(os.environ)
@@ -848,7 +844,7 @@ def check_reproducible(argv, *, root=ROOT):
         env = dict(os.environ)
         try:
             for directory in directories:
-                run([sys.executable, Path(root) / 'tools/oracle/build.py', '--libs-only', '--enable-libzhuyin',
+                run([sys.executable, Path(ROOT) / 'tools/oracle/build.py', '--libs-only', '--enable-libzhuyin',
                      '--dbm', backend, '--work-dir', directory / 'build', '--prefix', prefix,
                      '--jobs', args.jobs], env=env, heavy=True)
                 saved = directory / 'libraries'

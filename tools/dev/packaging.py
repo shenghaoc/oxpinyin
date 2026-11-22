@@ -1217,9 +1217,9 @@ def sizes(argv, tools):
     return ship_sizes.main(argv)
 
 
-def main(argv=None, *, tools=None):
+def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    tools = tools or Tools()
+    tools = Tools()
     if not argv or argv[0] not in NAMES:
         emit('usage: python -m tools.dev.packaging {' + ','.join(NAMES) + '} ...', error=True)
         return 2

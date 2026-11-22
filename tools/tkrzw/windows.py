@@ -88,20 +88,20 @@ def run(command, *, cwd, env, capture=False):
     return done.stdout
 
 
-def fetch(source, revision, env, *, runner=run, delays=(2, 4, 8), sleep=time.sleep):
+def fetch(source, revision, env):
     """Check out REVISION into SOURCE and refuse any other commit."""
-    runner(['git', 'init', '-q', '.'], cwd=source, env=env)
-    for delay in (*delays, None):
+    run(['git', 'init', '-q', '.'], cwd=source, env=env)
+    for delay in (2, 4, 8, None):
         try:
-            runner(['git', 'fetch', '-q', '--depth=1', TKRZW_URL, revision], cwd=source, env=env)
+            run(['git', 'fetch', '-q', '--depth=1', TKRZW_URL, revision], cwd=source, env=env)
             break
         except RecipeError:
             if delay is None:
                 raise
             print(f'tkrzw: retrying the fetch in {delay}s', file=sys.stderr, flush=True)
-            sleep(delay)
-    runner(['git', '-c', 'advice.detachedHead=false', 'checkout', '-q', 'FETCH_HEAD'], cwd=source, env=env)
-    head = runner(['git', 'rev-parse', 'HEAD'], cwd=source, env=env, capture=True).strip()
+            time.sleep(delay)
+    run(['git', '-c', 'advice.detachedHead=false', 'checkout', '-q', 'FETCH_HEAD'], cwd=source, env=env)
+    head = run(['git', 'rev-parse', 'HEAD'], cwd=source, env=env, capture=True).strip()
     if head != revision:
         raise RecipeError(f'the fetched tkrzw is {head}, not {revision}; refusing to build it')
 
@@ -159,7 +159,7 @@ def install(source, prefix, makefile, version):
     (prefix / 'lib' / 'pkgconfig' / 'tkrzw.pc').write_text(pc_text(prefix, version), encoding='utf-8')
 
 
-def build(prefix, env, *, runner=run, source=None):
+def build(prefix, env):
     """Fetch the pin, build tkrzw.lib with nmake and install it into PREFIX.
 
     The archive is an x64 one, so the MSVC environment must target x64 to
@@ -179,22 +179,21 @@ def build(prefix, env, *, runner=run, source=None):
         if prefix.exists() and any(prefix.iterdir()):
             raise RecipeError(f'{prefix} is not empty and holds no complete build; remove it')
         with tempfile.TemporaryDirectory(prefix='tkrzw-src-') as scratch:
-            tree = Path(source).resolve() if source else Path(scratch)
-            tree.mkdir(parents=True, exist_ok=True)
-            fetch(tree, pinned['revision'], env, runner=runner)
+            tree = Path(scratch)
+            fetch(tree, pinned['revision'], env)
             makefile = (tree / 'VCMakefile').read_text(encoding='utf-8')
             if macro(makefile, 'PKG_VERSION') != pinned['version']:
                 raise RecipeError(f'VCMakefile names version {macro(makefile, "PKG_VERSION")}, not the pinned {pinned["version"]}')
             # The library target alone: no utilities, no tests, no DLL.
-            runner(['nmake', '/nologo', '-f', 'VCMakefile', *overrides(makefile, env), 'tkrzw.lib'], cwd=tree, env=env)
+            run(['nmake', '/nologo', '-f', 'VCMakefile', *overrides(makefile, env), 'tkrzw.lib'], cwd=tree, env=env)
             install(tree, prefix, makefile, pinned['version'])
         (prefix / MARKER).write_text(pinned['revision'] + '\n')
     print(f'tkrzw: {pinned["revision"][:7]} installed in {prefix}', flush=True)
     return prefix
 
 
-def main(argv=None, env=None):
-    env = dict(os.environ if env is None else env)
+def main(argv=None):
+    env = dict(os.environ)
     parser = argparse.ArgumentParser(prog='python -m tools.tkrzw.windows', description=__doc__.splitlines()[0])
     parser.add_argument('--prefix', type=Path, help='install here instead of the cache root entry')
     parser.add_argument('--github-env', action='store_true', help='also append PKG_CONFIG_PATH to $GITHUB_ENV')
