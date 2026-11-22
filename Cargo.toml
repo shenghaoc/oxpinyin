@@ -55,6 +55,10 @@ sha2.workspace = true
 tempfile.workspace = true
 rstest.workspace = true
 
+[package.metadata.cargo-shear]
+# The maps that build.rs generates name `::phf::Map`.
+ignored = ["phf"]
+
 # One entry per backend, each probed only with its feature. The version is
 # required by the format; "0" is no floor, as libpinyin's configure sets
 # none. tkrzw and Kyoto Cabinet are found through their .pc file. Berkeley

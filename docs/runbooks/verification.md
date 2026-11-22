@@ -62,6 +62,7 @@ Before a push for review or merge and after each rebase, one `cargo clippy --loc
 
 - `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace` when doc comments or public items changed.
 - `just deny` when a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed. The recipe runs the cargo-deny checks of CI's `deny` job.
+- `just shear` when a `Cargo.toml` changed or a Rust file was added, moved or removed.
 - `just complexity` when Rust functions changed: the [complexity limit](#complexity-limit).
 - `just test-tools` when `tools/` changed.
 - `just ruff` when Python under `tools/` changed.
