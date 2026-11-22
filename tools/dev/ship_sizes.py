@@ -26,10 +26,13 @@ from collections import deque
 import hashlib
 import json
 import os
+import platform
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tomllib
 from typing import Sequence
 
 from . import cell
@@ -38,17 +41,16 @@ from .packaging import crate_dir, linux_exports, version_exports
 ROOT = Path(__file__).resolve().parents[2]
 # Each installed library, with its symbol prefix and [package.metadata.capi.library] name.
 LIBRARIES = {'libpinyin': 'pinyin', 'libzhuyin': 'zhuyin'}
-SCHEMA = 1
-KEY_PREFIX = 'ship-sizes-v1-'
-# Inputs that can change a library byte: they key the cached base result. The
-# same set CI_INPUTS["ship"] gates the job on, less the report-only paths.
-INPUTS = ('src', 'codegen', 'build.rs', 'capi', 'zhuyin-capi', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo',
-          'tools/dev/packaging.py', 'tools/dev/packaging_templates.py', 'tools/oracle/oracle-pin.txt')
-
-PACKAGES = ('binutils', 'gcc', 'g++', 'libc6', 'libglib2.0-dev')
-# The distribution package the Linux cell's build needs beside the common set
-# above: Kyoto Cabinet's, whose cxx bridge compiles with g++ and needs no libclang.
-BACKEND_PACKAGES = ('libkyotocabinet-dev',)
+SCHEMA = 2
+KEY_PREFIX = 'ship-sizes-v2-'
+# These modules select the cell, run the release install and check the installed exports.
+BUILD_TOOLS = ('tools/dev/__init__.py', 'tools/dev/entry.py', 'tools/dev/cell.py', 'tools/dev/packaging.py',
+               'tools/dev/packaging_templates.py', 'tools/dev/runners.py', 'tools/dev/pool.py',
+               'tools/dev/slot.py', 'tools/dev/host.py')
+INPUTS = ('src', 'codegen', 'build.rs', 'capi', 'zhuyin-capi', 'Cargo.toml', 'Cargo.lock',
+          'rust-toolchain.toml', '.cargo', '.gitattributes', 'justfile', '.python-version',
+          'pyproject.toml', 'uv.toml', 'uv.lock', 'tools/oracle/oracle-pin.txt', *BUILD_TOOLS)
+PACKAGES = ('binutils', 'gcc', 'g++', 'libc6', 'libglib2.0-dev', 'libkyotocabinet-dev')
 
 
 class Failure(Exception):
@@ -81,10 +83,6 @@ def reference_cell(root: Path = ROOT):
     return cell.Settings.read({'PINYIN_ORACLE_DBM': cell.LOCAL_CELL}, root)
 
 
-def backend_packages(root: Path = ROOT) -> tuple[str, ...]:
-    return BACKEND_PACKAGES
-
-
 def environment(root: Path = ROOT) -> dict[str, str]:
     """The toolchain facts that decide the bytes besides the source."""
     try:
@@ -97,23 +95,28 @@ def environment(root: Path = ROOT) -> dict[str, str]:
     # The backend's own package version is among the dpkg facts below: both
     # revisions link that one build of libkyotocabinet.
     if shutil.which('dpkg-query'):
-        for package in (*PACKAGES, *backend_packages(root)):
+        for package in PACKAGES:
             facts['dpkg:' + package] = first_line(['dpkg-query', '-W', '-f', '${Version}', package], root)
+    # The current checkout compares and strips both sides, including a historical base.
+    for name in (*BUILD_TOOLS, 'tools/dev/ship_sizes.py'):
+        with (root / name).open('rb') as stream:
+            facts[name] = hashlib.file_digest(stream, 'sha256').hexdigest()
+    for name, value in os.environ.items():
+        if name in ('CC', 'CXX', 'LD', 'AR', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS', 'RUSTFLAGS',
+                    'CARGO_ENCODED_RUSTFLAGS', 'RUSTC', 'RUSTC_WRAPPER', 'LIBRARY_PATH',
+                    'C_INCLUDE_PATH', 'CPLUS_INCLUDE_PATH') or name.startswith(
+                        ('CARGO_PROFILE_', 'CARGO_TARGET_', 'SYSTEM_DEPS_', 'PKG_CONFIG')):
+            if name != 'CARGO_TARGET_DIR':
+                facts['env:' + name] = value
     return facts
 
 
 def tree_ids(revision: str, root: Path = ROOT) -> dict[str, str]:
-    result = {}
-    if git('ls-tree', revision, 'src', root=root) == '' and git('ls-tree', revision, 'capi', root=root) == '':
-        # A historical comparison may use the old workspace layout. Include
-        # its full tree so source changes there still invalidate the key.
-        result['checkout'] = git('rev-parse', f'{revision}^{{tree}}', root=root)
-    for path in INPUTS:
-        try:
-            result[path] = git('rev-parse', f'{revision}:{path}', root=root)
-        except Failure:
-            result[path] = '-'
-    return result
+    # cargo metadata and the locked workspace build also read the other member manifests.
+    manifest = tomllib.loads(git('show', f'{revision}:Cargo.toml', root=root))
+    members = manifest['workspace']['members']
+    inputs = (*INPUTS, *(f'{member}/Cargo.toml' for member in members))
+    return {path: git('rev-parse', '--verify', f'{revision}:{path}', root=root) for path in inputs}
 
 
 def recipe_key(revision: str, facts: dict[str, str], root: Path = ROOT) -> str:
@@ -216,17 +219,17 @@ def revision_recipe(revision: str, source: Path, recipe: Sequence[str | Path], e
                                  'see docs/runbooks/setup.md#comparing-against-another-revision']))
 
 
-def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> dict[str, object]:
+def build_side(revision: str, key: str, work: Path, target: Path) -> dict[str, object]:
     """Build both facades of one commit with that commit's own `packaging install`.
 
     The source, stage and target paths are the same for every side and run:
     they enter RUSTFLAGS, so a changing path would rebuild every dependency.
     """
     source, stage = work / 'src', work / 'stage'
-    if platform_system() != 'Linux':
+    if platform.system() != 'Linux':
         raise Failure('the size build is the Linux release recipe; run it on Linux')
-    cell = reference_cell(root)
-    extract(revision, source, root)
+    cell = reference_cell()
+    extract(revision, source)
     shutil.rmtree(stage, ignore_errors=True)
     env = build_env(source, target, cell.cell)
     for library in LIBRARIES:
@@ -250,29 +253,28 @@ def build_side(revision: str, work: Path, target: Path, root: Path = ROOT) -> di
             raise Failure(f'{revision}: no {library}.ver at {script.relative_to(source).as_posix()}')
         check_exports(library, nm, script)
         sizes[library] = stripped.stat().st_size
-    return {'schema': SCHEMA, 'revision': git('rev-parse', revision, root=root), 'backend': cell.feature,
+    return {'schema': SCHEMA, 'revision': revision, 'recipe_key': key, 'backend': cell.feature,
             'libraries': sizes}
 
 
-def platform_system() -> str:
-    import platform
-    return platform.system()
-
-
-def valid(result: object) -> bool:
-    return (isinstance(result, dict) and result.get('schema') == SCHEMA
-            and isinstance(result.get('revision'), str)
-            and isinstance(result.get('libraries'), dict)
-            and set(result['libraries']) == set(LIBRARIES)
-            and all(isinstance(size, int) and size > 0 for size in result['libraries'].values()))
-
-
-def read_result(path: Path) -> dict[str, object] | None:
+def read_result(path: Path, key: str, backend: str) -> dict[str, object] | None:
     try:
-        result = json.loads(path.read_text())
+        data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
-    return result if valid(result) else None
+    if not isinstance(data, dict) or type(data.get('schema')) is not int or data['schema'] != SCHEMA:
+        return None
+    if data.get('recipe_key') != key or data.get('backend') != backend:
+        return None
+    revision = data.get('revision')
+    if not isinstance(revision, str) or not re.fullmatch('[0-9a-f]{40}', revision):
+        return None
+    sizes = data.get('libraries')
+    if not isinstance(sizes, dict) or sizes.keys() != LIBRARIES.keys():
+        return None
+    if any(type(size) is not int or size <= 0 for size in sizes.values()):
+        return None
+    return data
 
 
 def write_result(path: Path, result: dict[str, object]) -> None:
@@ -304,12 +306,12 @@ def emit_summary(text: str) -> None:
 
 
 def cmd_apt(args: argparse.Namespace) -> int:
-    print(' '.join(backend_packages()))
+    print('libkyotocabinet-dev')
     return 0
 
 
 def cmd_key(args: argparse.Namespace) -> int:
-    key = recipe_key(args.commit, environment())
+    key = recipe_key(resolve(args.commit), environment())
     print(key)
     output = os.environ.get('GITHUB_OUTPUT')
     if output:
@@ -324,24 +326,40 @@ def directories(args: argparse.Namespace) -> tuple[Path, Path]:
     return work, Path(args.target).resolve() if args.target else work / 'target'
 
 
+def resolve(revision: str) -> str:
+    return git('rev-parse', '--verify', '--end-of-options', f'{revision}^{{commit}}')
+
+
 def cmd_build(args: argparse.Namespace) -> int:
-    result = build_side(args.commit, *directories(args))
-    write_result(Path(args.out), result)
+    revision = resolve(args.commit)
+    facts = environment()
+    key = recipe_key(revision, facts)
+    path = Path(args.out)
+    result = read_result(path, key, facts['backend']) if args.reuse else None
+    if result is None:
+        result = build_side(revision, key, *directories(args))
+        write_result(path, result)
     print(json.dumps(result, sort_keys=True))
     return 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Head and base sizes in one table; the base comes from the cache file when it holds one."""
+    """Build the head and reuse the base only when the recorded build identity agrees."""
     work, target = directories(args)
-    cached = read_result(Path(args.base_cache)) if args.base_cache else None
-    if cached:
-        base, note = cached, 'cached by recipe key'
+    facts = environment()
+    base_revision, head_revision = resolve(args.base), resolve(args.head)
+    base_key = recipe_key(base_revision, facts)
+    head_key = recipe_key(head_revision, facts)
+    cache = Path(args.base_cache) if args.base_cache else None
+    base = read_result(cache, base_key, facts['backend']) if cache else None
+    if base is None:
+        base = build_side(base_revision, base_key, work, target)
+        note = 'built in this run'
+        if cache:
+            write_result(cache, base)
     else:
-        base, note = build_side(args.base, work, target), 'built in this run'
-        if args.base_cache:
-            write_result(Path(args.base_cache), base)
-    head = build_side(args.head, work, target)
+        note = 'cached by recipe key'
+    head = build_side(head_revision, head_key, work, target)
     if args.out:
         write_result(Path(args.out), head)
     emit_summary(table(base, head, note))
@@ -359,6 +377,7 @@ def parser() -> argparse.ArgumentParser:
     p = sub.add_parser('build', help='build one commit and write its sizes as JSON')
     p.add_argument('--commit', default='HEAD')
     p.add_argument('--out', required=True)
+    p.add_argument('--reuse', action='store_true', help='reuse OUT if its build identity matches')
     p.add_argument('--work', help='source, stage and strip scratch (default target/ship-sizes)')
     p.add_argument('--target', help='cargo target dir (default WORK/target)')
     p.set_defaults(func=cmd_build)
@@ -377,7 +396,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         return args.func(args)
-    except (Failure, ValueError) as error:
+    except (Failure, OSError, ValueError, KeyError) as error:
         print(f'error: {error}', file=sys.stderr)
         return 1
 

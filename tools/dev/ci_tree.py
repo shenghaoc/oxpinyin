@@ -13,6 +13,11 @@ import sys
 import tomllib
 from typing import Any
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tools.dev.ship_sizes import INPUTS as SHIPPING_INPUTS
+
 
 JOB_FLAGS = {"rust": "rust", "store": "store", "shipping-sizes": "ship"}
 
@@ -66,10 +71,7 @@ RUST_READS = (
 # the root library and the two C API crates. The other workspace members, the root tests and
 # each C API crate's integration tests are in no shipped library.
 SHIP_CRATES = ("capi", "zhuyin-capi")
-SHIP = ("src", "codegen", "build.rs", *SHIP_CRATES, "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo",
-        "tools/dev/packaging.py",
-        "tools/dev/packaging_templates.py", "tools/oracle/oracle-pin.txt",
-        "justfile", "pyproject.toml", "tools/dev/cell.py", "tools/dev/ship_sizes.py",
+SHIP = (*SHIPPING_INPUTS, *(f"{member}/Cargo.toml" for member in CRATE_DIRS), "tools/dev/ship_sizes.py",
         ".github/workflows/ci.yml", ".github/actions")
 CI_INPUTS = {
     # cargo fmt and fuzz Clippy read the fuzz workspace. The
