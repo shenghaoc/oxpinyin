@@ -2044,9 +2044,7 @@ mod candidate_surface {
     //! which `just fetch-contract-data` extracts and which is in tkrzw format, so this
     //! target requires that backend. A missing package is a failure, not a skip.
 
-    use super::{candidate_fixture, contract_data};
-
-    use std::path::PathBuf;
+    use super::{candidate_fixture, contract_data, repo_root};
 
     use crate::engine::{Candidate, CandidateKind, Session, SessionSettings};
 
@@ -2056,10 +2054,6 @@ mod candidate_surface {
 
     /// How many candidates the capture records per input.
     const CAPTURE_DEPTH: usize = 10;
-
-    fn repo_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    }
 
     fn candidate_type(candidate: &Candidate) -> Option<OracleCandidateType> {
         match candidate.kind() {

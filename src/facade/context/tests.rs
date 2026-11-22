@@ -438,19 +438,10 @@ mod failed_attachment_fini {
     //! Context finalization closes open tables while an instance still holds
     //! the runtime.
 
-    use std::path::PathBuf;
-
+    use crate::facade::test_fixture::fixture_dir;
     use crate::facade::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
     use crate::model::Dictionary as _;
     use crate::user::UserConfLaw;
-
-    fn fixture_dir() -> PathBuf {
-        let extension = crate::__internal::DEFAULT_STORE_EXT;
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("fixtures")
-            .join("w3")
-            .join(extension)
-    }
 
     #[test]
     fn context_finish_closes_open_tables_after_a_failed_attachment() {
@@ -508,18 +499,12 @@ mod library_directory {
 
     use std::path::{Path, PathBuf};
 
+    use crate::facade::test_fixture::fixture_dir;
     use crate::facade::{
         ContextCore, MaskOutOutcome, PINYIN_DEFAULT_OPTION_WORD, ZHUYIN_DEFAULT_OPTION_WORD,
     };
 
     use crate::{data::user_files::SystemVersions, user::UserConfLaw};
-
-    /// The committed fixture set the compiled backend opens.
-    fn fixture_dir() -> PathBuf {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        let extension = crate::__internal::DEFAULT_STORE_EXT;
-        root.join(extension)
-    }
 
     /// A fresh scratch directory for `name` under the temporary directory.
     ///
@@ -847,17 +832,12 @@ mod library_totals {
 
     use std::path::{Path, PathBuf};
 
+    use crate::facade::test_fixture::fixture_dir;
     use crate::facade::{ContextCore, MaskOutOutcome, PINYIN_DEFAULT_OPTION_WORD};
 
     use crate::user::UserConfLaw;
 
     const GBK: u8 = 2;
-
-    /// The committed fixture set the compiled backend opens.
-    fn fixture_dir() -> PathBuf {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/w3");
-        root.join(crate::__internal::DEFAULT_STORE_EXT)
-    }
 
     /// A private system directory under `parent`: every fixture file copied in,
     /// so the test needs no symbolic-link privilege on any host.
