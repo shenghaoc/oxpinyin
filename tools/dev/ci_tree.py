@@ -89,7 +89,7 @@ GENERATED_TABLES = (
     "src/engine/session/split_tables.rs",
 )
 CI_INPUTS = {
-    # cargo fmt and the compile-only fuzz check read the fuzz workspace. The
+    # cargo fmt and fuzz Clippy read the fuzz workspace. The
     # complexity check runs Lizard from a dependency group, so the lockfile is
     # an input. `just deny` runs cargo deny, which reads the manifests, the
     # lockfiles and deny.toml.
