@@ -192,9 +192,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
         if bench.capture(['pkg-config', '--exists', 'kyotocabinet'], env=env).status:
             raise ValueError('install libkyotocabinet-dev before measuring: pkg-config finds no kyotocabinet')
     elif windows:
-        if not env.get('VCPKG_ROOT'):
-            raise ValueError('native measurement requires VCPKG_ROOT for GLib and pkgconf; see the setup runbook')
-        env = windows_environment(env, Path(env['VCPKG_ROOT']).resolve() / 'installed/x64-windows')
+        env = windows_environment(env, bench.VCPKG_INSTALLED)
     else:
         from ..provision import homebrew_tkrzw_prefix
         pkgconfig = homebrew_tkrzw_prefix(env) / 'lib/pkgconfig'
@@ -267,7 +265,7 @@ def windows_environment(env, installed):
     from tools.tkrzw import windows as tkrzw
     pkgconfig = installed / 'lib/pkgconfig'
     if not (pkgconfig / 'glib-2.0.pc').is_file():
-        raise ValueError('install glib:x64-windows and pkgconf:x64-windows with vcpkg before measuring')
+        raise ValueError(f'run vcpkg install --triplet x64-windows in the repository root before measuring: no glib-2.0.pc in {pkgconfig}')
     revision = tkrzw.pin()['revision']
     prefix = tkrzw.default_prefix(env, revision)
     if not tkrzw.built(prefix, revision):

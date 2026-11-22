@@ -378,12 +378,9 @@ def native(argv, env):
         if platform.machine().lower() not in ('amd64', 'x86_64'):
             bench.fail('Windows comparison requires the x64 MSVC host and x64-windows triplet', 2)
         # vcpkg provides GLib and pkgconf; tkrzw is the repository's static build (prepare.native_build).
-        if not env.get('VCPKG_ROOT'):
-            bench.fail('Windows comparison requires VCPKG_ROOT for GLib and pkgconf', 2)
         from tools.dev.check import msvc_environment
         env = {key.upper(): value for key, value in msvc_environment(env).items()}
-        installed = Path(env['VCPKG_ROOT']).resolve() / 'installed/x64-windows'
-        env['PATH'] = str(installed / 'bin') + os.pathsep + env['PATH']
+        env['PATH'] = str(bench.VCPKG_INSTALLED / 'bin') + os.pathsep + env['PATH']
         env.pop('MEASURE_PREFLIGHT', None)
         env.pop('MEASURE_MODULES', None)
     toolchain = bench.capture(['rustup', 'show', 'active-toolchain'], env=env)
@@ -441,7 +438,7 @@ def native(argv, env):
             for label, arm in arms.items():
                 arm.update(label=PREFIXES[label], data=data)
         if windows:
-            modules = identity.windows_preflight(arms, data, env, installed)
+            modules = identity.windows_preflight(arms, data, env, bench.VCPKG_INSTALLED)
             manifest = artifacts / 'modules.txt'
             manifest.write_text(''.join(item['path'] + '\n' for item in modules), encoding='utf-8')
             env['MEASURE_MODULES'] = str(manifest)

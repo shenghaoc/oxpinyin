@@ -541,9 +541,10 @@ main-against-main validation is not a performance claim.
 
 ### Native Windows comparisons
 
-`just measure compare` also runs on Windows x64 with MSVC and `VCPKG_ROOT`
-set as in setup.md. Both arms use that checkout's `installed/x64-windows`
-pkg-config metadata and GLib DLL, and the repository's static tkrzw
+`just measure compare` also runs on Windows x64 with MSVC and the manifest
+dependencies installed as in setup.md. The recipe needs no `VCPKG_ROOT`.
+Both arms use the pkg-config metadata and GLib DLL in the repository's
+`vcpkg_installed/x64-windows`, and the repository's static tkrzw
 (`just tkrzw`) from the cache root, first on `PKG_CONFIG_PATH`.
 Each distinct SHA builds once with
 `cargo build --locked --release -p oxpinyin-capi`, default features and no

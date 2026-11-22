@@ -81,8 +81,7 @@ The build discovers Kyoto Cabinet through `pkg-config kyotocabinet`; the
 distribution's library is on the default loader path, so no path export is
 needed. GLib stays on the system package manager; the [macOS](#macos) and
 [Windows](#windows) sections name those platforms' tkrzw installation, and
-Windows alone uses vcpkg. `just provision` checks the Kyoto Cabinet development
-package and installs it with apt when it runs as root. Check the backend with:
+Windows alone uses vcpkg. Check the backend with:
 
 ```bash
 just check kyotocabinet
@@ -556,9 +555,10 @@ workspace on the [default backend](backends.md).
   the cache root's `tkrzw-<revision>` entry ([cache directory](#cache-directory)),
   or under `--prefix`. The archive is linked into every binary, so no tkrzw
   directory goes on PATH.
-- `$env:VCPKG_ROOT` names the vcpkg checkout. The commands below run from
-  the repository root in a Developer PowerShell; the tkrzw build also finds
-  MSVC by itself through vswhere.
+- `$env:VCPKG_ROOT` names the vcpkg checkout. The repository `vcpkg.json`
+  manifest names GLib and pkgconf for the `x64-windows` triplet. The commands
+  below run from the repository root in a Developer PowerShell; the tkrzw
+  build also finds MSVC by itself through vswhere.
 
 The job finds GLib and tkrzw through vcpkg's `pkgconf` and one
 `PKG_CONFIG_PATH`. It therefore builds and tests
@@ -572,8 +572,8 @@ A full local build or `just test` needs the same libraries as the CI job.
 The core library requires GLib. Run:
 
 ```powershell
-& "$env:VCPKG_ROOT\vcpkg.exe" install pkgconf:x64-windows glib:x64-windows
-$installed = "$env:VCPKG_ROOT\installed\x64-windows"
+& "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows
+$installed = "$PWD\vcpkg_installed\x64-windows"
 just tkrzw
 $env:PKG_CONFIG = "$installed\tools\pkgconf\pkgconf.exe"
 $env:PKG_CONFIG_PATH = "<the PKG_CONFIG_PATH entry just tkrzw printed>;$installed\lib\pkgconfig"
