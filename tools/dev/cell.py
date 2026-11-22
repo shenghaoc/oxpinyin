@@ -1,24 +1,11 @@
-"""Explicit cell settings and shared build/identity services."""
+"""Backend settings shared by the surviving ABI, packaging, and test paths."""
 
-if __name__ == '__main__':
-    from .entry import require_utf8_mode
-
-    require_utf8_mode()
-
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-import datetime
+from collections.abc import Mapping
+from dataclasses import dataclass
 import functools
-import hashlib
-import json
-import os
 from pathlib import Path
 import platform
 import re
-import shlex
-import subprocess
-import sys
-import tempfile
 import tomllib
 
 from . import slot
@@ -30,18 +17,21 @@ BACKEND_TO_CELL = {backend: cell for cell, backend in CELL_TO_BACKEND.items()}
 CELLS = tuple(CELL_TO_BACKEND)
 BACKEND_FORMATS = {'bdb': 'BerkeleyDB', 'kyotocabinet': 'KyotoCabinet', 'tkrzw': 'Tkrzw'}
 BACKEND_EXTENSIONS = {'bdb': 'db', 'kyotocabinet': 'kct', 'tkrzw': 'tkt'}
-# The one Linux cell: every Linux build that runs a backend, CI included, uses Kyoto Cabinet
-# from Ubuntu's packages (docs/runbooks/setup.md#linux; docs/runbooks/verification.md,
-# section 10). Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
-# A Linux host provisions this one pin oracle cell. tkrzw is no Linux cell: Ubuntu packages
-# no sound libtkrzw. Berkeley DB stays a CI peer, tested by the store job, not a Linux host cell.
+# Linux runs Kyoto Cabinet; the default tkrzw backend is exercised on macOS and
+# Windows because the Ubuntu tkrzw runtime is not supported.
 LOCAL_CELL = 'kc'
+
+
+class CellError(ValueError):
+    """An invalid backend setting or missing ABI build artifact."""
+
+    def __init__(self, message: str, status: int = 1):
+        super().__init__(message)
+        self.status = status
 
 
 @functools.cache
 def _declared_default(root: Path) -> str:
-    # The library at the root of the checkout declares the backend default; [features] cannot be
-    # inherited from the workspace, so that manifest is exact.
     manifest = root / 'Cargo.toml'
     defaults = tomllib.loads(manifest.read_text()).get('features', {}).get('default') if manifest.is_file() else None
     if not isinstance(defaults, list) or len(defaults) != 1 or defaults[0] not in BACKENDS:
@@ -50,22 +40,21 @@ def _declared_default(root: Path) -> str:
 
 
 def declared_default(root: Path = ROOT) -> str:
-    """Read the one declared backend default, once per resolved checkout."""
+    """Read the backend default from the root package manifest."""
     return _declared_default(root.resolve())
 
 
-def default_cell() -> str:
-    """Return the cell name for Cargo's declared default backend."""
-    return BACKEND_TO_CELL[declared_default()]
+def default_cell(root: Path = ROOT) -> str:
+    return BACKEND_TO_CELL[declared_default(root)]
 
 
 def host_cell(root: Path = ROOT) -> str:
-    """The cell a host runs when none is selected: LOCAL_CELL on Linux, Cargo's default elsewhere."""
-    return LOCAL_CELL if platform.system() == 'Linux' else BACKEND_TO_CELL[declared_default(root)]
+    """Return Linux's Kyoto Cabinet cell, or the package default elsewhere."""
+    return LOCAL_CELL if platform.system() == 'Linux' else default_cell(root)
 
 
 def feature_flags(backend: str | None = None) -> list[str]:
-    """Name every explicit backend; with none selected, leave the choice to Cargo."""
+    """Return Cargo feature flags for one explicit backend."""
     if backend is None:
         return []
     if backend not in BACKENDS:
@@ -73,92 +62,16 @@ def feature_flags(backend: str | None = None) -> list[str]:
     return ['--no-default-features', '--features', backend]
 
 
-def bash_word(value: str) -> str:
-    """Render invalid settings as the former Bash printf %q diagnostic did."""
+def _word(value: str) -> str:
     if not value:
         return "''"
-    if any(not character.isprintable() for character in value):
-        escapes = {'\a': r'\a', '\b': r'\b', '\t': r'\t', '\n': r'\n',
-                   '\v': r'\v', '\f': r'\f', '\r': r'\r', '\x1b': r'\E',
-                   "'": r"\'", '\\': r'\\'}
-        def quote(character):
-            if character in escapes:
-                return escapes[character]
-            if character.isprintable():
-                return character
-            number = ord(character)
-            if 0xdc80 <= number <= 0xdcff:
-                number -= 0xdc00
-            return f'\\{number:03o}'
-        return "$'" + ''.join(map(quote, value)) + "'"
-    safe = '_@%+=:,./-'
-    return ''.join(character if character.isalnum() or character in safe or ord(character) > 127
-                   else '\\' + character for character in value)
-
-
-def main(argv: Sequence[str]) -> int:
-    """Build or describe the selected cell artifacts."""
-    try:
-        environment = os.environ
-        if list(argv[:1]) == ['--library-path'] and len(argv) in (1, 2):
-            sys.stdout.write(library_path(environment.get('LD_LIBRARY_PATH', ''),
-                                         Path(argv[1]) if len(argv) == 2 else Path.cwd()))
-            return 0
-        settings = Settings.read(environment)
-        if list(argv) == ['--shell']:
-            keys = ('ORACLE_DBM', 'ORACLE_DBM_NAME', 'CAPI_FEATURE', 'OXPINYIN_CAPI_BACKEND_EXT',
-                    'EXPECTED_PIN_REF', 'CARGO_TARGET_DIR', 'CARGO_PROFILE_DEV_OPT_LEVEL',
-                    'OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO')
-            for key in keys:
-                if key in settings.environment:
-                    print(f'export {key}={shlex.quote(settings.environment[key])}')
-            return 0
-        if len(argv) == 4 and argv[0] == '--artifact':
-            print(settings.artifact(*argv[1:]))
-            return 0
-        if list(argv) == ['--describe']:
-            print(json.dumps(settings.describe()))
-            return 0
-        if len(argv) == 3 and argv[0] == '--describe-oracle':
-            print(json.dumps(settings.oracle(argv[1], argv[2]).describe()))
-            return 0
-        wanted = ['pinyin-capi', 'zhuyin-capi']
-        if len(argv) == 2 and argv[0] == '--artifacts':
-            wanted = argv[1].split(',')
-        elif argv:
-            raise CellError('usage: cell-artifacts [--artifacts LIST | --describe | '
-                            '--describe-oracle BASE_PREFIX VARIANT]', 2)
-        status = settings.build(wanted)
-        return 128 - status if status < 0 else status
-    except CellError as exc:
-        print(exc, file=sys.stderr)
-        return exc.status
-    except slot.Cancelled as exc:
-        print(exc, file=sys.stderr)
-        return slot.cancellation_status()
-    except (OSError, ValueError) as exc:
-        print(f'FAIL: {exc}', file=sys.stderr)
-        return 1
-
-
-class CellError(ValueError):
-    def __init__(self, message: str, status: int = 1):
-        super().__init__(message)
-        self.status = status
-
-
-def library_path(value: str, cwd: Path) -> str:
-    """Snapshot relative loader entries before a runner changes directory."""
-    if not value:
-        return ''
-    tokens = ('$ORIGIN', '${ORIGIN}', '$LIB', '${LIB}', '$PLATFORM', '${PLATFORM}')
-    return ':'.join(entry if entry.startswith('/') or any(t in entry for t in tokens)
-                    else str(cwd) + ('/' + entry if entry else '')
-                    for entry in value.split(':'))
+    return value if value.replace('_', '').replace('-', '').isalnum() else repr(value)
 
 
 @dataclass(frozen=True)
 class Settings:
+    """The backend-specific Cargo environment for one surviving tool invocation."""
+
     root: Path
     cell: str
     feature: str
@@ -175,11 +88,9 @@ class Settings:
     def read(cls, environment: Mapping[str, str], root: Path = ROOT) -> 'Settings':
         root = root.resolve()
         cell = environment.get('PINYIN_ORACLE_DBM') or host_cell(root)
-        choices = {cell: (backend, BACKEND_EXTENSIONS[backend], BACKEND_FORMATS[backend])
-                   for cell, backend in CELL_TO_BACKEND.items()}
-        if cell not in choices:
-            raise CellError(f'fatal: PINYIN_ORACLE_DBM={bash_word(cell)} is not one of: bdb kc tkrzw', 3)
-        feature, extension, name = choices[cell]
+        if cell not in CELL_TO_BACKEND:
+            raise CellError(f'fatal: PINYIN_ORACLE_DBM={_word(cell)} is not one of: bdb kc tkrzw', 3)
+        feature = CELL_TO_BACKEND[cell]
         source = root / 'tools/oracle/oracle-pin.txt'
         try:
             pin = dict(re.findall(r'^(libpinyin_tag|libpinyin_commit|model_archive_sha256)=(.+)$',
@@ -187,136 +98,35 @@ class Settings:
         except OSError:
             pin = {}
         if len(pin) != 3:
-            raise CellError(f'fatal: could not read the pin from {source}')
+            raise CellError(f'fatal: could not read the frozen pin from {source}')
         expected = (f'pin_ref=libpinyin-{pin["libpinyin_tag"]}-'
                     f'{pin["libpinyin_commit"]}+model20-{pin["model_archive_sha256"]}+dbm-{cell}')
         target = Path(environment.get('CARGO_TARGET_DIR') or
                       str(Path(environment.get('OXPINYIN_TARGET_ROOT') or root / 'target/cells') / cell))
         if not target.is_absolute():
             target = root / target
-        env = dict(environment, PINYIN_ORACLE_DBM=cell, ORACLE_DBM=cell, ORACLE_DBM_NAME=name,
-                   CAPI_FEATURE=feature, OXPINYIN_CAPI_BACKEND_EXT=extension,
-                   EXPECTED_PIN_REF=expected, CARGO_TARGET_DIR=str(target),
-                   CARGO_PROFILE_DEV_OPT_LEVEL='1')
+        env = dict(environment, PINYIN_ORACLE_DBM=cell, ORACLE_DBM=cell,
+                   ORACLE_DBM_NAME=BACKEND_FORMATS[feature], CAPI_FEATURE=feature,
+                   OXPINYIN_CAPI_BACKEND_EXT=BACKEND_EXTENSIONS[feature], EXPECTED_PIN_REF=expected,
+                   CARGO_TARGET_DIR=str(target), CARGO_PROFILE_DEV_OPT_LEVEL='1')
         for key in ('OXPINYIN_CAPI_SO', 'OXPINYIN_ZHUYIN_SO'):
             if env.get(key) and not Path(env[key]).is_absolute():
                 env[key] = str(root / env[key])
-        return cls(root, cell, feature, extension, name, expected, target, env)
-
-    def describe(self) -> dict[str, str]:
-        keys = ('PINYIN_ORACLE_DBM', 'ORACLE_DBM', 'CAPI_FEATURE', 'OXPINYIN_CAPI_BACKEND_EXT',
-                'EXPECTED_PIN_REF', 'CARGO_TARGET_DIR', 'CARGO_PROFILE_DEV_OPT_LEVEL',
-                'PINYIN_ORACLE_PREFIX', 'EXPECTED_ORACLE_PIN_REF', 'ORACLE_PATCH_FILE')
-        return {key: self.environment[key] for key in keys if key in self.environment}
-
-    def oracle(self, prefix: str, variant: str) -> 'Settings':
-        if variant != 'unpatched':
-            raise CellError(f'FAIL: unknown oracle variant: {variant}')
-        expected, patch = self.expected_pin, ''
-        return replace(self, environment=dict(self.environment, PINYIN_ORACLE_PREFIX=prefix,
-                       EXPECTED_ORACLE_PIN_REF=expected, ORACLE_PATCH_FILE=patch))
+        return cls(root, cell, feature, BACKEND_EXTENSIONS[feature], BACKEND_FORMATS[feature], expected, target, env)
 
     def artifact(self, variable: str, filename: str, package: str) -> Path:
+        """Return a caller-supplied ABI artifact, or build it directly with Cargo."""
         value = self.environment.get(variable)
         if value:
             artifact = Path(value)
             if not artifact.is_absolute():
                 artifact = self.root / artifact
         else:
-            command = ['cargo', 'build', '--locked', '--manifest-path',
-                       str(self.root / 'Cargo.toml'), '-p', package, *self.feature_args()]
+            command = ['cargo', 'build', '--locked', '--manifest-path', str(self.root / 'Cargo.toml'),
+                       '-p', package, *self.feature_args()]
             if slot.run_command(command, env=self.environment, cwd=self.root, stdout=2):
-                raise CellError(f'FAIL: building {package}', 1)
+                raise CellError(f'FAIL: building {package}')
             artifact = self.target / 'debug' / filename
         if not artifact.is_file():
             raise CellError(f'FAIL: missing {variable} artifact: {artifact}')
         return artifact
-
-    def owner(self) -> dict[str, str]:
-        return dict(worktree=str(self.root), cell=self.cell, feature=self.feature,
-                    profile='dev', opt_level='1')
-
-    def claim(self) -> None:
-        self.target.mkdir(parents=True, exist_ok=True)
-        path = self.target / 'oxpinyin-cell-identity.json'
-        fd, staged = tempfile.mkstemp(prefix='.oxpinyin-cell-claim-', dir=self.target)
-        try:
-            with os.fdopen(fd, 'w') as output:
-                json.dump(dict(schema=1, **self.owner(), artifacts={}, claimed_utc=utc()), output,
-                          indent=1, sort_keys=True)
-                output.write('\n')
-                output.flush()
-            try:
-                os.link(staged, path)
-            except FileExistsError:
-                try:
-                    owner = json.loads(path.read_text())
-                    if not isinstance(owner, dict):
-                        raise ValueError('expected a JSON object')
-                except (OSError, ValueError, UnicodeError) as exc:
-                    raise CellError(f'fatal: unreadable identity record {path}: {exc}') from exc
-                claimed = {key: owner.get(key) for key in self.owner()}
-                if claimed != self.owner():
-                    raise CellError(f'fatal: target directory {path} belongs to '
-                                    f'{json.dumps(claimed, sort_keys=True)}; this build is '
-                                    f'{json.dumps(self.owner(), sort_keys=True)}. One target directory per '
-                                    '(worktree, cell, profile): use another --target-root/CARGO_TARGET_DIR, '
-                                    'or remove the directory to start fresh.', 3)
-        finally:
-            os.unlink(staged)
-
-    def build(self, wanted: Sequence[str]) -> int:
-        packages = {'pinyin-capi': 'oxpinyin-capi', 'zhuyin-capi': 'oxzhuyin-capi'}
-        for item in wanted:
-            if item and item not in packages:
-                raise CellError(f"fatal: unknown artifact '{item}' (pinyin-capi, zhuyin-capi)", 2)
-        if not any(wanted):
-            return 0
-        self.claim()
-        common = ['--locked', '--manifest-path', str(self.root / 'Cargo.toml')]
-        features = self.feature_args()
-        selected = [part for package in dict.fromkeys(packages[item] for item in wanted if item in packages)
-                    for part in ('-p', package)]
-        if selected:
-            status = slot.run_command(['cargo', 'build', *common, *selected, *features],
-                                      env=self.environment, cwd=self.root)
-            if status:
-                return status
-        self.record()
-        return 0
-
-    def record(self) -> None:
-        def output(*command: str) -> str:
-            return subprocess.run(command, cwd=self.root, env=self.environment, capture_output=True,
-                                  text=True, check=True).stdout
-        rustc = dict(line.split(': ', 1) for line in output('rustc', '-vV').splitlines() if ': ' in line)
-        source = dict(head=output('git', 'rev-parse', 'HEAD').strip(),
-                      tracked_diff_sha256=hashlib.sha256(output('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest())
-        artifacts = {}
-        for name, filename in (('pinyin-capi', cdylib('oxpinyin_capi')), ('zhuyin-capi', cdylib('oxzhuyin_capi'))):
-            file = self.target / 'debug' / filename
-            if file.exists():
-                stat = file.stat()
-                artifacts[name] = dict(path=str(file), size=stat.st_size, mtime_ns=stat.st_mtime_ns)
-        record = dict(schema=1, **self.owner(), toolchain=dict(release=rustc.get('release'),
-                      commit=rustc.get('commit-hash'), host=rustc.get('host')),
-                      source=source, built_utc=utc(), artifacts=artifacts)
-        path = self.target / 'oxpinyin-cell-identity.json'
-        staged = path.with_name(path.name + f'.{os.getpid()}')
-        staged.write_text(json.dumps(record, indent=1, sort_keys=True) + '\n')
-        os.replace(staged, path)
-
-
-def cdylib(stem: str) -> str:
-    """The file name cargo gives the cdylib of the crate library STEM on this host."""
-    if sys.platform == 'win32':
-        return stem + '.dll'
-    return 'lib' + stem + ('.dylib' if sys.platform == 'darwin' else '.so')
-
-
-def utc() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-
-if __name__ == '__main__':
-    raise SystemExit(main(sys.argv[1:]))
