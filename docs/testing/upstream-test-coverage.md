@@ -166,7 +166,11 @@ workspace (`fuzz/Cargo.toml` lists the targets):
 The other targets feed hostile bytes to the parsers below the ABI:
 `double-pinyin` and `chewing-parser` (the eight parseable Zhuyin
 keyboards). `user-store-ops` drives arbitrary add, remove, train and mask-out
-interleavings over a fresh user directory.
+interleavings over a fresh user directory. Its phrases take any Unicode
+scalar and any of the 375 syllables per character, its counts reach past
+`u32::MAX`, and it checks each bigram write against the store's documented
+contract: the exact totals law where no field saturates or wraps, the cap
+and the refusals where one does (the target's "Bigram rows").
 
 ### Engine
 
