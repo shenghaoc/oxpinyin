@@ -11,33 +11,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+use crate::fixtures::w3;
 use oxpinyin::data::row_format::encode_token_key;
 use oxpinyin::store::{DefaultStore, RawReadStore};
 use oxpinyin_tool_support::data::decode_single_gram;
-
-/// The repository root.
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
-}
-
-/// The compiled backend's fixture directory.
-fn fixture() -> PathBuf {
-    root()
-        .join("fixtures/w3")
-        .join(oxpinyin::__internal::DEFAULT_STORE_EXT)
-}
-
-/// A private copy of [`fixture`].
-fn fixture_copy() -> tempfile::TempDir {
-    let temp = tempfile::tempdir().expect("temp dir");
-    for entry in std::fs::read_dir(fixture()).expect("fixture dir") {
-        let entry = entry.expect("fixture entry");
-        if entry.file_type().expect("fixture file type").is_file() {
-            std::fs::copy(entry.path(), temp.path().join(entry.file_name())).expect("copy fixture");
-        }
-    }
-    temp
-}
 
 /// The binary named `name`, built for this feature set.
 fn binary(name: &str) -> PathBuf {
@@ -120,7 +97,7 @@ const START: u32 = 1;
 
 #[test]
 fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
-    let dir = fixture_copy();
+    let dir = w3();
     let outcome = run(
         "gen_deleted_ngram",
         dir.path(),
@@ -136,7 +113,7 @@ fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
 }
 #[test]
 fn eval_correction_rate_refuses_an_unknown_token() {
-    let dir = fixture_copy();
+    let dir = w3();
     std::fs::write(dir.path().join("evals2.text"), "999999 阿\n").expect("corpus");
     let outcome = run("eval_correction_rate", dir.path(), &[], b"");
     // The pin's `strcmp(NULL, phrase)` reads the NULL (class (b)); oxpinyin
