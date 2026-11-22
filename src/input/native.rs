@@ -25,6 +25,7 @@ unsafe extern "C" {
 /// # Safety
 /// The caller must use the cell only on this thread.
 #[cfg(windows)]
+#[must_use]
 pub unsafe fn errno_location() -> *mut c_int {
     // SAFETY: UCRT returns this thread's live errno cell.
     unsafe { _errno() }
@@ -52,6 +53,7 @@ fn clear_crt_os_error() {
 
 /// A native Windows path, terminated at the pin's first NUL.
 #[cfg(windows)]
+#[must_use]
 pub fn wide_path(path: &std::path::Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt as _;
     path.as_os_str()
