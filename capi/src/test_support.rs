@@ -56,6 +56,7 @@ pub(crate) unsafe fn finalize_public_context(
     );
 }
 
+#[path = "../../tests/support/c_harness_tests.rs"]
 mod tests;
 
 /// The token snapshotted on the candidate pointer.
