@@ -2,9 +2,10 @@
 
 Run from the repository root after `uv python install`:
 `uv run --managed-python python -X utf8 -m tools.dev.provision` provisions the host natively
-and never starts a container. `just provision-oracle` runs that first, then `provision oracle`
-(the oracle cells, in containers), then `provision oracle-env`, the one writer of the
-environment file. uv enforces its own floor (uv.toml required-version). Compatibility identity,
+and never starts a container. `just provision-oracle` runs that first, then `provision oracle`.
+The oracle command provisions the requested cells in containers and writes the environment file
+on Linux if the selection includes the local cell. uv enforces its own floor (uv.toml
+required-version). Compatibility identity,
 loader, cancellable process and bounded pool services remain their sole owners.
 Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
 """
@@ -147,7 +148,7 @@ class Provision:
         self.host = platform.system()
         # A Linux host provisions the one Linux cell by default (tools/dev/cell.py). `--cells` names
         # others for a pin capture: their prefixes are built and checked in the Debian deps image,
-        # and the Linux environment file still holds the Linux cell alone (oracle_env).
+        # and only a selection that includes the Linux cell writes its environment file.
         self.cells = [backend_cell.LOCAL_CELL] if self.host == 'Linux' else list(CELLS)
         if self.host == 'Linux':
             try:
@@ -882,11 +883,9 @@ class Provision:
                 print(self.summary(cell, prefix), flush=True)
         return 0
 
-    def oracle_env(self, argv):
-        """Write the environment file from the verified cells of the provisioning cache (Linux)."""
+    def oracle_env(self):
+        """Write the environment file from the verified local cell on Linux."""
         self.refuse_overrides()
-        if argv:
-            fail('usage: provision oracle-env', 2)
         self.options([], oracle=True)
         if not self.linux:
             self.log(f'{self.env_file}: not written; host runners load the oracle only on Linux')
@@ -912,10 +911,11 @@ def main(argv=None):
         with slot.cancellation_handlers():
             if args[:1] == ['oracle']:
                 service = Provision()
-                return service.oracle_setup(args[1:])
-            if args[:1] == ['oracle-env']:
+                status = service.oracle_setup(args[1:])
+                if status or (service.linux and backend_cell.LOCAL_CELL not in service.cells):
+                    return status
                 service = Provision()
-                return service.oracle_env(args[1:])
+                return service.oracle_env()
             if args[:1] == ['probe-host']:
                 library = probe_host()
                 if not library:

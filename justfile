@@ -271,25 +271,14 @@ capture-pin run:
 
 # Provision the pin oracle: native `just provision` first, then the oracle cells
 # in containers through the selected runtime into the provisioning cache (the
-# pin's entry of the cache root), then the environment file (docs/runbooks/oracle.md).
+# pin's entry of the cache root). The Linux environment file needs the local cell.
 [unix]
-provision-oracle *args: provision && _oracle-env
+provision-oracle *args: provision
     @uv run --managed-python python -X utf8 -m tools.dev.provision oracle "$@"
 
 [windows]
-provision-oracle *args: provision && _oracle-env
+provision-oracle *args: provision
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.provision oracle @forwarded; exit $LASTEXITCODE
-
-# The one writer of the oracle environment file; only provision-oracle runs it.
-[unix]
-[private]
-_oracle-env:
-    @uv run --managed-python python -X utf8 -m tools.dev.provision oracle-env
-
-[windows]
-[private]
-_oracle-env:
-    @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.provision oracle-env; exit $LASTEXITCODE
 
 # Run a sanitizer gate with address, thread, leak or memory instrumentation.
 [linux]
