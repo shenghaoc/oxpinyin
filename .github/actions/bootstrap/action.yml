@@ -12,8 +12,9 @@ description: |-
   versions and cargo-nextest at the latest version that the pinned action carries,
   and cargo-c from its
   upstream macOS release archive), and an optional Swatinem/rust-cache
-  restore/save of the registry and build artifacts (its post step runs
-  with the composite's completion). Tool binaries are not cached.
+  restore of the registry and build artifacts, with saves only on main
+  (its post step runs with the composite's completion). Tool binaries are
+  not cached.
 
   The actions/checkout step stays inline in every calling job. A local
   `./` action cannot run the checkout that makes it visible: a job
@@ -96,7 +97,8 @@ inputs:
     default: 'false'
   rust-cache:
     description: >-
-      Run Swatinem/rust-cache as the final bootstrap step. String
+      Run Swatinem/rust-cache as the final bootstrap step. Only refs/heads/main
+      saves the cache; every other ref restores only. String
       'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
@@ -104,14 +106,6 @@ inputs:
     description: 'Additional key input for Swatinem/rust-cache.'
     required: false
     default: ''
-  rust-cache-save-if:
-    description: >-
-      Whether this ref may save the Swatinem/rust-cache entry at the end of
-      the job. The cache is saved only when this is 'true' and the ref is
-      refs/heads/main; every other run restores only. String 'true'/'false'
-      (composite-action inputs are strings).
-    required: false
-    default: 'true'
 
 runs:
   using: composite
@@ -120,9 +114,8 @@ runs:
       shell: bash
       run: echo 'UV_LOCKED=1' >> "$GITHUB_ENV"
 
-    # The distro-container jobs run as root over a root-owned checkout, so any later
-    # git invocation would die on dubious ownership (this affected
-    # tracked-path probes in local tooling scripts during development).
+    # The distro-container jobs run as root over a root-owned checkout, so later
+    # git invocations need the safe.directory entry to accept the checkout.
     - name: Register the checkout as a git safe.directory
       if: inputs.safe-directory == 'true'
       shell: bash
@@ -149,7 +142,7 @@ runs:
       working-directory: ${{ inputs.rust-toolchain-dir }}
       run: rustup toolchain install
 
-    # Pinned to the v10.3.3 tag commit. No version input: setup-uv reads
+    # No version input: setup-uv reads
     # required-version from uv.toml (the repository root) and, with the
     # default highest resolution, installs the newest uv that satisfies it.
     - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
@@ -218,7 +211,7 @@ runs:
           printf 'wanted=%s\n' "${wanted[*]}" >> "$GITHUB_OUTPUT"
         fi
 
-    # install-action pin: v2.90.3 tag commit. Checksum verification stays
+    # Checksum verification stays
     # on (its default) and fallback is off, so a tool the action cannot install
     # from a release fails the job. The action has no retry or timeout input;
     # its downloads retry inside the script.
@@ -229,7 +222,7 @@ runs:
         fallback: none
 
     # The upstream release archive for macOS, an arm64 build, held to its
-    # SHA-256. A source build took seven minutes. The version and the hash
+    # SHA-256. The version and the hash
     # move together, by hand. A failed download, another hash, another runner
     # or another version fails the step: nothing falls back to a source
     # build. See the `just doctor` tool minimums in docs/runbooks/setup.md
@@ -260,10 +253,10 @@ runs:
         esac
         printf '%s/cargo-c/bin\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
-    # Pinned to the v2.9.3 tag commit (do not bump without re-verifying).
+    # Pinned to a tag commit; do not bump without re-verifying.
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       if: inputs.rust-cache == 'true'
       with:
         cache-bin: 'false'
         key: ${{ inputs.rust-cache-key }}
-        save-if: ${{ inputs.rust-cache-save-if == 'true' && github.ref == 'refs/heads/main' }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
