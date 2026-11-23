@@ -1,9 +1,9 @@
 //! `utils/training/k_mixture_model_to_interpolation.cpp` at libpinyin
 //! 074a2219: KMM text in, interpolation text out.
 //!
-//! [`convert`] is the conversion, over any [`LineReader`] and [`Sink`]; it
-//! answers a [`Failure`] where the pin exits or aborts. `convert_text` runs
-//! it in memory for the trainer. [`main`] reads `std::cin`, writes to `stdout`,
+//! [`convert`] reads lines through [`LineReader`] and writes each result to an
+//! [`OutputStream`]. It returns a [`Failure`] where the pin exits or aborts.
+//! [`main`] reads `std::cin`, writes to `stdout`,
 //! follows the pin's messages and its calls to `exit(ENODATA)` and `abort()`,
 //! and refuses undefined reads. The utility parses no options, reads no argument
 //! (`main`, :188-213) and makes no locale call.
@@ -14,9 +14,9 @@
 //! their prescribed refusal.
 
 use oxpinyin::vocab::SENTENCE_START;
-use std::ffi::{CStr, CString, OsString, c_int, c_long};
+use std::ffi::{CStr, CString, OsString};
 use std::fmt;
-use std::io::{BufRead, Write as _};
+use std::io::BufRead;
 
 use oxpinyin_tool_support::input::k_mixture_model_to_interpolation as edge;
 use oxpinyin_tool_support::input::{self as tool, LineReader, OutputStream};
@@ -67,93 +67,15 @@ impl fmt::Display for Failure {
 
 impl std::error::Error for Failure {}
 
-/// The interpolation lines the conversion writes (:74, :91-99, :134,
-/// :170-171).
-pub trait Sink {
-    /// `\data model interpolation`.
-    fn header(&mut self);
-    /// `\end`.
-    fn end(&mut self);
-    /// `\1-gram`.
-    fn gram_1(&mut self);
-    /// `\2-gram`.
-    fn gram_2(&mut self);
-    /// `\item %d %s count %ld`.
-    fn unigram(&mut self, token: c_int, word: &CStr, freq: c_long);
-    /// `\item %d %s %d %s count %ld`.
-    fn bigram(&mut self, token1: c_int, word1: &CStr, token2: c_int, word2: &CStr, count: c_long);
-}
-
-/// The utility's `fprintf` calls on its output stream.
-impl Sink for OutputStream {
-    fn header(&mut self) {
-        edge::print_header(self);
-    }
-
-    fn end(&mut self) {
-        edge::print_end(self);
-    }
-
-    fn gram_1(&mut self) {
-        edge::print_gram_1(self);
-    }
-
-    fn gram_2(&mut self) {
-        edge::print_gram_2(self);
-    }
-
-    fn unigram(&mut self, token: c_int, word: &CStr, freq: c_long) {
-        edge::print_unigram(self, token, word, freq);
-    }
-
-    fn bigram(&mut self, token1: c_int, word1: &CStr, token2: c_int, word2: &CStr, count: c_long) {
-        edge::print_bigram(self, token1, word1, token2, word2, count);
-    }
-}
-
-/// The same lines in memory: `%d` and `%ld` are the signed decimal Rust
-/// writes, and `%s` the word's bytes. Writing to a `Vec` cannot fail.
-impl Sink for Vec<u8> {
-    fn header(&mut self) {
-        self.extend_from_slice(b"\\data model interpolation\n");
-    }
-
-    fn end(&mut self) {
-        self.extend_from_slice(b"\\end\n");
-    }
-
-    fn gram_1(&mut self) {
-        self.extend_from_slice(b"\\1-gram\n");
-    }
-
-    fn gram_2(&mut self) {
-        self.extend_from_slice(b"\\2-gram\n");
-    }
-
-    fn unigram(&mut self, token: c_int, word: &CStr, freq: c_long) {
-        let _ = write!(self, "\\item {token} ");
-        self.extend_from_slice(word.to_bytes());
-        let _ = writeln!(self, " count {freq}");
-    }
-
-    fn bigram(&mut self, token1: c_int, word1: &CStr, token2: c_int, word2: &CStr, count: c_long) {
-        let _ = write!(self, "\\item {token1} ");
-        self.extend_from_slice(word1.to_bytes());
-        let _ = write!(self, " {token2} ");
-        self.extend_from_slice(word2.to_bytes());
-        let _ = writeln!(self, " count {count}");
-    }
-}
-
 /// The pin's statics (:41-44) over `main`'s streams (:189-190); the
 /// reader's line is the pin's `linebuf`.
-struct Converter<'a, R, S> {
+struct Converter<'a, R> {
     input: &'a mut LineReader<R>,
-    output: &'a mut S,
+    output: &'a mut OutputStream,
     model: TaggedModel,
 }
 
-impl<R: BufRead, S: Sink> Converter<'_, R, S> {
+impl<R: BufRead> Converter<'_, R> {
     /// `taglib_read(linebuf, line_type, values, required)`.
     fn read(&mut self, checked: bool) -> Result<bool, Failure> {
         let line = self.input.c_str();
@@ -185,7 +107,7 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
         if !self.read(false)? || self.model.value(b"model") != c"k mixture model" {
             return Err(Failure::NotKmm);
         }
-        self.output.header();
+        edge::print_header(self.output);
         Ok(())
     }
 
@@ -205,16 +127,16 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
             self.check_read(final_item_at_eof)?;
             match self.model.line_type {
                 END_LINE => {
-                    self.output.end();
+                    edge::print_end(self.output);
                     break;
                 }
                 GRAM_1_LINE => {
-                    self.output.gram_1();
+                    edge::print_gram_1(self.output);
                     self.input.getline();
                     final_item_at_eof = self.parse_unigram()?;
                 }
                 GRAM_2_LINE => {
-                    self.output.gram_2();
+                    edge::print_gram_2(self.output);
                     self.input.getline();
                     final_item_at_eof = self.parse_bigram()?;
                 }
@@ -240,7 +162,7 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
                     if token.cast_unsigned() != SENTENCE_START {
                         let freq = tool::atol(self.model.value(b"freq"));
                         if freq != 0 {
-                            self.output.unigram(token, self.model.phrase(1), freq);
+                            edge::print_unigram(self.output, token, self.model.phrase(1), freq);
                         }
                     }
                 }
@@ -268,7 +190,7 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
                     let count = tool::atol(self.model.value(b"count"));
                     let (token1, token2) = (self.model.token(0), self.model.token(2));
                     let (word1, word2) = (self.model.phrase(1), self.model.phrase(3));
-                    self.output.bigram(token1, word1, token2, word2, count);
+                    edge::print_bigram(self.output, token1, word1, token2, word2, count);
                 }
                 END_LINE | GRAM_1_LINE | GRAM_2_LINE => break false,
                 _ => return Err(Failure::LineTypeUnlisted),
@@ -292,7 +214,7 @@ impl<R: BufRead, S: Sink> Converter<'_, R, S> {
 /// The [`Failure`] at which the pin stops.
 pub fn convert<R: BufRead>(
     input: &mut LineReader<R>,
-    output: &mut impl Sink,
+    output: &mut OutputStream,
 ) -> Result<(), Failure> {
     let mut converter = Converter {
         input,
