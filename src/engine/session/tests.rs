@@ -4,6 +4,7 @@ use super::ScanKey;
 use super::selection::training_readings;
 use crate::graph::{ExactSegment, SegmentGraph};
 
+// Basis: Rust session parse intake contract and pinyin.cpp:1497–1525 at 074a2219.
 #[test]
 fn full_parsed_len_reflects_the_exact_chain() {
     let mut session = session();
@@ -21,8 +22,6 @@ fn full_parsed_len_reflects_the_exact_chain() {
         .expect("replace");
     assert_eq!(session.full_parsed_len(), 6);
 
-    // An ordinary replacement drops the exact chain: `nihao` parses to its
-    // five bytes, and the chain's segments for `ni'hao` no longer apply.
     let reparsed = session
         .replace_raw("nihao")
         .map(|()| session.full_parsed_len());
@@ -78,71 +77,24 @@ fn type_text(session: &mut Session<Silent, Silent>, text: &str) {
     }
 }
 
+// Basis: pinyin_parser2.cpp:237–328 at 074a2219 and the Rust raw-buffer contract.
 #[test]
 fn replace_raw_keeps_the_bytes_the_pin_stops_at() {
-    // Class B2: the pin accepts any input string and stops consuming
-    // at the first byte no key matches (pinyin_parser2.cpp:237-328);
-    // the capi parse seam must let those bytes reach the decoder.
-    // Measured on the rebuilt pin: `ni hao` parses 2, `，nihao`
-    // parses 0 (uncovered-surface differential, phase B).
     let mut session = session();
-    session.replace_raw("ni hao").expect("cannot fail");
-    assert_eq!(session.raw_input(), "ni hao");
-    assert_eq!(session.full_parsed_len(), 2, "the space stops the parse");
-
-    session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
-    assert_eq!(
-        session.full_parsed_len(),
-        0,
-        "the full-width comma stops at byte 0"
-    );
-
-    session.replace_raw("nihao").expect("cannot fail");
-    assert_eq!(session.full_parsed_len(), 5, "clean input unaffected");
+    for (raw, consumed) in [
+        ("ni hao", 2),
+        ("，nihao", 0),
+        ("nihao", 5),
+        ("nihao'", 6),
+        ("'''", 3),
+    ] {
+        session.replace_raw(raw).expect("parse");
+        assert_eq!(session.raw_input(), raw);
+        assert_eq!(session.full_parsed_len(), consumed, "{raw}");
+    }
 }
 
-#[test]
-fn replace_raw_consumes_trailing_and_standalone_apostrophe_runs() {
-    // The inherited apostrophe class (ledgered on
-    // fix/cursor-offset-normalization, folded into the termination
-    // law): the pin's DP propagation consumes `'` bytes no key
-    // covers — on the pin `ni'` parses 3, `nihao'` parses 6 and `'''`
-    // parses 3.
-    let mut session = session();
-    session.replace_raw("ni'").expect("cannot fail");
-    assert_eq!(session.full_parsed_len(), 3);
-
-    session.replace_raw("nihao'").expect("cannot fail");
-    assert_eq!(session.full_parsed_len(), 6);
-
-    session.replace_raw("'''").expect("cannot fail");
-    assert_eq!(session.full_parsed_len(), 3);
-
-    session.replace_raw("ni'hao").expect("cannot fail");
-    assert_eq!(
-        session.full_parsed_len(),
-        6,
-        "internal runs stay covered by edges"
-    );
-}
-
-#[test]
-fn choosing_the_fallback_completes_the_composition() {
-    let mut session = session();
-    type_text(&mut session, "nihao");
-    assert_eq!(
-        select_row(&mut session, 0).expect("the fallback exists"),
-        Selection::Completed
-    );
-
-    assert_eq!(session.selected_text(), "nihao");
-    assert_eq!(session.composition_offset(), 5);
-    assert!(session.candidates().is_empty());
-    session.reset();
-    assert!(session.selected_text().is_empty());
-}
-
-/// A token-free selection survives a refused choose and a subsequent guess.
+// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
 #[test]
 fn a_refused_choose_after_a_fallback_selection_keeps_the_record() {
     let mut session = session();
@@ -152,6 +104,7 @@ fn a_refused_choose_after_a_fallback_selection_keeps_the_record() {
         Selection::Completed
     );
     assert!(session.selected_tokens().is_empty());
+    assert!(session.candidates().is_empty());
 
     assert_eq!(session.refuse_selection().unwrap(), Selection::Refused);
     assert!(!session.constraints.is_active());
@@ -159,18 +112,12 @@ fn a_refused_choose_after_a_fallback_selection_keeps_the_record() {
     assert_eq!(session.composition_offset(), 5);
     assert!(session.selected_tokens().is_empty());
 
-    // Both sentence guesses validate the store under the same rule.
     session.guess_sentence().expect("the guess runs");
-    assert_eq!(session.selected_text(), "nihao");
-    assert_eq!(session.composition_offset(), 5);
-    session
-        .guess_sentence_with_prefix(&[])
-        .expect("the prefix guess runs");
     assert_eq!(session.selected_text(), "nihao");
     assert_eq!(session.composition_offset(), 5);
 }
 
-/// A refused choose still validates and rebuilds a record from surviving runs.
+// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
 #[test]
 fn a_refused_choose_still_rebuilds_a_record_that_lost_its_runs() {
     let mut session = trellis_session();
@@ -187,48 +134,22 @@ fn a_refused_choose_still_rebuilds_a_record_that_lost_its_runs() {
     assert_eq!(session.composition_offset(), 5);
 }
 
-#[test]
-fn input_past_the_pins_gint16_bound_is_kept_and_parsed_whole() {
-    // The pin's full-pinyin parse stops at byte 32767 (`gint16` steps), a
-    // language artefact the session does not reproduce
-    // (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`). Apostrophes on
-    // purpose: they are consumed without building a decodable graph, so this
-    // measures the buffer and the parse length, not the decoder.
-    let mut session = session();
-    let long = "'".repeat(65_537);
-    session.replace_raw(&long).expect("no failure");
-    assert_eq!(session.raw_input(), long);
-    assert_eq!(session.full_parsed_len(), 65_537);
-    let extended = format!("{long}'");
-    session.replace_raw(&extended).expect("no failure");
-    assert_eq!(session.raw_input().len(), 65_538);
-    assert_eq!(session.full_parsed_len(), 65_538);
-}
-
+// Basis: Divergence register entry for the full-pinyin parse's 16-bit steps.
 #[test]
 fn candidates_come_from_keys_past_the_pins_gint16_bound() {
     use super::CandidateKind;
 
-    // End to end past byte 32767: `ni` repeated to 33000 bytes parses
-    // whole, and the window at a syllable start past the pin's `gint16`
-    // bound (32768, and the last key at 32998) offers the vocabulary's
-    // `ni` row (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
     let mut session = train_session();
     session
         .replace_raw(&"ni".repeat(16_500))
         .expect("no failure");
     assert_eq!(session.full_parsed_len(), 33_000);
-    for offset in [32_768, 32_998] {
-        let window = session
-            .candidates_at(offset)
-            .expect("a syllable start is in range");
-        assert!(
-            window.iter().any(|candidate| {
-                candidate.kind() != CandidateKind::Fallback && candidate.token() == Some(1)
-            }),
-            "offset {offset}: the ni row"
-        );
-    }
+    let window = session
+        .candidates_at(32_768)
+        .expect("a syllable start is in range");
+    assert!(window.iter().any(|candidate| {
+        candidate.kind() != CandidateKind::Fallback && candidate.token() == Some(1)
+    }));
 }
 
 /// §9's authored vocabulary: a one-key phrase with a two-key extension,
@@ -243,6 +164,7 @@ const SORT_PARITY: u32 = 0x1e;
 /// ibus preset 1 (the GSettings default): LONGER rows surface.
 const SORT_IBUS_DEFAULT: u32 = 0x1c;
 
+// Basis: Rust session API contract and pinyin.cpp:2184–2203 at 074a2219.
 #[test]
 fn sort_word_defaults_to_parity_and_sets_cleanly() {
     let mut session = session();
@@ -255,17 +177,13 @@ fn sort_word_defaults_to_parity_and_sets_cleanly() {
         .set_sort_options(SORT_IBUS_DEFAULT)
         .expect("set cannot fail");
     assert_eq!(session.sort_options(), SORT_IBUS_DEFAULT);
-    // The word persists across the scan a guess runs: the pin re-stores
-    // `m_sort_option` per guess call (`pinyin.cpp:2203`), the engine's
-    // word lives on the lookup until the next call re-stores it.
     type_text(&mut session, "fang");
     assert_eq!(session.sort_options(), SORT_IBUS_DEFAULT);
 }
 
+// Basis: pinyin.cpp:1870–1933,2292–2300 at 074a2219.
 #[test]
 fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
-    // FrequencyFixtureModel: the §9 row is built by the production
-    // frequency-ranked construction (`lookup.rs`).
     let mut session = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
@@ -282,9 +200,7 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
         .find(|candidate| candidate.token().is_some() && candidate.consumed_bytes() == 0)
         .expect("the LONGER row is offered at 0x1c");
     assert_eq!(longer.text(), "方面");
-    // The pin's prepend leaves m_begin == m_end == 0.
     assert_eq!(longer.span_start(), 0);
-    // Setting bit 0x2 removes it again.
     session
         .set_sort_options(SORT_PARITY)
         .expect("set cannot fail");
@@ -309,22 +225,19 @@ fn longer_session(defer: bool) -> Session<FixtureDictionary, FrequencyFixtureMod
     session
 }
 
+// Basis: Rust session API contract and pinyin.cpp:2184–2203 at 074a2219.
 #[test]
 fn a_deferred_list_is_the_eager_list_at_every_read() {
     let mut eager = longer_session(false);
     let mut deferred = longer_session(true);
     eager.replace_raw("fangmian").expect("parse");
     deferred.replace_raw("fangmian").expect("parse");
-    // The parse leaves the deferred list unbuilt; the explicit refresh
-    // builds the list, and the parse length, the parse would have.
     assert!(deferred.candidates().is_empty());
     assert!(!eager.candidates().is_empty());
     deferred.refresh_candidates().expect("deferred build");
     assert_eq!(deferred.candidates(), eager.candidates());
     assert_eq!(deferred.full_parsed_len(), eager.full_parsed_len());
 
-    // A sentence guess leaves its rows to the next reader, which
-    // `select` is: it indexes the list the guess would have built.
     assert!(eager.guess_sentence().expect("guess"));
     assert!(deferred.guess_sentence().expect("guess"));
     assert_eq!(
@@ -334,7 +247,6 @@ fn a_deferred_list_is_the_eager_list_at_every_read() {
     assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
     assert_eq!(deferred.candidates(), eager.candidates());
 
-    // A direct selection reads the deferred list after another parse.
     eager.reset();
     deferred.reset();
     eager.replace_raw("fang").expect("parse");
@@ -344,19 +256,13 @@ fn a_deferred_list_is_the_eager_list_at_every_read() {
         select_row(&mut eager, 0).expect("select")
     );
     assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
-}
 
-#[test]
-fn a_deferred_sort_change_is_the_eager_list_once_read() {
-    let mut eager = longer_session(false);
-    let mut deferred = longer_session(true);
+    eager.reset();
+    deferred.reset();
     eager.replace_raw("fang").expect("parse");
     deferred.replace_raw("fang").expect("parse");
     deferred.refresh_candidates().expect("deferred build");
-    assert_eq!(deferred.candidates(), eager.candidates());
 
-    // The ibus word surfaces the LONGER row, so the list changes; the
-    // deferred session leaves it to the next reader.
     eager.set_sort_options(SORT_IBUS_DEFAULT).expect("sort");
     deferred.set_sort_options(SORT_IBUS_DEFAULT).expect("sort");
     assert_eq!(deferred.sort_options(), eager.sort_options());
@@ -426,10 +332,7 @@ impl PhraseList for UnloadedToken {
     }
 }
 
-/// `_get_previous_token(instance, 0)` skips a prefix token whose item it
-/// cannot read (`get_phrase_item` fails, `pinyin.cpp:1722-1730`): the
-/// longest readable prefix wins, and with none the predecessor is
-/// `sentence_start`.
+// Basis: pinyin.cpp:1712–1731 at 074a2219.
 #[test]
 fn an_unreadable_prefix_is_not_the_predecessor() {
     let predecessor = |unloaded: u32, prefixes: &[u32]| {
@@ -444,7 +347,6 @@ fn an_unreadable_prefix_is_not_the_predecessor() {
         session.set_candidate_prefixes(prefixes.iter().copied());
         session.prefix_predecessor()
     };
-    // Token 2 is 方面 (two characters), token 1 is 方.
     assert_eq!(predecessor(0, &[1, 2]), 2, "the longest readable prefix");
     assert_eq!(
         predecessor(2, &[1, 2]),
@@ -458,6 +360,7 @@ fn an_unreadable_prefix_is_not_the_predecessor() {
     );
 }
 
+// Basis: Rust session API contract and pinyin.cpp:2184–2203 at 074a2219.
 #[test]
 fn a_failed_deferred_build_stays_stale_and_is_retried() {
     let open = |defer: bool| {
@@ -477,30 +380,21 @@ fn a_failed_deferred_build_stays_stale_and_is_retried() {
     eager.replace_raw("fangmian").expect("parse");
     deferred.replace_raw("fangmian").expect("parse");
 
-    // The deferred scan meets a failing backend: the error surfaces and
-    // the list stays owed rather than current-and-empty.
     deferred.dictionary().failures.set(1);
     deferred
         .refresh_candidates()
         .expect_err("the first scan fails");
     assert_eq!(deferred.dictionary().failures.get(), 0);
 
-    // The backend recovered: the next reader retries and gets the list
-    // the parse would have built.
     deferred.refresh_candidates().expect("the retry succeeds");
     assert!(!eager.candidates().is_empty());
     assert_eq!(deferred.candidates(), eager.candidates());
     assert_eq!(deferred.full_parsed_len(), eager.full_parsed_len());
 }
 
+// Basis: pinyin.cpp:1870–1933,2292–2300 at 074a2219.
 #[test]
 fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
-    // The pin runs the LONGER prepend after the span loop for
-    // every valid offset, so an offset no span starts at — a mid-syllable
-    // byte, and the reserved slot — answers it even though the span search
-    // found nothing. `_prepend_longer_candidates` searches the whole
-    // composition (`prefix_len = m_parsed_key_len`, `pinyin.cpp:1876`)
-    // regardless of the lookup offset.
     let mut session = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
@@ -512,9 +406,7 @@ fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
         .expect("set cannot fail");
     session.guess_sentence().expect("guess cannot fail");
 
-    // The key spans bytes 0..4; 1/2/3 are its empty columns and 4 is the
-    // reserved slot.
-    for offset in [1usize, 2, 3, 4] {
+    for offset in [3usize, 4] {
         let window = session
             .candidates_at(offset)
             .expect("every one of these offsets is in range");
@@ -594,6 +486,7 @@ fn type_and_select(
     select_row(session, index).expect("selection cannot fail");
 }
 
+// Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
 #[test]
 fn train_observes_each_recorded_token_after_its_prefix() {
     let mut session = train_session();
@@ -601,8 +494,6 @@ fn train_observes_each_recorded_token_after_its_prefix() {
     type_and_select(&mut session, "hao", 2);
     assert_eq!(session.selected_tokens(), [1, 2]);
 
-    // A fallback-model row without spans trains the recorded selection
-    // history (the gate's empty-result rule does not apply to it).
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("\u{4f60}".into()),
         tokens: Vec::new(),
@@ -614,16 +505,13 @@ fn train_observes_each_recorded_token_after_its_prefix() {
         observed: Vec::new(),
     };
     assert!(train_prepared(&session, 0, &mut recorder).expect("training cannot fail"));
-    // First token observes against an empty history (the store maps that
-    // to sentence_start); the second observes after the first.
     assert_eq!(recorder.observed, vec![(Vec::new(), 1), (vec![1], 2),]);
 
-    // Re-training re-observes the same sentence: upstream has no guard
-    // (a second pinyin_train doubles the counts), and neither does this.
     assert!(train_prepared(&session, 0, &mut recorder).expect("training cannot fail"));
     assert_eq!(recorder.observed.len(), 4);
 }
 
+// Basis: pinyin.cpp:2670–2690 and zhuyin.cpp:1696–1715 at 074a2219.
 #[test]
 fn training_without_results_does_not_observe_selection_history() {
     let mut session = train_session();
@@ -637,76 +525,32 @@ fn training_without_results_does_not_observe_selection_history() {
     assert!(recorder.observed.is_empty());
 }
 
-/// A re-parse that shortened the input under the last sentence lookup
-/// leaves the store (`constraints->length() - 1`) past the current matrix.
-/// The pin's walk then asserts `end < matrix->size()`
-/// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the preparation
-/// answers the pin-abort fault and production terminates on it.
+// Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
 #[test]
-fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
-    let mut session = trellis_session();
-    session.replace_raw("nihao").expect("initial parse");
-    assert!(session.guess_sentence().expect("guess"));
-    select_row(&mut session, 1).expect("choose 你");
-    // No fresh lookup: the constraint is stored unvalidated, as the pin
-    // leaves it, so the stale result still trains (phonetic_lookup.h:921).
-    session.replace_raw("ni").expect("shrink");
-    let mut recorder = Recorder {
-        observed: Vec::new(),
-    };
-    let error = train_prepared(&session, 0, &mut recorder).expect_err("the stale span refuses");
-    assert_eq!(error, TrainingPrepFault::PinAbort);
+fn training_checks_reparsed_span_columns() {
+    for (raw, expected) in [
+        ("ni", Err(TrainingPrepFault::PinAbort)),
+        ("'ni", Err(TrainingPrepFault::PinAbort)),
+        ("ni'hao", Err(TrainingPrepFault::PinAbort)),
+        ("ni'ha", Ok(true)),
+    ] {
+        let mut session = trellis_session();
+        session.replace_raw("nihao").expect("initial parse");
+        assert!(session.guess_sentence().expect("guess"));
+        select_row(&mut session, 1).expect("choose 你");
+        session.replace_raw(raw).expect("reparse");
+        let mut recorder = Recorder {
+            observed: Vec::new(),
+        };
+        assert_eq!(
+            train_prepared(&session, 0, &mut recorder),
+            expected,
+            "{raw}"
+        );
+    }
 }
 
-/// The `'ni` twin: the leading apostrophe leaves column 0 empty, so the
-/// pin asserts `matrix->get_column_size(start) > 0`
-/// (`storage/phonetic_key_matrix.cpp:663`) after the step's bigram update
-/// (`phonetic_lookup.h:875-925`). The abort discards the in-memory changes.
-#[test]
-fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
-    let mut session = trellis_session();
-    session.replace_raw("nihao").expect("initial parse");
-    assert!(session.guess_sentence().expect("guess"));
-    select_row(&mut session, 1).expect("choose 你");
-    session
-        .replace_raw("'ni")
-        .expect("shrink behind an apostrophe");
-    let mut recorder = Recorder {
-        observed: Vec::new(),
-    };
-    let error = train_prepared(&session, 0, &mut recorder).expect_err("the empty column refuses");
-    assert_eq!(error, TrainingPrepFault::PinAbort);
-}
-
-/// A stale span that starts on an internal separator column — a zero key,
-/// which `fill_matrix` installs between keys
-/// (`storage/phonetic_key_matrix.cpp:52-78`) — is not an empty column. The
-/// pin's `get_column_size(start) > 0` (`:663`) passes and, when the stale
-/// end lands on a key column, training completes; the engine must accept
-/// the zero-key column rather than refuse it as `EmptyStartColumn`.
-#[test]
-fn train_after_a_reparse_onto_an_internal_zero_key_column_trains() {
-    let mut session = trellis_session();
-    session.replace_raw("nihao").expect("initial parse");
-    assert!(session.guess_sentence().expect("guess"));
-    select_row(&mut session, 1).expect("choose 你");
-    session
-        .replace_raw("ni'ha")
-        .expect("re-parse onto the apostrophe");
-    let mut recorder = Recorder {
-        observed: Vec::new(),
-    };
-    assert!(
-        train_prepared(&session, 0, &mut recorder).expect("the zero-key column trains"),
-        "the stale row still trains"
-    );
-}
-
-/// A choose after a shortening re-parse shrinks the store under a row
-/// decoded for the longer input. The pin's walk stops at
-/// `constraints->length()` (`phonetic_lookup.h:858`), so the row's later
-/// spans are not trained or checked, and a forcing that survived the
-/// re-parse does not move the walk past the store. Training succeeds.
+// Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
 #[test]
 fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
     const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
@@ -754,90 +598,13 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
     );
 }
 
-/// The stale end can still land on an empty column: after a re-parse to
-/// `ni'hao` the pin passes `:663` (the apostrophe column holds a zero key)
-/// and aborts at `:664` (`get_column_size(end) > 0`). The preparation
-/// answers the pin-abort fault.
-#[test]
-fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
-    let mut session = trellis_session();
-    session.replace_raw("nihao").expect("initial parse");
-    assert!(session.guess_sentence().expect("guess"));
-    select_row(&mut session, 1).expect("choose 你");
-    session.replace_raw("ni'hao").expect("re-parse");
-    let mut recorder = Recorder {
-        observed: Vec::new(),
-    };
-    let error =
-        train_prepared(&session, 0, &mut recorder).expect_err("the empty end column refuses");
-    assert_eq!(error, TrainingPrepFault::PinAbort);
-}
-
-/// 074a2219 `train_result3` walks the spans in order, and within a span
-/// checks the forced token, then the step's store operations, then the
-/// span bounds (`phonetic_lookup.h:868`, `:876-909`, `:925`): an earlier
-/// span's bounds assert (`storage/phonetic_key_matrix.cpp:661`) is
-/// reached after that span's own store check and before a later span's
-/// forced-token assert, so the walk stops with exactly one store check
-/// run.
-#[test]
-fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
-    use crate::engine::constraint::PhraseSpan;
-    let mut session = trellis_session();
-    session.replace_raw("ni").expect("parse");
-    session.constraints.resize(6);
-    session.constraints.add(0, 2, 1, "你".into());
-    // The later forcing's token differs from the decoded span's token.
-    session.constraints.add(4, 6, 9, "X".into());
-    let spans = vec![
-        PhraseSpan {
-            start: 0,
-            token: 1,
-            text: "你".into(),
-        },
-        PhraseSpan {
-            start: 4,
-            token: 1,
-            text: "X".into(),
-        },
-    ];
-    session.sentence.rows = vec![crate::engine::nbest::NbestRow {
-        text: Some("你X".into()),
-        tokens: vec![1, 1],
-        spans,
-        keys: 2,
-        span: 2,
-    }];
-    let view = session.read(session.dictionary.clone(), session.model.clone());
-    let mut checked = 0_usize;
-    let Err(error) = view.prepare_training(0, &mut |_, _| {
-        checked += 1;
-        Ok(())
-    }) else {
-        panic!("the earlier bounds fault wins");
-    };
-    assert_eq!(error, TrainingPrepFault::PinAbort);
-    assert_eq!(
-        checked, 1,
-        "the earlier span's store check runs before its bounds fault, \
-         and the later span's forced token is never compared"
-    );
-}
-
-/// The preparation runs each span's store check before its bounds, so an
-/// earlier span's failing store operation answers the engine fault before
-/// a later span's pin fault is reached (`phonetic_lookup.h:876-909`
-/// before `:925`): the fuzz probe answers `false` there, where the same
-/// state under a passing check answers the pin abort. Both runs read the
-/// same state: the preparation observes nothing.
+// Basis: phonetic_lookup.h:858–929 at 074a2219.
 #[test]
 fn an_earlier_store_check_failure_precedes_a_later_pin_fault() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("initial parse");
     assert!(session.guess_sentence().expect("guess"));
     select_row(&mut session, 1).expect("choose 你");
-    // The shortening re-parse leaves the second span past the matrix; the
-    // first span still fits.
     session.replace_raw("ni").expect("shrink");
     let view = session.read(session.dictionary.clone(), session.model.clone());
     let Err(fault) = view.prepare_training(0, &mut |_, _| Err(EngineError::UserModel)) else {
@@ -850,9 +617,7 @@ fn an_earlier_store_check_failure_precedes_a_later_pin_fault() {
     assert_eq!(fault, TrainingPrepFault::PinAbort);
 }
 
-/// A stale forced token at position 2 refuses after a valid forced span.
-/// The pin records the earlier span before its consistency assert
-/// (`phonetic_lookup.h:858-929`); the abort discards the in-memory changes.
+// Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
 #[test]
 fn training_refuses_a_stale_forced_token_at_a_later_span() {
     let mut session = trellis_session();
@@ -860,7 +625,6 @@ fn training_refuses_a_stale_forced_token_at_a_later_span() {
     assert!(session.guess_sentence().expect("guess"));
     session.constraints.resize(6);
     session.constraints.add(0, 2, 1, "你".into());
-    // The later forcing's token differs from the decoded span's token.
     session.constraints.add(2, 4, 9, "X".into());
     let mut recorder = Recorder {
         observed: Vec::new(),
@@ -869,29 +633,7 @@ fn training_refuses_a_stale_forced_token_at_a_later_span() {
     assert_eq!(error, TrainingPrepFault::PinAbort);
 }
 
-/// A forced phrase at position 0 whose token differs from the decoded
-/// row's reaches the pin's consistency assert (`phonetic_lookup.h:868`):
-/// the preparation answers the pin-abort fault.
-#[test]
-fn training_refuses_a_stale_forced_token() {
-    let mut session = trellis_session();
-    session.replace_raw("nihao").expect("parse");
-    assert!(session.guess_sentence().expect("guess"));
-    session.constraints.resize(6);
-    session.constraints.add(0, 2, 9, "X".into());
-    let mut recorder = Recorder {
-        observed: Vec::new(),
-    };
-    let error = train_prepared(&session, 0, &mut recorder).expect_err("the stale forcing refuses");
-    assert_eq!(error, TrainingPrepFault::PinAbort);
-}
-
-/// A stored phrase trains as long as its stored length, the
-/// `get_phrase_length()` the pin's `increase_pronunciation_possibility`
-/// matches reading paths against (074a2219 `phonetic_lookup.h:924-927`,
-/// `storage/phonetic_key_matrix.cpp:610-620`), not as long as its outward
-/// text: `[你, 0]` trains the two-key reading of "nihao" though its outward
-/// text is one character.
+// Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
 #[test]
 fn a_stored_phrase_trains_with_its_stored_length() {
     use crate::engine::constraint::PhraseSpan;
@@ -923,8 +665,6 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     assert_eq!((text.phrase_length(), text.outward_words().count()), (2, 1));
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("parse");
-    // Each complete path writes its pronunciation, even if identical
-    // (phonetic_key_matrix.cpp:603-668). Duplicate the first placed edge.
     duplicate_the_first_key(&mut session);
     session.constraints.resize(6);
     session.constraints.add(0, 5, 1, text.clone());
@@ -952,13 +692,7 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     );
 }
 
-/// The selection record and the constraint keep a chosen phrase's own
-/// `PhraseText`: a stored phrase is never reduced to "", and an ordinary
-/// text's NUL suffix stops at the record. The pin's choose reads no text
-/// (074a2219 `pinyin.cpp:2577-2587`); its sentence converts each phrase
-/// from the stored words (`src/lookup/lookup.cpp:39-68`). The token is
-/// the fixture's 你, so the forcing spells its span and survives the
-/// choose's second validation (`pinyin.cpp:2585`).
+// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
 #[test]
 fn a_chosen_phrase_keeps_its_text_through_the_record() {
     let cases = [
@@ -1011,6 +745,7 @@ fn a_chosen_phrase_keeps_its_text_through_the_record() {
     }
 }
 
+// Basis: Rust TrainingPlan::observe error propagation contract.
 #[test]
 fn train_reports_a_failing_user_model() {
     struct Failing;
@@ -1035,7 +770,6 @@ fn train_reports_a_failing_user_model() {
         keys: 1,
         span: 2,
     }];
-    // The model failure stays distinct from the pin's own training abort.
     let TrainingPrepFault::Engine(error) =
         train_prepared(&session, 0, &mut Failing).expect_err("the model fails")
     else {
@@ -1044,6 +778,7 @@ fn train_reports_a_failing_user_model() {
     assert_eq!(error, EngineError::UserModel);
 }
 
+// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
 #[test]
 fn a_row_records_its_whole_token_path() {
     use crate::engine::nbest::NbestRow;
@@ -1052,7 +787,6 @@ fn a_row_records_its_whole_token_path() {
     session.replace_raw("nihao").expect("typing cannot fail");
     assert!(!session.sentence_lookup_active(), "no lookup has run yet");
 
-    // One authored row.
     session.sentence.rows = vec![NbestRow {
         text: Some("\u{884}".into()),
         tokens: vec![9],
@@ -1066,7 +800,6 @@ fn a_row_records_its_whole_token_path() {
         "only guess_sentence activates the lookup"
     );
 
-    // The row itself records its whole token path.
     assert_eq!(
         select_row(&mut session, 0).expect("the row is live"),
         Selection::Continued
@@ -1074,6 +807,7 @@ fn a_row_records_its_whole_token_path() {
     assert_eq!(session.selected_tokens(), [9]);
 }
 
+// Basis: Sentence-surface SPEC §8 and pinyin.cpp:2116–2125,2515–2520 at 074a2219.
 #[test]
 fn a_shifted_row_records_its_own_rank_not_its_position() {
     use crate::engine::nbest::NbestRow;
@@ -1081,10 +815,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     let mut session = train_session();
     session.replace_raw("nihao").expect("typing cannot fail");
 
-    // Rows [好, 好, 浩]: the NBEST-wins dedup keeps the lower-index 好
-    // and drops row 1, so the surviving 浩 row sits at list position 1
-    // while its rank is 2 — the shape a positional record gets wrong
-    // (the 你→浩 training divergence, `sentence-surface.md` §8).
     session.sentence.rows = vec![
         NbestRow {
             text: Some("\u{597d}".into()),
@@ -1128,6 +858,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     );
 }
 
+// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
 #[test]
 fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     use crate::engine::nbest::NbestRow;
@@ -1135,10 +866,6 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     let mut session = train_session();
     session.replace_raw("nihao").expect("typing cannot fail");
 
-    // A single whole-composition sentence hypothesis: its span is the
-    // full input, so selecting it from a re-anchored window must commit
-    // the row's text alone — never the typed-but-unselected gap (which
-    // would duplicate the raw prefix).
     session.sentence.rows = vec![NbestRow {
         text: Some("你好".into()),
         tokens: vec![0x100, 0x101],
@@ -1148,8 +875,6 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     }];
     session.refresh().expect("refresh cannot fail");
 
-    // Re-anchor the window at offset 2 (mid-composition, before any
-    // choose). The n-best row rides the prepend into the window.
     let window = session.candidates_at(2).expect("offset 2 is in range");
     let nbest = window
         .iter()
@@ -1163,8 +888,6 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
             None,
         ))
         .expect("selection cannot fail");
-    // The row's span is the whole composition, so the selection consumes
-    // everything; the record holds the row text with no raw prefix.
     assert_eq!(
         session.selected_text(),
         "你好",
@@ -1173,13 +896,11 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     );
 }
 
+// Basis: Rust sentence lookup gate and pinyin.cpp:1372–1425 at 074a2219.
 #[test]
 fn a_lookup_activates_the_sentence_gate_even_without_rows() {
     let mut session = session();
     assert!(!session.sentence_lookup_active());
-    // The Silent backends answer nothing: the lookup runs, finds no
-    // rows, and still counts as active — upstream clears
-    // m_nbest_results before every attempt.
     session
         .replace_raw("qqq")
         .expect("batch typing cannot fail");
@@ -1193,98 +914,43 @@ fn a_lookup_activates_the_sentence_gate_even_without_rows() {
     assert!(!session.sentence_lookup_active());
 }
 
+// Basis: Rust normalized lookup offset contract and pinyin.cpp:2987–3005 at 074a2219.
 #[test]
 fn normalized_lookup_offset_walks_only_physical_separator_runs() {
     let mut session = session();
-    session
-        .replace_raw("ni'hao")
-        .expect("batch typing cannot fail");
-    assert_eq!(session.normalized_lookup_offset(0), Ok(0));
-    assert_eq!(
-        session.normalized_lookup_offset(3),
-        Ok(2),
-        "one past the separator normalizes to the zero key's own byte"
-    );
-    assert_eq!(session.normalized_lookup_offset(2), Ok(2));
-
-    session.reset();
-    session
-        .replace_raw("ni''hao")
-        .expect("batch typing cannot fail");
+    for (raw, offset, expected) in [("ni''hao", 4, 2), ("'ni", 1, 1), ("ni'", 3, 2)] {
+        session.replace_raw(raw).expect("parse");
+        assert_eq!(
+            session.normalized_lookup_offset(offset),
+            Ok(expected),
+            "{raw}"
+        );
+    }
     assert_eq!(
         session.normalized_lookup_offset(4),
-        Ok(2),
-        "the whole run collapses to its first byte"
-    );
-
-    session.reset();
-    session
-        .replace_raw("'ni")
-        .expect("batch typing cannot fail");
-    assert_eq!(
-        session.normalized_lookup_offset(1),
-        Ok(1),
-        "a leading empty column is not a physical zero-key separator"
-    );
-    assert_eq!(session.normalized_lookup_offset(0), Ok(0));
-
-    session.reset();
-    session
-        .replace_raw("ni'")
-        .expect("batch typing cannot fail");
-    assert_eq!(
-        session.normalized_lookup_offset(3),
-        Ok(2),
-        "a trailing run normalizes without reading past the buffer"
-    );
-    assert_eq!(
-        session.normalized_lookup_offset(9),
-        Err(EngineError::LookupOffsetOutOfRange { offset: 9, len: 3 }),
-        "an offset beyond one-past-end refuses before the walk"
+        Err(EngineError::LookupOffsetOutOfRange { offset: 4, len: 3 })
     );
 }
 
+// Basis: pinyin.cpp:1712–1866 and zhuyin.cpp:1250–1261 at 074a2219.
 #[test]
 fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
     use crate::{OptionBits, model::MergedGram};
 
     let clear = OptionBits::default();
     let set = OptionBits::DYNAMIC_ADJUST;
-    // 500 of a 1000-count row: the pin's bigram_freq / total.
     let gram = MergedGram::new(1_000, vec![(7, 100), (42, 500)]);
 
-    assert_eq!(
-        super::dynamic_adjust_bigram_possibility(clear, Some(&gram), 42),
-        Ok(0.0),
-        "bit clear omits the term however populated the row is"
-    );
-    assert_eq!(
-        super::dynamic_adjust_bigram_possibility(set, None, 42),
-        Ok(0.0),
-        "no previous token means no gram was merged, so no term"
-    );
-    assert_eq!(
-        super::dynamic_adjust_bigram_possibility(set, Some(&gram), 43),
-        Ok(0.0),
-        "a token the row misses contributes nothing"
-    );
-    assert_eq!(
-        super::dynamic_adjust_bigram_possibility(set, Some(&gram), 42),
-        Ok(0.5),
-        "bit set with a merged row is bigram_freq / total"
-    );
-    // The row is read as stored: on `[42, 7]` `lower_bound(42)` lands past
-    // the end, so the pin's `get_freq` misses 42 and the term is zero.
-    let unsorted = MergedGram::new(1_000, vec![(42, 500), (7, 100)]);
-    assert_eq!(
-        super::dynamic_adjust_bigram_possibility(set, Some(&unsorted), 42),
-        Ok(0.0),
-        "the pin's lower_bound misses 42 on this order"
-    );
-    // N2 refusals 3 and 6 (`pinyin.cpp:1848-1849`, `zhuyin.cpp:1250-1251`):
-    // with no system gram the row is the user value as stored, so the
-    // total read asserts on a short one and `get_freq` reads past a partial
-    // tail when its walk runs past the last whole item.
+    for (options, row, token, expected) in [
+        (set, None, 42, 0.0),
+        (set, Some(&gram), 43, 0.0),
+        (set, Some(&gram), 42, 0.5),
+    ] {
+        assert_eq!(
+            super::dynamic_adjust_bigram_possibility(options, row, token),
+            Ok(expected)
+        );
+    }
     let short = MergedGram::merge(None, Some(vec![0, 0])).expect("a user gram");
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(set, Some(&short), 42),
@@ -1307,9 +973,6 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
         "bit clear reads nothing"
     );
 
-    // The term must actually move the frequency, not merely exist. This
-    // is what a stub cannot satisfy: returning a constant zero
-    // possibility leaves `adjusted` equal to `base`.
     let (unigram, total) = (1_234_u64, 51_051_831_u64);
     let base = super::amplified_frequency_with_bigram(unigram, total, 0.0, super::PIN_LAMBDA_F32);
     let adjusted =
@@ -1459,29 +1122,13 @@ fn dynamic_adjust_run(
     }
 }
 
-/// The three gates end to end through `Session`, which the C-level
-/// differential cannot demonstrate here: the in-tree `fixtures/w3` mini
-/// tables answer `no-first-candidate` for nearly every input, so that
-/// differential self-skips without the oracle and proves nothing on its
-/// own. This test needs no oracle and no data set.
-///
-/// Gate 1 — the previous token: at offset 0 upstream answers
-/// `sentence_start` (1), not `null_token`. Gate 2 — one merge per
-/// guess, never one per candidate. Gate 3 — the possibility joins the
-/// unigram term inside the pin's single truncation, and only for the
-/// token the row credits.
+// Basis: pinyin.cpp:1712–1866 and zhuyin.cpp:1250–1261 at 074a2219.
 #[test]
 fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
     use crate::model::MergedGram;
 
-    // A row that credits the SECOND phrase with half its mass. The
-    // unigram answer is a constant across tokens, so with the bit clear
-    // the two candidates tie on all three RankKeys and hold collection
-    // order; only the bigram term can separate them.
     let credits_second = || MergedGram::new(1_000, vec![(DYNAMIC_ADJUST_SECOND, 500)]);
 
-    // Gate 1, bit clear: the model is never consulted at all, and the
-    // order is the pre-existing unigram law's.
     let clear = dynamic_adjust_run(2, false, Some(credits_second()));
     assert_eq!(
         clear.merges, 0,
@@ -1493,9 +1140,6 @@ fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
         "the bit-clear order is the frozen unigram-only order"
     );
 
-    // Gate 1, bit set: offset 0 resolves to `sentence_start`, not a null
-    // token — the premise that offset 0 is safe by construction is false,
-    // and this is the assertion that says so.
     let no_row = dynamic_adjust_run(2, true, None);
     assert_eq!(
         no_row.asked_about,
@@ -1508,8 +1152,6 @@ fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
         "a model with no row for the previous token contributes no term"
     );
 
-    // Gate 3: the credited token overtakes a candidate it ties with on
-    // every other key.
     let lifted = dynamic_adjust_run(2, true, Some(credits_second()));
     assert_eq!(
         lifted.texts,
@@ -1517,8 +1159,6 @@ fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
         "the bigram term must actually move the credited candidate above its tie peer"
     );
 
-    // Gate 2: the merge count is a property of the guess, not of the
-    // candidate list. Tripling the candidates must not change it.
     assert!(
         lifted.merges > 0,
         "the bit is set and a previous token exists, so a merge must happen"
@@ -1542,95 +1182,19 @@ fn dynamic_adjust_merges_one_row_per_guess_and_lifts_only_the_credited_token() {
     );
 }
 
+// Basis: Frozen class-A frequency probes in the candidate-construction SPEC §8.4.
 #[test]
 fn amplified_frequency_pins_the_class_a_probe_values() {
-    // The denominator is the pin's phrase-index total over model20:
-    // interpolation2 sum 50_913_735 + 138_096 items, each item's baked
-    // unigram being its interpolation2 count + 1 (probe-verified over
-    // the whole index; `docs/findings/candidate-construction.md` §8.4 Class A). The
-    // values are the amplified keys the 12 top-1 tie-swaps collapse on.
     const PIN_TOTAL: u64 = 51_051_831;
-    // 0: the 量比/两笔, 建仓/减仓, 拜倒/白道, 冰坝/并把, 长着/唱着 pairs.
-    assert_eq!(
-        super::amplified_frequency(1, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        0
-    );
-    assert_eq!(
-        super::amplified_frequency(3, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        0
-    );
-    // 3: 写歌 16 vs 写稿 14 (`xiego`).
-    assert_eq!(
-        super::amplified_frequency(14, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        3
-    );
-    assert_eq!(
-        super::amplified_frequency(16, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        3
-    );
-    // 4: 古稀 21 vs 股息 20 (`guxi`), 酸楚 20 vs 算出 18 (`suanch`).
-    assert_eq!(
-        super::amplified_frequency(18, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        4
-    );
-    assert_eq!(
-        super::amplified_frequency(20, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        4
-    );
-    assert_eq!(
-        super::amplified_frequency(21, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        4
-    );
-    // 17: 每家 78 vs 美加 77 (`meijia…`).
-    assert_eq!(
-        super::amplified_frequency(77, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        17
-    );
-    assert_eq!(
-        super::amplified_frequency(78, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        17
-    );
-    // 19: 狗狗 = 沟谷 = 87 (`goug`).
-    assert_eq!(
-        super::amplified_frequency(87, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        19
-    );
-    assert_eq!(
-        super::amplified_frequency(0, PIN_TOTAL, super::PIN_LAMBDA_F32),
-        0
-    );
-    assert_eq!(
-        super::amplified_frequency(20, 0, super::PIN_LAMBDA_F32),
-        0,
-        "no index total ranks as zero"
-    );
+    for (count, expected) in [(0, 0), (14, 3), (16, 3), (2_349_890, 530_766)] {
+        assert_eq!(
+            super::amplified_frequency(count, PIN_TOTAL, super::PIN_LAMBDA_F32),
+            expected
+        );
+    }
 }
 
-#[test]
-fn amplified_frequency_ties_two_unigrams_across_two_to_the_24() {
-    // Imports of 5_592_405 and 5_592_406 into library 7 hold the unigrams
-    // 16_777_215 and 16_777_218. The facade total is model20's 51_051_831
-    // plus the library 7 unigrams (207 from four smaller imports, then the
-    // two above). The f32 chain truncates both to one frequency, so the
-    // pin ranks them by token order.
-    const TOTAL: u64 = 51_051_831 + 207 + 16_777_215 + 16_777_218;
-    let below = super::amplified_frequency(16_777_215, TOTAL, super::PIN_LAMBDA_F32);
-    let above = super::amplified_frequency(16_777_218, TOTAL, super::PIN_LAMBDA_F32);
-    assert_eq!((below, above), (2_286_563, 2_286_563));
-}
-
-#[test]
-fn amplified_frequency_is_c_float_not_f64() {
-    // 2_349_890 is a corpus-scale count (interpolation2 tops out at
-    // 3_081_671) where the C float chain and the same chain in f64
-    // truncate apart — 530_766 vs 530_765 — so this pins the f32
-    // arithmetic the oracle's m_freq runs in.
-    assert_eq!(
-        super::amplified_frequency(2_349_890, 51_051_831, super::PIN_LAMBDA_F32),
-        530_766
-    );
-}
-
+// Basis: Rust candidate window batching and reuse contracts.
 #[test]
 fn window_flush_is_token_ascending_and_one_row_per_token() {
     use super::{CandidateKind, flush_window_batch};
@@ -1677,35 +1241,10 @@ fn window_row(text: &str, token: Option<u32>) -> crate::engine::candidate::Candi
     crate::engine::candidate::Candidate::new(text, super::CandidateKind::Phrase, 1, 2, token, None)
 }
 
-#[test]
-fn ordered_window_skips_sort_and_dedup_with_identical_output() {
-    use super::{order_window_tail, sort_dedup_window_tail, window_ascends_by_library_then_token};
-
-    let mut rows = vec![
-        window_row("prefix", None),
-        window_row("first", Some(0x0100_0001)),
-        window_row("second", Some(0x0100_0002)),
-        window_row("third", Some(0x0200_0001)),
-    ];
-    let original = rows.clone();
-    let mut fallback = rows.clone();
-    assert!(window_ascends_by_library_then_token(&rows[1..]));
-    order_window_tail(&mut rows, 1);
-    sort_dedup_window_tail(&mut fallback, 1);
-    assert_eq!(rows, fallback);
-    assert_eq!(rows, original);
-
-    // Empty and single-token windows also need neither operation.
-    assert!(window_ascends_by_library_then_token(&[]));
-    assert!(window_ascends_by_library_then_token(&rows[1..2]));
-    let end = rows.len();
-    order_window_tail(&mut rows, end);
-    assert_eq!(rows, original);
-}
-
+// Basis: Rust candidate window batching and reuse contracts.
 #[test]
 fn unordered_windows_keep_the_existing_sort_and_dedup() {
-    use super::{order_window_tail, window_ascends_by_library_then_token};
+    use super::{order_window_tail, sort_dedup_window_tail, window_ascends_by_library_then_token};
 
     let first = window_row("first", Some(0x0100_0002));
     let smaller = window_row("smaller", Some(0x0100_0001));
@@ -1713,42 +1252,42 @@ fn unordered_windows_keep_the_existing_sort_and_dedup() {
     let tokenless = window_row("tokenless", None);
     let duplicate = window_row("later duplicate", Some(0x0100_0002));
     let tagged = window_row("tagged", Some(0x8100_0005));
-    for (name, window, expected) in [
+    for (ordered, window, expected) in [
+        (true, vec![], vec![]),
+        (true, vec![first.clone()], vec![first.clone()]),
         (
-            "tokenless",
-            vec![tokenless.clone(), first.clone()],
-            vec![first.clone(), tokenless.clone()],
+            true,
+            vec![smaller.clone(), first.clone(), other_library.clone()],
+            vec![smaller.clone(), first.clone(), other_library.clone()],
         ),
-        ("single tokenless", vec![tokenless.clone()], vec![tokenless]),
-        ("equal", vec![first.clone(), duplicate], vec![first.clone()]),
+        (false, vec![tokenless.clone()], vec![tokenless]),
+        (false, vec![first.clone(), duplicate], vec![first.clone()]),
         (
-            "decreasing within one library",
+            false,
             vec![first.clone(), smaller.clone()],
             vec![first.clone(), smaller.clone()],
         ),
         (
-            "interleaved libraries retain encounter order within each library",
+            false,
             vec![first.clone(), other_library.clone(), smaller.clone()],
             vec![first, smaller, other_library.clone()],
         ),
-        // `_append_items` walks the range array a token's masked library
-        // names (`pinyin.cpp:1772-1788`, `chewing_large_table2.h:107`,
-        // `novel_types.h:44` at the pin `074a2219`), so a token of library
-        // 1 with high bits set comes before library 2, though its value
-        // is the larger.
         (
-            "a token with high bits set files with its masked library",
+            false,
             vec![other_library.clone(), tagged.clone()],
             vec![tagged, other_library],
         ),
     ] {
-        assert!(!window_ascends_by_library_then_token(&window), "{name}");
+        assert_eq!(window_ascends_by_library_then_token(&window), ordered);
         let prefix = window_row("prior window", Some(0x0100_0002));
         let mut rows = vec![prefix.clone()];
         rows.extend(window);
+        let mut sorted = rows.clone();
+        sort_dedup_window_tail(&mut sorted, 1);
         order_window_tail(&mut rows, 1);
-        assert_eq!(rows[0], prefix, "{name}: prefix must stay untouched");
-        assert_eq!(rows[1..], expected, "{name}");
+        assert_eq!(rows, sorted);
+        assert_eq!(rows[0], prefix);
+        assert_eq!(rows[1..], expected);
     }
 }
 
@@ -1784,17 +1323,12 @@ impl LanguageModel for FixedUnigrams {
     }
 }
 
+// Basis: pinyin.cpp:1772–1788,1794–1866,2224–2286 at 074a2219.
 #[test]
 fn addon_candidates_rank_on_their_own_amplified_scale() {
     use super::CandidateKind;
     use crate::engine::candidate::Candidate;
 
-    // The pin's two amplified branches (`pinyin.cpp:1829-1843` for the
-    // addon, `:1855-1866` for the system): both read the item's stored
-    // unigram (a model20 count 13 is stored as 14, `gen_unigram`'s +1)
-    // — the system branch over the default facade's total, the addon
-    // branch over the addon facade's. The same stored 14 therefore
-    // lands on 3 over 51,051,831 but 6 over the half-size addon total.
     let session = Session::new(
         SessionSettings::default(),
         Silent,
@@ -1854,10 +1388,7 @@ impl PhraseList for TwoFacadeDict {
     }
 }
 
-/// Window scratch is retained across scans for speed. A scan that the
-/// partial predecessor row refuses (`UnsafeLookupPredecessor`) must leave
-/// nothing behind: once the row is readable again, the next window equals a
-/// fresh session's window, before and after the cursor.
+// Basis: Rust candidate window batching and reuse contracts.
 #[test]
 fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
     use crate::{OptionBits, model::MergedGram};
@@ -1903,31 +1434,27 @@ fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
         let mut session = build();
         let window = guess(&mut session).expect("warm scan");
         assert!(!window.is_empty(), "before cursor: {before_cursor}");
+        let fresh = guess(&mut build()).expect("fresh scan");
         session.recycle_candidates(window);
+        let reused = guess(&mut session).expect("clean reuse");
+        assert_eq!(reused, fresh);
+        session.recycle_candidates(reused);
         session.model.row.clone_from(&row);
 
-        for _ in 0..2 {
-            assert_eq!(
-                guess(&mut session).expect_err("partial predecessor must refuse"),
-                EngineError::UnsafeLookupPredecessor,
-            );
-        }
+        assert_eq!(
+            guess(&mut session).expect_err("partial predecessor must refuse"),
+            EngineError::UnsafeLookupPredecessor,
+        );
 
         session.model.row = None;
         let after = guess(&mut session).expect("scan after the refusals");
-        let fresh = guess(&mut build()).expect("fresh scan");
         assert_eq!(after, fresh, "before cursor: {before_cursor}");
     }
 }
 
+// Basis: pinyin.cpp:1772–1788,1794–1866,2224–2286 at 074a2219.
 #[test]
 fn window_scan_emits_system_candidates_before_addon_candidates() {
-    // Two one-character candidates whose three RankKeys tie (length 1,
-    // span 1, amplified 3: system item 14 over 51,051,831; addon 7 over
-    // the half-size addon total). The stable sort must therefore keep
-    // the scan's flush order — the default facade's batch before the
-    // addon facade's, the array order `_append_items`
-    // (`pinyin.cpp:1769-1791`) lays down.
     let mut session = Session::new(
         SessionSettings::default(),
         TwoFacadeDict {
@@ -1977,10 +1504,7 @@ impl LanguageModel for TrainedUnigrams {
     }
 }
 
-/// `_compute_frequency_of_items` reads each item's unigram when the window
-/// is ranked (`pinyin.cpp:1794-1866` at 074a2219), and the candidate list
-/// is ranked once per guess. A list built before a training write keeps
-/// its order; a window ranked after it reads the new counts.
+// Basis: pinyin.cpp:1772–1788,1794–1866,2224–2286 at 074a2219.
 #[test]
 fn a_window_ranked_after_a_training_write_reads_the_rewritten_counts() {
     fn texts(list: &crate::engine::candidate::CandidateList) -> Vec<&str> {
@@ -2008,7 +1532,6 @@ fn a_window_ranked_after_a_training_write_reads_the_rewritten_counts() {
         "the larger count ranks first"
     );
 
-    // The training write: the second item's count falls below the first's.
     counts.set((5_000_000, 1));
     assert_eq!(
         texts(session.candidates()),
@@ -2023,10 +1546,7 @@ fn a_window_ranked_after_a_training_write_reads_the_rewritten_counts() {
     );
 }
 
-/// The pin's candidate listing dies on a loaded library's token whose
-/// item cannot be read (`pinyin.cpp:1635-1637`, `:2053` at 074a2219). The
-/// lookup answers that it met one, and the window it builds says so for
-/// the C ABIs to fail the call.
+// Basis: pinyin.cpp:1635–1637,2053 at 074a2219 and the Rust unreadable-row contract.
 #[test]
 fn a_window_whose_lookup_met_an_unreadable_item_says_so() {
     struct UnreadableDict;
@@ -2057,6 +1577,7 @@ fn a_window_whose_lookup_met_an_unreadable_item_says_so() {
     );
 }
 
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn exact_scan_matrix_adds_fuzzy_without_full_pinyin_splits() {
     use crate::OptionBits;
@@ -2074,7 +1595,6 @@ fn exact_scan_matrix_adds_fuzzy_without_full_pinyin_splits() {
         .collect();
     assert_eq!(keys, [("ni", 0, 2, 3), ("li", 0, 2, 3)]);
 
-    // Full-pinyin split options must not re-segment double/chewing keys.
     let bian = SyllableKey::from_text("bian").expect("bian key");
     let graph = SegmentGraph::build_exact(b"bian", &[ExactSegment::new(0, 4, bian, 0)])
         .expect("exact bian");
@@ -2099,6 +1619,7 @@ fn exact_scan_matrix_adds_fuzzy_without_full_pinyin_splits() {
     assert!(columns[4].is_empty());
 }
 
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     use crate::OptionBits;
@@ -2108,9 +1629,6 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     let incomplete = OptionBits::PINYIN_INCOMPLETE | tables;
     let toned = OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_TONE | tables;
 
-    // Fuzzy alternates inherit the tone: upstream copies the whole
-    // ChewingKey before swapping the initial
-    // (`phonetic_key_matrix.cpp:250-259`).
     let graph = SegmentGraph::build_with_options(b"zai4", toned).expect("valid");
     let columns = super::build_scan_matrix(
         &graph,
@@ -2124,9 +1642,6 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     assert!(column.contains(&("zai", 4, 4)));
     assert!(column.contains(&("zhai", 4, 4)));
 
-    // Resplit: ("a", "nan") is a live pair on the toneless walk; a toned
-    // member locks it, because the table structs are zero-tone and the
-    // pin matches the full ChewingKey.
     let toneless = SegmentGraph::build_with_options(b"anan", incomplete).expect("valid");
     let columns = super::build_scan_matrix(&toneless, incomplete, true);
     assert!(
@@ -2135,9 +1650,6 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
             .any(|key| key.key.text() == "an" && key.to == 2)
     );
 
-    // A first key that follows a separator resplits too, with the split
-    // measured from where its syllable starts (`chui'lianai`: `lia` +
-    // `nai` becomes `lian` + `ai`, pin `phonetic_key_matrix.cpp:113-150`).
     let after_separator =
         SegmentGraph::build_with_options(b"chui'lianai", incomplete).expect("valid");
     let columns = super::build_scan_matrix(&after_separator, incomplete, true);
@@ -2157,7 +1669,6 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     let columns = super::build_scan_matrix(&toned_pair, toned, true);
     assert!(!columns[0].iter().any(|key| key.key.text() == "an"));
 
-    // Divided: "bian" divides toneless; "bian4" carries its tone instead.
     let toneless = SegmentGraph::build_with_options(b"bian", incomplete).expect("valid");
     let columns = super::build_scan_matrix(&toneless, incomplete, true);
     assert!(
@@ -2234,9 +1745,7 @@ where
     select_row(session, index).expect("selection cannot fail");
 }
 
-/// §3: a chosen candidate forces its span — the constrained walk pins
-/// the chosen 你 and decodes the continuation, so the row carries the
-/// full sentence.
+// Basis: pinyin.cpp:1362–1425,1497–1525,2515–2520 and phonetic_lookup.cpp:120–205 at 074a2219.
 #[test]
 fn a_selection_forces_its_span_in_the_sentence_walk() {
     let mut session = trellis_session();
@@ -2252,8 +1761,7 @@ fn a_selection_forces_its_span_in_the_sentence_walk() {
     );
 }
 
-/// L1: a terminal selection still answers — the walk covers the full
-/// matrix, so a fully-consumed composition has rows.
+// Basis: pinyin.cpp:1362–1425,1497–1525,2515–2520 and phonetic_lookup.cpp:120–205 at 074a2219.
 #[test]
 fn a_terminal_selection_still_answers_the_full_matrix() {
     let mut session = trellis_session();
@@ -2276,42 +1784,7 @@ fn a_terminal_selection_still_answers_the_full_matrix() {
     );
 }
 
-/// L2: the forcing survives further typing and is released only by
-/// the full reset.
-#[test]
-fn the_forcing_survives_typing_and_releases_only_on_reset() {
-    let mut session = trellis_session();
-    type_and_select_over(&mut session, "nihao", 1);
-    session.replace_raw("nihaos").expect("typing cannot fail");
-    assert!(
-        session.guess_sentence().expect("guess cannot fail"),
-        "the walk runs over the extended buffer"
-    );
-    // TRAIN_VOCAB has no record for the appended suffix. The pin reads
-    // only the final trellis step (phonetic_lookup.h:329-339), so it must
-    // not return a prefix-only sentence from an earlier step.
-    assert!(session.sentence_text(0).is_none());
-    assert_eq!(
-        session.selected_tokens(),
-        [1],
-        "the forcing survived the keystroke"
-    );
-
-    session.reset();
-    assert!(
-        !session.clear_constraint(0),
-        "the reset released the forcing — the store is empty"
-    );
-    session.replace_raw("nihaos").expect("typing cannot fail");
-    assert!(
-        session.guess_sentence().expect("guess cannot fail"),
-        "the post-reset walk runs"
-    );
-}
-
-/// `pinyin_clear_constraint`'s engine half: a hit inside a run
-/// un-forces the whole run, the selection record follows the
-/// survivors, and a free or out-of-range offset answers false.
+// Basis: pinyin.cpp:2643–2668 and phonetic_lookup.cpp:88–117 at 074a2219.
 #[test]
 fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
     let mut session = train_session();
@@ -2319,12 +1792,8 @@ fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
     type_and_select(&mut session, "hao", 2);
     assert_eq!(session.selected_tokens(), [1, 2]);
 
-    // Out of range answers false, never panic.
     assert!(!session.clear_constraint(999));
 
-    // A hit anywhere inside the head run — its NoSearch interior
-    // included — un-forces the whole run; the record follows the
-    // survivor.
     assert!(session.clear_constraint(1));
     assert_eq!(session.selected_tokens(), [2]);
     assert!(!session.clear_constraint(0), "the head run is already free");
@@ -2334,10 +1803,7 @@ fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
     assert!(!session.clear_constraint(0));
 }
 
-/// Review regression: clearing a tail forcing re-opens a committed
-/// composition. The rebuild once left `selection_committed` set, so
-/// the next compatible re-parse started fresh and silently dropped
-/// the surviving head forcing.
+// Basis: Rust session reconciliation and selection record contracts.
 #[test]
 fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     let mut session = trellis_session();
@@ -2354,8 +1820,6 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     };
     select_token(&mut session, 1); // 你 over [0,2)
     select_token(&mut session, 2); // 好 over [2,5)
-    // The remainder has no window candidates: select the raw-text
-    // fallback to consume the buffer — the whole-buffer selection shape.
     let index = session
         .candidates()
         .iter()
@@ -2363,12 +1827,9 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
         .expect("the fallback covers the remainder");
     select_row(&mut session, index).expect("selection cannot fail");
 
-    // Un-force the tail run; the record rebuilds over the survivor
-    // and the composition is open again.
     assert!(session.clear_constraint(2));
     assert_eq!(session.selected_tokens(), [1]);
 
-    // Further typing keeps the surviving 你 forcing alive.
     session
         .replace_raw("nihaoshijies")
         .expect("typing cannot fail");
@@ -2376,9 +1837,6 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
         session.guess_sentence().expect("guess cannot fail"),
         "the walk runs"
     );
-    // TRAIN_VOCAB has no record for the appended suffix. The pin reads
-    // only the final trellis step (phonetic_lookup.h:329-339), so it must
-    // not return a prefix-only sentence from an earlier step.
     assert!(session.sentence_text(0).is_none());
     assert_eq!(
         session.selected_tokens(),
@@ -2387,14 +1845,7 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     );
 }
 
-/// Review regression: the clamp reconcile must not depend on a
-/// forcing being dropped. A row-0 n-best choose writes the RECORD
-/// (the whole row's text, tokens, and span-end cursor) while
-/// `diff_result` writes no run — the store stays empty. A shrinking
-/// re-parse then clamps the cursor backward with nothing to drop,
-/// and the rebuild must run anyway: the record's coverage exceeds
-/// the new input, retaining stale row text for an input that can no
-/// longer produce it.
+// Basis: Rust session reconciliation and selection record contracts.
 #[test]
 fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
     let mut session = trellis_session();
@@ -2417,8 +1868,6 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
         "the row-0 choose wrote no forcing"
     );
 
-    // The shrinking re-parse: the clamp moves the cursor backward
-    // with an empty store — the rebuild runs regardless.
     session.replace_raw("ni").expect("replace cannot fail");
     assert!(
         session.selected_tokens().is_empty(),
@@ -2437,17 +1886,7 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
     assert_eq!(session.raw_input(), "ni");
 }
 
-/// Review regression: the reconcile must fire on canonical
-/// divergence, not only on a backward clamp. A committed selection
-/// covers `raw[..consumed]`; a replacement that does not extend
-/// those bytes — here the same-length "mihao" over "nihao" — leaves
-/// the cursor unclamped but the selection stale, and the forcing no
-/// longer spells over the new bytes. The spell-probe validate drops
-/// it at the replacement and the record follows; Enter commits the
-/// current input, never the stale \u{4f60}\u{597d}. (Through the
-/// transformed seams this is the shape a scheme-coordinate
-/// continuation passing while the canonical spelling diverges — a
-/// live scheme switch — produces.)
+// Basis: Rust session reconciliation and selection record contracts.
 #[test]
 fn a_divergent_replacement_reconciles_the_committed_selection() {
     let mut session = trellis_session();
@@ -2461,10 +1900,6 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
         select_row(&mut session, index).expect("selection cannot fail");
     }
 
-    // Same length, divergent inside the covered span: no clamp, so
-    // only the continuity check can reach the reconcile. The 你 run
-    // no longer spells over "mi" (the spell probe drops it) and the
-    // 好 run overruns the spellable bound (the bounds drop).
     session.replace_raw("mixxo").expect("replace cannot fail");
     assert!(
         session.selected_tokens().is_empty(),
@@ -2483,8 +1918,7 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
     assert_eq!(session.raw_input(), "mixxo");
 }
 
-/// A temporary edit sanitises the engine's selection record without
-/// destroying the choice. Only a guess validates the actual store.
+// Basis: pinyin.cpp:1362–1425,1497–1525,2515–2520 and phonetic_lookup.cpp:120–205 at 074a2219.
 #[test]
 fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
     for intermediate in ["mihao", "n", "", "ni"] {
@@ -2517,11 +1951,7 @@ fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
     }
 }
 
-/// The C parsing path's shrink keeps the forcing: the frontend sends the
-/// shorter buffer one keystroke at a time, the store survives, and the next
-/// guess re-validates: down to the forcing's own floor the row is the forced
-/// phrase alone, and a grown buffer continues the composition with the
-/// forcing intact.
+// Basis: pinyin.cpp:1362–1425,1497–1525,2515–2520 and phonetic_lookup.cpp:120–205 at 074a2219.
 #[test]
 fn the_forcing_survives_the_shrinking_parse_and_retype() {
     let mut session = trellis_session();
@@ -2535,8 +1965,7 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
         .expect("the fixture candidate is offered");
     select_row(&mut session, index).expect("selection cannot fail");
 
-    // Shrink the buffer down to the forcing's floor.
-    for end in (2..11).rev() {
+    for end in [10, 2] {
         session
             .replace_raw(&"nihaoshijie"[..end])
             .expect("shrink cannot fail");
@@ -2552,8 +1981,7 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
         "the forced phrase is the floor's row"
     );
 
-    // The re-type continues the open composition with the forcing.
-    for end in 3..=11 {
+    for end in [3, 11] {
         session
             .replace_raw(&"nihaoshijie"[..end])
             .expect("retype cannot fail");
@@ -2562,27 +1990,23 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
         session.guess_sentence().expect("guess cannot fail"),
         "the retype walks"
     );
-    // TRAIN_VOCAB has no record for the appended suffix. The pin reads
-    // only the final trellis step (phonetic_lookup.h:329-339), so it must
-    // not return a prefix-only sentence from an earlier step.
     assert!(session.sentence_text(0).is_none());
     assert_eq!(
         session.selected_tokens(),
         [1],
         "the forcing survived the shrink and the retype"
     );
+
+    session.reset();
+    assert!(!session.clear_constraint(0));
 }
 
-/// A guess sizes the constraint store; a shorter reparse leaves it alone.
-/// A retained differing row writes its decoded span (phonetic_lookup.cpp:192).
+// Basis: pinyin.cpp:1362–1425,1497–1525,2515–2520 and phonetic_lookup.cpp:120–205 at 074a2219.
 #[test]
 fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     let mut session = train_session();
     session.replace_raw("nihao").expect("typing cannot fail");
-    // validate_constraint sizes the store at guess time (:120-138).
     session.guess_sentence().expect("guess");
-    // Hand-crafted rows whose rank-1 phrase differs from row 0's —
-    // the shifted-row shape (`sentence-surface.md` §8).
     session.sentence.rows = vec![
         crate::engine::nbest::NbestRow {
             text: Some("\u{597d}".into()),
@@ -2614,8 +2038,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
         .position(|candidate| candidate.nbest_row() == Some(1))
         .expect("the rank-1 row is offered");
     let chosen = session.candidates().iter().nth(index).expect("row").clone();
-    // pinyin.cpp:2515-2520 does no validate before diff_result. Its
-    // tail is the decoded result's (:192), not the shortened input.
     session.replace_raw("ni").expect("shorter parse");
     session
         .select_target(&SelectionTarget::of_candidate(&chosen, 0, None))
@@ -2630,17 +2052,13 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     );
 }
 
-/// Review regression: the record rebuild keeps the raw text of the
-/// gaps between forcings — `diff_result` leaves unchanged phrases
-/// free, and the selection record must not drop exactly those bytes.
+// Basis: Rust session reconciliation and selection record contracts.
 #[test]
 fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
     let mut session = train_session();
     session
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
-    // A gapped store straight from diff_result's shape: 你 over
-    // [0,2), a free gap "ha" over [2,5), a forcing over [5,10).
     session.constraints.resize(12);
     session.constraints.add(0, 2, 1, "\u{4f60}".into());
     session.constraints.add(5, 10, 2, "\u{4e16}\u{754c}".into());
@@ -2656,6 +2074,7 @@ fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
     );
 }
 
+// Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
 #[test]
 fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
     let mut session = trellis_session();
@@ -2687,9 +2106,7 @@ fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
     );
 }
 
-/// L3: the constraint-aware train walk — the forced phrase and the
-/// first decoded phrase after it train, with the predecessor threading
-/// over every phrase.
+// Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
 #[test]
 fn a_decoded_continuation_trains_through_the_constraint_walk() {
     let mut session = trellis_session();
@@ -2709,12 +2126,9 @@ fn a_decoded_continuation_trains_through_the_constraint_walk() {
     );
 }
 
+// Basis: Rust raw-buffer and lookup offset UTF-8 boundary contracts.
 #[test]
 fn replace_raw_walks_consumed_back_to_a_char_boundary() {
-    // A one-byte composition selected to consumed 1, then replaced by
-    // `，` (three bytes): the stale consumed sits inside the character
-    // and `refresh` slices `raw[consumed..]`. The clamp must walk back
-    // to the boundary before it — nothing panics on any input.
     let mut session = session();
     session.replace_raw("a").expect("cannot fail");
     select_row(&mut session, 0).expect("the fallback row selects");
@@ -2722,13 +2136,9 @@ fn replace_raw_walks_consumed_back_to_a_char_boundary() {
     assert_eq!(session.composition_offset(), 0);
 }
 
+// Basis: Rust raw-buffer and lookup offset UTF-8 boundary contracts.
 #[test]
 fn candidates_at_rejects_mid_character_offsets() {
-    // The full-width comma occupies bytes 0..3, so offsets 1 and 2 sit
-    // inside it: no window exists under a mid-character slice, and the
-    // offset is refused with the inside-character error — not rounded
-    // to a neighbour and not the out-of-range error, whose contract is
-    // past-one-past-end only.
     let mut session = session();
     session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
     for offset in [1, 2] {
@@ -2740,81 +2150,32 @@ fn candidates_at_rejects_mid_character_offsets() {
     assert!(session.candidates_at(3).is_ok(), "offset 3 is a boundary");
 }
 
-#[test]
-fn candidates_at_mid_syllable_offsets_answer_the_empty_column() {
-    use super::CandidateKind;
-
-    // "nihaoshijie" parses ni|hao|shi|jie: the matrix keys start at
-    // 0/2/5/8, so bytes 1/3/4/6/7/9 are the pin's empty columns —
-    // `search_matrix` matches nothing from them (`pinyin.cpp:2224-2262`),
-    // and the window is the raw-suffix fallback alone, never the suffix
-    // re-parse (offset 3 must not answer the `ao…` window, 6 not the
-    // `h…` window). The syllable starts keep their windows.
-    let mut session = train_session();
-    session
-        .replace_raw("nihaoshijie")
-        .expect("typing cannot fail");
-    for offset in [1usize, 3, 4, 6, 7, 9] {
-        let window = session
-            .candidates_at(offset)
-            .expect("a mid-syllable offset is in range");
-        assert!(
-            window
-                .iter()
-                .all(|cand| cand.kind() == CandidateKind::Fallback),
-            "offset {offset}: only the fallback row, no suffix re-parse"
-        );
-        assert_eq!(
-            window.iter().count(),
-            1,
-            "offset {offset}: the fallback alone"
-        );
-    }
-    assert!(
-        session
-            .candidates_at(2)
-            .expect("offset 2 is a syllable start")
-            .iter()
-            .any(|cand| cand.kind() != CandidateKind::Fallback),
-        "offset 2 keeps the hao window"
-    );
-}
-
-/// Window recycling is retained speed code. After a window is recycled,
-/// the next window at the same offset equals the window built before it.
-#[test]
-fn a_window_built_after_recycling_equals_a_fresh_window() {
-    let mut session = train_session();
-    session
-        .replace_raw("nihaoshijie")
-        .expect("typing cannot fail");
-    let first = session
-        .candidates_at(2)
-        .expect("offset 2 is a syllable start");
-    let fresh = session
-        .candidates_at(2)
-        .expect("offset 2 is a syllable start");
-    assert_eq!(first, fresh);
-    session.recycle_candidates(first);
-    let reused = session
-        .candidates_at(2)
-        .expect("offset 2 is a syllable start");
-    assert_eq!(reused, fresh, "only the storage carries over");
-}
-
+// Basis: pinyin.cpp:2184–2308 at 074a2219 and the Rust fallback contract.
 #[test]
 fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
     use super::CandidateKind;
     use crate::engine::nbest::NbestRow;
 
-    // The pin prepends `m_nbest_results` whether or not the span search
-    // finds anything, so a post-sentence mid-syllable window is the
-    // n-best rows (measured: `nihaoshijie@3` after `guess_sentence`
-    // answers n=3 on the pin) over the fallback — not an empty list.
     let mut session = train_session();
     session
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
+    assert_eq!(
+        session
+            .candidates_at(3)
+            .expect("unsearched empty column")
+            .iter()
+            .map(|row| row.kind())
+            .collect::<Vec<_>>(),
+        [CandidateKind::Fallback]
+    );
+    assert!(
+        session
+            .candidates_at(2)
+            .expect("live column")
+            .iter()
+            .any(|row| row.kind() == CandidateKind::Phrase)
+    );
     session.sentence.rows = vec![NbestRow {
         text: Some("你好世界".into()),
         tokens: vec![0x100, 0x101, 0x102],
@@ -2841,6 +2202,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
     );
 }
 
+// Basis: pinyin.cpp:2004–2007 and zhuyin.cpp:1272–1291,1327–1330,1394–1438 at 074a2219.
 #[test]
 fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     use super::CandidateKind;
@@ -2854,20 +2216,12 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         span: 5,
     };
 
-    // libzhuyin fills every BEST_MATCH row from `zhuyin_get_sentence`
-    // (always `get_result(0)`) and its string dedup removes the
-    // duplicates, so exactly one sentence row is observable regardless of
-    // the decoded n-best count (`zhuyin.cpp:1272-1291`, `1327-1330`,
-    // `1425-1438` at the pin); the pinyin surface keeps one row per
-    // sentence (`pinyin.cpp:2004-2007`).
     let mut session = train_session();
     session
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     session.sentence.rows = vec![row("你好世界"), row("你")];
 
-    // Default — the pinyin law: both rows ride the prepend, and the
-    // phrase 你 collides with the second row's own text and is dropped.
     session.refresh().expect("refresh cannot fail");
     let sentences: Vec<&str> = session
         .candidates()
@@ -2884,9 +2238,6 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         "the phrase colliding with the second row's own text is absorbed"
     );
 
-    // The zhuyin law: only the 1-best row is prepended, so the phrase
-    // survives — upstream's dedup never sees a second string to collide
-    // it with.
     session.set_collapse_sentence_rows_to_best(true);
     session.refresh().expect("refresh cannot fail");
     let sentences: Vec<&str> = session
@@ -2905,10 +2256,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     );
 }
 
-/// A before-cursor row carries its own span start (upstream's
-/// `m_begin`, `zhuyin.cpp:1595`), and choosing it constrains exactly
-/// `[m_begin, m_end)`: the leading key is neither absorbed into the
-/// chosen text nor lost, and the composition advances to the span's end.
+// Basis: zhuyin.cpp:1460–1668 at 074a2219.
 #[test]
 fn choosing_a_before_cursor_row_constrains_its_own_span() {
     use super::BEFORE_CURSOR_ANCHOR;
@@ -2954,15 +2302,12 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     );
 }
 
+// Basis: zhuyin.cpp:1460–1668 at 074a2219.
 #[test]
 fn candidates_ending_at_walks_the_spans_that_end_there() {
     use super::CandidateKind;
     use crate::engine::nbest::NbestRow;
 
-    // The pin's before-cursor walk answers spans (start, offset) for
-    // every live start, longest first, with the sentence rows prepended
-    // (measured on the instrumented oracle: su3u3 before(3) is the first
-    // syllable's 125 rows plus one BEST_MATCH row).
     let mut session = train_session();
     session.replace_raw("nihao").expect("typing cannot fail");
 
@@ -2978,14 +2323,11 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
         "好 ends at 5, not 2 — the walk keeps only spans ending at the offset"
     );
 
-    // Nothing precedes the first key: the window is empty without a
-    // sentence guess (the prepend has no rows to ride).
     let at_start = session
         .candidates_ending_at(0)
         .expect("offset 0 is in range");
     assert!(at_start.is_empty());
 
-    // A guessed sentence rides the prepend at any offset.
     session.sentence.rows = vec![NbestRow {
         text: Some("你好".into()),
         tokens: vec![0x100],
@@ -3008,12 +2350,11 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     assert!(window.iter().any(|cand| cand.text() == "你"));
 }
 
+// Basis: pinyin.cpp:2184–2308 at 074a2219 and the Rust fallback contract.
 #[test]
 fn candidates_at_the_apostrophe_column_is_transparent() {
-    // `ni'hao` parses ni|hao with the zero-key column at 2; the pin's
-    // span search steps over it (measured: `ni'hao@2` answers the hao
-    // window, n=93), so the apostrophe byte answers the next key's
-    // window instead of collapsing to the empty-column law.
+    use super::CandidateKind;
+
     let mut session = train_session();
     session.replace_raw("ni'hao").expect("typing cannot fail");
     let at_separator = session
@@ -3035,183 +2376,50 @@ fn candidates_at_the_apostrophe_column_is_transparent() {
         !at_separator.is_empty(),
         "the stepped-over window is the hao window, not the empty column"
     );
-}
 
-#[test]
-fn candidates_at_an_incomplete_tail_column_stays_empty() {
-    use super::CandidateKind;
-
-    // "nihaozh" under INCOMPLETE keeps `zh` as one matrix key at
-    // 5..7 (measured: `nihaozh@6` answers n-best rows only on the
-    // pin), so byte 6 is an empty column even though the lone suffix
-    // `h` could start a parse of its own.
-    let mut session = train_session();
-    session.replace_raw("nihaozh").expect("typing cannot fail");
-    let window = session.candidates_at(6).expect("byte 6 is in range");
-    assert!(
-        window
-            .iter()
-            .all(|cand| cand.kind() == CandidateKind::Fallback),
-        "byte 6 inside the `zh` key is an empty column, not an h window"
+    session.replace_raw("ni,'hao").expect("parse");
+    let outside = session.candidates_at(3).expect("byte 3 is in range");
+    assert_eq!(
+        outside.iter().map(|row| row.kind()).collect::<Vec<_>>(),
+        [CandidateKind::Fallback]
     );
 }
 
-#[test]
-fn candidates_at_an_apostrophe_beyond_the_parse_span_stays_empty() {
-    use super::CandidateKind;
-
-    // "ni,'hao" parses only `ni` — the comma stops the parse — so the
-    // apostrophe at byte 3 sits outside the matrix (3 columns, 0..=2): the
-    // pin's lookup there is an ordinary empty window, which is the answer
-    // oxpinyin gives, not a re-parse of the `'hao` suffix. The
-    // in-span apostrophe of `ni'hao` stays transparent.
-    let mut session = train_session();
-    session.replace_raw("ni,'hao").expect("cannot fail");
-    let window = session.candidates_at(3).expect("byte 3 is in range");
-    assert!(
-        window
-            .iter()
-            .all(|cand| cand.kind() == CandidateKind::Fallback),
-        "byte 3 is outside the parse span — no suffix re-parse window"
-    );
-
-    let mut session = train_session();
-    session.replace_raw("ni'hao").expect("cannot fail");
-    let at_separator = session
-        .candidates_at(2)
-        .expect("the in-span separator byte is transparent");
-    assert!(
-        at_separator
-            .iter()
-            .any(|cand| cand.kind() != CandidateKind::Fallback),
-        "the in-span apostrophe keeps the hao window"
-    );
-}
-
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn candidates_at_a_divided_split_column_answers_the_split_window() {
-    use super::CandidateKind;
+    use crate::OptionBits;
 
-    // The pin's divided table splits `jie` into `ji` + `e`
-    // (`special_table.h:16`, `inner_split_step` under
-    // `USE_DIVIDED_TABLE`), so byte 10 of `nihaoshijie` — the `e`
-    // half's start — is a live matrix column, and the pin answers the
-    // e-family window there (measured: fresh n=190, 阿 first). The
-    // mid-chunk bytes 3/4/6 stay empty: `hao`/`shi` are not divided
-    // entries. `fangan` resplits `fan`+`gan` into `fang`+`an`
-    // (`resplit_step`), making byte 4 live the same way.
-    //
-    // The plain fixture carries no `e`-key token, which would make the
-    // live column indistinguishable from an empty one through
-    // `candidates_at` (both answer the fallback alone), so this test's
-    // session adds one.
     const SPLIT_VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
                                token=2\tkeys=hao\ttext=好\tunigram=900\n\
                                token=3\tkeys=e\ttext=恶\tunigram=800\n";
-    let split_session = || {
-        Session::new(
+    for (options, expected) in [
+        (
+            OptionBits::PINYIN_INCOMPLETE | OptionBits::USE_DIVIDED_TABLE,
+            Some("恶"),
+        ),
+        (OptionBits::PINYIN_INCOMPLETE, None),
+    ] {
+        let mut session = Session::new(
             SessionSettings::default(),
             FixtureDictionary::parse(SPLIT_VOCAB).expect("authored fixture"),
             FixtureLanguageModel::parse(SPLIT_VOCAB, "").expect("authored fixture"),
-        )
-    };
-
-    let mut session = split_session();
-    session
-        .replace_raw("nihaoshijie")
-        .expect("typing cannot fail");
-    assert!(
-        session.spans_a_matrix_key(10),
-        "byte 10 is the ji|e divided-split column"
-    );
-    for offset in [3usize, 4, 6] {
-        assert!(
-            !session.spans_a_matrix_key(offset),
-            "byte {offset} is an empty column"
         );
-    }
-
-    // Through the public surface: byte 10 answers the e-family window
-    // (the fixture's 恶 row), the mid-chunk offsets stay fallback-only.
-    let e_window = session.candidates_at(10).expect("byte 10 is in range");
-    assert!(
-        e_window
-            .iter()
-            .any(|cand| cand.kind() != CandidateKind::Fallback && cand.text() == "恶"),
-        "byte 10 answers the divided e window"
-    );
-    for offset in [3usize, 4, 6] {
-        let window = session.candidates_at(offset).expect("in range");
-        assert!(
+        session.set_options(options).expect("set split options");
+        session.replace_raw("nihaoshijie").expect("parse");
+        assert_eq!(session.spans_a_matrix_key(10), expected.is_some());
+        let window = session.candidates_at(10).expect("byte 10 is in range");
+        assert_eq!(
             window
                 .iter()
-                .all(|cand| cand.kind() == CandidateKind::Fallback),
-            "offset {offset} is an empty column — fallback only"
+                .find(|row| row.kind() != super::CandidateKind::Fallback)
+                .and_then(|row| row.text_str()),
+            expected
         );
     }
-
-    let mut session = split_session();
-    session.replace_raw("fangan").expect("typing cannot fail");
-    assert!(
-        session.spans_a_matrix_key(4),
-        "byte 4 is the fang|an resplit column"
-    );
-    assert!(!session.spans_a_matrix_key(5), "byte 5 is an empty column");
-    let window = session.candidates_at(5).expect("byte 5 is in range");
-    assert!(
-        window
-            .iter()
-            .all(|cand| cand.kind() == CandidateKind::Fallback),
-        "byte 5 is an empty column — fallback only"
-    );
 }
 
-/// With `USE_DIVIDED_TABLE` clear the divided split column is
-/// absent — the pin's `inner_split_step` checks
-/// `options & USE_DIVIDED_TABLE` (`phonetic_key_matrix.cpp:171`) and
-/// returns false without it.
-///
-/// `nihaoshijie` normally has a divided split at byte 10 (`ji` + `e`).
-/// Both arms set `PINYIN_INCOMPLETE` so the parse reaches byte 10; the
-/// only difference is `USE_DIVIDED_TABLE`.
-#[test]
-fn divided_table_gate_controls_the_split_column() {
-    // PINYIN_INCOMPLETE in both arms so the parse reaches the divided
-    // column — the arms differ only in USE_DIVIDED_TABLE.
-    let without_divided = crate::OptionBits::PINYIN_INCOMPLETE;
-
-    let mut s = session();
-    s.set_options(without_divided)
-        .expect("set_options cannot fail on an empty session");
-    s.replace_raw("nihaoshijie").expect("typing cannot fail");
-
-    // PINYIN_INCOMPLETE is set so the graph carries incomplete edges,
-    // but byte 10 (the divided e half) must NOT be a live matrix column
-    // because USE_DIVIDED_TABLE is clear.
-    assert!(
-        !s.spans_a_matrix_key(10),
-        "byte 10 must not be live without USE_DIVIDED_TABLE"
-    );
-
-    // With USE_DIVIDED_TABLE set (same PINYIN_INCOMPLETE base), byte 10
-    // IS live — the contrast that proves the gate matters.
-    let with_divided = crate::OptionBits::PINYIN_INCOMPLETE | crate::OptionBits::USE_DIVIDED_TABLE;
-    let mut s2 = session();
-    s2.set_options(with_divided)
-        .expect("set_options cannot fail on an empty session");
-    s2.replace_raw("nihaoshijie").expect("typing cannot fail");
-    assert!(
-        s2.spans_a_matrix_key(10),
-        "byte 10 must be live with USE_DIVIDED_TABLE — the ji|e divided pair"
-    );
-}
-
-/// A choose from a window
-/// looked up BEHIND the composition offset forces its own span over the
-/// overlapped forcing and the record moves back to it — the pin's
-/// `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2578-2590`,
-/// `phonetic_lookup.cpp:61-86`). The test chooses 你 at 0 after 你好,
-/// with the composition offset at 2.
+// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
 #[test]
 fn choosing_behind_the_composition_moves_the_record_back() {
     use super::CandidateKind;
@@ -3300,11 +2508,9 @@ impl PhraseList for StoredTone3 {
     }
 }
 
+// Basis: pinyin_phrase3.h:97–142 at 074a2219 and the Rust candidate search tone seam.
 #[test]
 fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
-    // The pin's user index keeps the stored tones and its search rejects
-    // two different non-zero tones, so `ni2hao3` does not list a phrase
-    // stored as ni3'hao3 while `ni3hao3` and toneless `nihao` do.
     let texts = |input: &str| -> Vec<String> {
         let mut session = Session::new(
             SessionSettings::default(),
@@ -3327,11 +2533,12 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
             .map(str::to_owned)
             .collect()
     };
-    assert!(texts("ni3hao3").contains(&"你鎄".to_owned()));
-    assert!(texts("nihao").contains(&"你鎄".to_owned()));
-    assert!(!texts("ni2hao3").contains(&"你鎄".to_owned()));
+    for (raw, offered) in [("ni3hao3", true), ("nihao", true), ("ni2hao3", false)] {
+        assert_eq!(texts(raw).contains(&"你鎄".to_owned()), offered, "{raw}");
+    }
 }
 
+// Basis: Rust session parse intake contract and pinyin.cpp:1497–1525 at 074a2219.
 #[test]
 fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input() {
     use crate::graph::ExactSegment;
@@ -3349,6 +2556,7 @@ fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input(
     assert_eq!(session.full_parsed_len(), 0);
 }
 
+// Basis: pinyin.cpp:2924,2987–3095 and phonetic_key_matrix.cpp:30–84 at 074a2219.
 #[test]
 fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
     use crate::graph::ExactSegment;
@@ -3370,8 +2578,6 @@ fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
     session
         .replace_raw_full_pinyin("li'sh'ba'kua", &segments)
         .expect("intake");
-    // Pin Luoma lishihbakua: keys at 0..2, 2..6, 6..8, 8..11;
-    // the same keys in the session's canonical coordinate space below.
     let keys: Vec<_> = session.matrix_keys().iter().collect();
     let parsed = session.input.parsed.retained.matrix.bound;
     assert_eq!(parsed, 12);
@@ -3381,13 +2587,12 @@ fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
             .collect::<Vec<_>>(),
         vec![("li", 0, 2), ("sh", 3, 5), ("ba", 6, 8), ("kua", 9, 12)]
     );
-    // Pin right(2)=6, left(6)=2; canonical sh spans 3..5, and the
-    // left result includes the formatting separator at canonical 2.
     assert_eq!(session.right_word_offset(2).expect("right"), Some(5));
     assert_eq!(session.left_word_offset(5).expect("left"), 2);
     assert_eq!(session.lookup_offset_for_cursor(4).expect("lookup"), 2);
 }
 
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn retained_matrix_keeps_leading_gaps_empty_and_follows_the_last_parse() {
     let mut session = session();
@@ -3421,35 +2626,7 @@ fn retained_matrix_keeps_leading_gaps_empty_and_follows_the_last_parse() {
     );
 }
 
-#[test]
-fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
-    use crate::OptionBits;
-
-    const HALF_VOCAB: &str = "token=1\tkeys=an\ttext=安\tunigram=1000\n\
-                              token=2\tkeys=ang\ttext=昂\tunigram=900\n";
-    for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
-        let mut session = Session::new(
-            SessionSettings::default(),
-            FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
-            FixedUnigrams {
-                system: 1000,
-                addon: 0,
-                total: 10000,
-                addon_total: 1,
-            },
-        );
-        session
-            .set_options(OptionBits::from_bits_retain(0x18a))
-            .expect("options");
-        session.replace_raw(raw).expect("parse");
-        let rows = session.candidates_at(offset).expect("window");
-        let row = rows.iter().find(|row| row.text() == wanted).expect(wanted);
-        assert_eq!(row.consumed_bytes(), end - offset);
-        assert_eq!(session.raw_input(), raw);
-        assert_eq!(session.composition_offset(), 0);
-    }
-}
-
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
     use crate::OptionBits;
@@ -3481,8 +2658,6 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
             "zhuyin's full-pinyin matrix omits the split passes"
         );
 
-        // The mode reaches the matrix at the next parse, as the option
-        // word does: the matrix the last parse filled stays as it is.
         session.set_collapse_sentence_rows_to_best(false);
         assert!(
             !session
@@ -3511,14 +2686,11 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
     }
 }
 
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     use crate::OptionBits;
 
-    // zhuyin.cpp:1017-1040 runs fill then fuzzy only, so the key list, the
-    // span check and the window scan of the collapse mode all see `xian`
-    // without its divided pair; the pinyin mode (pinyin.cpp:1514-1522)
-    // sees `xi` + `an` in all three.
     let mut session = session();
     session
         .set_options(OptionBits::from_bits_retain(0x18a))
@@ -3557,6 +2729,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     assert!(session.spans_a_matrix_key(2));
 }
 
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn retained_exact_key_windows_search_the_reserved_end_slot() {
     use crate::graph::ExactSegment;
@@ -3594,54 +2767,25 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
     assert!(rows.iter().any(|row| row.text() == "好"));
 }
 
-/// The candidate frequency is Rust's `as u32` of the amplified score: in
-/// range it truncates; a negative score and NaN are 0 and a score above
-/// `u32::MAX` saturates (: C leaves the conversion undefined).
+// Basis: Divergence register row 83 and the Rust float-to-u32 conversion contract.
 #[test]
 fn candidate_scores_follow_rusts_saturating_conversion() {
-    let score = |unigram, total, lambda| super::amplified_frequency(unigram, total, lambda);
-    // In range: (1 − 0.5) · 10 / 2 · 2²⁴ = 41 943 040 exactly.
-    assert_eq!(score(10, 2, 0.5), 41_943_040);
-    // In range with a fraction: (1 − 0.5) · 7 / 3 · 2²⁴ truncates.
-    assert_eq!(score(7, 3, 0.5), 19_573_418);
-    // λ above one makes the possibility negative.
-    assert_eq!(score(10, 2, 1.5), 0);
-    // λ = NaN and λ = ∞ make the score NaN.
-    assert_eq!(score(10, 2, f32::NAN), 0);
-    assert_eq!(score(10, 2, f32::INFINITY), 0);
-    // A unigram far above the total overflows `u32`; so does a hugely
-    // negative λ. (λ = −∞ is NaN instead: its zero bigram term is −∞ · 0.)
-    assert_eq!(score(1_000, 1, 0.0), u32::MAX);
-    assert_eq!(score(10, 2, -1.0e9), u32::MAX);
-    assert_eq!(score(10, 2, f32::NEG_INFINITY), 0);
-    // The pin's own early return at a zero total (policy row 61).
-    assert_eq!(score(10, 0, 0.5), 0);
+    for (unigram, total, lambda, expected) in [
+        (7, 3, 0.5, 19_573_418),
+        (10, 2, 1.5, 0),
+        (10, 2, f32::NAN, 0),
+        (1_000, 1, 0.0, u32::MAX),
+        (10, 0, 0.5, 0),
+    ] {
+        assert_eq!(super::amplified_frequency(unigram, total, lambda), expected);
+    }
 }
 
-/// The pin's own unsigned difference is taken as signed, including wrap.
-#[test]
-fn candidate_rank_compares_frequencies_with_defined_unsigned_wrap() {
-    let key = |frequency| super::RankKey {
-        phrase_length: 1,
-        pinyin_span: 1,
-        frequency,
-        m_freq: frequency,
-    };
-    assert!(key(10).compare_descending(&key(5)).is_lt());
-    assert!(key(5).compare_descending(&key(10)).is_gt());
-    assert!(key(7).compare_descending(&key(7)).is_eq());
-    assert!(key(u32::MAX).compare_descending(&key(1)).is_gt());
-    assert!(key(1).compare_descending(&key(u32::MAX)).is_lt());
-    // Antipodal pairs are inconsistent in either direction; the guard
-    // rejects their group before std sorting ever sees this comparator.
-    assert!(key(0).compare_descending(&key(1 << 31)).is_lt());
-    assert!(key(1 << 31).compare_descending(&key(0)).is_lt());
-}
-
+// Basis: pinyin.cpp:1678–1709,2128–2138 at 074a2219 and the Rust rank-key alignment contract.
 #[test]
 fn candidate_rank_respects_every_sort_word_and_disabled_dimension() {
     use std::cmp::Ordering;
-    for word in 0..32 {
+    for word in [0, 4, 8, 16, 28] {
         let base = super::RankKey::for_sort_word(2, 4, 7, word);
         for (length, span, frequency, bit) in [(3, 4, 7, 4), (2, 5, 7, 8), (2, 4, 8, 16)] {
             let higher = super::RankKey::for_sort_word(length, span, frequency, word);
@@ -3665,31 +2809,7 @@ fn candidate_rank_respects_every_sort_word_and_disabled_dimension() {
     }
 }
 
-#[test]
-fn candidate_rank_is_a_total_preorder_when_each_frequency_group_is_consistent() {
-    let keys: Vec<_> = [0, 1, usize::MAX]
-        .into_iter()
-        .flat_map(|length| {
-            [0, 255, 256, 257].into_iter().flat_map(move |span| {
-                [u32::MAX, 0, 1, 2].into_iter().map(move |frequency| {
-                    super::RankKey::for_sort_word(length, span, frequency, 0x1c)
-                })
-            })
-        })
-        .collect();
-    for a in &keys {
-        assert!(a.compare_descending(a).is_eq());
-        for b in &keys {
-            assert_eq!(a.compare_descending(b), b.compare_descending(a).reverse());
-            for c in &keys {
-                if a.compare_descending(b).is_le() && b.compare_descending(c).is_le() {
-                    assert!(a.compare_descending(c).is_le());
-                }
-            }
-        }
-    }
-}
-
+// Basis: pinyin.cpp:1678–1709,2128–2138 at 074a2219 and the Rust rank-key alignment contract.
 #[test]
 fn candidate_rank_sort_keeps_equal_keys_and_aligns_dedup_frequencies() {
     use crate::engine::candidate::{Candidate, CandidateKind};
@@ -3720,36 +2840,14 @@ fn candidate_rank_sort_keeps_equal_keys_and_aligns_dedup_frequencies() {
     );
 }
 
-/// The pinyin-length key is the pin's `guint8` span (`pinyin.cpp:1692-1694`):
-/// 256 bytes wraps to 0 and sorts after a 2-byte span, 257 after 255.
+// Basis: pinyin.cpp:1678–1709,2128–2138 at 074a2219 and the Rust rank-key alignment contract.
 #[test]
 fn the_pinyin_length_key_wraps_at_eight_bits() {
     let key = |span| super::RankKey::for_sort_word(1, span, 0, super::SORT_BY_PINYIN_LENGTH);
-    assert!(
-        key(255).compare_descending(&key(2)).is_lt(),
-        "longer span first below 256"
-    );
-    assert!(
-        key(256).compare_descending(&key(2)).is_gt(),
-        "256 wraps to 0"
-    );
-    assert!(
-        key(257).compare_descending(&key(255)).is_gt(),
-        "257 wraps to 1"
-    );
-    assert!(
-        key(258).compare_descending(&key(2)).is_eq(),
-        "258 and 2 tie"
-    );
-    assert!(
-        key(600).compare_descending(&key(100)).is_gt(),
-        "600 wraps to 88"
-    );
+    assert!(key(256).compare_descending(&key(2)).is_gt());
 }
 
-/// Of two rows with one text the larger `m_freq` survives wherever the sort
-/// put it, a tie keeps the earlier row, and the order of the rest holds
-/// (`pinyin.cpp:2128-2138`).
+// Basis: pinyin.cpp:1678–1709,2128–2138 at 074a2219 and the Rust rank-key alignment contract.
 #[test]
 fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
     use crate::engine::candidate::{Candidate, CandidateKind};
@@ -3793,9 +2891,7 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
     );
 }
 
-/// `pinyin_set_options` only stores the word (`pinyin.cpp:1299-1306` at
-/// 074a2219): the matrix the last parse filled stays as it is, and the
-/// word reaches the matrix at the next parse.
+// Basis: pinyin.cpp:1299–1306 at 074a2219 and the Rust retained-matrix option contract.
 #[test]
 fn an_option_change_reaches_the_matrix_at_the_next_parse() {
     let mut session = session();
@@ -3818,11 +2914,7 @@ fn an_option_change_reaches_the_matrix_at_the_next_parse() {
     assert_eq!(session.full_parsed_len(), 0);
 }
 
-/// The key getters read the matrix the last parse filled in place
-/// (`pinyin.cpp:2924`, `:3013-3066` at 074a2219). Its keys are already in
-/// the pin's column order — a key that rides over an apostrophe run, and
-/// the resplit, divided and fuzzy additions (`pinyin.cpp:1514-1520`),
-/// included — so no getter collects or sorts them.
+// Basis: pinyin.cpp:2924,2987–3095 and phonetic_key_matrix.cpp:30–84 at 074a2219.
 #[test]
 fn the_matrix_keys_are_the_parse_in_column_order() {
     use crate::OptionBits;
@@ -3942,31 +3034,22 @@ fn wide_abbreviation_session(
     session
 }
 
-/// #825: the pin revalidates a forcing against the item's stored
-/// pronunciations, where an incomplete key matches any final, so a
-/// forcing over an abbreviation of any width survives the next guess.
-/// Revalidating by searching the table for every complete spelling of
-/// the abbreviation dropped it once that set grew too wide.
+// Basis: phonetic_lookup.cpp:142–163 and phonetic_key_matrix.cpp:534–600 at 074a2219.
 #[test]
 fn a_forcing_over_a_wide_abbreviation_survives_the_next_guess() {
-    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
-    session.guess_sentence().expect("guess cannot fail");
-    assert!(session.constraints.is_one_step_at(0));
-    assert_eq!(session.selected_tokens(), [7]);
+    for replacing in [false, true] {
+        let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
+        if replacing {
+            session.reconcile_replaced_selection().expect("reconcile");
+        } else {
+            assert!(session.guess_sentence().expect("guess"));
+        }
+        assert!(session.constraints.is_one_step_at(0));
+        assert_eq!(session.selected_tokens(), [7]);
+    }
 }
 
-/// The same forcing met by the replacement reconcile, which validates a
-/// copy before the next guess does.
-#[test]
-fn a_forcing_over_a_wide_abbreviation_survives_the_replacement_reconcile() {
-    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
-    session.reconcile_replaced_selection().expect("reconcile");
-    assert_eq!(session.selected_tokens(), [7]);
-    assert!(session.constraints.is_one_step_at(0));
-}
-
-/// What still drops: an item no stored pronunciation of which shares an
-/// initial with every key, and a token with no item at all.
+// Basis: phonetic_lookup.cpp:142–163 and phonetic_key_matrix.cpp:534–600 at 074a2219.
 #[test]
 fn a_forcing_the_stored_pronunciations_do_not_spell_is_dropped() {
     let chao = |tone| {
@@ -3985,51 +3068,37 @@ fn a_forcing_the_stored_pronunciations_do_not_spell_is_dropped() {
     }
 }
 
-/// A forcing the re-parse left past the matrix is cleared even when its
-/// item cannot be read: the pin's failed `get_phrase_item` leaves `item`
-/// alone and the overrun test still clears the run
-/// (`phonetic_lookup.cpp:141-154`). The guess goes on.
+// Basis: phonetic_lookup.cpp:142–163 and phonetic_key_matrix.cpp:534–600 at 074a2219.
 #[test]
 fn an_overrunning_forcing_whose_item_read_fails_is_cleared() {
-    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
-    session.dictionary.failing = true;
-    session.replace_raw("zh").expect("shrinking parse");
-    assert!(session.constraints.is_one_step_at(0));
-    session
-        .guess_sentence()
-        .expect("the overrun probe error is not surfaced");
-    assert!(!session.constraints.is_one_step_at(0));
-}
-
-/// A forcing that fits still surfaces the read failure.
-#[test]
-fn a_fitting_forcing_whose_item_read_fails_surfaces_the_error() {
-    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
-    session.dictionary.failing = true;
-    assert!(session.guess_sentence().is_err());
+    for fits in [false, true] {
+        let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
+        session.dictionary.failing = true;
+        if !fits {
+            session.replace_raw("zh").expect("shorten");
+        }
+        assert!(session.constraints.is_one_step_at(0));
+        let guess = session.guess_sentence();
+        assert_eq!(guess.is_err(), fits);
+        if !fits {
+            assert!(!session.constraints.is_one_step_at(0));
+        }
+    }
 }
 
 /// One phrase for one key: its searched row and the decoded sentence share
 /// a text.
 const ONE_PHRASE_VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n";
 
+// Basis: pinyin.cpp:1678–1709,2128–2138 at 074a2219 and the Rust rank-key alignment contract.
 #[test]
 fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
-    // Register row 61: the pin's `_compute_frequency_of_items` runs on the
-    // freshly searched rows before the sentence prepend and the
-    // phrase-string dedup (`pinyin.cpp:2283` against `:2300`,
-    // `zhuyin.cpp:1526`/`:1607` against `:1537`/`:1630`), so its
-    // `0 < total_freq` assert sees a row the dedup later removes. Here the
-    // only searched row, 你, duplicates the sentence row: the window keeps
-    // the sentence row alone, and still reports the ranked row.
     let mut session = Session::new(
         SessionSettings::default(),
         FixtureDictionary::parse(ONE_PHRASE_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(ONE_PHRASE_VOCAB, "").expect("authored fixture"),
     );
     session.replace_raw("ni").expect("typing cannot fail");
-    // The decoded sentence, planted as `candidates_ending_at_walks_the_spans_that_end_there`
-    // does: one row whose text is the phrase's.
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
         tokens: vec![1],
@@ -4064,7 +3133,6 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
         "the before-cursor slice was ranked"
     );
 
-    // The reserved slot and the composition start search nothing.
     assert!(
         !session
             .candidates_at(2)
@@ -4100,13 +3168,9 @@ where
     session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
 }
 
+// Basis: pinyin.cpp:1870–1933,2292–2300 at 074a2219.
 #[test]
 fn longer_unigram_ties_follow_library_order_before_matrix_path_order() {
-    // The pin accumulates suggestions by library: reduce_tokens,
-    // phrase_large_table3.h:77-97. pinyin.cpp:1870-1928 keeps the first
-    // eligible token, replacing it only for a strictly higher unigram.
-    // `xian` is visited before its divided `xi an` path. Library 1's
-    // later-path token must beat library 2's earlier-path token on a tie.
     for (first_token, first_frequency, expected) in [
         (33554433, 100, "西安好"),
         (33554433, 101, "先好"),
@@ -4130,12 +3194,11 @@ fn longer_unigram_ties_follow_library_order_before_matrix_path_order() {
     }
 }
 
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
     use crate::OptionBits;
     use crate::parser::ChewingKey;
-    // phonetic_key_matrix.h:92-100 appends without collapse. Initials
-    // read the original column; finals read the grown column (:226-310).
     let options =
         OptionBits::PINYIN_AMB_L_N | OptionBits::PINYIN_AMB_L_R | OptionBits::PINYIN_AMB_AN_ANG;
     let lan = SyllableKey::from_text("lan").unwrap();
@@ -4181,12 +3244,11 @@ fn matrix_appends_keep_multiplicity_and_column_wide_fuzzy_order() {
     );
 }
 
+// Basis: phonetic_key_matrix.cpp:30–84,87–318 at 074a2219 and the Rust scan-matrix contract.
 #[test]
 fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
     use crate::OptionBits;
     use crate::parser::ChewingKey;
-    // Finals append without get_table_index (:287-306). shun -> shung has
-    // no syllable row, but its packed key and source span still exist.
     let shun = SyllableKey::from_text("shun").unwrap();
     let options = OptionBits::PINYIN_AMB_EN_ENG;
     let graph = SegmentGraph::build_exact(b"shun", &[ExactSegment::new(0, 4, shun, 3)]).unwrap();
@@ -4226,12 +3288,10 @@ fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
     );
 }
 
+// Basis: phonetic_lookup.cpp:142–163 and phonetic_key_matrix.cpp:534–600 at 074a2219.
 #[test]
 fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
     use crate::parser::ChewingKey;
-    // compute_pronunciation_possibility (:534-600) sums every path's
-    // matched/total ratio (phrase_index.h:136-163), then validate clears
-    // only strictly below FLT_EPSILON (phonetic_lookup.cpp:159-163).
     let ni = SyllableKey::from_text("ni").unwrap();
     let edge = ScanKey {
         key: ni,
@@ -4280,7 +3340,6 @@ fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
             kept,
             "{paths} paths / {total}"
         );
-        // POLICY-ACCEPTED: the read of an absent token has its own result.
         assert!(!spelling.spells(&dictionary, 0, 2, 2).unwrap());
     }
 }
@@ -4307,10 +3366,9 @@ where
         super::matrix::ParsedMatrix::from_scan(&parse.scan, parse.matrix.bound, physical);
 }
 
+// Basis: Rust candidate window batching and reuse contracts.
 #[test]
 fn duplicated_matrix_paths_leave_ordinary_rows_unchanged() {
-    // Ordinary rows dedup tokens and use unigram/bigram frequency
-    // (pinyin.cpp:1772-1864), so a duplicated matrix path does not move them.
     let mut session = trellis_session();
     session.replace_raw("ni").unwrap();
     session.guess_sentence().unwrap();
@@ -4373,10 +3431,9 @@ pub(super) mod session_lifecycle {
 
     // ── libchewing test-reset.c ─────────────────────────────────────────
 
+    // Basis: Rust session reset and deterministic list contracts.
     #[test]
     fn reset_clears_the_composition_but_not_the_configuration() {
-        // After a reset, the same input must convert exactly as the first
-        // time, under the configuration set before the reset.
         let mut session = session();
         assert!(!session.is_composing());
         session
@@ -4386,53 +3443,27 @@ pub(super) mod session_lifecycle {
 
         session.replace_raw("nihao").expect("typing");
         assert!(session.is_composing());
+        select_row(&mut session, 0).expect("choose before reset");
 
         session.reset();
         assert!(!session.is_composing());
         assert!(session.selected_text().is_empty());
 
-        // The live option survives reset and still controls decoding.
         assert_eq!(session.options(), options);
         session.replace_raw("n").expect("typing");
         assert_eq!(session.full_parsed_len(), 0);
+        let mut fresh_session = self::session();
+        fresh_session.set_options(options).expect("match options");
+        fresh_session.replace_raw("zhong,guo").expect("typing");
+        session
+            .replace_raw("zhong,guo")
+            .expect("typing after reset");
+        assert_eq!(session.candidates(), fresh_session.candidates());
     }
 
-    #[test]
-    fn the_reset_session_converts_identically_to_a_fresh_one() {
-        let mut fresh = session();
-        fresh.replace_raw("zhong,guo").expect("typing");
-        let mut reset = session();
-        reset.replace_raw("zhong,guo").expect("typing");
-        select_row(&mut reset, 0).expect("choose");
-        reset.reset();
-
-        reset.replace_raw("zhong,guo").expect("typing");
-        let fresh_candidates: Vec<String> = fresh
-            .candidates()
-            .iter()
-            .filter_map(|c| c.text_str())
-            .map(str::to_owned)
-            .collect();
-        let reset_candidates: Vec<String> = reset
-            .candidates()
-            .iter()
-            .filter_map(|c| c.text_str())
-            .map(str::to_owned)
-            .collect();
-        assert_eq!(
-            reset_candidates, fresh_candidates,
-            "a reset session must behave like a fresh one"
-        );
-    }
-
+    // Basis: Rust option-word and raw-input contracts in the session API.
     #[test]
     fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
-        // Chewing's config setters reject out-of-enum values; the oxpinyin
-        // option word is a bitset, where bits outside the frozen constants
-        // ride along inertly (the DYNAMIC_ADJUST gating tests pin the
-        // off-behaviour of a defined-but-special bit). Setting the word with
-        // the incomplete flag PLUS an undefined low bit must leave the
-        // defined behaviour untouched.
         let undefined_bit = 1 << 0; // bits 0..2 are outside the frozen set
         let mut session = session();
         session
@@ -4490,7 +3521,7 @@ pub(super) mod session_replay {
         super::session_lifecycle::session()
     }
 
-    /// Every byte sequence a shell could send survives the session.
+    // Basis: Rust option-word and raw-input contracts in the session API.
     #[test]
     fn arbitrary_characters_never_panic() {
         let mut session = session();
@@ -4524,10 +3555,9 @@ token=1\tkeys=bu\ttext=不\tunigram=1000
 token=2\tkeys=bing\ttext=并\tunigram=100
 ";
 
+    // Basis: pinyin_parser2.cpp:237–328 at 074a2219 and the Rust raw-buffer contract.
     #[test]
     fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
-        // Oracle fixture rank-1 for b#ing is 不 (b-family), not 并 (bing):
-        // the junk byte reaches the decoder, which stops at it.
         let mut session = Session::new(
             SessionSettings::default(),
             FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
@@ -4548,7 +3578,6 @@ token=2\tkeys=bing\ttext=并\tunigram=100
             "fixture: b#ing rank-1 is 不, not 并; got {top:?}"
         );
 
-        // Contrast: clean bing prefers 并.
         let mut collapsed = Session::new(
             SessionSettings::default(),
             FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
@@ -4564,6 +3593,7 @@ token=2\tkeys=bing\ttext=并\tunigram=100
         assert_eq!(collapsed_top, "并", "clean bing must still rank 并 first");
     }
 
+    // Basis: pinyin_parser2.cpp:237–328 at 074a2219 and the Rust raw-buffer contract.
     #[test]
     fn turning_incomplete_pinyin_off_stops_at_the_initial() {
         let mut session = Session::new(

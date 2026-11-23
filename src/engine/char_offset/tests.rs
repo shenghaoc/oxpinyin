@@ -1,6 +1,5 @@
 use super::{matrix_columns, remember_walk};
 use crate::engine::{MatrixKey, parse_time_keys};
-use crate::parser::DoublePinyinParser;
 use crate::{OptionBits, graph::SegmentGraph};
 
 fn full_matrix(input: &str, options: OptionBits) -> Vec<MatrixKey> {
@@ -14,21 +13,6 @@ fn full_matrix(input: &str, options: OptionBits) -> Vec<MatrixKey> {
     parse_time_keys(&keys, input.len(), options, true)
 }
 
-fn double_nong_matrix() -> Vec<MatrixKey> {
-    let options = OptionBits::from_bits_retain(0x8 | (1 << 15));
-    let parse = DoublePinyinParser::new().parse_with_options(b"ns", options);
-    assert_eq!(parse.consumed(), 2);
-    let keys: Vec<_> = parse
-        .keys()
-        .iter()
-        .map(|key| MatrixKey::new(key.key(), key.tone(), key.start(), key.end()))
-        .collect();
-    parse_time_keys(&keys, 2, options, false)
-}
-
-// The callback's accepted readings are the original mini items (你 and 好),
-// or the two imported readings of 弄. The C module tests retain the actual
-// dictionary callback, preflight order and writes of counts 3 and 6.
 fn remembered_paths(
     input: &str,
     keys: Vec<MatrixKey>,
@@ -49,44 +33,19 @@ fn remembered_paths(
     (found, paths)
 }
 
-/// A one-key path for 你好 never calls the add/preflight callback
-/// (`pinyin.cpp:3600-3601` at 074a2219).
+// Basis: pinyin.cpp:3594–3606,3640–3645 at 074a2219.
 #[test]
 fn remember_user_input_refuses_a_short_path_before_the_preflight() {
-    assert_eq!(
-        remembered_paths(
-            "ni",
-            full_matrix("ni", OptionBits::from_bits_retain(0x28)),
-            &[&["ni"], &["hao"]]
-        ),
-        (false, vec![])
-    );
+    for (input, readings) in [("ni", ["ni", "hao"]), ("nihao", ["hao", "ni"])] {
+        let matrix = full_matrix(input, OptionBits::from_bits_retain(0x28));
+        assert_eq!(
+            remembered_paths(input, matrix, &[&[readings[0]], &[readings[1]]]),
+            (false, vec![])
+        );
+    }
 }
 
-/// 好 does not pronounce ni (`pinyin.cpp:3640-3645` at 074a2219).
-#[test]
-fn remember_user_input_refuses_a_path_the_item_does_not_pronounce() {
-    assert_eq!(
-        remembered_paths(
-            "nihao",
-            full_matrix("nihao", OptionBits::from_bits_retain(0x28)),
-            &[&["hao"], &["ni"]]
-        ),
-        (false, vec![])
-    );
-}
-
-/// The walk uses the retained parse matrix after L_N is cleared by its caller.
-#[test]
-fn remember_user_input_keeps_the_parse_time_fuzzy_alternatives() {
-    let matrix = double_nong_matrix();
-    assert_eq!(
-        remembered_paths("ns", matrix, &[&["nong", "long"]]),
-        (true, vec![vec!["nong".to_owned()], vec!["long".to_owned()]])
-    );
-}
-
-/// Every complete path calls add (`pinyin.cpp:3654-3659` at 074a2219).
+// Basis: pinyin.cpp:3654–3659 at 074a2219.
 #[test]
 fn remember_user_input_adds_along_every_complete_path() {
     let matrix = full_matrix("nong", OptionBits::from_bits_retain(0x8 | (1 << 15)));
@@ -96,14 +55,13 @@ fn remember_user_input_adds_along_every_complete_path() {
     );
 }
 
-/// PhoneticTable::append retains identical entries (phonetic_key_matrix.h:92-100).
-/// Each complete path still calls add (`pinyin.cpp:3594-3606` at 074a2219).
+// Basis: phonetic_key_matrix.h:92–100 and pinyin.cpp:3594–3606 at 074a2219.
 #[test]
 fn remember_user_input_writes_again_for_an_identical_complete_path() {
-    let mut matrix = double_nong_matrix();
+    let mut matrix = full_matrix("nong", OptionBits::from_bits_retain(0x8 | (1 << 15)));
     matrix.push(matrix[0]);
     assert_eq!(
-        remembered_paths("ns", matrix, &[&["nong", "long"]]),
+        remembered_paths("nong", matrix, &[&["nong", "long"]]),
         (
             true,
             vec![

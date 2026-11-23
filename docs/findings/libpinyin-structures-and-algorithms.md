@@ -781,8 +781,7 @@ below also has a pin capture. Constraint validation uses these rules.
 A phrase forced over its abbreviation, one initial-only key per syllable,
 takes the incomplete disjunct on both sides with no expansion and no cap
 (`pinyin_phrase3.h:81-83`; `nbest.rs:1332`). The engine tests
-`a_forcing_over_a_wide_abbreviation_survives_the_next_guess` and
-`a_forcing_over_a_wide_abbreviation_survives_the_replacement_reconcile`
+`a_forcing_over_a_wide_abbreviation_survives_the_next_guess` covers both the guess and replacement reconciliation
 (`src/engine/session/tests.rs`) hold the wide case.
 
 **Measured on the pin** for 整个 forced over `zhg` on the reference cell:

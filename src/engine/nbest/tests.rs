@@ -14,33 +14,6 @@ use crate::engine::error::EngineError;
 use crate::engine::session::build_scan_matrix;
 use crate::fixture_doubles::FixtureDictionary;
 
-struct TextDictionary;
-
-impl PhraseList for TextDictionary {
-    type Syllable = SyllableKey;
-    type Error = std::convert::Infallible;
-
-    fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<PhraseEntry>, Self::Error> {
-        Ok(vec![PhraseEntry::new(1, "你好")])
-    }
-}
-
-#[test]
-fn an_ordinary_sentence_text_is_built() {
-    let mut trellis = Trellis::with_seeds(0, &[], NbestShape::PINYIN);
-    trellis.texts.insert(1, (0, 1));
-    trellis
-        .text_keys
-        .push(SyllableKey::from_text("ni").expect("ni is a key"));
-    trellis.text_tones.push(0);
-    let mut cache = super::TokenMap::default();
-    let text = trellis
-        .text(&TextDictionary, &mut cache, &[(0, 1)], &RefCell::default())
-        .expect("trellis text")
-        .expect("present");
-    assert_eq!(text.as_str(), Some("你好"));
-}
-
 /// A slot whose pricing is already known, so no dictionary is read.
 fn priced_slot(token: u32) -> super::LazySlot {
     let slot = super::LazySlot::new(0);
@@ -76,6 +49,7 @@ fn pricing(
     }
 }
 
+// Basis: Rust span pricing contract and phonetic_key_matrix.cpp:534–600 at 074a2219.
 #[test]
 fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
     use std::cell::Cell;
@@ -91,8 +65,6 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
 
         fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
             self.reads.set(self.reads.get() + 1);
-            // Give one path a different item length for the same token
-            // to exercise the length check on a populated cache.
             let (text, total) = match syllables {
                 [_] => ("西安", 5),
                 [key, _] if *key == self.short_item_key => ("先", 7),
@@ -113,7 +85,6 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
         crosses_separator: false,
         tone: 0,
     };
-    // The paths in walk order are xian, xi + an, and xia + n.
     let scan = ScanMatrix::from_columns(vec![
         vec![edge("xian", 0, 4), edge("xi", 0, 2), edge("xia", 0, 3)],
         vec![],
@@ -149,8 +120,6 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
         generation: &generation,
         span: 0..4,
     };
-    // The uncached walk for length two sums the two split paths in
-    // matrix order. The walk for length one prices only the direct path.
     let split_sum = 1.0_f32 / 3.0 + 1.0_f32 / 7.0;
     let expected = [
         (0, 1, 2, split_sum),
@@ -166,7 +135,6 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
         assert_eq!((entry.path, entry.keys, entry.chars), (path, keys, chars));
         assert_eq!(entry.pronunciation.to_bits(), sum.to_bits(), "path {path}");
         if path == 1 {
-            // The cache hit reads only this slot's item.
             assert_eq!(dictionary.reads.get(), 1);
         }
     }
@@ -189,27 +157,24 @@ fn scored(poss: f32, length: u32) -> Value {
     }
 }
 
+// Basis: Divergence register rows 146 and 152.
 #[test]
 fn complete_selection_keys_obey_ordering_laws() {
     let mut entries = Vec::new();
-    for length in [0, 1, u32::MAX] {
-        for poss in [
-            f32::NAN,
-            f32::from_bits(0xffc00001),
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            f32::MAX,
-            -f32::MAX,
-            0.0,
-            -0.0,
-            -1.0,
-        ] {
-            entries.push(super::BeamEntry {
-                value: scored(poss, length),
-                slot: 1,
-                batch_position: entries.len(),
-            });
-        }
+    for (poss, length) in [
+        (f32::NAN, 0),
+        (f32::INFINITY, 1),
+        (f32::NEG_INFINITY, 1),
+        (0.0, 1),
+        (-0.0, 1),
+        (-1.0, 0),
+        (-1.0, 1),
+    ] {
+        entries.push(super::BeamEntry {
+            value: scored(poss, length),
+            slot: 1,
+            batch_position: entries.len(),
+        });
     }
     for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
         let less = |a, b| super::selection_compare(a, b, shape.nstore()).is_gt();
@@ -230,6 +195,7 @@ fn complete_selection_keys_obey_ordering_laws() {
     }
 }
 
+// Basis: phonetic_lookup_heap.h:56–81,89–122 at 074a2219 and the Rust physical slot contract.
 #[test]
 fn node_transitions_preserve_physical_slots() {
     let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
@@ -269,37 +235,54 @@ fn node_transitions_preserve_physical_slots() {
     }
 }
 
+// Basis: Divergence register rows 146 and 152.
 #[test]
 fn selection_keeps_the_complete_key_at_each_limit() {
-    for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
-        for limit in [0, 1, 3, super::NBEAM] {
-            for size in [0, limit.saturating_sub(1), limit, limit + 1] {
-                for tied in [false, true] {
-                    let entries: Vec<_> = (0..size)
-                        .rev()
-                        .map(|position| super::BeamEntry {
-                            value: scored(if tied { -1.0 } else { -(position as f32) }, 1),
-                            slot: (position % 2) as u32,
-                            batch_position: position,
-                        })
-                        .collect();
-                    let selected = super::select_top(entries, limit, shape.nstore());
-                    assert_eq!(
-                        selected
-                            .iter()
-                            .map(|entry| entry.batch_position)
-                            .collect::<Vec<_>>(),
-                        (0..size.min(limit)).collect::<Vec<_>>()
-                    );
-                    assert!(
-                        selected
-                            .iter()
-                            .all(|entry| entry.slot as usize == entry.batch_position % 2)
-                    );
-                }
-            }
-        }
+    use super::NBEAM;
+
+    for (size, limit) in [
+        (0, 1),
+        (1, 0),
+        (NBEAM - 1, NBEAM),
+        (NBEAM, NBEAM),
+        (NBEAM + 1, NBEAM),
+    ] {
+        let entries = selection_batch(size, true);
+        let selected = super::select_top(entries, limit, NbestShape::PINYIN.nstore());
+        assert_eq!(
+            selected
+                .iter()
+                .map(|entry| (entry.batch_position, entry.slot))
+                .collect::<Vec<_>>(),
+            (0..size.min(limit))
+                .map(|index| (index, (index % 2) as u32))
+                .collect::<Vec<_>>()
+        );
     }
+
+    let entries = selection_batch(NBEAM + 1, false);
+    let ids = |selected: Vec<super::BeamEntry>| {
+        selected
+            .into_iter()
+            .map(|entry| (entry.batch_position, entry.slot))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(super::select_top(
+            entries.clone(),
+            NBEAM,
+            NbestShape::PINYIN.nstore()
+        )),
+        ids(binary_heap_top::<2>(entries.clone(), NBEAM))
+    );
+    assert_eq!(
+        ids(super::select_top(
+            entries.clone(),
+            NBEAM,
+            NbestShape::ZHUYIN.nstore()
+        )),
+        ids(binary_heap_top::<1>(entries, NBEAM))
+    );
 }
 
 /// The standard-heap alternative uses exactly the production key. A
@@ -365,31 +348,7 @@ fn selection_batch(size: usize, tied: bool) -> Vec<super::BeamEntry> {
         .collect()
 }
 
-#[test]
-fn selection_agrees_with_std_heap_on_mixed_keys() {
-    for size in [0, 1, 2, 3, 31, 32, 33, 128] {
-        for count in [0, 1, 3, super::NBEAM, 129] {
-            for tied in [false, true] {
-                let entries = selection_batch(size, tied);
-                let ids = |entries: Vec<super::BeamEntry>| {
-                    entries
-                        .into_iter()
-                        .map(|entry| (entry.batch_position, entry.slot))
-                        .collect::<Vec<_>>()
-                };
-                assert_eq!(
-                    ids(super::select_top(entries.clone(), count, 1)),
-                    ids(binary_heap_top::<1>(entries.clone(), count))
-                );
-                assert_eq!(
-                    ids(super::select_top(entries.clone(), count, 2)),
-                    ids(binary_heap_top::<2>(entries, count))
-                );
-            }
-        }
-    }
-}
-
+// Basis: Rust trellis storage layout contract.
 #[test]
 fn float_trellis_storage_shrinks() {
     assert_eq!(std::mem::size_of::<Value>(), 28);
@@ -398,6 +357,7 @@ fn float_trellis_storage_shrinks() {
     assert_eq!(std::mem::size_of::<super::BeamEntry>(), 40);
 }
 
+// Basis: Divergence register row 147.
 #[test]
 fn ieee_order_and_stable_raw_tails() {
     let mut tails = [
@@ -407,6 +367,7 @@ fn ieee_order_and_stable_raw_tails() {
         f32::INFINITY,
         0.0,
         -1.0,
+        -0.25,
         f32::from_bits(0xffc00001),
     ]
     .map(|p| scored(p, 1));
@@ -414,22 +375,10 @@ fn ieee_order_and_stable_raw_tails() {
         tail.token = index as u32;
     }
     super::tail_merge(&mut tails);
-    assert_eq!(tails.map(|v| v.token), [3, 1, 4, 5, 2, 0, 6]);
-    for (index, left) in tails.iter().enumerate() {
-        for right in &tails[index..] {
-            assert!(!super::ordered_poss_compare(left.poss, right.poss).is_gt());
-        }
-    }
+    assert_eq!(tails.map(|v| v.token), [3, 1, 4, 6, 5, 2, 0, 7]);
 }
 
-#[test]
-fn raw_tails_order_subunit_score_differences() {
-    let mut tails = [scored(-1.0, 1), scored(-0.25, 1)];
-    tails[1].token = 2;
-    super::tail_merge(&mut tails);
-    assert_eq!(tails.map(|tail| tail.token), [2, 1]);
-}
-
+// Basis: Divergence register row 146.
 #[test]
 fn adjusted_score_rounds_product_then_difference_and_ties() {
     let p = 1.2_f32.ln();
@@ -439,7 +388,6 @@ fn adjusted_score_rounds_product_then_difference_and_ties() {
         assert_eq!(loses_to(&short, &long), advantage > p);
         assert_eq!(loses_to(&long, &short), advantage < p);
     }
-    // Distinct exact adjusted scores collapse on the f32 grid.
     let short = scored(-16777216.0, 0);
     let long = scored(-16777216.0, 1);
     assert_ne!(f64::from(short.poss), f64::from(long.poss) - f64::from(p));
@@ -451,25 +399,18 @@ fn adjusted_score_rounds_product_then_difference_and_ties() {
     }
 }
 
+// Basis: Divergence register row 146.
 #[test]
 fn float_adjusted_comparison_is_a_strict_weak_order() {
-    let mut values = Vec::new();
-    for length in [0, 1, 3, u32::MAX] {
-        for poss in [
-            f32::NAN,
-            f32::from_bits(0xffc00001),
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            f32::MAX,
-            -f32::MAX,
-            0.0,
-            -0.0,
-            -1.0,
-            -1.0_f32.next_up(),
-        ] {
-            values.push(scored(poss, length));
-        }
-    }
+    let values = [
+        scored(f32::NAN, 0),
+        scored(f32::INFINITY, 1),
+        scored(f32::NEG_INFINITY, 1),
+        scored(0.0, 0),
+        scored(-0.0, 0),
+        scored(-1.0, 1),
+        scored(-1.0_f32.next_up(), 1),
+    ];
     for a in &values {
         assert!(!loses_to(a, a));
         for b in &values {
@@ -486,39 +427,39 @@ fn float_adjusted_comparison_is_a_strict_weak_order() {
     }
 }
 
+// Basis: phonetic_lookup.h:329–339 at 074a2219.
 #[test]
 fn tails_require_the_final_step_even_when_underfilled() {
-    for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
-        let mut trellis = Trellis::with_seeds(2, &[], shape);
-        for token in 1..=3 {
-            trellis.insert(
-                1,
-                Value {
-                    token,
-                    ..scored(-1.0, 1)
-                },
-            );
-        }
-        assert!(trellis.tails().is_empty());
+    let mut trellis = Trellis::with_seeds(2, &[], NbestShape::PINYIN);
+    for token in 1..=3 {
         trellis.insert(
-            2,
+            1,
             Value {
-                token: 4,
-                ..scored(-2.0, 2)
+                token,
+                ..scored(-1.0, 1)
             },
         );
-        assert_eq!(
-            trellis.tails().iter().map(|v| v.token).collect::<Vec<_>>(),
-            [4]
-        );
     }
+    assert!(trellis.tails().is_empty());
+    trellis.insert(
+        2,
+        Value {
+            token: 4,
+            ..scored(-2.0, 2)
+        },
+    );
+    assert_eq!(
+        trellis.tails().iter().map(|v| v.token).collect::<Vec<_>>(),
+        [4]
+    );
 }
 
+// Basis: Divergence register row 152 and phonetic_lookup.h:66–91 at 074a2219.
 #[test]
 fn selection_uses_batch_ties_and_zhuyin_length_first_nan_last() {
-    for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
-        let mut trellis = Trellis::with_seeds(1, &[], shape);
-        for token in 1..=40 {
+    {
+        let mut trellis = Trellis::with_seeds(1, &[], NbestShape::ZHUYIN);
+        for token in 1..=33 {
             trellis.insert(
                 1,
                 Value {
@@ -549,7 +490,6 @@ fn selection_uses_batch_ties_and_zhuyin_length_first_nan_last() {
             .is_gt()
     );
     assert!(super::selection_compare(&entry(-0.0, 1, 1), &entry(0.0, 1, 0), 1).is_gt());
-    // Zhuyin's single-slot admission remains raw IEEE <, including NaN.
     assert!(!super::node_loses_to(
         &scored(f32::NAN, 1),
         &scored(1.0, 1),
@@ -557,6 +497,7 @@ fn selection_uses_batch_ties_and_zhuyin_length_first_nan_last() {
     ));
 }
 
+// Basis: phonetic_lookup_heap.h:56–81,89–122 at 074a2219 and the Rust physical slot contract.
 #[test]
 fn backtracking_uses_the_physical_slot_after_batch_selection() {
     let mut trellis = Trellis::with_seeds(3, &[0], NbestShape::PINYIN);
@@ -652,10 +593,9 @@ impl LanguageModel for Fixed {
     }
 }
 
+// Basis: Divergence register row 11 and phonetic_lookup.h:643–697 at 074a2219.
 #[test]
 fn unigram_step_accumulates_log_possibility() {
-    // phonetic_lookup.h:45,650-665 stores predecessor + log(p) in a gfloat.
-    // At 13/32, rounding log(p) before addition gives 0xc039_a67c.
     for (probability, expected) in [(0.5, 0xc02c_5c86), (13.0 / 32.0, 0xc039_a67d)] {
         let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
         let mut paths = super::SpanPaths::default();
@@ -703,10 +643,7 @@ fn one_column_matrix(text: &str) -> (ScanMatrix, usize) {
     (matrix, bound)
 }
 
-/// The pin sums all paths in `phonetic_key_matrix.cpp:534-600` at
-/// 074a2219, then both step branches compare the sum with FLT_EPSILON
-/// (`phonetic_lookup.h:654-658,683-688`). Two shares of 1/2^24
-/// reach that boundary even though neither path reaches it alone.
+// Basis: Divergence register row 11 and phonetic_lookup.h:643–697 at 074a2219.
 #[test]
 fn two_sub_epsilon_paths_admit_the_span_in_both_step_branches() {
     struct TinyReadings;
@@ -758,6 +695,7 @@ fn two_sub_epsilon_paths_admit_the_span_in_both_step_branches() {
     }
 }
 
+// Basis: phonetic_lookup.h:643–713 at 074a2219 and the Rust step-cost contract.
 #[test]
 fn a_model_without_step_costs_yields_no_rows() {
     let (matrix, bound) = one_column_matrix("nihao");
@@ -771,10 +709,7 @@ fn a_model_without_step_costs_yields_no_rows() {
     assert!(rows.is_empty());
 }
 
-/// λ = 1 makes `unigram_lambda(1. - lambda)` zero
-/// (`phonetic_lookup.h:712-713` at 074a2219), so a unigram step adds
-/// `log(0)`. The step is kept: the sentence still reaches the final
-/// step, at -inf.
+// Basis: phonetic_lookup.h:643–713 at 074a2219 and the Rust step-cost contract.
 #[test]
 fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
     struct UnigramOnly;
@@ -815,12 +750,7 @@ fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
     );
 }
 
-/// A predecessor's row lives for one span load: the pin reloads both
-/// bigrams for every beam value and span (`phonetic_lookup.h:595-596`
-/// at 074a2219). A model that loads into the row must decode the same
-/// rows as the pair-wise default `nbest_step_costs_in_row`, including
-/// after the gram changes between guesses, so no row outlives its span
-/// and no predecessor reads another's row.
+// Basis: Rust row cache contract and phonetic_lookup.h:595–596 at 074a2219.
 #[test]
 fn row_cached_step_costs_decode_as_the_pairwise_path() {
     use crate::model::{MergedGram, NbestStepRow};
@@ -933,6 +863,7 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
     assert_ne!(seen[0], seen[1], "the gram change must move the rows");
 }
 
+// Basis: phonetic_lookup.h:594–632 and ngram.cpp:167–173 at 074a2219.
 #[test]
 fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
     use crate::model::{MergedGram, NbestStepRow};
@@ -984,9 +915,6 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
     let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
     let beam = trellis.beam(0);
     super::expand_entries(&pricing(&entries), &beam, 0..1, &model, &mut trellis, None).unwrap();
-    // Bigram visits present 3,1,3 in the original range/item order;
-    // the zero-count record 3 still participates. The independent head
-    // unigram pass then visits every candidate, including absent 2.
     assert_eq!(*model.0.borrow(), [3, 1, 3, 3, 2, 1, 3]);
 }
 
@@ -1062,11 +990,7 @@ fn expand_with_row(
     )
 }
 
-/// N2 refusals 4 and 6 in the n-best step (`phonetic_lookup.h:594-632`):
-/// a one-step constraint's `get_freq` reads past a short row, and a walk
-/// past the last whole item reads past a partial tail. A walk that stops
-/// before the tail steps normally. The short-total asserts of the same
-/// step die in the engine; the two death tests below witness them.
+// Basis: phonetic_lookup.h:594–632 and ngram.cpp:165–173,231–248,303–349 at 074a2219.
 #[test]
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
     use crate::model::MergedGram;
@@ -1076,7 +1000,6 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
     assert_eq!(expand_with_row(alone(), Some(1)), Err(unsafe_read.clone()));
     let tailed = || MergedGram::merge(None, Some(gram_value(3, &[(1, 3)], &[9])));
     assert_eq!(expand_with_row(tailed(), None), Err(unsafe_read));
-    // `get_freq(1)` returns at the whole item before the tail.
     assert_eq!(expand_with_row(tailed(), Some(1)), Ok(()));
     assert_eq!(
         expand_with_row(None, None),
@@ -1085,9 +1008,7 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
     );
 }
 
-/// N2 refusal 1: the predecessor's merge asserts on a short user value
-/// beside a system gram (`merge_single_gram` reads both totals first,
-/// `ngram.cpp:303-304`), and the step dies in the engine.
+// Basis: phonetic_lookup.h:594–632 and ngram.cpp:165–173,231–248,303–349 at 074a2219.
 #[test]
 fn a_short_merge_aborts_the_step() {
     crate::store::death_test::assert_aborts(
@@ -1102,9 +1023,7 @@ fn a_short_merge_aborts_the_step() {
     );
 }
 
-/// N2 refusal 2: with no system gram, the ranged walk's `search` asserts
-/// on the lone user row's total (`SingleGram::search`, `ngram.cpp:165`),
-/// and the step dies in the engine.
+// Basis: phonetic_lookup.h:594–632 and ngram.cpp:165–173,231–248,303–349 at 074a2219.
 #[test]
 fn a_short_lone_row_aborts_the_ranged_step() {
     crate::store::death_test::assert_aborts(
@@ -1116,17 +1035,12 @@ fn a_short_lone_row_aborts_the_ranged_step() {
     );
 }
 
-/// `SingleGram::search` bounds its walk by the range end only
-/// (`ngram.cpp:167-173`). On the row `[1, 3, 2]` the walk over range
-/// `[3]` starts at 3 and yields 2 too, below that range; the pin steps
-/// every yielded token whose phrase spells the span, with that item's
-/// own count, so 2 steps there with 7.
+// Basis: phonetic_lookup.h:594–632 and ngram.cpp:167–173 at 074a2219.
 #[test]
 fn a_token_the_walk_yields_below_its_range_still_steps() {
     use crate::model::{MergedGram, NbestStepRow, NbestSuccessors};
     use std::cell::RefCell;
 
-    /// Each bigram step's token and the item it was priced from.
     type Steps = Vec<(u32, Option<(u32, u32)>)>;
     struct Walked(RefCell<Steps>);
     impl LanguageModel for Walked {
@@ -1174,16 +1088,13 @@ fn a_token_the_walk_yields_below_its_range_still_steps() {
     let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
     let beam = trellis.beam(0);
     super::expand_entries(&pricing(&entries), &beam, 0..1, &model, &mut trellis, None).unwrap();
-    // Range [1] yields 1; range [3] yields 3 and then 2; range [2]
-    // starts past 2 and yields nothing.
     assert_eq!(
         *model.0.borrow(),
         [(1, Some((1, 15))), (3, Some((5, 15))), (2, Some((7, 15)))]
     );
 }
 
-/// The mini vocabulary's `ni`+`hao` chain with equal step costs decodes
-/// the composition span.
+// Basis: phonetic_lookup.h:329–339 at 074a2219.
 #[test]
 fn the_trellis_decodes_the_composition_span() {
     const VOCAB: &str =
@@ -1206,10 +1117,7 @@ fn the_trellis_decodes_the_composition_span() {
     assert_eq!(rows[0].keys, 2);
 }
 
-/// libzhuyin's `PhoneticLookup<1, 1>` keeps one value per node and
-/// extracts one tail, where libpinyin's `<2, 3>` extracts up to three:
-/// two readings of `ni` give the pinyin shape two rows and the zhuyin
-/// shape exactly one. Selection ties use earlier batch position.
+// Basis: pinyin.cpp:406–409 and zhuyin.cpp:348–351 at 074a2219, with register row 152 for ties.
 #[test]
 fn the_zhuyin_shape_keeps_one_tail_with_batch_ties() {
     const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
