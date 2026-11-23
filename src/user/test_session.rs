@@ -489,10 +489,8 @@ pub(crate) fn native_keys(reading: &str) -> Vec<crate::user::PinyinKey> {
 }
 
 pub(crate) fn native_tokens(system: &Path, text: &str) -> Vec<u32> {
-    crate::data::SystemDictionary::open(system)
-        .unwrap()
-        .tokens_for_text(text)
-        .unwrap()
+    let (tables, libraries) = crate::data::dict_tests::open_dictionary_parts(system).unwrap();
+    tables.read(&libraries).tokens_for_text(text).unwrap()
 }
 
 pub(crate) fn native_unigram(store: &UserStore, token: u32) -> Option<u32> {
