@@ -580,7 +580,7 @@ impl ContextCore {
         // 96) ends the loop after the libraries before it were mapped and
         // merged, and a merge of theirs that asserts comes first.
         {
-            let mut originals = self.runtime.finish_system_remap(walk);
+            let mut originals = walk.into_originals();
             let replay = self.user_store_mut().reload_system_libraries_prefetched(
                 &mut originals,
                 mask,
@@ -684,7 +684,7 @@ impl ContextCore {
             None if !user_file => return Ok(true),
             Some(RemapStep::Mapped(_)) | None => {}
         }
-        let mut originals = self.runtime.finish_system_remap(walk);
+        let mut originals = walk.into_originals();
         let store = self.user_store_mut();
         let replay = {
             if user_file {
