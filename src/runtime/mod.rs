@@ -56,12 +56,11 @@ use crate::{
 /// suggestion ordering instead of each assembling an equivalent against
 /// raw UCS-4 keys.
 #[must_use]
-pub(crate) fn merge_suggestion_rows(system: &[u32], user_rows: &[(u32, Vec<u8>)]) -> Vec<u32> {
-    let mut user = user_rows.to_vec();
-    user.sort_by(|a, b| a.1.cmp(&b.1));
-    let mut merged = Vec::with_capacity(system.len() + user.len());
+pub(crate) fn merge_suggestion_rows(system: &[u32], user_rows: &[(Vec<u8>, Vec<u32>)]) -> Vec<u32> {
+    let user_len: usize = user_rows.iter().map(|(_, tokens)| tokens.len()).sum();
+    let mut merged = Vec::with_capacity(system.len() + user_len);
     merged.extend_from_slice(system);
-    merged.extend(user.into_iter().map(|(token, _)| token));
+    merged.extend(user_rows.iter().flat_map(|(_, tokens)| tokens).copied());
     crate::model::sort_tokens_by_library(&mut merged);
     merged
 }

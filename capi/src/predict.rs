@@ -58,7 +58,9 @@ fn predicted_bigram_items(
     let mut merged = single_gram::new_gram();
     for prev in prefixes.iter().rev() {
         if let Ok(Some(row)) = user.bigram_row(*prev) {
-            single_gram::merge_single_gram(&mut merged, None, Some(&row));
+            // The one-sided merge copies every byte without inspecting the row
+            // (single_gram::merge_single_gram; 074a2219 ngram.cpp:286-290).
+            merged = row;
         }
         if single_gram::get_length(&merged) != 0 {
             break;
@@ -130,12 +132,12 @@ fn guess_predicted_result(
     // the first row. The winner remains at its original sorted position.
     let mut winners = FxHashMap::default();
     for (index, item) in items.iter().enumerate() {
-        let winner = winners.entry(item.text.clone()).or_insert(index);
+        let winner = winners.entry(&item.text).or_insert(index);
         if item.frequency > items[*winner].frequency {
             *winner = index;
         }
     }
-    for (index, item) in items.into_iter().enumerate() {
+    for (index, item) in items.iter().enumerate() {
         if winners.get(&item.text) != Some(&index) {
             continue;
         }

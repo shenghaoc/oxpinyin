@@ -66,17 +66,35 @@ impl NativeTable {
         self.0.save_user_index(path)
     }
 
-    pub(crate) fn keys_starting_with(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
-        let mut keys = Vec::new();
+    pub(crate) fn for_each_record_starting_with<E>(
+        &self,
+        prefix: &[u8],
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let mut result = Ok(());
         self.0
-            .scan_raw(Bound::Included(prefix), Bound::Unbounded, |key, _| {
+            .scan_raw(Bound::Included(prefix), Bound::Unbounded, |key, value| {
                 if !key.starts_with(prefix) {
                     return Ok(ControlFlow::Break(()));
                 }
-                keys.push(key.to_vec());
-                Ok(ControlFlow::Continue(()))
+                result = visit(key, value);
+                Ok(if result.is_ok() {
+                    ControlFlow::Continue(())
+                } else {
+                    ControlFlow::Break(())
+                })
             })
             .unwrap_or_else(|_| std::process::abort());
+        result
+    }
+
+    pub(crate) fn keys_starting_with(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
+        let mut keys = Vec::new();
+        let Ok(()) =
+            self.for_each_record_starting_with::<std::convert::Infallible>(prefix, |key, _| {
+                keys.push(key.to_vec());
+                Ok(())
+            });
         keys
     }
 

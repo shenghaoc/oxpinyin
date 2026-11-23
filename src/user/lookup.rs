@@ -140,24 +140,23 @@ impl<'a> UserLookup<'a> {
     ///
     /// Import creates an empty phrase-index key for every proper prefix
     /// (`074a2219 phrase_large_table3_bdb.cpp:297-315`, with KC/tkrzw twins).
-    /// A prefix need not have a phrase token of its own. Rows are merged into
-    /// the DBM walk order by the runtime before the stable prediction sort.
+    /// A prefix need not have a phrase token of its own. Each key is owned once,
+    /// with its tokens in stored order. Rows keep the ascending raw-key order
+    /// of the single native tree scan before the stable prediction sort.
     #[must_use]
-    pub(crate) fn suggest_after(&self, prefix: &[u32]) -> Vec<(u32, Vec<u8>)> {
+    pub(crate) fn suggest_after(
+        &self,
+        prefix: &[u32],
+    ) -> crate::user::user_phrase_table::SuggestionRows {
         let prefix = crate::user::phrase_key_ucs4(prefix);
-        let Ok(rows) = self.phrases.borrow().phrase_table.suggest_after(&prefix) else {
-            return Vec::new();
-        };
-        let mut out = Vec::new();
-        for (key, tokens) in rows {
-            // The pin compares raw UCS-4 bytes without Unicode validation
-            // (074a2219 phrase_large_table3_bdb.cpp:249-252). Resolve display
-            // text through the token's live item after ordering these rows.
-            for token in tokens {
-                out.push((token, key.clone()));
-            }
-        }
-        out
+        // The pin compares raw UCS-4 bytes without Unicode validation
+        // (074a2219 phrase_large_table3_bdb.cpp:249-252). Resolve display
+        // text through the token's live item after ordering these rows.
+        self.phrases
+            .borrow()
+            .phrase_table
+            .suggest_after(&prefix)
+            .unwrap_or_default()
     }
 }
 
