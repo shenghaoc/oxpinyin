@@ -75,17 +75,18 @@ fn merge_array_items(target: &Database, new_one: &Database) -> bool {
                 .wrapping_add(new_array_header.m_freq),
         };
 
-        let merged_array =
+        let mut merged_array =
             merge_two_phrase_array(target_single_gram.items(), new_single_gram.items());
 
-        let mut merged_single_gram = KmmGram::new();
-        for item in &merged_array {
-            let inserted = merged_single_gram.insert_array_item(item.token, item.item);
-            if !inserted {
-                std::process::abort();
-            }
+        // Repeated insertion sorted even out-of-order input before storing the row.
+        merged_array.sort_unstable_by_key(|entry| entry.token);
+        if merged_array
+            .windows(2)
+            .any(|pair| pair[0].token == pair[1].token)
+        {
+            std::process::abort();
         }
-        merged_single_gram.set_header(merged_array_header);
+        let merged_single_gram = KmmGram::from_parts(merged_array_header, merged_array);
         target.store(token, &merged_single_gram);
     }
     true

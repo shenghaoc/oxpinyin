@@ -46,15 +46,12 @@ fn feed_file(table: &mut Table, filename: &CString) {
             edge::missing_frequency(line);
             tool::exit(1);
         };
-        let frequency =
-            tool::atoi(&CString::new(frequency.clone()).unwrap_or_default()).cast_unsigned();
+        let frequency = tool::atoi(frequency).cast_unsigned();
         let [phrase, _, pinyin] = fields.as_slice() else {
             edge::wrong_line(line);
             continue;
         };
-        let phrase = CString::new(phrase.clone()).unwrap_or_default();
-        let pinyin = CString::new(pinyin.clone()).unwrap_or_default();
-        table.feed_parts(&phrase, &pinyin, frequency, parse_keys);
+        table.feed_parts(phrase, pinyin, frequency, parse_keys);
     }
 }
 

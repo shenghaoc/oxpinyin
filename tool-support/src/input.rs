@@ -395,7 +395,7 @@ fn take_glib_string(string: *mut c_char) -> Option<Vec<u8>> {
 /// `g_strsplit_set(string, delimiters, max_tokens)`
 /// (`utils/utils_helper.h:27-46`), its strings copied out.
 #[must_use]
-pub fn strsplit_set(string: &CStr, delimiters: &CStr, max_tokens: c_int) -> Vec<Vec<u8>> {
+pub fn strsplit_set(string: &CStr, delimiters: &CStr, max_tokens: c_int) -> Vec<CString> {
     // SAFETY: both strings are NUL-terminated and outlive the call.
     let array = unsafe {
         glib_sys::g_strsplit_set(string.as_ptr(), delimiters.as_ptr().cast(), max_tokens)
@@ -412,7 +412,7 @@ pub fn strsplit_set(string: &CStr, delimiters: &CStr, max_tokens: c_int) -> Vec<
             break;
         }
         // SAFETY: `part` is one of the array's strings.
-        parts.push(unsafe { CStr::from_ptr(part) }.to_bytes().to_vec());
+        parts.push(unsafe { CStr::from_ptr(part) }.to_owned());
     }
     // SAFETY: the array came from `g_strsplit_set` and is not used again.
     unsafe { glib_sys::g_strfreev(array) };

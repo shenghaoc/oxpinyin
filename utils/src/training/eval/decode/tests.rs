@@ -1,35 +1,32 @@
 use super::super::tests::FixtureDictionary;
-use super::{EvalLanguageModel, PhraseSource, correction_rate};
+use super::{EvalLanguageModel, LibraryPhraseSource, correction_rate};
 use oxpinyin::data::PhraseLibraries;
+use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
 use oxpinyin::parser::ChewingKey;
-use oxpinyin::vocab::PhraseToken;
-use std::collections::BTreeMap;
 
 // The hand-computable homophone fixture in eval/tests.rs exercises the
 // full decode. These tests cover the error paths.
 
-/// A minimal map-backed `PhraseSource` for the error tests: keys and text
-/// per token, either absent.
-struct MapSource {
-    keys: BTreeMap<u32, Vec<ChewingKey>>,
-    text: BTreeMap<u32, String>,
-}
-impl PhraseSource for MapSource {
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>> {
-        self.keys.get(&token).cloned()
-    }
-    fn text(&self, token: PhraseToken) -> Option<String> {
-        self.text.get(&token).cloned()
-    }
-}
-
 fn fixture() -> (FixtureDictionary, PhraseLibraries) {
     let vocab = include_str!("../../../../../fixtures/w4/mini-vocab.txt");
     let dict = FixtureDictionary::parse(vocab).expect("vocab");
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/w3")
-        .join(oxpinyin::__internal::DEFAULT_STORE_EXT)
-        .join("gb_char.bin");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gb.bin");
+    let uncovered = ChunkItem {
+        phrase: vec!['国' as u32],
+        unigram: 1,
+        prons: vec![(vec![ChewingKey::from_pinyin("guo").unwrap().to_packed()], 1)],
+    };
+    let invalid_text = ChunkItem {
+        phrase: vec![0x110000],
+        unigram: 1,
+        prons: vec![(vec![ChewingKey::from_pinyin("ni").unwrap().to_packed()], 1)],
+    };
+    std::fs::write(
+        &path,
+        build_chunk(&[(10, &uncovered), (20, &invalid_text)]).unwrap(),
+    )
+    .unwrap();
     let mut libraries = PhraseLibraries::empty();
     oxpinyin_tool_support::data::load_heap_library(&mut libraries, 1, &path).unwrap();
     (dict, libraries)
@@ -39,9 +36,8 @@ fn fixture() -> (FixtureDictionary, PhraseLibraries) {
 fn a_token_without_pronunciation_is_an_error() {
     let (dict, libraries) = fixture();
     let model = EvalLanguageModel::new(&libraries, None, 0.312_699);
-    let source = MapSource {
-        keys: BTreeMap::new(),
-        text: BTreeMap::new(),
+    let source = LibraryPhraseSource {
+        libraries: &libraries,
     };
     let sentences = vec![vec![1]];
     assert!(correction_rate(&dict, &model, &source, &sentences).is_none());
@@ -51,13 +47,12 @@ fn a_token_without_pronunciation_is_an_error() {
 fn a_token_without_text_is_an_error_not_a_shorter_expected_sentence() {
     let (dict, libraries) = fixture();
     let model = EvalLanguageModel::new(&libraries, None, 0.312_699);
-    let mut keys = BTreeMap::new();
-    keys.insert(1, vec![ChewingKey::from_pinyin("ni").expect("key")]);
-    let source = MapSource {
-        keys,
-        text: BTreeMap::new(),
+    let source = LibraryPhraseSource {
+        libraries: &libraries,
     };
-    let sentences = vec![vec![1]];
+    // A stored non-scalar UCS-4 word has a pronunciation but no Rust text.
+    assert!(source.best_keys(0x0100_0014).is_some());
+    let sentences = vec![vec![0x0100_0014]];
     assert!(correction_rate(&dict, &model, &source, &sentences).is_none());
 }
 
@@ -65,13 +60,10 @@ fn a_token_without_text_is_an_error_not_a_shorter_expected_sentence() {
 fn a_key_chain_without_a_phrase_cover_is_an_error_not_a_mismatch() {
     let (dict, libraries) = fixture();
     let model = EvalLanguageModel::new(&libraries, None, 0.312_699);
-    let mut keys = BTreeMap::new();
-    // `guo` is not in the fixture vocabulary, so no phrase covers the
-    // chain.
-    keys.insert(1, vec![ChewingKey::from_pinyin("guo").expect("key")]);
-    let mut text = BTreeMap::new();
-    text.insert(1, "国".to_owned());
-    let source = MapSource { keys, text };
-    let sentences = vec![vec![1]];
+    // guo is not in mini-vocab, so no phrase covers the real item's reading.
+    let source = LibraryPhraseSource {
+        libraries: &libraries,
+    };
+    let sentences = vec![vec![0x0100_000a]];
     assert!(correction_rate(&dict, &model, &source, &sentences).is_none());
 }

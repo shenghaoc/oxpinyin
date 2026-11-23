@@ -119,8 +119,7 @@ impl Merger {
                 // `if (2 != g_strv_length(strs)) abort();`
                 abort_on_pin_assert();
             }
-            let token_field = c_string(&parts[0]).unwrap_or_default();
-            tool::atoi(&token_field) as u32
+            tool::atoi(&parts[0]) as u32
         };
 
         if token == NULL_TOKEN {
@@ -137,8 +136,8 @@ impl Merger {
             return;
         }
 
-        let phrase = c_string(&parts[1]).unwrap_or_default();
-        if !self.validate(search, token, &phrase) {
+        let phrase = &parts[1];
+        if !self.validate(search, token, phrase) {
             // `check_result(taglib_validate_token_with_string(...))`.
             abort_on_pin_assert();
         }

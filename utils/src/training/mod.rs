@@ -152,19 +152,9 @@ pub(crate) fn parse_segmented_line(
     if parts.len() != 2 {
         tool::abort();
     }
-    let Some(first) = parts
-        .first()
-        .and_then(|bytes| CString::new(bytes.clone()).ok())
-    else {
-        tool::abort();
-    };
-    let Some(phrase) = parts
-        .get(1)
-        .and_then(|bytes| CString::new(bytes.clone()).ok())
-    else {
-        tool::abort();
-    };
-    let token = tool::atoi(&first) as u32;
+    let first = &parts[0];
+    let phrase = &parts[1];
+    let token = tool::atoi(first) as u32;
     if token != NULL_TOKEN {
         let Some(text) = token_text(token) else {
             tool::exit(1);

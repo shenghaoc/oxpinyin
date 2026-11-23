@@ -28,7 +28,7 @@ use oxpinyin_tool_support::data::PinyinIndexTable;
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::LineReader;
 
-use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
+use super::eval::{EvalLanguageModel, LibraryPhraseSource, correction_rate};
 use crate::training::{load_table_conf, parse_segmented_line};
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
 
@@ -172,41 +172,6 @@ fn token_text(libraries: &PhraseLibraries, token: u32) -> Option<std::ffi::CStri
         |token| tool::storage::report_unknown_token(token as core::ffi::c_int),
     )?;
     crate::segment::c_string(&text)
-}
-
-/// `get_possible_pinyin` and `convert_to_utf8` over the loaded phrase
-/// libraries (`eval_correction_rate.cpp:36-63`, `:113-116`).
-struct LibraryPhraseSource<'a> {
-    libraries: &'a PhraseLibraries,
-}
-
-impl PhraseSource for LibraryPhraseSource<'_> {
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>> {
-        // All stored readings compete, including partial and unspellable
-        // keys. Strict improvement keeps the first tie and index 0 at zero
-        // (`eval_correction_rate.cpp:47-60`). Convert only the winner.
-        let item = self.libraries.library(token)?.item(token)?;
-        let mut best = item.pronunciation(0)?;
-        for reading in item.pronunciations().skip(1) {
-            if reading.freq > best.freq {
-                best = reading;
-            }
-        }
-        Some(
-            best.keys
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| ChewingKey::from_packed(u16::from_le_bytes(*pair)))
-                .collect(),
-        )
-    }
-
-    fn text(&self, token: PhraseToken) -> Option<String> {
-        self.libraries
-            .phrase_text(token)
-            .and_then(|text| text.as_str().map(ToOwned::to_owned))
-    }
 }
 
 /// The pinyin index resolved through the loaded phrase libraries: the

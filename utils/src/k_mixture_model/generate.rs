@@ -22,15 +22,15 @@
 //! `errno` (`:352-358`).
 
 use oxpinyin::vocab::{NULL_TOKEN, SENTENCE_START};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 
 use oxpinyin_tool_support::input::{
     self as tool, DirectHashTable, LineReader, k_mixture_model as edge,
 };
 
 use crate::k_mixture_model::database::{Database, Loaded, exit_on_short_single_gram};
-use crate::k_mixture_model::phrase::PhraseIndex;
 use crate::k_mixture_model::records::{KMixtureModelArrayItem, KmmGram};
+use crate::phrase_index::SystemPhraseIndex;
 
 /// Default `--maximum-occurs-allowed` (`gen_k_mixture_model.cpp:50`).
 pub const DEFAULT_MAX_OCCURS: i32 = 20;
@@ -99,7 +99,7 @@ pub fn run(
     filename: Option<&CStr>,
     params: GenerateParams,
     documents: &[&CStr],
-    phrases: &dyn PhraseIndex,
+    phrases: &SystemPhraseIndex,
 ) {
     let bigram = Database::open_read_write(filename);
 
@@ -133,7 +133,7 @@ pub fn run(
 
 /// `read_document` (`:65-135`): the per-document pair and unigram tables.
 fn read_document<R: std::io::BufRead>(
-    phrases: &dyn PhraseIndex,
+    phrases: &SystemPhraseIndex,
     document: &mut LineReader<R>,
     train_pi_gram: bool,
 ) -> Document {
@@ -176,7 +176,7 @@ fn read_document<R: std::io::BufRead>(
 /// answer two tokens (else `abort()`), the first is `atoi`'s token and the
 /// second is validated against the phrase index when the token is not the
 /// null token.
-fn parse_segmented_line(phrases: &dyn PhraseIndex, line: &CStr) -> u32 {
+fn parse_segmented_line(phrases: &SystemPhraseIndex, line: &CStr) -> u32 {
     if line.to_bytes().is_empty() {
         return NULL_TOKEN;
     }
@@ -184,9 +184,8 @@ fn parse_segmented_line(phrases: &dyn PhraseIndex, line: &CStr) -> u32 {
     if parts.len() != 2 {
         std::process::abort();
     }
-    let token_text = CString::new(parts[0].clone()).unwrap_or_default();
-    let token = tool::atoi(&token_text) as u32;
-    if token != NULL_TOKEN && !phrases.validate_token_with_string(token, &parts[1]) {
+    let token = tool::atoi(&parts[0]) as u32;
+    if token != NULL_TOKEN && !phrases.validate_token_with_string(token, parts[1].to_bytes()) {
         std::process::abort();
     }
     token

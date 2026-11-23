@@ -163,7 +163,7 @@ const EIO_EXIT_CODE: i32 = 5;
 ///
 /// Implementors define the k-mixture model's magic header, array header and
 /// array item. [`Self::LEN`] must be the pin's `sizeof` for that type and
-/// [`Self::encode`] must produce exactly `LEN` bytes in the pin's
+/// [`Self::encode`] must write exactly `LEN` bytes in the pin's
 /// host-native layout — do not add a length prefix, padding or a normalised
 /// byte order.
 pub trait FixedRecord: Clone {
@@ -173,8 +173,8 @@ pub trait FixedRecord: Clone {
     /// The value the pin's `memset(&record, 0, sizeof(record))` produces.
     fn zeroed() -> Self;
 
-    /// The record as the pin `memcpy`s it, exactly [`Self::LEN`] bytes.
-    fn encode(&self) -> Vec<u8>;
+    /// Write the record as the pin `memcpy`s it into exactly [`Self::LEN`] bytes.
+    fn encode(&self, bytes: &mut [u8]);
 
     /// Read a record from exactly [`Self::LEN`] bytes of the pin's layout.
     ///
@@ -614,10 +614,9 @@ where
         if self.db.is_none() || self.read_only {
             return Ok(false);
         }
-        let encoded = header.encode();
-        let mut value = Vec::with_capacity(MAGIC_NUMBER_LEN + encoded.len());
-        value.extend_from_slice(&S::MAGIC_NUMBER);
-        value.extend_from_slice(&encoded);
+        let mut value = vec![0; MAGIC_NUMBER_LEN + S::MagicHeader::LEN];
+        value[..MAGIC_NUMBER_LEN].copy_from_slice(&S::MAGIC_NUMBER);
+        header.encode(&mut value[MAGIC_NUMBER_LEN..]);
         self.write_value(&MAGIC_KEY, &value)
     }
 
@@ -667,11 +666,6 @@ where
     /// # Errors
     ///
     /// Returns [`StoreError`] on a failed read or write.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the array-header encoder produces a different number of bytes from its
-    /// declared [`FixedRecord::LEN`].
     pub fn set_array_header(
         &self,
         token: u32,
@@ -682,12 +676,11 @@ where
         }
         let key = token.to_ne_bytes();
         let header_len = <S::ArrayHeader as FixedRecord>::LEN;
-        let encoded = header.encode();
         let mut value = self.read_value(&key)?.unwrap_or_default();
         if value.len() < header_len {
             value.resize(header_len, 0);
         }
-        value[..header_len].copy_from_slice(&encoded);
+        header.encode(&mut value[..header_len]);
         self.write_value(&key, &value)
     }
 
@@ -777,11 +770,14 @@ fn encode_value<H: FixedRecord, I: FixedRecord>(
     header: &H,
     items: &[ArrayItemWithToken<I>],
 ) -> Vec<u8> {
-    let mut value = Vec::with_capacity(H::LEN + items.len() * (TOKEN_LEN + I::LEN));
-    value.extend_from_slice(&header.encode());
-    for entry in items {
-        value.extend_from_slice(&entry.token.to_ne_bytes());
-        value.extend_from_slice(&entry.item.encode());
+    let mut value = vec![0; H::LEN + items.len() * (TOKEN_LEN + I::LEN)];
+    header.encode(&mut value[..H::LEN]);
+    for (index, entry) in items.iter().enumerate() {
+        let at = H::LEN + index * (TOKEN_LEN + I::LEN);
+        value[at..at + TOKEN_LEN].copy_from_slice(&entry.token.to_ne_bytes());
+        entry
+            .item
+            .encode(&mut value[at + TOKEN_LEN..at + TOKEN_LEN + I::LEN]);
     }
     value
 }
