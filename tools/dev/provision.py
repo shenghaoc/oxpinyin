@@ -656,7 +656,7 @@ class Provision:
                 flags += ['--secret', f'id=cacert,src={self.ca}']
         run(runtime_command([self.ctr, 'build', *images.container_resources(self.ctr), '--platform', self.platform, *flags, '--target', 'deps',
                              '-f', self.root / 'tools/oracle/Dockerfile.oracle', '-t', self.deps_image, self.root]),
-            env=dict(self.env, DOCKER_BUILDKIT='1', https_proxy=self.proxy, HTTPS_PROXY=self.proxy), stdout=2, heavy=True)
+            env=dict(self.env, DOCKER_BUILDKIT='1', https_proxy=self.proxy, HTTPS_PROXY=self.proxy), stdout=2)
 
     def in_image_command(self, args, flags=()):
         """The container command that runs the checkout's tools/oracle/build.py with ARGS.

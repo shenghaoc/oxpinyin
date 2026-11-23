@@ -5,13 +5,13 @@ what the numbers depend on before taking any: the kernel, the CPU, the tool
 versions and a digest of each artifact. These are the readers behind those
 tables. Standard library only.
 """
-import hashlib
 from pathlib import Path
 import platform
 import re
 from collections.abc import Sequence
 
 from . import bench
+from tools.oracle.build import file_sha256 as sha256
 
 PROC = Path('/proc')
 
@@ -30,12 +30,6 @@ def library_backend(library):
     if len(backends) != 1:
         raise ValueError('expected exactly one backend in DT_NEEDED: ' + ', '.join(needed))
     return backends[0]
-
-
-def sha256(path) -> str:
-    """The hex SHA-256 digest of the file at PATH."""
-    with open(path, 'rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def kernel() -> str:

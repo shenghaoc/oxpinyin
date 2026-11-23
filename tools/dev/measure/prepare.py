@@ -22,6 +22,7 @@ from ..cell import LOCAL_CELL
 from ..runners import Finished, emit
 from . import bench
 from .bench import fail
+from tools.oracle.build import file_sha256
 
 DATA_SUBDIRECTORY = 'lib/libpinyin/data'
 
@@ -87,7 +88,7 @@ def prepared_pin_refusal(prefix, backend):
                 path = prefix / name
                 if not path.resolve().is_relative_to(prefix.resolve()):
                     return f'{manifest} lists {name}, outside the prefix'
-                if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                if file_sha256(path) != digest:
                     return f'{name} differs from {manifest}'
         if not (prefix / DATA_SUBDIRECTORY / 'table.conf').is_file():
             return f'{DATA_SUBDIRECTORY}/table.conf is missing'
@@ -114,8 +115,8 @@ def build_pin(prefix, backend, extracted, work, env):
     prefix.parent.mkdir(parents=True, exist_ok=True)
     common = [sys.executable, bench.ROOT / 'tools/oracle/build.py', '--dbm', backend, '--enable-libzhuyin',
               '--prefix', prefix]
-    bench.heavy([*common, '--libs-only', '--work-dir', work / 'libs', '--jobs', str(os.cpu_count() or 1)], env=env)
-    bench.heavy([*common, '--regen-data', '--model-dir', extracted, '--work-dir', work / 'data'], env=env)
+    bench.run([*common, '--libs-only', '--work-dir', work / 'libs', '--jobs', str(os.cpu_count() or 1)], env=env)
+    bench.run([*common, '--regen-data', '--model-dir', extracted, '--work-dir', work / 'data'], env=env)
 
 
 def prepare(argv, env):
@@ -152,7 +153,7 @@ def prepare(argv, env):
             build_env['RUSTFLAGS'] = '-Cdebuginfo=1 -Cstrip=none'
         else:
             build_env.pop('RUSTFLAGS', None)
-        bench.heavy(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
+        bench.run(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
                      '--no-default-features', '--features', cell.CELL_TO_BACKEND[LOCAL_CELL],
                      f'--destdir={stage}', '--prefix=/usr'], env=build_env)
         stages[name] = stage

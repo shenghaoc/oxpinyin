@@ -31,6 +31,7 @@ import urllib.error
 import urllib.request
 
 from tools import cachedir
+from tools.oracle.build import file_sha256
 
 ROOT = Path(__file__).resolve().parents[2]
 PIN = Path(os.environ.get('CONTRACT_DATA_PIN', ROOT / 'tools/oracle/libpinyin-data.json'))
@@ -44,7 +45,7 @@ def read_pin(path=PIN):
 
 def content_digest(directory):
     """Hash the sorted relative paths and file bytes of the pinned data."""
-    rows = sorted((file.name, hashlib.sha256(file.read_bytes()).hexdigest())
+    rows = sorted((file.name, file_sha256(file))
                   for file in Path(directory).iterdir() if file.is_file())
     text = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
     return hashlib.sha256(text.encode('ascii')).hexdigest()

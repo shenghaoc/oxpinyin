@@ -42,6 +42,7 @@ from tools.dev import cell, model
 from tools.dev.process import ROOT, capture, fail, run, text
 from tools.dev.runners import Finished, guarded
 from tools.oracle.build import fields, recipe_hash
+from tools.oracle.build import file_sha256 as digest_file
 
 VERIFY_IMAGE_USAGE = '''Check a built oracle image against tools/oracle/oracle-pin.txt (issue #818).
 
@@ -256,12 +257,6 @@ def container_ids(engine, label, value, *, run):
     found = run(runtime_command([*engine, 'container', 'ls', '-a', '-q', '--no-trunc',
                                  '--filter', f'label={label}={value}']))
     return [] if found.returncode else found.stdout.split()
-
-
-def digest_file(path):
-    """Return the hexadecimal SHA-256 of file bytes; read errors propagate."""
-    with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def platform_field(pin, platform, key):
@@ -846,7 +841,7 @@ def check_reproducible(argv):
             for directory in directories:
                 run([sys.executable, Path(ROOT) / 'tools/oracle/build.py', '--libs-only', '--enable-libzhuyin',
                      '--dbm', backend, '--work-dir', directory / 'build', '--prefix', prefix,
-                     '--jobs', args.jobs], env=env, heavy=True)
+                     '--jobs', args.jobs], env=env)
                 saved = directory / 'libraries'
                 shutil.copytree(prefix / 'lib', saved, symlinks=True)
                 builds.append(saved)

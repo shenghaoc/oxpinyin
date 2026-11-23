@@ -27,7 +27,7 @@ import traceback
 import types
 from collections.abc import Callable, Iterator, Mapping, Sequence
 
-from .. import pool, slot
+from .. import pool, process, slot
 from ..runners import Finished, emit, status as shell_status
 from tools.tkrzw.runtime import RuntimeRefused, check
 
@@ -205,13 +205,8 @@ def capture(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None
     does not exist raises FileNotFoundError, which the shared failure ladder
     (runners.guarded) reports with status 127.
     """
-    command = [str(part) for part in command]
-    sys.stdout.flush()
-    sys.stderr.flush()
-    context = pool.UnitContext('measure', slot.CANCELLED,
-                               environment=dict(os.environ if env is None else env))
-    done = context.launch(command, cwd=cwd, merge_stderr=merge_stderr)
-    return done._replace(status=shell_status(done.status))
+    return process.capture(command, env=env, cwd=cwd, check=False, stderr=False,
+                           merge_stderr=merge_stderr)
 
 
 def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, stdout=None,
@@ -224,27 +219,8 @@ def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, st
     command = [str(part) for part in command]
     sys.stdout.flush()
     sys.stderr.flush()
-    streams = {}
-    if stdin is not None:
-        streams['stdin'] = stdin
-    if stderr is not None:
-        streams['stderr'] = stderr
-    with slot.supervised(command, env=None if env is None else dict(env), cwd=cwd, stdout=stdout,
-                         **streams) as process:
-        code = shell_status(slot.wait_child(process, timeout=timeout) if timeout is not None
-                            else slot.wait_child(process))
-    if check_status and code:
-        raise Finished(code)
-    return code
-
-
-def heavy(command: Sequence, *, env: Mapping[str, str] | None = None, stdout=None,
-          check_status: bool = True) -> int:
-    """Run COMMAND supervised and return its shell status.
-
-    A nonzero status ends the runner with it unless CHECK_STATUS is false.
-    """
-    code = shell_status(slot.run_command([str(part) for part in command], env=env, stdout=stdout))
+    code = shell_status(slot.run_command(command, env=env, cwd=cwd, stdout=stdout,
+                                         stdin=stdin, stderr=stderr, timeout=timeout))
     if check_status and code:
         raise Finished(code)
     return code

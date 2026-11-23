@@ -448,7 +448,7 @@ def wait_child(process, timeout=None, *, usage=False):
         raise
 
 
-def run_command(command, env=None, *, cwd=None, stdout=None):
+def run_command(command, env=None, *, cwd=None, stdout=None, stdin=None, stderr=None, timeout=None):
     """Run a child under cancellation handlers and return its raw status.
 
     Copy the supplied environment or os.environ. Install cancellation
@@ -457,11 +457,17 @@ def run_command(command, env=None, *, cwd=None, stdout=None):
     Spawn and cancellation errors propagate. On every platform, cwd is the
     child's working directory and stdout redirects its standard output to a
     file or descriptor (default: inherited; never PIPE, which nothing here
-    drains).
+    drains). STDIN and STDERR may redirect the inherited streams. TIMEOUT bounds
+    the wait in seconds.
     """
     command = list(command)
     child_env = dict(os.environ if env is None else env)
+    streams = {}
+    if stdin is not None:
+        streams['stdin'] = stdin
+    if stderr is not None:
+        streams['stderr'] = stderr
     with cancellation_handlers():
         check_cancelled()
-        with supervised(command, env=child_env, cwd=cwd, stdout=stdout) as process:
-            return wait_child(process)
+        with supervised(command, env=child_env, cwd=cwd, stdout=stdout, **streams) as process:
+            return wait_child(process, timeout=timeout) if timeout is not None else wait_child(process)
