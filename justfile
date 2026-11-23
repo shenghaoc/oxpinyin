@@ -314,6 +314,11 @@ abi *args:
 abi *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -m tools.dev.abi @forwarded; exit $LASTEXITCODE
 
+# Prepare the pinned inputs explicitly on Linux.
+[linux]
+measure-prepare *args:
+    @uv run --managed-python python -X utf8 -m tools.dev.measure.prepare "$@"
+
 # Run Valgrind recipes under the shared cancellation and failure handlers.
 [linux]
 measure-callgrind-control *args:

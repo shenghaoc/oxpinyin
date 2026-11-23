@@ -34,7 +34,7 @@ The pin's build needs the host packages that [`tools/oracle/dependencies.json`](
 lists as `common` and `kc`. kc is the one Linux measurement cell. Then prepare the inputs:
 
 ```sh
-OXPINYIN_CACHE="$(just cache-root)" uv run --managed-python python -X utf8 -m tools.dev.measure.prepare callgrind
+just measure-prepare callgrind
 ```
 
 A direct `uv run` command needs `OXPINYIN_CACHE` ([cache directory](setup.md#cache-directory)).
@@ -60,8 +60,8 @@ These rules apply:
 - `--cells` is valid only with `oracle` preparation.
 
 Preparation lives in `tools/dev/measure/prepare.py`.
-`callgrind` selects the profiled and shipping Kyoto Cabinet arms, and
-`oracle --cells kc` selects pin data only. Model data stays local.
+`just measure-prepare callgrind` selects the profiled and shipping Kyoto Cabinet arms, and
+`just measure-prepare oracle --cells kc` selects pin data only. Model data stays local.
 The pin, the subject and the recipes use the distribution's libkyotocabinet; no arm loads a libtkrzw,
 and the [runtime check](verification.md#9-sound-tkrzw-library) still refuses one that does.
 Additional base or PR revisions are built on the same host as well,
@@ -597,7 +597,7 @@ system. Every arm is the Linux local cell, Kyoto Cabinet from the distribution
 ([Linux setup](setup.md#linux)); `tools/tkrzw/runtime.py` still checks each launch.
 Each distinct SHA builds once through the packaging install procedure: locked
 release, `--no-default-features --features kyotocabinet` and no other flags.
-Without `--data`, the arms read the Kyoto Cabinet pin data that `prepare oracle` wrote
+Without `--data`, the arms read the Kyoto Cabinet pin data that `just measure-prepare oracle` wrote
 under the cache root (`host_cell` in `tools/dev/cell.py`); Debian's `libpinyin-data`
 package, the macOS and Windows default, is tkrzw data.
 This is the plain shipping library, the arm that Linux times. A′ is staged as
