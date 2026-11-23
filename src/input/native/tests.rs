@@ -12,6 +12,7 @@ fn inheritable(fd: c_int) -> bool {
     flags & HANDLE_FLAG_INHERIT != 0
 }
 
+// Rust Windows fopen uses the UCRT N mode to prevent handle inheritance.
 #[test]
 fn fopen_stream_is_not_inheritable() {
     let dir = tempfile::tempdir().unwrap();
@@ -26,6 +27,7 @@ fn fopen_stream_is_not_inheritable() {
     assert!(!result, "fopen stream handle is inheritable");
 }
 
+// Rust Windows ReadChunk::open uses O_NOINHERIT for its CRT descriptor.
 #[test]
 fn wopen_descriptor_is_not_inheritable() {
     let dir = tempfile::tempdir().unwrap();

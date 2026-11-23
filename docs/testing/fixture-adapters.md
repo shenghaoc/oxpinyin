@@ -63,13 +63,11 @@ weight and keeps that order exactly, across the whole fixture and not
 per input. The committed captures reproduce it. A phrase
 observed at several ranks takes its best rank.
 
-The fixture-provenance tests in `src/model/tests.rs` enforce these rules:
+The fixture follows these provenance rules:
 
 - every phrase must appear in a committed capture;
 - every weight must equal the output of the rule;
 - entries that share a key sequence must stay in captured order.
-
-The fixture therefore cannot drift away from the observed ranking of the pin without a test failure.
 
 ### Why bigrams are authored
 

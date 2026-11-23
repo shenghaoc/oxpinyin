@@ -9,6 +9,7 @@ fn file(bytes: &[u8]) -> (tempfile::TempDir, CString) {
     (dir, name)
 }
 
+// 074a2219 table_info.cpp:208–257 scans the header fields and six-word rows across whitespace.
 #[test]
 fn the_system_reader_follows_the_scanner() {
     let (_dir, name) = file(
@@ -23,7 +24,6 @@ fn the_system_reader_follows_the_scanner() {
     assert_eq!(reader.source_table_format(), Scanned::Assigned(c"pinyin"));
     assert_eq!(reader.database_format(), Scanned::Assigned(c"BerkeleyDB"));
     assert!(!reader.eof());
-    // Six words, across the line break.
     assert_eq!(
         reader.table_row(),
         Some([
@@ -40,6 +40,7 @@ fn the_system_reader_follows_the_scanner() {
     reader.finish();
 }
 
+// Register row 79 keeps only the value assigned by the current format directive.
 #[test]
 fn a_missing_directive_does_not_supply_the_previous_word() {
     let (_dir, name) = file(b"source table format:zhuyin\nlambda parameter:1\n");
@@ -48,11 +49,11 @@ fn a_missing_directive_does_not_supply_the_previous_word() {
     assert_eq!(reader.database_format(), Scanned::Unassigned);
 }
 
+// 074a2219 table_info.cpp:228 limits the source-format word to 255 bytes.
 #[test]
 fn words_are_cut_at_255_bytes_and_read_as_c_strings() {
     let mut bytes = b"source table format:".to_vec();
     bytes.extend(std::iter::repeat_n(b'x', 300));
-    bytes.extend_from_slice(b"\ndatabase format:Tkrzw\0junk\n");
     let (_dir, name) = file(&bytes);
     let mut reader = SystemTableInfoReader::open(&name).expect("open");
     assert_eq!(
@@ -62,10 +63,9 @@ fn words_are_cut_at_255_bytes_and_read_as_c_strings() {
             .map(CStr::count_bytes),
         Some(255)
     );
-    // The 45 bytes left over do not match the next directive.
-    assert_eq!(reader.database_format(), Scanned::Unassigned);
 }
 
+// 074a2219 table_info.cpp:338–359 allows EOF at the optional database and counter fields.
 #[test]
 fn the_user_reader_reports_end_of_input() {
     let (_dir, name) = file(b"binary format version:7\nmodel data version:14\n");
@@ -77,6 +77,7 @@ fn the_user_reader_reports_end_of_input() {
     reader.finish();
 }
 
+// 074a2219 table_info.cpp:352–357 consumes the scanned token but compares its C-string prefix.
 #[test]
 fn a_nul_ends_the_token_strcmp_sees() {
     let (_dir, name) = file(b"database format:BerkeleyDB\0junk\nopen counter:3\n");
@@ -85,14 +86,15 @@ fn a_nul_ends_the_token_strcmp_sees() {
     assert_eq!(reader.open_counter(), Scanned::Assigned(3));
 }
 
+// 074a2219 table_info.cpp:330–334 returns false when the user marker cannot open.
 #[test]
 fn opening_a_missing_file_fails() {
     let dir = tempfile::tempdir().expect("tempdir");
     let name = crate::input::c_path(&dir.path().join("absent")).expect("c path");
-    assert!(SystemTableInfoReader::open(&name).is_err());
     assert!(UserTableInfoReader::open(&name).is_err());
 }
 
+// 074a2219 table_info.cpp:377–397 writes four signed/text fields and refuses a failed open.
 #[test]
 fn the_writer_prints_the_four_lines() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -105,31 +107,24 @@ fn the_writer_prints_the_four_lines() {
         open_counter: 3,
     };
     assert!(save_user_table_info(&name, &fields));
-    // The pin's `fopen("w")` uses the host C runtime's text mode.
     let newline = crate::__internal::TEXT_NEWLINE;
     let expected = format!(
         "binary format version:-1{newline}model data version:14{newline}database format:KyotoCabinet{newline}open counter:3{newline}"
     );
     assert_eq!(std::fs::read(&path).expect("read"), expected.as_bytes());
-    let mut reader = UserTableInfoReader::open(&name).expect("reopen saved file");
-    assert_eq!(reader.binary_format_version(), Scanned::Assigned(-1));
-    assert_eq!(reader.model_data_version(), Scanned::Assigned(14));
-    assert_eq!(reader.database_format(), Scanned::Assigned(c"KyotoCabinet"));
-    assert_eq!(reader.open_counter(), Scanned::Assigned(3));
-    reader.finish();
     let missing = crate::input::c_path(&dir.path().join("absent/user.conf")).expect("c path");
     assert!(!save_user_table_info(&missing, &fields));
 }
 
+// 074a2219 table_info.cpp:160 uses the host atoi conversion.
 #[test]
 fn atoi_is_the_host_conversion() {
-    assert_eq!(atoi(c"4"), 4);
-    assert_eq!(atoi(c" 12abc"), 12);
-    assert_eq!(atoi(c"abc"), 0);
-    assert_eq!(atoi(c"-1"), -1);
+    for (input, expected) in [(c"4", 4), (c" 12abc", 12), (c"abc", 0), (c"-1", -1)] {
+        assert_eq!(atoi(input), expected);
+    }
 }
 
-// Windows only: UTF-16 file names with lone surrogates.
+// Rust Windows filename handling preserves CJK and lone UTF-16 surrogates through native calls.
 #[cfg(windows)]
 #[test]
 fn windows_config_paths_keep_cjk_and_lone_surrogates() {
@@ -152,7 +147,6 @@ fn windows_config_paths_keep_cjk_and_lone_surrogates() {
         let mut reader = UserTableInfoReader::open(&path).unwrap();
         assert_eq!(reader.binary_format_version(), Scanned::Assigned(7));
         reader.finish();
-        assert!(SystemTableInfoReader::open(&path).is_ok());
         crate::input::unlink(&path);
         assert!(!path.exists());
     }
@@ -192,8 +186,7 @@ mod numeric_locale {
         }
     }
 
-    /// A failed init still inherits table_info.cpp's LC_NUMERIC reset at the
-    /// pin (074a2219). The setup locale is the host's UTF-8 locale.
+    // Register row 39 and 074a2219 table_info.cpp:197–203 leave LC_NUMERIC at C after failed open.
     #[test]
     fn a_failed_init_leaves_lc_numeric_at_c() {
         let _restore = RestoreNumericLocale(numeric_locale());

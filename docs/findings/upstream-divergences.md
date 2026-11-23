@@ -189,7 +189,7 @@ An entry holds nothing else.
 - **Pin:** `MemoryChunk::mmap` maps the whole `file_size` (`src/include/memory_chunk.h:475-524`), but `freemem` unmaps only `header + capacity()` (`:72-78`). When `guint32 data_len` wraps, as for a 2^32+8 file, most of the mapping stays after `fini`.
 - **oxpinyin:** `oxpinyin::input::chunk` owns one private whole-file mapping per loaded chunk, and its `Drop` releases all of it.
 - **Decision:** the mapping is reproduced; the wrapped-size residual is accepted under the external API misuse ruling: the pin's `munmap` length contradicts its own mapping.
-- **Tests:** `chunk::tests::sparse_file_has_one_whole_writable_private_mapping_and_no_residual` (`src/input/chunk.rs`).
+- **Tests:** `data::phrase_library::tests::sparse_mapping_tests::a_sparse_chunk_maps_the_whole_file` (`src/data/phrase_library/tests.rs`) and `input::chunk::tests::validation_owns_the_descriptor_and_finish_closes_it` (`src/input/chunk/tests.rs`).
 
 ### `table.conf` follows its rows; malformed ones fail the triggering call (policy rows 78, 79, 80 and 83)
 

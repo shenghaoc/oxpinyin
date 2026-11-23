@@ -127,6 +127,6 @@ The junk stratum contains inputs such as `#nishaozhan`, and escaping never emits
 
 ## Acceptance
 
-`src/graph/tests.rs` asserts in portable CI that every one of the 1,788 captured oracle paths walks the graph and that the consumed length agrees with the pin on each.
+`captured_oracle_paths_cover_graph_partitions` in `src/graph/tests.rs` asserts in portable CI that every one of the 1,788 captured oracle paths walks the graph and that the consumed length agrees with the pin on each.
 `OPEN_APOSTROPHE_CASES` is empty.
 Synthetic goldens in `src/graph.rs` also cover the empty input, ordering, tie cases, apostrophes, junk, chained initials and over-length refusal.

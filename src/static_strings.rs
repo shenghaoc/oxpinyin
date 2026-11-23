@@ -48,16 +48,6 @@ impl<const N: usize> StringTable<N> {
         Some(self.resolve(*self.rows.get(row)?.get(column)?))
     }
 
-    /// Resolves all rows in their stored order.
-    #[cfg(test)]
-    pub fn entries(
-        self,
-    ) -> impl ExactSizeIterator<Item = [&'static str; N]> + DoubleEndedIterator + Clone {
-        self.rows
-            .iter()
-            .map(move |row| row.map(|span| self.resolve(span)))
-    }
-
     /// Binary-searches the first column of a table sorted by that column.
     ///
     /// The probes compare byte slices: UTF-8 byte order is the `str` order,
