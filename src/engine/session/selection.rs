@@ -33,11 +33,10 @@ pub const BEFORE_CURSOR_ANCHOR: usize = 0;
 /// What a choose reads off the row it selects: the pin's `m_begin`,
 /// `m_end` and `m_token`, and for an n-best row `m_nbest_index`
 /// (`lookup_candidate_t`, 074a2219 `pinyin.cpp:97-105`; read at
-/// `:2515-2520` and `:2577-2590`, `zhuyin.cpp:1646-1666`), plus the text
-/// the selection record keeps. Both spans are absolute, in the store's
-/// coordinates.
+/// `:2515-2520` and `:2577-2590`, `zhuyin.cpp:1646-1666`). Both spans
+/// are absolute, in the store's coordinates.
 #[derive(Clone, Copy, Debug)]
-pub struct SelectionTarget<'a> {
+pub struct SelectionTarget {
     /// Where the chosen span starts (`m_begin`).
     pub span_start: usize,
     /// Where the chosen span ends, before the separator walk
@@ -48,21 +47,19 @@ pub struct SelectionTarget<'a> {
     pub token: Option<PhraseToken>,
     /// The n-best tail rank, for a sentence row only.
     pub nbest_row: Option<u8>,
-    /// The chosen phrase's text, stored words included.
-    pub text: &'a PhraseText,
 }
 
-/// Where `Session::select_row` takes the recorded text from.
+/// Whether `Session::select_row` checks the chosen item before selecting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RowText {
-    /// The session dictionary's item text for the token.
+    /// Resolve the token's item; an unreadable item takes only the constraint write.
     Resolve,
-    /// No text: an addon row whose item the receiving context lacks
+    /// Skip item resolution: an addon row whose item the receiving context lacks
     /// (`pinyin.cpp:2534-2563`).
     Empty,
 }
 
-impl<'a> SelectionTarget<'a> {
+impl SelectionTarget {
     /// The target of `candidate` read in a window anchored at `anchor`,
     /// forcing `token_override` in place of its own token when given (the
     /// addon promotion, `pinyin.cpp:2532-2562`).
@@ -80,7 +77,7 @@ impl<'a> SelectionTarget<'a> {
     /// key to the decode.
     #[must_use]
     pub fn of_candidate(
-        candidate: &'a Candidate,
+        candidate: &Candidate,
         anchor: usize,
         token_override: Option<PhraseToken>,
     ) -> Self {
@@ -89,7 +86,6 @@ impl<'a> SelectionTarget<'a> {
             span_end: anchor.saturating_add(candidate.consumed_bytes()),
             token: token_override.or_else(|| candidate.token()),
             nbest_row: candidate.nbest_row(),
-            text: candidate.text(),
         }
     }
 }
@@ -370,15 +366,6 @@ where
     pub fn selected_tokens(&self) -> &[PhraseToken] {
         self.record.history()
     }
-
-    /// Text retained by selections, including raw gaps before anchored choices.
-    /// Unselected trailing input remains in [`Session::raw_input`] after
-    /// [`Session::composition_offset`].
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[must_use]
-    pub fn selected_text(&self) -> &PhraseText {
-        self.record.selected()
-    }
 }
 
 impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
@@ -402,10 +389,7 @@ where
     /// Selecting an n-best row aborts if a differing phrase in that row cannot be written
     /// into the current constraint store. This can occur when the selected row predates a
     /// change of composition.
-    pub fn select_target(
-        &mut self,
-        target: &SelectionTarget<'_>,
-    ) -> Result<Selection, EngineError> {
+    pub fn select_target(&mut self, target: &SelectionTarget) -> Result<Selection, EngineError> {
         let span_end = target.span_end;
         if target.nbest_row.is_none()
             && target.token.is_some()
@@ -424,12 +408,6 @@ where
         if target.nbest_row.is_none() {
             self.validate_selection_constraints()?;
         }
-        // The chosen phrase's own text, stored words included: the pin's
-        // choose reads no text (`add_constraint(m_begin, m_end, token)`,
-        // `pinyin.cpp:2577-2587`, `zhuyin.cpp:1646-1666` at 074a2219), and
-        // the C sentence read converts each phrase from its stored words
-        // (`src/lookup/lookup.cpp:39-68`), so the record keeps them too.
-        let text = target.text.clone();
         let token = target.token;
         // The chosen span in the store's coordinates — upstream's
         // `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2582`,
@@ -449,7 +427,7 @@ where
         // the record follows the store, moving back to it. An n-best row
         // is a whole-composition hypothesis and takes the row path below.
         if span_start < self.record.consumed() && target.nbest_row.is_none() {
-            return self.select_behind(constraint_start, constraint_end, token, text);
+            return self.select_behind(constraint_start, constraint_end, token);
         }
         // The normal choose of a token: `add_constraint(m_begin, m_end,
         // token)`, then `validate_constraint` again (074a2219
@@ -461,54 +439,23 @@ where
             && let Some(token) = token
         {
             self.constraints
-                .add(constraint_start, constraint_end, token, text);
+                .add(constraint_start, constraint_end, token);
             return self.settle_written_forcing();
         }
-        self.record_row_choice(target, &text, constraint_end)
+        self.record_row_choice(target, constraint_end)
     }
 
     /// The row path of [`Self::select_target`], for an n-best row or a
-    /// choose without a token: record the chosen text and the token
-    /// history, constrain the phrases where an n-best row differs from the
-    /// best one, move the composition offset to `constraint_end` and
+    /// choose without a token: record the token history, constrain the
+    /// phrases where an n-best row differs from the best one, move the
+    /// composition offset to `constraint_end` and
     /// refresh.
     fn record_row_choice(
         &mut self,
-        target: &SelectionTarget<'_>,
-        text: &PhraseText,
+        target: &SelectionTarget,
         constraint_end: usize,
     ) -> Result<Selection, EngineError> {
-        let span_start = target.span_start;
-        // The raw bytes between the composition offset and the span start
-        // were typed without being selected. For a re-anchored selection
-        // (span start > composition offset) they would otherwise be dropped
-        // from the retained selection text — the same gap the constraint
-        // rebuild preserves (`rebuild_selection_from_constraints`). The
-        // composition-anchored path (span start == composition offset) has
-        // an empty gap.
         let state = self.state.borrow_mut();
-        let gap = if span_start > state.record.consumed() {
-            state
-                .input
-                .as_str()
-                .get(state.record.consumed()..span_start)
-                .unwrap_or("")
-        } else {
-            ""
-        };
-        if target.nbest_row.is_some() {
-            // An n-best row is a whole-composition hypothesis: its text
-            // already covers the full input and its span (consumed_bytes)
-            // is the whole composition, so a re-anchored selection must not
-            // prepend the typed-but-unselected gap — that would duplicate
-            // the raw prefix in the committed text (upstream commits the
-            // row's sentence text, pinyin_choose_candidate's NBEST branch
-            // returning matrix.size() - 1). The composition-anchored path
-            // has an empty gap either way.
-            state.record.set_selected(text);
-        } else {
-            state.record.append_selected(gap, text);
-        }
         if let Some(token) = target.token {
             state.record.push_token(token);
         } else if let Some(rank) = target.nbest_row {
@@ -522,10 +469,10 @@ where
             // surviving row off the position its rank would give it, and a
             // positional lookup then trains the wrong path.
             if let Some(row) = state.sentence.rows.get(usize::from(rank)) {
-                // The row is a path over the whole matrix — the text side
-                // of that replace is the assign above — so a normal
-                // selection made before it leaves no token in the record.
-                state.record.replace_history(&row.tokens);
+                // A row replaces the whole path, including any earlier selection.
+                state
+                    .record
+                    .replace_history(row.spans.iter().map(|span| span.token));
             }
         }
         // The §3 constraint writes (`pinyin_choose_candidate`,
@@ -577,9 +524,7 @@ where
         token: PhraseToken,
     ) -> Result<usize, EngineError> {
         self.validate_selection_constraints()?;
-        let len = self
-            .constraints
-            .add(start, end, token, PhraseText::from(""));
+        let len = self.constraints.add(start, end, token);
         self.validate_selection_constraints()?;
         Ok(len)
     }
@@ -604,25 +549,19 @@ where
         let Some(row) = self.sentence.rows.get(usize::from(rank)) else {
             return Ok(Selection::Refused);
         };
-        let (text, span_end) = (row.text.clone().unwrap_or_default(), row.span);
+        let span_end = row.span;
         self.select_target(&SelectionTarget {
             span_start: 0,
             span_end,
             token: None,
             nbest_row: Some(rank),
-            text: &text,
         })
     }
 
     /// The pin's normal choose of `token` over `[start, end)` in store
     /// coordinates (074a2219 `pinyin.cpp:2577-2590`, `zhuyin.cpp:1646-1666`).
-    /// The pin reads no text here. The record keeps the text this session's
-    /// dictionary holds for the token, the text the C sentence read
-    /// converts later (`src/lookup/lookup.cpp:39-68`); with
-    /// [`RowText::Empty`], or when the dictionary has no item for the
-    /// token, the record keeps none. A token without an item takes the
-    /// pin's write and both validations without a sentence decode
-    /// ([`Self::choose_unreadable_step`]).
+    /// The item lookup still chooses the unreadable-item path, which writes
+    /// and validates the constraint without refreshing the candidate list.
     ///
     /// # Errors
     ///
@@ -634,26 +573,19 @@ where
         token: PhraseToken,
         text: RowText,
     ) -> Result<Selection, EngineError> {
-        let text = match text {
-            RowText::Resolve => match self.dictionary.phrase_text_for_token(token) {
-                Some(text) => text,
-                None => {
-                    let len = self.choose_unreadable_step(start, end, token)?;
-                    return Ok(if len == 0 {
-                        Selection::Refused
-                    } else {
-                        self.selection_outcome()
-                    });
-                }
-            },
-            RowText::Empty => PhraseText::from(""),
-        };
+        if text == RowText::Resolve && self.dictionary.phrase_text_for_token(token).is_none() {
+            let len = self.choose_unreadable_step(start, end, token)?;
+            return Ok(if len == 0 {
+                Selection::Refused
+            } else {
+                self.selection_outcome()
+            });
+        }
         self.select_target(&SelectionTarget {
             span_start: start,
             span_end: end,
             token: Some(token),
             nbest_row: None,
-            text: &text,
         })
     }
 
@@ -745,14 +677,13 @@ where
         start: usize,
         end: usize,
         token: Option<PhraseToken>,
-        text: PhraseText,
     ) -> Result<Selection, EngineError> {
         let Some(token) = token else {
             return Err(EngineError::Failure);
         };
         let state = self.state.borrow_mut();
         state.constraints.resize(state.input.len() + 1);
-        state.constraints.add(start, end, token, text);
+        state.constraints.add(start, end, token);
         self.settle_written_forcing()
     }
 
@@ -788,7 +719,7 @@ where
     /// coordinate space (raw-buffer byte positions, #141's law); a hit
     /// anywhere inside a forced run un-forces the whole run. The
     /// selection record follows the surviving forcings, so the cleared
-    /// phrase's text and token leave the record.
+    /// phrase's token leaves the record.
     ///
     /// Returns `false` for a free cell or an out-of-range offset.
     #[must_use]
@@ -800,22 +731,16 @@ where
         true
     }
 
-    /// Rebuilds the selection record (`selected`, `consumed`, `history`)
+    /// Rebuilds the selection record (`consumed`, `history`)
     /// from the surviving forcings. Upstream keeps no such record — the
     /// frontend tracks its own cursor — so the store is the engine's
     /// single source once forcings exist.
     pub(super) fn rebuild_selection_from_constraints(&mut self) {
-        // Gaps between forced runs are free spans (diff_result forces only
-        // the differing phrases); their text is the current buffer's bytes,
-        // so the rebuilt record never drops raw input the forcings skip
-        // over — the selected text would otherwise lose exactly that gap. The
-        // record owns the rebuild: this seam only hands it the surviving
-        // runs and the buffer.
         let runs = self.constraints.runs();
         let state = self.state.borrow_mut();
         state
             .record
-            .rebuild_from_constraints(state.input.as_str(), &runs);
+            .rebuild_from_constraints(state.input.len(), &runs);
     }
 }
 

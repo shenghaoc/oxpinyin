@@ -90,10 +90,6 @@ pub struct NbestRow {
     /// Concatenated phrase texts. `None` represents a NULL string when no
     /// phrase converts.
     pub text: Option<PhraseText>,
-    /// The phrase tokens in order — the selection record a chosen row
-    /// contributes (upstream keeps the whole `MatchResult` on the
-    /// instance; the engine records tokens instead).
-    pub(crate) tokens: Vec<PhraseToken>,
     /// The row's phrases at their walk positions — the `MatchResult`
     /// shape `diff_result` constraints and the constraint-aware train
     /// walk read. Walk-local coordinates; `Session::guess_sentence`
@@ -875,8 +871,7 @@ where
             zeros: &owned.zeros,
         }
     };
-    let seed_values: Vec<u32> = seeds.to_vec();
-    let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
+    let mut trellis = Trellis::with_seeds(bound, seeds, shape);
     // One path scratch for every span search of the call.
     let mut scratch = GenerationPath::default();
     let facts = RefCell::new(SentenceFacts::default());
@@ -1005,10 +1000,8 @@ where
         else {
             continue;
         };
-        let tokens = phrase_spans.iter().map(|span| span.token).collect();
         rows.push(NbestRow {
             text,
-            tokens,
             spans: phrase_spans,
             keys: tail.keys as usize,
             span,

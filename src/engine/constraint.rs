@@ -13,13 +13,6 @@
 //! every keystroke, and only `pinyin_reset` clears upstream's
 //! `m_constraints`) — see `Session::reset_composition` for the split.
 //!
-//! `OneStep` carries the chosen phrase's text: upstream re-fetches it
-//! from the phrase index by token, the engine carries it from the
-//! candidate as a [`PhraseText`] — the item's stored words and length when
-//! it has the stored form — so the selection record can be rebuilt from
-//! the store alone (promoted addon phrases included) without a by-token
-//! dictionary lookup.
-
 use std::ops::Range;
 
 use crate::engine::error::EngineError;
@@ -32,13 +25,8 @@ pub enum Cell {
     /// `NO_CONSTRAINT` — a free step.
     None,
     /// `CONSTRAINT_ONESTEP` — `token` is forced over `[start, end)`;
-    /// `end` is the cell's own index plus the span, `text` the chosen
-    /// phrase's text.
-    OneStep {
-        token: PhraseToken,
-        end: usize,
-        text: PhraseText,
-    },
+    /// `end` is the cell's own index plus the span.
+    OneStep { token: PhraseToken, end: usize },
     /// `CONSTRAINT_NOSEARCH` — interior of a forced run; `start` points
     /// back at the run's `OneStep` cell.
     NoSearch { start: usize },
@@ -203,13 +191,7 @@ impl ConstraintStore {
     /// back-pointers on the interior. Returns the span length, or 0 when
     /// the span overruns the array (upstream's refusal, not an abort).
     /// The clear of an orphaned continuation aborts if its head is gone.
-    pub(crate) fn add(
-        &mut self,
-        start: usize,
-        end: usize,
-        token: PhraseToken,
-        text: PhraseText,
-    ) -> usize {
+    pub(crate) fn add(&mut self, start: usize, end: usize, token: PhraseToken) -> usize {
         if self.add_refuses(start, end) {
             return 0;
         }
@@ -217,7 +199,7 @@ impl ConstraintStore {
             self.clear_by_offset(index);
         }
         self.note_write(start..end);
-        self.cells[start] = Cell::OneStep { token, end, text };
+        self.cells[start] = Cell::OneStep { token, end };
         for cell in &mut self.cells[start + 1..end] {
             *cell = Cell::NoSearch { start };
         }
@@ -277,25 +259,25 @@ impl ConstraintStore {
         forcing: impl Fn(usize, usize) -> Option<(usize, usize)>,
         orphaned: impl Fn(&Range<usize>) -> Range<usize>,
     ) {
-        let forcings: Vec<(usize, usize, PhraseToken, PhraseText)> = self
+        let forcings: Vec<(usize, usize, PhraseToken)> = self
             .cells
             .iter()
             .enumerate()
             .filter_map(|(start, cell)| match cell {
-                Cell::OneStep { token, end, text } => Some((start, *end, *token, text.clone())),
+                Cell::OneStep { token, end } => Some((start, *end, *token)),
                 Cell::None | Cell::NoSearch { .. } => None,
             })
             .collect();
         let pending = self.orphaned.take();
         self.cells.fill(Cell::None);
-        for (start, end, token, text) in forcings {
+        for (start, end, token) in forcings {
             let Some((start, end)) = forcing(start, end).filter(|(start, end)| start < end) else {
                 continue;
             };
             if self.cells.len() <= end {
                 self.cells.resize(end + 1, Cell::None);
             }
-            self.add(start, end, token, text);
+            self.add(start, end, token);
         }
         self.orphaned = pending;
         self.map_orphaned(orphaned);
@@ -377,7 +359,7 @@ impl ConstraintStore {
             changed = true;
             // check_result is an assert at the n-best choose's write
             // (phonetic_lookup.cpp:189-203 at 074a2219).
-            if self.add(span.start, next_pos, span.token, span.text.clone()) == 0 {
+            if self.add(span.start, next_pos, span.token) == 0 {
                 std::process::abort();
             }
         }
@@ -404,18 +386,14 @@ impl ConstraintStore {
         end > self.cells.len() || start >= end
     }
 
-    /// The surviving forcings as `(start, end, token, text)` runs, left
-    /// to right — the record-rebuild input. Gaps between runs are free
-    /// spans (`diff_result` forces only the differing phrases); the
-    /// caller supplies their text from the current buffer, so the rebuilt
-    /// record preserves raw input the forcings skip over.
-    pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, PhraseText)> {
+    /// The surviving forcings as `(start, end, token)` runs, left to right.
+    pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken)> {
         self.cells
             .iter()
             .enumerate()
             .filter_map(|(start, cell)| {
-                if let Cell::OneStep { token, end, text } = cell {
-                    Some((start, *end, *token, text.clone()))
+                if let Cell::OneStep { token, end } = cell {
+                    Some((start, *end, *token))
                 } else {
                     None
                 }
@@ -433,10 +411,18 @@ fn differing_spans<'a>(
     other: &'a [PhraseSpan],
     tail: usize,
 ) -> impl Iterator<Item = (&'a PhraseSpan, usize)> {
+    // Both rows come from extract's reversed backward walk: starts ascend.
+    let mut best = best.iter().peekable();
     other.iter().enumerate().filter_map(move |(index, span)| {
+        while best
+            .peek()
+            .is_some_and(|candidate| candidate.start < span.start)
+        {
+            best.next();
+        }
         let best_token = best
-            .iter()
-            .find(|candidate| candidate.start == span.start)
+            .peek()
+            .filter(|candidate| candidate.start == span.start)
             .map(|candidate| candidate.token);
         if best_token == Some(span.token) {
             return None;

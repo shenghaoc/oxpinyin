@@ -821,7 +821,7 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
                         .as_ref()
                         .and_then(PhraseText::as_str)
                         .map(str::to_owned),
-                    row.tokens.to_vec(),
+                    row.spans.iter().map(|span| span.token).collect(),
                 )
             })
             .collect()

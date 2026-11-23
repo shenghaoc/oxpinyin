@@ -86,15 +86,6 @@ where
             Some(&self.constraints),
             self.nbest_shape,
         )?;
-        // The full-matrix rows already carry the chosen prefix: a chosen
-        // row's record is its own whole path.
-        let state = self.state.borrow_mut();
-        state.sentence.last_result = state
-            .sentence
-            .rows
-            .first()
-            .map_or_else(Vec::new, |row| row.spans.clone());
-
         self.refresh_after_parse()?;
         Ok(true)
     }
@@ -149,12 +140,6 @@ where
             Some(&self.constraints),
             self.nbest_shape,
         )?;
-        self.sentence.last_result = self
-            .sentence
-            .rows
-            .first()
-            .map_or_else(Vec::new, |row| row.spans.clone());
-
         self.refresh_after_parse()?;
         Ok(true)
     }

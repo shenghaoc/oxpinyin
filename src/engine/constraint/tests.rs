@@ -17,13 +17,12 @@ fn span(start: usize, value: u32, text: &str) -> PhraseSpan {
 fn add_writes_the_run_and_clear_walks_it_back() {
     let mut store = ConstraintStore::default();
     store.resize(6);
-    assert_eq!(store.add(0, 2, token(7), "你".into()), 2);
+    assert_eq!(store.add(0, 2, token(7)), 2);
     assert_eq!(
         store.cell(0),
         Some(&Cell::OneStep {
             token: token(7),
             end: 2,
-            text: "你".into()
         })
     );
     assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
@@ -40,13 +39,13 @@ fn add_writes_the_run_and_clear_walks_it_back() {
 fn an_overwritten_middle_is_not_an_orphan_after_its_clear() {
     let mut store = ConstraintStore::default();
     store.resize(10);
-    store.add(0, 8, token(7), "你好嗎".into());
+    store.add(0, 8, token(7));
     assert!(store.choose_tokenless());
     assert!(store.clear_by_offset(7));
 
-    store.add(3, 5, token(8), "好".into());
+    store.add(3, 5, token(8));
     assert!(store.clear_by_offset(3));
-    store.add(0, 2, token(9), "你".into());
+    store.add(0, 2, token(9));
     assert!(store.clear_by_offset(0));
 
     assert!(!store.clear_by_offset(3));
@@ -59,8 +58,8 @@ fn an_overwritten_middle_is_not_an_orphan_after_its_clear() {
 fn validate_drops_a_run_that_overruns_or_stops_spelling() {
     let mut store = ConstraintStore::default();
     store.resize(6);
-    store.add(0, 2, token(7), "你".into());
-    store.add(3, 5, token(8), "好".into());
+    store.add(0, 2, token(7));
+    store.add(3, 5, token(8));
 
     let dropped = store
         .validate(4, |_, _, _| Ok(true))
@@ -81,7 +80,7 @@ fn validate_drops_a_run_that_overruns_or_stops_spelling() {
 fn validate_grows_with_free_cells() {
     let mut store = ConstraintStore::default();
     store.resize(3);
-    store.add(0, 2, token(7), "你".into());
+    store.add(0, 2, token(7));
     let dropped = store
         .validate(8, |_, _, _| Ok(true))
         .expect("probe cannot fail");
@@ -95,8 +94,8 @@ fn validate_grows_with_free_cells() {
 fn add_clears_a_partly_overlapped_run_whole() {
     let mut store = ConstraintStore::default();
     store.resize(8);
-    store.add(0, 4, token(7), "你好".into());
-    assert_eq!(store.add(2, 6, token(8), "好事".into()), 4);
+    store.add(0, 4, token(7));
+    assert_eq!(store.add(2, 6, token(8)), 4);
     assert_eq!(store.cell(0), Some(&Cell::None));
     assert_eq!(store.cell(1), Some(&Cell::None));
     assert!(store.is_one_step_at(2));
@@ -116,10 +115,7 @@ fn diff_result_constrains_only_the_differing_phrases() {
         store.resize(6);
         assert!(store.diff_result(&best, &other, 5));
         let span = &other[changed];
-        assert_eq!(
-            store.runs(),
-            [(span.start, end, span.token, span.text.clone())]
-        );
+        assert_eq!(store.runs(), [(span.start, end, span.token)]);
         assert_eq!(
             store.cell(end - 1),
             Some(&Cell::NoSearch { start: span.start })
@@ -153,8 +149,8 @@ fn diff_result_refuses_only_a_differing_phrase_past_the_array() {
 fn runs_report_start_and_end_with_gaps_between() {
     let mut store = ConstraintStore::default();
     store.resize(8);
-    store.add(0, 2, token(7), "你".into());
-    store.add(4, 7, token(9), "浩".into());
+    store.add(0, 2, token(7));
+    store.add(4, 7, token(9));
     let runs = store.runs();
     assert_eq!(runs.len(), 2);
     assert_eq!((runs[0].0, runs[0].1, runs[0].2), (0, 2, 7));
@@ -179,7 +175,7 @@ fn the_validate_boundary_pins_the_reserved_tail_slot() {
     ] {
         let mut store = ConstraintStore::default();
         store.resize(4);
-        assert_eq!(store.add(0, end, token(7), "你".into()), added);
+        assert_eq!(store.add(0, end, token(7)), added);
         assert_eq!(store.validate(4, |_, _, _| Ok(true)), Ok(dropped));
         assert_eq!(store.is_active(), active);
     }

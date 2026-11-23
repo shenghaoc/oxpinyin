@@ -924,7 +924,25 @@ impl ZhuyinParser {
     /// bytes that map only to a tone.
     #[must_use]
     pub fn in_scheme(&self, key: u8, use_tone: bool) -> bool {
-        !self.symbols_for(key, use_tone).is_empty()
+        match self.scheme.keyboard() {
+            Some(Keyboard::Simple(tables)) => {
+                tables.symbol(key).is_some() || (use_tone && tables.tone(key).is_some())
+            }
+            Some(Keyboard::Discrete(tables)) => {
+                [tables.initials, tables.middles, tables.finals]
+                    .into_iter()
+                    .any(|table| DiscreteTables::first_symbol(table, key).is_some())
+                    || (use_tone && tables.tone(key).is_some())
+            }
+            Some(Keyboard::Cp26(tables)) => {
+                [tables.initials, tables.middles, tables.finals]
+                    .into_iter()
+                    .any(|table| DiscreteTables::first_symbol(table, key).is_some())
+                    || key == b'i'
+                    || (use_tone && tables.tone(key).is_some())
+            }
+            None => false,
+        }
     }
 
     /// The Zhuyin symbol(s) mapped by one keystroke.

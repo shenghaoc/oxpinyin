@@ -63,7 +63,7 @@ pub struct PublishedRow {
     /// The row's token as it stands, after any in-place promotion
     /// (`pinyin.cpp:2559-2561`).
     pub token: crate::vocab::PhraseToken,
-    /// Where the recorded text comes from.
+    /// Whether selection checks the receiving context's item first.
     pub text: crate::engine::RowText,
 }
 
@@ -311,7 +311,6 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     pub fn phrase_tokens(&self, phrase: &PhraseText) -> Vec<u32> {
         self.dict
             .tokens_for_ucs4(&phrase.outward_words().collect::<Vec<_>>())
-            .to_vec()
     }
 
     /// The stored length and text of `token`'s item, as the C token getters
@@ -755,8 +754,7 @@ impl<
             self.session.discard_composition();
             return Ok(false);
         }
-        let prefix_tokens: Vec<PhraseToken> = prefixes.to_vec();
-        self.session.guess_sentence_with_prefix(&prefix_tokens)
+        self.session.guess_sentence_with_prefix(prefixes)
     }
 
     /// The full reset — `pinyin_reset`/`zhuyin_reset`'s law: the parse

@@ -2,12 +2,12 @@
 //!
 //! Groups the transient state a sentence lookup produces and the two
 //! surfaces that read it back — the prepended candidate rows, and the
-//! constraint-aware train walk. These three fields live and die together:
+//! constraint-aware train walk. These fields live and die together:
 //! [`SentenceState::begin`] clears them and marks a lookup active before a
 //! decode fills them, and [`SentenceState::reset`] clears them on the full
 //! reset only — upstream's parse never touches `m_nbest_results`
 //! (`pinyin.cpp:1497-1524`), which `pinyin_reset` alone clears (`:2700`).
-//! `rows` and `last_result` stay fields because a lookup rewrites them wholesale and
+//! `rows` stays a field because a lookup rewrites it wholesale and
 //! [`crate::engine::session::Session::guess_sentence`] mutates the rows in place
 //! (absolutising walk-local span positions) — an access pattern no method
 //! seam captures without obscuring it.
@@ -18,7 +18,6 @@
 
 use crate::vocab::{PhraseText, PhraseToken};
 
-use crate::engine::constraint::PhraseSpan;
 use crate::engine::nbest::NbestRow;
 
 /// One phrase of a decoded sentence, as the C sentence getters read it.
@@ -26,8 +25,8 @@ use crate::engine::nbest::NbestRow;
 /// The pin keeps the result tokens and resolves each one through the
 /// phrase index when the caller reads the sentence (`convert_to_utf8`,
 /// `src/lookup/lookup.cpp:37-48` at 074a2219). A token is therefore kept
-/// as a token and resolved at read time. A raw gap of the selection record
-/// has no token and keeps its typed text.
+/// as a token and resolved at read time. A fallback row without decoded
+/// spans keeps its typed text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SentencePart {
     /// A phrase token, resolved through the live phrase index on each read.
@@ -51,10 +50,6 @@ pub(super) struct SentenceState {
     /// empty key matrix, so a later `pinyin_get_sentence` answers `false`
     /// rather than the pre-lookup raw form).
     active: bool,
-    /// The last lookup's 1-best phrases at their absolute positions —
-    /// upstream's `m_nbest_results[0]`, the result `pinyin_train` walks
-    /// against the constraint store.
-    pub(super) last_result: Vec<PhraseSpan>,
 }
 
 impl SentenceState {
@@ -89,7 +84,6 @@ impl SentenceState {
     /// decoded-or-nothing even when the lookup produced no rows.
     pub(super) fn begin(&mut self) {
         self.rows.clear();
-        self.last_result.clear();
         self.active = true;
     }
 
@@ -99,7 +93,6 @@ impl SentenceState {
     /// hangs on.
     pub(super) fn reset(&mut self) {
         self.rows.clear();
-        self.last_result.clear();
         self.active = false;
     }
 }

@@ -475,7 +475,15 @@ P item reads with O(1) auxiliary space, as the pin's scan of P item headers
 does. The C producers bound P by 64: 16 suffix lengths, at most four tokens
 per successful `reduce_tokens` (`pinyin.cpp:1404-1420`,
 `phrase_large_table3.h:95`). Internal Rust callers have no such bound.
-Nonzero offsets keep the decoded-result walk.
+Nonzero offsets read the first retained row's spans. Their starts are strictly
+ascending: `Trellis::extract` reverses a backward walk. One `partition_point`
+finds the first start at or after the offset. Only an exact start admits the
+preceding span's token, as `zhuyin.cpp:1189-1200` requires. No preceding span
+means no predecessor. For M spans this is O(log M) time and O(1) auxiliary
+space, replacing two O(M) scans. Across B before-cursor offsets, this part of
+lookup changes from O(B·M) to O(B log M); other window work is unchanged.
+The pin's dense result checks the current token in O(1), then scans at most
+B preceding byte positions with O(1) auxiliary space.
 
 `order_window_tail` (`src/engine/session/mod.rs`) skips its
 stable library sort and token-membership set only when every row has a
@@ -492,6 +500,48 @@ For a window of `n` rows, the guard takes O(n) time and O(1) space; on
 success it avoids the stable sort's O(n log n) time and the membership set's
 O(n) space. The pin's append traverses 16 library slots and their ranges in
 O(n + r + 16) time for `r` ranges.
+
+### Selection and sentence state
+
+`SelectionRecord` keeps only the composition offset and token history.
+Constraint cells keep token and end positions; rebuilding the record copies
+only tokens from ordered runs. `PhraseSpan.text` remains because training
+uses its stored phrase length. Sentence state retains the n-best rows across
+typing and reparses, as the pin retains `m_nbest_results`
+(`pinyin.cpp:1497-1524`). It has no separate clone of the best row's spans or
+of each row's tokens: predecessor lookup reads row 0, and selection projects
+tokens from the chosen row's spans. This removes the duplicated text and
+vectors without changing their sources or lifetimes.
+
+`differing_spans` walks the two ordered span slices forward. For M best-row
+spans and N chosen-row spans, comparison takes O(M + N) time and O(1) space,
+replacing O(M·N) repeated searches. Constraint writes still run in chosen-row
+order, with the next chosen start or result tail as the end, and abort at the
+first refused write (`phonetic_lookup.cpp:172-205`). Their costs are unchanged.
+
+### LONGER traversal and keyboard membership
+
+The LONGER search evaluates each path at its DFS leaf. The matrix walk reads
+only immutable in-memory state; moving evaluation into it preserves the
+order of dictionary and model calls, including failures. Library priority
+still breaks unigram ties before path order (`pinyin.cpp:1904-1917`,
+`phrase_large_table3.h:77-97`). Explicit guesses retain their abort gates;
+refreshes retain their skip rules.
+
+Let E be the number of visited DFS entries, P the leaf count and L the maximum
+path length, bounded by min(16, 2·prefix_len). The previous path collection
+copied O(P·L) keys and tones and retained O(P·L) space. The new traversal keeps
+O(L) path and recursion space, plus the winner, and removes those leaf copies.
+Traversal takes O(E) plus the unchanged dictionary/model work. The number of
+paths can still grow with matrix branching. No tighter bound on external
+model reads is assumed. The pin also keeps one current path
+(`phonetic_key_matrix.cpp:443-529`).
+
+`ZhuyinParser::in_scheme` checks the same fixed keyboard tables directly,
+including CP26's special 'i' membership and tone gating. Its worst-case table
+scan remains O(T) for T compiled rows, with O(1) auxiliary space and no symbol
+vector or owned strings. Display callers still use `symbols_for`, preserving
+all mappings and their order (`zhuyin_parser2.cpp:496-545,796-844`).
 
 ## 6. Training and user phrases
 
