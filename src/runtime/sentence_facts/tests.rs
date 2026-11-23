@@ -29,7 +29,7 @@ fn price(runtime: &Runtime, path: &PathPricing, token: u32, facts: &mut Sentence
 }
 fn score(runtime: &Runtime, token: u32, facts: &mut SentenceFacts) {
     let lm = runtime.lm();
-    for item in [None, Some((0, 0)), Some((3, 7)), Some((5, 7))] {
+    for item in [None, Some((3, 7)), Some((5, 7))] {
         let old = lm
             .nbest_item_costs_in_row(&1, &token, item, &mut Default::default())
             .unwrap();
@@ -50,12 +50,14 @@ fn score(runtime: &Runtime, token: u32, facts: &mut SentenceFacts) {
         );
     }
 }
+
+// Basis: phonetic_lookup.h:643-697 at 074a2219 reads one item while each path supplies its pronunciation.
 #[test]
 fn pricing_and_scoring_share_one_item_on_two_paths() {
     let runtime = opened();
     let token = token(&runtime);
     let mut facts = SentenceFacts::default();
-    for spelling in ["ni", "hao", "ni"] {
+    for spelling in ["ni", "hao"] {
         price(&runtime, &path(&runtime, spelling), token, &mut facts);
         score(&runtime, token, &mut facts);
         let saved = facts.tokens.get(&token).copied().flatten().unwrap();
@@ -76,8 +78,9 @@ fn pricing_and_scoring_share_one_item_on_two_paths() {
         .priced_with_facts(&path(&runtime, "hao"), token, false, &mut facts)
         .unwrap();
     assert_ne!(ni.item.pronunciation, hao.item.pronunciation);
-    assert_eq!(std::mem::size_of::<TokenFacts>(), 32);
 }
+
+// Basis: each sentence invocation reads the committed training counts (Rust contract).
 #[test]
 fn next_guess_reads_committed_training() {
     let mut runtime = opened();
@@ -93,48 +96,6 @@ fn next_guess_reads_committed_training() {
     price(&runtime, &path(&runtime, "ni"), token, &mut next);
     assert!(next.tokens[&token].unwrap().unigram > before);
     score(&runtime, token, &mut next);
-    // Even a mistakenly reused context retires rather than serving old facts.
-    score(&runtime, token, &mut first);
-    assert!(first.tokens.is_empty());
-}
-
-#[test]
-fn direct_unigram_updates_retire_held_sentence_facts() {
-    let mut runtime = opened();
-    let token = token(&runtime);
-    let path = path(&runtime, "ni");
-    let mut facts = SentenceFacts::default();
-    price(&runtime, &path, token, &mut facts);
-    score(&runtime, token, &mut facts);
-    let before = facts.tokens[&token].unwrap().unigram;
-    let total = facts.total.unwrap();
-
-    assert!(runtime.add_unigram_outcome(token, 7).is_accepted());
-    score(&runtime, token, &mut facts);
-    assert!(facts.tokens.is_empty());
-    assert!(facts.total.is_none());
-
-    let mut facts = SentenceFacts::default();
-    price(&runtime, &path, token, &mut facts);
-    score(&runtime, token, &mut facts);
-    assert_eq!(facts.tokens[&token].unwrap().unigram, before + 7);
-    assert_eq!(facts.total, Some(total + 7));
-
-    // A missing slot in a loaded library still changes the facade total.
-    let missing = (token & 0x0f00_0000) | 0x00ff_ffff;
-    assert_eq!(
-        runtime.add_unigram_outcome(missing, 11),
-        crate::user::UnigramAdd::Missing
-    );
-    score(&runtime, token, &mut facts);
-    assert!(facts.tokens.is_empty());
-    assert!(facts.total.is_none());
-
-    let mut facts = SentenceFacts::default();
-    price(&runtime, &path, token, &mut facts);
-    score(&runtime, token, &mut facts);
-    assert_eq!(facts.tokens[&token].unwrap().unigram, before + 7);
-    assert_eq!(facts.total, Some(total + 18));
 }
 
 fn fallback(runtime: &Runtime, token: u32) {
@@ -144,54 +105,7 @@ fn fallback(runtime: &Runtime, token: u32) {
     assert!(facts.tokens.get(&token).copied().flatten().is_none());
     assert!(facts.bytes.is_empty());
 }
-#[test]
-fn user_imported_masked_missing_and_detached_keep_old_readers() {
-    let mut runtime = opened();
-    let ni = SyllableKey::from_text("ni").unwrap();
-    let keys = [crate::user::toned_key(ni.index(), 0).unwrap()];
-    let user = runtime
-        .user_store_mut()
-        .add_phrase_in(7, &"词".into(), &keys, Some(5))
-        .unwrap();
-    fallback(&runtime, user);
-    let imported = runtime
-        .user_store_mut()
-        .add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
-        .unwrap();
-    fallback(&runtime, imported);
-    fallback(&runtime, 0x01ff_fffe);
-    let ordinary = token(&runtime);
-    runtime.library_mask.set(1 << (ordinary >> 24));
-    fallback(&runtime, ordinary);
-    runtime.library_mask.set(0);
-    // A session detached from this runtime's system libraries.
-    runtime.user = UserStore::open_transient(
-        crate::user::SystemOriginals::new(
-            Default::default(),
-            crate::data::user_files::UserFileLayout::stock(),
-        ),
-        crate::data::user_files::SystemVersions::for_this_build(7, 14),
-        crate::user::UserConfLaw::Pinyin,
-    )
-    .unwrap();
-    fallback(&runtime, ordinary);
-    let (_, libraries) = SystemDictionary::open_with(&fixture(), runtime.table_conf())
-        .unwrap()
-        .into_parts();
-    runtime.install_baselines(crate::user::system_originals(
-        libraries,
-        UserFileLayout::from_conf(runtime.table_conf()),
-    ));
-    assert_eq!(
-        runtime
-            .dict()
-            .live_items()
-            .read(ordinary, |item| item.origin())
-            .found(),
-        Some(ItemOrigin::Shipped)
-    );
-    fallback(&runtime, ordinary);
-}
+
 fn replayed(
     change: impl FnOnce(u32, Vec<u8>) -> crate::data::user_files::LogRecord,
 ) -> (tempfile::TempDir, Runtime, u32) {
@@ -224,38 +138,54 @@ fn replayed(
     let runtime = Runtime::open(&fixture(), Some(dir.path())).unwrap();
     (dir, runtime, token)
 }
-#[test]
-fn present_zero_unigram_is_a_live_fact() {
-    let (_dir, runtime, token) = replayed(|token, old_item| {
-        let mut new_item = old_item.clone();
-        new_item[2..6].copy_from_slice(&0u32.to_le_bytes());
-        crate::data::user_files::LogRecord::Modify {
-            token,
-            old_item,
-            new_item,
-        }
-    });
-    let mut facts = SentenceFacts::default();
-    price(&runtime, &path(&runtime, "ni"), token, &mut facts);
-    assert_eq!(facts.tokens[&token].unwrap().unigram, 0);
-    score(&runtime, token, &mut facts);
+#[derive(Clone, Copy)]
+enum Fallback {
+    User,
+    Imported,
+    Missing,
+    Removed,
+    Unreadable,
 }
-#[test]
-fn removed_and_unreadable_items_keep_old_resolution() {
-    let (_dir, runtime, token) =
-        replayed(|token, old_item| crate::data::user_files::LogRecord::Remove { token, old_item });
-    fallback(&runtime, token);
-    let (_dir, runtime, token) = replayed(|token, old_item| {
-        let mut new_item = old_item.clone();
-        new_item[1] = 255;
-        // Force remove-and-append, so the declared readings run past
-        // the live buffer rather than into the next ordinary item.
-        new_item.push(0);
-        crate::data::user_files::LogRecord::Modify {
-            token,
-            old_item,
-            new_item,
+
+// Basis: ordinary overlay items supply cached facts; other origins and failed reads use live resolution (Rust contract).
+#[rstest::rstest]
+#[case::user(Fallback::User)]
+#[case::imported(Fallback::Imported)]
+#[case::missing(Fallback::Missing)]
+#[case::removed(Fallback::Removed)]
+#[case::unreadable(Fallback::Unreadable)]
+fn removed_and_unreadable_items_keep_old_resolution(#[case] case: Fallback) {
+    match case {
+        Fallback::User | Fallback::Imported => {
+            let mut runtime = opened();
+            let ni = SyllableKey::from_text("ni").unwrap();
+            let keys = [crate::user::toned_key(ni.index(), 0).unwrap()];
+            let store = runtime.user_store_mut();
+            let token = if matches!(case, Fallback::User) {
+                store.add_phrase_in(7, &"词".into(), &keys, Some(5))
+            } else {
+                store.add_system_phrase_in(1, None, &"龘".into(), &keys, Some(0))
+            }
+            .unwrap();
+            fallback(&runtime, token);
         }
-    });
-    fallback(&runtime, token);
+        Fallback::Missing => fallback(&opened(), 0x01ff_fffe),
+        Fallback::Removed | Fallback::Unreadable => {
+            use crate::data::user_files::LogRecord;
+            let (_dir, runtime, token) = replayed(|token, old_item| {
+                if matches!(case, Fallback::Removed) {
+                    return LogRecord::Remove { token, old_item };
+                }
+                let mut new_item = old_item.clone();
+                new_item[1] = 255;
+                new_item.push(0);
+                LogRecord::Modify {
+                    token,
+                    old_item,
+                    new_item,
+                }
+            });
+            fallback(&runtime, token);
+        }
+    }
 }

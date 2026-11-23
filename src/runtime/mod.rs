@@ -550,9 +550,9 @@ impl<'a> RuntimeDict<'a> {
     /// sixteen sub-indices; the pin ignores what its `unload` returns
     /// (`pinyin.cpp:473-474`, `zhuyin.cpp:386-387`), so a repeat unload
     /// answers `true` too. Which indices a facade lets through is the C
-    /// ABI's rule, not the runtime's: `pinyin_unload_phrase_library` refuses
-    /// everything but `GBK_DICTIONARY` (2), `zhuyin_unload_phrase_library`
-    /// everything but `TSI_DICTIONARY` (1).
+    /// ABI's rule. Within range, pinyin accepts only `GBK_DICTIONARY` (2)
+    /// (`pinyin.cpp:464-475`), and zhuyin refuses only `TSI_DICTIONARY`
+    /// (1) (`zhuyin.cpp:379-390`).
     #[must_use]
     fn unload_library(&self, index: u32) -> bool {
         if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
