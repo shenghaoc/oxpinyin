@@ -111,6 +111,67 @@ fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
     assert_eq!(bigram_row(&deleted, A), (1, vec![(AH, 1)]));
     assert!(!has_bigram_row(&deleted, AH));
 }
+// Moved from the evaluator's removed test-only dump parser to the real
+// import_interpolation entry: preserve its 100, 40, 1 and zero-count checks
+// in the native phrase chunk and bigram rows (074a2219
+// utils/storage/import_interpolation.cpp:124-232).
+#[test]
+fn interpolation2_parses_to_the_expected_counts() {
+    use assert_cmd::cargo::cargo_bin_cmd;
+    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
+
+    let dir = w3();
+    let items: Vec<_> = [(10, '中'), (20, '钟'), (30, '国')]
+        .into_iter()
+        .map(|(slot, text)| {
+            (
+                slot,
+                ChunkItem {
+                    phrase: vec![text as u32],
+                    unigram: 0,
+                    prons: vec![],
+                },
+            )
+        })
+        .collect();
+    let items: Vec<_> = items.iter().map(|(slot, item)| (*slot, item)).collect();
+    let chunk = build_chunk(&items).unwrap();
+    let path = dir.path().join("gb_char.bin");
+    std::fs::write(&path, &chunk).unwrap();
+    std::fs::remove_file(dir.path().join("bigram.db")).unwrap();
+    cargo_bin_cmd!("import_interpolation")
+        .current_dir(dir.path())
+        .write_stdin("\\data model interpolation\n\\1-gram\n\\item 16777226 中 count 100\n\\item 16777236 钟 count 10\n\\item 16777246 国 count 50\n\\2-gram\n\\item 1 <start> 16777226 中 count 30\n\\item 1 <start> 16777236 钟 count 1\n\\item 16777226 中 16777246 国 count 40\n\\end\n".as_bytes())
+        .assert().success().stdout("").stderr("");
+    let library = oxpinyin_tool_support::data::load_heap(&path).unwrap();
+    assert_eq!(library.item(0x0100_000a).unwrap().unigram(), 100);
+    assert_eq!(library.item(0x0100_0014).unwrap().unigram(), 10);
+    assert_eq!(library.item(0x0100_001e).unwrap().unigram(), 50);
+    assert_eq!(
+        bigram_row(&dir.path().join("bigram.db"), 1),
+        (31, vec![(0x0100_000a, 30), (0x0100_0014, 1)])
+    );
+    assert_eq!(
+        bigram_row(&dir.path().join("bigram.db"), 0x0100_000a),
+        (40, vec![(0x0100_001e, 40)])
+    );
+
+    // The same token also accepts a zero count, as the old dump test did.
+    drop(library);
+    std::fs::write(&path, &chunk).unwrap();
+    cargo_bin_cmd!("import_interpolation")
+        .current_dir(dir.path())
+        .write_stdin(
+            "\\data model interpolation\n\\1-gram\n\\item 16777226 中 count 0\n\\end\n".as_bytes(),
+        )
+        .assert()
+        .success()
+        .stdout("")
+        .stderr("");
+    let library = oxpinyin_tool_support::data::load_heap(&path).unwrap();
+    assert_eq!(library.item(0x0100_000a).unwrap().unigram(), 0);
+}
+
 #[test]
 fn eval_correction_rate_refuses_an_unknown_token() {
     let dir = w3();
@@ -319,6 +380,7 @@ mod frozen {
         use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
+        use oxpinyin::parser::ChewingKey;
         use rstest::rstest;
 
         use super::bigram_db_not_berkeley_db;
@@ -331,6 +393,106 @@ mod frozen {
             Exact(b"correction rate:-nan\n")
         };
         const CORRECTION_RATE_ONE: &[u8] = b"correction rate:1.000000\n";
+
+        // No decode is reached: construction stores pointers and does not
+        // enumerate bigram keys (074a2219 eval_correction_rate.cpp:154-170,
+        // phonetic_lookup.h:707-728). Test both corpus-open outcomes with
+        // an extra key in each database.
+        #[test]
+        fn an_extra_bigram_key_is_not_read_by_evaluation() {
+            use oxpinyin::store::{DefaultStore, WriteStore};
+
+            let directory = w3();
+            {
+                let store = DefaultStore::create_hash(&directory.path().join("bigram.db")).unwrap();
+                store.set_raw(b"extra", b"unreached").unwrap();
+            }
+            captured_cases(
+                directory,
+                &[],
+                b"",
+                &[("evals2.text", b"")],
+                Run {
+                    status: Exit(0),
+                    stdout: CORRECTION_RATE_NAN,
+                    stderr: b"",
+                    files: &[],
+                },
+            );
+            let directory = w3();
+            {
+                let store = DefaultStore::create_hash(&directory.path().join("bigram.db")).unwrap();
+                store.set_raw(b"extra", b"unreached").unwrap();
+            }
+            captured_cases(
+                directory,
+                &[],
+                b"",
+                &[],
+                Run {
+                    status: Exit(2),
+                    stdout: Exact(b""),
+                    stderr: CANT_OPEN_EVALS2_TEXT,
+                    files: &[],
+                },
+            );
+        }
+
+        // Reduced packed data for the real utility. The source token is
+        // deliberately absent from some index rows: the decoded probe text
+        // identifies the winning key without calling a private helper.
+        fn readings_fixture(
+            readings: &[(oxpinyin::parser::ChewingKey, u32)],
+            other_key: oxpinyin::parser::ChewingKey,
+            index: &[(u32, oxpinyin::parser::ChewingKey)],
+        ) -> TempDir {
+            use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
+            use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
+            use oxpinyin::store::{DefaultStore, WriteStore};
+
+            let directory = w3();
+            let source = ChunkItem {
+                phrase: vec!['你' as u32],
+                unigram: 1,
+                prons: readings
+                    .iter()
+                    .map(|(key, freq)| (vec![key.to_packed()], *freq))
+                    .collect(),
+            };
+            let other = ChunkItem {
+                phrase: vec!['尼' as u32],
+                unigram: 100,
+                prons: vec![(vec![other_key.to_packed()], 100)],
+            };
+            let zero = ChunkItem {
+                phrase: vec!['你' as u32],
+                unigram: 1,
+                prons: vec![(vec![0], 1)],
+            };
+            std::fs::write(
+                directory.path().join("gb_char.bin"),
+                build_chunk(&[(3, &source), (4, &other), (5, &zero)]).unwrap(),
+            )
+            .unwrap();
+            let index_path = directory.path().join("pinyin_index.bin");
+            std::fs::remove_file(&index_path).unwrap();
+            {
+                let store = DefaultStore::create(&index_path).unwrap();
+                let mut rows = std::collections::BTreeMap::<Vec<u8>, Vec<u8>>::new();
+                for &(token, key) in index {
+                    rows.entry(encode_complete_key(&[key]))
+                        .or_default()
+                        .extend(encode_item(token, &[key]));
+                }
+                for (key, value) in rows {
+                    store.set_raw(&key, &value).unwrap();
+                }
+            }
+            let bigram_path = directory.path().join("bigram.db");
+            std::fs::remove_file(&bigram_path).unwrap();
+            drop(DefaultStore::create_hash(&bigram_path).unwrap());
+            directory
+        }
 
         #[rstest]
         // eval_correction_rate-bad-segmented-line: utils/training/eval_correction_rate.cpp at
@@ -467,6 +629,83 @@ mod frozen {
                 stderr: b"",
                 files: &[],
             },
+        )]
+        // The pre-existing pass/mismatch cases below reach main ->
+        // do_one_test -> correction_rate -> sentence_keys ->
+        // LibraryPhraseSource::best_keys. Fold the packed-reading partitions
+        // into that same real-evaluator test (pin eval_correction_rate.cpp:47-60).
+        #[case::partial_winner(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1), (ChewingKey::from_pinyin("n").unwrap(), 2)], ChewingKey::from_pinyin("n").unwrap(), &[(0x0100_0004, ChewingKey::from_pinyin("n").unwrap())]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::unspellable_winner(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1), (ChewingKey::new(1, 3, 31, 4), 2)], ChewingKey::new(1, 3, 31, 4), &[(0x0100_0004, ChewingKey::new(1, 3, 31, 4))]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::first_reading_on_tie(
+            readings_fixture(&[(ChewingKey::from_pinyin("n").unwrap(), 2), (ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 2)], ChewingKey::from_pinyin("n").unwrap(), &[(0x0100_0004, ChewingKey::from_pinyin("n").unwrap())]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::index_zero_when_frequencies_are_zero(
+            readings_fixture(&[(ChewingKey::new(1, 3, 31, 4), 0), (ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 0)], ChewingKey::new(1, 3, 31, 4), &[(0x0100_0004, ChewingKey::new(1, 3, 31, 4))]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::later_valid_winner(
+            readings_fixture(&[(ChewingKey::from_pinyin("n").unwrap(), 1), (ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 2)], ChewingKey::from_pinyin("ni").unwrap().with_tone(3), &[(0x0100_0004, ChewingKey::from_pinyin("ni").unwrap().with_tone(3))]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::zero_winner(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1), (ChewingKey::default(), 2)], ChewingKey::from_pinyin("ni").unwrap().with_tone(3), &[(0x0100_0004, ChewingKey::from_pinyin("ni").unwrap().with_tone(3))]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Signal(6), stdout: Exact(b""), stderr: b"", files: &[] },
+        )]
+        #[case::eng_winner(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1), (ChewingKey::from_pinyin("eng").unwrap(), 2)], ChewingKey::from_pinyin("eng").unwrap(), &[(0x0100_0004, ChewingKey::from_pinyin("eng").unwrap())]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::nun_winner(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1), (ChewingKey::from_pinyin("nun").unwrap(), 2)], ChewingKey::from_pinyin("nun").unwrap(), &[(0x0100_0004, ChewingKey::from_pinyin("nun").unwrap())]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::den_winner(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1), (ChewingKey::from_pinyin("den").unwrap(), 2)], ChewingKey::from_pinyin("den").unwrap(), &[(0x0100_0004, ChewingKey::from_pinyin("den").unwrap())]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你\nguessed sentence:尼\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        // Index filtering and pronunciation pricing independently exclude
+        // the much more frequent wrong-tone item (chewing_large_table2.h:102-104,
+        // phrase_index.h:149 at 074a2219).
+        #[case::stored_tone_filters_index(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1)], ChewingKey::from_pinyin("ni").unwrap().with_tone(3).with_tone(2), &[(0x0100_0003, ChewingKey::from_pinyin("ni").unwrap().with_tone(3)), (0x0100_0004, ChewingKey::from_pinyin("ni").unwrap().with_tone(3).with_tone(2))]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(CORRECTION_RATE_ONE), stderr: b"", files: &[] },
+        )]
+        // Index filtering and pronunciation pricing independently exclude
+        // the much more frequent wrong-tone item (chewing_large_table2.h:102-104,
+        // phrase_index.h:149 at 074a2219).
+        #[case::stored_tone_prices_readings(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1)], ChewingKey::from_pinyin("ni").unwrap().with_tone(3).with_tone(2), &[(0x0100_0003, ChewingKey::from_pinyin("ni").unwrap().with_tone(3)), (0x0100_0004, ChewingKey::from_pinyin("ni").unwrap().with_tone(3))]),
+            &[], b"", &[("evals2.text", "16777219 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(CORRECTION_RATE_ONE), stderr: b"", files: &[] },
+        )]
+        // Preserve the zero-cell mismatch, the 16 nonzero-key bound and
+        // the all-zero no-cover refusal (phonetic_key_matrix.cpp:389-393,567-574).
+        #[case::zero_cells_extend_past_sixteen_raw_cells(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1)], ChewingKey::from_pinyin("ni").unwrap().with_tone(3).with_tone(2), &[(0x0100_0003, ChewingKey::from_pinyin("ni").unwrap().with_tone(3))]),
+            &[], b"", &[("evals2.text", "16777219 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n16777221 你\n".as_bytes())],
+            Run { status: Exit(0), stdout: Exact(b"correction rate:0.000000\n"), stderr: "test sentence:你你你你你你你你你你你你你你你你你你\nguessed sentence:你\nthe result mis-matches.\n".as_bytes(), files: &[] },
+        )]
+        #[case::all_zero_keys_have_no_phrase_cover(
+            readings_fixture(&[(ChewingKey::from_pinyin("ni").unwrap().with_tone(3), 1)], ChewingKey::from_pinyin("ni").unwrap().with_tone(3).with_tone(2), &[(0x0100_0003, ChewingKey::from_pinyin("ni").unwrap().with_tone(3))]),
+            &[], b"", &[("evals2.text", "16777221 你\n".as_bytes())],
+            Run { status: Signal(6), stdout: Exact(b""), stderr: b"", files: &[] },
         )]
         fn captured_cases(
             #[case] directory: TempDir,

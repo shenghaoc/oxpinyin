@@ -2,7 +2,7 @@
 //! decode.
 //!
 //! A three-token vocabulary with one homophone pair pins the decode exactly:
-//! `中`(10) and `钟`(20) both spell `zhong`, `国`(30) spells `guo`. `中` is
+//! `中`(slot 10) and `钟`(slot 20) both spell `zhong`, `国`(slot 30) spells `guo`. `中` is
 //! far more frequent than `钟` in both the unigram (100 vs 10) and after
 //! `sentence_start` (bigram 30 vs 1), so `zhong` always decodes to `中` for
 //! **any** λ ∈ [0, 1]. Therefore:
@@ -14,63 +14,52 @@
 
 use std::collections::BTreeMap;
 
-use super::counts::parse_interpolation_dump;
-use super::fixture_doubles::FixtureDictionary;
+use super::fixture_doubles;
 use super::{EvalLanguageModel, PhraseSource, correction_rate};
+use crate::storage::Hash;
+use oxpinyin::data::PhraseLibraries;
+use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
+use oxpinyin::data::row_format::encode_token_key;
+use oxpinyin::model::PhraseList;
+use oxpinyin::parser::ChewingKey;
+use oxpinyin::single_gram::encode_single_gram;
+use oxpinyin::vocab::PhraseEntry;
 use oxpinyin::vocab::{PhraseToken, SyllableKey};
 
 const VOCAB: &str = "\
-token=10\tkeys=zhong\ttext=中\tunigram=100
-token=20\tkeys=zhong\ttext=钟\tunigram=10
-token=30\tkeys=guo\ttext=国\tunigram=50
+token=16777226\tkeys=zhong\ttext=中\tunigram=100
+token=16777236\tkeys=zhong\ttext=钟\tunigram=10
+token=16777246\tkeys=guo\ttext=国\tunigram=50
 ";
 
-/// The candidate `interpolation2.text` for the same model.
-const INTERPOLATION2: &str = "\
-\\data model interpolation
-\\1-gram
-\\item 10 中 count 100
-\\item 20 钟 count 10
-\\item 30 国 count 50
-\\2-gram
-\\item 1 <start> 10 中 count 30
-\\item 1 <start> 20 钟 count 1
-\\item 10 中 30 国 count 40
-\\end
-";
-
-fn keys(text: &str) -> Vec<SyllableKey> {
+fn keys(text: &str) -> Vec<ChewingKey> {
     text.split(',')
-        .map(|k| SyllableKey::from_text(k).expect("frozen key"))
+        .map(|k| ChewingKey::from_pinyin(k).expect("frozen key"))
         .collect()
 }
 
 /// A `PhraseSource` mirroring the fixture: token → best keys + text.
 struct FixtureSource {
-    best: BTreeMap<u32, Vec<SyllableKey>>,
+    best: BTreeMap<u32, Vec<ChewingKey>>,
     text: BTreeMap<u32, String>,
 }
 
 impl FixtureSource {
     fn new() -> Self {
         let mut best = BTreeMap::new();
-        best.insert(10, keys("zhong"));
-        best.insert(20, keys("zhong"));
-        best.insert(30, keys("guo"));
+        best.insert(0x0100_000a, keys("zhong"));
+        best.insert(0x0100_0014, keys("zhong"));
+        best.insert(0x0100_001e, keys("guo"));
         let mut text = BTreeMap::new();
-        text.insert(10, "中".to_owned());
-        text.insert(20, "钟".to_owned());
-        text.insert(30, "国".to_owned());
+        text.insert(0x0100_000a, "中".to_owned());
+        text.insert(0x0100_0014, "钟".to_owned());
+        text.insert(0x0100_001e, "国".to_owned());
         Self { best, text }
-    }
-
-    fn lexicon_tokens(&self) -> impl Iterator<Item = PhraseToken> + '_ {
-        self.text.keys().copied()
     }
 }
 
 impl PhraseSource for FixtureSource {
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>> {
+    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>> {
         self.best.get(&token).cloned()
     }
     fn text(&self, token: PhraseToken) -> Option<String> {
@@ -80,37 +69,64 @@ impl PhraseSource for FixtureSource {
 
 fn sentences() -> Vec<Vec<PhraseToken>> {
     vec![
-        vec![10, 30], // 中国
-        vec![20],     // 钟
+        vec![0x0100_000a, 0x0100_001e], // 中国
+        vec![0x0100_0014],              // 钟
     ]
-}
-
-#[test]
-fn interpolation2_parses_to_the_expected_counts() {
-    let counts = parse_interpolation_dump(INTERPOLATION2);
-    assert_eq!(counts.unigrams.get(&10), Some(&100));
-    assert_eq!(counts.bigrams.get(&(10, 30)), Some(&40));
-    assert_eq!(counts.bigrams.get(&(1, 20)), Some(&1));
-    // A zero count is a value like any other: the pin's taglib returns true
-    // for it, and the dump carries it through.
-    let zero = parse_interpolation_dump("\\1-gram\n\\item 10 中 count 0\n");
-    assert_eq!(zero.unigrams.get(&10), Some(&0));
 }
 
 #[test]
 fn correction_rate_is_lambda_independent_here() {
     // The homophone ranking holds for every λ, so the rate is 0.5 whether λ
     // is 0 (pure unigram), 1 (pure bigram), or anything between.
-    let counts = parse_interpolation_dump(INTERPOLATION2);
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
     let source = FixtureSource::new();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gb.bin");
+    // The binary model after import_interpolation and gen_unigram: the
+    // authored 100/10/50 counts plus their existing +1 floor.
+    let items: Vec<_> = [
+        (10, '中', "zhong", 101),
+        (20, '钟', "zhong", 11),
+        (30, '国', "guo", 51),
+    ]
+    .into_iter()
+    .map(|(slot, text, spelling, unigram)| {
+        (
+            slot,
+            ChunkItem {
+                phrase: vec![text as u32],
+                unigram,
+                prons: vec![(
+                    vec![ChewingKey::from_pinyin(spelling).unwrap().to_packed()],
+                    1,
+                )],
+            },
+        )
+    })
+    .collect();
+    let items: Vec<_> = items.iter().map(|(slot, item)| (*slot, item)).collect();
+    std::fs::write(&path, build_chunk(&items).unwrap()).unwrap();
+    let mut libraries = PhraseLibraries::empty();
+    oxpinyin_tool_support::data::load_heap_library(&mut libraries, 1, &path).unwrap();
+    let bigram = Hash::create(&dir.path().join("bigram.db")).unwrap();
+    bigram
+        .put(
+            &encode_token_key(1),
+            &encode_single_gram(31, &[(0x0100_000a, 30), (0x0100_0014, 1)]),
+        )
+        .unwrap();
+    bigram
+        .put(
+            &encode_token_key(0x0100_000a),
+            &encode_single_gram(40, &[(0x0100_001e, 40)]),
+        )
+        .unwrap();
     for lambda in [0.0, 0.312_699, 1.0] {
-        let model =
-            EvalLanguageModel::from_counts_with_lexicon(&counts, lambda, source.lexicon_tokens());
+        let model = EvalLanguageModel::new(&libraries, Some(&bigram), lambda);
         // The gen_unigram floor: every lexicon token carries count + 1
         // (101, 11, 51) and the total is their sum, 163. Without the floor
         // this would be 100 / 160.
-        let floored = model.unigram_poss(10);
+        let floored = model.unigram_poss(0x0100_000a);
         assert!(
             (floored - 101.0 / 163.0).abs() < 1e-12,
             "λ={lambda} floored P_uni(中) {floored}"
@@ -125,5 +141,40 @@ fn correction_rate_is_lambda_independent_here() {
         );
         // The one failure is 钟 decoded as the more frequent homophone 中.
         assert_eq!(report.mismatches, vec![("钟".to_owned(), "中".to_owned())]);
+    }
+}
+
+// The shared fixture uses tone-free inventory keys. Adapt only these
+// authored test inputs; the evaluator keeps packed keys in production.
+pub(super) struct FixtureDictionary(fixture_doubles::FixtureDictionary);
+
+impl FixtureDictionary {
+    pub(super) fn parse(text: &str) -> Result<Self, fixture_doubles::FixtureError> {
+        fixture_doubles::FixtureDictionary::parse(text).map(Self)
+    }
+}
+
+impl PhraseList for FixtureDictionary {
+    type Syllable = ChewingKey;
+    type Error = fixture_doubles::FixtureError;
+
+    fn lookup(&self, keys: &[ChewingKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
+        self.0.lookup(
+            &keys
+                .iter()
+                .copied()
+                .map(SyllableKey::from_matrix_key)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn phrase_prefix_exists(&self, keys: &[ChewingKey]) -> Result<bool, Self::Error> {
+        self.0.phrase_prefix_exists(
+            &keys
+                .iter()
+                .copied()
+                .map(SyllableKey::from_matrix_key)
+                .collect::<Vec<_>>(),
+        )
     }
 }

@@ -1,7 +1,8 @@
-use super::super::counts::Counts;
-use super::super::fixture_doubles::FixtureDictionary;
+use super::super::tests::FixtureDictionary;
 use super::{EvalLanguageModel, PhraseSource, correction_rate};
-use oxpinyin::vocab::{PhraseToken, SyllableKey};
+use oxpinyin::data::PhraseLibraries;
+use oxpinyin::parser::ChewingKey;
+use oxpinyin::vocab::PhraseToken;
 use std::collections::BTreeMap;
 
 // The hand-computable homophone fixture in eval/tests.rs exercises the
@@ -10,11 +11,11 @@ use std::collections::BTreeMap;
 /// A minimal map-backed `PhraseSource` for the error tests: keys and text
 /// per token, either absent.
 struct MapSource {
-    keys: BTreeMap<u32, Vec<SyllableKey>>,
+    keys: BTreeMap<u32, Vec<ChewingKey>>,
     text: BTreeMap<u32, String>,
 }
 impl PhraseSource for MapSource {
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>> {
+    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>> {
         self.keys.get(&token).cloned()
     }
     fn text(&self, token: PhraseToken) -> Option<String> {
@@ -22,20 +23,22 @@ impl PhraseSource for MapSource {
     }
 }
 
-fn fixture() -> (FixtureDictionary, EvalLanguageModel) {
-    // The real fixture dictionary; an evaluation model that gives every
-    // fixture token a unigram count.
+fn fixture() -> (FixtureDictionary, PhraseLibraries) {
     let vocab = include_str!("../../../../../fixtures/w4/mini-vocab.txt");
     let dict = FixtureDictionary::parse(vocab).expect("vocab");
-    let mut counts = Counts::default();
-    counts.unigrams.insert(1, 10);
-    let model = EvalLanguageModel::from_counts(&counts, 0.312_699);
-    (dict, model)
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures/w3")
+        .join(oxpinyin::__internal::DEFAULT_STORE_EXT)
+        .join("gb_char.bin");
+    let mut libraries = PhraseLibraries::empty();
+    oxpinyin_tool_support::data::load_heap_library(&mut libraries, 1, &path).unwrap();
+    (dict, libraries)
 }
 
 #[test]
 fn a_token_without_pronunciation_is_an_error() {
-    let (dict, model) = fixture();
+    let (dict, libraries) = fixture();
+    let model = EvalLanguageModel::new(&libraries, None, 0.312_699);
     let source = MapSource {
         keys: BTreeMap::new(),
         text: BTreeMap::new(),
@@ -46,9 +49,10 @@ fn a_token_without_pronunciation_is_an_error() {
 
 #[test]
 fn a_token_without_text_is_an_error_not_a_shorter_expected_sentence() {
-    let (dict, model) = fixture();
+    let (dict, libraries) = fixture();
+    let model = EvalLanguageModel::new(&libraries, None, 0.312_699);
     let mut keys = BTreeMap::new();
-    keys.insert(1, vec![SyllableKey::from_text("ni").expect("key")]);
+    keys.insert(1, vec![ChewingKey::from_pinyin("ni").expect("key")]);
     let source = MapSource {
         keys,
         text: BTreeMap::new(),
@@ -59,11 +63,12 @@ fn a_token_without_text_is_an_error_not_a_shorter_expected_sentence() {
 
 #[test]
 fn a_key_chain_without_a_phrase_cover_is_an_error_not_a_mismatch() {
-    let (dict, model) = fixture();
+    let (dict, libraries) = fixture();
+    let model = EvalLanguageModel::new(&libraries, None, 0.312_699);
     let mut keys = BTreeMap::new();
     // `guo` is not in the fixture vocabulary, so no phrase covers the
     // chain.
-    keys.insert(1, vec![SyllableKey::from_text("guo").expect("key")]);
+    keys.insert(1, vec![ChewingKey::from_pinyin("guo").expect("key")]);
     let mut text = BTreeMap::new();
     text.insert(1, "国".to_owned());
     let source = MapSource { keys, text };

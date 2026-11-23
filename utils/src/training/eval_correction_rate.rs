@@ -15,7 +15,7 @@
 //! (`:156-157`) leaves the user bigram `NULL`, so `merge_single_gram`
 //! always sees the system row alone and no user row is read.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -23,16 +23,13 @@ use oxpinyin::data::phrase_library::{LibraryError, RowFault};
 use oxpinyin::data::{DictError, PhraseLibraries};
 use oxpinyin::model::PhraseList;
 use oxpinyin::parser::ChewingKey;
-use oxpinyin::vocab::{
-    NULL_TOKEN, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, PhraseEntry, PhraseToken, SyllableKey,
-    phrase_index_library_index, phrase_index_make_token,
-};
+use oxpinyin::vocab::{NULL_TOKEN, PhraseEntry, PhraseToken, phrase_index_library_index};
 use oxpinyin_tool_support::data::PinyinIndexTable;
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::LineReader;
 
 use super::eval::{EvalLanguageModel, PhraseSource, correction_rate};
-use crate::training::{all_tokens, load_gram, load_table_conf, parse_segmented_line};
+use crate::training::{load_table_conf, parse_segmented_line};
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
 
 /// The evaluation corpus name (`eval_correction_rate.cpp:133`).
@@ -81,7 +78,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     // `system_table_info.get_lambda()`, the `gfloat` the pin passes to
     // `PhoneticLookup<1, 1>`.
     let lambda = conf.lambda_f32();
-    let model = build_model(&libraries, bigram.as_ref(), lambda);
+    let model = EvalLanguageModel::new(&libraries, bigram.as_ref(), lambda);
     let source = LibraryPhraseSource {
         libraries: &libraries,
     };
@@ -127,46 +124,6 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
     // `parameter_t rate = passed_count / (parameter_t) tested_count;`
     let rate = passed_count as f64 / tested_count as f64;
     tool::training::print_correction_rate(rate);
-}
-
-/// The pin's evaluation model over the binary tables.
-fn build_model(
-    libraries: &PhraseLibraries,
-    bigram: Option<&crate::storage::Hash>,
-    lambda: f32,
-) -> EvalLanguageModel {
-    let mut unigrams = BTreeMap::new();
-    for nibble in 0..PHRASE_INDEX_LIBRARY_COUNT {
-        let Some(library) = libraries.library(phrase_index_make_token(nibble, 0)) else {
-            continue;
-        };
-        // The pin reads a unigram with `get_phrase_item(token)`
-        // (`src/lookup/phonetic_lookup.h:646`, `:674`), which reads the slot
-        // `token & PHRASE_MASK` (`src/storage/phrase_index.h:646-652`,
-        // `phrase_index.cpp:180-187`). No token names a wider slot, and
-        // `items` walks slots in ascending order.
-        for (slot, item) in library.items().take_while(|(slot, _)| *slot <= PHRASE_MASK) {
-            unigrams.insert(
-                phrase_index_make_token(nibble, slot),
-                u64::from(item.unigram()),
-            );
-        }
-    }
-    let unigram_total = u64::from(libraries.unigram_total());
-
-    let mut bigrams = BTreeMap::new();
-    let mut bigram_totals = BTreeMap::new();
-    for token in all_tokens(bigram) {
-        let Some(gram) = load_gram(bigram, token) else {
-            continue;
-        };
-        bigram_totals.insert(token, u64::from(gram.total));
-        for (next, count) in gram.records {
-            bigrams.entry((token, next)).or_insert(u64::from(count));
-        }
-    }
-
-    EvalLanguageModel::from_binary(unigrams, unigram_total, bigrams, bigram_totals, lambda)
 }
 
 /// One test (`do_one_test`, `eval_correction_rate.cpp:84-130`): `true` when
@@ -224,18 +181,25 @@ struct LibraryPhraseSource<'a> {
 }
 
 impl PhraseSource for LibraryPhraseSource<'_> {
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>> {
-        // `get_possible_pinyin` keeps the first pronunciation of the
-        // highest frequency (`freq > max_freq`), then appends its keys.
-        let best = self
-            .libraries
-            .pronunciations(token)?
-            .into_iter()
-            .reduce(|best, next| if next.freq > best.freq { next } else { best })?;
-        best.spelling
-            .split('\'')
-            .map(SyllableKey::from_text)
-            .collect::<Option<Vec<_>>>()
+    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>> {
+        // All stored readings compete, including partial and unspellable
+        // keys. Strict improvement keeps the first tie and index 0 at zero
+        // (`eval_correction_rate.cpp:47-60`). Convert only the winner.
+        let item = self.libraries.library(token)?.item(token)?;
+        let mut best = item.pronunciation(0)?;
+        for reading in item.pronunciations().skip(1) {
+            if reading.freq > best.freq {
+                best = reading;
+            }
+        }
+        Some(
+            best.keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| ChewingKey::from_packed(u16::from_le_bytes(*pair)))
+                .collect(),
+        )
     }
 
     fn text(&self, token: PhraseToken) -> Option<String> {
@@ -253,16 +217,17 @@ struct EvalDictionary<'a> {
 }
 
 impl PhraseList for EvalDictionary<'_> {
-    type Syllable = SyllableKey;
+    type Syllable = ChewingKey;
     type Error = DictError;
 
-    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
+    fn lookup(&self, keys: &[ChewingKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let Some(pinyin) = self.pinyin else {
             return Ok(Vec::new());
         };
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+        let keys = matrix_keys(keys);
+        if keys.is_empty() {
             return Ok(Vec::new());
-        };
+        }
         let tokens = pinyin.search(&keys)?;
         let mut entries = Vec::new();
         for token in tokens {
@@ -288,21 +253,29 @@ impl PhraseList for EvalDictionary<'_> {
     }
 
     /// `SEARCH_CONTINUED`: the query's index key exists in the DBM.
-    fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
+    fn phrase_prefix_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
         let Some(pinyin) = self.pinyin else {
             return Ok(false);
         };
-        let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(false);
-        };
+        let keys = matrix_keys(keys);
+        if keys.is_empty() {
+            return Ok(true);
+        }
         pinyin.key_exists(&keys)
     }
 }
 
-/// `ChewingKey` from a tone-less spelling, as the lookup's query keys are.
-fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey>> {
-    syllables
-        .iter()
-        .map(|s| ChewingKey::from_pinyin(s.text()))
-        .collect()
+// fill_matrix retains zero cells; search_matrix and pronunciation pricing
+// skip them (`phonetic_key_matrix.cpp:389-393,567-574` at 074a2219).
+fn matrix_keys(keys: &[ChewingKey]) -> Cow<'_, [ChewingKey]> {
+    if keys.contains(&ChewingKey::default()) {
+        Cow::Owned(
+            keys.iter()
+                .copied()
+                .filter(|key| *key != ChewingKey::default())
+                .collect(),
+        )
+    } else {
+        Cow::Borrowed(keys)
+    }
 }
