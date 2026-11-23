@@ -101,6 +101,7 @@ impl Drop for TestLimits {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Replacement {
     slot: u32,
     length: usize,
@@ -192,7 +193,7 @@ impl UserLibrary {
 
     /// Replace one body: the pin's remove and add (`pinyin.cpp:563-605`).
     pub(crate) fn replace(&mut self, slot: u32, bytes: &[u8]) -> Option<()> {
-        let change = self.replacement(slot, bytes)?;
+        let change = Self::replacement(slot, bytes)?;
         self.apply_replacement(change, bytes);
         Some(())
     }
@@ -209,13 +210,13 @@ impl UserLibrary {
     /// by `PHRASE_MASK` and the bytes `encode_phrase_item` made, which
     /// `PhraseItemView::from_bytes` accepts, so neither refusal reaches them.
     pub(crate) fn add(&mut self, slot: u32, bytes: &[u8]) -> Option<()> {
-        let mut change = self.replacement(slot, bytes)?;
+        let mut change = Self::replacement(slot, bytes)?;
         change.removes_old = false;
         self.apply_replacement(change, bytes);
         Some(())
     }
 
-    fn replacement(&self, slot: u32, bytes: &[u8]) -> Option<Replacement> {
+    fn replacement(slot: u32, bytes: &[u8]) -> Option<Replacement> {
         if slot > crate::vocab::PHRASE_MASK {
             return None;
         }

@@ -92,7 +92,7 @@ pub enum AttachMode {
     /// `ATTACH_READWRITE`, without `ATTACH_CREATE`.
     ReadWrite,
     /// `ATTACH_READWRITE | ATTACH_CREATE`.
-    ReadWriteCreate,
+    OpenOrCreateWritable,
 }
 
 /// What a `FlexibleBigram` attach leaves, before its signature check:
@@ -424,7 +424,7 @@ where
                     .read_value(&MAGIC_KEY)
                     .ok()
                     .flatten()
-                    .is_some_and(|value| this.matches_magic(&value));
+                    .is_some_and(|value| Self::matches_magic(&value));
             }
         }
         Ok(this)
@@ -559,7 +559,7 @@ where
             }
             return Ok(None);
         }
-        if !self.matches_magic(&value) {
+        if !Self::matches_magic(&value) {
             std::process::abort();
         }
         Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
@@ -580,7 +580,7 @@ where
             }
             return Ok(None);
         }
-        if !self.matches_magic(&value) {
+        if !Self::matches_magic(&value) {
             std::process::abort();
         }
         Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
@@ -719,7 +719,7 @@ where
     }
 
     /// The magic record's value starts with this container's magic number.
-    fn matches_magic(&self, value: &[u8]) -> bool {
+    fn matches_magic(value: &[u8]) -> bool {
         value.len() >= MAGIC_NUMBER_LEN && value[..MAGIC_NUMBER_LEN] == S::MAGIC_NUMBER
     }
 
@@ -854,7 +854,7 @@ pub fn attach_hash(
     if let Some(store) = open(false)? {
         return Ok(HashAttach::Opened(store));
     }
-    if mode != AttachMode::ReadWriteCreate {
+    if mode != AttachMode::OpenOrCreateWritable {
         return Ok(HashAttach::Closed);
     }
     let Some(store) = open(true)? else {
@@ -891,7 +891,7 @@ pub fn attach_hash(
     if store.try_open_native(path, false)? {
         return Ok(HashAttach::Opened(store));
     }
-    if mode != AttachMode::ReadWriteCreate {
+    if mode != AttachMode::OpenOrCreateWritable {
         return Ok(HashAttach::Closed);
     }
     if !store.try_open_native(path, true)? {
@@ -921,7 +921,7 @@ pub fn attach_hash(
     if store.try_open_native(path, false)? {
         return Ok(HashAttach::Opened(store));
     }
-    if mode != AttachMode::ReadWriteCreate || !store.try_open_native(path, true)? {
+    if mode != AttachMode::OpenOrCreateWritable || !store.try_open_native(path, true)? {
         return Ok(HashAttach::Closed);
     }
     let (key, value) = signature;

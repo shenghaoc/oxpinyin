@@ -601,7 +601,7 @@ mod native {
         let planted = TempUserDir::new("export-gram-plant");
         plant_bigram(
             &planted.path,
-            vec![(predecessor.to_le_bytes().to_vec(), gram_bytes(total, items))],
+            &[(predecessor.to_le_bytes().to_vec(), gram_bytes(total, items))],
         );
         std::fs::copy(
             planted.path.join("user_bigram.db"),
@@ -636,7 +636,7 @@ mod native {
         let gram = gram_bytes(u32::MAX, &[(hao, u32::MAX)]);
         plant_bigram(
             &user.path,
-            vec![
+            &[
                 (ni.to_le_bytes().to_vec(), gram.clone()),
                 (zhong.to_le_bytes().to_vec(), gram),
                 (1_u32.to_le_bytes().to_vec(), vec![0; 4]),
@@ -700,7 +700,7 @@ mod native {
         let user = TempUserDir::new("export-bigram-system-key");
         plant_bigram(
             &user.path,
-            vec![(
+            &[(
                 good.to_le_bytes().to_vec(),
                 gram_bytes(200, &[(good, 100), (bad, 100)]),
             )],

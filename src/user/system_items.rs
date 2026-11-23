@@ -25,6 +25,13 @@ fn library_of<'a>(
     })
 }
 
+/// The result of reading fields from a live system library.
+pub(crate) enum LiveItemFields<R> {
+    NoLiveLibrary,
+    NoReadableItem,
+    Read(R),
+}
+
 /// What the session holds of the loaded system libraries beyond the shipped
 /// chunks: one live buffer per library a replay, a training, an import or an
 /// increment has written, whose items and `guint32` total are the
@@ -259,22 +266,22 @@ impl SystemItems {
         Some(read(&bytes))
     }
 
-    /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`]. The
-    /// outer `None` means the token's library has no live buffer; the inner
-    /// one that the buffer holds no item the getters can read.
+    /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`].
     pub(crate) fn with_live_fields<R>(
         &self,
         token: PhraseToken,
         read: impl FnOnce(&[u8]) -> R,
-    ) -> Option<Option<R>> {
-        let library = self
+    ) -> LiveItemFields<R> {
+        let Some(library) = self
             .replayed
-            .get(&crate::vocab::phrase_index_library_index(token))?;
-        Some(
-            library
-                .item_field_bytes(token & 0x00ff_ffff)
-                .map(|bytes| read(&bytes)),
-        )
+            .get(&crate::vocab::phrase_index_library_index(token))
+        else {
+            return LiveItemFields::NoLiveLibrary;
+        };
+        match library.item_field_bytes(token & 0x00ff_ffff) {
+            Some(bytes) => LiveItemFields::Read(read(&bytes)),
+            None => LiveItemFields::NoReadableItem,
+        }
     }
 
     pub(crate) fn live_pronunciation_count(&self, token: PhraseToken) -> Option<u32> {

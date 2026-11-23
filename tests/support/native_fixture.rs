@@ -295,7 +295,7 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 /// Writes a conforming profile for the fixture data set whose user bigram
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total.
-pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
+pub fn plant_bigram(user_dir: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
     let mut marker = oxpinyin::data::user_files::UserTableInfo::conform_to(&versions);
@@ -303,7 +303,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
     assert!(marker.save(user_dir.join("user.conf").as_path()));
     craft_user_bigram(
         &user_dir.join(oxpinyin::data::user_files::UserDbm::Bigram.file_name()),
-        &rows,
+        rows,
     );
 }
 

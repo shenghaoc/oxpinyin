@@ -510,7 +510,7 @@ mod native {
         let (lo, hi) = (2_u32, 0xFFFF_FFF0_u32);
         plant_bigram(
             &user.path,
-            vec![(
+            &[(
                 crate::vocab::SENTENCE_START.to_le_bytes().to_vec(),
                 gram(&[lo, hi, lo, hi, lo]),
             )],

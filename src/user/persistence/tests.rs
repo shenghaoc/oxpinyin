@@ -244,7 +244,7 @@ fn a_kept_index_key_is_saved_empty_and_loaded_back() {
         Some(&Vec::new())
     );
 
-    let loaded = load_profile(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+    let loaded = load_profile(&dir, &originals, &versions(), UserConfLaw::Pinyin);
     assert!(loaded.phrase_table.contains_key(&gone));
     assert!(loaded.index.contains_key(&gone_reading));
     let actual = load(&dir, &originals, &versions(), UserConfLaw::Pinyin)
@@ -2765,7 +2765,7 @@ fn when_two_sessions_save_the_later_save_is_the_profile() {
 }
 
 /// Hex of each `(key, value)` row.
-fn hex_rows(rows: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(String, String)> {
+fn hex_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Vec<(String, String)> {
     let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect();
     rows.iter()
         .map(|(key, value)| (hex(key), hex(value)))
@@ -2803,7 +2803,7 @@ fn saved_user_indexes_hold_the_pins_records() {
             .collect()
     };
     assert_eq!(
-        hex_rows(rows("user_pinyin_index.bin")),
+        hex_rows(&rows("user_pinyin_index.bin")),
         pairs(&[
             ("0100", ""),
             ("01000100", "0200000781488148"),
@@ -2816,7 +2816,7 @@ fn saved_user_indexes_hold_the_pins_records() {
         ])
     );
     assert_eq!(
-        hex_rows(rows("user_phrase_index.bin")),
+        hex_rows(&rows("user_phrase_index.bin")),
         pairs(&[
             ("50970000", ""),
             ("5097000050970000", "02000007"),
@@ -2882,7 +2882,7 @@ fn init_survives_a_user_bigram_that_does_not_open() {
     let user = scratch.path();
     crate::user::native_fixture::plant_bigram(
         user,
-        vec![
+        &[
             (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
             (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
         ],
@@ -2902,7 +2902,7 @@ fn init_survives_a_copy_whose_source_iterator_is_not_made() {
     let user = scratch.path();
     crate::user::native_fixture::plant_bigram(
         user,
-        vec![
+        &[
             (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
             (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
         ],
@@ -3025,14 +3025,15 @@ fn a_journal_word_no_import_writes_is_kept() {
 
     let mut store =
         crate::user::test_session::open_native(&user.path, &system, UserConfLaw::Pinyin);
-    let words = store
-        .with_live_item_fields(token, |item| {
+    let crate::user::system_items::LiveItemFields::Read(words) =
+        store.with_live_item_fields(token, |item| {
             crate::data::phrase_library::decode_phrase_item(item)
                 .unwrap()
                 .phrase
         })
-        .flatten()
-        .unwrap();
+    else {
+        panic!("expected a live item");
+    };
     assert_eq!(words, [0x7532, 0xd800, 0x4e59]);
     assert_eq!(store.system_unigram(token), Some(3000));
     store.compact_libraries();

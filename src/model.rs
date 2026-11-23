@@ -1079,6 +1079,10 @@ impl MergedGram {
 #[derive(Default)]
 pub struct NbestStepRow {
     /// `None` until the load; a loaded miss is `Some(None)`.
+    #[expect(
+        clippy::option_option,
+        reason = "Unloaded, cached miss and cached row differ; a failed load leaves the row unloaded"
+    )]
     loaded: Option<Option<MergedGram>>,
 }
 

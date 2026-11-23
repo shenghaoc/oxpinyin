@@ -358,7 +358,7 @@ fn bigram_get_next_writes_its_row_before_the_short_predecessor_aborts() {
             let user_dir = TempUserDir::new("export-row-then-short");
             crate::support::plant_bigram(
                 &user_dir.path,
-                vec![
+                &[
                     (first.to_le_bytes().to_vec(), whole_gram(successor)),
                     (second.to_le_bytes().to_vec(), vec![7, 0, 0]),
                 ],
@@ -409,7 +409,7 @@ fn bigram_export_aborts_at_a_short_predecessor_before_a_partial_one() {
             let user_dir = TempUserDir::new("export-short-then-partial");
             crate::support::plant_bigram(
                 &user_dir.path,
-                vec![
+                &[
                     (first.to_le_bytes().to_vec(), vec![7, 0, 0]),
                     (second.to_le_bytes().to_vec(), partial_gram(successor)),
                 ],
@@ -442,7 +442,7 @@ fn key_outside_the_table_fixture(
     let total = items.iter().map(|(_, count)| count).sum();
     crate::support::plant_bigram(
         user_dir,
-        vec![(
+        &[(
             good.to_le_bytes().to_vec(),
             crate::support::gram_bytes(total, &items),
         )],
@@ -542,7 +542,7 @@ fn bigram_export_ends_at_a_partial_predecessor() {
     let user_dir = TempUserDir::new("export-whole-then-partial");
     crate::support::plant_bigram(
         &user_dir.path,
-        vec![
+        &[
             (first.to_le_bytes().to_vec(), whole_gram(successor)),
             (second.to_le_bytes().to_vec(), partial_gram(successor)),
         ],

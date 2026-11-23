@@ -1011,6 +1011,7 @@ where
 }
 
 /// Scan data and separator policy for one decoder invocation.
+#[derive(Clone, Copy)]
 pub struct GenerationInput<'a> {
     /// Packed scan edges.
     pub matrix: &'a ScanMatrix,

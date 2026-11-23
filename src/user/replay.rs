@@ -364,8 +364,8 @@ impl Merge {
     }
 
     #[cfg(test)]
-    pub(crate) fn apply_owned(&mut self, record: LogRecord<Vec<u8>>) -> Result<(), Stop> {
-        self.apply(match &record {
+    pub(crate) fn apply_fixture(&mut self, record: &LogRecord<Vec<u8>>) -> Result<(), Stop> {
+        self.apply(match record {
             LogRecord::Add { token, new_item } => LogRecord::Add {
                 token: *token,
                 new_item,

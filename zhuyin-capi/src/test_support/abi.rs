@@ -334,6 +334,10 @@ impl LogCapture {
     }
 
     /// Takes the records and their messages in emission order.
+    #[expect(
+        clippy::unused_self,
+        reason = "The capture guard must stay live while its thread-local records are read"
+    )]
     pub fn take_with_messages(&self) -> Vec<(LogRecord, String)> {
         CAPTURED.with(|logs| {
             logs.borrow_mut()

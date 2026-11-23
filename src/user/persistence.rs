@@ -749,6 +749,20 @@ pub struct Loaded {
 }
 
 impl Loaded {
+    #[cfg_attr(
+        not(test),
+        expect(
+            clippy::unused_self,
+            reason = "Production has no skip-note sink; tests use the receiver's skip notes"
+        )
+    )]
+    #[cfg_attr(
+        test,
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "Tests supply the note sink; the non-test build returns None"
+        )
+    )]
     fn skip_notes(&mut self) -> Option<&mut Vec<String>> {
         #[cfg(test)]
         return Some(&mut self.skipped);
@@ -965,7 +979,7 @@ pub(crate) struct LoadedPinyinIndex<'a> {
 }
 
 impl<'a> LoadedPinyinIndex<'a> {
-    pub(crate) fn open(user: Option<(&'a Path, ProfileCheck)>) -> Result<Self, PersistenceError> {
+    pub(crate) fn open(user: Option<(&'a Path, ProfileCheck)>) -> Self {
         let mut loaded = Loaded {
             open_counter: user.map_or(0, |(_, check)| check.open_counter),
             #[cfg(test)]
@@ -978,12 +992,12 @@ impl<'a> LoadedPinyinIndex<'a> {
         if let Some(dir) = conform_dir {
             load_user_pinyin_index(dir, &mut loaded, &mut overlong, &mut index);
         }
-        Ok(Self {
+        Self {
             conform_dir,
             loaded,
             index,
             overlong,
-        })
+        }
     }
 
     /// The second user index, after the system phrase attach.
@@ -1037,11 +1051,11 @@ pub(crate) fn load_session_in_loop(
     originals: &mut SystemOriginals,
     rows: &crate::user::LibraryLoopRows<'_>,
     check: &ProfileCheck,
-) -> Result<(LoadedProfile, Result<(), crate::user::LibraryLoopStop>), PersistenceError> {
+) -> (LoadedProfile, Result<(), crate::user::LibraryLoopStop>) {
     let user = Some((dir, *check));
-    let mut profile = LoadedPinyinIndex::open(user)?.load_phrase_table();
+    let mut profile = LoadedPinyinIndex::open(user).load_phrase_table();
     let stop = profile.load_libraries(user, originals, rows, &mut |_| {});
-    Ok((profile, stop))
+    (profile, stop)
 }
 
 /// The library loop's steps over a user profile.
@@ -2276,6 +2290,7 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
 
 /// The live side of a save's diff: a library's live buffer, or its shipped
 /// chunk where no write has made one.
+#[derive(Clone, Copy)]
 pub(crate) enum LiveSubIndex<'a> {
     /// The library's live buffer.
     Buffer(&'a crate::user::replay::ReplayedLibrary),

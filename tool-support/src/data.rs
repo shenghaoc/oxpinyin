@@ -116,11 +116,8 @@ impl PinyinIndexTable {
     }
 
     /// `SEARCH_CONTINUED`: whether the query's index key exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the DBM read fails.
-    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
+    #[must_use]
+    pub fn key_exists(&self, keys: &[ChewingKey]) -> bool {
         self.pinyin.key_exists(keys)
     }
 }

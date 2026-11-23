@@ -280,6 +280,10 @@ fn tkrzw_library_honours_its_sentinel_protocol() {
              sentinels (known cause: an LTO build of tkrzw older than 1.0.34); see \
              docs/findings/tkrzw-distro-compat.md";
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The helper owns and closes the native database before the fixture directory is released"
+    )]
     fn check(class: &str, store: TkrzwStore) {
         store
             .write(|txn| {

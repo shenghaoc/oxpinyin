@@ -296,7 +296,7 @@ pub(crate) fn export_order_fixture() -> (u32, u32, u32) {
     let probe = TempUserDir::new("export-order");
     crate::support::plant_bigram(
         &probe.path,
-        vec![
+        &[
             (ni.to_le_bytes().to_vec(), whole_gram(hao)),
             (wo.to_le_bytes().to_vec(), whole_gram(hao)),
         ],

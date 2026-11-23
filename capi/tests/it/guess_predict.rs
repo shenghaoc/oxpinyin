@@ -445,9 +445,9 @@ fn prediction_aborts_on_an_item_less_gram_with_a_total() {
             unsafe { close(context, instance) };
             plant_bigram(
                 &user.path,
-                ni.iter()
+                &ni.iter()
                     .map(|token| (token.to_le_bytes().to_vec(), vec![7, 0, 0, 0]))
-                    .collect(),
+                    .collect::<Vec<_>>(),
             );
             let (_context, instance) = open_at(&user.path);
             unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) };
@@ -468,9 +468,9 @@ fn prediction_reads_only_the_prefixes_it_reaches() {
     unsafe { close(context, instance) };
     plant_bigram(
         &user.path,
-        ni.iter()
+        &ni.iter()
             .map(|token| (token.to_le_bytes().to_vec(), vec![7, 0, 0]))
-            .collect(),
+            .collect::<Vec<_>>(),
     );
     let (context, instance) = open_at(&user.path);
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"中".as_ptr()) });
@@ -560,7 +560,7 @@ fn partial_candidate_gram_logs_once(
     let user = TempUserDir::new("partial-candidate-gram");
     crate::support::plant_bigram(
         &user.path,
-        vec![(token.to_le_bytes().to_vec(), partial_gram(token))],
+        &[(token.to_le_bytes().to_vec(), partial_gram(token))],
     );
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     if operation == "lookup" {
@@ -839,7 +839,7 @@ fn repeated_candidate_guess_refuses_the_same_partial_predecessor() {
     let (_, _, successor) = export_order_fixture();
     crate::support::plant_bigram(
         user,
-        vec![(
+        &[(
             SENTENCE_START.to_le_bytes().to_vec(),
             partial_gram(successor),
         )],

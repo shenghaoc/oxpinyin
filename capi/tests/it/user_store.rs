@@ -79,7 +79,7 @@ fn ni_and_its_overlong_run(first: &[u8]) -> Vec<Vec<u8>> {
 }
 
 /// A context on a profile whose user bigram holds exactly `rows`.
-fn crafted_bigram_context(user: &Path, rows: Vec<(Vec<u8>, Vec<u8>)>) -> *mut PinyinContext {
+fn crafted_bigram_context(user: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> *mut PinyinContext {
     plant_bigram(user, rows);
     let context = init_at(&system_dir(), user);
     assert!(!context.is_null());
@@ -124,7 +124,7 @@ fn mask_out_aborts_on_a_non_token_bigram_key() {
         "user_store::mask_out_aborts_on_a_non_token_bigram_key",
         || {
             let user = TempUserDir::new("mask-non-token-key");
-            let context = crafted_bigram_context(&user.path, vec![(vec![0, 1], vec![7, 0, 0, 0])]);
+            let context = crafted_bigram_context(&user.path, &[(vec![0, 1], vec![7, 0, 0, 0])]);
             unsafe { pinyin_mask_out(context, 0xFFFF_FFFF, 0) };
         },
     );
@@ -138,7 +138,7 @@ fn mask_out_aborts_on_a_residual_bigram_gram() {
         || {
             let user = TempUserDir::new("mask-residual-gram");
             let value = [&[7_u8, 0, 0, 0][..], &[0; 8]].concat();
-            let context = crafted_bigram_context(&user.path, vec![(vec![1, 0, 0, 0], value)]);
+            let context = crafted_bigram_context(&user.path, &[(vec![1, 0, 0, 0], value)]);
             unsafe { pinyin_mask_out(context, 0xFFFF_FFFF, 0) };
         },
     );
@@ -152,7 +152,7 @@ fn bigram_export_aborts_on_a_non_token_key() {
         "user_store::bigram_export_aborts_on_a_non_token_key",
         || {
             let user = TempUserDir::new("export-non-token-key");
-            let context = crafted_bigram_context(&user.path, vec![(vec![0, 1], vec![7, 0, 0, 0])]);
+            let context = crafted_bigram_context(&user.path, &[(vec![0, 1], vec![7, 0, 0, 0])]);
             unsafe { pinyin_begin_get_bigram_phrases(context) };
         },
     );
@@ -265,7 +265,7 @@ fn mask_out_aborts_on_a_short_bigram_value() {
             let user_dir = TempUserDir::new("mask-short-gram");
             crate::support::plant_bigram(
                 &user_dir.path,
-                vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+                &[(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
             );
             let context = init_fixture_at(&user_dir.path);
             assert!(!context.is_null());
@@ -281,7 +281,7 @@ fn mask_out_refuses_a_partial_bigram_tail() {
     let user_dir = TempUserDir::new("mask-partial-tail");
     let mut value = 7_u32.to_le_bytes().to_vec();
     value.extend_from_slice(&[9, 0, 0, 0, 7, 0, 0, 0, 1]);
-    crate::support::plant_bigram(&user_dir.path, vec![(1_u32.to_le_bytes().to_vec(), value)]);
+    crate::support::plant_bigram(&user_dir.path, &[(1_u32.to_le_bytes().to_vec(), value)]);
     let context = init_fixture_at(&user_dir.path);
     assert!(!context.is_null());
     assert!(!unsafe { pinyin_mask_out(context, 0xffff_ffff, 0) });

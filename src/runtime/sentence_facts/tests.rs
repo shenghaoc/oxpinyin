@@ -15,7 +15,6 @@ fn path(runtime: &Runtime, spelling: &str) -> PathPricing {
     runtime
         .dict()
         .path_pricing(&[SyllableKey::from_text(spelling).unwrap()], &[])
-        .unwrap()
 }
 fn price(runtime: &Runtime, path: &PathPricing, token: u32, facts: &mut SentenceFacts) {
     let old = runtime.dict().priced_on_path(path, token, true);

@@ -201,15 +201,15 @@ impl<S: crate::store::RawReadStore> RawChewingDbm<S> {
         self.get_pinyin_row(key, value)
     }
 
-    pub(crate) fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+    pub(crate) fn contains(&self, key: &[u8]) -> bool {
         match &self.state {
             // A failed existence read is a miss: the pin tests
             // `Get(key, nullptr).IsOK()` and returns
             // (`chewing_large_table2_tkrzwdb.cpp:511`,
             // `phrase_large_table3_tkrzwdb.cpp:166` at 074a2219), as its
             // Kyoto Cabinet `check` and Berkeley DB cursor do.
-            DbmState::Open(store) => Ok(store.contains_raw(key).unwrap_or(false)),
-            DbmState::Unopened | DbmState::Closed => Ok(false),
+            DbmState::Open(store) => store.contains_raw(key).unwrap_or(false),
+            DbmState::Unopened | DbmState::Closed => false,
         }
     }
 
@@ -353,11 +353,9 @@ impl ChewingTable {
 
     /// Whether the query's index key exists at all — `SEARCH_CONTINUED`
     /// without the record decode or a value copy, for the widen probe.
-    pub fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
-        if keys.is_empty() {
-            return Ok(false);
-        }
-        self.dbm.contains(&index_key(keys))
+    #[must_use]
+    pub fn key_exists(&self, keys: &[ChewingKey]) -> bool {
+        !keys.is_empty() && self.dbm.contains(&index_key(keys))
     }
 
     /// Whether some row extending the query's index key is past
@@ -392,7 +390,7 @@ impl ChewingTable {
         keys: &[ChewingKey],
         mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
     ) -> Result<bool, DictError> {
-        if !self.key_exists(keys)? {
+        if !self.key_exists(keys) {
             return Ok(false);
         }
         let encoded = index_key(keys);

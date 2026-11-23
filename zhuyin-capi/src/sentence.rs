@@ -309,6 +309,7 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_before_cursor(
     guess_candidates(&mut inst, offset, true)
 }
 
+#[derive(Clone, Copy)]
 enum CandidateGuessRefusal {
     Lookup(oxpinyin::engine::EngineError),
 }

@@ -216,9 +216,9 @@ impl UserIndex {
     /// Builds an index from the rows of `user_pinyin_index.bin` (the
     /// loaded profile's table).
     #[cfg(test)]
-    pub(crate) fn from_entries(entries: Vec<(Vec<u8>, Vec<u8>)>) -> Self {
+    pub(crate) fn from_entries(entries: &[(Vec<u8>, Vec<u8>)]) -> Self {
         let mut index = Self::new();
-        for (key, value) in &entries {
+        for (key, value) in entries {
             index.push_record(key, value).unwrap();
         }
         index

@@ -45,7 +45,7 @@ impl FullPinyinParser {
     /// option-enabled aliases. Initials alone require [`OptionBits::PINYIN_INCOMPLETE`].
     /// An unmatched spelling returns [`None`].
     #[must_use]
-    pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
+    pub fn parse_one_key(options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         if input.contains(&b'\'') {
             return None;
         }

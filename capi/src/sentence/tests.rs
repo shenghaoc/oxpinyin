@@ -170,7 +170,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
     unsafe { crate::test_support::close(context, instance) };
     crate::test_support::plant_bigram(
         &user.path,
-        [
+        &[
             (oxpinyin::vocab::SENTENCE_START, hao),
             (short, hao),
             (long, number),
@@ -180,8 +180,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
                 prev.to_le_bytes().to_vec(),
                 crate::test_support::gram_bytes(1_000_000, &[(next, 1_000_000)]),
             )
-        })
-        .to_vec(),
+        }),
     );
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     assert!(unsafe {
@@ -331,7 +330,7 @@ fn a_short_system_gram_merged_with_a_user_gram_aborts_the_segment() {
             let user = TempUserDir::new("short-system-gram-merge");
             crate::test_support::plant_bigram(
                 &user.path,
-                vec![(
+                &[(
                     oxpinyin::vocab::SENTENCE_START.to_le_bytes().to_vec(),
                     crate::test_support::gram_bytes(1, &[(0x0100_0001, 1)]),
                 )],

@@ -61,7 +61,7 @@ impl Database {
     /// `attach(filename, ATTACH_READWRITE | ATTACH_CREATE)`.
     #[must_use]
     pub fn open_read_write(filename: Option<&CStr>) -> Self {
-        Self::attach(filename, AttachMode::ReadWriteCreate)
+        Self::attach(filename, AttachMode::OpenOrCreateWritable)
     }
 
     /// `attach(filename, ATTACH_READONLY)`.

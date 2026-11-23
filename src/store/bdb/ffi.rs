@@ -181,6 +181,10 @@ fn c_path(path: &Path) -> Result<CString, StoreError> {
 }
 
 /// An owned, exclusively used `DB` handle, closed on drop.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Access mode, key order, successful open and sync on drop are independent handle properties"
+)]
 pub(crate) struct Db {
     handle: *mut sys::DB,
     read_only: bool,

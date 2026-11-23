@@ -101,8 +101,9 @@ fn magic_header_reads_follow_backend_sizes() {
     const DIR: &str = "OXPINYIN_MAGIC_READ_DIR";
     if let Ok(mode) = std::env::var(MODE) {
         let path = std::path::PathBuf::from(std::env::var_os(DIR).unwrap()).join("model.db");
-        let model = super::FlexibleBigram::<Spec>::attach(Some(&path), AttachMode::ReadWriteCreate)
-            .unwrap();
+        let model =
+            super::FlexibleBigram::<Spec>::attach(Some(&path), AttachMode::OpenOrCreateWritable)
+                .unwrap();
         assert!(model.attached());
         // Change the already-attached record so attach's own signature
         // check cannot hide the getter contract being tested.
@@ -400,7 +401,7 @@ mod flexible_bigram {
 
     /// `attach(path, ATTACH_READWRITE | ATTACH_CREATE)`, which must answer true.
     fn open(path: &Path) -> Model {
-        let model = Model::attach(Some(path), AttachMode::ReadWriteCreate).expect("attach");
+        let model = Model::attach(Some(path), AttachMode::OpenOrCreateWritable).expect("attach");
         assert!(model.attached(), "{} attaches", path.display());
         model
     }
@@ -554,7 +555,7 @@ mod flexible_bigram {
             db.write(|txn| txn.put_raw(&MAGIC_KEY, b"BAAD"))
                 .expect("foreign magic");
         }
-        for mode in [AttachMode::ReadWriteCreate, AttachMode::ReadOnly] {
+        for mode in [AttachMode::OpenOrCreateWritable, AttachMode::ReadOnly] {
             let model = Model::attach(Some(&foreign), mode).expect("attach");
             assert!(!model.attached(), "{mode:?}: wrong magic number");
             assert!(
@@ -570,7 +571,7 @@ mod flexible_bigram {
                 .expect("foreign row");
         }
         let model =
-            Model::attach(Some(&signatureless), AttachMode::ReadWriteCreate).expect("attach");
+            Model::attach(Some(&signatureless), AttachMode::OpenOrCreateWritable).expect("attach");
         assert!(!model.attached(), "a non-empty file has no magic");
         assert!(model.get_all_items().is_some());
     }
@@ -587,7 +588,8 @@ mod flexible_bigram {
                 .expect("foreign magic");
         }
         {
-            let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
+            let model =
+                Model::attach(Some(&path), AttachMode::OpenOrCreateWritable).expect("attach");
             assert!(!model.attached());
             assert!(model.store(11, &gram_with_header()).expect("store"));
         }
@@ -602,7 +604,8 @@ mod flexible_bigram {
         let scratch = tempfile::tempdir().expect("scratch directory");
 
         let created = scratch.path().join("created.db");
-        let model = Model::attach(Some(&created), AttachMode::ReadWriteCreate).expect("attach");
+        let model =
+            Model::attach(Some(&created), AttachMode::OpenOrCreateWritable).expect("attach");
         assert!(model.attached() && model.get_all_items().is_some());
         drop(model);
         assert!(
@@ -623,7 +626,7 @@ mod flexible_bigram {
             assert!(!path.exists(), "{mode:?}: no file is created");
         }
 
-        let model = Model::attach(None, AttachMode::ReadWriteCreate).expect("attach");
+        let model = Model::attach(None, AttachMode::OpenOrCreateWritable).expect("attach");
         assert!(
             !model.attached() && model.get_all_items().is_none(),
             "a NULL filename"
@@ -640,7 +643,7 @@ mod flexible_bigram {
         let scratch = tempfile::tempdir().expect("scratch directory");
         let path = scratch.path().join("empty.db");
         fs::write(&path, b"").expect("empty file");
-        let model = Model::attach(Some(&path), AttachMode::ReadWriteCreate).expect("attach");
+        let model = Model::attach(Some(&path), AttachMode::OpenOrCreateWritable).expect("attach");
         assert!(model.get_all_items().is_some());
         if cfg!(feature = "bdb") {
             assert!(model.attached());
@@ -666,7 +669,8 @@ mod flexible_bigram {
         fs::create_dir(&directory).unwrap();
         fs::write(directory.join("keep"), b"occupied").unwrap();
         for path in [&absent_parent, &directory] {
-            let model = Model::attach(Some(path), AttachMode::ReadWriteCreate).expect("attach");
+            let model =
+                Model::attach(Some(path), AttachMode::OpenOrCreateWritable).expect("attach");
             assert!(!model.attached());
             assert_eq!(
                 model.get_all_items(),
