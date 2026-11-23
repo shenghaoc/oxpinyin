@@ -28,7 +28,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include <tkrzw_dbm.h>
 
@@ -40,6 +39,7 @@ namespace tkrzw {
 // Defined by the bridge (bridge.rs): a status code and, when the library
 // attached one, its message.
 struct NativeStatus;
+struct KeySink;
 
 // The pin's `std::unique_ptr<DBM::Iterator>` (`tkrzwdb_utils.h:52`).
 using DbmIterator = ::tkrzw::DBM::Iterator;
@@ -80,7 +80,7 @@ NativeStatus count(const ::tkrzw::DBM& dbm, std::int64_t& count);
 bool is_healthy(const ::tkrzw::DBM& dbm);
 // `DBM::ProcessEach(&processor, false)` with a processor that copies every
 // key into `keys` in the walk's own order (`ngram_tkrzwdb.cpp:143-171`).
-NativeStatus collect_keys(const ::tkrzw::DBM& dbm, std::vector<std::string>& keys);
+NativeStatus collect_keys(const ::tkrzw::DBM& dbm, KeySink& keys);
 
 // `DBM::MakeIterator()`. The iterator points back at its database and must
 // not outlive it (`tkrzw_dbm_hash.cc:2285-2296`); Rust encodes the borrow.

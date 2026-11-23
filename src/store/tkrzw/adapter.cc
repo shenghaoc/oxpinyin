@@ -68,10 +68,10 @@ NativeStatus wrap(const ::tkrzw::Status& status) {
 // walk (`tkrzw_dbm.h:1535-1544`); those calls carry no record.
 class KeyCollector final : public ::tkrzw::DBM::RecordProcessor {
  public:
-  explicit KeyCollector(std::vector<std::string>& keys) : keys_(keys) {}
+  explicit KeyCollector(KeySink& keys) : keys_(keys) {}
 
   std::string_view ProcessFull(std::string_view key, std::string_view) override {
-    keys_.emplace_back(key);
+    keys_.append({reinterpret_cast<const std::uint8_t*>(key.data()), key.size()});
     return NOOP;
   }
 
@@ -80,7 +80,7 @@ class KeyCollector final : public ::tkrzw::DBM::RecordProcessor {
   }
 
  private:
-  std::vector<std::string>& keys_;
+  KeySink& keys_;
 };
 
 }  // namespace
@@ -140,7 +140,7 @@ bool is_healthy(const ::tkrzw::DBM& dbm) {
   return dbm.IsHealthy();
 }
 
-NativeStatus collect_keys(const ::tkrzw::DBM& dbm, std::vector<std::string>& keys) {
+NativeStatus collect_keys(const ::tkrzw::DBM& dbm, KeySink& keys) {
   KeyCollector collector(keys);
   return wrap(mutable_dbm(dbm).ProcessEach(&collector, false));
 }
