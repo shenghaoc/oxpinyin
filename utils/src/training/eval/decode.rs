@@ -27,6 +27,7 @@
 //! probabilities, and the live `eval_correction_rate` gate showed the
 //! difference (0.52 vs 0.88 on a 25-sentence corpus).
 
+use oxpinyin::data::PhraseLibraries;
 use oxpinyin::vocab::{MAX_PHRASE_LENGTH, NULL_TOKEN, SENTENCE_START};
 use rustc_hash::FxHashMap;
 
@@ -39,15 +40,40 @@ use super::model::EvalLanguageModel;
 /// Beam width per step (`phonetic_lookup.h:37`, `nbeam`).
 const NBEAM: usize = 32;
 
-/// Supplies each token's best pronunciation and its text — the
-/// `get_possible_pinyin` and `convert_to_utf8` inputs.
-pub trait PhraseSource {
-    /// The highest-frequency pronunciation of `token` as syllable keys, or
-    /// `None` when the token has no pronunciation.
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>>;
+/// `get_possible_pinyin` and `convert_to_utf8` over the loaded phrase
+/// libraries (`eval_correction_rate.cpp:36-63`, `:113-116`).
+pub struct LibraryPhraseSource<'a> {
+    /// The loaded phrase libraries used for text and pronunciation.
+    pub libraries: &'a PhraseLibraries,
+}
 
-    /// The phrase text of `token`, or `None` when it is unknown.
-    fn text(&self, token: PhraseToken) -> Option<String>;
+impl LibraryPhraseSource<'_> {
+    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>> {
+        // All stored readings compete, including partial and unspellable
+        // keys. Strict improvement keeps the first tie and index 0 at zero
+        // (`eval_correction_rate.cpp:47-60`). Convert only the winner.
+        let item = self.libraries.library(token)?.item(token)?;
+        let mut best = item.pronunciation(0)?;
+        for reading in item.pronunciations().skip(1) {
+            if reading.freq > best.freq {
+                best = reading;
+            }
+        }
+        Some(
+            best.keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| ChewingKey::from_packed(u16::from_le_bytes(*pair)))
+                .collect(),
+        )
+    }
+
+    fn text(&self, token: PhraseToken) -> Option<String> {
+        self.libraries
+            .phrase_text(token)
+            .and_then(|text| text.as_str().map(ToOwned::to_owned))
+    }
 }
 
 /// The evaluation result.
@@ -70,15 +96,14 @@ pub struct EvalReport {
 /// (`get_possible_pinyin` would abort) or no text, when a key chain has no
 /// phrase cover (upstream asserts exactly one best match), or when a decode
 /// backend fails.
-pub fn correction_rate<D, P>(
+pub fn correction_rate<D>(
     dictionary: &D,
     model: &EvalLanguageModel,
-    phrases: &P,
+    phrases: &LibraryPhraseSource<'_>,
     sentences: &[Vec<PhraseToken>],
 ) -> Option<EvalReport>
 where
     D: PhraseList<Syllable = ChewingKey>,
-    P: PhraseSource,
 {
     let mut tested = 0;
     let mut passed = 0;
@@ -115,8 +140,8 @@ where
 }
 
 /// Each token's best-pronunciation keys, concatenated (`get_possible_pinyin`).
-fn sentence_keys<P: PhraseSource>(
-    phrases: &P,
+fn sentence_keys(
+    phrases: &LibraryPhraseSource<'_>,
     sentence: &[PhraseToken],
 ) -> Option<Vec<ChewingKey>> {
     let mut keys = Vec::new();
@@ -129,7 +154,7 @@ fn sentence_keys<P: PhraseSource>(
 /// The text of a token sequence (`convert_to_utf8`). A token without text
 /// is an error, never silently dropped: an incomplete expected sentence
 /// would make the comparison — and the reported rate — wrong.
-fn sentence_text<P: PhraseSource>(phrases: &P, sentence: &[PhraseToken]) -> Option<String> {
+fn sentence_text(phrases: &LibraryPhraseSource<'_>, sentence: &[PhraseToken]) -> Option<String> {
     let mut text = String::new();
     for &token in sentence {
         let phrase = phrases.text(token)?;

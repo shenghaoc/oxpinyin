@@ -15,7 +15,7 @@ use std::io::Write as _;
 use oxpinyin_tool_support::input::{self as tool, OutputStream, k_mixture_model as edge};
 
 use super::database::Database;
-use super::phrase::PhraseIndex;
+use crate::phrase_index::SystemPhraseIndex;
 
 /// The output stream's `fprintf` calls, so the in-memory tests can compare
 /// the pin's bytes without a file.
@@ -129,7 +129,7 @@ impl Sink for Vec<u8> {
 
 /// `main`'s body before the output callbacks (`:112-152`). `filename` is the
 /// `--k-mixture-model-file` value.
-pub fn run(filename: Option<&CStr>, phrases: &dyn PhraseIndex, output: &mut impl Sink) {
+pub fn run(filename: Option<&CStr>, phrases: &SystemPhraseIndex, output: &mut impl Sink) {
     let bigram = Database::open_read_only(filename);
     if !bigram.attached() {
         edge::report_open_failed(filename);
@@ -161,7 +161,7 @@ fn c_text(bytes: &[u8]) -> std::ffi::CString {
 }
 
 /// `print_k_mixture_model_array_headers` (`:48-67`).
-fn print_array_headers(bigram: &Database, phrases: &dyn PhraseIndex, output: &mut impl Sink) {
+fn print_array_headers(bigram: &Database, phrases: &SystemPhraseIndex, output: &mut impl Sink) {
     output.gram_1();
     for token in bigram.get_all_items() {
         let array_header = bigram.array_header_checked(token);
@@ -179,7 +179,7 @@ fn print_array_headers(bigram: &Database, phrases: &dyn PhraseIndex, output: &mu
 }
 
 /// `print_k_mixture_model_array_items` (`:69-105`).
-fn print_array_items(bigram: &Database, phrases: &dyn PhraseIndex, output: &mut impl Sink) {
+fn print_array_items(bigram: &Database, phrases: &SystemPhraseIndex, output: &mut impl Sink) {
     output.gram_2();
     for token in bigram.get_all_items() {
         let single_gram = bigram.load_checked(token);

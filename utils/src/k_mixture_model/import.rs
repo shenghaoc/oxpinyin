@@ -17,8 +17,8 @@ use std::io::BufRead;
 use oxpinyin_tool_support::input::{self as tool, LineReader, k_mixture_model as edge};
 
 use super::database::{Database, Loaded, exit_on_short_single_gram};
-use super::phrase::PhraseIndex;
 use super::records::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KmmGram};
+use crate::phrase_index::SystemPhraseIndex;
 use crate::utils_helper::{
     BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,
 };
@@ -31,7 +31,7 @@ use crate::utils_helper::{
 /// The function calls [`tool::exit`] and does not return in that case.
 pub fn run<R: BufRead>(
     filename: Option<&CStr>,
-    phrases: &dyn PhraseIndex,
+    phrases: &SystemPhraseIndex,
     input: &mut LineReader<R>,
 ) {
     let bigram = Database::open_read_write(filename);
@@ -57,7 +57,7 @@ pub fn run<R: BufRead>(
 /// The pin's statics (`:51-55`) over `main`'s streams.
 struct Converter<'a, R> {
     bigram: &'a Database,
-    phrases: &'a dyn PhraseIndex,
+    phrases: &'a SystemPhraseIndex,
     input: &'a mut LineReader<R>,
     model: TaggedModel,
 }

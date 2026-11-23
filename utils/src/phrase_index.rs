@@ -15,7 +15,6 @@
 use oxpinyin::vocab::phrase_index_library_index;
 use std::ffi::{CString, OsStr};
 
-use crate::k_mixture_model::phrase::PhraseIndex;
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::LibraryError;
@@ -27,8 +26,9 @@ pub struct SystemPhraseIndex {
     libraries: PhraseLibraries,
 }
 
-impl PhraseIndex for SystemPhraseIndex {
-    fn token_to_string(&self, token: u32) -> Option<Vec<u8>> {
+impl SystemPhraseIndex {
+    /// Resolve the token text, printing the pin's diagnostic for an unknown token.
+    pub fn token_to_string(&self, token: u32) -> Option<Vec<u8>> {
         tag_token_text(
             token,
             // 074a2219 tag_utility.cpp:391.
@@ -37,6 +37,16 @@ impl PhraseIndex for SystemPhraseIndex {
             |text| Some(text.outward_words().collect::<Vec<_>>()),
             |token| edge::report_unknown_token(token as i32),
         )
+    }
+
+    /// `taglib_validate_token_with_string`: whether the token's phrase text
+    /// equals `text` (compared as C strings). A token the pin cannot
+    /// resolve answers `false`, where the pin's `strcmp` reads through NULL.
+    pub fn validate_token_with_string(&self, token: u32, text: &[u8]) -> bool {
+        self.token_to_string(token).is_some_and(|answer| {
+            let answer = answer.split(|byte| *byte == 0).next().unwrap_or(&[]);
+            answer == text
+        })
     }
 }
 

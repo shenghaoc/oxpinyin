@@ -84,12 +84,13 @@ impl FixedRecord for KMixtureModelMagicHeader {
         Self::default()
     }
 
-    fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::LEN);
-        for word in [self.m_wc, self.m_n, self.m_total_freq] {
-            bytes.extend_from_slice(&word.to_ne_bytes());
+    fn encode(&self, bytes: &mut [u8]) {
+        for (word, field) in [self.m_wc, self.m_n, self.m_total_freq]
+            .into_iter()
+            .zip(bytes.as_chunks_mut::<4>().0)
+        {
+            field.copy_from_slice(&word.to_ne_bytes());
         }
-        bytes
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
@@ -116,12 +117,13 @@ impl FixedRecord for KMixtureModelArrayHeader {
         Self::default()
     }
 
-    fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::LEN);
-        for word in [self.m_wc, self.m_freq] {
-            bytes.extend_from_slice(&word.to_ne_bytes());
+    fn encode(&self, bytes: &mut [u8]) {
+        for (word, field) in [self.m_wc, self.m_freq]
+            .into_iter()
+            .zip(bytes.as_chunks_mut::<4>().0)
+        {
+            field.copy_from_slice(&word.to_ne_bytes());
         }
-        bytes
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
@@ -144,12 +146,13 @@ impl FixedRecord for KMixtureModelArrayItem {
         Self::default()
     }
 
-    fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::LEN);
-        for word in [self.m_wc, self.m_n_n_0, self.m_n_1, self.m_mr] {
-            bytes.extend_from_slice(&word.to_ne_bytes());
+    fn encode(&self, bytes: &mut [u8]) {
+        for (word, field) in [self.m_wc, self.m_n_n_0, self.m_n_1, self.m_mr]
+            .into_iter()
+            .zip(bytes.as_chunks_mut::<4>().0)
+        {
+            field.copy_from_slice(&word.to_ne_bytes());
         }
-        bytes
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {

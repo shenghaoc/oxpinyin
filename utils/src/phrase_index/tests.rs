@@ -1,4 +1,4 @@
-use super::{PhraseIndex, SystemPhraseIndex};
+use super::SystemPhraseIndex;
 use oxpinyin::data::PhraseLibraries;
 
 #[test]

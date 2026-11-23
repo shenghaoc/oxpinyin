@@ -188,7 +188,7 @@ fn numeric_fields_are_the_c_librarys() {
 fn text_calls_keep_their_format_contracts() {
     assert_eq!(
         strsplit_set(c"1 2\t3 4", c" \t", 2),
-        [b"1".to_vec(), b"2\t3 4".to_vec()]
+        [c"1".to_owned(), c"2\t3 4".to_owned()]
     );
     assert_eq!(utf8_strlen(c"你好"), 2);
     // POLICY-ACCEPTED: the malformed sequence leaves subsequent bytes to count.

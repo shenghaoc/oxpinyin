@@ -19,8 +19,8 @@ impl FixedRecord for Magic {
         Self(0)
     }
 
-    fn encode(&self) -> Vec<u8> {
-        self.0.to_ne_bytes().to_vec()
+    fn encode(&self, bytes: &mut [u8]) {
+        bytes.copy_from_slice(&self.0.to_ne_bytes());
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
@@ -37,11 +37,9 @@ impl FixedRecord for Header {
         Self(0, 0)
     }
 
-    fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::LEN);
-        bytes.extend_from_slice(&self.0.to_ne_bytes());
-        bytes.extend_from_slice(&self.1.to_ne_bytes());
-        bytes
+    fn encode(&self, bytes: &mut [u8]) {
+        bytes[..4].copy_from_slice(&self.0.to_ne_bytes());
+        bytes[4..].copy_from_slice(&self.1.to_ne_bytes());
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
@@ -62,12 +60,13 @@ impl FixedRecord for Item {
         Self(0, 0, 0, 0)
     }
 
-    fn encode(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(Self::LEN);
-        for word in [self.0, self.1, self.2, self.3] {
-            bytes.extend_from_slice(&word.to_ne_bytes());
+    fn encode(&self, bytes: &mut [u8]) {
+        for (word, field) in [self.0, self.1, self.2, self.3]
+            .into_iter()
+            .zip(bytes.as_chunks_mut::<4>().0)
+        {
+            field.copy_from_slice(&word.to_ne_bytes());
         }
-        bytes
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
@@ -288,8 +287,13 @@ mod flexible_bigram {
             }
         }
 
-        fn encode(&self) -> Vec<u8> {
-            words(&[self.wc, self.n, self.total_freq])
+        fn encode(&self, bytes: &mut [u8]) {
+            for (word, field) in [self.wc, self.n, self.total_freq]
+                .into_iter()
+                .zip(bytes.as_chunks_mut::<4>().0)
+            {
+                field.copy_from_slice(&word.to_ne_bytes());
+            }
         }
 
         fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
@@ -305,8 +309,13 @@ mod flexible_bigram {
             Self { wc: 0, freq: 0 }
         }
 
-        fn encode(&self) -> Vec<u8> {
-            words(&[self.wc, self.freq])
+        fn encode(&self, bytes: &mut [u8]) {
+            for (word, field) in [self.wc, self.freq]
+                .into_iter()
+                .zip(bytes.as_chunks_mut::<4>().0)
+            {
+                field.copy_from_slice(&word.to_ne_bytes());
+            }
         }
 
         fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
@@ -327,23 +336,19 @@ mod flexible_bigram {
             }
         }
 
-        fn encode(&self) -> Vec<u8> {
-            words(&[self.wc, self.n_n_0, self.n_1, self.mr])
+        fn encode(&self, bytes: &mut [u8]) {
+            for (word, field) in [self.wc, self.n_n_0, self.n_1, self.mr]
+                .into_iter()
+                .zip(bytes.as_chunks_mut::<4>().0)
+            {
+                field.copy_from_slice(&word.to_ne_bytes());
+            }
         }
 
         fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
             let [wc, n_n_0, n_1, mr] = read_words::<4>(bytes)?;
             Ok(Self { wc, n_n_0, n_1, mr })
         }
-    }
-
-    /// The native u32 bytes the pin `memcpy`s on the reference host.
-    fn words(values: &[u32]) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(values.len() * 4);
-        for value in values {
-            bytes.extend_from_slice(&value.to_ne_bytes());
-        }
-        bytes
     }
 
     /// An exact-length decode into `N` native u32s.

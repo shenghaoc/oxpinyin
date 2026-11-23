@@ -106,8 +106,14 @@ impl TagLib {
             line_type,
             line_tag: line_tag.to_bytes().to_vec(),
             num_of_values,
-            required_tags: tool::strsplit_set(required_tags, c",:", -1),
-            ignored_tags: tool::strsplit_set(ignored_tags, c",:", -1),
+            required_tags: tool::strsplit_set(required_tags, c",:", -1)
+                .into_iter()
+                .map(CString::into_bytes)
+                .collect(),
+            ignored_tags: tool::strsplit_set(ignored_tags, c",:", -1)
+                .into_iter()
+                .map(CString::into_bytes)
+                .collect(),
         };
         if let Some(top) = self.stack.last_mut() {
             top.push(entry);

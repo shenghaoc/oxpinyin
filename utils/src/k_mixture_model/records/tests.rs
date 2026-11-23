@@ -12,15 +12,15 @@ fn records_encode_native_little_endian_words() {
     for word in [0x0102_0304_u32, 0x0506_0708, 9] {
         expected.extend_from_slice(&word.to_ne_bytes());
     }
-    assert_eq!(magic.encode(), expected);
+    let mut bytes = [0; KMixtureModelMagicHeader::LEN];
+    magic.encode(&mut bytes);
+    assert_eq!(bytes.as_slice(), expected);
     assert_eq!(KMixtureModelMagicHeader::decode(&expected).unwrap(), magic);
 
     let header = KMixtureModelArrayHeader { m_wc: 7, m_freq: 8 };
-    assert_eq!(header.encode().len(), 8);
-    assert_eq!(
-        KMixtureModelArrayHeader::decode(&header.encode()).unwrap(),
-        header
-    );
+    let mut bytes = [0; KMixtureModelArrayHeader::LEN];
+    header.encode(&mut bytes);
+    assert_eq!(KMixtureModelArrayHeader::decode(&bytes).unwrap(), header);
 
     let item = KMixtureModelArrayItem {
         m_wc: 1,
@@ -28,7 +28,8 @@ fn records_encode_native_little_endian_words() {
         m_n_1: 3,
         m_mr: 4,
     };
-    let bytes = item.encode();
+    let mut bytes = [0; KMixtureModelArrayItem::LEN];
+    item.encode(&mut bytes);
     assert_eq!(bytes.len(), 16);
     assert_eq!(&bytes[8..12], &3_u32.to_ne_bytes());
     assert_eq!(KMixtureModelArrayItem::decode(&bytes).unwrap(), item);

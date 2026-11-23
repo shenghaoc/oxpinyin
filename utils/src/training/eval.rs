@@ -29,5 +29,5 @@ mod fixture_doubles;
 #[cfg(test)]
 mod tests;
 
-pub(super) use decode::{PhraseSource, correction_rate};
+pub(super) use decode::{LibraryPhraseSource, correction_rate};
 pub(super) use model::EvalLanguageModel;

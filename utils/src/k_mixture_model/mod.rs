@@ -26,7 +26,6 @@ pub(crate) mod generate;
 pub(crate) mod import;
 pub(crate) mod math;
 pub(crate) mod merge;
-pub(crate) mod phrase;
 pub(crate) mod prune;
 pub(crate) mod records;
 pub(crate) mod validate;

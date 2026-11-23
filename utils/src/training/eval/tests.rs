@@ -12,10 +12,8 @@
 //!
 //! Correction rate = 1 passed / 2 tested = 0.5, independent of λ.
 
-use std::collections::BTreeMap;
-
 use super::fixture_doubles;
-use super::{EvalLanguageModel, PhraseSource, correction_rate};
+use super::{EvalLanguageModel, LibraryPhraseSource, correction_rate};
 use crate::storage::Hash;
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
@@ -32,41 +30,6 @@ token=16777236\tkeys=zhong\ttext=钟\tunigram=10
 token=16777246\tkeys=guo\ttext=国\tunigram=50
 ";
 
-fn keys(text: &str) -> Vec<ChewingKey> {
-    text.split(',')
-        .map(|k| ChewingKey::from_pinyin(k).expect("frozen key"))
-        .collect()
-}
-
-/// A `PhraseSource` mirroring the fixture: token → best keys + text.
-struct FixtureSource {
-    best: BTreeMap<u32, Vec<ChewingKey>>,
-    text: BTreeMap<u32, String>,
-}
-
-impl FixtureSource {
-    fn new() -> Self {
-        let mut best = BTreeMap::new();
-        best.insert(0x0100_000a, keys("zhong"));
-        best.insert(0x0100_0014, keys("zhong"));
-        best.insert(0x0100_001e, keys("guo"));
-        let mut text = BTreeMap::new();
-        text.insert(0x0100_000a, "中".to_owned());
-        text.insert(0x0100_0014, "钟".to_owned());
-        text.insert(0x0100_001e, "国".to_owned());
-        Self { best, text }
-    }
-}
-
-impl PhraseSource for FixtureSource {
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>> {
-        self.best.get(&token).cloned()
-    }
-    fn text(&self, token: PhraseToken) -> Option<String> {
-        self.text.get(&token).cloned()
-    }
-}
-
 fn sentences() -> Vec<Vec<PhraseToken>> {
     vec![
         vec![0x0100_000a, 0x0100_001e], // 中国
@@ -79,7 +42,6 @@ fn correction_rate_is_lambda_independent_here() {
     // The homophone ranking holds for every λ, so the rate is 0.5 whether λ
     // is 0 (pure unigram), 1 (pure bigram), or anything between.
     let dictionary = FixtureDictionary::parse(VOCAB).expect("vocab");
-    let source = FixtureSource::new();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gb.bin");
     // The binary model after import_interpolation and gen_unigram: the
@@ -108,6 +70,9 @@ fn correction_rate_is_lambda_independent_here() {
     std::fs::write(&path, build_chunk(&items).unwrap()).unwrap();
     let mut libraries = PhraseLibraries::empty();
     oxpinyin_tool_support::data::load_heap_library(&mut libraries, 1, &path).unwrap();
+    let source = LibraryPhraseSource {
+        libraries: &libraries,
+    };
     let bigram = Hash::create(&dir.path().join("bigram.db")).unwrap();
     bigram
         .put(
