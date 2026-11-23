@@ -305,23 +305,6 @@ impl crate::store::RawReadStore for KcStore {
             db: db.into_read_only(),
         })
     }
-
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn open_user_bigram(path: &Path) -> Result<Self, crate::store::StoreError> {
-        // Kyoto Cabinet's user bigram is a snapshot stream, not a hash
-        // file (`ngram_kyotodb.cpp:54-64`): open an in-memory stash and
-        // load the snapshot into it. The system bigram stays a HashDB file
-        // through `open_hash_read_only` above — the two are different
-        // containers and must not share one open.
-        let db = Db::open_stash()?.with_reset_sync();
-        db.load_snapshot(path)?;
-        // The seam is read-only even though the stash class opens
-        // writer: seal it so a stray `write` cannot mutate memory that
-        // no dump would ever persist.
-        Ok(Self {
-            db: db.into_read_only(),
-        })
-    }
 }
 
 impl WriteStore for KcStore {
@@ -398,27 +381,6 @@ impl WriteStore for KcStore {
         db.dump_snapshot(path)
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
-        // The inverse of `open_user_bigram`, mirroring the pin's
-        // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`) — unlink then
-        // dump — with the unlink deferred into an atomic rename: the
-        // snapshot is dumped to a sibling temporary first, so a failure
-        // anywhere before the rename leaves the previous profile intact
-        // instead of destroyed. The temporary itself is unlinked first,
-        // as `pinyin.cpp:1017` unlinks it: a stale one's mode would
-        // otherwise survive the dump's truncation.
-        let tmp = crate::store::sibling_temp(path);
-        crate::store::remove_if_present(&tmp)?;
-        let db = Db::open_stash()?;
-        for (key, value) in rows {
-            db.set(key, value)?;
-        }
-        db.dump_snapshot(&tmp)?;
-        std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
-        Ok(())
-    }
-
     fn write<R>(
         &self,
         f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
@@ -484,20 +446,6 @@ impl WriteStore for KcStore {
     /// read-only container too, as the pin's `reset()` makes it.
     fn flush(&self) -> Result<(), StoreError> {
         self.db.sync(false)
-    }
-
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn compact(&mut self) -> Result<(), StoreError> {
-        if self.db.is_read_only() {
-            return Err(StoreError::ReadOnly);
-        }
-        // Kyoto Cabinet reuses freed regions in place through its own free
-        // block pool; there is no in-place rewrite that does not go
-        // through a copy of the whole file, which is not what the other
-        // backends' `compact` does either (Berkeley DB's successful
-        // `compact` also does not shrink the file). Hard synchronization makes a
-        // file-backed store durable. The profile save compacts an in-memory session store.
-        self.db.sync(true)
     }
 }
 

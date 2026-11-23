@@ -676,22 +676,11 @@ impl Db {
 
     /// Marks this handle read-only, in place, after a load-time fill.
     ///
-    /// The user-bigram open loads a snapshot into a writable in-memory
-    /// stash (the stash class opens writer, and `load_snapshot` needs
-    /// that); the seam itself is read-only, so the fill ends by sealing
-    /// the handle — a later `write` on it answers [`StoreError::ReadOnly`]
-    /// instead of mutating memory that nothing would ever dump.
+    /// User-index loading fills a writable in-memory tree before sealing
+    /// the handle. Later writes answer [`StoreError::ReadOnly`].
     pub(crate) fn into_read_only(mut self) -> Self {
         self.read_only = true;
         self
-    }
-
-    /// An in-memory `StashDB` opened as `"-"` with the pin's mode, the
-    /// container libpinyin's KC user bigram lives in between its snapshot
-    /// load and dump (`ngram_kyotodb.cpp:58-60`).
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn open_stash() -> Result<Self, StoreError> {
-        Self::open(Path::new("-"), DbType::Stash, false, true)
     }
 
     /// An in-memory `ProtoTreeDB` opened as `"-"` with the pin's mode, the

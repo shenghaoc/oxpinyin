@@ -9,7 +9,9 @@ use oxpinyin::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
 use oxpinyin::data::{BigramTable, DictError, PhraseLibraries, SystemTables, TableError};
 use oxpinyin::parser::ChewingKey;
 use oxpinyin::single_gram::{SingleGramRecord, get_total_freq, retrieve_all};
-use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore};
+use oxpinyin::store::{
+    AccessMode, DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore,
+};
 use std::path::Path;
 
 fn open_tree(path: &Path) -> Result<ChewingTable, DictError> {
@@ -141,7 +143,7 @@ pub fn system_key_exists(tables: &SystemTables, keys: &[ChewingKey]) -> Result<b
 /// # Errors
 /// Returns a native DBM construction error.
 pub fn lookup_tables(path: &Path, phonetic: bool) -> Result<SystemTables, DictError> {
-    let attached = DefaultDbm::attach(path, false)?;
+    let attached = DefaultDbm::attach(path, oxpinyin::store::DbmKind::Tree)?;
     let empty = DefaultDbm::new(
         <DefaultStore as WriteStore>::create_in_memory()
             .map_err(|error| DictError::Table(error.into()))?,
@@ -197,8 +199,8 @@ pub fn open_bigram(path: &Path) -> Result<BigramTable, DictError> {
 ///
 /// # Errors
 /// Returns an error that occurs before the native open.
-pub fn attach_bigram(path: &Path, read_only: bool) -> Result<Option<DefaultStore>, StoreError> {
-    match SystemAttachment::attach_bigram(path, read_only)? {
+pub fn attach_bigram(path: &Path, access: AccessMode) -> Result<Option<DefaultStore>, StoreError> {
+    match SystemAttachment::attach_bigram(path, access)? {
         SystemAttachment::Open(store) => Ok(Some(store)),
         SystemAttachment::Unopened => Ok(None),
     }

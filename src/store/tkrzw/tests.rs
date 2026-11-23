@@ -280,7 +280,7 @@ fn tkrzw_library_honours_its_sentinel_protocol() {
              sentinels (known cause: an LTO build of tkrzw older than 1.0.34); see \
              docs/findings/tkrzw-distro-compat.md";
 
-    fn check(class: &str, mut store: TkrzwStore) {
+    fn check(class: &str, store: TkrzwStore) {
         store
             .write(|txn| {
                 txn.put_raw(b"kept", b"v")?;
@@ -302,9 +302,6 @@ fn tkrzw_library_honours_its_sentinel_protocol() {
             "{class}: a removed record is still stored: {CAUSE}"
         );
 
-        if let Err(error) = store.compact() {
-            panic!("{class}: compact failed ({error}): {CAUSE}");
-        }
         assert_eq!(store.read_raw(b"kept").unwrap(), Some(b"v".to_vec()));
     }
 

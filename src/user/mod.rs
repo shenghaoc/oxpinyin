@@ -100,3 +100,6 @@ pub(crate) use persistence::{
 #[cfg(test)]
 pub(crate) use persistence::{chewing_rows, encode_live_diff};
 pub(crate) use phrase::add_phrase_token;
+
+#[cfg(test)]
+pub(crate) use store::tests::seed_bigram;

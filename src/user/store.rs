@@ -728,22 +728,6 @@ impl UserStore {
         Ok(ContainerGrams(self.container()).keys()?)
     }
 
-    /// Installs fixture bytes in the live bigram container and invalidates cached reads.
-    ///
-    /// # Errors
-    /// Returns the native write error.
-    #[cfg(any(test, feature = "test-hooks"))]
-    #[doc(hidden)]
-    pub fn plant_raw_bigram(
-        &mut self,
-        token: PhraseToken,
-        value: &[u8],
-    ) -> Result<(), UserStoreError> {
-        self.store_gram(token, value)?;
-        self.mark_committed_write(true);
-        Ok(())
-    }
-
     /// Whether the gram stored under `token` is shorter than a `guint32`
     /// `total_freq` (`memory_chunk.h:390`). The predicted-candidate walk
     /// loads only the resolved prefixes' own grams (`pinyin.cpp:2322-2330`),
@@ -2545,4 +2529,4 @@ impl UserStore {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

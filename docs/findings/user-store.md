@@ -613,10 +613,14 @@ Architecture — the session state behind the value engine:
   from its keys, short and partial values from the bytes, and a mask's
   residual total by running the ported mask on a copy. A writer takes the
   database guard, then the container, and moves the write generation
-  before it releases the database guard. `UserState.bigram` holds the raw
-  `(key, value)` rows in file order. Only tests fill it: the test session
-  reads a profile's rows into it and seeds a session's container from it.
-  A session never fills it.
+  before it releases the database guard. Only tests fill
+  `UserState.bigram`: `test_session::load_checked` loads the native user
+  container and collects its `(key, value)` rows in that container's
+  iteration order, which can differ from raw file order. A predecessor
+  key whose length is not four bytes maps to `PersistenceError::Codec`;
+  the helper does not preserve that malformed key. Tests that need raw
+  bytes retain a raw file or DBM path instead. Test setup can seed a
+  session's container from this state; production never fills it.
 * **The user bigram's container is backend-specific, and is not the
   system bigram's container.** On Kyoto Cabinet the *system* `bigram.db`
   is a `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`), but the *user*
@@ -624,10 +628,11 @@ Architecture — the session state behind the value engine:
   magic `KCSS` (`load_db`/`save_db`'s `load_snapshot`/`dump_snapshot`,
   `ngram_kyotodb.cpp:54-101`). tkrzw uses a `HashDBM` file for both
   (`ngram_tkrzwdb.cpp:48-84`), and Berkeley DB a `DB_HASH` file for both.
-  The store therefore has its own seam —
-  `RawReadStore::open_user_bigram` / `WriteStore::write_user_bigram`.
-  Its default is the hash container (correct for tkrzw and Berkeley DB),
-  and Kyoto Cabinet overrides it with the stash-plus-snapshot form.
+  `UserBigramDb::load_db` and `UserBigramDb::save_db` use each backend's
+  native user-container operations, including Kyoto Cabinet's
+  stash-plus-snapshot form. `UserBigramDb` and `DefaultUserBigramDb` are
+  crate-only in normal builds and public only with `test-hooks`, for the
+  downstream C-ABI fixtures.
   Opening the user bigram through the *system* bigram's hash path answers
   `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
 * `oxpinyin::user::store_libpinyin` — `UserStore::open_libpinyin_checked` reads the

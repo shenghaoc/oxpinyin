@@ -605,7 +605,7 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
 fn live_appended_item_accepts_import_after_failed_mask() {
     let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
     let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
-    let (dir, mut store) = open_over(
+    let (dir, store) = open_over(
         "materialized-appended-failed-mask",
         &base,
         &[LogRecord::Add {
@@ -613,13 +613,15 @@ fn live_appended_item_accepts_import_after_failed_mask() {
             new_item: encode_phrase_item(&added).expect("added"),
         }],
     );
+    drop(store);
+    crate::user::native_fixture::craft_user_bigram(
+        &dir.join("user_bigram.db"),
+        &[(1_u32.to_le_bytes().to_vec(), vec![0, 0, 0, 0, 1])],
+    );
+    let mut store = open(&dir, &base);
     let token = LIBRARY | 5;
-    store.mask_out(u32::MAX, 0).expect("mask other token");
     assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(store.lookup().phrase_text(token), Some("五".into()));
-    store
-        .plant_raw_bigram(1, &[0, 0, 0, 0, 1])
-        .expect("plant raw bigram");
     assert!(matches!(
         store.mask_out(u32::MAX, 0),
         Err(crate::user::UserStoreError::PartialUserBigramTail)
@@ -646,16 +648,18 @@ fn live_appended_item_accepts_import_after_failed_mask() {
 #[test]
 fn live_new_import_keeps_text_and_accepts_another_reading_after_failed_mask() {
     let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
-    let (dir, mut store) = open_over("materialized-new-import", &base, &[]);
+    let (dir, store) = open_over("materialized-new-import", &base, &[]);
+    drop(store);
+    crate::user::native_fixture::craft_user_bigram(
+        &dir.join("user_bigram.db"),
+        &[(1_u32.to_le_bytes().to_vec(), vec![0, 0, 0, 0, 1])],
+    );
+    let mut store = open(&dir, &base);
     let token = store
         .add_system_phrase_in(1, None, &"五".into(), &dense("wu", 3), Some(5))
         .expect("import new");
-    store.mask_out(u32::MAX, 0).expect("mask other token");
     assert!(store.with_live_item(token, |_| ()).is_some());
     assert_eq!(store.lookup().phrase_text(token), Some("五".into()));
-    store
-        .plant_raw_bigram(1, &[0, 0, 0, 0, 1])
-        .expect("plant raw bigram");
     assert!(matches!(
         store.mask_out(u32::MAX, 0),
         Err(crate::user::UserStoreError::PartialUserBigramTail)

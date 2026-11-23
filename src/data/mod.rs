@@ -13,8 +13,6 @@ pub(crate) mod chewing_table;
 pub mod chunk_format;
 mod dict;
 mod lm;
-#[cfg(test)]
-pub(crate) mod memory_dbm;
 mod phrase_libraries;
 pub mod phrase_library;
 pub(crate) mod phrase_table;

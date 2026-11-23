@@ -1879,7 +1879,9 @@ fn hostile_profile_files_degrade_per_file() {
 
     let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
     assert!(!loaded.wiped, "user.conf is intact; only files skip");
-    assert_eq!(loaded.skipped.len(), 2, "{:?}", loaded.skipped);
+    // Bigram::load_db leaves an empty container after a failed file load;
+    // init ignores its false answer (074a2219 pinyin.cpp:399-401).
+    assert_eq!(loaded.skipped, ["user.bin: invalid data"]);
     assert!(loaded.state.bigram.is_empty());
     assert!(!loaded.state.libraries.contains_key(&7));
     assert!(loaded.state.system_overrides.contains_key(&1));
@@ -2035,22 +2037,7 @@ fn dump_user_dir(dir: &Path) -> String {
     let mut out = String::new();
     for dbm in [UserDbm::Bigram, UserDbm::PinyinIndex, UserDbm::PhraseIndex] {
         let path = dir.join(dbm.file_name());
-        let store = if dbm.is_hash() {
-            DefaultStore::open_user_bigram(&path).expect("user bigram opens")
-        } else {
-            DefaultStore::open_user_index(&path).expect("index opens")
-        };
-        let mut rows = Vec::new();
-        store
-            .range_raw(
-                std::ops::Bound::Unbounded,
-                std::ops::Bound::Unbounded,
-                |k, v| {
-                    rows.push((k.to_vec(), v.to_vec()));
-                    Ok(())
-                },
-            )
-            .expect("walk");
+        let mut rows = crate::user::native_fixture::store_rows(&path, dbm.is_hash());
         rows.sort();
         let _ = writeln!(out, "## {} ({} rows)", dbm.stem(), rows.len());
         for (k, v) in rows {
@@ -2268,11 +2255,11 @@ mod save_semantics_929 {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
             let dir = tempfile::tempdir().unwrap();
             let mut store = seed(dir.path(), law);
-            crate::user::native_fixture::seed_bigram(&mut store, 0x0100_0001, &[(0x0200_0001, 37)]);
+            crate::user::seed_bigram(&mut store, 0x0100_0001, &[(0x0200_0001, 37)]);
             store.mark_modified();
             store.save_reporting().unwrap();
             let saved_bytes = data_bytes(dir.path());
-            crate::user::native_fixture::seed_bigram(&mut store, 0x0100_0001, &[(0x0200_0001, 91)]);
+            crate::user::seed_bigram(&mut store, 0x0100_0001, &[(0x0200_0001, 91)]);
             drop(store); // fini is not an implicit save (both facades).
             let mut reopened = open(dir.path(), law);
             assert_eq!(
@@ -2576,7 +2563,7 @@ mod save_boundaries_929 {
                 .add_phrase_in(library, &"你".into(), &[key], Some(17))
                 .unwrap();
         }
-        crate::user::native_fixture::seed_bigram(store, 0x0700_0001, &[(0x0600_0001, 37)]);
+        crate::user::seed_bigram(store, 0x0700_0001, &[(0x0600_0001, 37)]);
         store.mark_modified();
     }
 

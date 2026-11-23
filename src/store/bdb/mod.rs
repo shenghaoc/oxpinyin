@@ -10,9 +10,8 @@
 //! containers (`pinyin_index.bin`, `phrase_index.bin`, `punct.bin`), the
 //! session scratch store and the user-dir bigram writer are written
 //! through. On this backend the system and user bigrams are the same
-//! container — a `DB_HASH` file — so the trait's default
-//! `open_user_bigram` (delegate to `open_hash_read_only`) is correct and
-//! neither override that Kyoto Cabinet needs applies.
+//! container — a `DB_HASH` file. The user container loads and saves it
+//! through `UserBigramDb`, without a snapshot stream.
 //!
 //! # Key ordering
 //!
@@ -413,15 +412,6 @@ impl WriteStore for BdbStore {
         })
     }
 
-    /// The user bigram, created as `Bigram::save_db` creates it: a
-    /// `DB_HASH` file, mode 0600 (`ffi::USER_FILE_MODE`).
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn create_user_hash(path: &Path) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?,
-        })
-    }
-
     /// `ChewingLargeTable2::save_db` / `PhraseLargeTable3::save_db`
     /// (`chewing_large_table2_bdb.cpp:135-162`,
     /// `phrase_large_table3_bdb.cpp:150-177` at 074a2219): unlink, create a
@@ -482,20 +472,6 @@ impl WriteStore for BdbStore {
     }
 
     fn flush(&self) -> Result<(), StoreError> {
-        self.db.sync()
-    }
-
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn compact(&mut self) -> Result<(), StoreError> {
-        if self.db.is_read_only() {
-            return Err(StoreError::ReadOnly);
-        }
-        // Berkeley DB keeps a free-page list and reuses freed pages in
-        // place; `DB->compact` exists in 5.3 but wants to move data under
-        // a transaction, which this backend deliberately does not open
-        // (see the module note). Stable storage is what `compact` owes —
-        // `DB->sync` — and the file not shrinking mirrors Kyoto
-        // Cabinet's compact, which also only syncs.
         self.db.sync()
     }
 }

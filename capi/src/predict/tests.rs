@@ -4,7 +4,6 @@
 )]
 
 // Nextest isolates the process-wide read-fault key by running each test in its own process.
-use crate::test_support::seed_bigram;
 use crate::test_support::{PREDICTED_BIGRAM, PREDICTED_PREFIX, predicted_texts};
 
 use crate::test_support::{close, open_at, wrap_facade_total_to_zero};
@@ -170,32 +169,38 @@ fn predicted_rows_ignore_dynamic_adjust_and_the_bigram_counts() {
     let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let [ni, hao, zhong] = ["你", "好", "中"].map(|text| unsafe { lookup(instance, text) }[0]);
+    // SAFETY: the setup handles are live and are unused after this call.
+    unsafe { close(context, instance) };
     let mut lists = Vec::new();
     for (hao_count, zhong_count) in [(1000, 20), (20, 1000)] {
-        // SAFETY: the live context has no reader retained across this write.
-        let ctx = unsafe { crate::state::context_mut(context) };
-        let store = ctx.core.user_store_mut();
-        seed_bigram(store, ni, &[(hao, hao_count), (zhong, zhong_count)]);
+        let mut successors = [(hao, hao_count), (zhong, zhong_count)];
+        successors.sort_unstable_by_key(|&(token, _)| token);
+        crate::test_support::plant_bigram(
+            &user.path,
+            vec![(
+                ni.to_le_bytes().to_vec(),
+                crate::test_support::gram_bytes(hao_count + zhong_count, &successors),
+            )],
+        );
+        let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
         for dynamic in [0, DYNAMIC_ADJUST] {
             assert!(unsafe { pinyin_set_options(context, OPTIONS | dynamic) });
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
-            // it.
+            // SAFETY: the instance is live; this thread serializes the calls.
             lists.push(unsafe { predicted_texts(instance, c"你") });
         }
+        assert!(
+            // SAFETY: prediction populated this live instance's rows.
+            unsafe { capture_rows(instance) }
+                .iter()
+                .any(|(kind, text, _)| {
+                    *kind == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE && text == "中"
+                }),
+            "the bigram rows are listed"
+        );
+        // SAFETY: both handles are live and are unused after this call.
+        unsafe { close(context, instance) };
     }
-    assert!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { capture_rows(instance) }
-            .iter()
-            .any(|(kind, text, _)| {
-                *kind == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE && text == "中"
-            }),
-        "the bigram rows are listed"
-    );
     assert!(lists.iter().all(|list| *list == lists[0]), "{lists:?}");
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
 }
 
 /// Prefix rows alone never reach the zero-total assert, which gates the
@@ -281,8 +286,18 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
             .expect("read")
             .expect("imported")
     });
-    // Training starts at 69. Use the exact stored counts around the filter at 10.
-    seed_bigram(store, prev, &[(nine, 9), (ten, 10)]);
+    // Training starts at 69. Load the exact stored counts around the filter at 10.
+    assert!(unsafe { crate::context::pinyin_save(context) });
+    // SAFETY: both import handles are live and are unused after closing them.
+    unsafe { close(context, instance) };
+    crate::test_support::plant_bigram(
+        &user_dir.path,
+        vec![(
+            prev.to_le_bytes().to_vec(),
+            crate::test_support::gram_bytes(19, &[(nine, 9), (ten, 10)]),
+        )],
+    );
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
     let prefix = cstr("测测");
     assert!(unsafe {

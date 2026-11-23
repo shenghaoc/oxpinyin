@@ -20,7 +20,7 @@
 //! and `phrase_large_table3_tkrzwdb.cpp`.
 
 use crate::data::DictError;
-use crate::data::chewing_table::{ChewingDbm, DefaultDbm, prefix_upper_bound};
+use crate::data::chewing_table::{DefaultDbm, prefix_upper_bound};
 // The key and value layouts this reader shares with
 // `gen_binary_files`'s writer: one written copy (`crate::data::row_format`).
 #[cfg(test)]
@@ -36,13 +36,14 @@ use crate::data::row_format::phrase_index::{
 ///
 /// Does not materialize the entire index at open time. Lookups are
 /// point reads against the DBM backend.
-pub struct PhraseTable<D = DefaultDbm> {
-    dbm: D,
+pub struct PhraseTable {
+    dbm: DefaultDbm,
 }
 
-impl<D: ChewingDbm> PhraseTable<D> {
+impl PhraseTable {
     /// Constructs the phrase index over its row store.
-    pub const fn new(dbm: D) -> Self {
+    #[must_use]
+    pub const fn new(dbm: DefaultDbm) -> Self {
         Self { dbm }
     }
 

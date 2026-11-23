@@ -672,11 +672,7 @@ mod backend_files {
             .user_store_mut()
             .add_phrase(&"你鎬".into(), &keys, Some(5))
             .unwrap();
-        crate::user::native_fixture::seed_bigram(
-            runtime.user_store_mut(),
-            SENTENCE_START,
-            &[(other, 1000)],
-        );
+        crate::user::seed_bigram(runtime.user_store_mut(), SENTENCE_START, &[(other, 1000)]);
         let prev = SENTENCE_START;
         let mut row = NbestStepRow::default();
 
@@ -800,11 +796,7 @@ mod backend_files {
             .user_store_mut()
             .add_phrase(&"你鎄".into(), &keys, Some(5))
             .unwrap();
-        crate::user::native_fixture::seed_bigram(
-            runtime.user_store_mut(),
-            SENTENCE_START,
-            &[(token, 1000)],
-        );
+        crate::user::seed_bigram(runtime.user_store_mut(), SENTENCE_START, &[(token, 1000)]);
         assert_eq!(
             guess(&runtime),
             "你鎄",
@@ -1695,18 +1687,40 @@ fn a_step_prices_readings_with_the_query_tone(
 
 // Basis: pinyin.cpp:2231-2256 at 074a2219.
 #[test]
-fn a_failed_candidate_table_read_keeps_searching_longer_spans() {
+fn a_missing_candidate_table_row_keeps_searching_longer_spans() {
     let user = TempUserDir::new("candidate-read-miss");
-    let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    use crate::store::RawReadStore as _;
+    let scratch = tempfile::tempdir().unwrap();
+    let system = native_fixture::private_system(scratch.path());
     let key = crate::parser::ChewingKey::from_pinyin("ni")
         .unwrap()
         .to_packed();
+    let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     let mut state = native_session(&runtime, OptionBits::USE_TONE);
     runtime.session(&mut state).replace_raw("nihao").unwrap();
     let before = normal_texts(&runtime, &mut state);
     assert!(before.iter().any(|text| text == "你"));
     assert!(before.iter().any(|text| text == "你好"));
-    crate::store::fail_point_read_of(&key.to_le_bytes(), 0);
+    let index = system.join("pinyin_index.bin");
+    let store = crate::store::DefaultStore::open_read_only(&index).unwrap();
+    let mut rows = Vec::new();
+    store
+        .range_raw(
+            std::ops::Bound::Unbounded,
+            std::ops::Bound::Unbounded,
+            |row, value| {
+                if row != key.to_le_bytes() {
+                    rows.push((row.to_vec(), value.to_vec()));
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+    drop(store);
+    native_fixture::craft_tree(&index, &rows);
+    let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    runtime.session(&mut state).replace_raw("nihao").unwrap();
     let after = normal_texts(&runtime, &mut state);
     assert!(!after.iter().any(|text| text == "你"));
     assert!(after.iter().any(|text| text == "你好"));

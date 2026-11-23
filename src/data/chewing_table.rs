@@ -32,83 +32,6 @@ pub use crate::data::row_format::pinyin_index::{
 
 // ── ChewingTable ─────────────────────────────────────────────────
 
-/// The DBM access method behind the tables ([`ChewingTable`],
-/// [`crate::data::phrase_table::PhraseTable`], [`crate::data::BigramTable`], [`crate::data::PunctTable`]):
-/// each table is generic over it, so the one implementation of a table's
-/// logic runs over the production [`DefaultDbm`] and over the in-memory,
-/// counting and failing test doubles alike.
-pub trait ChewingDbm {
-    /// Whether the system table failed to open.
-    fn attachment_failed(&self) -> bool {
-        false
-    }
-
-    /// Closes the native attachment at facade fini. Later reads are misses.
-    fn finish_attachment(&mut self) {}
-
-    /// Whether [`Self::finish_attachment`] has closed the native object.
-    #[cfg(test)]
-    fn attachment_finished(&self) -> bool {
-        false
-    }
-
-    /// Point read into `value`, a buffer the caller owns: `value` is
-    /// cleared, then holds the stored bytes on a hit. Answers whether the
-    /// key was found. A caller that passes one buffer to successive reads
-    /// allocates only when a value outgrows it.
-    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError>;
-
-    /// Read one bigram row with the pin's checked-read shape. The default
-    /// is [`Self::get`]; a backend whose library checks the size and then
-    /// reads the body overrides it.
-    fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        self.get(key, value)
-    }
-
-    /// Read one pinyin-table row with the shape of
-    /// `ChewingLargeTable2::search_internal`: every backend answers a failed
-    /// first read as a miss (`chewing_large_table2_tkrzwdb.cpp:146-149`,
-    /// `chewing_large_table2_bdb.cpp:182-184`,
-    /// `chewing_large_table2_kyotodb.cpp:160-163` at 074a2219). Kyoto
-    /// Cabinet's body read after a good size check aborts, as the pin's
-    /// `check_result` does (`:170-174`). The default is [`Self::get`].
-    fn get_pinyin_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        self.get(key, value)
-    }
-
-    /// Read one phrase-table row with the shape of
-    /// `PhraseLargeTable3::search`: a failed read is a miss
-    /// (`phrase_large_table3_tkrzwdb.cpp:136-139`,
-    /// `phrase_large_table3_bdb.cpp:196-198`,
-    /// `phrase_large_table3_kyotodb.cpp:174-182` at 074a2219). Kyoto
-    /// Cabinet aborts on a failed body read after a successful check
-    /// (`:187`). The default is [`Self::get`].
-    fn get_phrase_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        self.get(key, value)
-    }
-
-    /// Whether `key` exists, an empty marker included, with no value bytes
-    /// copied — the `SEARCH_CONTINUED` probe and the suggestion walk's
-    /// opening check (`m_db->check`, `phrase_large_table3_kyotodb.cpp:206`
-    /// at 074a2219).
-    fn contains(&self, key: &[u8]) -> Result<bool, DictError>;
-
-    /// Every row whose key lies in `[lo, hi)` (`hi = None` — to the end),
-    /// in ascending key-byte order — the cursor walk upstream's
-    /// `search_suggestion` performs (`cursor->jump` + `step`).
-    ///
-    /// A visitor return of `Ok(true)` stops the walk: implementations
-    /// must terminate the underlying scan there (not merely skip the
-    /// remaining rows), and the walk returns `Ok(())`. A visitor `Err`
-    /// ends the walk and comes back as itself.
-    fn walk(
-        &self,
-        lo: &[u8],
-        hi: Option<&[u8]>,
-        visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
-    ) -> Result<(), DictError>;
-}
-
 /// The smallest key-byte string above every extension of `prefix` — the
 /// exclusive upper bound of the range `[prefix, …)` that holds exactly the
 /// keys starting with `prefix`. `None` when no such bound exists (every
@@ -165,10 +88,10 @@ impl DefaultDbm {
     ///
     /// # Errors
     /// Returns the open or backend error.
-    pub fn attach(path: &std::path::Path, hash: bool) -> Result<Self, DictError> {
+    pub fn attach(path: &std::path::Path, kind: crate::store::DbmKind) -> Result<Self, DictError> {
         use crate::store::SystemAttachment;
         Ok(
-            match SystemAttachment::open(path, hash).map_err(|e| DictError::Table(e.into()))? {
+            match SystemAttachment::open(path, kind).map_err(|e| DictError::Table(e.into()))? {
                 SystemAttachment::Open(store) => Self::new(store),
                 SystemAttachment::Unopened => Self {
                     state: DbmState::Unopened,
@@ -202,12 +125,12 @@ fn failed_read_is_a_miss(
     }
 }
 
-impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
-    fn attachment_failed(&self) -> bool {
+impl<S: crate::store::RawReadStore> RawChewingDbm<S> {
+    pub(crate) fn attachment_failed(&self) -> bool {
         matches!(self.state, DbmState::Unopened)
     }
 
-    fn finish_attachment(&mut self) {
+    pub(crate) fn finish_attachment(&mut self) {
         // A failed open still controls the phrase-prefix walk after fini.
         if matches!(self.state, DbmState::Open(_)) {
             self.state = DbmState::Closed;
@@ -215,11 +138,11 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     }
 
     #[cfg(test)]
-    fn attachment_finished(&self) -> bool {
+    pub(crate) fn attachment_finished(&self) -> bool {
         !matches!(self.state, DbmState::Open(_))
     }
 
-    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+    pub(crate) fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         match &self.state {
             DbmState::Open(store) => store
                 .get_raw(key, value)
@@ -238,7 +161,7 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
     /// 074a2219). The one failure that is not a miss is Kyoto Cabinet's
     /// body read after a good size check, the pin's `check_result` assert
     /// (`ngram_kyotodb.cpp:138`).
-    fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+    pub(crate) fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         match &self.state {
             DbmState::Open(store) => failed_read_is_a_miss(store.get_bigram_raw(key, value), value),
             DbmState::Unopened | DbmState::Closed => {
@@ -248,7 +171,11 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
         }
     }
 
-    fn get_pinyin_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+    pub(crate) fn get_pinyin_row(
+        &self,
+        key: &[u8],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
         match &self.state {
             DbmState::Open(store) => match store.get_pinyin_row_raw(key, value) {
                 // Kyoto Cabinet's body read after a good size check:
@@ -263,14 +190,18 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
         }
     }
 
-    fn get_phrase_row(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+    pub(crate) fn get_phrase_row(
+        &self,
+        key: &[u8],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
         // Both tables use the same checked read on Kyoto Cabinet, including
         // the abort after a successful check (`phrase_large_table3_kyotodb.cpp:
         // 174-187` at 074a2219).
         self.get_pinyin_row(key, value)
     }
 
-    fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+    pub(crate) fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
         match &self.state {
             // A failed existence read is a miss: the pin tests
             // `Get(key, nullptr).IsOK()` and returns
@@ -282,7 +213,7 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
         }
     }
 
-    fn walk(
+    pub(crate) fn walk(
         &self,
         lo: &[u8],
         hi: Option<&[u8]>,
@@ -330,13 +261,14 @@ impl<S: crate::store::RawReadStore> ChewingDbm for RawChewingDbm<S> {
 ///
 /// Does not materialize the entire index at open time. Lookups are
 /// point reads against the DBM backend.
-pub struct ChewingTable<D = DefaultDbm> {
-    dbm: D,
+pub struct ChewingTable {
+    dbm: DefaultDbm,
 }
 
-impl<D: ChewingDbm> ChewingTable<D> {
+impl ChewingTable {
     /// Constructs the phonetic index over its row store.
-    pub const fn new(dbm: D) -> Self {
+    #[must_use]
+    pub const fn new(dbm: DefaultDbm) -> Self {
         Self { dbm }
     }
 

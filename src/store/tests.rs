@@ -81,25 +81,6 @@ fn scan_break_stops_and_error_propagates(#[case] fail: bool) {
     }
 }
 
-// WriteStore's user-bigram fixture format round-trips opaque bytes, including partial items.
-#[test]
-fn user_bigram_round_trips_through_its_own_seam() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("user_bigram.db");
-    let key = 1_u32.to_ne_bytes().to_vec();
-    let full = [42_u32, 1, 7].map(u32::to_ne_bytes).concat();
-    for value in [full, vec![7, 0, 0, 0, 0xa5]] {
-        let rows = [(key.clone(), value)];
-        DefaultStore::write_user_bigram(&path, &rows).unwrap();
-        let db = DefaultStore::open_user_bigram(&path).unwrap();
-        assert_eq!(db.read_raw(&key).unwrap().as_ref(), Some(&rows[0].1));
-        let mut copied = Vec::new();
-        db.copy_raw(|k, v| copied.push((k.to_vec(), v.to_vec())))
-            .unwrap();
-        assert_eq!(copied, rows);
-    }
-}
-
 // WriteStore::write and write_deferred leave no changes after a closure error.
 #[rstest]
 #[case::regular(false)]
@@ -189,18 +170,16 @@ fn remove_in_write(#[case] present: bool, #[case] pending: bool) {
 #[rstest]
 #[case::write("write")]
 #[case::deferred("deferred")]
-#[case::compact("compact")]
 fn read_only_reopen_preserves_reads_and_rejects_mutation(#[case] operation: &str) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reader.db");
     let writer = DefaultStore::create(&path).unwrap();
     put_rows(&writer, &[(b"k", b"old")]);
     drop(writer);
-    let mut reader = DefaultStore::open_read_only(&path).unwrap();
+    let reader = DefaultStore::open_read_only(&path).unwrap();
     let result = match operation {
         "write" => reader.write(|txn| txn.put_raw(b"k", b"new")),
         "deferred" => reader.write_deferred(|txn| txn.remove_raw(b"k")).map(drop),
-        "compact" => reader.compact(),
         _ => unreachable!(),
     };
     assert!(matches!(result, Err(StoreError::ReadOnly)));
@@ -208,16 +187,6 @@ fn read_only_reopen_preserves_reads_and_rejects_mutation(#[case] operation: &str
         reader.read_raw(b"k").unwrap().as_deref(),
         Some(b"old".as_slice())
     );
-}
-
-// WriteStore::compact preserves the file's records.
-#[test]
-fn compact_preserves_data() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut db = DefaultStore::create(&dir.path().join("tree.db")).unwrap();
-    put_rows(&db, &[(b"k", b"v")]);
-    db.compact().unwrap();
-    assert_eq!(db.read_raw(b"k").unwrap(), Some(b"v".to_vec()));
 }
 
 // WriteStore::create_in_memory produces a fresh, mutable ordered tree.
@@ -307,14 +276,13 @@ fn keys_mark_a_key_that_is_not_four_bytes_in_its_place(#[case] malformed: &[u8])
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("user_bigram.db");
     let key = 3_u32.to_le_bytes();
-    DefaultStore::write_user_bigram(
+    crate::user::native_fixture::craft_user_bigram(
         &path,
         &[
             (key.to_vec(), b"gram".to_vec()),
             (malformed.to_vec(), b"gram".to_vec()),
         ],
-    )
-    .unwrap();
+    );
     let db = DefaultUserBigramDb::load_db(&path).unwrap();
     let mut keys = db.keys().unwrap();
     keys.sort();

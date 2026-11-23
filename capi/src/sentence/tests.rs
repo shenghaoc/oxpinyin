@@ -3,7 +3,6 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use crate::test_support::seed_bigram;
 use crate::test_support::{Fixture, n_candidate};
 use oxpinyin::model::Dictionary as _;
 
@@ -167,18 +166,24 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
         };
         (token("好"), token("你好"), token("好"), token("号"))
     };
-    {
-        // SAFETY: the preceding reader ended; this test serializes all calls.
-        let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        let store = ctx.core.user_store_mut();
-        for (previous, next) in [
+    // SAFETY: both setup handles are live and are unused after closing them.
+    unsafe { crate::test_support::close(context, instance) };
+    crate::test_support::plant_bigram(
+        &user.path,
+        [
             (oxpinyin::vocab::SENTENCE_START, hao),
             (short, hao),
             (long, number),
-        ] {
-            seed_bigram(store, previous, &[(next, 1_000_000)]);
-        }
-    }
+        ]
+        .map(|(prev, next)| {
+            (
+                prev.to_le_bytes().to_vec(),
+                crate::test_support::gram_bytes(1_000_000, &[(next, 1_000_000)]),
+            )
+        })
+        .to_vec(),
+    );
+    let (context, instance) = open(user.path.to_str().expect("UTF-8 path"));
     assert!(unsafe {
         crate::config::pinyin_set_options(context, OptionBits::DYNAMIC_ADJUST.bits())
     });

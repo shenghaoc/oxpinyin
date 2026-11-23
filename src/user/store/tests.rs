@@ -1,5 +1,21 @@
 use super::*;
 
+/// Whole fixture rows use the native DBM operation, with the session's
+/// production bookkeeping so cached readers see the committed value.
+pub(crate) fn seed_bigram(store: &mut UserStore, prev: u32, rows: &[(u32, u32)]) {
+    let mut rows = rows.to_vec();
+    rows.sort_unstable_by_key(|&(token, _)| token);
+    let total = rows.iter().map(|&(_, count)| count).sum();
+    store
+        .container()
+        .store(
+            &prev.to_le_bytes(),
+            &crate::single_gram::encode_single_gram(total, &rows),
+        )
+        .expect("store the fixture gram");
+    store.mark_committed_write(true);
+}
+
 fn next_user_token(store: &UserStore) -> PhraseToken {
     let end = store
         .inner
@@ -178,18 +194,30 @@ mod session {
     /// Basis: `074a2219 ngram_tkrzwdb.cpp:195-198` (a gram is stored back only when an item went).
     #[test]
     fn mask_out_leaves_an_itemless_gram_untouched() {
-        let mut store = transient();
+        let dir = tempfile::tempdir().unwrap();
         let user = phrase_index_make_token(USER_DICTIONARY, 1);
-        store
-            .plant_raw_bigram(1, &17_u32.to_le_bytes())
-            .expect("plant raw bigram");
-        store
-            .plant_raw_bigram(2, &0_u32.to_le_bytes())
-            .expect("plant raw bigram");
-        let emptied = [9_u32.to_le_bytes(), user.to_le_bytes(), 9_u32.to_le_bytes()].concat();
-        store
-            .plant_raw_bigram(3, &emptied)
-            .expect("plant raw bigram");
+        crate::user::native_fixture::craft_user_bigram(
+            &dir.path().join("user_bigram.db"),
+            &[
+                (1_u32.to_le_bytes().to_vec(), 17_u32.to_le_bytes().to_vec()),
+                (2_u32.to_le_bytes().to_vec(), 0_u32.to_le_bytes().to_vec()),
+                (
+                    3_u32.to_le_bytes().to_vec(),
+                    [9_u32.to_le_bytes(), user.to_le_bytes(), 9_u32.to_le_bytes()].concat(),
+                ),
+            ],
+        );
+        assert!(
+            crate::data::user_files::UserTableInfo::conform_to(&versions())
+                .save(&dir.path().join("user.conf"))
+        );
+        let mut store = crate::user::test_session::open(
+            dir.path(),
+            no_originals(),
+            versions(),
+            UserConfLaw::Pinyin,
+        )
+        .unwrap();
 
         store
             .mask_out(
@@ -286,7 +314,7 @@ mod session {
     fn predicted_prefix_invalidates_counts_without_training_a_bigram() {
         let mut store = transient();
         let cur = bare_token(&mut store, "你", &[key("ni")]);
-        crate::user::native_fixture::seed_bigram(&mut store, 1, &[(cur, 10)]);
+        crate::user::seed_bigram(&mut store, 1, &[(cur, 10)]);
         assert_eq!(store.count_delta(Some(1), cur).unwrap().unigram_delta, 0);
         let generation = store.generation();
         for _ in 0..2 {
@@ -631,8 +659,13 @@ mod session {
             (3, gram(0, &[(token, 0)])),
         ];
         for (p, value) in &planted {
-            store.plant_raw_bigram(*p, value).expect("plant raw bigram");
+            use crate::store::UserBigramDb as _;
+            store
+                .container()
+                .store(&p.to_le_bytes(), value)
+                .expect("store native fixture gram");
         }
+        store.mark_committed_write(true);
         if remove_phrase {
             assert!(store.remove_user_phrase(token).unwrap());
         } else {
@@ -1110,7 +1143,7 @@ mod backend_files {
         let (a, b) = (FIRST_USER_TOKEN, FIRST_USER_TOKEN + 1);
         {
             let mut store = session_in(dir.path());
-            crate::user::native_fixture::seed_bigram(&mut store, a, &[(b, 16)]);
+            crate::user::seed_bigram(&mut store, a, &[(b, 16)]);
             let (count_before, total_before) = (
                 store.bigram_count(a, b).unwrap(),
                 store.bigram_total(a).unwrap(),
@@ -1146,7 +1179,7 @@ mod backend_files {
         let a = bare_token(&mut store, "甲", "jia");
         let b = bare_token(&mut store, "乙", "yi");
 
-        crate::user::native_fixture::seed_bigram(&mut store, a, &[(b, 4)]);
+        crate::user::seed_bigram(&mut store, a, &[(b, 4)]);
         store.observe_selection(SENTENCE_START, a).unwrap();
         store.observe_selection(a, b).unwrap();
         assert!(store.bigram_total(a).unwrap() > 0);

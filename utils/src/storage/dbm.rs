@@ -9,11 +9,17 @@
 
 use std::path::Path;
 
-use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore};
+use oxpinyin::store::{
+    AccessMode, DbmKind, DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore,
+};
 
 /// The utility checks the result of this attachment.
-fn open_required(path: &Path, hash: bool, read_only: bool) -> Result<DefaultStore, StoreError> {
-    match SystemAttachment::attach(path, hash, read_only)? {
+fn open_required(
+    path: &Path,
+    kind: DbmKind,
+    access: AccessMode,
+) -> Result<DefaultStore, StoreError> {
+    match SystemAttachment::attach(path, kind, access)? {
         SystemAttachment::Open(store) => Ok(store),
         SystemAttachment::Unopened => Err(StoreError::Backend("the container did not open".into())),
     }
@@ -53,7 +59,7 @@ impl Tree {
     /// `attach(filename, ATTACH_READWRITE|ATTACH_CREATE)`.
     pub(crate) fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: open_required(path, false, false)?,
+            store: open_required(path, DbmKind::Tree, AccessMode::ReadWrite)?,
         })
     }
 
@@ -68,7 +74,7 @@ impl Tree {
     /// `attach(filename, ATTACH_READONLY)`.
     pub(crate) fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: open_required(path, false, true)?,
+            store: open_required(path, DbmKind::Tree, AccessMode::ReadOnly)?,
         })
     }
 
@@ -97,7 +103,7 @@ impl Hash {
     /// class.
     pub(crate) fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            store: Some(open_required(path, true, false)?),
+            store: Some(open_required(path, DbmKind::Hash, AccessMode::ReadWrite)?),
         })
     }
 
@@ -109,7 +115,7 @@ impl Hash {
     /// A failure before the native open, such as an unsupported linked
     /// library: never a missing container.
     pub(crate) fn create_or_missing(path: &Path) -> Result<Self, StoreError> {
-        Self::attach(path, false)
+        Self::attach(path, AccessMode::ReadWrite)
     }
 
     /// `attach(filename, ATTACH_READONLY)` on the hash class, whose answer
@@ -119,13 +125,13 @@ impl Hash {
     ///
     /// As [`Self::create_or_missing`].
     pub(crate) fn open_read_only(path: &Path) -> Result<Self, StoreError> {
-        Self::attach(path, true)
+        Self::attach(path, AccessMode::ReadOnly)
     }
 
     /// The store's `Bigram::attach`.
-    fn attach(path: &Path, read_only: bool) -> Result<Self, StoreError> {
+    fn attach(path: &Path, access: AccessMode) -> Result<Self, StoreError> {
         Ok(Self {
-            store: oxpinyin_tool_support::data::attach_bigram(path, read_only)?,
+            store: oxpinyin_tool_support::data::attach_bigram(path, access)?,
         })
     }
 

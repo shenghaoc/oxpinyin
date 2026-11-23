@@ -210,10 +210,14 @@ pub fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// own save writes the user bigram: a snapshot on Kyoto Cabinet, a hash
 /// file on tkrzw and Berkeley DB.
 pub fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin::store::WriteStore as _;
+    use oxpinyin::store::{DefaultUserBigramDb, UserBigramDb as _};
+    let db = DefaultUserBigramDb::empty().expect("empty user bigram");
     let mut rows = rows.to_vec();
     rows.sort();
-    oxpinyin::store::DefaultStore::write_user_bigram(path, &rows).expect("write the user bigram");
+    for (key, value) in rows {
+        db.store(&key, &value).expect("store a fixture gram");
+    }
+    db.save_db(path).expect("save the user bigram");
 }
 
 /// Every record of the user container at `path`, sorted. `hash` reads the
@@ -222,12 +226,21 @@ pub fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 pub fn store_rows(path: &std::path::Path, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
     use oxpinyin::store::RawReadStore as _;
     use std::ops::Bound;
-    let store = if hash {
-        oxpinyin::store::DefaultStore::open_user_bigram(path)
-    } else {
-        oxpinyin::store::DefaultStore::open_user_index(path)
+    if hash {
+        use oxpinyin::store::{DefaultUserBigramDb, UserBigramDb as _};
+        let store = DefaultUserBigramDb::load_db(path).expect("load the user bigram");
+        let mut rows = Vec::new();
+        for key in store.keys().expect("predecessors") {
+            let key = key.expect("a fixture predecessor is four bytes");
+            let mut value = Vec::new();
+            assert!(store.get(&key, &mut value).expect("read a gram"));
+            rows.push((key.to_vec(), value));
+        }
+        rows.sort();
+        return rows;
     }
-    .unwrap_or_else(|error| panic!("open {}: {error:?}", path.display()));
+    let store = oxpinyin::store::DefaultStore::open_user_index(path)
+        .unwrap_or_else(|error| panic!("open {}: {error:?}", path.display()));
     let mut rows = Vec::new();
     store
         .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
@@ -283,17 +296,15 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total.
 pub fn plant_bigram(user_dir: &std::path::Path, rows: Vec<(Vec<u8>, Vec<u8>)>) {
-    use oxpinyin::store::WriteStore as _;
     let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
     let mut marker = oxpinyin::data::user_files::UserTableInfo::conform_to(&versions);
     marker.open_counter = 1;
     assert!(marker.save(user_dir.join("user.conf").as_path()));
-    oxpinyin::store::DefaultStore::write_user_bigram(
+    craft_user_bigram(
         &user_dir.join(oxpinyin::data::user_files::UserDbm::Bigram.file_name()),
         &rows,
-    )
-    .expect("write the user bigram");
+    );
 }
 
 /// Sets one row of the user phrase table (`user_phrase_index.bin`) to
@@ -696,17 +707,4 @@ pub fn replace_with_failed_layout(library: &std::path::Path, total: u32) {
     )
     .unwrap();
     std::fs::rename(staged, library).unwrap();
-}
-
-/// Seeds a complete row, sorting its successor tokens as the native writer does.
-pub fn seed_bigram(store: &mut oxpinyin::user::UserStore, prev: u32, rows: &[(u32, u32)]) {
-    let mut rows = rows.to_vec();
-    rows.sort_unstable_by_key(|&(token, _)| token);
-    let total = rows.iter().map(|&(_, count)| count).sum();
-    store
-        .plant_raw_bigram(
-            prev,
-            &oxpinyin::single_gram::encode_single_gram(total, &rows),
-        )
-        .expect("plant the fixture gram");
 }

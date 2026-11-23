@@ -245,7 +245,7 @@ pub(crate) fn load_checked(
     originals: &SystemOriginals,
     check: &crate::user::ProfileCheck,
 ) -> Result<crate::user::Loaded, crate::user::PersistenceError> {
-    use crate::store::RawReadStore as _;
+    use crate::store::UserBigramDb as _;
     let crate::user::LoadedProfile {
         mut loaded,
         replayed,
@@ -260,13 +260,14 @@ pub(crate) fn load_checked(
         std::ffi::OsStr::new(&crate::data::user_files::UserDbm::Bigram.file_name()),
     );
     if check.conform && bigram.exists() {
-        match crate::store::DefaultStore::open_user_bigram(&bigram) {
+        match crate::store::DefaultUserBigramDb::load_db(&bigram) {
             Ok(store) => {
-                let rows = &mut state.bigram;
-                if let Err(error) =
-                    store.copy_raw(|key, value| rows.push((key.to_vec(), value.to_vec())))
-                {
-                    loaded.skipped.push(format!("user bigram: {error}"));
+                for key in store.keys()? {
+                    let key = key.ok_or(crate::user::PersistenceError::Codec)?;
+                    let mut value = Vec::new();
+                    if store.get(&key, &mut value)? {
+                        state.bigram.push((key.to_vec(), value));
+                    }
                 }
             }
             Err(error) => loaded.skipped.push(format!("user bigram: {error}")),

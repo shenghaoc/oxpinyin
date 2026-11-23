@@ -3,7 +3,6 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-use crate::test_support::seed_bigram;
 use crate::test_support::{
     IBUS_DEFAULT_SORT, NORMAL, PREDICTED_PUNCTUATION, Pair, user_row_of_dada,
 };
@@ -501,13 +500,11 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         0
     );
     // SAFETY: the live context has no reader retained across this write.
-    seed_bigram(
-        unsafe { crate::state::instance_context_mut(instance) }
-            .core
-            .user_store_mut(),
-        ni,
-        &[(word, 10)],
-    );
+    unsafe { crate::state::instance_context_mut(instance) }
+        .core
+        .user_store_mut()
+        .observe_predicted(ni, word)
+        .unwrap();
 
     assert!(unsafe { pinyin_guess_predicted_candidates(instance, prefix.as_ptr()) });
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
@@ -810,8 +807,8 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
         // SAFETY: the live context has no reader retained across this write.
         let context = unsafe { crate::state::instance_context_mut(instance) };
         let store = context.core.user_store_mut();
-        seed_bigram(store, ni, &[(word, 10)]);
-        seed_bigram(store, hao, &[(word, 20)]);
+        store.observe_predicted(ni, word).unwrap();
+        store.observe_predicted(hao, word).unwrap();
     }
     assert!(unsafe { pinyin_guess_predicted_candidates(pair.producer(), cstr("你").as_ptr()) });
     // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only when
@@ -828,6 +825,9 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
         // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
         // `pair` drops at the end of the test; only this thread calls into it.
         unsafe { with_store(pair.receiver(), |store| store.bigram_count(hao, word)) }.unwrap();
+    // SAFETY: the receiver is live and all calls in this test are serial.
+    let other_predecessor_before =
+        unsafe { with_store(pair.receiver(), |store| store.bigram_count(ni, word)) }.unwrap();
     assert!(unsafe { pinyin_choose_predicted_candidate(pair.receiver(), bigram_row) });
     assert_eq!(
         // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
@@ -839,20 +839,20 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
         // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
         // `pair` drops at the end of the test; only this thread calls into it.
         unsafe { with_store(pair.receiver(), |store| store.bigram_count(ni, word)) }.unwrap(),
-        10
+        other_predecessor_before
     );
     if !same_context {
         assert_eq!(
             // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only
             // when `pair` drops at the end of the test; only this thread calls into it.
             unsafe { with_store(pair.producer(), |store| store.bigram_count(ni, word)) }.unwrap(),
-            10
+            69
         );
         assert_eq!(
             // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only
             // when `pair` drops at the end of the test; only this thread calls into it.
             unsafe { with_store(pair.producer(), |store| store.bigram_count(hao, word)) }.unwrap(),
-            20
+            69
         );
     }
 }
