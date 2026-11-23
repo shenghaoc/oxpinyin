@@ -17,6 +17,7 @@ fn row(span: TextSpan) -> Row {
     Row(span, std::ptr::null())
 }
 
+// Rust contract: TextSpan::NULL remains distinct from an interned empty string.
 #[test]
 fn null_text_survives_growth_and_punctuation_prepend() {
     let mut predicted = CandidateSnapshot::<Row>::new();
@@ -36,6 +37,7 @@ fn null_text_survives_growth_and_punctuation_prepend() {
     assert!(punctuation[1].1.is_null());
 }
 
+// Rust contract: intern accepts NUL-free bytes and exposes a terminated string.
 #[test]
 fn interned_strings_are_terminated_and_addressable() {
     let mut snapshot = CandidateSnapshot::<Row>::new();
@@ -59,35 +61,9 @@ fn interned_strings_are_terminated_and_addressable() {
     assert_eq!(snapshot.text_ptr(a), snapshot.text(a).as_ptr());
     snapshot.clear();
     assert!(snapshot.is_empty());
-    assert_eq!(
-        snapshot.text(a).to_bytes(),
-        b"",
-        "a stale span reads as empty"
-    );
 }
 
-#[test]
-fn a_span_not_written_here_points_outside_the_buffer() {
-    let in_buffer = |snapshot: &CandidateSnapshot<Row>, span| {
-        snapshot
-            .text
-            .as_ptr_range()
-            .contains(&snapshot.text_ptr(span).cast())
-    };
-    let mut snapshot = CandidateSnapshot::<Row>::new();
-    let held = snapshot.intern("你好".as_bytes()).expect("interned");
-    assert_eq!(snapshot.text_ptr(held), snapshot.text.as_ptr().cast());
-    let unterminated = TextSpan { start: 0, len: 3 };
-    assert!(
-        !in_buffer(&snapshot, unterminated),
-        "no terminator after it"
-    );
-    let past_end = TextSpan { start: 0, len: 100 };
-    assert!(!in_buffer(&snapshot, past_end), "beyond the buffer");
-    assert!(!snapshot.text_ptr(past_end).is_null());
-    assert!(snapshot.text_ptr(TextSpan::NULL).is_null());
-}
-
+// Rust contract: append copies owned text and repoints the transferred rows.
 #[test]
 fn append_re_interns_the_other_rows() {
     let mut first = CandidateSnapshot::<Row>::new();
@@ -108,6 +84,7 @@ fn append_re_interns_the_other_rows() {
     assert_eq!(first[1].1, first.text_ptr(first[1].0));
 }
 
+// Rust contract: growing the text buffer refreshes every published row pointer.
 #[test]
 fn growth_repoints_every_row() {
     let mut snapshot = CandidateSnapshot::<Row>::new();

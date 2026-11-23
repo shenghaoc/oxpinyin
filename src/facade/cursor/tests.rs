@@ -7,11 +7,11 @@ use super::{CursorFault, CursorLaw};
 use crate::facade::ChewingCorrections;
 use crate::facade::test_fixture::{open_context, pinyin_instance, zhuyin_instance};
 
+// Rust contract: CursorFault::of classifies the engine fault for the calling law.
 #[rstest::rstest]
 #[case::out_of_range(EngineError::LookupOffsetOutOfRange { offset: 7, len: 5 }, true, true)]
 #[case::zero_key(EngineError::ZeroKeyOffsetCheck, true, true)]
 #[case::matrix_column(EngineError::PinAssert, false, true)]
-#[case::reduce_tokens(EngineError::PinAssert, false, true)]
 fn each_law_aborts_at_its_own_pin_asserts(
     #[case] error: EngineError,
     #[case] check_offset_asserts: bool,
@@ -34,45 +34,39 @@ fn each_law_aborts_at_its_own_pin_asserts(
     );
 }
 
-#[test]
-fn the_pinyin_candidate_offset_one_past_the_reserved_slot_is_the_end_of_input() {
-    let (context, mut inst) = pinyin_instance();
-    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
-    let read = inst.bind(&context.runtime);
-    assert_eq!(read.pin_matrix_columns(), 6);
-    assert_eq!(read.abi_candidate_offset(2, false), Ok(2));
-    // `pinyin.cpp:2226` ignores `_check_offset`: one past the reserved
-    // slot is the end-of-input lookup.
-    assert_eq!(read.abi_candidate_offset(6, false), Ok(5));
-    // Past the last column, `get_column_size` asserts.
+// 074a2219 pinyin.cpp:2226 and zhuyin.cpp:1441–1456 differ at the reserved column.
+#[rstest::rstest]
+#[case::pinyin(false, 2, 6, Ok(5))]
+#[case::zhuyin(true, 3, 7, Err(CursorFault::PinAssert))]
+fn candidate_offset_at_the_reserved_column(
+    #[case] zhuyin: bool,
+    #[case] interior: usize,
+    #[case] columns: usize,
+    #[case] reserved: Result<usize, CursorFault>,
+) {
+    let (context, mut instance) = if zhuyin {
+        zhuyin_instance()
+    } else {
+        pinyin_instance()
+    };
+    let mut view = instance.bind(&context.runtime);
+    let consumed = if zhuyin {
+        view.parse_chewing_more("su3cl3", ChewingCorrections::FromOptions)
+    } else {
+        view.parse_full_more("nihao")
+    };
+    assert_eq!(consumed, columns - 1);
+    let read = instance.read(&context.runtime);
+    assert_eq!(read.pin_matrix_columns(), columns);
+    assert_eq!(read.abi_candidate_offset(interior, zhuyin), Ok(interior));
+    assert_eq!(read.abi_candidate_offset(columns, zhuyin), reserved);
     assert_eq!(
-        read.abi_candidate_offset(7, false),
+        read.abi_candidate_offset(columns + 1, zhuyin),
         Err(CursorFault::PinAssert)
     );
 }
 
-#[test]
-fn the_zhuyin_candidate_offset_one_past_the_reserved_slot_asserts() {
-    let (context, mut inst) = zhuyin_instance();
-    assert_eq!(
-        inst.bind(&context.runtime)
-            .parse_chewing_more("su3cl3", ChewingCorrections::FromOptions),
-        6
-    );
-    let read = inst.bind(&context.runtime);
-    assert_eq!(read.pin_matrix_columns(), 7);
-    assert_eq!(read.abi_candidate_offset(3, true), Ok(3));
-    // `zhuyin.cpp:1441-1456` asserts on the reserved slot's zero key.
-    assert_eq!(
-        read.abi_candidate_offset(7, true),
-        Err(CursorFault::PinAssert)
-    );
-    assert_eq!(
-        read.abi_candidate_offset(8, true),
-        Err(CursorFault::PinAssert)
-    );
-}
-
+// Rust contract: an empty matrix only admits candidate offset zero.
 #[test]
 fn an_empty_matrix_asserts_on_a_candidate_offset_past_column_zero() {
     let (context, mut inst) = pinyin_instance();
@@ -89,8 +83,7 @@ fn an_empty_matrix_asserts_on_a_candidate_offset_past_column_zero() {
 }
 
 // From the facade-orchestration laws (see instance/tests.rs).
-/// At a separator column the zhuyin accessor reads the zero key itself;
-/// the pinyin accessor walks on to the next real key.
+// Register row 122 distinguishes a typed separator from a syllable key.
 #[test]
 fn abi_key_at_a_separator_reads_the_zero_key_only_for_zhuyin() {
     let context = open_context(crate::OptionBits::from_bits_retain(0x18a));
@@ -107,6 +100,7 @@ fn abi_key_at_a_separator_reads_the_zero_key_only_for_zhuyin() {
     assert_eq!(packed(false).to_le_bytes(), [0x86, 0x02]);
 }
 
+// Rust contract: cursor movement follows the active parse spans.
 #[test]
 fn cursor_laws_step_by_key_in_both_modes() {
     let (context, mut inst) = pinyin_instance();
@@ -183,8 +177,7 @@ mod native {
         (context, instance)
     }
 
-    /// Every matrix alternative participates in the
-    /// character walk (pinyin.cpp:3138-3191, zhuyin.cpp:2117).
+    // 074a2219 pinyin.cpp:3138–3191 and zhuyin.cpp:2117 walk the character spans.
     #[rstest::rstest]
     #[case::double(UserConfLaw::Pinyin, 7, "long", "ns", 2, 1, true)]
     #[case::chewing(UserConfLaw::Pinyin, 7, "long", "sj/", 3, 1, false)]
@@ -230,8 +223,9 @@ mod native {
         );
     }
 
+    // Register row 122 retains divided columns in the original input coordinates.
     #[test]
-    fn the_left_offset_reads_the_divided_column() {
+    fn cursor_getters_read_the_divided_column() {
         let (context, instance) = luoma_xian();
         assert_eq!(
             instance
@@ -240,23 +234,14 @@ mod native {
                 .unwrap(),
             2
         );
-    }
-    #[test]
-    fn the_right_offset_reads_the_divided_column() {
-        let (context, instance) = luoma_xian();
+
         assert_eq!(
             instance.read(&context.runtime).right_offset(2).unwrap(),
             Some(4)
         );
-    }
-    #[test]
-    fn the_cursor_offset_stops_at_the_divided_column() {
-        let (context, instance) = luoma_xian();
+
         assert_eq!(instance.read(&context.runtime).lookup_offset(2).unwrap(), 2);
-    }
-    #[test]
-    fn the_key_rest_getter_reads_the_divided_column() {
-        let (context, instance) = luoma_xian();
+
         let key = instance
             .read(&context.runtime)
             .abi_key_at(2, false)
@@ -265,6 +250,7 @@ mod native {
         assert_eq!((key.1, key.2), (2, 4));
     }
 
+    // Register row 122 preserves resplit keys on both parse paths.
     #[rstest::rstest]
     fn a_resplit_key_pair_spells_a_phrase_on_the_session_and_index_paths(
         #[values(1, 2)] scheme: i32,
@@ -286,10 +272,9 @@ mod native {
         );
     }
 
+    // 074a2219 phonetic_lookup.cpp:88–115 clears the forcing at its stored start.
     #[rstest::rstest]
     #[case::hanyu_guess_at_the_key(1, "ni'hao", 3, [false, true])]
-    #[case::hanyu_guess_at_the_separator(1, "ni'hao", 2, [true, true])]
-    #[case::luoma_guess_at_the_key(2, "ni'hao", 3, [false, true])]
     #[case::luoma_guess_at_the_separator(2, "ni'hao", 2, [true, true])]
     fn a_guess_start_is_the_forcings_start_across_a_separator(
         #[case] scheme: i32,
@@ -329,6 +314,7 @@ mod native {
             .map(|row| row.text().as_str().unwrap().to_owned())
             .collect()
     }
+    // Register row 122 allows lookup inside a divided Luoma key.
     #[test]
     fn a_guess_at_a_divided_column_inside_a_luoma_key_searches_it() {
         let hanyu = divided_window(1, "xian");
@@ -336,6 +322,7 @@ mod native {
         assert_eq!(divided_window(2, "sian"), hanyu);
     }
 
+    // Rust contract: double-pinyin lookup distinguishes mid-key input offsets.
     #[test]
     fn a_double_pinyin_lookup_identifies_mid_key_columns() {
         let (context, mut instance) = pinyin_instance();

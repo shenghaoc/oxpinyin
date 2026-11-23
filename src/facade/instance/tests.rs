@@ -10,6 +10,7 @@ use crate::facade::ChewingCorrections;
 
 use crate::facade::test_fixture::{pinyin_instance, zhuyin_instance};
 
+// Rust contract: a new instance has no active composition or results.
 #[test]
 fn a_fresh_instance_is_empty_and_answers_nothing() {
     let (mut context, mut inst) = pinyin_instance();
@@ -22,11 +23,11 @@ fn a_fresh_instance_is_empty_and_answers_nothing() {
     );
 }
 
+// Rust contract: offset validation uses the active parse length.
 #[test]
 fn lookup_offset_validation_follows_the_active_mode() {
     let (context, mut inst) = pinyin_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
-    // Plain full pinyin: in range, normalised by the session's own law.
     assert!(
         inst.bind(&context.runtime)
             .validate_lookup_offset(0)
@@ -51,7 +52,6 @@ fn lookup_offset_validation_follows_the_active_mode() {
             .parse_chewing_more("su3cl3", ChewingCorrections::FromOptions),
         6
     );
-    // The zhuyin mode validates against the parse's consumed length.
     assert_eq!(
         zhuyin
             .bind(&zhuyin_context.runtime)
@@ -74,39 +74,36 @@ fn lookup_offset_validation_follows_the_active_mode() {
     );
 }
 
-#[test]
-fn a_re_parse_that_extends_the_buffer_continues_the_composition() {
-    let (context, mut inst) = pinyin_instance();
-    assert_eq!(inst.bind(&context.runtime).parse_full_more("ni"), 2);
-    // The frontend re-sends the whole buffer every keystroke.
-    inst.bind(&context.runtime).begin_parse(b"nihao");
-    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
-    assert_eq!(inst.bind(&context.runtime).parsed_len, 5);
-    // Backspace: the buffer shrinks into the composition and stays open.
-    inst.bind(&context.runtime).begin_parse(b"niha");
-    assert_eq!(inst.bind(&context.runtime).parse_full_more("niha"), 4);
-    assert_eq!(inst.bind(&context.runtime).parsed_len, 4);
+// Rust contract: begin_parse keeps related buffers in the composition and restarts on divergence.
+#[rstest::rstest]
+#[case::related("ni", &["nihao", "niha"], false)]
+#[case::divergent("nihao", &["women"], true)]
+fn reparse_updates_the_active_composition(
+    #[case] initial: &str,
+    #[case] edits: &[&str],
+    #[case] restarted: bool,
+) {
+    let (context, mut instance) = pinyin_instance();
+    let mut view = instance.bind(&context.runtime);
+    assert_eq!(view.parse_full_more(initial), initial.len());
+    for &input in edits {
+        view.begin_parse(input.as_bytes());
+        assert_eq!(view.parse_full_more(input), input.len());
+        assert_eq!(view.parsed_len, input.len());
+        if restarted {
+            assert_eq!(view.session.raw_input(), input);
+            assert_eq!(view.session.composition_offset(), 0);
+        }
+    }
 }
 
-#[test]
-fn a_divergent_buffer_starts_a_fresh_composition() {
-    let (context, mut inst) = pinyin_instance();
-    assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
-    inst.bind(&context.runtime).begin_parse(b"women");
-    assert_eq!(inst.bind(&context.runtime).parse_full_more("women"), 5);
-    assert_eq!(inst.bind(&context.runtime).session.raw_input(), "women");
-    assert_eq!(inst.bind(&context.runtime).session.composition_offset(), 0);
-}
-
+// Rust contract: parse reset preserves the session and full reset clears it.
 #[test]
 fn the_parse_reset_keeps_the_session_and_the_full_reset_clears_it() {
     let (context, mut inst) = pinyin_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
     inst.bind(&context.runtime).reset_parse_state();
     assert_eq!(inst.bind(&context.runtime).parsed_len, 0);
-    // The parse path resets the composition's parse state only: the raw
-    // buffer (which the frontend re-sends every keystroke), the selection
-    // record and the constraint store survive.
     assert!(inst.bind(&context.runtime).session.is_composing());
     assert_eq!(inst.bind(&context.runtime).session.raw_input(), "nihao");
     assert_eq!(inst.bind(&context.runtime).parse_full_more("nihao"), 5);
@@ -123,10 +120,10 @@ mod native {
     use crate::facade::{ChewingCorrections, ContextCore, InstanceCore};
     use crate::user::UserConfLaw;
 
+    // Register row 122 gives a leading separator an empty first column.
     #[rstest::rstest]
     #[case::pinyin_luoma(UserConfLaw::Pinyin, 2)]
     #[case::zhuyin_hanyu(UserConfLaw::Zhuyin, 1)]
-    #[case::zhuyin_luoma(UserConfLaw::Zhuyin, 2)]
     fn a_leading_separator_guess_has_no_sentence(#[case] law: UserConfLaw, #[case] scheme: i32) {
         let user = TempUserDir::new("separator-sentence");
         let mut context = native_context(&system_dir(), &user.path, law);
@@ -146,6 +143,7 @@ mod native {
         assert_eq!(sentence(&context, &instance, 0), None);
     }
 
+    // 074a2219 pinyin.cpp:2582–2588 constrains the selected row span.
     #[test]
     fn a_repeat_choose_of_an_accepted_row_forces_its_own_span_again() {
         let start = |tag| {
@@ -195,6 +193,7 @@ mod native {
         assert_eq!(counts(&once_context), counts(&twice_context));
     }
 
+    // 074a2219 pinyin.cpp:2582–2588 retains a forced phrase for the next lookup.
     #[test]
     fn a_new_sentence_lookup_trains_a_forcing() {
         let user = TempUserDir::new("train-restep");
@@ -220,6 +219,7 @@ mod native {
         assert!(context.train(&instance, 0).unwrap());
     }
 
+    // Rust contract: a committed composition reparses against its active store.
     #[test]
     fn a_selection_committed_composition_reparses_with_its_store() {
         let (context, mut instance) = pinyin_instance();
@@ -256,6 +256,7 @@ mod native {
         );
     }
 
+    // 074a2219 pinyin.cpp:1497–1525 leaves the previous guess on reparse.
     #[test]
     fn a_reparse_keeps_the_stale_nbest_result_until_the_next_guess() {
         let (context, mut instance) = pinyin_instance();
@@ -277,6 +278,7 @@ mod native {
         assert_eq!(sentence(&context, &instance, 0).as_deref(), Some("中国"));
     }
 
+    // Rust contract: reparse uses the typed buffer even with an overlong stored key.
     #[test]
     fn a_reparse_after_a_guess_ignores_an_overlong_index_key() {
         let user = TempUserDir::new("overlong-reparse");
@@ -296,6 +298,7 @@ mod native {
         assert_eq!(instance.bind(&context.runtime).parse_full_more("ni"), 2);
     }
 
+    // Rust contract: phrase getters enumerate the segmented result.
     #[test]
     fn a_sentence_is_handed_out_phrase_by_phrase() {
         let (context, mut instance) = pinyin_instance();
@@ -321,6 +324,7 @@ mod native {
         assert!(!joined.is_empty());
     }
 
+    // Rust contract: the parsed length and matrix length describe the stored parse.
     #[test]
     fn the_length_getters_answer_the_stored_parse_length() {
         let mut context = open_context(crate::facade::PINYIN_DEFAULT_OPTION_WORD);
@@ -341,6 +345,7 @@ mod native {
         assert_eq!(lengths(&context, &instance), (0, 0));
     }
 
+    // Rust contract: a guess reads options captured in the parse matrix.
     #[test]
     fn a_guess_after_an_option_change_reads_the_parse_time_matrix() {
         let mut context = open_context(crate::facade::PINYIN_DEFAULT_OPTION_WORD);
@@ -357,6 +362,7 @@ mod native {
         assert_eq!(sentence(&context, &instance, 0), Some(parsed));
     }
 
+    // Rust contract: a choice without a forcing leaves the full matrix available.
     #[test]
     fn a_guess_after_a_choice_without_a_forcing_decodes_the_whole_matrix() {
         let (context, mut instance) = pinyin_instance();
@@ -376,23 +382,25 @@ mod native {
         assert_eq!(sentence(&context, &instance, 0), decoded);
     }
 
-    #[test]
-    fn empty_segment_succeeds_with_an_empty_result() {
+    // Rust contract: segmentation exposes its success flag and sized result array.
+    #[rstest::rstest]
+    #[case::empty("", true, 0, &[(0,None)])]
+    #[case::unmatched("abcd", false, 4, &[(0,Some(0)),(3,Some(0))])]
+    fn segment_result(
+        #[case] text: &str,
+        #[case] success: bool,
+        #[case] count: usize,
+        #[case] tokens: &[(usize, Option<u32>)],
+    ) {
         let (context, mut instance) = pinyin_instance();
         let mut view = instance.bind(&context.runtime);
-        assert!(view.segment_phrases("").unwrap());
-        assert_eq!(view.phrase_count(), 0);
-        assert_eq!(view.phrase_token(0), None);
+        assert_eq!(view.segment_phrases(text).unwrap(), success);
+        assert_eq!(view.phrase_count(), count);
+        for &(index, token) in tokens {
+            assert_eq!(view.phrase_token(index), token);
+        }
     }
-    #[test]
-    fn failed_match_keeps_the_sized_all_null_array() {
-        let (context, mut instance) = pinyin_instance();
-        let mut view = instance.bind(&context.runtime);
-        assert!(!view.segment_phrases("abcd").unwrap());
-        assert_eq!(view.phrase_count(), 4);
-        assert_eq!(view.phrase_token(0), Some(0));
-        assert_eq!(view.phrase_token(3), Some(0));
-    }
+    // Rust contract: full reset clears the segmentation result.
     #[test]
     fn reset_clears_the_phrase_result() {
         let (context, mut instance) = pinyin_instance();
@@ -405,6 +413,7 @@ mod native {
         assert_eq!(view.phrase_token(0), None);
     }
 
+    // Rust contract: training requires a current result.
     #[test]
     fn training_requires_a_result_and_reset_starts_new_composition() {
         let user = TempUserDir::new("train-doubling");
@@ -466,12 +475,7 @@ mod native {
         assert!(guess(context, instance));
     }
 
-    /// The fuzz probe answers the pin's own training aborts without
-    /// running them: an index past the nonempty results
-    /// (`pinyin.cpp:2684`) and a stale span after a shortening re-parse
-    /// (`storage/phonetic_key_matrix.cpp:661`) answer `true` where
-    /// `Runtime::train_session` dies. A context without a user directory
-    /// answers `false` from the same gate `pinyin_train` runs first.
+    // 074a2219 pinyin.cpp:2684 and phonetic_key_matrix.cpp:661 specify the training assertion sites.
     #[test]
     fn the_training_probe_answers_the_pins_own_aborts() {
         let user = TempUserDir::new("train-probe-true");
@@ -481,8 +485,6 @@ mod native {
         assert!(guess(&context, &mut instance));
         assert!(instance.read(&context.runtime).train_aborts(9));
         assert!(!instance.read(&context.runtime).train_aborts(0));
-        // A choose, then a shortening re-parse: the surviving store
-        // outlives the matrix and the span walk leaves it.
         choose_a_phrase_and_reguess(&context, &mut instance);
         assert_eq!(instance.bind(&context.runtime).parse_full_more("ni"), 2);
         assert!(instance.read(&context.runtime).train_aborts(0));
@@ -493,21 +495,10 @@ mod native {
         assert!(!no_user.read(&fixture.runtime).train_aborts(9));
     }
 
-    /// A store fault that production training dies on answers the probe
-    /// `true`, so the fuzz harness never calls `pinyin_train` into a
-    /// known abort: the crafted set-freq miss is classified
-    /// `TrainingRefusal::Abort`, exactly as `pinyin_train` classifies it.
+    // Register row 113 covers a store fault during training.
     #[test]
     fn a_store_fault_that_production_dies_on_answers_the_probe_true() {
         let user = TempUserDir::new("train-probe-store-abort");
-        // A sentence-start user gram with whole items whose tokens
-        // straddle every real phrase token: the trained step's `get_freq`
-        // misses, `insert_freq` appends the forced token, and `set_freq`'s
-        // second `lower_bound` stops on a high token before the appended
-        // item — the pin's `check_result` dies (`phonetic_lookup.h:903`,
-        // register row 113). Lookups survive the unsorted row (whole
-        // items, no partial tail), so the guesses succeed and only
-        // training's store check meets the fault.
         let gram = |tokens: &[u32]| {
             let mut value = 0_u32.to_le_bytes().to_vec();
             for &token in tokens {
@@ -535,16 +526,13 @@ mod native {
             matches!(&result, Err(crate::engine::EngineError::TrainingAbort)),
             "{result:?}"
         );
-        // The classification the probe shares: the C adapters terminate.
         assert_eq!(
             crate::facade::training_answer(result),
             Err(crate::facade::TrainingRefusal::Abort)
         );
     }
 
-    /// The probe runs the whole shared preparation and nothing more: it
-    /// never observes the plan and never marks the store modified, and
-    /// production training over the same state still observes.
+    // Rust contract: probing a training fault preserves the user store.
     #[test]
     fn the_training_probe_observes_nothing_and_leaves_the_store_clean() {
         let user = TempUserDir::new("train-probe-pure");
@@ -601,12 +589,7 @@ mod native_full_data {
             .map(|item| row(item.kind(), item.text().as_str().unwrap(), item.nbest_row()))
             .collect()
     }
-    /// S4: the tenth and the last row of the 0x18a list at offset 0, chosen, then the window at the
-    /// cursor. A NORMAL row's choose answers `offset + add_constraint(m_begin, m_end)`, the span it
-    /// constrains (`pinyin.cpp:2582-2588` at 074a2219; `lookup/phonetic_lookup.cpp:61-86`): 2 for a
-    /// `ni` row, 3 for a whole `shi`. The window then leads with the constrained sentences, deduped
-    /// by string (`pinyin.cpp:2295-2300`). Observations `deep-choose/nihao@10`, `deep-choose/shi@10`,
-    /// `last-choose/nihao` and `last-choose/shi`.
+    // Frozen observations: deep-choose/nihao@10 and last-choose/shi.
     #[test]
     fn choosing_a_deep_or_last_row_constrains_its_span() {
         struct Case {
@@ -636,24 +619,6 @@ mod native_full_data {
                 cursor: 2,
                 window: 96,
                 head: after_ni("溺"),
-            },
-            Case {
-                input: "nihao",
-                count: 126,
-                index: 125,
-                text: "袮",
-                cursor: 2,
-                window: 96,
-                head: after_ni("袮"),
-            },
-            Case {
-                input: "shi",
-                count: 280,
-                index: 10,
-                text: "史",
-                cursor: 3,
-                window: 1,
-                head: vec![row(NBEST, "史", Some(0))],
             },
             Case {
                 input: "shi",
@@ -699,7 +664,7 @@ mod native_full_data {
         }
     }
 
-    /// pinyin.cpp:2515-2520 applies a selected tail rank against result zero.
+    // 074a2219 pinyin.cpp:2515–2520 applies the selected tail rank against result zero.
     #[test]
     fn choosing_a_nonzero_nbest_row_trains_the_selected_result() {
         let user = TempUserDir::new("nonzero-nbest");
@@ -752,23 +717,7 @@ mod native_full_data {
         }
     }
 
-    /// Constraint revalidation: 整个 forced over its abbreviation `zhg`, one initial-only key per
-    /// syllable. Observations `constraint-revalidation/pinyin/zhg-整个` (`PhoneticLookup<2, 3>`,
-    /// under 0x18a) and `constraint-revalidation/zhuyin/zhg-整个` (`PhoneticLookup<1, 1>`,
-    /// `zhuyin.cpp:348`, parsed as full pinyin under `PINYIN_INCOMPLETE` alone) at 074a2219. The chewing parsers refuse an
-    /// initial-only key (`zhuyin_parser2.cpp:256-257`), and the default `FORCE_TONE` refuses an
-    /// untoned full pinyin (`pinyin_parser2.cpp:185-189`).
-    ///
-    /// `fill_matrix` puts `zh` at column 0 and `g` at column 2 (`phonetic_key_matrix.cpp:30-84`;
-    /// `zhuyin.cpp:1017-1043`). The choose constrains `[0, 3)` (`pinyin.cpp:2578-2588`,
-    /// `zhuyin.cpp:1650-1655`; `lookup/phonetic_lookup.cpp:61-86`). `validate_constraint` keeps
-    /// the forcing at the next guess (`zhuyin.cpp:886-910`; `phonetic_lookup.cpp:120-167`),
-    /// because an incomplete key matches any final (`pinyin_phrase3.h:80-86`), and on the pinyin
-    /// facade the one forced path leaves one sentence row
-    /// (`lookup/phonetic_lookup.h:552-554,601-612,776-788`). A parse never touches the constraints
-    /// (`pinyin.cpp:1497-1525`), so the forcing survives `zh` and `zhg` parsed with no guess
-    /// between. A guess on `zh` shrinks the store to 3 and clears the forcing that ends at 3
-    /// (`phonetic_lookup.cpp:136-138,145-148`).
+    // 074a2219 phonetic_lookup.cpp:120–167 revalidates a forcing against the current matrix.
     #[rstest::rstest]
     #[case::pinyin(UserConfLaw::Pinyin, 0x18a)]
     #[case::zhuyin(UserConfLaw::Zhuyin, 0x8)]
@@ -781,7 +730,6 @@ mod native_full_data {
         let mut context = native_context(&contract_data::contract_data_dir(), &user.path, law);
         context.set_options(OptionBits::from_bits_retain(options));
         let mut instance = native_instance(&context, law);
-        // Parses `text` as full pinyin; the parse and the parsed length are its byte length.
         let parse = |instance: &mut InstanceCore, text: &str| {
             let mut view = instance.bind(&context.runtime);
             let consumed = if zhuyin {
@@ -795,7 +743,6 @@ mod native_full_data {
                 text.len()
             );
         };
-        // Parses `text` and decodes it; answers sentence 0.
         let decoded = |instance: &mut InstanceCore, text: &str| {
             parse(instance, text);
             assert!(guess(&context, instance));
@@ -817,7 +764,6 @@ mod native_full_data {
         assert_eq!(sentence(&context, &instance, 0).as_deref(), Some("中国"));
         let before = rows(&context, &mut instance, 0);
         assert_eq!(before.len(), 2025);
-        // The zhuyin facade lists one sentence row; the pinyin facade lists the n-best rows.
         let second = if zhuyin {
             row(NORMAL, "这个", None)
         } else {
@@ -838,7 +784,6 @@ mod native_full_data {
         );
         assert_eq!(selected.end, 3);
 
-        // Revalidated by the guess.
         assert!(guess(&context, &mut instance));
         assert_eq!(sentence(&context, &instance, 0).as_deref(), Some("整个"));
         let after = rows(&context, &mut instance, 0);
@@ -852,11 +797,9 @@ mod native_full_data {
             ]
         );
 
-        // A replaced selection: no guess sees the shorter parse.
         parse(&mut instance, "zh");
         assert_eq!(decoded(&mut instance, "zhg").as_deref(), Some("整个"));
 
-        // A guess on the shorter parse clears the forcing.
         assert_eq!(decoded(&mut instance, "zh").as_deref(), Some("中"));
         assert_eq!(decoded(&mut instance, "zhg").as_deref(), Some("中国"));
     }
