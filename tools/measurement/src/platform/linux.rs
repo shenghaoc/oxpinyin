@@ -225,14 +225,13 @@ mod allocator {
         let Ok(path) = CString::new(format!("{directory}/{tag}-mallocinfo.xml")) else {
             return;
         };
-        // SAFETY: path and mode are NUL-terminated; only a successful fopen is
-        // passed to malloc_info and fclose, exactly once.
-        unsafe {
-            let file = libc::fopen(path.as_ptr(), c"w".as_ptr());
-            if !file.is_null() {
-                libc::malloc_info(0, file);
-                libc::fclose(file);
-            }
+        // SAFETY: path and mode are live, NUL-terminated strings.
+        let file = unsafe { libc::fopen(path.as_ptr(), c"w".as_ptr()) };
+        if !file.is_null() {
+            // SAFETY: fopen returned an open writable stream and options is zero.
+            unsafe { libc::malloc_info(0, file) };
+            // SAFETY: this is the successful fopen stream, not yet closed.
+            unsafe { libc::fclose(file) };
         }
     }
 }

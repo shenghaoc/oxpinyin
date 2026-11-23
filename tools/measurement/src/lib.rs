@@ -1,4 +1,5 @@
 //! Nonshipping C-ABI workloads shared by the measurement recipes.
+#![deny(clippy::multiple_unsafe_ops_per_block)]
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,

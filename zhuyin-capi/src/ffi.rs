@@ -159,13 +159,11 @@ pub(crate) fn symbol_vector(items: &[impl AsRef<str>]) -> *mut *mut c_char {
         unsafe { glib_sys::g_ptr_array_free(array, glib_sys::GTRUE) };
         return ptr::null_mut();
     }
-    // SAFETY: `array` is live. Adding NULL terminates the vector, and
-    // `g_ptr_array_free(…, FALSE)` releases the array and hands its
-    // segment, now owned by the caller, back.
-    unsafe {
-        glib_sys::g_ptr_array_add(array, ptr::null_mut());
-        glib_sys::g_ptr_array_free(array, glib_sys::GFALSE).cast()
-    }
+    // SAFETY: The array is live and GLib accepts NULL as the terminating element.
+    unsafe { glib_sys::g_ptr_array_add(array, ptr::null_mut()) };
+    // SAFETY: The array is live and owned here. FALSE releases only the
+    // array wrapper and transfers the NULL-terminated segment to the caller.
+    unsafe { glib_sys::g_ptr_array_free(array, glib_sys::GFALSE) }.cast()
 }
 
 /// The pin's `convert_to_utf8` over the sentence row's phrases
@@ -210,13 +208,12 @@ pub(crate) fn sentence_text(
                 )
             }
         };
-        // SAFETY: `converted` is NULL or this call's encoder buffer, and
-        // `previous` NULL or the GLib string this loop owns; nothing else
-        // holds either, and `g_free` releases both.
-        unsafe {
-            glib_sys::g_free(converted.cast());
-            glib_sys::g_free(previous.cast());
-        }
+        // SAFETY: `converted` is NULL or this call's owned encoder buffer,
+        // which the new result no longer borrows.
+        unsafe { glib_sys::g_free(converted.cast()) };
+        // SAFETY: `previous` is NULL or the GLib string this loop owns.
+        // The new result does not borrow it.
+        unsafe { glib_sys::g_free(previous.cast()) };
     }
     result
 }

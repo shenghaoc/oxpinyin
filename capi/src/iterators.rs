@@ -68,13 +68,14 @@ impl BigramHandle {
         // SAFETY: Both are NULL or this call's NUL-terminated buffers.
         let phrase = unsafe { strconcat_pair(first, second) };
         // SAFETY: `self.phrase` is NULL or the previous pair's GLib string,
-        // which this handle alone owns; `second` and `first` are NULL or
-        // this call's encoder buffers. `g_free` releases each.
-        unsafe {
-            glib_sys::g_free(self.phrase.cast());
-            glib_sys::g_free(second.cast());
-            glib_sys::g_free(first.cast());
-        }
+        // which this handle alone owns and will not read again.
+        unsafe { glib_sys::g_free(self.phrase.cast()) };
+        // SAFETY: `second` is NULL or this call's owned encoder buffer.
+        // Concatenation has finished reading it.
+        unsafe { glib_sys::g_free(second.cast()) };
+        // SAFETY: `first` is NULL or this call's owned encoder buffer.
+        // Concatenation has finished reading it.
+        unsafe { glib_sys::g_free(first.cast()) };
         self.phrase = phrase;
         if phrase.is_null() {
             self.walk.drop_phrase();

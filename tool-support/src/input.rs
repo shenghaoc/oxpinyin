@@ -197,25 +197,33 @@ impl OptionArg {
 
     /// The slot after parsing.
     fn read(&self, value: RawValue) -> OptionValue {
-        // SAFETY: each slot was initialised as the member its `GOptionArg`
-        // names, and GLib writes that type there.
-        unsafe {
-            match self {
-                Self::Flag(_) => OptionValue::Flag(value.flag != 0),
-                Self::Int(_) => OptionValue::Int(value.integer),
-                Self::Double(_) => OptionValue::Double(value.number),
-                Self::Filename(_) if value.string == self.default_string() => {
-                    OptionValue::Filename(
-                        (!value.string.is_null())
-                            .then(|| CStr::from_ptr(value.string).to_bytes().to_vec()),
-                    )
+        match self {
+            Self::Flag(_) => {
+                // SAFETY: this slot was initialised as a flag, and GLib writes a gboolean.
+                OptionValue::Flag(unsafe { value.flag } != 0)
+            }
+            Self::Int(_) => {
+                // SAFETY: this slot was initialised as an integer, and GLib writes a gint.
+                OptionValue::Int(unsafe { value.integer })
+            }
+            Self::Double(_) => {
+                // SAFETY: this slot was initialised as a number, and GLib writes a gdouble.
+                OptionValue::Double(unsafe { value.number })
+            }
+            Self::Filename(default) | Self::String(default) => {
+                // SAFETY: both option kinds initialise the string member;
+                // GLib writes a gchar pointer to it.
+                let string = unsafe { value.string };
+                let bytes = if string == self.default_string() {
+                    default.map(|text| text.to_bytes().to_vec())
+                } else {
+                    take_glib_string(string)
+                };
+                if matches!(self, Self::Filename(_)) {
+                    OptionValue::Filename(bytes)
+                } else {
+                    OptionValue::String(bytes)
                 }
-                Self::Filename(_) => OptionValue::Filename(take_glib_string(value.string)),
-                Self::String(_) if value.string == self.default_string() => OptionValue::String(
-                    (!value.string.is_null())
-                        .then(|| CStr::from_ptr(value.string).to_bytes().to_vec()),
-                ),
-                Self::String(_) => OptionValue::String(take_glib_string(value.string)),
             }
         }
     }
@@ -327,39 +335,40 @@ pub fn parse_options(
         .collect();
     let mut argv_ptr = argv.as_mut_ptr();
     let mut error: *mut glib_sys::GError = core::ptr::null_mut();
-    // SAFETY: every name and description is a `'static` NUL-terminated
-    // string or NULL; the entry array ends with a zeroed entry and, with the
-    // value slots each `arg_data` points at, outlives the context, which is
-    // freed below; `argv` is `argc` valid C strings and a NULL, which GLib
-    // permutes and shortens in place.
-    let (context, parsed) = unsafe {
-        let context = glib_sys::g_option_context_new(parameter_string.as_ptr());
-        glib_sys::g_option_context_add_main_entries(context, options.as_ptr(), core::ptr::null());
-        let parsed = glib_sys::g_option_context_parse(
-            context,
-            &raw mut argc,
-            &raw mut argv_ptr,
-            &raw mut error,
-        );
-        (context, parsed)
+    // SAFETY: the parameter string is statically allocated and NUL-terminated.
+    let context = unsafe { glib_sys::g_option_context_new(parameter_string.as_ptr()) };
+    // SAFETY: the context is live. Entry names and descriptions are static
+    // C strings or NULL, and the zero-terminated array and value slots
+    // that its entries point at outlive the context.
+    unsafe {
+        glib_sys::g_option_context_add_main_entries(context, options.as_ptr(), core::ptr::null())
+    };
+    // SAFETY: the context and its value slots are live. The writable argv
+    // array holds argc valid C-string pointers followed by NULL; GLib may
+    // permute and shorten the array. The error pointer starts as NULL.
+    let parsed = unsafe {
+        glib_sys::g_option_context_parse(context, &raw mut argc, &raw mut argv_ptr, &raw mut error)
     };
     if parsed == 0 {
-        // SAFETY: a failed parse sets `error` to a GError whose message is a
-        // NUL-terminated string; the format takes one string. The error and
-        // the context are freed once, after the message.
-        unsafe {
-            glib_sys::g_print(c"option parsing failed:%s\n".as_ptr(), (*error).message);
-            glib_sys::g_error_free(error);
-            glib_sys::g_option_context_free(context);
-        }
+        let format = c"option parsing failed:%s\n".as_ptr();
+        // SAFETY: a failed parse sets the supplied out-parameter to a live GError.
+        let message = unsafe { (*error).message };
+        // SAFETY: the format takes one C string, and the error still owns
+        // its NUL-terminated message.
+        unsafe { glib_sys::g_print(format, message) };
+        // SAFETY: GLib allocated this error and neither it nor its message is used again.
+        unsafe { glib_sys::g_error_free(error) };
+        // SAFETY: this context is still live and has no further users.
+        unsafe { glib_sys::g_option_context_free(context) };
         return Err(OptionsFailed);
     }
     let count = usize::try_from(argc).unwrap_or(0);
     let mut args = Vec::with_capacity(count);
     for index in 0..count {
-        // SAFETY: GLib leaves `argv_ptr` pointing at `argc` valid strings
-        // (the caller's, or GLib's own where it converts them).
-        let arg = unsafe { *argv_ptr.add(index) };
+        // SAFETY: index is below argc, within the remaining argv array.
+        let slot = unsafe { argv_ptr.add(index) };
+        // SAFETY: this slot contains an initialised pointer and the array is still live.
+        let arg = unsafe { *slot };
         if arg.is_null() {
             break;
         }
@@ -405,9 +414,11 @@ pub fn strsplit_set(string: &CStr, delimiters: &CStr, max_tokens: c_int) -> Vec<
         return parts;
     }
     for index in 0.. {
-        // SAFETY: `g_strsplit_set` answers a NULL-terminated array of
-        // NUL-terminated strings; `index` never passes its NULL.
-        let part = unsafe { *array.add(index) };
+        // SAFETY: this loop stops at the array's NULL terminator, so
+        // index is within the GLib allocation, including that terminator.
+        let slot = unsafe { array.add(index) };
+        // SAFETY: GLib initialised the pointer in this slot; the array is still live.
+        let part = unsafe { *slot };
         if part.is_null() {
             break;
         }
@@ -744,21 +755,19 @@ pub mod pin_tests {
     // test_pinyin.cpp:49–50.
     /// Prints and flushes the prefix prompt on standard output.
     pub fn prefix_prompt() {
-        // SAFETY: the host stdout object and literal format are valid.
-        unsafe {
-            libc::fprintf(c_stdout(), c"prefix:".as_ptr());
-            libc::fflush(c_stdout());
-        }
+        // SAFETY: the utility's stdout stream is open; the format takes no arguments.
+        unsafe { libc::fprintf(c_stdout(), c"prefix:".as_ptr()) };
+        // SAFETY: stdout remains open after printing the prompt.
+        unsafe { libc::fflush(c_stdout()) };
     }
 
     // test_pinyin.cpp:55–56.
     /// Prints and flushes the pinyin prompt on standard output.
     pub fn pinyin_prompt() {
-        // SAFETY: the host stdout object and literal format are valid.
-        unsafe {
-            libc::fprintf(c_stdout(), c"pinyin:".as_ptr());
-            libc::fflush(c_stdout());
-        }
+        // SAFETY: the utility's stdout stream is open; the format takes no arguments.
+        unsafe { libc::fprintf(c_stdout(), c"pinyin:".as_ptr()) };
+        // SAFETY: stdout remains open after printing the prompt.
+        unsafe { libc::fflush(c_stdout()) };
     }
 
     // test_pinyin.cpp:73 and test_chewing.cpp:57 use printf("auxiliary text:%s\\n", …),
@@ -1312,14 +1321,18 @@ pub mod storage {
     /// was set, nothing converted, or trailing bytes remained.
     #[must_use]
     pub fn ascii_strtoull(field: &CStr) -> Option<u64> {
-        // SAFETY: the errno cell is this thread's; the call below sets it.
-        unsafe { *errno_location() = 0 };
+        // SAFETY: the accessor is called on the thread whose errno will be reset.
+        let errno = unsafe { errno_location() };
+        // SAFETY: this is the current thread's writable errno cell.
+        unsafe { *errno = 0 };
         let mut end: *mut c_char = core::ptr::null_mut();
         // SAFETY: `field` is NUL-terminated and outlives the call; `end`
         // receives a pointer into it.
         let parsed = unsafe { glib_sys::g_ascii_strtoull(field.as_ptr(), &raw mut end, 10) };
-        // SAFETY: the errno cell is this thread's.
-        let failed = unsafe { *errno_location() } != 0;
+        // SAFETY: the accessor is called on the thread that just performed the conversion.
+        let errno = unsafe { errno_location() };
+        // SAFETY: this is the current thread's initialised errno cell.
+        let failed = unsafe { *errno } != 0;
         if failed || end.is_null() || end == field.as_ptr().cast_mut() {
             return None;
         }
@@ -1812,10 +1825,11 @@ pub const OPTION_FLAG_REVERSE: c_int = glib_sys::G_OPTION_FLAG_REVERSE as c_int;
 /// `strerror(errnum)`, copied out of the C library's static buffer.
 #[must_use]
 pub fn strerror(errnum: c_int) -> CString {
-    // SAFETY: `strerror` answers a NUL-terminated string for every error
-    // number; the copy happens before any other call in a single-threaded
-    // utility can replace it.
-    unsafe { CStr::from_ptr(libc::strerror(errnum)) }.to_owned()
+    // SAFETY: the C library accepts any c_int error number.
+    let message = unsafe { libc::strerror(errnum) };
+    // SAFETY: the C library returns a NUL-terminated string; the single-threaded
+    // utility copies it before another strerror call can replace it.
+    unsafe { CStr::from_ptr(message) }.to_owned()
 }
 
 // utils/training/*_k_mixture_model.cpp uses signed %d for guint32 fields and %f for

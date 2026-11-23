@@ -33,22 +33,33 @@ pub unsafe fn errno_location() -> *mut c_int {
 
 #[cfg(windows)]
 fn crt_error() -> std::io::Error {
-    // SAFETY: UCRT owns both readable error cells for this thread.
-    let os_code = unsafe { *__doserrno() };
+    // SAFETY: UCRT returns the DOS error cell for the calling thread.
+    let doserrno = unsafe { __doserrno() };
+    // SAFETY: the cell is live and readable on this thread.
+    let os_code = unsafe { *doserrno };
     if os_code != 0 {
         return std::io::Error::from_raw_os_error(os_code as i32);
     }
     // CRT-only validation errors have no Win32 code. Copy the CRT message;
     // do not interpret errno as a Windows error number.
-    // SAFETY: errno is thread-local; strerror returns a live C string.
-    let message = unsafe { CStr::from_ptr(libc::strerror(*errno_location())) };
+    // SAFETY: the returned errno cell is used only on this thread.
+    let errno = unsafe { errno_location() };
+    // SAFETY: the thread-local errno cell is live and readable.
+    let code = unsafe { *errno };
+    // SAFETY: strerror accepts a CRT error number and returns its message.
+    let message = unsafe { libc::strerror(code) };
+    // SAFETY: the CRT's NUL-terminated message is live through the copy below,
+    // with no intervening CRT call that can overwrite it.
+    let message = unsafe { CStr::from_ptr(message) };
     std::io::Error::other(message.to_string_lossy().into_owned())
 }
 
 #[cfg(windows)]
 fn clear_crt_os_error() {
-    // SAFETY: UCRT owns this thread's writable DOS error cell.
-    unsafe { *__doserrno() = 0 };
+    // SAFETY: UCRT returns the DOS error cell for the calling thread.
+    let doserrno = unsafe { __doserrno() };
+    // SAFETY: the cell is live and writable on this thread.
+    unsafe { *doserrno = 0 };
 }
 
 /// A native Windows path, terminated at the pin's first NUL.
@@ -128,14 +139,11 @@ impl ReadChunk {
         use libc::lseek;
         #[cfg(windows)]
         use libc::lseek64 as lseek;
-        // SAFETY: the descriptor is open and owned. Both seeks use zero
-        // offsets and the pin's whence values; the rewind result is ignored
-        // just as at memory_chunk.h:484. Windows uses the CRT's 64-bit seek.
-        let size = unsafe {
-            let size = lseek(self.0, 0, libc::SEEK_END);
-            lseek(self.0, 0, libc::SEEK_SET);
-            size
-        };
+        // SAFETY: the owned descriptor is open and SEEK_END accepts a zero offset.
+        let size = unsafe { lseek(self.0, 0, libc::SEEK_END) };
+        // SAFETY: the same descriptor is still open and SEEK_SET accepts a
+        // zero offset. Ignore the rewind result as at memory_chunk.h:484.
+        unsafe { lseek(self.0, 0, libc::SEEK_SET) };
         u64::try_from(size).map_err(|_| std::io::Error::last_os_error())
     }
 
@@ -427,15 +435,15 @@ impl Stream {
         counter: c_int,
     ) {
         let output = self.0.as_ptr();
-        // SAFETY: the stream is open for writing and owned; each format
-        // takes the one argument passed, an `int` for `%d` and the
-        // NUL-terminated `format`, which outlives the calls, for `%s`.
-        unsafe {
-            libc::fprintf(output, c"binary format version:%d\n".as_ptr(), binver);
-            libc::fprintf(output, c"model data version:%d\n".as_ptr(), modelver);
-            libc::fprintf(output, c"database format:%s\n".as_ptr(), format.as_ptr());
-            libc::fprintf(output, c"open counter:%d\n".as_ptr(), counter);
-        }
+        // SAFETY: the owned stream is open for writing; %d takes a c_int.
+        unsafe { libc::fprintf(output, c"binary format version:%d\n".as_ptr(), binver) };
+        // SAFETY: the owned stream is still open for writing; %d takes a c_int.
+        unsafe { libc::fprintf(output, c"model data version:%d\n".as_ptr(), modelver) };
+        // SAFETY: the owned stream is still open for writing, and format is
+        // a live NUL-terminated string as required by %s.
+        unsafe { libc::fprintf(output, c"database format:%s\n".as_ptr(), format.as_ptr()) };
+        // SAFETY: the owned stream is still open for writing; %d takes a c_int.
+        unsafe { libc::fprintf(output, c"open counter:%d\n".as_ptr(), counter) };
     }
 
     /// `fclose(stream)` at the point the pin closes it.

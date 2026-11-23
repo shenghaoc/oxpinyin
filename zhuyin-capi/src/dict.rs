@@ -68,19 +68,18 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
                 .count()
         });
     // SAFETY: A non-null array is a caller-owned GLib GArray. GLib
-    // 2.84.4 garray.c:595,762 checks NULL, logs a critical, and returns
-    // before accessing the array or data (including a zero-length append).
-    unsafe {
-        g_array_set_size(tokenarray, 0);
-        if let Some(count) = null_append_count {
-            for _ in 0..count {
-                g_array_append_vals(tokenarray, std::ptr::null(), 0);
-            }
-            if reduce_asserts {
-                std::process::abort();
-            }
-            return !tokens.is_empty();
+    // 2.84.4 garray.c:595 checks NULL and returns after logging a critical.
+    unsafe { g_array_set_size(tokenarray, 0) };
+    if let Some(count) = null_append_count {
+        for _ in 0..count {
+            // SAFETY: This branch has a NULL array. GLib 2.84.4 garray.c:762
+            // logs a critical and returns before reading the data pointer.
+            unsafe { g_array_append_vals(tokenarray, std::ptr::null(), 0) };
         }
+        if reduce_asserts {
+            std::process::abort();
+        }
+        return !tokens.is_empty();
     }
     if tokens.is_empty() {
         return false;

@@ -42,6 +42,13 @@
 //! adapter's own processor returns one, and it returns the header's
 //! `NOOP` object itself (`adapter.cc`, `KeyCollector`); nothing on the
 //! Rust side holds, copies or compares a sentinel.
+#![cfg_attr(
+    not(test),
+    expect(
+        clippy::multiple_unsafe_ops_per_block,
+        reason = "CXX generates the ABI marshalling operations together and checks the signatures against the C++ declarations"
+    )
+)]
 #![expect(
     unsafe_code,
     reason = "the cxx bridge declares the adapter's functions safe to call; the claims are in the backend module"
