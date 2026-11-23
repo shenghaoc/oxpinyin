@@ -109,55 +109,80 @@ fn deal_with_segmentable(search: &PhraseSearch<'_>, run: &[u32], output: &Output
 }
 
 /// `main` (`spseg.cpp:201-345`).
-pub fn main(args: impl IntoIterator<Item = OsString>) {
-    let _ = tool::set_locale_from_environment();
-    let entries = [
-        crate::segment::outputfile_entry(),
-        crate::segment::extra_enter_entry(),
-    ];
-    let parsed = crate::segment::parse_options(c"- shortest path segment", &entries, args);
-    let output = crate::segment::open_output(&parsed.values[0]);
-    crate::segment::refuse_extra_arguments(&parsed.args);
-    let mut input = Input::open(&parsed.args);
-    let tables = data::load_or_exit(false);
-    let search = PhraseSearch::new(tables.phrase.as_ref(), &tables.libraries);
-    let gen_extra_enter = matches!(
-        parsed.values[1],
-        oxpinyin_tool_support::input::OptionValue::Flag(true)
-    );
+///
+/// # Safety
+///
+/// If the entry point closes C `stdout`, it must still be open. No other
+/// code on any thread, including teardown and exit handlers, may use C
+/// `stdout` during or after that close.
+#[allow(
+    unsafe_code,
+    reason = "callers must uphold the process-level C stdout close precondition"
+)]
+pub unsafe fn main(args: impl IntoIterator<Item = OsString>) {
+    #[deny(unsafe_code)]
+    {
+        let _ = tool::set_locale_from_environment();
+        let entries = [
+            crate::segment::outputfile_entry(),
+            crate::segment::extra_enter_entry(),
+        ];
+        let parsed = crate::segment::parse_options(c"- shortest path segment", &entries, args);
+        let output = crate::segment::open_output(&parsed.values[0]);
+        crate::segment::refuse_extra_arguments(&parsed.args);
+        let mut input = Input::open(&parsed.args);
+        let tables = data::load_or_exit(false);
+        let search = PhraseSearch::new(tables.phrase.as_ref(), &tables.libraries);
+        let gen_extra_enter = matches!(
+            parsed.values[1],
+            oxpinyin_tool_support::input::OptionValue::Flag(true)
+        );
 
-    while input.getline() {
-        let line = input.c_str();
-        let num_of_chars = tool::utf8_strlen(line);
-        let (sentence, count) = tool::utf8_to_ucs4(line);
-        let Some(sentence) = sentence else {
-            tool::segmentation::report_non_ucs4(line);
-            tool::segmentation::print_null_line(&output);
-            continue;
-        };
-        if count != num_of_chars {
-            tool::segmentation::report_non_ucs4(line);
-            tool::segmentation::print_null_line(&output);
-            continue;
-        }
-        // `/* only new-line persists. */`
-        if num_of_chars == 0 {
-            tool::segmentation::print_null_line(&output);
-            continue;
-        }
+        while input.getline() {
+            let line = input.c_str();
+            let num_of_chars = tool::utf8_strlen(line);
+            let (sentence, count) = tool::utf8_to_ucs4(line);
+            let Some(sentence) = sentence else {
+                tool::segmentation::report_non_ucs4(line);
+                tool::segmentation::print_null_line(&output);
+                continue;
+            };
+            if count != num_of_chars {
+                tool::segmentation::report_non_ucs4(line);
+                tool::segmentation::print_null_line(&output);
+                continue;
+            }
+            // `/* only new-line persists. */`
+            if num_of_chars == 0 {
+                tool::segmentation::print_null_line(&output);
+                continue;
+            }
 
-        for run in runs(&sentence, &search) {
-            if run.segmentable {
-                deal_with_segmentable(&search, &sentence[run.range], &output);
-            } else {
-                let text = text_of(&sentence[run.range]);
-                tool::segmentation::print_token_line(&output, NULL_TOKEN as i32, text.as_deref());
+            for run in runs(&sentence, &search) {
+                if run.segmentable {
+                    deal_with_segmentable(&search, &sentence[run.range], &output);
+                } else {
+                    let text = text_of(&sentence[run.range]);
+                    tool::segmentation::print_token_line(
+                        &output,
+                        NULL_TOKEN as i32,
+                        text.as_deref(),
+                    );
+                }
+            }
+            if gen_extra_enter {
+                tool::segmentation::print_null_line(&output);
             }
         }
-        if gen_extra_enter {
-            tool::segmentation::print_null_line(&output);
+        tool::segmentation::print_null_line(&output);
+        #[allow(
+            unsafe_code,
+            reason = "the utility closes its output including C stdout as the pin does"
+        )]
+        // SAFETY: This entry point's caller guarantees the C stdout close
+        // precondition. An owned file is closed only here.
+        unsafe {
+            output.close_including_stdout();
         }
     }
-    tool::segmentation::print_null_line(&output);
-    output.close_including_stdout();
 }
