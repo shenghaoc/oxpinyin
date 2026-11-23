@@ -188,12 +188,6 @@ impl std::error::Error for LibraryError {
     }
 }
 
-impl From<std::io::Error> for LibraryError {
-    fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
-    }
-}
-
 /// Reads a little-endian `u32` at `offset`, or `None` past the end.
 fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(*bytes.get(offset..)?.first_chunk()?))
