@@ -13,20 +13,9 @@ The tkrzw cell runs in the pin capture image and on macOS and Windows.
 
 ## 2. Backend selection
 
-All three cells, tkrzw, bdb and kc, run only when a backend path check selects them.
-This rule makes sure that the non-default bdb and kc cells gate every change that can reach them.
-The three checks are:
-
-1. The diff lists a file under `src/store/`, `codegen/store.rs`, the root `build.rs` or `Cargo.lock`.
-2. A changed non-Markdown file contains `feature = "bdb"`, `feature = "tkrzw"` or `feature = "kyotocabinet"`, at `HEAD` or at the merge base.
-3. A changed line in a `Cargo.toml` names a backend.
-
-Check 2 excludes Markdown because documentation quotes these patterns.
-Check 2 reads each changed file at both revisions, so a change that deletes a file's last gate, or deletes a gated file, still fires it.
-A deleted file matches through its merge-base version, and an added file through its `HEAD` version.
-Rule 7's documentation and comments case needs no backend-selection run.
-A change that seems to depend on a backend but fails these checks is reported as a finding.
-A finding of this kind does not authorize a three-cell run.
+The [local test gate](#5-local-test-gate) and [verification scope](#verification-scope-and-precedence) select local checks.
+[Backend reporting](#backend-reporting) states when separate tkrzw verification is needed.
+[CI merge conditions](#10-ci-merge-conditions) define CI backend coverage.
 
 For shipping builds, see the [function-layout ruling](../packaging.md#function-layout).
 
@@ -204,6 +193,13 @@ Failed or unrun required checks are disclosed as limitations.
 A fix is ready for review when the pre-push checks in verification rule 5 and the local checks that CI does not cover pass.
 A PR is not ready to merge until CI passes on its head.
 A `wip/` checkpoint push runs only the checkpoint check in verification rule 5.
+
+### Backend reporting
+
+A verification report names the backend used.
+A local Linux Kyoto Cabinet result is reported as Kyoto Cabinet, never as the "default backend".
+Separate tkrzw verification is needed only when the change touches a tkrzw-specific path or code gated on tkrzw with `cfg`.
+Otherwise, tkrzw coverage follows the current [nightly coverage](#10-ci-merge-conditions).
 
 ## 8. Builds
 
