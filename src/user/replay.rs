@@ -13,7 +13,7 @@ use crate::user::record_skip;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
-use crate::data::phrase_library::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
+use crate::data::phrase_library::ITEM_HEADER_SIZE;
 use crate::data::phrase_library::{ChunkItem, decode_phrase_item};
 use crate::data::phrase_library::{PhraseContent, PhraseItemView};
 use crate::data::user_files::LogRecord;
@@ -598,38 +598,11 @@ impl ReplayedLibrary {
         let Some(bytes) = self.complete_item(slot) else {
             return false;
         };
-        let length = usize::from(bytes[0]);
-        let first = ITEM_HEADER_SIZE + 4 * length;
         let end = bytes.len();
         let Some(bytes) = self.edit_fields(slot) else {
             return false;
         };
-        let keys_len = CHEWING_KEY_SIZE * length;
-        for reading in readings {
-            let mut total = 0_u32;
-            for entry in bytes[first..end].chunks_exact_mut(keys_len + 4) {
-                let (keys, count_bytes) = entry.split_at_mut(keys_len);
-                let Ok(count_bytes) = <&mut [u8; 4]>::try_from(count_bytes) else {
-                    break;
-                };
-                let count = u32::from_le_bytes(*count_bytes);
-                total = total.wrapping_add(count);
-                let words = keys
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .copied()
-                    .map(u16::from_le_bytes);
-                if !crate::user::store_libpinyin::pronunciation_matches(&reading, words) {
-                    continue;
-                }
-                let Some(next) = total.checked_add(delta) else {
-                    break;
-                };
-                total = next;
-                *count_bytes = count.wrapping_add(delta).to_le_bytes();
-            }
-        }
+        crate::user::user_library::train_readings(&mut bytes[..end], readings, delta);
         true
     }
 

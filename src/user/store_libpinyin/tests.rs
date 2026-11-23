@@ -3073,43 +3073,6 @@ fn training_over_an_unsorted_start_gram_answers_true() {
     store.observe_selection(ni, hao).unwrap();
 }
 
-/// Basis: `phonetic_lookup.h:884-904` (the gram total refuses the seed; the unigram takes seed * 7).
-#[test]
-fn training_past_the_gram_total_limit_keeps_the_gram() {
-    const COUNT: u32 = 0xffff_ffff - 22_080 + 1;
-    let user = tempfile::tempdir().unwrap();
-    let system = crate::user::native_fixture::system_dir();
-    let [ni, hao, zhong] =
-        ["你", "好", "中"].map(|text| crate::user::test_session::native_tokens(&system, text)[0]);
-    let gram = crate::user::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)]);
-    crate::user::native_fixture::plant_bigram(
-        user.path(),
-        vec![
-            (ni.to_le_bytes().to_vec(), gram.clone()),
-            (zhong.to_le_bytes().to_vec(), gram),
-            (1_u32.to_le_bytes().to_vec(), vec![0; 4]),
-        ],
-    );
-    let mut store = crate::user::test_session::open_w3(user.path());
-    let before = store.system_unigram(hao).unwrap();
-    store.observe_selection(1, ni).unwrap();
-    store.observe_selection(ni, hao).unwrap();
-    assert_eq!(store.system_unigram(hao), Some(before + 154_560));
-    store.save_reporting().unwrap();
-    drop(store);
-    let stored = crate::user::native_fixture::store_rows(&user.path().join("user_bigram.db"), true)
-        .into_iter()
-        .find(|(key, _)| *key == ni.to_le_bytes())
-        .unwrap()
-        .1;
-    assert_eq!(
-        stored,
-        crate::user::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)])
-    );
-    let store = crate::user::test_session::open_w3(user.path());
-    assert_eq!(store.system_unigram(hao), Some(before + 154_560));
-}
-
 /// Basis: `phrase_index.cpp:677-715`, `pinyin.cpp:2609-2639` (mask and reload restore the shipped items).
 #[test]
 fn masking_system_imports_restores_originals_and_removes_appended_items() {

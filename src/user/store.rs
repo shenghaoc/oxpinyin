@@ -448,28 +448,28 @@ fn gram_mask_fault_over(
 /// with `insert_freq(token, 0)` and the initial seed on a miss and the
 /// expanded seed on a hit; then, unless the total would overflow,
 /// `set_total_freq` and `set_freq`. Answers the seed and the gram to
-/// store — `None` when the overflow guard skips the store.
+/// store — `None` when the overflow guard leaves the gram unchanged.
 fn trained_gram(
-    row: Option<Vec<u8>>,
+    gram: &mut Vec<u8>,
     cur: PhraseToken,
-) -> Result<(u64, Option<Vec<u8>>), UserStoreError> {
-    let mut gram = row.unwrap_or_else(single_gram::new_gram);
-    let total = single_gram::get_total_freq(&gram).ok_or(UserStoreError::ShortUserBigramValue)?;
-    let (freq, seed) = match single_gram::get_freq(&gram, cur) {
+) -> Result<(u64, Option<&[u8]>), UserStoreError> {
+    let total = single_gram::get_total_freq(gram).ok_or(UserStoreError::ShortUserBigramValue)?;
+    let previous = single_gram::get_freq(gram, cur);
+    let (freq, seed) = match previous {
         Some(freq) => (freq, seed::training_seed(Some(u64::from(freq)))),
-        None => {
-            // A miss walks the same items `insert_freq` walks, so it never
-            // meets an equal token (`ngram.cpp:190-200`).
-            single_gram::insert_freq(&mut gram, cur, 0);
-            (0, seed::INITIAL_SEED)
-        }
+        None => (0, seed::INITIAL_SEED),
     };
     let seed32 = seed as u32;
     if seed32 > 0 && total > total.wrapping_add(seed32) {
         return Ok((seed, None));
     }
-    single_gram::set_total_freq(&mut gram, total.wrapping_add(seed32));
-    if !single_gram::set_freq(&mut gram, cur, freq.wrapping_add(seed32)) {
+    if previous.is_none() {
+        // The pin inserts before its overflow guard, but skips the store
+        // on overflow. Leave the cached row unchanged in that case.
+        single_gram::insert_freq(gram, cur, 0);
+    }
+    single_gram::set_total_freq(gram, total.wrapping_add(seed32));
+    if !single_gram::set_freq(gram, cur, freq.wrapping_add(seed32)) {
         // On an unsorted gram the second `lower_bound` can land past the
         // item `insert_freq` just added; the pin's `check_result` dies
         // (`phonetic_lookup.h:903`).
@@ -585,7 +585,7 @@ pub enum TrainingFault {
 /// fault a failing check met.
 #[derive(Debug, Default)]
 pub struct TrainingCheck {
-    grams: FxHashMap<PhraseToken, Option<Vec<u8>>>,
+    grams: FxHashMap<PhraseToken, Vec<u8>>,
     fault: Option<TrainingFault>,
 }
 
@@ -825,25 +825,22 @@ impl UserStore {
             check.fault = Some(TrainingFault::Abort);
             return Err(UserStoreError::FailedUserBigramStore);
         }
-        let row = match check.grams.get(&prev) {
-            Some(row) => row.clone(),
-            None => self.bigram_row(prev)?,
+        let gram = match check.grams.entry(prev) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(self.bigram_row(prev)?.unwrap_or_else(single_gram::new_gram))
+            }
         };
-        if let Some(gram) = row.as_deref() {
-            if gram.len() < single_gram::TOTAL_LEN {
-                check.fault = Some(TrainingFault::Abort);
-                return Err(UserStoreError::ShortUserBigramValue);
-            }
-            if single_gram::has_partial_tail(gram) {
-                check.fault = Some(TrainingFault::PartialTail);
-                return Err(UserStoreError::PartialUserBigramTail);
-            }
+        if gram.len() < single_gram::TOTAL_LEN {
+            check.fault = Some(TrainingFault::Abort);
+            return Err(UserStoreError::ShortUserBigramValue);
         }
-        match trained_gram(row.clone(), cur) {
-            Ok((_, gram)) => {
-                check.grams.insert(prev, gram.or(row));
-                Ok(())
-            }
+        if single_gram::has_partial_tail(gram) {
+            check.fault = Some(TrainingFault::PartialTail);
+            return Err(UserStoreError::PartialUserBigramTail);
+        }
+        match trained_gram(gram, cur) {
+            Ok(_) => Ok(()),
             Err(UserStoreError::TrainingSetFreqMiss) => {
                 check.fault = Some(TrainingFault::Abort);
                 Err(UserStoreError::TrainingSetFreqMiss)
@@ -1296,7 +1293,7 @@ impl UserStore {
         // predicted-selection policies meet at four shared steps with a
         // different failure sequence at each; a split by policy duplicates
         // the steps, and a split by step hides which policy fails where.
-        let row = self.gram_in(last)?;
+        let mut row = self.gram_in(last)?;
         // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
         // `set_freq` walks read past a partial item (`ngram.cpp:190`,
         // `:241`, `:261`); refused before anything changes.
@@ -1325,8 +1322,13 @@ impl UserStore {
             return Err(UserStoreError::ShortUserBigramValue);
         }
         let (seed, gram) = match policy {
-            SeedPolicy::Training => trained_gram(row, cur)?,
-            SeedPolicy::Predicted => (seed::predicted_seed(), Some(predicted_gram(row, cur)?)),
+            SeedPolicy::Training => {
+                trained_gram(row.get_or_insert_with(single_gram::new_gram), cur)?
+            }
+            SeedPolicy::Predicted => {
+                row = Some(predicted_gram(row, cur)?);
+                (seed::predicted_seed(), row.as_deref())
+            }
         };
         // `seed * unigram_factor` in `guint32`; the seeds are small.
         let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
@@ -1346,7 +1348,7 @@ impl UserStore {
         // `m_user_bigram->store(last_token, user)` (`phonetic_lookup.h:904`,
         // `pinyin.cpp:2638`): one store of the predecessor's gram, skipped
         // by training's overflow guard.
-        let stored = if accepted && let Some(gram) = &gram {
+        let stored = if accepted && let Some(gram) = gram {
             self.store_gram(last, gram)
         } else {
             Ok(())

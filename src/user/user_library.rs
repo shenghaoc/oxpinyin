@@ -13,6 +13,46 @@ use crate::data::phrase_library::{
 use crate::user::user_index::UserIndex;
 use crate::user::user_phrase_table::UserPhraseTable;
 
+/// Train a complete item's header-bounded readings (`phonetic_lookup.h:913-929`
+/// at 074a2219). Earlier increments survive a later prefix-total refusal.
+pub(super) fn train_readings(
+    bytes: &mut [u8],
+    readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+    delta: u32,
+) {
+    let length = usize::from(bytes[0]);
+    let first = ITEM_HEADER_SIZE + 4 * length;
+    let keys_len = CHEWING_KEY_SIZE * length;
+    for reading in readings {
+        if reading.len() != length {
+            continue;
+        }
+        let mut total = 0_u32;
+        for entry in bytes[first..].chunks_exact_mut(keys_len + 4) {
+            let (keys, count_bytes) = entry.split_at_mut(keys_len);
+            let Ok(count_bytes) = <&mut [u8; 4]>::try_from(count_bytes) else {
+                break;
+            };
+            let count = u32::from_le_bytes(*count_bytes);
+            total = total.wrapping_add(count);
+            let words = keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
+                .map(u16::from_le_bytes);
+            if !crate::user::store_libpinyin::pronunciation_matches(&reading, words) {
+                continue;
+            }
+            let Some(next) = total.checked_add(delta) else {
+                break;
+            };
+            total = next;
+            *count_bytes = count.wrapping_add(delta).to_le_bytes();
+        }
+    }
+}
+
 /// The pin's SubPhraseIndex (phrase_index.h:257-430 at 074a2219), owned.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserLibrary {
@@ -226,13 +266,20 @@ impl UserLibrary {
     }
 
     pub(crate) fn remove_matching(&mut self, selected: impl Fn(u32) -> bool) {
-        let slots: Vec<_> = self
-            .items()
-            .filter_map(|(slot, _)| selected(slot).then_some(slot))
-            .collect();
-        for slot in slots {
-            self.remove_body(slot);
-        }
+        self.slots.retain(|&slot, range| {
+            let Some(item) = self
+                .content
+                .get(range.clone())
+                .and_then(PhraseItemView::from_bytes)
+            else {
+                return true;
+            };
+            if !selected(slot) {
+                return true;
+            }
+            self.total = self.total.wrapping_sub(item.unigram());
+            false
+        });
     }
 
     #[cfg(test)]
@@ -325,42 +372,11 @@ impl UserLibrary {
         delta: u32,
     ) {
         let Some(item) = self.item(slot) else { return };
-        let length = item.phrase_length();
-        let count = item.n_pronunciations();
+        let length = item.as_bytes().len();
         let Some(start) = self.editable_start(slot) else {
             return;
         };
-        let start = start + ITEM_HEADER_SIZE + 4 * length;
-        let keys_len = CHEWING_KEY_SIZE * length;
-        for query in readings {
-            if query.len() != length {
-                continue;
-            }
-            let mut total = 0_u32;
-            for i in 0..count {
-                let position = start + i * (keys_len + 4);
-                let frequency = position + keys_len;
-                let freq = u32::from_le_bytes(self.content[frequency..].as_chunks::<4>().0[0]);
-                total = total.wrapping_add(freq);
-                let matches = crate::user::store_libpinyin::pronunciation_matches(
-                    &query,
-                    self.content[position..frequency]
-                        .as_chunks::<2>()
-                        .0
-                        .iter()
-                        .map(|bytes| u16::from_le_bytes(*bytes)),
-                );
-                if !matches {
-                    continue;
-                }
-                let Some(next) = total.checked_add(delta) else {
-                    break;
-                };
-                total = next;
-                self.content[frequency..frequency + 4]
-                    .copy_from_slice(&freq.wrapping_add(delta).to_le_bytes());
-            }
-        }
+        train_readings(&mut self.content[start..start + length], readings, delta);
     }
 
     /// `SubPhraseIndex::compact` (`phrase_index.cpp:624-675`): a fresh
