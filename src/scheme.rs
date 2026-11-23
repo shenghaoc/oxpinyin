@@ -266,25 +266,6 @@ impl DoublePinyinParser {
         self
     }
 
-    /// Selects a compiled scheme. `Customized` returns `false` and leaves
-    /// the parser unchanged. A successful switch clears the suppressed-fallback flag.
-    #[cfg(test)]
-    fn set_scheme(&mut self, scheme: DoublePinyinScheme) -> bool {
-        if scheme == DoublePinyinScheme::Customized {
-            return false;
-        }
-        self.scheme = scheme;
-        self.suppress_fallback = false;
-        true
-    }
-
-    /// The scheme in force.
-    #[cfg(test)]
-    #[must_use]
-    const fn scheme(self) -> DoublePinyinScheme {
-        self.scheme
-    }
-
     // DoublePinyinParser2::parse, pinyin_parser2.cpp:531–574.
     // pinyin_parse_more_double_pinyins forwards the option word at pinyin.cpp:1543.
     /// Greedily parses the longest keyboard prefix, trying the longest key first at each
@@ -937,24 +918,6 @@ impl ZhuyinParser {
     #[must_use]
     pub const fn with_scheme(scheme: ZhuyinScheme) -> Self {
         Self { scheme }
-    }
-
-    /// Selects a supported keyboard. A scheme without a keyboard mapping
-    /// returns `false` and leaves the current scheme unchanged.
-    #[cfg(test)]
-    fn set_scheme(&mut self, scheme: ZhuyinScheme) -> bool {
-        if scheme.keyboard().is_none() {
-            return false;
-        }
-        self.scheme = scheme;
-        true
-    }
-
-    /// The scheme in force.
-    #[cfg(test)]
-    #[must_use]
-    pub const fn scheme(self) -> ZhuyinScheme {
-        self.scheme
     }
 
     /// Reports whether the current keyboard maps `key` to a symbol. Set `use_tone` to admit

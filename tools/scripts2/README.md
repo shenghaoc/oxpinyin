@@ -58,7 +58,6 @@ and handwritten consumers. The generated destinations are:
 | `oxpinyin/src/table_data/full_pinyin_syllables.rs` | 405 full syllables in `fullpinyin.PINYIN_DICT` numeric-ID order; exact values/order |
 | `oxpinyin/src/table_data/syllable_inventory.rs` | Counts, maximum length, 23 incomplete, 2 option-only, 10 Zhuyin-only keys; exact values/order |
 | `oxpinyin/src/table_data/full_pinyin_indexes.rs` | 406 Luoma and 406 secondary-Zhuyin rows and counts; exact values/order |
-| `oxpinyin/src/table_data/full_pinyin_counts.rs` | Existing duplicate public counts; exact values |
 | `oxpinyin/src/table_data/zhuyin_indexes.rs` | 1,493 standard, 500 Hsu, 482 Eten26 rows with consulted flags; exact values/order |
 | `oxpinyin/src/table_data/zhuyin_tones.rs` | Three counts and 440 valid-tone masks; exact values/order; fallback below |
 | `oxpinyin/src/table_data/double_pinyin.rs` | Six schemes' sheng/yun tables and three fallback lists; exact values/order |

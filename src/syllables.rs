@@ -4,16 +4,6 @@ use crate::options::OptionBits;
 
 include!("table_data/syllable_inventory.rs");
 
-/// Complete full-pinyin syllables in pinned upstream numeric-ID order.
-#[cfg(test)]
-#[must_use]
-pub(crate) fn full_pinyin_syllables()
--> impl ExactSizeIterator<Item = &'static str> + DoubleEndedIterator + Clone {
-    crate::string_tables::full_pinyin_syllables()
-        .entries()
-        .map(|[text]| text)
-}
-
 /// A complete full-pinyin spelling by its frozen numeric ID.
 #[must_use]
 pub(crate) fn full_pinyin_syllable(index: usize) -> Option<&'static str> {

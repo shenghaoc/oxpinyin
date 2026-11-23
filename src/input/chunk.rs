@@ -36,9 +36,6 @@ pub(crate) mod read {
 
     /// The header and bytes returned by the single payload read.
     pub struct LoadedChunk {
-        /// The declared payload length, in the file's native header bytes.
-        #[cfg(test)]
-        pub(super) length: [u8; 4],
         /// The stored checksum, in the file's native header bytes.
         pub(super) checksum: [u8; 4],
         /// The actual bytes returned by the one payload read.
@@ -115,8 +112,6 @@ pub(crate) mod read {
             .map_err(|error| ChunkLoadError::Io(io::Error::other(error)))?;
         read_payload(&mut source.source, &mut payload).map_err(ChunkLoadError::Io)?;
         Ok(LoadedChunk {
-            #[cfg(test)]
-            length,
             checksum,
             payload,
             source,

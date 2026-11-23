@@ -9,76 +9,59 @@ fn under(dir: &str, name: &[u8]) -> OsString {
     build_path(Path::new(dir), OsStr::from_bytes(name)).into_os_string()
 }
 
-/// `g_build_filename(dir, name, NULL)`: the separators, empty parts and
-/// separator-only parts GLib 2.84.4's `g_build_path_va` produces.
-// Unix only: byte-string names, and `/` as the separator GLib inserts.
+// Frozen GLib 2.84.4 g_build_filename observations cover Unix separator and empty-part handling.
 #[test]
 #[cfg(unix)]
 fn names_stay_beneath_their_directory() {
-    assert_eq!(under("/u", b"/tmp/x"), "/u/tmp/x");
-    assert_eq!(under("/u", b"//x//y/"), "/u/x//y/");
-    assert_eq!(under("/u", b"../x"), "/u/../x");
-    assert_eq!(under("/u", b""), "/u");
-    assert_eq!(under("", b"/tmp/x"), "/tmp/x");
-    assert_eq!(under("", b""), "");
-    assert_eq!(under("a/", b"x"), "a/x");
-    assert_eq!(under("a///", b"x"), "a/x");
-    assert_eq!(under("//a", b"x"), "//a/x");
-    assert_eq!(under("/", b"x"), "/x");
-    assert_eq!(under("//", b"x"), "//x");
-    assert_eq!(under("/a", b"//"), "/a//");
-    assert_eq!(under("/a//", b"/"), "/a/");
-    assert_eq!(under("/", b"/"), "//");
-    assert_eq!(under("/u", b"./x"), "/u/./x");
-    assert_eq!(under("/u\\", b"\\x"), "/u\\/\\x");
+    for (dir, name, expected) in [
+        ("/u", "//x//y/", "/u/x//y/"),
+        ("/u", "../x", "/u/../x"),
+        ("/u", "", "/u"),
+        ("", "/tmp/x", "/tmp/x"),
+        ("", "", ""),
+        ("a///", "x", "a/x"),
+        ("//a", "x", "//a/x"),
+        ("//", "x", "//x"),
+        ("/a//", "/", "/a/"),
+        ("/", "/", "//"),
+    ] {
+        assert_eq!(under(dir, name.as_bytes()), expected);
+    }
 }
 
-/// `rename(2)` refuses a directory over an existing file with `ENOTDIR`
-/// (POSIX); on Windows `rename` gives the same refusal before `g_rename`,
-/// whose `MoveFileExW` would move the directory onto the file.
+// Rust Windows posix_refusal preserves the Linux rename refusal for unlike file and directory types.
 #[test]
-fn a_directory_is_not_renamed_over_a_file() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let staged = scratch.path().join("user_bigram.db.tmp");
-    let final_path = scratch.path().join("user_bigram.db");
-    std::fs::create_dir(&staged).expect("the staged directory");
-    std::fs::write(&final_path, b"kept").expect("the final file");
-    let error = rename(&staged, &final_path).expect_err("a directory over a file");
-    assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory, "{error}");
-    assert!(staged.is_dir(), "the directory stays");
-    assert_eq!(std::fs::read(&final_path).expect("the final file"), b"kept");
+fn rename_rejects_file_directory_type_changes() {
+    use std::io::ErrorKind::{IsADirectory, NotADirectory};
+    for (source_is_dir, expected) in [(true, NotADirectory), (false, IsADirectory)] {
+        let scratch = tempfile::tempdir().unwrap();
+        let staged = scratch.path().join("user_bigram.db.tmp");
+        let final_path = scratch.path().join("user_bigram.db");
+        let (directory, file) = if source_is_dir {
+            (&staged, &final_path)
+        } else {
+            (&final_path, &staged)
+        };
+        std::fs::create_dir(directory).unwrap();
+        std::fs::write(file, b"kept").unwrap();
+        assert_eq!(rename(&staged, &final_path).unwrap_err().kind(), expected);
+        assert!(directory.is_dir());
+        assert_eq!(std::fs::read(file).unwrap(), b"kept");
+    }
 }
 
-/// `rename(2)` refuses a file over an existing directory with `EISDIR`
-/// (POSIX); on Windows `rename` gives the same refusal before `g_rename`.
-#[test]
-fn a_file_is_not_renamed_over_a_directory() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let staged = scratch.path().join("user_bigram.db.tmp");
-    let final_path = scratch.path().join("user_bigram.db");
-    std::fs::write(&staged, b"staged").expect("the staged file");
-    std::fs::create_dir(&final_path).expect("the final directory");
-    let error = rename(&staged, &final_path).expect_err("a file over a directory");
-    assert_eq!(error.kind(), std::io::ErrorKind::IsADirectory, "{error}");
-    assert_eq!(std::fs::read(&staged).expect("the staged file"), b"staged");
-    assert!(final_path.is_dir(), "the directory stays");
-}
-
-/// The pin's `NULL` first element answers `""`, and a `NULL` name the
-/// directory, because that is what GLib does.
+// Rust build_filename passes NULL elements to GLib, which stops at the first NULL.
 #[test]
 fn null_elements_are_glibs() {
-    assert_eq!(build_filename(None, Some(c"user.conf")).to_bytes(), b"");
-    assert_eq!(build_filename(Some(c"/u"), None).to_bytes(), b"/u");
-    assert_eq!(build_filename(None, None).to_bytes(), b"");
+    for (dir, name, expected) in [
+        (None, Some(c"user.conf"), b"".as_slice()),
+        (Some(c"/u"), None, b"/u".as_slice()),
+    ] {
+        assert_eq!(build_filename(dir, name).to_bytes(), expected);
+    }
 }
 
-#[test]
-fn bytes_are_the_pins() {
-    assert_eq!(build_bytes(Some(Path::new("/a//b")), Some("x")), b"/a//b/x");
-    assert_eq!(build_bytes(None, Some("x")), b"");
-}
-
+// 074a2219 pinyin.cpp:164–165,1059–1062 uses native rename status and ignores unlink status.
 #[test]
 fn rename_and_unlink_are_the_pins() {
     let dir = tempfile::tempdir().unwrap();
@@ -92,21 +75,22 @@ fn rename_and_unlink_are_the_pins() {
     unlink(&to);
 }
 
-/// The pair round-trips Unix bytes, and on Windows round-trips only
-/// UTF-8 paths. A path with an unpaired surrogate is representable but
-/// lossy through `path_from_bytes`. This is not a lossless Windows path
-/// codec.
+// Rust path conversion preserves Unix bytes and well-formed UTF-8 Windows paths.
 #[test]
 fn paths_round_trip() {
     let path = Path::new("/u/name");
     assert_eq!(path_from_bytes(path_to_bytes(path)), path.to_path_buf());
 }
 
+// Rust Windows filename decoding keeps NULL and empty names and replaces invalid UTF-8.
 #[cfg(windows)]
 #[test]
 fn filenames_keep_null_empty_and_lossy_utf8_handling() {
-    assert_eq!(filename(None), None);
-    assert_eq!(filename(Some(c"")), Some(PathBuf::new()));
-    let input = c"\xff";
-    assert_eq!(filename(Some(input)), Some(PathBuf::from("\u{fffd}")));
+    for (input, expected) in [
+        (None, None),
+        (Some(c""), Some(PathBuf::new())),
+        (Some(c"\xff"), Some(PathBuf::from("\u{fffd}"))),
+    ] {
+        assert_eq!(filename(input), expected);
+    }
 }

@@ -11,9 +11,6 @@
 
 use crate::static_strings::StringTable;
 
-#[cfg(test)]
-include!("table_data/full_pinyin_counts.rs");
-
 /// An indexed full-pinyin spelling table, decoded on demand.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FullPinyinIndex(StringTable<2>);
@@ -23,17 +20,6 @@ impl FullPinyinIndex {
     #[must_use]
     pub fn canonical(self, spelling: &str) -> Option<&'static str> {
         self.0.field(self.0.position(spelling)?, 1)
-    }
-
-    /// All spelling rows in pinned order.
-    #[cfg(test)]
-    fn entries(
-        self,
-    ) -> impl ExactSizeIterator<Item = (&'static str, &'static str)> + DoubleEndedIterator + Clone
-    {
-        self.0
-            .entries()
-            .map(|[input, canonical]| (input, canonical))
     }
 }
 

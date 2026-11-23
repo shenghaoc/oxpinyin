@@ -201,7 +201,6 @@ pub struct FixtureDictionary {
     /// Each token's phrase item: one pronunciation per record that spells
     /// it, toneless, with frequency 1.
     items: BTreeMap<PhraseToken, oxpinyin::model::PronunciationRows>,
-    count: usize,
 }
 
 impl FixtureDictionary {
@@ -214,7 +213,6 @@ impl FixtureDictionary {
         let records = parse_vocab(text)?;
         let mut entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>> = BTreeMap::new();
         let mut items: BTreeMap<PhraseToken, oxpinyin::model::PronunciationRows> = BTreeMap::new();
-        let count = records.len();
 
         for record in records {
             items
@@ -227,31 +225,7 @@ impl FixtureDictionary {
                 .push(PhraseEntry::new(record.token, record.text));
         }
 
-        Ok(Self {
-            entries,
-            items,
-            count,
-        })
-    }
-
-    /// Number of phrases held.
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.count
-    }
-
-    /// Whether the dictionary holds nothing.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    /// Length in keys of the longest phrase held.
-    ///
-    /// The decoder uses this to bound how far ahead it looks.
-    #[must_use]
-    pub fn max_keys(&self) -> usize {
-        self.entries.keys().map(Vec::len).max().unwrap_or(0)
+        Ok(Self { entries, items })
     }
 }
 
@@ -381,18 +355,6 @@ impl FixtureLanguageModel {
             unigrams,
             unigram_total,
         })
-    }
-
-    /// Number of unigrams held.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.unigrams.len()
-    }
-
-    /// Whether the model holds nothing.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.unigrams.is_empty()
     }
 }
 

@@ -892,30 +892,12 @@ impl<E> PhraseIndexRanges<E> {
         self.slots.get(first.checked_add(offset)?)?.as_ref()
     }
 
-    /// `range`'s resolved entries, ascending by token.
-    #[cfg(test)]
-    pub fn entries<'a>(&'a self, range: &PhraseIndexRange) -> impl Iterator<Item = &'a E> + 'a {
-        let count =
-            usize::try_from(range.last - range.first).map_or(0, |span| span.saturating_add(1));
-        self.slots
-            .iter()
-            .skip(usize::try_from(range.slot).unwrap_or(usize::MAX))
-            .take(count)
-            .filter_map(Option::as_ref)
-    }
-
     /// Every filled slot with its token, in the walk order of [`Self::iter`].
     pub(crate) fn walk_tokens(&self) -> impl Iterator<Item = (u32, &E)> {
         self.iter().flat_map(move |range| {
             (range.first..=range.last)
                 .filter_map(move |token| self.entry(range, token).map(|entry| (token, entry)))
         })
-    }
-
-    /// Every resolved entry, in the walk order of [`Self::iter`].
-    #[cfg(test)]
-    fn walk(&self) -> impl Iterator<Item = &E> {
-        self.iter().flat_map(|range| self.entries(range))
     }
 
     /// Appends `other`'s ranges after this one's, library by library, with

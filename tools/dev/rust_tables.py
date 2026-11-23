@@ -311,15 +311,13 @@ def render(source=SOURCE):
             text += array(name, f'[&str; {size}]', map(string, values))
         output[CORE + 'table_data/syllable_inventory.rs'] = text
 
-        text, counts = '', ''
+        text = ''
         for name in ('LUOMA_PINYIN', 'SECONDARY_ZHUYIN'):
             values = data[name + '_INDEX']
             declaration = count(name + '_COUNT', len(values))
-            counts += declaration
             text += declaration + array(name + '_INDEX', f'[(&str, &str); {name}_COUNT]',
                                         [f'({string(row[0])}, {string(content[row[2]][0])})' for row in values])
         output[CORE + 'table_data/full_pinyin_indexes.rs'] = text
-        output[CORE + 'table_data/full_pinyin_counts.rs'] = counts
 
         text, counts = '', ''
         for marker, name, size in [('ZHUYIN_INDEX', 'ZHUYIN_PINYIN_MAP', 'ZHUYIN_PINYIN_COUNT'),
