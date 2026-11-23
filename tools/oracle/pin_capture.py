@@ -1357,7 +1357,11 @@ def checked_utilities(cache):
         built = {}
         for subdir, program in sorted(programs):
             path = tree_ / 'utils' / subdir / program
-            if not path.is_file() or not os.access(path, os.X_OK) or path.read_bytes()[:4] != b'\x7fELF':
+            if not path.is_file() or not os.access(path, os.X_OK):
+                raise CaptureError(f'{path}: not a built utility executable')
+            with path.open('rb') as stream:
+                magic = stream.read(4)
+            if magic != b'\x7fELF':
                 raise CaptureError(f'{path}: not a built utility executable')
             built[program] = {'path': str(path), 'sha256': image.digest_file(path)}
         cells[cell] = {'prefix': str(prefix), 'recipe_sha256': record['recipe_sha256'],

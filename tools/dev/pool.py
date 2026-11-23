@@ -176,7 +176,9 @@ def _tail(path: Path | None, out) -> None:
     """Print the last lines of a failed task's log."""
     if path is None or not path.exists():
         return
-    lines = path.read_text(errors='replace').splitlines()[-TAIL_LINES:]
+    with path.open(errors='replace') as stream:
+        lines = collections.deque((line for chunk in stream for line in chunk.splitlines()),
+                                  maxlen=TAIL_LINES)
     print(f'last lines of {path}:', file=out, flush=True)
     for line in lines:
         print(f'  {line}', file=out, flush=True)
