@@ -78,6 +78,13 @@ use crate::store::StoreError;
     clippy::undocumented_unsafe_blocks,
     clippy::all
 )]
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::multiple_unsafe_ops_per_block,
+        reason = "bindgen emits raw access and interpretation of the same db.h layout together in its generated accessors"
+    )
+)]
 mod sys {
     include!(concat!(env!("OUT_DIR"), "/bdb_bindings.rs"));
 }
@@ -143,9 +150,10 @@ fn check(code: i32, what: &'static str) -> Result<(), StoreError> {
     if code == 0 {
         return Ok(());
     }
-    // SAFETY: `db_strerror` returns a pointer to a NUL-terminated static
-    // string for any input, including codes it does not recognise.
-    let message = unsafe { CStr::from_ptr(sys::db_strerror(code)) }
+    // SAFETY: db_strerror accepts all integer codes, including unrecognised ones.
+    let message = unsafe { sys::db_strerror(code) };
+    // SAFETY: db_strerror returns a live NUL-terminated static string.
+    let message = unsafe { CStr::from_ptr(message) }
         .to_string_lossy()
         .into_owned();
     // Berkeley DB reports out-of-space and other filesystem failures as

@@ -214,16 +214,20 @@ pub(crate) fn box_context(context: CapiContext) -> *mut ZhuyinContext {
 /// # Safety
 /// `ptr` is live and the caller excludes mutation during the borrow.
 pub(crate) unsafe fn context_ref<'a>(ptr: *mut ZhuyinContext) -> &'a CapiContext {
-    // SAFETY: the caller keeps the public handle live and serializes its calls.
-    unsafe { owner_ref(handles::context_ref(ptr)) }
+    // SAFETY: The public handle is live and the caller excludes mutation.
+    let owner = unsafe { handles::context_ref(ptr) };
+    // SAFETY: The caller excludes mutation through any handle sharing this owner.
+    unsafe { owner_ref(owner) }
 }
 
 /// Borrow a live public context exclusively for one operation.
 /// # Safety
 /// `ptr` is live; no call or borrow through any handle overlaps this one.
 pub(crate) unsafe fn context_mut<'a>(ptr: *mut ZhuyinContext) -> &'a mut CapiContext {
-    // SAFETY: the caller keeps the public handle live and grants exclusive access.
-    unsafe { owner_mut(handles::context_mut(ptr)) }
+    // SAFETY: The caller keeps the public handle live and grants exclusive access.
+    let owner = unsafe { handles::context_mut(ptr) };
+    // SAFETY: No call or borrow through any other handle shares this access.
+    unsafe { owner_mut(owner) }
 }
 
 /// Borrow the runtime retained by an instance, without its public context.
@@ -231,9 +235,11 @@ pub(crate) unsafe fn context_mut<'a>(ptr: *mut ZhuyinContext) -> &'a mut CapiCon
 /// `ptr` is live; all earlier readers have ended and the C caller grants
 /// exclusive access across every handle sharing this runtime for this call.
 pub(crate) unsafe fn instance_context_mut<'a>(ptr: *mut ZhuyinInstance) -> &'a mut CapiContext {
-    // SAFETY: the instance owns the allocation; serialized C calls exclude
+    // SAFETY: The instance is live and the caller grants exclusive access to it.
+    let instance = unsafe { handles::instance_mut(ptr) };
+    // SAFETY: The instance retains the context, and the caller excludes
     // access through any other instance, iterator or the public context.
-    unsafe { owner_mut(&mut handles::instance_mut(ptr).owner) }
+    unsafe { owner_mut(&mut instance.owner) }
 }
 
 /// Borrow this call's instance and its live context.

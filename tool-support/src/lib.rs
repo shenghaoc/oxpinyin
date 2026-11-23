@@ -5,6 +5,7 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
+#![cfg_attr(not(test), deny(clippy::multiple_unsafe_ops_per_block))]
 
 #[expect(
     unsafe_code,

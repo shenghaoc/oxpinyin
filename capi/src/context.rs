@@ -135,17 +135,13 @@ pub unsafe extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     // `mark_version`'s user.conf write (`pinyin.cpp:1200`) runs when the
     // user store is finalised, through `UserTableInfo::save`, which resets
     // LC_NUMERIC to "C" (`table_info.cpp:378`).
-    // SAFETY: `context` was created by `pinyin_init` via `box_context`
-    // (= `Box::into_raw`), the registry held its address and this call
-    // removed it, so no other call can free it. The caller transfers
-    // ownership back. The C caller serializes this call with all operations
-    // on its instances and iterators, so the retained allocation is exclusively
-    // borrowed for fini even when other handles still own it.
-    unsafe {
-        let mut owner = Box::from_raw(context.cast::<crate::state::ContextOwner>());
-        crate::state::owner_mut(&mut owner).core.finish();
-        drop(owner);
-    };
+    // SAFETY: `pinyin_init` boxed this owner and registered its address.
+    // This call removed the address and takes back the box exactly once.
+    let mut owner = unsafe { Box::from_raw(context.cast::<crate::state::ContextOwner>()) };
+    // SAFETY: The caller serializes fini with every operation on the context,
+    // its instances and its iterators, so no borrow of the retained context overlaps.
+    unsafe { crate::state::owner_mut(&mut owner) }.core.finish();
+    drop(owner);
 }
 
 // pinyin.cpp:1133.

@@ -24,14 +24,13 @@ pub(crate) fn cpu_ns() -> u64 {
     clock(libc::CLOCK_PROCESS_CPUTIME_ID)
 }
 fn clock(id: libc::clockid_t) -> u64 {
-    // SAFETY: The output timespec is writable; libc initializes it on success.
-    unsafe {
-        let mut time: libc::timespec = std::mem::zeroed();
-        if libc::clock_gettime(id, &mut time) != 0 {
-            return 0;
-        }
-        time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+    // SAFETY: timespec contains only integer fields, which admit zero.
+    let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+    // SAFETY: time points to writable storage for one timespec.
+    if unsafe { libc::clock_gettime(id, &mut time) } != 0 {
+        return 0;
     }
+    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
 }
 pub(crate) fn fresh_user(path: &Path) -> Result<()> {
     use std::os::unix::fs::DirBuilderExt;
