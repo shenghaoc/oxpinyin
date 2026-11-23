@@ -640,12 +640,14 @@ impl DiscreteTables {
 
     /// Every symbol `byte` maps to in `table`, matching upstream's
     /// `search_chewing_symbols2` (at most two rows per key).
-    fn all_symbols(table: &'static [(u8, &'static str)], byte: u8) -> Vec<&'static str> {
+    fn all_symbols(
+        table: &'static [(u8, &'static str)],
+        byte: u8,
+    ) -> impl Iterator<Item = &'static str> {
         table
             .iter()
-            .filter(|(key, _)| *key == byte)
+            .filter(move |(key, _)| *key == byte)
             .map(|(_, symbol)| *symbol)
-            .collect()
     }
 
     /// The tone one key spells, if it is a tone key.
@@ -953,29 +955,25 @@ impl ZhuyinParser {
     /// mark come back — exactly `ZhuyinDiscreteParser2::
     /// in_chewing_scheme`'s vector (`zhuyin_parser2.cpp:496-545`).
     #[must_use]
-    pub(crate) fn symbols_for(&self, key: u8, use_tone: bool) -> Vec<String> {
+    pub(crate) fn symbols_for(&self, key: u8, use_tone: bool) -> Vec<&'static str> {
         match self.scheme.keyboard() {
             Some(Keyboard::Simple(tables)) => {
                 let mut symbols = Vec::new();
                 if let Some(symbol) = tables.symbol(key) {
-                    symbols.push(symbol.to_owned());
+                    symbols.push(symbol);
                 }
                 if use_tone && let Some(tone) = tables.tone(key) {
-                    symbols.push(tone_symbol(tone).to_owned());
+                    symbols.push(tone_symbol(tone));
                 }
                 symbols
             }
             Some(Keyboard::Discrete(tables)) => {
                 let mut symbols = Vec::new();
                 for table in [tables.initials, tables.middles, tables.finals] {
-                    symbols.extend(
-                        DiscreteTables::all_symbols(table, key)
-                            .into_iter()
-                            .map(str::to_owned),
-                    );
+                    symbols.extend(DiscreteTables::all_symbols(table, key));
                 }
                 if use_tone && let Some(tone) = tables.tone(key) {
-                    symbols.push(tone_symbol(tone).to_owned());
+                    symbols.push(tone_symbol(tone));
                 }
                 symbols
             }
@@ -986,17 +984,13 @@ impl ZhuyinParser {
                 // "ㄧㄚ" extra for 'i', then the tone mark.
                 let mut symbols = Vec::new();
                 for table in [tables.initials, tables.middles, tables.finals] {
-                    symbols.extend(
-                        DiscreteTables::all_symbols(table, key)
-                            .into_iter()
-                            .map(str::to_owned),
-                    );
+                    symbols.extend(DiscreteTables::all_symbols(table, key));
                 }
                 if key == b'i' {
-                    symbols.push("ㄧㄚ".to_owned());
+                    symbols.push("ㄧㄚ");
                 }
                 if use_tone && let Some(tone) = tables.tone(key) {
-                    symbols.push(tone_symbol(tone).to_owned());
+                    symbols.push(tone_symbol(tone));
                 }
                 symbols
             }

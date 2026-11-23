@@ -220,7 +220,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// symbols under the live `USE_TONE` flag. Empty means the key is
     /// not on the keyboard (upstream's `false`).
     #[must_use]
-    pub fn in_keyboard(&self, key: u8) -> Vec<String> {
+    pub fn in_keyboard(&self, key: u8) -> Vec<&'static str> {
         let use_tone = self.options().contains(OptionBits::USE_TONE);
         let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.get()) else {
             return Vec::new();
