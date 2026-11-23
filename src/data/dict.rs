@@ -83,12 +83,6 @@ impl From<TableError> for DictError {
     }
 }
 
-impl From<crate::data::phrase_library::LibraryError> for DictError {
-    fn from(e: crate::data::phrase_library::LibraryError) -> Self {
-        Self::Library(e)
-    }
-}
-
 /// `token`'s entry: its text, priced against `keys`; `None` when the
 /// library is unloaded or the item cannot be read.
 ///
@@ -335,7 +329,7 @@ impl SystemDictionary {
                 )),
                 user_nibbles: 0,
             },
-            libraries: PhraseLibraries::open(library_dir, stems)?,
+            libraries: PhraseLibraries::open(library_dir, stems).map_err(DictError::Library)?,
         })
     }
 }

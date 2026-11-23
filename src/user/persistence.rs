@@ -701,12 +701,6 @@ impl PersistenceError {
     }
 }
 
-impl From<std::io::Error> for PersistenceError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(error)
-    }
-}
-
 impl From<StoreError> for PersistenceError {
     fn from(error: StoreError) -> Self {
         Self::Store(error)
