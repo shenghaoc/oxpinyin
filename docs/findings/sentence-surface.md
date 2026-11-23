@@ -290,10 +290,11 @@ over the full `PhoneticKeyMatrix` with `CONSTRAINT_ONESTEP` /
   (`pinyin.cpp:1373-1385`). The rows already carry the chosen prefix in
   their own paths. The offset guess does not decode only the remaining
   input, and it does not prepend the selected text.
-- n-best rows cover the full matrix. Choosing a row assigns its text as
-  the selected text and replaces the selection history with the row's
-  tokens (`record.replace_history`); a normal selection made before it
-  leaves no token in the record.
+- n-best rows cover the full matrix. Choosing a row replaces the selection
+  history with its spans' tokens (`record.replace_history`); a normal
+  selection made before it leaves no token in the record. Sentence getters
+  read the retained row. The selection record holds only the composition
+  offset and token history.
 
 ## 11. Candidate tie law and the sentence trellis
 

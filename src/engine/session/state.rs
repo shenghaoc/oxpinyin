@@ -52,8 +52,8 @@ where
     /// lives in these canonical bytes: a replacement that passes those
     /// checks but does not extend the covered span — a scheme switch
     /// that decodes the same codes to a different spelling, any
-    /// transform divergence — must reconcile, or `Session::selected_text`
-    /// retains stale text alongside the new raw input.
+    /// transform divergence — must reconcile, or the record retains a stale
+    /// composition offset and token history alongside the new raw input.
     pub(super) fn replacement_extends_selection(&self, text: &str) -> bool {
         text.as_bytes()
             .starts_with(&self.input.as_bytes()[..self.record.consumed()])
@@ -372,7 +372,7 @@ where
         let state = self.state.borrow_mut();
         state
             .record
-            .rebuild_from_constraints(state.input.as_str(), &retained.runs());
+            .rebuild_from_constraints(state.input.len(), &retained.runs());
         Ok(())
     }
 

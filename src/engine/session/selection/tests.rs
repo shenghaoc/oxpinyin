@@ -76,15 +76,8 @@ mod session_lifecycle {
             select_row(&mut session, 0).expect("choose"),
             Selection::Continued
         );
-        assert!(
-            session
-                .selected_text()
-                .as_str()
-                .unwrap()
-                .starts_with(chosen.as_str()),
-            "the chosen phrase is retained in the record: {:?}",
-            session.selected_text()
-        );
+        assert_eq!(session.composition_offset(), 2);
+        assert_eq!(session.selected_tokens().len(), 1);
 
         assert!(session.is_composing());
     }
@@ -105,33 +98,37 @@ mod session_replay {
         session.replace_raw("zhuan").expect("type");
         let first = session.candidates().iter().next().unwrap();
         assert_eq!(first.text(), "传");
+        let first_token = first.token().expect("phrase token");
         assert_eq!(
             select_row(&mut session, 0).expect("select"),
             Selection::Completed
         );
-        assert_eq!(session.selected_text(), "传");
+        assert_eq!(session.selected_tokens(), [first_token]);
         assert_eq!(session.composition_offset(), "zhuan".len());
         session.reset();
         assert!(!session.is_composing());
-        assert!(session.selected_text().is_empty());
+        assert!(session.selected_tokens().is_empty());
 
         let mut session = self::session();
         session.replace_raw("nihaozhongguo").expect("type");
+        let prefix = session.candidates().iter().next().unwrap().token().unwrap();
         assert_eq!(
             select_row(&mut session, 0).expect("select prefix"),
             Selection::Continued
         );
-        assert_eq!(session.selected_text(), "你好");
+        assert_eq!(session.selected_tokens(), [prefix]);
         assert_eq!(
             &session.raw_input()[session.composition_offset()..],
             "zhongguo"
         );
         assert_eq!(session.candidates().iter().next().unwrap().text(), "中国");
+        let tail = session.candidates().iter().next().unwrap().token().unwrap();
         assert_eq!(
             select_row(&mut session, 0).expect("select tail"),
             Selection::Completed
         );
-        assert_eq!(session.selected_text(), "你好中国");
+        assert_eq!(session.selected_tokens(), [prefix, tail]);
+        assert_eq!(session.composition_offset(), "nihaozhongguo".len());
         session.reset();
         assert!(!session.is_composing());
     }

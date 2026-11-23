@@ -1,31 +1,16 @@
-//! The selection record: what the user has chosen so far.
+//! The selection record: the composition offset and chosen token history.
 //!
-//! Groups the three fields that always move together — the committed text,
-//! the composition offset (the lookup anchor and the store's coordinate
-//! origin) and the token history a `pinyin_train` walks — behind one type
-//! so a caller cannot advance the cursor without the text and history that
-//! must move with it. Upstream keeps no such record (the frontend tracks
-//! its own cursor); once forcings exist the constraint store is the source
-//! of truth, and [`SelectionRecord::rebuild_from_constraints`] re-derives
-//! all three from it.
-//!
-use crate::ucs4::PhraseTextConcat;
-use crate::vocab::{PhraseText, PhraseToken};
+//! The offset anchors lookup and the history feeds training. Once forcings
+//! exist, the constraint store is their source of truth.
+
+use crate::vocab::PhraseToken;
 
 /// The user's selections in this composition.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SelectionRecord {
-    /// The text retained by selections so far, including raw gaps. A
-    /// chosen phrase keeps its [`PhraseText`], stored words included, and
-    /// each part is cut at its own first zero when joined (the pin converts
-    /// every phrase separately, `src/lookup/lookup.cpp:39-68` at 074a2219).
-    selected: PhraseText,
-    /// Bytes of the raw input the selections consumed: the composition
-    /// offset the candidate lookup is anchored at and the store's
-    /// coordinate origin. Never past the raw input's length.
+    /// Bytes of raw input consumed by selections. Never past its length.
     consumed: usize,
-    /// The phrase token of every pinned phrase, in selection order — the
-    /// record a `pinyin_train` trains.
+    /// The pinned phrase tokens in selection order.
     history: Vec<PhraseToken>,
 }
 
@@ -35,30 +20,19 @@ impl SelectionRecord {
         self.consumed
     }
 
-    /// The text chosen so far.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(super) const fn selected(&self) -> &PhraseText {
-        &self.selected
-    }
-
     /// The pinned tokens in selection order.
     pub(super) fn history(&self) -> &[PhraseToken] {
         &self.history
     }
 
-    /// Empties the record — the all-or-nothing un-select and the full
-    /// reset. The constraint store is cleared by the caller alongside
-    /// this, or a forcing would outlive its own selection.
+    /// Empties the record. The caller clears the constraint store alongside it.
     pub(super) fn clear(&mut self) {
-        self.selected = PhraseText::default();
         self.consumed = 0;
         self.history.clear();
     }
 
-    /// Clamps the composition offset onto `raw` — the offset may sit past
-    /// the shrunk buffer, or inside a multi-byte character of a replaced
-    /// one, so it lands on the character boundary at or before its old
-    /// value. Every `raw[consumed..]` slice depends on this.
+    /// Clamps the composition offset to the character boundary at or before
+    /// its old value. Every `raw[consumed..]` slice depends on this.
     pub(super) fn clamp_consumed(&mut self, raw: &str) {
         self.consumed = self.consumed.min(raw.len());
         while !raw.is_char_boundary(self.consumed) {
@@ -66,74 +40,31 @@ impl SelectionRecord {
         }
     }
 
-    /// Extends the text chosen so far with a typed-but-unselected `gap`
-    /// then the chosen `text` — the ordinary selection, whose gap is
-    /// empty on the composition-anchored path.
-    pub(super) fn append_selected(&mut self, gap: &str, text: &PhraseText) {
-        let mut selected = PhraseTextConcat::new();
-        selected.push(&self.selected);
-        selected.push(&PhraseText::from(gap));
-        selected.push(text);
-        self.selected = selected.finish();
-    }
-
-    /// Replaces the text chosen so far with `text` — an n-best row, whose
-    /// text already covers the whole composition, so no gap is prepended.
-    pub(super) fn set_selected(&mut self, text: &PhraseText) {
-        self.selected = text.clone();
-    }
-
     /// Appends one token to the record.
     pub(super) fn push_token(&mut self, token: PhraseToken) {
         self.history.push(token);
     }
 
-    /// Replaces the history with a chosen n-best row's tokens: the row is
-    /// a path over the whole matrix, so a normal selection made before it
-    /// leaves no token behind.
-    pub(super) fn replace_history(&mut self, tokens: &[PhraseToken]) {
+    /// Replaces the history with a chosen n-best row's whole token path.
+    pub(super) fn replace_history(&mut self, tokens: impl Iterator<Item = PhraseToken>) {
         self.history.clear();
-        self.history.extend_from_slice(tokens);
+        self.history.extend(tokens);
     }
 
-    /// Advances the composition offset — the
-    /// fallback n-best row that matched no stored row (its span still
-    /// advances the cursor).
+    /// Advances the composition offset, including a fallback n-best row
+    /// that matched no stored row.
     pub(super) const fn set_consumed(&mut self, consumed: usize) {
         self.consumed = consumed;
     }
 
-    /// Rebuilds all three fields from the surviving forcings — the store is
-    /// the engine's single source once forcings exist. Gaps between forced
-    /// runs are free spans whose text is the current buffer's bytes, so the
-    /// rebuilt record never drops raw input the forcings skip over.
+    /// Rebuilds the offset and history from the surviving forcings, in
+    /// matrix order. Free gaps contribute no token to the history.
     pub(super) fn rebuild_from_constraints(
         &mut self,
-        raw: &str,
-        runs: &[(usize, usize, PhraseToken, PhraseText)],
+        raw_len: usize,
+        runs: &[(usize, usize, PhraseToken)],
     ) {
-        if runs.is_empty() {
-            self.clear();
-            return;
-        }
-        let mut selected = PhraseTextConcat::new();
-        let mut cursor = 0_usize;
-        let mut history = Vec::with_capacity(runs.len());
-        for (start, end, token, text) in runs {
-            if *start > cursor
-                && let Some(gap) = raw.get(cursor..*start)
-            {
-                selected.push(&PhraseText::from(gap));
-            }
-            selected.push(text);
-            history.push(*token);
-            cursor = *end;
-        }
-        self.selected = selected.finish();
-        self.consumed = cursor.min(raw.len());
-        self.history = history;
+        self.consumed = runs.last().map_or(0, |(_, end, _)| *end).min(raw_len);
+        self.replace_history(runs.iter().map(|(_, _, token)| *token));
     }
 }
-
-#[cfg(test)]
-mod tests;

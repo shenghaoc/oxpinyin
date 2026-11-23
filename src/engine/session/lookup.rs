@@ -143,11 +143,6 @@ where
         if prefix_len == 0 || prefix_len >= MAX_PHRASE_LENGTH {
             return Ok(None);
         }
-        // The pin's own two caps in one bound: the walk refuses a key path
-        // longer than `MAX_PHRASE_LENGTH` (`cached_keys->len > 16 →
-        // SEARCH_NONE`) and longer than `prefix_len * 2` (`:472-475`).
-        let max_keys = (prefix_len * 2).min(MAX_PHRASE_LENGTH);
-
         let matrix = &self.retained_parse().scan;
         // `search_suggestion_with_matrix` walks to `matrix->size() - 1`
         // (`phonetic_key_matrix.cpp:512`), the parse's reserved slot: the
@@ -166,11 +161,9 @@ where
         // recursion over every column entry (all parses plus the
         // resplit/divided/fuzzy additions), zero-key separator columns
         // stepped over without pushing.
-        let mut paths: Vec<SuggestionPath> = Vec::new();
         let mut path = SuggestionPath::default();
-        self.collect_suggestion_paths(matrix, 0, end, max_keys, &mut path, &mut paths);
-
-        let winner = self.longer_winner(&paths, prefix_len, gate_overlong)?;
+        let mut winner = None;
+        self.search_longer_paths(0, end, prefix_len, gate_overlong, &mut path, &mut winner)?;
         let Some((token, unigram, text)) = winner else {
             return Ok(None);
         };
@@ -195,10 +188,8 @@ where
         )))
     }
 
-    /// The winner of the LONGER row among the suggestion `paths`: the
-    /// maximum-unigram token whose phrase is within the character cap of
-    /// `prefix_len`, with its unigram and text. Ties follow
-    /// [`beats_longer_winner`].
+    /// Updates the LONGER winner for one DFS leaf. Dictionary and model
+    /// reads retain path order; ties follow [`beats_longer_winner`].
     ///
     /// # Errors
     ///
@@ -211,104 +202,100 @@ where
     /// (`abort_toned_incomplete`), or a user index key past
     /// `MAX_PHRASE_LENGTH` syllables that extends a path
     /// (`chewing_large_table2_bdb.cpp:282` at 074a2219).
-    fn longer_winner(
+    fn update_longer_winner(
         &self,
-        paths: &[SuggestionPath],
+        path: &SuggestionPath,
         prefix_len: usize,
         gate_overlong: bool,
-    ) -> Result<Option<(PhraseToken, u64, PhraseText)>, EngineError> {
-        let mut winner: Option<(PhraseToken, u64, PhraseText)> = None;
-        for SuggestionPath { keys, tones } in paths {
-            // `search_suggestion` asserts on a toned first initial-only key
-            // before its walk (`chewing_large_table2_bdb.cpp:560`, kc `:534`,
-            // tkrzw `:504`; `pinyin_phrase3.h:152`). Only the explicit guess
-            // runs the pin's prepend; a refresh keeps searching the path.
+        winner: &mut Option<(PhraseToken, u64, PhraseText)>,
+    ) -> Result<(), EngineError> {
+        let SuggestionPath { keys, tones } = path;
+        // `search_suggestion` asserts on a toned first initial-only key
+        // before its walk (`chewing_large_table2_bdb.cpp:560`, kc `:534`,
+        // tkrzw `:504`; `pinyin_phrase3.h:152`). Only the explicit guess
+        // runs the pin's prepend; a refresh keeps searching the path.
+        if gate_overlong {
+            crate::engine::abort_toned_incomplete(keys, tones);
+        }
+        // The pin's `search_suggestion` gate: the walk reaches a user
+        // index key past `MAX_PHRASE_LENGTH` syllables that extends this
+        // path and `switch`'s `default: abort()` dies
+        // (`chewing_large_table2_bdb.cpp:282`; kc `:269`, tkrzw `:252`).
+        // The pin reaches it only inside `_prepend_longer_candidates`
+        // (`pinyin.cpp:2292-2293`), called from
+        // `pinyin_guess_candidates`; a parse or another non-guess
+        // operation refreshes the cached list without that prepend. So
+        // die on an explicit guess, and skip the path rather than
+        // building a LONGER row from a corrupt index on any other
+        // refresh.
+        let tokens = self
+            .dictionary
+            .checked_extension_tokens(keys.as_slice())
+            .map_err(|_| EngineError::Failure)?;
+        let Some(tokens) = tokens else {
             if gate_overlong {
-                crate::engine::abort_toned_incomplete(keys, tones);
+                std::process::abort();
             }
-            // The pin's `search_suggestion` gate: the walk reaches a user
-            // index key past `MAX_PHRASE_LENGTH` syllables that extends this
-            // path and `switch`'s `default: abort()` dies
-            // (`chewing_large_table2_bdb.cpp:282`; kc `:269`, tkrzw `:252`).
-            // The pin reaches it only inside `_prepend_longer_candidates`
-            // (`pinyin.cpp:2292-2293`), called from
-            // `pinyin_guess_candidates`; a parse or another non-guess
-            // operation refreshes the cached list without that prepend. So
-            // die on an explicit guess, and skip the path rather than
-            // building a LONGER row from a corrupt index on any other
-            // refresh.
-            let tokens = self
-                .dictionary
-                .checked_extension_tokens(keys.as_slice())
-                .map_err(|_| EngineError::Failure)?;
-            let Some(tokens) = tokens else {
-                if gate_overlong {
-                    std::process::abort();
-                }
+            return Ok(());
+        };
+        for token in tokens {
+            // `get_phrase_item` + the char-length cap: a phrase longer
+            // than `prefix_len * 2 + 1` characters is skipped
+            // (`pinyin.cpp:1899-1902`).
+            let Some(text) = self.dictionary.phrase_text_for_token(token) else {
                 continue;
             };
-            for token in tokens {
-                // `get_phrase_item` + the char-length cap: a phrase longer
-                // than `prefix_len * 2 + 1` characters is skipped
-                // (`pinyin.cpp:1899-1902`).
-                let Some(text) = self.dictionary.phrase_text_for_token(token) else {
-                    continue;
-                };
-                let phrase_length = text.phrase_length();
-                if phrase_length > prefix_len * 2 + 1 {
-                    continue;
-                }
-                // The winner law: the first survivor initializes; a
-                // strictly greater unigram replaces (ties keep the earlier
-                // token — `:1904-1917`). `reduce_tokens` concatenates
-                // libraries first (`phrase_large_table3.h:77-97`), so an
-                // equal unigram from an earlier library wins even when
-                // reached through a later path. Within a library the
-                // path walk order stays unchanged. The unigram read carries
-                // the user/training overlay (`add_unigram_frequency` writes
-                // the facade item), which the model's `unigram_freq`
-                // already merges.
-                let unigram = self
-                    .model
-                    .unigram_freq(&token)
-                    .map_err(|_| EngineError::Failure)?
-                    .unwrap_or(0);
-                if winner.as_ref().is_none_or(|(best_token, best, _)| {
-                    beats_longer_winner(token, unigram, *best_token, *best)
-                }) {
-                    winner = Some((token, unigram, text));
-                }
+            let phrase_length = text.phrase_length();
+            if phrase_length > prefix_len * 2 + 1 {
+                continue;
+            }
+            // The winner law: the first survivor initializes; a
+            // strictly greater unigram replaces (ties keep the earlier
+            // token — `:1904-1917`). `reduce_tokens` concatenates
+            // libraries first (`phrase_large_table3.h:77-97`), so an
+            // equal unigram from an earlier library wins even when
+            // reached through a later path. Within a library the
+            // path walk order stays unchanged. The unigram read carries
+            // the user/training overlay (`add_unigram_frequency` writes
+            // the facade item), which the model's `unigram_freq`
+            // already merges.
+            let unigram = self
+                .model
+                .unigram_freq(&token)
+                .map_err(|_| EngineError::Failure)?
+                .unwrap_or(0);
+            if winner.as_ref().is_none_or(|(best_token, best, _)| {
+                beats_longer_winner(token, unigram, *best_token, *best)
+            }) {
+                *winner = Some((token, unigram, text));
             }
         }
-        Ok(winner)
+        Ok(())
     }
 
-    /// The suggestion walk's path enumeration: every key-path from `node`
-    /// to `end` no longer than `max_keys`, collected into `paths` —
-    /// `search_suggestion_with_matrix_recur`
-    /// (`phonetic_key_matrix.cpp:443-501` at the pin) with the window
-    /// scan's own zero-key column skip.
-    fn collect_suggestion_paths(
+    /// Visits suggestion paths in DFS order, evaluating each leaf before
+    /// continuing. Only the current path and winner are retained. The matrix
+    /// walk itself reads immutable session state and performs no model I/O.
+    fn search_longer_paths(
         &self,
-        matrix: &matrix::ScanMatrix,
         node: usize,
         end: usize,
-        max_keys: usize,
+        prefix_len: usize,
+        gate_overlong: bool,
         path: &mut SuggestionPath,
-        paths: &mut Vec<SuggestionPath>,
-    ) {
-        let Some(column) = matrix.get(node) else {
-            return;
+        winner: &mut Option<(PhraseToken, u64, PhraseText)>,
+    ) -> Result<(), EngineError> {
+        let Some(column) = self.retained_parse().scan.get(node) else {
+            return Ok(());
         };
         if node == end {
-            // The pin's leaf gate: an empty path (apostrophes only)
-            // searches nothing; the length caps were applied on the way
-            // down (`max_keys`).
             if !path.keys.is_empty() {
-                paths.push(path.clone());
+                self.update_longer_winner(path, prefix_len, gate_overlong, winner)?;
             }
-            return;
+            return Ok(());
         }
+        // The pin's two caps (phonetic_key_matrix.cpp:452-459 at 074a2219).
+        let max_keys = (prefix_len * 2).min(MAX_PHRASE_LENGTH);
         for scan_key in column.iter().copied() {
             let to = scan_key.to;
             if to > end || path.keys.len() >= max_keys {
@@ -316,10 +303,11 @@ where
             }
             path.keys.push(scan_key.key);
             path.tones.push(scan_key.tone);
-            self.collect_suggestion_paths(matrix, to, end, max_keys, path, paths);
+            self.search_longer_paths(to, end, prefix_len, gate_overlong, path, winner)?;
             path.keys.pop();
             path.tones.pop();
         }
+        Ok(())
     }
 
     /// Whether `offset` names a column the pin's span search can answer.
@@ -370,7 +358,7 @@ where
     ///
     /// At offset zero this uses [`Session::prefix_predecessor`].
     ///
-    /// Above 0 upstream reads the 1-best result — `last_result` here — and
+    /// Above 0 upstream reads the first sentence row's spans and
     /// carries a guard worth reproducing: it inspects `result[offset]` FIRST
     /// and only walks backwards when that position holds a token. A guess at
     /// an offset no phrase starts at contributes no bigram term at all.
@@ -378,23 +366,13 @@ where
         if offset == 0 {
             return Some(self.prefix_predecessor());
         }
-        if self.sentence.last_result.is_empty() {
+        let spans = &self.sentence.rows.first()?.spans;
+        let index = spans.partition_point(|span| span.start < offset);
+        // `result[offset] != null_token`: a phrase must begin here.
+        if spans.get(index)?.start != offset {
             return None;
         }
-        // `result[offset] != null_token`: a phrase must begin here.
-        self.sentence
-            .last_result
-            .iter()
-            .any(|span| span.start == offset)
-            .then(|| {
-                self.sentence
-                    .last_result
-                    .iter()
-                    .filter(|span| span.start < offset)
-                    .max_by_key(|span| span.start)
-                    .map(|span| span.token)
-            })
-            .flatten()
+        spans.get(index.checked_sub(1)?).map(|span| span.token)
     }
 
     /// Upstream's Gates 1 and 2 as one call: resolve the previous token and
@@ -1355,7 +1333,7 @@ where
 /// One key path of the LONGER suggestion walk, with the tone typed on each
 /// key: the table's suggestion search reads both
 /// (`contains_incomplete_pinyin`, `pinyin_phrase3.h:146-156`).
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct SuggestionPath {
     keys: SmallVec<[SyllableKey; 16]>,
     tones: SmallVec<[u8; 16]>,

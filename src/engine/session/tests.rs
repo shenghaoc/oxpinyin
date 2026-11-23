@@ -108,12 +108,10 @@ fn a_refused_choose_after_a_fallback_selection_keeps_the_record() {
 
     assert_eq!(session.refuse_selection().unwrap(), Selection::Refused);
     assert!(!session.constraints.is_active());
-    assert_eq!(session.selected_text(), "nihao");
     assert_eq!(session.composition_offset(), 5);
     assert!(session.selected_tokens().is_empty());
 
     session.guess_sentence().expect("the guess runs");
-    assert_eq!(session.selected_text(), "nihao");
     assert_eq!(session.composition_offset(), 5);
 }
 
@@ -130,7 +128,6 @@ fn a_refused_choose_still_rebuilds_a_record_that_lost_its_runs() {
 
     assert_eq!(session.refuse_selection().unwrap(), Selection::Refused);
     assert_eq!(session.selected_tokens(), [1, 2]);
-    assert_eq!(session.selected_text(), "你好");
     assert_eq!(session.composition_offset(), 5);
 }
 
@@ -496,7 +493,6 @@ fn train_observes_each_recorded_token_after_its_prefix() {
 
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("\u{4f60}".into()),
-        tokens: Vec::new(),
         spans: Vec::new(),
         keys: 1,
         span: 2,
@@ -624,8 +620,8 @@ fn training_refuses_a_stale_forced_token_at_a_later_span() {
     session.replace_raw("nihao").expect("parse");
     assert!(session.guess_sentence().expect("guess"));
     session.constraints.resize(6);
-    session.constraints.add(0, 2, 1, "你".into());
-    session.constraints.add(2, 4, 9, "X".into());
+    session.constraints.add(0, 2, 1);
+    session.constraints.add(2, 4, 9);
     let mut recorder = Recorder {
         observed: Vec::new(),
     };
@@ -667,7 +663,7 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     session.replace_raw("nihao").expect("parse");
     duplicate_the_first_key(&mut session);
     session.constraints.resize(6);
-    session.constraints.add(0, 5, 1, text.clone());
+    session.constraints.add(0, 5, 1);
     let spans = vec![PhraseSpan {
         start: 0,
         token: 1,
@@ -675,7 +671,6 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     }];
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
-        tokens: vec![1],
         spans,
         keys: 1,
         span: 2,
@@ -690,59 +685,6 @@ fn a_stored_phrase_trains_with_its_stored_length() {
         "every trained reading has the stored length: {:?}",
         model.0
     );
-}
-
-// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
-#[test]
-fn a_chosen_phrase_keeps_its_text_through_the_record() {
-    let cases = [
-        (
-            crate::vocab::PhraseText::from_words([0x4F60, 0xD800]).expect("stored words"),
-            vec![0x4F60, 0xD800],
-        ),
-        (
-            crate::vocab::PhraseText::from_words([0x4F60, 0, 0x597D]).expect("stored words"),
-            vec![0x4F60],
-        ),
-        (crate::vocab::PhraseText::from("你\0好"), vec![0x4F60]),
-    ];
-    for (text, outward) in cases {
-        let mut session = trellis_session();
-        session.replace_raw("nihao").expect("parse");
-        let window = crate::engine::candidate::CandidateList::from_vec(vec![
-            crate::engine::candidate::Candidate::new(
-                text.clone(),
-                crate::engine::CandidateKind::Phrase,
-                1,
-                2,
-                Some(1),
-                None,
-            ),
-        ]);
-        session
-            .select_target(&SelectionTarget::of_candidate(
-                window.iter().next().expect("the row is in the window"),
-                0,
-                None,
-            ))
-            .expect("the phrase is selectable");
-
-        let runs = session.constraints.runs();
-        assert_eq!(runs.len(), 1, "{text:?} forces its span");
-        assert_eq!(runs[0].3.stored_words(), text.stored_words());
-        assert_eq!(runs[0].3.as_str(), text.as_str());
-        assert_eq!(runs[0].3.phrase_length(), text.phrase_length());
-        assert_eq!(
-            session
-                .record
-                .selected()
-                .outward_words()
-                .collect::<Vec<_>>(),
-            outward,
-            "{text:?} is the record's outward text"
-        );
-        assert_eq!(&session.raw_input()[session.composition_offset()..], "hao");
-    }
 }
 
 // Basis: Rust TrainingPlan::observe error propagation contract.
@@ -765,7 +707,6 @@ fn train_reports_a_failing_user_model() {
     type_and_select(&mut session, "ni", 1);
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
-        tokens: Vec::new(),
         spans: Vec::new(),
         keys: 1,
         span: 2,
@@ -789,8 +730,11 @@ fn a_row_records_its_whole_token_path() {
 
     session.sentence.rows = vec![NbestRow {
         text: Some("\u{884}".into()),
-        tokens: vec![9],
-        spans: Vec::new(),
+        spans: vec![crate::engine::constraint::PhraseSpan {
+            start: 0,
+            token: 9,
+            text: "\u{884}".into(),
+        }],
         keys: 1,
         span: 2,
     }];
@@ -818,26 +762,36 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     session.sentence.rows = vec![
         NbestRow {
             text: Some("\u{597d}".into()),
-            tokens: vec![0x100],
-            spans: Vec::new(),
+            spans: vec![crate::engine::constraint::PhraseSpan {
+                start: 0,
+                token: 0x100,
+                text: "好".into(),
+            }],
             keys: 1,
             span: 3,
         },
         NbestRow {
             text: Some("\u{597d}".into()),
-            tokens: vec![0x101],
-            spans: Vec::new(),
+            spans: vec![crate::engine::constraint::PhraseSpan {
+                start: 0,
+                token: 0x101,
+                text: "好".into(),
+            }],
             keys: 1,
             span: 3,
         },
         NbestRow {
             text: Some("\u{6d69}".into()),
-            tokens: vec![0x102],
-            spans: Vec::new(),
+            spans: vec![crate::engine::constraint::PhraseSpan {
+                start: 0,
+                token: 0x102,
+                text: "浩".into(),
+            }],
             keys: 1,
             span: 3,
         },
     ];
+    session.constraints.resize(6);
     session.refresh().expect("refresh cannot fail");
 
     let hao = session
@@ -855,44 +809,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
         session.selected_tokens(),
         [0x102],
         "the chosen row records its own token path, not the deduped row 1's"
-    );
-}
-
-// Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
-#[test]
-fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
-    use crate::engine::nbest::NbestRow;
-
-    let mut session = train_session();
-    session.replace_raw("nihao").expect("typing cannot fail");
-
-    session.sentence.rows = vec![NbestRow {
-        text: Some("你好".into()),
-        tokens: vec![0x100, 0x101],
-        spans: Vec::new(),
-        keys: 2,
-        span: 5,
-    }];
-    session.refresh().expect("refresh cannot fail");
-
-    let window = session.candidates_at(2).expect("offset 2 is in range");
-    let nbest = window
-        .iter()
-        .position(|candidate| candidate.nbest_row() == Some(0))
-        .expect("the sentence row is prepended at a re-anchored offset");
-
-    session
-        .select_target(&SelectionTarget::of_candidate(
-            window.iter().nth(nbest).expect("the row is in the window"),
-            2,
-            None,
-        ))
-        .expect("selection cannot fail");
-    assert_eq!(
-        session.selected_text(),
-        "你好",
-        "an n-best row from a re-anchored window retains its own text,\n\
-         not the gap-prefixed duplicate"
     );
 }
 
@@ -1879,10 +1795,6 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
         "the composition re-opened at 0"
     );
 
-    assert!(
-        session.selected_text().is_empty(),
-        "the stale selection is gone"
-    );
     assert_eq!(session.raw_input(), "ni");
 }
 
@@ -1911,10 +1823,6 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
         "the composition re-opened at 0"
     );
 
-    assert!(
-        session.selected_text().is_empty(),
-        "the stale selection is gone"
-    );
     assert_eq!(session.raw_input(), "mixxo");
 }
 
@@ -2010,7 +1918,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     session.sentence.rows = vec![
         crate::engine::nbest::NbestRow {
             text: Some("\u{597d}".into()),
-            tokens: vec![0x100],
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
                 token: 0x100,
@@ -2021,7 +1928,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
         },
         crate::engine::nbest::NbestRow {
             text: Some("\u{6d69}".into()),
-            tokens: vec![0x102],
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
                 token: 0x102,
@@ -2049,28 +1955,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
     assert!(
         session.clear_constraint(0),
         "the differing phrase's write lands after a shorter reparse"
-    );
-}
-
-// Basis: Rust session reconciliation and selection record contracts.
-#[test]
-fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
-    let mut session = train_session();
-    session
-        .replace_raw("nihaoshijie")
-        .expect("typing cannot fail");
-    session.constraints.resize(12);
-    session.constraints.add(0, 2, 1, "\u{4f60}".into());
-    session.constraints.add(5, 10, 2, "\u{4e16}\u{754c}".into());
-    session.rebuild_selection_from_constraints();
-    assert!(
-        session
-            .selected_text()
-            .as_str()
-            .unwrap()
-            .starts_with("\u{4f60}hao\u{4e16}\u{754c}"),
-        "the gap's raw bytes survived the rebuild: got {:?}",
-        session.selected_text()
     );
 }
 
@@ -2178,7 +2062,6 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
     );
     session.sentence.rows = vec![NbestRow {
         text: Some("你好世界".into()),
-        tokens: vec![0x100, 0x101, 0x102],
         spans: Vec::new(),
         keys: 3,
         span: 11,
@@ -2210,7 +2093,6 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
 
     let row = |text: &str| NbestRow {
         text: Some(text.into()),
-        tokens: vec![0x100],
         spans: Vec::new(),
         keys: 2,
         span: 5,
@@ -2291,15 +2173,11 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "one forcing: {runs:?}");
     assert_eq!(
-        (runs[0].0, runs[0].1, &runs[0].3),
-        (2, 5, &crate::vocab::PhraseText::from("好")),
+        runs[0],
+        (2, 5, row.token().expect("token row")),
         "the constraint is the row's own span, not [0, offset)"
     );
-    assert_eq!(
-        session.selected_text(),
-        "ni好",
-        "the leading key stays typed-but-unselected, as an after-cursor re-anchor keeps it"
-    );
+    assert_eq!(session.selected_tokens(), [row.token().expect("token row")]);
 }
 
 // Basis: zhuyin.cpp:1460–1668 at 074a2219.
@@ -2330,7 +2208,6 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
 
     session.sentence.rows = vec![NbestRow {
         text: Some("你好".into()),
-        tokens: vec![0x100],
         spans: Vec::new(),
         keys: 2,
         span: 5,
@@ -2442,7 +2319,7 @@ fn choosing_behind_the_composition_moves_the_record_back() {
     assert_eq!(session.composition_offset(), 5);
 
     let window = session.candidates_at(0).expect("offset 0 is in range");
-    let (index, _) = window
+    let (index, row) = window
         .iter()
         .enumerate()
         .find(|(_, cand)| cand.kind() == CandidateKind::Phrase && cand.text() == "你")
@@ -2457,11 +2334,8 @@ fn choosing_behind_the_composition_moves_the_record_back() {
     assert_eq!(session.composition_offset(), 2, "the record moves back");
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "你好 was overlapped and cleared: {runs:?}");
-    assert_eq!(
-        (runs[0].0, runs[0].1, &runs[0].3),
-        (0, 2, &crate::vocab::PhraseText::from("你"))
-    );
-    assert_eq!(session.selected_text(), "你");
+    assert_eq!(runs[0], (0, 2, row.token().expect("token row")));
+    assert_eq!(session.selected_tokens(), [row.token().expect("token row")]);
     assert_eq!(&session.raw_input()[session.composition_offset()..], "hao");
 }
 
@@ -3029,7 +2903,7 @@ fn wide_abbreviation_session(
         .expect("incomplete on");
     session.replace_raw("zhhrm").expect("parse");
     session.constraints.resize(6);
-    assert_eq!(session.constraints.add(0, 5, 7, "中华人民".into()), 5);
+    assert_eq!(session.constraints.add(0, 5, 7), 5);
     session.rebuild_selection_from_constraints();
     session
 }
@@ -3101,7 +2975,6 @@ fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
     session.replace_raw("ni").expect("typing cannot fail");
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
-        tokens: vec![1],
         spans: Vec::new(),
         keys: 1,
         span: 2,
@@ -3329,7 +3202,7 @@ fn constraint_spelling_sums_duplicate_paths_at_the_f32_boundary() {
         let spelling = crate::engine::nbest::ConstraintSpelling::new(&matrix);
         let mut constraints = crate::engine::constraint::ConstraintStore::default();
         constraints.resize(3);
-        constraints.add(0, 2, 1, "你".into());
+        constraints.add(0, 2, 1);
         constraints
             .validate(3, |start, end, token| {
                 spelling.spells(&dictionary, start, end, token)
@@ -3447,7 +3320,7 @@ pub(super) mod session_lifecycle {
 
         session.reset();
         assert!(!session.is_composing());
-        assert!(session.selected_text().is_empty());
+        assert!(session.selected_tokens().is_empty());
 
         assert_eq!(session.options(), options);
         session.replace_raw("n").expect("typing");
@@ -3533,7 +3406,7 @@ pub(super) mod session_replay {
         assert!(session.composition_offset() <= session.raw_input().len());
         session.reset();
         assert!(session.raw_input().is_empty());
-        assert!(session.selected_text().is_empty());
+        assert!(session.selected_tokens().is_empty());
     }
 }
 

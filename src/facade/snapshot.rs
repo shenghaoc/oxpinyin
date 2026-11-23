@@ -122,9 +122,8 @@ impl<R> CandidateSnapshot<R> {
     ///
     /// The packed copy of a stored-words phrase is lossy: it stops at the
     /// first zero word and drops the stored length
-    /// (`crate::marshal::phrase_text_bytes`), while the selection
-    /// record and the constraint store keep every stored word
-    /// ([`crate::engine::SelectionTarget::text`]). Call it only for such
+    /// ([`crate::marshal::phrase_text_bytes`]). This keeps the source words
+    /// and stored length alongside that packed copy. Call it only for such
     /// a text; the packed bytes of every other text are exact.
     pub fn keep_stored_text(&mut self, text: PhraseText) {
         let row = u32::try_from(self.rows.len()).unwrap_or(u32::MAX);

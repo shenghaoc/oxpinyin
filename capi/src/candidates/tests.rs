@@ -214,17 +214,15 @@ fn phrase_text_system(parent: &Path, word: u32) -> std::path::PathBuf {
     )
 }
 
-/// A row whose phrase is stored words keeps them through a choose of its
-/// published handle, after a reparse of the same input: the selection
-/// record takes the row's text with its stored length and words. The packed
-/// string the handle points at cannot give them back — it stops at a zero
-/// word and drops the stored length — so the snapshot keeps that text.
+/// A saved handle chooses its stored token and span after a reparse of the
+/// same input. Sentence reads resolve that token's live words, including
+/// embedded zero words and words outside Unicode's scalar range.
 #[rstest::rstest]
-#[case::zero_word(0, &[0x7532])]
-#[case::above_unicode(0x11_0000, &[0x7532, 0x11_0000, 0x4e59])]
-fn a_stored_words_row_is_chosen_through_its_handle_with_its_stored_text(
+#[case::zero_word(0, "甲丙".as_bytes())]
+#[case::above_unicode(0x11_0000, b"\xe7\x94\xb2\xf4\x90\x80\x80\xe4\xb9\x99\xe4\xb8\x99")]
+fn a_stored_words_row_keeps_its_token_and_span_through_its_handle(
     #[case] word: u32,
-    #[case] stored: &[u32],
+    #[case] sentence: &[u8],
 ) {
     let scratch = tempfile::tempdir().expect("scratch");
     let system = phrase_text_system(scratch.path(), word);
@@ -242,12 +240,17 @@ fn a_stored_words_row_is_chosen_through_its_handle_with_its_stored_text(
     assert_eq!(unsafe { parse(instance, "da1da1da1ba1") }, 12);
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 9);
     // SAFETY: the live instance is read between serialized ABI calls.
-    let inst = unsafe { crate::state::instance_ref(instance) };
-    let selected = inst.core.session.selected_text();
+    assert_eq!(unsafe { selected_tokens(instance) }, [0x0100_0001]);
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    let mut text = ptr::null_mut();
+    assert!(unsafe { pinyin_get_sentence(instance, 0, &raw mut text) });
+    // SAFETY: get_sentence returned an owned, NUL-terminated GLib string.
     assert_eq!(
-        (selected.stored_words(), selected.phrase_length()),
-        (Some(stored), 3)
+        unsafe { std::ffi::CStr::from_ptr(text) }.to_bytes(),
+        sentence
     );
+    // SAFETY: the owned sentence is freed once after the last read.
+    unsafe { glib_sys::g_free(text.cast()) };
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };
@@ -725,24 +728,6 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
         return;
     }
 
-    // The skipped prefix (the raw bytes [0, 2) before the anchor) is
-    // retained in the committed text: a re-anchored selection must not
-    // drop the typed-but-unselected bytes (the gap
-    // `rebuild_selection_from_constraints` preserves).
-    let committed = {
-        // SAFETY: the instance is live; this reads the retained selection.
-        unsafe {
-            crate::state::instance_ref(instance)
-                .core
-                .session
-                .selected_text()
-                .clone()
-        }
-    };
-    assert_eq!(
-        committed, "ni好",
-        "the typed prefix survives the re-anchored choose"
-    );
     assert!(unsafe { crate::candidates::pinyin_clear_constraint(instance, 2) });
     unsafe { crate::instance::pinyin_free_instance(instance) };
     unsafe { crate::context::pinyin_fini(context) };
