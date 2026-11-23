@@ -405,7 +405,7 @@ An entry holds nothing else.
 - **Pin:** `trellis_value_compare` returns the negated `gfloat` difference as `gint` (`src/lookup/phonetic_lookup.h:174-178`) and is passed to `g_ptr_array_sort` (`:337`); its equality is not transitive, against the consistent total order a qsort-style comparator needs.
 - **oxpinyin:** `tail_merge` (`src/engine/nbest.rs`) sorts the tails stably by raw possibility descending, NaN last, with no integer truncation.
 - **Decision:** accepted under the [S3 ruling](compatibility-policy.md#s3-stable-descending-possibility) (policy row 147).
-- **Tests:** `nbest::tests::ieee_order_and_stable_raw_tails` checks ties and special values. `nbest::tests::raw_tails_order_subunit_score_differences` checks two finite scores 0.75 apart.
+- **Tests:** `nbest::tests::ieee_order_and_stable_raw_tails` checks ties, special values and two finite scores 0.75 apart.
 
 ### Phrase segmentation writes no invalid-UTF-8 critical
 
@@ -436,7 +436,7 @@ An entry holds nothing else.
 - **oxpinyin:** `candidate::rank_by_frequency` groups stably by enabled length and span, checks each group's wrapping relation, and sorts a consistent group by `rhs.wrapping_sub(lhs) as i32` and a cyclic group by stable numeric descending frequency. A consistent group fits in a circular interval strictly narrower than 2^31.
 - **Decision:** accepted under the [candidate-frequency ruling](compatibility-policy.md#no-ported-external-library-internals) (policy row 151): std sorting needs a consistent order; the fallback applies only within inconsistent equal-length, equal-span groups.
 - **Rejected:** transcribing GLib's sort algorithm.
-- **Tests:** `candidate::tests::frequency_sort_guards_each_leading_key_group_and_preserves_ties`, `candidate::tests::frequency_sort_has_a_defined_antipodal_fallback`, `guess_predict::a_prediction_list_past_gint_max_keeps_the_wrapping_order` (`oxpinyin-capi`; a consistent group past `gint`'s maximum at the C boundary).
+- **Tests:** `candidate::tests::frequency_sort_guards_each_leading_key_group_and_preserves_ties` (cyclic groups, including antipodal pairs), `guess_predict::a_prediction_list_past_gint_max_keeps_the_wrapping_order` (`oxpinyin-capi`; a consistent group past `gint`'s maximum at the C boundary).
 
 ### Zhuyin selection uses length, raw score and input order
 
@@ -471,7 +471,7 @@ An entry holds nothing else.
 - **Pin:** all three full-pinyin schemes use the same `gint16` steps (`src/storage/pinyin_parser2.cpp:67-70,276,290,383-396`). The parser returns the last step whose parsed length equals its index, at most 32,767 bytes (`:333,346-380`).
 - **oxpinyin:** the graph uses `u32` positions and spans and accepts input up to `MAX_GRAPH_POSITION`. After `pinyin_set_full_pinyin_scheme` selects Luoma or secondary Zhuyin, `pinyin_parse_more_full_pinyins` uses `usize` steps and can return a parsed prefix longer than 32,767 bytes (`src/full_pinyin_index.rs:114-139,196-297`).
 - **Decision:** accepted, language artefact (policy row 59), by maintainer decision: the stop is a C++ storage width.
-- **Tests:** `session::tests::input_past_the_pins_gint16_bound_is_kept_and_parsed_whole`, `session::tests::candidates_come_from_keys_past_the_pins_gint16_bound`, `oxpinyin::graph::tests::an_import_reading_parses_past_long_separator_runs`, `oxpinyin_capi::iterators::tests::an_import_reading_parses_past_long_separator_runs`. `keys::a_scheme_parse_keys_render_as_luoma_and_secondary_zhuyin` covers both alternate indexes on `nihao`.
+- **Tests:** `session::tests::candidates_come_from_keys_past_the_pins_gint16_bound`, `oxpinyin::graph::tests::an_import_reading_parses_past_long_separator_runs`, `oxpinyin_capi::iterators::tests::an_import_reading_parses_past_long_separator_runs`. `keys::a_scheme_parse_keys_render_as_luoma_and_secondary_zhuyin` covers both alternate indexes on `nihao`.
 
 ### Oversized journal record payloads (policy row 123)
 
@@ -566,7 +566,7 @@ Pin cites are relative to `src/`; `*` in a case name is `pinyin` and `zhuyin`.
 | `*_save` on a chunk header or checksum write (row 77) | `include/memory_chunk.h:543`, `:547` | `init_and_save::save_aborts_where_the_chunk_header_write_fails`, `init_and_save::a_save_cut_after_the_chunk_length_word_aborts` |
 | `table.conf` rows and library loads the pin refuses (row 79) | `storage/table_info.cpp:119`, `:132`, `:142`, `:156`, `:175`, `:276`; `pinyin.cpp:388`, `:457`, `:491`; `zhuyin.cpp:330`, `:372`; `include/memory_chunk.h:434`, `:493` | `init_and_save::init_aborts_on_an_unknown_table_conf_database_format`, `init_and_save::an_unknown_table_database_format_aborts_before_any_user_file`, `library_loading::addon_load_aborts_on_a_row_that_is_not_a_dictionary`, `init_and_save::init_aborts_on_a_default_dictionary_row_after_user_conf` (`oxpinyin-capi`), `init_and_save::a_default_dictionary_row_aborts_the_init_with_no_user_conf` (`oxzhuyin-capi`) |
 | `pinyin_remove_user_candidate` on a removal the store refuses (row 81) | `pinyin.cpp:3743`, `:3750`, `:3759` | `choose::remove_user_candidate_aborts_without_the_phrase_table`; `a_removal_assert_comes_before_the_bigram_fault`, `choose::remove_user_candidate_aborts_on_a_reading_the_index_lacks` |
-| `*_train` after a re-parse past the matrix (row 82) | `storage/phonetic_key_matrix.cpp:661`, `:663`, `:664` | `session::tests::train_after_a_shortening_reparse_refuses_a_span_past_the_matrix`, `session::tests::train_after_an_apostrophe_reparse_refuses_an_empty_start_column`, `session::tests::train_after_a_reparse_onto_an_empty_end_column_refuses`; `session::tests::train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length` |
+| `*_train` after a re-parse past the matrix (row 82) | `storage/phonetic_key_matrix.cpp:661`, `:663`, `:664` | `session::tests::training_checks_reparsed_span_columns` (overrun, empty start and empty end); `session::tests::train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length` |
 | `*_mask_out` on an over-long user index key (rows 84, 94) | `storage/chewing_large_table2_bdb.cpp:529` (kc `:499`, tkrzw `:466`) | `user_store::mask_out_aborts_on_an_overlong_index_key_before_the_reload`, `oxpinyin::user::store::tests::mask_out_aborts_on_an_empty_index_key` (owner error) |
 | `pinyin_guess_candidates` LONGER walk on an over-long index key (rows 84, 95) | `storage/chewing_large_table2_bdb.cpp:282` (kc `:269`, tkrzw `:252`) | `user_store::guess_candidates_aborts_on_an_overlong_index_key`; `import_and_user_store::cursor_guesses_ignore_an_overlong_user_index_key` |
 | A user-bigram key that is not a token (row 86) | `storage/ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`) | `user_store::mask_out_aborts_on_a_non_token_bigram_key`, `user_store::bigram_export_aborts_on_a_non_token_key` |

@@ -85,11 +85,9 @@ impl LanguageModel for CheckedModel {
     }
 }
 
+// Basis: Rust raw UCS-4 lookup contract and phrase_lookup.cpp:119–157 at 074a2219.
 #[test]
 fn a_raw_surrogate_key_segments_to_its_token() {
-    // The pin searches the phrase table with the raw UCS-4 words the
-    // converter produced. A stored `[0xd800]` row must reach its token
-    // even though no `char` or `str` exists for that word.
     let dictionary = RawDict {
         entries: vec![(vec![0xd800], 3)],
     };
@@ -106,6 +104,7 @@ fn a_raw_surrogate_key_segments_to_its_token() {
     assert_eq!(result[0], 3);
 }
 
+// Basis: Rust raw UCS-4 lookup contract and phrase_lookup.cpp:119–157 at 074a2219.
 #[test]
 fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
     use crate::model::{NbestStepCosts, NbestStepRow, NbestSuccessors};
@@ -154,6 +153,7 @@ fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
     assert!(model.0.borrow().contains(&SENTENCE_START));
 }
 
+// Basis: ngram_kyotodb.cpp:131–139 at 074a2219.
 #[test]
 fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
     use crate::engine::error::EngineError;
@@ -164,6 +164,7 @@ fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
     );
 }
 
+// Basis: phrase_lookup.cpp:119–157,255–305 at 074a2219.
 #[test]
 fn prefix_faults_follow_spans_before_predecessors() {
     struct Ordered(std::cell::RefCell<Vec<(u32, u32)>>);
@@ -202,10 +203,7 @@ fn prefix_faults_follow_spans_before_predecessors() {
     assert_eq!(*model.0.borrow(), [(1, 3), (1, 4), (3, 5), (4, 5)]);
 }
 
-/// A missing row (a failed system read is one at the data layer):
-/// `search_bigram2` loads it once per predecessor for the span, however
-/// many tokens the span holds, and `search_unigram2` still runs
-/// (`phrase_lookup.cpp:145-146,263-270`), so `final_step` finds the path.
+// Basis: phrase_lookup.cpp:119–157,255–305 at 074a2219.
 #[test]
 fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
     use crate::model::{NbestStepRow, NbestSuccessors};
@@ -250,8 +248,6 @@ fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
     let (matched, result) = phrase_segment(&dictionary, &model, "ab").unwrap();
     assert!(matched);
     assert_eq!(result, [3, 4]);
-    // Sentence start once for "a" (two tokens), then one row per node
-    // of the next step for "b".
     assert_eq!(*model.0.borrow(), [1, 3, 5]);
 }
 
@@ -298,10 +294,7 @@ impl LanguageModel for Rows {
     }
 }
 
-/// N2 refusals 1 and 4 on `phrase_segment`'s merge and `get_freq`
-/// (`phrase_lookup.cpp:272-290`): the sentence-start predecessor's row
-/// refuses where the pin reads past it, and a whole row segments. A
-/// sentence the search never reaches a predecessor row for stays quiet.
+// Basis: phrase_lookup.cpp:255–305 and ngram.cpp:231–248,303–349 at 074a2219.
 #[test]
 fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
     use crate::engine::error::EngineError;
@@ -310,8 +303,11 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
     let short_merge = Rows {
         row: MergedGram::merge(Some(segment_system_gram()), Some(vec![0, 0])).unwrap(),
     };
-    assert!(phrase_segment(&dictionary, &short_merge, "").is_ok());
-    assert!(phrase_segment(&dictionary, &short_merge, "无").is_ok());
+    for (sentence, found, expected) in [("", true, &[][..]), ("无", false, &[0])] {
+        let (matched, result) = phrase_segment(&dictionary, &short_merge, sentence).unwrap();
+        assert_eq!(matched, found);
+        assert_eq!(result, expected);
+    }
     let short_alone = Rows {
         row: MergedGram::merge(None, Some(vec![0, 0])).unwrap(),
     };
@@ -336,10 +332,7 @@ fn segment_system_gram() -> Vec<u8> {
     value
 }
 
-/// N2 refusal 1: the predecessor's merge asserts on a short user value
-/// beside the system gram (`merge_single_gram` reads both totals first,
-/// `ngram.cpp:303-304` through `memory_chunk.h:390`), and the segment
-/// dies in the engine.
+// Basis: phrase_lookup.cpp:255–305 and ngram.cpp:231–248,303–349 at 074a2219.
 #[test]
 fn a_short_merge_aborts_the_segment() {
     crate::store::death_test::assert_aborts(
@@ -354,6 +347,7 @@ fn a_short_merge_aborts_the_segment() {
         },
     );
 }
+// Basis: phrase_lookup.cpp:348–405 at 074a2219.
 #[test]
 fn ieee_relax_and_best_keep_first_on_ties_and_nan() {
     use super::{Node, Step};

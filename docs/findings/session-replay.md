@@ -32,25 +32,22 @@ The session has no key, preedit or commit operation, so no scenario uses one.
 
 ## Scenarios
 
-The test `recorded_candidate_scenarios_use_direct_operations` runs seven scenarios, each in a new session:
+The test `recorded_candidate_scenarios_use_direct_operations` runs two scenarios, each in a new session.
 
 | Input | What it holds |
 |---|---|
-| `nihao` | the basic loop: first candidate `你好`, and `select(0)` completes the composition |
 | `nihaozhongguo` | choose `你好`, decode the remainder `zhongguo`, choose `中国` |
-| `xian` | offers `西安` first and `西岸` second |
-| `nih` | reaches `你好` through an initial-only key |
-| `chang'an` | the apostrophe boundary: `长安` |
-| `zhuan` | the F-E-12 trigger: `传` |
-| `qqq` | offers itself back and does not offer `你好` |
+| `zhuan` | the F-E-12 trigger: choose `传` and reset |
+
+`candidates_come_from_every_segmentation_not_only_the_selected_one`, `an_initial_only_tail_reaches_the_phrases_it_prefixes`, and `an_apostrophe_is_a_boundary_the_decoder_honours` hold the candidate construction cases. `an_input_no_phrase_can_reach_falls_back_to_itself` holds the raw fallback.
 
 ## Robustness tests
 
 The test doc comments state each upstream defect. F-E-12 is an `assert()` on the user input `zhuan` (ibus-libpinyin #542).
 
-- **F-E-12**, the `zhuan` row of `recorded_candidate_scenarios_use_direct_operations` and `the_reset_session_converts_identically_to_a_fresh_one`.
+- **F-E-12**, the `zhuan` row of `recorded_candidate_scenarios_use_direct_operations` and `reset_clears_the_composition_but_not_the_configuration`.
   The row runs the full frontend-equivalent sequence, not a parse in isolation: it parses `zhuan`, takes `传`, reads the retained text and resets.
-  `the_reset_session_converts_identically_to_a_fresh_one` (the `session_lifecycle` module of `src/engine/session/tests.rs`) continues on a session after a choice and a reset.
+  `reset_clears_the_composition_but_not_the_configuration` (the `session_lifecycle` module of `src/engine/session/tests.rs`) continues on a session after a choice and a reset.
 
 The test `arbitrary_characters_never_panic` appends every character in `U+0000..=U+00FF`, then `你` and `U+10FFFF`, and calls `replace_raw` after each one.
 It requires no panic and no error: the totality property at session level.

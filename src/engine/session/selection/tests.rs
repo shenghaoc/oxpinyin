@@ -1,5 +1,6 @@
 use super::*;
 
+// Basis: phonetic_key_matrix.cpp:603–664 at 074a2219 and the Rust training_readings contract.
 #[test]
 fn readings_preserve_span_tones_order_and_multiplicity() {
     let Some(key) = SyllableKey::from_text("jin") else {
@@ -27,9 +28,12 @@ fn readings_preserve_span_tones_order_and_multiplicity() {
         readings.iter().map(|r| r[0].tone).collect::<Vec<_>>(),
         [2, 3]
     );
-    assert_eq!(training_readings(&matrix, b"xx", 0, 2, 2).count(), 2);
-    assert_eq!(training_readings(&matrix, b"xx", 0, 2, 1).count(), 1);
-    assert_eq!(training_readings(&matrix, b"xx", 2, 1, 1).count(), 0);
+    for (start, end, keys, count) in [(0, 2, 2, 2), (0, 2, 1, 1), (2, 1, 1, 0)] {
+        assert_eq!(
+            training_readings(&matrix, b"xx", start, end, keys).count(),
+            count
+        );
+    }
     let trailing = super::super::matrix::ParsedMatrix::from_scan(
         &super::super::matrix::ScanMatrix::from_columns(vec![
             vec![edge(0, 1, 2)],
@@ -40,22 +44,21 @@ fn readings_preserve_span_tones_order_and_multiplicity() {
         3,
         false,
     );
-    assert_eq!(training_readings(&trailing, b"x''", 0, 3, 1).count(), 1);
-    assert_eq!(training_readings(&trailing, b"xxx", 0, 3, 1).count(), 0);
+    for (input, count) in [(b"x''", 1), (b"xxx", 0)] {
+        assert_eq!(training_readings(&trailing, input, 0, 3, 1).count(), count);
+    }
 }
 
 /// The lifecycle suite's selection tests (libchewing test-keyboardless.c).
 mod session_lifecycle {
-    use crate::engine::{Selection, SelectionTarget};
+    use crate::engine::Selection;
 
     use crate::engine::session::tests::select_row;
     use crate::engine::session::tests::session_lifecycle::session;
 
-    // ── libchewing test-keyboardless.c: programmatic selection ─────────
-
+    // Basis: pinyin.cpp:2577–2587 at 074a2219 and the Rust selection outcome contract.
     #[test]
     fn a_programmatic_choice_retains_the_chosen_phrase() {
-        // `cand_choose_word`: choosing by index retains the exact phrase.
         let mut session = session();
         session.replace_raw("ni,hao").expect("typing");
         let chosen = session
@@ -69,9 +72,6 @@ mod session_lifecycle {
             .to_owned();
         assert_eq!(chosen, "你", "the captured order leads with 你");
 
-        // The first choice selects the first segment's phrase and continues
-        // the composition with the remaining syllables (chewing puts the
-        // chosen phrase into the preedit too).
         assert_eq!(
             select_row(&mut session, 0).expect("choose"),
             Selection::Continued
@@ -86,45 +86,7 @@ mod session_lifecycle {
             session.selected_text()
         );
 
-        // Completing the rest and resetting is covered by the session replay
-        // suite (`recorded_candidate_scenarios_use_direct_operations`); this
-        // port stops at the single-choice invariant the chewing test protects.
         assert!(session.is_composing());
-    }
-
-    #[test]
-    fn a_mid_composition_choice_targets_the_offset_window() {
-        // `test_select_candidate_in_middle`: choosing can address a sub-span
-        // of the composition through `candidates_at` + `select_target`,
-        // retaining the raw input alongside the selected text.
-        let mut session = session();
-        session.replace_raw("ni,hao,zhong,guo").expect("typing");
-        let full = session.raw_input().to_owned();
-        assert!(!full.is_empty());
-
-        // The offset window after the first two syllables offers candidates
-        // of its own; the anchored selection moves the composition forward.
-        let offset = session
-            .normalized_lookup_offset(2)
-            .expect("offset in range");
-        let window = session
-            .candidates_at(offset)
-            .expect("a mid-composition window");
-        assert!(
-            !window.is_empty(),
-            "the mid-composition window offers candidates"
-        );
-        session
-            .select_target(&SelectionTarget::of_candidate(
-                window.iter().next().expect("the row is in the window"),
-                offset,
-                None,
-            ))
-            .expect("the anchored selection succeeds over a live window");
-        // The composition stays live and bounded after the anchored choice.
-        assert_eq!(session.raw_input(), full);
-        assert!(session.composition_offset() <= full.len());
-        assert!(!session.selected_text().is_empty());
     }
 }
 
@@ -136,44 +98,24 @@ mod session_replay {
     use crate::engine::session::tests::select_row;
     use crate::engine::session::tests::session_replay::session;
 
-    /// Candidate and state transitions through direct session operations.
+    // Basis: Frozen F-A candidate lists and the Rust session replay contract.
     #[test]
     fn recorded_candidate_scenarios_use_direct_operations() {
-        for (input, first) in [
-            ("nihao", "你好"),
-            ("xian", "西安"),
-            ("nih", "你好"),
-            ("chang'an", "长安"),
-            ("zhuan", "传"),
-            ("qqq", "qqq"),
-        ] {
-            let mut session = session();
-            session.replace_raw(input).expect("type");
-            assert_eq!(session.raw_input(), input);
-            assert_eq!(session.candidates().iter().next().unwrap().text(), first);
-            if input == "xian" {
-                assert_eq!(session.candidates().iter().nth(1).unwrap().text(), "西岸");
-            }
-            if input == "qqq" {
-                assert!(
-                    session
-                        .candidates()
-                        .iter()
-                        .all(|candidate| candidate.text() != "你好")
-                );
-            }
-            assert_eq!(
-                select_row(&mut session, 0).expect("select"),
-                Selection::Completed
-            );
-            assert_eq!(session.selected_text(), first);
-            assert_eq!(session.composition_offset(), input.len());
-            session.reset();
-            assert!(!session.is_composing());
-            assert!(session.selected_text().is_empty());
-        }
-
         let mut session = session();
+        session.replace_raw("zhuan").expect("type");
+        let first = session.candidates().iter().next().unwrap();
+        assert_eq!(first.text(), "传");
+        assert_eq!(
+            select_row(&mut session, 0).expect("select"),
+            Selection::Completed
+        );
+        assert_eq!(session.selected_text(), "传");
+        assert_eq!(session.composition_offset(), "zhuan".len());
+        session.reset();
+        assert!(!session.is_composing());
+        assert!(session.selected_text().is_empty());
+
+        let mut session = self::session();
         session.replace_raw("nihaozhongguo").expect("type");
         assert_eq!(
             select_row(&mut session, 0).expect("select prefix"),

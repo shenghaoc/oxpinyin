@@ -1,8 +1,7 @@
 use super::SelectionRecord;
 use crate::vocab::PhraseText;
 
-/// Chosen phrases and raw gaps join in order, an n-best row replaces
-/// the text, and a rebuild keeps the gaps its runs skip over.
+// Basis: Rust SelectionRecord append, replace and rebuild contract.
 #[test]
 fn the_selected_text_keeps_raw_gaps() {
     let mut record = SelectionRecord::default();

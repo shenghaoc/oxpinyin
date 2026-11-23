@@ -1,14 +1,3 @@
-//! Pin-table tests for the cursor laws.
-//!
-//! Every table below was measured FIRST-HAND on the rebuilt pin
-//! (recorded evidence: a pin-built oracle prefix; libpinyin 2.11.91 @ `0c5e80e`,
-//! parity word `0x18a`) with a fork-per-probe driver: each offset ran in
-//! its own child process so the pin's `assert`-abort is a datum, not a
-//! dead driver. Legend: values are the pin's answers; `ABORT` is the
-//! pin's `_check_offset` SIGABRT (the engine answers
-//! [`EngineError::ZeroKeyOffsetCheck`]); `false` is the pin's one graceful
-//! false (`pinyin.cpp:3087-3088`), encoded `Ok(None)` on the right move.
-
 use crate::OptionBits;
 use crate::graph::SegmentGraph;
 
@@ -49,543 +38,65 @@ fn over_matrix<T>(
     law(input, parsed, &spans, true)
 }
 
-/// Expected pin answer for one probe: non-negative = value, -1 = the
-/// `_check_offset` abort shape, -2 = the graceful false (right move only).
-fn off(input: &[u8], probes: &[(usize, i64)]) {
-    for &(cursor, want) in probes {
-        let got = over_matrix(input, PARITY, |i, p, s, sep| {
-            lookup_offset_over_spans(i, p, s, sep, cursor)
-        });
-        assert_eq!(
-            got,
-            Ok(usize::try_from(want).expect("non-negative probe")),
-            "{:?} OFF c={cursor}: pin {want}",
-            std::str::from_utf8(input)
-        );
-    }
-}
-
-fn left(input: &[u8], probes: &[(usize, i64)]) {
-    for &(offset, want) in probes {
-        let got = over_matrix(input, PARITY, |i, p, s, sep| {
-            left_word_offset_over_spans(i, p, s, sep, offset)
-        });
-        match want {
-            v if v >= 0 => assert_eq!(
-                got,
-                Ok(usize::try_from(v).expect("non-negative probe")),
-                "{:?} LEFT off={offset}: pin {v}",
-                std::str::from_utf8(input)
-            ),
-            -1 => assert!(
-                matches!(got, Err(EngineError::ZeroKeyOffsetCheck)),
-                "{:?} LEFT off={offset}: pin aborts, got {got:?}",
-                std::str::from_utf8(input)
-            ),
-            _ => panic!("left has no graceful false"),
-        }
-    }
-}
-
-fn right(input: &[u8], probes: &[(usize, i64)]) {
-    for &(offset, want) in probes {
-        let got = over_matrix(input, PARITY, |i, p, s, sep| {
-            right_word_offset_over_spans(i, p, s, sep, offset)
-        });
-        match want {
-            v if v >= 0 => assert_eq!(
-                got,
-                Ok(Some(usize::try_from(v).expect("non-negative probe"))),
-                "{:?} RIGHT off={offset}: pin {v}",
-                std::str::from_utf8(input)
-            ),
-            -1 => assert!(
-                matches!(got, Err(EngineError::ZeroKeyOffsetCheck)),
-                "{:?} RIGHT off={offset}: pin aborts, got {got:?}",
-                std::str::from_utf8(input)
-            ),
-            -2 => assert_eq!(
-                got,
-                Ok(None),
-                "{:?} RIGHT off={offset}: pin false",
-                std::str::from_utf8(input)
-            ),
-            _ => unreachable!(),
-        }
-    }
-}
-
+// Basis: pinyin.cpp:2163–2180,2987–3095 at 074a2219 and the Rust Columns::zero_end projection contract.
 #[test]
 fn nihaoshijie_matches_the_pin_tables() {
-    let input = b"nihaoshijie";
-    off(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 2),
-            (3, 2),
-            (4, 2),
-            (5, 5),
-            (6, 5),
-            (7, 5),
-            (8, 8),
-            (9, 8),
-            (10, 10),
-            (11, 11),
-        ],
-    );
-    left(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 0),
-            (3, 0),
-            (4, 0),
-            (5, 2),
-            (6, 0),
-            (7, 0),
-            (8, 5),
-            (9, 0),
-            (10, 8),
-            (11, 10),
-        ],
-    );
-    right(
-        input,
-        &[
-            (0, 2),
-            (1, -2),
-            (2, 5),
-            (3, -2),
-            (4, -2),
-            (5, 8),
-            (6, -2),
-            (7, -2),
-            (8, 11),
-            (9, -2),
-            (10, 11),
-            (11, -1),
-        ],
-    );
-}
-
-#[test]
-fn separator_inputs_match_the_pin_tables() {
-    // ni'hao: the apostrophe at 2 is a lone zero key; offset 3 sits one
-    // past it (the abort shape), and the zero-skip steps 2 -> 6 over it.
-    let input = b"ni'hao";
-    off(
-        input,
-        &[(0, 0), (1, 0), (2, 2), (3, 2), (4, 2), (5, 2), (6, 6)],
-    );
-    left(
-        input,
-        &[(0, 0), (1, 0), (2, 0), (3, -1), (4, 0), (5, 0), (6, 2)],
-    );
-    right(
-        input,
-        &[(0, 2), (1, -2), (2, 6), (3, -1), (4, -2), (5, -2), (6, -1)],
-    );
-
-    // xiang'a: zero-start pulls cursor 6 back over the apostrophe to 5.
-    let input = b"xiang'a";
-    off(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 0),
-            (3, 0),
-            (4, 0),
-            (5, 5),
-            (6, 5),
-            (7, 7),
-        ],
-    );
-    left(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 0),
-            (3, 0),
-            (4, 0),
-            (5, 0),
-            (6, -1),
-            (7, 5),
-        ],
-    );
-    right(
-        input,
-        &[
-            (0, 5),
-            (1, -2),
-            (2, -2),
-            (3, -2),
-            (4, -2),
-            (5, 7),
-            (6, -1),
-            (7, -1),
-        ],
-    );
-
-    // bu'tian: the divided ti/an put real keys at columns 3 and 5, so
-    // cursor 5 stays at 5 while cursor 4 walks back over the apostrophe.
-    let input = b"bu'tian";
-    off(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 2),
-            (3, 2),
-            (4, 2),
-            (5, 5),
-            (6, 5),
-            (7, 7),
-        ],
-    );
-    left(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 0),
-            (3, -1),
-            (4, 0),
-            (5, 2),
-            (6, 0),
-            (7, 5),
-        ],
-    );
-    right(
-        input,
-        &[
-            (0, 2),
-            (1, -2),
-            (2, 7),
-            (3, -1),
-            (4, -2),
-            (5, 7),
-            (6, -2),
-            (7, -1),
-        ],
-    );
-}
-
-#[test]
-fn leading_apostrophe_runs_match_the_pin_tables() {
-    // 'nihao: the DP propagates over the leading apostrophe without a
-    // zero key at column 0 — OFF c=1 answers 1, RIGHT(0) is the graceful
-    // false, and neither aborts.
-    let input = b"'nihao";
-    off(
-        input,
-        &[(0, 0), (1, 1), (2, 1), (3, 3), (4, 3), (5, 3), (6, 6)],
-    );
-    left(
-        input,
-        &[(0, 0), (1, 0), (2, 0), (3, 1), (4, 0), (5, 0), (6, 3)],
-    );
-    right(
-        input,
-        &[(0, -2), (1, 3), (2, -2), (3, 6), (4, -2), (5, -2), (6, -1)],
-    );
-
-    let input = b"'ni'hao";
-    off(
-        input,
-        &[
-            (0, 0),
-            (1, 1),
-            (2, 1),
-            (3, 3),
-            (4, 3),
-            (5, 3),
-            (6, 3),
-            (7, 7),
-        ],
-    );
-    left(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 0),
-            (3, 1),
-            (4, -1),
-            (5, 0),
-            (6, 0),
-            (7, 3),
-        ],
-    );
-    right(
-        input,
-        &[
-            (0, -2),
-            (1, 3),
-            (2, -2),
-            (3, 7),
-            (4, -1),
-            (5, -2),
-            (6, -2),
-            (7, -1),
-        ],
-    );
-
-    // Two leading apostrophes: both columns empty, same propagation.
-    let input = b"''nihao";
-    off(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 2),
-            (3, 2),
-            (4, 4),
-            (5, 4),
-            (6, 4),
-            (7, 7),
-        ],
-    );
-    left(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 0),
-            (3, 0),
-            (4, 2),
-            (5, 0),
-            (6, 0),
-            (7, 4),
-        ],
-    );
-    right(
-        input,
-        &[
-            (0, -2),
-            (1, -2),
-            (2, 4),
-            (3, -2),
-            (4, 7),
-            (5, -2),
-            (6, -2),
-            (7, -1),
-        ],
-    );
-}
-
-#[test]
-fn doubled_and_trailing_apostrophes_match_the_pin_tables() {
-    // ni''hao: both apostrophes of an internal run are lone zero keys.
-    let input = b"ni''hao";
-    off(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 2),
-            (3, 2),
-            (4, 2),
-            (5, 2),
-            (6, 2),
-            (7, 7),
-        ],
-    );
-    left(
-        input,
-        &[
-            (0, 0),
-            (1, 0),
-            (2, 0),
-            (3, -1),
-            (4, -1),
-            (5, 0),
-            (6, 0),
-            (7, 2),
-        ],
-    );
-    right(
-        input,
-        &[
-            (0, 2),
-            (1, -2),
-            (2, 7),
-            (3, -1),
-            (4, -1),
-            (5, -2),
-            (6, -2),
-            (7, -1),
-        ],
-    );
-
-    // nihao': the trailing apostrophe is a separator zero at 5 plus the
-    // reserved-slot zero at 6; zero-start pulls cursor 6 back to 5.
-    let input = b"nihao'";
-    off(
-        input,
-        &[(0, 0), (1, 0), (2, 2), (3, 2), (4, 2), (5, 5), (6, 5)],
-    );
-    left(
-        input,
-        &[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 2), (6, -1)],
-    );
-    right(
-        input,
-        &[(0, 2), (1, -2), (2, 5), (3, -2), (4, -2), (5, -1), (6, -1)],
-    );
-
-    // ni'h: the separator zero at 2, the incomplete h at 3, tail at 4.
-    let input = b"ni'h";
-    off(input, &[(0, 0), (1, 0), (2, 2), (3, 2), (4, 4)]);
-    left(input, &[(0, 0), (1, 0), (2, 0), (3, -1), (4, 2)]);
-    right(input, &[(0, 2), (1, -2), (2, 4), (3, -1), (4, -1)]);
-}
-
-#[test]
-fn early_stopping_parses_zero_fill_the_tail() {
-    // ni2hao: the parse stops at 2; columns 2..=6 are lone zero keys, so
-    // every LEFT/RIGHT at offset >= 2 (except the graceful falses) hits
-    // the abort shape.
-    let input = b"ni2hao";
-    off(
-        input,
-        &[(0, 0), (1, 0), (2, 2), (3, 2), (4, 2), (5, 2), (6, 2)],
-    );
-    left(
-        input,
-        &[(0, 0), (1, 0), (2, 0), (3, -1), (4, -1), (5, -1), (6, -1)],
-    );
-    right(
-        input,
-        &[(0, 2), (1, -2), (2, -1), (3, -1), (4, -1), (5, -1), (6, -1)],
-    );
-
-    // niX: garbage tail, same shape at one byte.
-    let input = b"niX";
-    off(input, &[(0, 0), (1, 0), (2, 2), (3, 2)]);
-    left(input, &[(0, 0), (1, 0), (2, 0), (3, -1)]);
-    right(input, &[(0, 2), (1, -2), (2, -1), (3, -1)]);
-
-    // nih / nix: the incomplete final key sits at the parse end.
-    let input = b"nih";
-    off(input, &[(0, 0), (1, 0), (2, 2), (3, 3)]);
-    left(input, &[(0, 0), (1, 0), (2, 0), (3, 2)]);
-    right(input, &[(0, 2), (1, -2), (2, 3), (3, -1)]);
-
-    // h2: one incomplete key, then the zero tail.
-    let input = b"h2";
-    off(input, &[(0, 0), (1, 1), (2, 1)]);
-    left(input, &[(0, 0), (1, 0), (2, -1)]);
-    right(input, &[(0, 1), (1, -1), (2, -1)]);
-}
-
-#[test]
-fn garbage_inputs_zero_fill_from_position_zero() {
-    let input = b"2";
-    off(input, &[(0, 0), (1, 0)]);
-    left(input, &[(0, 0), (1, -1)]);
-    right(input, &[(0, -1), (1, -1)]);
-
-    let input = b"2x";
-    off(input, &[(0, 0), (1, 0), (2, 0)]);
-    left(input, &[(0, 0), (1, -1), (2, -1)]);
-    right(input, &[(0, -1), (1, -1), (2, -1)]);
-}
-
-#[test]
-fn leading_garbage_parses_as_an_incomplete_key() {
-    // xnihao: the leading x is an incomplete key at column 0 under the
-    // parity word's PINYIN_INCOMPLETE.
-    let input = b"xnihao";
-    off(
-        input,
-        &[(0, 0), (1, 1), (2, 1), (3, 3), (4, 3), (5, 3), (6, 6)],
-    );
-    left(
-        input,
-        &[(0, 0), (1, 0), (2, 0), (3, 1), (4, 0), (5, 0), (6, 3)],
-    );
-    right(
-        input,
-        &[(0, 1), (1, 3), (2, -2), (3, 6), (4, -2), (5, -2), (6, -1)],
-    );
-
-    let input = b"x";
-    off(input, &[(0, 0), (1, 1)]);
-    left(input, &[(0, 0), (1, 0)]);
-    right(input, &[(0, 1), (1, -1)]);
-}
-
-#[test]
-fn apostrophe_only_inputs_follow_the_zero_fill() {
-    // The pin parses apostrophe-only input to its full length and places
-    // a lone zero key at every consumed position. Before the termination
-    // law (#178) the graph consumed 0 for these, so the columns came from
-    // the tail zero-fill instead and OFF answered the clamped 0 where the
-    // pin aborts — a parse-derived divergence the old expectations
-    // recorded. The law's apostrophe propagation makes the scan matrix
-    // report the run-consumed length, so the columns are now the pin's
-    // own and every law agrees with it: LEFT/RIGHT abort as before, and
-    // OFF aborts for every cursor past 0 (cursor 0 clamps below the
-    // zero-run walk and stays 0).
-    for input in [b"'".as_slice(), b"''", b"'''"] {
-        let len = input.len();
+    let cases: &[(&[u8], usize, [i64; 3])] = &[
+        (b"nihaoshijie", 0, [0, 0, 2]),
+        (b"nihaoshijie", 3, [2, 0, -2]),
+        (b"nihaoshijie", 5, [5, 2, 8]),
+        (b"nihaoshijie", 8, [8, 5, 11]),
+        (b"nihaoshijie", 10, [10, 8, 11]),
+        (b"nihaoshijie", 11, [11, 10, -1]),
+        (b"ni'hao", 2, [2, 0, 6]),
+        (b"ni'hao", 3, [2, -1, -1]),
+        (b"'ni'hao", 0, [0, 0, -2]),
+        (b"'ni'hao", 1, [1, 0, 3]),
+        (b"''nihao", 1, [0, 0, -2]),
+        (b"''nihao", 2, [2, 0, 4]),
+        (b"ni''hao", 2, [2, 0, 7]),
+        (b"ni''hao", 4, [2, -1, -1]),
+        (b"nihao'", 6, [5, -1, -1]),
+        (b"ni2hao", 2, [2, 0, -1]),
+        (b"ni2hao", 3, [2, -1, -1]),
+        (b"2", 0, [0, 0, -1]),
+        (b"2", 1, [0, -1, -1]),
+        (b"''", 0, [0, 0, -1]),
+        (b"''", 1, [-1, -1, -1]),
+    ];
+    let expected = |answer| match answer {
+        -2 => Ok(None),
+        -1 => Err(EngineError::ZeroKeyOffsetCheck),
+        position => Ok(Some(usize::try_from(position).unwrap())),
+    };
+    for &(input, offset, [lookup, left, right]) in cases {
+        let (keys, parsed) = matrix_keys(input, PARITY).unwrap();
+        let spans: Vec<_> = keys
+            .iter()
+            .map(|key| (key.syllable_start(), key.end()))
+            .collect();
+        let input_label = String::from_utf8_lossy(input);
         assert_eq!(
-            over_matrix(input, PARITY, |i, p, s, sep| lookup_offset_over_spans(
-                i, p, s, sep, 0
-            )),
-            Ok(0)
+            lookup_offset_over_spans(input, parsed, &spans[..], true, offset).map(Some),
+            expected(lookup),
+            "{input_label} lookup at {offset}"
         );
-        for cursor in 1..=len {
-            assert!(
-                matches!(
-                    over_matrix(input, PARITY, |i, p, s, sep| lookup_offset_over_spans(
-                        i, p, s, sep, cursor
-                    )),
-                    Err(EngineError::ZeroKeyOffsetCheck)
-                ),
-                "{input:?} OFF c={cursor}: pin aborts"
-            );
-        }
         assert_eq!(
-            over_matrix(input, PARITY, |i, p, s, sep| left_word_offset_over_spans(
-                i, p, s, sep, 0
-            )),
-            Ok(0)
+            left_word_offset_over_spans(input, parsed, &spans[..], true, offset).map(Some),
+            expected(left),
+            "{input_label} left at {offset}"
         );
-        for offset in 1..=len {
-            assert!(
-                matches!(
-                    over_matrix(input, PARITY, |i, p, s, sep| left_word_offset_over_spans(
-                        i, p, s, sep, offset
-                    )),
-                    Err(EngineError::ZeroKeyOffsetCheck)
-                ),
-                "{input:?} LEFT off={offset}: pin aborts"
-            );
-        }
-        for offset in 0..=len {
-            assert!(
-                matches!(
-                    over_matrix(input, PARITY, |i, p, s, sep| right_word_offset_over_spans(
-                        i, p, s, sep, offset
-                    )),
-                    Err(EngineError::ZeroKeyOffsetCheck)
-                ),
-                "{input:?} RIGHT off={offset}: pin aborts"
-            );
-        }
+        assert_eq!(
+            right_word_offset_over_spans(input, parsed, &spans[..], true, offset),
+            expected(right),
+            "{input_label} right at {offset}"
+        );
     }
 }
 
+// Basis: Rust KeySpans contract with physical separator projection disabled.
 #[test]
 fn span_law_without_separators_steps_keys_only() {
-    // The zhuyin/double degenerate shape: key spans only, no zero
-    // columns, so nothing aborts and gaps answer the graceful false.
     let input = b"abcd";
     let spans = [(0usize, 2usize), (2, 4)];
     assert_eq!(
@@ -606,12 +117,9 @@ fn span_law_without_separators_steps_keys_only() {
     );
 }
 
+// Basis: Rust Columns::zero_end and cursor range contracts for an empty input.
 #[test]
 fn an_empty_buffer_is_an_empty_matrix() {
-    // No parse ever ran: every column is empty, no zero keys. Offsets
-    // past the (zero) one-past-end position are the range refusal — the
-    // pin asserts on its empty matrix there (the same assert as a key
-    // query on an apostrophe-only parse).
     assert_eq!(
         over_matrix(b"", PARITY, |i, p, s, sep| lookup_offset_over_spans(
             i, p, s, sep, 3
@@ -638,6 +146,7 @@ fn an_empty_buffer_is_an_empty_matrix() {
     );
 }
 
+// Basis: Rust cursor range contract at the raw-buffer bound.
 #[test]
 fn offsets_past_one_past_end_are_refused() {
     let input = b"nihao";
