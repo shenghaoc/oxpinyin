@@ -1527,3 +1527,52 @@ fn a_bigram_row_under_high_bits_is_listed_and_trains_its_item() {
         .collect();
     assert_eq!(trained, [[(token | 0x8000_0000, 89)]]);
 }
+
+/// Basis: `phonetic_lookup.h:884-904` (the gram total refuses the seed; the unigram takes seed * 7).
+#[test]
+fn training_past_the_gram_total_limit_keeps_the_gram() {
+    const COUNT: u32 = u32::MAX - 68;
+    let user = tempfile::tempdir().unwrap();
+    let system = crate::user::native_fixture::system_dir();
+    let [ni, hao, zhong] =
+        ["你", "好", "中"].map(|text| crate::user::test_session::native_tokens(&system, text)[0]);
+    let gram = crate::user::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)]);
+    crate::user::native_fixture::plant_bigram(
+        user.path(),
+        vec![
+            (ni.to_le_bytes().to_vec(), gram.clone()),
+            (zhong.to_le_bytes().to_vec(), gram),
+            (1_u32.to_le_bytes().to_vec(), vec![0; 4]),
+        ],
+    );
+    let mut store = crate::user::test_session::open_w3(user.path());
+    let before = store.system_unigram(hao).unwrap();
+    let mut check = TrainingCheck::default();
+    store.check_training_step_with(&mut check, ni, hao).unwrap();
+    let cached = crate::user::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)]);
+    // A missing token would be inserted before the pin skips its store.
+    // Repeated checked steps must retain the original row on that refusal.
+    store
+        .check_training_step_with(&mut check, ni, zhong)
+        .unwrap();
+    assert_eq!(check.grams.get(&ni), Some(&cached));
+    store.check_training_step_with(&mut check, ni, hao).unwrap();
+    assert_eq!(check.grams.get(&ni), Some(&cached));
+    assert_eq!(check.fault(), None);
+    store.observe_selection(1, ni).unwrap();
+    store.observe_selection(ni, hao).unwrap();
+    assert_eq!(store.system_unigram(hao), Some(before + 154_560));
+    store.save_reporting().unwrap();
+    drop(store);
+    let stored = crate::user::native_fixture::store_rows(&user.path().join("user_bigram.db"), true)
+        .into_iter()
+        .find(|(key, _)| *key == ni.to_le_bytes())
+        .unwrap()
+        .1;
+    assert_eq!(
+        stored,
+        crate::user::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)])
+    );
+    let store = crate::user::test_session::open_w3(user.path());
+    assert_eq!(store.system_unigram(hao), Some(before + 154_560));
+}

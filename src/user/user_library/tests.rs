@@ -221,10 +221,18 @@ fn the_store_copy_threshold_follows_the_compacted_content() {
 fn removing_a_batch_collects_nothing_until_the_compaction() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2, 3, 4]);
+    let unreadable = library.slots[&3].start;
+    library.content[unreadable + 1] = 2;
     let size = library.content.len();
-    library.remove_matching(|slot| slot != 4);
+    let visited = std::cell::RefCell::new(Vec::new());
+    library.remove_matching(|slot| {
+        visited.borrow_mut().push(slot);
+        slot != 4
+    });
+    assert_eq!(visited.into_inner(), [1, 2, 4]);
+    assert!(library.slots.contains_key(&3));
     assert_eq!(library.content.len(), size);
-    assert_eq!(library.total(), 4);
+    assert_eq!(library.total(), 7);
     library.compact();
     assert_eq!(library.content.len(), 8 + 16);
     assert_eq!(library.total(), 4);

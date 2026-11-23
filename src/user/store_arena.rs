@@ -211,7 +211,7 @@ impl UserStore {
         view: &PhraseItemView<'_>,
     ) -> Result<(), UserStoreError> {
         let target = &self.inner.libpinyin;
-        let bytes = view.as_bytes().to_vec();
+        let bytes = view.as_bytes();
         let unigram = view.unigram();
         let words: Vec<u32> = view
             .phrase_codes()
@@ -241,7 +241,7 @@ impl UserStore {
             if items.lacks_sub_index(library, original) {
                 return Err(UserStoreError::InvalidPhrase);
             }
-            items.add_item(original, token, &bytes);
+            items.add_item(original, token, bytes);
             drop(items);
             self.inner.has_system_items.set(true);
         } else {
@@ -251,7 +251,7 @@ impl UserStore {
             phrases
                 .arena(library, retained)
                 .ok_or(UserStoreError::InvalidPhrase)?
-                .add(token & PHRASE_MASK, &bytes)
+                .add(token & PHRASE_MASK, bytes)
                 .ok_or(UserStoreError::Persistence)?;
             self.inner
                 .system_items
