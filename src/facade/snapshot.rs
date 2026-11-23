@@ -24,7 +24,7 @@
 #[cfg(test)]
 use std::ffi::CStr;
 use std::ffi::c_char;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 
 use crate::vocab::PhraseText;
 
@@ -262,12 +262,6 @@ impl<R> Deref for CandidateSnapshot<R> {
 
     fn deref(&self) -> &[R] {
         &self.rows
-    }
-}
-
-impl<R> DerefMut for CandidateSnapshot<R> {
-    fn deref_mut(&mut self) -> &mut [R] {
-        &mut self.rows
     }
 }
 

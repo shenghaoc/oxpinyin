@@ -152,20 +152,6 @@ pub(crate) struct CapiInstanceState {
     pub(crate) candidates: oxpinyin::facade::CandidateSnapshot<CapiCandidate>,
 }
 
-impl<C, S: std::borrow::Borrow<CapiInstanceState>, O> std::ops::Deref for CapiInstance<C, S, O> {
-    type Target = CapiInstanceState;
-    fn deref(&self) -> &Self::Target {
-        self.state.borrow()
-    }
-}
-impl<C, S: std::borrow::BorrowMut<CapiInstanceState>, O> std::ops::DerefMut
-    for CapiInstance<C, S, O>
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.state.borrow_mut()
-    }
-}
-
 pub(crate) type CapiInstanceRead<'a> =
     CapiInstance<oxpinyin::facade::InstanceRead<'a>, &'a CapiInstanceState, &'a ContextOwner>;
 pub(crate) type CapiInstanceMut<'a> =
