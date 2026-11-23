@@ -131,7 +131,7 @@ use std::ops::Bound;
 use std::path::Path;
 use std::pin::Pin;
 
-use cxx::{CxxString, CxxVector, UniquePtr, let_cxx_string};
+use cxx::{CxxString, UniquePtr, let_cxx_string};
 
 use crate::store::common::{in_bounds, validate_path};
 use crate::store::{Flow, StoreError, WriteStore, WriteTxn};
@@ -251,6 +251,23 @@ pub(crate) enum Class {
     Tiny,
 }
 
+/// The two final key destinations, borrowed only for one `ProcessEach`.
+enum KeySink<'a> {
+    Tokens(&'a mut Vec<Option<[u8; 4]>>),
+    Raw(&'a mut Vec<Vec<u8>>),
+}
+
+impl KeySink<'_> {
+    /// Copies one key while its native view is valid. The traversal holds
+    /// database locks, so this callback only appends; it never calls the DBM.
+    fn append(&mut self, key: &[u8]) {
+        match self {
+            Self::Tokens(keys) => keys.push(<[u8; 4]>::try_from(key).ok()),
+            Self::Raw(keys) => keys.push(key.to_vec()),
+        }
+    }
+}
+
 /// One native database object, the pin's `DBM* m_db`: a concrete class
 /// allocated by [`Db::new`] and opened by [`Db::open`]. Drop closes any
 /// open file before destroying the object.
@@ -274,8 +291,13 @@ pub(crate) enum Class {
 /// - Byte slices cross as borrowed views for one call; `Set` copies the key
 ///   and value into the record (`tkrzw_dbm.h:1123-1131`), `Open` copies
 ///   the path into a `std::string`, and no method retains a view.
-/// - Out-parameters (`CxxString`, `CxxVector<CxxString>`, `i64`) are
-///   assigned, never retained.
+/// - Out-parameters (`CxxString`, `i64`) are assigned, never retained.
+///   The key destination is borrowed by a stack-local processor only for
+///   `ProcessEach`. It calls back synchronously with valid record views
+///   (tkrzw 1.0.34: `tkrzw_dbm_tiny.cc:344-376`,
+///   `tkrzw_dbm_hash.cc:505-618`, `tkrzw_dbm_tree.cc:714-772`,
+///   `tkrzw_dbm_baby.cc:509-534`). The callback copies each key and retains
+///   no native view or database handle.
 pub(crate) struct Db {
     dbm: UniquePtr<ffi::DBM>,
     file_open: bool,
@@ -419,13 +441,10 @@ impl Db {
 
     /// Every key in `DBM::ProcessEach` order — a hash container's bucket
     /// order, not the iterator's — the pin's `get_all_items` walk
-    /// (`ngram_tkrzwdb.cpp:161-172`) with its key-length rule left to the
-    /// caller.
-    fn keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError> {
-        let mut native = CxxVector::<CxxString>::new();
-        let status = ffi::collect_keys(&self.dbm, native.pin_mut());
-        keys.extend(native.iter().map(|key| key.as_bytes().to_vec()));
-        check(&status)
+    /// (`ngram_tkrzwdb.cpp:161-172`). The destination copies each key into
+    /// its final form; raw keys visited before an error stay appended.
+    fn keys(&self, mut keys: KeySink<'_>) -> Result<(), StoreError> {
+        check(&ffi::collect_keys(&self.dbm, &mut keys))
     }
 }
 
@@ -710,7 +729,7 @@ impl crate::store::RawReadStore for TkrzwStore {
     /// the hash container's bucket order, which is **not** the iterator
     /// order [`crate::store::RawReadStore::range_raw`] gives.
     fn native_keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError> {
-        self.db.keys(keys)
+        self.db.keys(KeySink::Raw(keys))
     }
 
     /// The library's own record count — over the whole file, which on
@@ -1055,11 +1074,8 @@ impl crate::store::UserBigramDb for TkrzwUserBigramDb {
             return Ok(Vec::new());
         };
         let mut keys = Vec::new();
-        db.keys(&mut keys)?;
-        Ok(keys
-            .into_iter()
-            .map(|key| <[u8; 4]>::try_from(key).ok())
-            .collect())
+        db.keys(KeySink::Tokens(&mut keys))?;
+        Ok(keys)
     }
 
     fn is_empty(&self) -> Result<bool, StoreError> {

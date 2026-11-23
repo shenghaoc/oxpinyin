@@ -58,6 +58,9 @@ pub(super) mod ffi {
     }
 
     extern "Rust" {
+        type KeySink<'a>;
+        fn append(self: &mut KeySink<'_>, key: &[u8]);
+
         type Rewriter<'a, 'f>;
         fn replacement(self: &mut Rewriter<'_, '_>, key: &[u8], value: &[u8]) -> Vec<u8>;
     }
@@ -89,7 +92,7 @@ pub(super) mod ffi {
         fn synchronize(dbm: &DBM, hard: bool) -> NativeStatus;
         fn count(dbm: &DBM, count: &mut i64) -> NativeStatus;
         fn is_healthy(dbm: &DBM) -> bool;
-        fn collect_keys(dbm: &DBM, keys: Pin<&mut CxxVector<CxxString>>) -> NativeStatus;
+        fn collect_keys(dbm: &DBM, keys: &mut KeySink<'_>) -> NativeStatus;
 
         fn make_iterator(dbm: &DBM) -> UniquePtr<DbmIterator>;
         fn iter_first(iter: Pin<&mut DbmIterator>) -> NativeStatus;
@@ -103,4 +106,5 @@ pub(super) mod ffi {
     }
 }
 
+use super::KeySink;
 use crate::store::Rewriter;
