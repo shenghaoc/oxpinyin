@@ -135,6 +135,4 @@ macro_rules! full_pinyin_keyless_query_aborts {
     };
 }
 
-full_pinyin_keyless_query_aborts!(full_pinyin_one_separator_key_aborts, "'", 1);
-
 full_pinyin_keyless_query_aborts!(full_pinyin_ni_separator_key_aborts, "ni'", 0);

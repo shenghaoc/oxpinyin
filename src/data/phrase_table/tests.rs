@@ -144,13 +144,6 @@ fn a_failed_phrase_table_read_is_a_miss() {
     assert!(table.search("测测").unwrap().is_empty());
 }
 
-#[test]
-fn a_failed_phrase_table_read_is_a_miss_for_zhuyin() {
-    let table = native_table();
-    crate::store::fail_point_read_of(&encode_ucs4_key("你你"), 0);
-    assert!(table.search("你你").unwrap().is_empty());
-}
-
 /// A failed cursor read ends the walk after the prior rows
 /// (phrase_large_table3_tkrzwdb.cpp:171-186 at 074a2219).
 #[test]

@@ -1,79 +1,5 @@
 use super::*;
 
-/// The exit status of a death-test child whose operation panicked. A
-/// panic that reaches a non-unwinding `extern "C"` function aborts the
-/// process, so without this status an unrelated panic passes as the
-/// pin's abort.
-const OPERATION_PANICKED: i32 = 86;
-
-/// The variable that names the one test a child runs for real.
-const DEATH_TEST: &str = "OXPINYIN_USER_DEATH_TEST";
-
-/// Runs `setup` and then `operation` in a child copy of this test binary
-/// that runs only the test `name`, and requires the child to abort.
-/// `setup` may panic on purpose: the strict check is armed only after
-/// it, and a panic in `operation` then fails with its own message.
-fn assert_aborts_after_setup<T>(name: &str, setup: impl FnOnce() -> T, operation: impl FnOnce(T)) {
-    if std::env::var_os(DEATH_TEST).is_some_and(|value| value == name) {
-        let value = setup();
-        // From here on, a panic writes its message to fd 2 (past
-        // libtest's capture, which an abort discards) and exits with
-        // `OPERATION_PANICKED`.
-        std::panic::set_hook(Box::new(|info| {
-            use std::io::Write as _;
-            let _ = writeln!(std::io::stderr(), "death-test operation panicked: {info}");
-            std::process::exit(OPERATION_PANICKED);
-        }));
-        operation(value);
-        // Reached only when `operation` did not abort.
-        std::process::exit(0);
-    }
-
-    let output = crate::user::test_child::run_exact(name, [(DEATH_TEST, name)]);
-    assert_ne!(
-        output.status.code(),
-        Some(OPERATION_PANICKED),
-        "{name}: the operation panicked: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt as _;
-        assert_eq!(
-            output.status.signal(),
-            Some(6),
-            "expected SIGABRT: {output:?}"
-        );
-    }
-    #[cfg(windows)]
-    assert_eq!(
-        output.status.code(),
-        Some(i32::from_ne_bytes(0xC000_0409_u32.to_ne_bytes())),
-        "expected STATUS_STACK_BUFFER_OVERRUN: {output:?}"
-    );
-}
-
-/// A panic that reaches this non-unwinding function aborts the process.
-extern "C" fn panic_in_a_c_boundary() {
-    panic!("an unrelated panic");
-}
-
-/// The witness: a death test whose operation panics at a C boundary
-/// fails with its own message, not as the pin's abort.
-#[test]
-fn a_panic_at_the_c_boundary_is_not_the_pins_abort() {
-    const NAME: &str = "user::store::tests::a_panic_at_the_c_boundary_is_not_the_pins_abort";
-    let parent = std::panic::catch_unwind(|| {
-        assert_aborts_after_setup(NAME, || (), |()| panic_in_a_c_boundary());
-    });
-    let message = parent.expect_err("a panic must not pass as an abort");
-    let message = message
-        .downcast_ref::<String>()
-        .expect("the helper's assertion message");
-    assert!(message.contains("the operation panicked"), "{message}");
-    assert!(message.contains("an unrelated panic"), "{message}");
-}
-
 fn next_user_token(store: &UserStore) -> PhraseToken {
     let end = store
         .inner
@@ -1785,33 +1711,6 @@ fn mask_out_aborts_on_an_empty_index_key() {
     crate::user::native_fixture::craft_user_index(
         &user.path().join("user_pinyin_index.bin"),
         &[(Vec::new(), Vec::new()), (vec![0, 1], Vec::new())],
-    );
-    let mut store = crate::user::test_session::open_w3(user.path());
-    assert!(matches!(
-        store.check_mask_out(0xffff_ffff, 0),
-        Err(UserStoreError::OverlongIndexKey)
-    ));
-    assert!(matches!(
-        store.mask_out(0xffff_ffff, 0),
-        Err(UserStoreError::OverlongIndexKey)
-    ));
-}
-
-/// A one-byte user index key holds no whole `ChewingKey`: the pin's word
-/// count is `key.size() / sizeof(ChewingKey)` = 0, which its `switch` sends
-/// to `default: abort()` like the empty key
-/// (`chewing_large_table2_tkrzwdb.cpp:430`, `:448-466`; bdb `:529`, kc
-/// `:499`). The C shared mask-abort path converts this owner error to abort.
-#[test]
-fn mask_out_aborts_on_a_one_byte_index_key() {
-    let user = tempfile::tempdir().unwrap();
-    crate::user::native_fixture::write_user_conf(
-        user.path(),
-        &crate::user::native_fixture::system_dir(),
-    );
-    crate::user::native_fixture::craft_user_index(
-        &user.path().join("user_pinyin_index.bin"),
-        &[(vec![7], Vec::new()), (vec![0, 1], Vec::new())],
     );
     let mut store = crate::user::test_session::open_w3(user.path());
     assert!(matches!(

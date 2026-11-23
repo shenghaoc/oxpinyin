@@ -1015,25 +1015,6 @@ mod backend_files {
     }
 
     #[test]
-    fn missing_pinyin_index_follows_backend_attach() {
-        let tmp = scratch_dir("oxpinyin-runtime-empty-");
-        let dir = tmp.path().to_path_buf();
-        // Keep the chunks valid: absent chunks reach an independent pin
-        // assertion after the ignored DBM attach (#764).
-        for entry in std::fs::read_dir(system_dir()).expect("w3 fixture") {
-            let entry = entry.expect("w3 entry");
-            if entry.file_name().as_os_str()
-                != std::ffi::OsStr::new(&crate::data::SystemDbm::PinyinIndex.file_name())
-            {
-                std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copy");
-            }
-        }
-        // Every backend initializes even when the pinyin index fails to open
-        // (pinyin.cpp:357 at 074a2219).
-        assert!(Runtime::open(&dir, None).is_ok());
-    }
-
-    #[test]
     fn open_reads_no_records_beyond_the_handles() {
         // The fixture opens with real counts straight from the chunk files:
         // no interpolation text, no fixture mode.

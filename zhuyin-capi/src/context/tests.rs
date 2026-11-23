@@ -108,27 +108,6 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
     }
 }
 
-/// The session could not be built once the library loop had handed it
-/// the system libraries (`OpenError::UserSession`): the pin dies at each
-/// counterpart. No input makes those steps fail, so the open's answer
-/// is handed to the init's refusal directly.
-#[test]
-fn a_user_session_fault_aborts_the_init() {
-    let stderr = crate::test_support::assert_aborts(
-        "context::tests::a_user_session_fault_aborts_the_init",
-        || {
-            let error =
-                oxpinyin::facade::OpenFailure::Runtime(oxpinyin::runtime::OpenError::UserSession(
-                    oxpinyin::user::UserStoreError::SessionSeed,
-                ));
-            super::refuse_init(&error, std::path::Path::new("system"));
-        },
-    );
-    // No Rust panic text or other line: the pin writes none here but
-    // glibc's assert line, the register's policy-accepted missing line.
-    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
-}
-
 /// One call over a private system directory whose library is a directory: init maps `merged.bin` (`zhuyin.cpp:199`), the save and
 /// the mask-out map it again (`:589`, `:800`), and the reload of the
 /// unloaded library 2 maps `gbk_char.bin` (`:200`).

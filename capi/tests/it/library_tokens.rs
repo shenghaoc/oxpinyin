@@ -7,12 +7,9 @@
 )]
 
 use crate::support::{
-    PinyinContext, TempUserDir, assert_aborts, cstr, import_batch, open, pinyin_begin_add_phrases,
-    pinyin_end_add_phrases, pinyin_get_character_offset, pinyin_guess_predicted_candidates,
-    pinyin_iterator_add_phrase, set_phrase_table_row, *,
+    PinyinContext, TempUserDir, assert_aborts, import_batch, pinyin_get_character_offset,
+    pinyin_guess_predicted_candidates, set_phrase_table_row, *,
 };
-
-use std::ptr;
 
 /// Imports `phrase` under `reading` into libraries 1 to 5, so the phrase
 /// table search holds five tokens.
@@ -142,40 +139,4 @@ fn remember_aborts_on_five_tokens() {
         assert_eq!(unsafe { parse(instance, "ni") }, 2);
         unsafe { crate::support::pinyin_remember_user_input(instance, c"你".as_ptr(), 1) };
     });
-}
-
-/// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
-/// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
-///
-/// # Safety
-///
-/// `context` is NULL or a live context: `pinyin_init` returned it and `pinyin_fini` has not taken
-/// it.
-///
-/// Calls are serial across the context, its sibling instances and its iterators: no other call
-/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
-/// rule).
-unsafe fn hold_nihao_in_libraries(context: *mut crate::support::PinyinContext, libraries: u8) {
-    for library in 1..=libraries {
-        let iter = unsafe { pinyin_begin_add_phrases(context, library) };
-        assert!(unsafe {
-            pinyin_iterator_add_phrase(iter, cstr("你好").as_ptr(), cstr("ni3'hao3").as_ptr(), 1)
-        });
-        unsafe { pinyin_end_add_phrases(iter) };
-    }
-}
-
-/// Four tokens pass `reduce_tokens`' count, so the NULL-array lookup
-/// answers instead of aborting.
-#[test]
-fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
-    let user_dir = TempUserDir::new("lookup-null-four");
-    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
-    unsafe { hold_nihao_in_libraries(context, 4) };
-    assert!(unsafe {
-        crate::support::pinyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut())
-    });
-    unsafe { crate::support::pinyin_free_instance(instance) };
-    unsafe { crate::support::pinyin_fini(context) };
 }

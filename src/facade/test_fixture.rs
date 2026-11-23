@@ -248,6 +248,7 @@ pub(crate) fn saved_user_phrase(user: &std::path::Path) -> u32 {
     token
 }
 
+#[cfg(feature = "tkrzw")]
 pub(crate) fn train_once(context: &mut ContextCore) {
     let mut instance = context.alloc_instance();
     assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);

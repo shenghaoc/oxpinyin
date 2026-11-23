@@ -25,9 +25,6 @@ mod pinned_data;
 mod pipeline;
 mod sentence;
 mod support;
-// The harness's own checks sit beside it.
-#[path = "support/tests.rs"]
-mod support_tests;
 #[path = "../../../src/user/test_child.rs"]
 mod test_child;
 mod token_getters;

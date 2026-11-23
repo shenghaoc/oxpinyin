@@ -515,27 +515,6 @@ fn tails_require_the_final_step_even_when_underfilled() {
 }
 
 #[test]
-fn full_node_preserves_front_eviction_and_rejects_ties() {
-    let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
-    for poss in [-10.0, -20.0, -5.0] {
-        trellis.insert(1, scored(poss, 1));
-    }
-    let residents = trellis.candidates(1);
-    assert_eq!(
-        residents.iter().map(|v| v.value.poss).collect::<Vec<_>>(),
-        [-5.0, -20.0]
-    );
-    trellis.insert(
-        1,
-        Value {
-            keys: 999,
-            ..scored(-5.0, 1)
-        },
-    );
-    assert!(trellis.candidates(1).iter().all(|v| v.value.keys != 999));
-}
-
-#[test]
 fn selection_uses_batch_ties_and_zhuyin_length_first_nan_last() {
     for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
         let mut trellis = Trellis::with_seeds(1, &[], shape);

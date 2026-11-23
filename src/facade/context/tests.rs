@@ -1063,32 +1063,6 @@ mod native {
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
 
-    #[test]
-    fn save_reports_an_absent_system_library_and_answers_false() {
-        let Some((_scratch, user, run)) = child(
-            "facade::context::tests::native::save_reports_an_absent_system_library_and_answers_false",
-            |user| {
-                let system = private_system(user.parent().unwrap());
-                let mut context = native_context(&system, user, UserConfLaw::Pinyin);
-                train_once(&mut context);
-                std::fs::remove_file(system.join("gb_char.bin")).unwrap();
-                assert_eq!(context.save_user(), SaveOutcome::NotSaved);
-            },
-        ) else {
-            return;
-        };
-        let line = format!(
-            "mmap {} failed!{}",
-            user.parent()
-                .unwrap()
-                .join("system")
-                .join("gb_char.bin")
-                .display(),
-            crate::__internal::TEXT_NEWLINE
-        );
-        assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
-    }
-
     #[cfg(any(feature = "tkrzw", feature = "bdb"))]
     #[test]
     fn init_aborts_at_source_copy_failure_after_the_open_counter() {

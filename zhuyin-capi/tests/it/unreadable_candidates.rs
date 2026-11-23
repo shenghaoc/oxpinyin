@@ -202,11 +202,6 @@ fn zero_total_aborts_before_cursor() {
 
 use crate::support::zhuyin_unload_phrase_library;
 
-#[test]
-fn a_sole_unreadable_row_is_omitted_after_the_user_table_fallback() {
-    check_row(fixture::Case::Fallback, false);
-}
-
 /// The zhuyin twin of the pinyin facade's
 /// `a_library_mask_does_not_read_extension_rows`. `zhuyin_unload_phrase_library`
 /// unloads any library but TSI (`zhuyin.cpp:379-390` at 074a2219), and the

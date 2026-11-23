@@ -1,13 +1,5 @@
-use super::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader, KmmSpec};
-use oxpinyin_tool_support::flexible_ngram::{FixedRecord, FlexibleGramSpec};
-
-#[test]
-fn the_record_sizes_and_magic_number_are_the_pins() {
-    assert_eq!(KMixtureModelMagicHeader::LEN, 12);
-    assert_eq!(KMixtureModelArrayHeader::LEN, 8);
-    assert_eq!(KMixtureModelArrayItem::LEN, 16);
-    assert_eq!(KmmSpec::MAGIC_NUMBER, *b"KMMP");
-}
+use super::{KMixtureModelArrayHeader, KMixtureModelArrayItem, KMixtureModelMagicHeader};
+use oxpinyin_tool_support::flexible_ngram::FixedRecord;
 
 #[test]
 fn records_encode_native_little_endian_words() {

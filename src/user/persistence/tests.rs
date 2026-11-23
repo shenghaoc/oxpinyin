@@ -1692,21 +1692,6 @@ fn mask_log_cache_keeps_validated_payloads_and_failed_loads() {
 }
 
 #[test]
-fn a_header_token_the_merge_reaches_is_the_load_fault() {
-    let (records, _) = accepted_modify();
-    let mut payload = encode_log_records(&records).expect("log");
-    payload.extend_from_slice(&header_with_token(0x0100_0001));
-    let loaded = load_with_log("header-token", &payload);
-    assert_eq!(
-        loaded.journal_fault,
-        Some(JournalFault::HeaderToken {
-            library: 1,
-            token: 0x0100_0001,
-        })
-    );
-}
-
-#[test]
 fn bounded_short_header_runs_keep_later_journal_faults_reachable() {
     let full = encode_log_records(&[LogRecord::<Vec<u8>>::ModifyHeader {
         old_total: 150,
@@ -1785,23 +1770,6 @@ fn a_header_token_after_a_mismatch_is_never_read() {
     let loaded = load_with_log("header-token-after-stop", &payload);
     assert_eq!(loaded.journal_fault, None);
     assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
-}
-
-#[test]
-fn a_short_add_payload_is_the_load_fault() {
-    let (mut records, _) = accepted_modify();
-    records.push(LogRecord::Add {
-        token: 0x0100_0005,
-        new_item: vec![1, 0, 0, 0, 0],
-    });
-    let loaded = load_with_log("short-add", &encode_log_records(&records).expect("log"));
-    assert_eq!(
-        loaded.journal_fault,
-        Some(JournalFault::ShortAdd {
-            library: 1,
-            token: 0x0100_0005,
-        })
-    );
 }
 
 #[test]

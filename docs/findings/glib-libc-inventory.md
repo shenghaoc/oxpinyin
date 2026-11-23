@@ -650,7 +650,7 @@ Held by the `save_semantics_929` and `save_boundaries_929` modules of
 `sync_rejecting_chunk_target_does_not_stop_later_files`,
 `save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them`),
 `reporting_save_stops_at_a_chunk_header_write`, the `oxpinyin::input`
-`chunk.rs` tests (`a_chunk_is_the_written_bytes`,
+`chunk.rs` tests (`framed_chunk_replaces_an_old_file_and_reads_through_heap_and_map`,
 `an_unopenable_path_is_the_soft_failure`,
 `a_header_write_failure_is_the_abort_site`) and the `save-929-*` contract
 cases. The `save-929-boundary-*` cases interrupt at the marker write-open

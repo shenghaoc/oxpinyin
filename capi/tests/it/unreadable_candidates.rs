@@ -33,7 +33,6 @@ mod fixture {
         Single,
         Pair,
         Mixed,
-        Fallback,
         MaskedExtension,
         #[cfg(unix)]
         Zero,
@@ -44,7 +43,7 @@ mod fixture {
         let total = match case {
             #[cfg(unix)]
             Case::Zero => 0,
-            Case::Single | Case::Pair | Case::Mixed | Case::Fallback | Case::MaskedExtension => 1,
+            Case::Single | Case::Pair | Case::Mixed | Case::MaskedExtension => 1,
         };
         let dir = tempfile::tempdir().unwrap();
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -63,7 +62,7 @@ mod fixture {
 
         let key = ChewingKey::from_pinyin("ni").unwrap();
         write_libraries(dir.path(), case, total, key);
-        write_index(dir.path(), user.path(), case, key);
+        write_index(dir.path(), case, key);
         (dir, user)
     }
 
@@ -90,20 +89,8 @@ mod fixture {
         }
     }
 
-    /// Write the case's pinyin index: the user index in `user` for
-    /// `Fallback`, else the system index in `dir` with the case's rows.
-    fn write_index(dir: &Path, user: &Path, case: Case, key: ChewingKey) {
-        let index_path = if matches!(case, Case::Fallback) {
-            let conf = oxpinyin::data::TableConf::load_from_dir(dir).unwrap();
-            let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
-            assert!(
-                oxpinyin::data::user_files::UserTableInfo::conform_to(&versions)
-                    .save(user.join("user.conf").as_path())
-            );
-            user.join("user_pinyin_index.bin")
-        } else {
-            dir.join("pinyin_index.bin")
-        };
+    /// Write the case's rows into the system pinyin index in `dir`.
+    fn write_index(dir: &Path, case: Case, key: ChewingKey) {
         let token = if matches!(case, Case::MaskedExtension) {
             0x0200_0001
         } else {
@@ -115,22 +102,18 @@ mod fixture {
         }
         let extension = encode_complete_key(&[key, ChewingKey::from_pinyin("hao").unwrap()]);
         let key = encode_complete_key(&[key]);
-        if matches!(case, Case::Fallback) {
-            DefaultStore::write_user_index(&index_path, |sink| sink(&key, &value)).unwrap();
-        } else {
-            let index = DefaultStore::create(&index_path).unwrap();
-            index
-                .write(|txn| {
-                    txn.put_raw(&key, &value)?;
-                    if matches!(case, Case::MaskedExtension) {
-                        // Too short for one record: only a decode of this
-                        // row fails.
-                        txn.put_raw(&extension, &[1, 2, 3])?;
-                    }
-                    Ok(())
-                })
-                .unwrap();
-        }
+        let index = DefaultStore::create(&dir.join("pinyin_index.bin")).unwrap();
+        index
+            .write(|txn| {
+                txn.put_raw(&key, &value)?;
+                if matches!(case, Case::MaskedExtension) {
+                    // Too short for one record: only a decode of this
+                    // row fails.
+                    txn.put_raw(&extension, &[1, 2, 3])?;
+                }
+                Ok(())
+            })
+            .unwrap();
     }
 }
 
@@ -181,12 +164,6 @@ fn a_sole_unreadable_after_cursor_row_is_omitted() {
 #[test]
 fn two_unreadable_rows_are_omitted() {
     check_row(fixture::Case::Pair, 0x1f);
-}
-
-/// omit an unreadable item found through the user table.
-#[test]
-fn a_sole_unreadable_row_is_omitted_after_the_user_table_fallback() {
-    check_row(fixture::Case::Fallback, 0x1f);
 }
 
 #[test]

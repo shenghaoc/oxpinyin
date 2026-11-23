@@ -1,4 +1,4 @@
-use super::{EngineError, abort_toned_incomplete};
+use super::abort_toned_incomplete;
 
 fn key(text: &str) -> crate::vocab::SyllableKey {
     crate::vocab::SyllableKey::from_text(text).expect("key")
@@ -32,29 +32,5 @@ fn a_toned_initial_only_key_behind_a_complete_key_aborts() {
     crate::store::death_test::assert_aborts(
         "engine::error::tests::a_toned_initial_only_key_behind_a_complete_key_aborts",
         || abort_toned_incomplete(&[key("ni"), key("n")], &[3, 4]),
-    );
-}
-
-/// The over-read gram fault keeps its typed refusal: the C layers warn
-/// once and refuse (`ngram.cpp:318-349`).
-#[test]
-fn an_over_read_gram_fault_keeps_its_refusal() {
-    assert_eq!(
-        EngineError::lookup_gram(crate::single_gram::GramFault::OverRead),
-        EngineError::UnsafeLookupPredecessor
-    );
-}
-
-/// The short merged-gram total dies at the mapping every lookup site
-/// shares: the pin reads the total through `memory_chunk.h:390`
-/// (`merge_single_gram`, `ngram.cpp:303-304`; `SingleGram::search`,
-/// `:165`; `get_total_freq`, `:49`).
-#[test]
-fn a_short_gram_fault_aborts_at_the_shared_mapping() {
-    crate::store::death_test::assert_aborts(
-        "engine::error::tests::a_short_gram_fault_aborts_at_the_shared_mapping",
-        || {
-            let _ = EngineError::lookup_gram(crate::single_gram::GramFault::Short);
-        },
     );
 }

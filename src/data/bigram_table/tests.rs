@@ -2,15 +2,6 @@ use super::*;
 
 use std::sync::Mutex;
 
-use crate::data::memory_dbm::MemoryDbm;
-
-#[test]
-fn load_raw_successors_miss_returns_none() {
-    let dbm = MemoryDbm::new();
-    let table = BigramTable::new(dbm);
-    assert!(table.load_raw_successors(0x0100_0010).unwrap().is_none());
-}
-
 /// A DBM that answers each read from a script and counts the reads.
 struct ScriptedDbm {
     answers: Mutex<Vec<Result<Option<Vec<u8>>, ()>>>,

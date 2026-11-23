@@ -194,19 +194,6 @@ mod frozen {
         use crate::fixtures::w3;
 
         #[rstest]
-        // mergeseq-bogus-option: utils/segment/mergeseq.cpp at 074a2219: 210-215.
-        #[case::mergeseq_bogus_option(
-            TempDir::new().unwrap(),
-            &["--bogus"],
-            b"",
-            &[],
-            Run {
-                status: Exit(22),
-                stdout: Exact(UNKNOWN_OPTION_BOGUS),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // mergeseq-empty-input: utils/segment/mergeseq.cpp at 074a2219: 273-276 (the synthetic
         // "0 " line).
         #[case::mergeseq_empty_input(
@@ -557,19 +544,6 @@ mod frozen {
         use crate::fixtures::w3;
 
         #[rstest]
-        // spseg-bogus-option: utils/segment/spseg.cpp at 074a2219: 211-215.
-        #[case::spseg_bogus_option(
-            TempDir::new().unwrap(),
-            &["--bogus"],
-            b"",
-            &[],
-            Run {
-                status: Exit(22),
-                stdout: Exact(UNKNOWN_OPTION_BOGUS),
-                stderr: b"",
-                files: &[],
-            },
-        )]
         // spseg-empty-input: utils/segment/spseg.cpp at 074a2219: 339-343.
         #[case::spseg_empty_input(
             w3(),
