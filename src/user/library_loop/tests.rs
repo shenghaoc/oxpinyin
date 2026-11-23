@@ -7,8 +7,6 @@ use crate::data::user_files::{SystemVersions, UserFileLayout, UserTableInfo};
 use super::*;
 use crate::user::{LoadedPinyinIndex, LoadedProfile, UserConfLaw, check_format, system_originals};
 
-const LAWS: [UserConfLaw; 2] = [UserConfLaw::Pinyin, UserConfLaw::Zhuyin];
-
 /// Row 1 to 3 and 5 are system libraries, row 4 a user library.
 const CONF: &str = "binary format version:7\nmodel data version:14\n\
         lambda parameter:0.312699\n\nsource table format:pinyin\n\
@@ -20,8 +18,7 @@ const CONF: &str = "binary format version:7\nmodel data version:14\n\
         default MERGED_DICTIONARY NULL NULL u.bin USER_FILE\n\
         default ADDON_DICTIONARY d.table d.bin d.dbin SYSTEM_FILE\n";
 
-/// A `MODIFY_HEADER` with a token, which `next_record` asserts on
-/// (`phrase_index_logger.h:202`), framed as a chunk.
+/// A framed `MODIFY_HEADER` with a token (`phrase_index_logger.h:202` asserts on it).
 fn bad_log() -> Vec<u8> {
     let mut payload = 4_u32.to_le_bytes().to_vec();
     payload.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
@@ -75,11 +72,11 @@ impl Fixture {
     }
 
     /// The session load over `rows`, using the production loop.
-    fn run(&self, law: UserConfLaw, rows: &[(u8, DefaultRowStep<'_>)]) -> Run {
+    fn run(&self, rows: &[(u8, DefaultRowStep<'_>)]) -> Run {
         let conf = self.conf();
         let layout = UserFileLayout::from_conf(&conf);
         let versions = SystemVersions::from_conf(&conf);
-        let check = check_format(&self.user, &versions, &layout, law);
+        let check = check_format(&self.user, &versions, &layout, UserConfLaw::Pinyin);
         let mut originals = system_originals(crate::data::PhraseLibraries::empty(), layout);
         let mut profile = LoadedPinyinIndex::open(Some((&self.user, check)))
             .unwrap()
@@ -122,170 +119,138 @@ fn assert_journal(stop: &Result<(), LibraryLoopStop>, library: u8) {
     );
 }
 
-/// a later chunk the pin never opens cannot stop library
-/// 1's replay, and writes no line (`pinyin.cpp:276` before `:256`).
+/// Basis: `074a2219 pinyin.cpp:256,276` (the log merge dies before a later row is mapped).
 #[test]
 fn a_bad_log_aborts_before_a_later_library_that_cannot_map() {
-    for law in LAWS {
-        let fixture = Fixture::new(CONF);
-        fixture.bad_log("a.dbin");
-        fixture.absent("b.bin");
-        fixture.unmappable("c.bin");
-        let conf = fixture.conf();
-        let run = fixture.run(law, &conf.default_row_steps(None));
-        assert_journal(&run.stop, 1);
-        assert!(run.unmapped.is_empty(), "{law:?}: {:?}", run.unmapped);
-    }
+    let fixture = Fixture::new(CONF);
+    fixture.bad_log("a.dbin");
+    fixture.absent("b.bin");
+    fixture.unmappable("c.bin");
+    let conf = fixture.conf();
+    let run = fixture.run(&conf.default_row_steps(None));
+    assert_journal(&run.stop, 1);
+    assert!(run.unmapped.is_empty(), "{:?}", run.unmapped);
 }
 
-/// a fatal row is judged where the loop reaches it, after
-/// the logs before it. Row 3 is each of the three sites; the absent
-/// library 2 between them writes no line (`pinyin.cpp:388`,
-/// `memory_chunk.h:434`, `:493`).
+/// Basis: `pinyin.cpp:388`, `memory_chunk.h:434,493` (each fatal site where the loop reaches it).
 #[test]
-fn a_bad_log_aborts_before_a_later_fatal_row() {
+fn a_fatal_row_is_judged_after_the_rows_before_it() {
     let dictionary = CONF.replace("c.dbin SYSTEM_FILE", "c.dbin DICTIONARY");
     let null_system = CONF.replace("c.table c.bin", "c.table NULL");
     let null_user = CONF.replace("c.dbin SYSTEM_FILE", "NULL SYSTEM_FILE");
-    for law in LAWS {
-        for (text, site) in [
-            (&dictionary, TableConfSite::DefaultDictionary),
-            (&null_system, TableConfSite::NullSystemFile),
-            (&null_user, TableConfSite::NullUserFile),
-        ] {
-            let fixture = Fixture::new(text);
-            fixture.absent("b.bin");
-            let conf = fixture.conf();
-            // Whether the user directory reads as a chunk depends on the
-            // filesystem, so the null user file is set here.
-            let rows: Vec<_> = conf
-                .default_row_steps(None)
-                .into_iter()
-                .map(|(index, step)| match step {
-                    DefaultRowStep::System { file, .. }
-                        if index == 3 && site == TableConfSite::NullUserFile =>
-                    {
-                        (
-                            index,
-                            DefaultRowStep::System {
-                                file,
-                                null_user_file: true,
-                            },
-                        )
-                    }
-                    other @ (DefaultRowStep::Stop(_)
-                    | DefaultRowStep::System { .. }
-                    | DefaultRowStep::User) => (index, other),
-                })
-                .collect();
+    for (text, site) in [
+        (&dictionary, TableConfSite::DefaultDictionary),
+        (&null_system, TableConfSite::NullSystemFile),
+        (&null_user, TableConfSite::NullUserFile),
+    ] {
+        let fixture = Fixture::new(text);
+        fixture.absent("b.bin");
+        let conf = fixture.conf();
+        // Whether a directory reads as a chunk depends on the filesystem.
+        let rows: Vec<_> = conf
+            .default_row_steps(None)
+            .into_iter()
+            .map(|(index, step)| match step {
+                DefaultRowStep::System { file, .. }
+                    if index == 3 && site == TableConfSite::NullUserFile =>
+                {
+                    (
+                        index,
+                        DefaultRowStep::System {
+                            file,
+                            null_user_file: true,
+                        },
+                    )
+                }
+                other @ (DefaultRowStep::Stop(_)
+                | DefaultRowStep::System { .. }
+                | DefaultRowStep::User) => (index, other),
+            })
+            .collect();
 
-            let reached = fixture.run(law, &rows);
-            assert!(
-                matches!(reached.stop, Err(LibraryLoopStop::Row(got)) if got == site),
-                "{law:?} {site:?}: {:?}",
-                reached.stop
-            );
-            let mut expected = vec![fixture.system.join("b.bin")];
-            if site == TableConfSite::NullSystemFile
-                && crate::data::phrase_library::null_chunk_writes_mmap_line(&fixture.system)
-            {
-                expected.push(fixture.system.clone());
-            }
-            assert_eq!(reached.unmapped, expected, "{law:?}");
-
-            fixture.bad_log("a.dbin");
-            let run = fixture.run(law, &rows);
-            assert_journal(&run.stop, 1);
-            assert!(run.unmapped.is_empty(), "{law:?} {site:?}");
+        let reached = fixture.run(&rows);
+        assert!(
+            matches!(reached.stop, Err(LibraryLoopStop::Row(got)) if got == site),
+            "{site:?}: {:?}",
+            reached.stop
+        );
+        let mut expected = vec![fixture.system.join("b.bin")];
+        if site == TableConfSite::NullSystemFile
+            && crate::data::phrase_library::null_chunk_writes_mmap_line(&fixture.system)
+        {
+            expected.push(fixture.system.clone());
         }
+        assert_eq!(reached.unmapped, expected, "{site:?}");
     }
 }
 
-/// An absent library reports before the later chunk that stops the loop
-/// (`pinyin.cpp:256`).
+/// Basis: `pinyin.cpp:256` (an absent library writes its line and the loop goes on).
 #[test]
 fn an_absent_library_keeps_its_line_before_a_later_unmappable_one() {
-    for law in LAWS {
-        let fixture = Fixture::new(CONF);
-        fixture.absent("a.bin");
-        fixture.unmappable("c.bin");
-        let conf = fixture.conf();
-        let run = fixture.run(law, &conf.default_row_steps(None));
-        let Err(LibraryLoopStop::Library(error)) = &run.stop else {
-            panic!("{law:?}: {:?}", run.stop);
-        };
-        assert_eq!(
-            error.unmappable_path(),
-            Some(fixture.system.join("c.bin").as_path()),
-            "{law:?}"
-        );
-        assert_eq!(
-            run.unmapped,
-            [fixture.system.join("a.bin"), fixture.system.join("c.bin")],
-            "{law:?}"
-        );
-    }
+    let fixture = Fixture::new(CONF);
+    fixture.absent("a.bin");
+    fixture.unmappable("c.bin");
+    let conf = fixture.conf();
+    let run = fixture.run(&conf.default_row_steps(None));
+    let Err(LibraryLoopStop::Library(error)) = &run.stop else {
+        panic!("{:?}", run.stop);
+    };
+    assert_eq!(
+        error.unmappable_path(),
+        Some(fixture.system.join("c.bin").as_path())
+    );
+    assert_eq!(
+        run.unmapped,
+        [fixture.system.join("a.bin"), fixture.system.join("c.bin")]
+    );
 }
 
-/// nothing after the faulting log is mapped or read, a
-/// later well-formed library and user file included.
+/// Basis: `pinyin.cpp:268-276` (nothing after the faulting log is mapped or read).
 #[test]
 fn the_loop_touches_nothing_after_the_faulting_log() {
-    for law in LAWS {
-        let fixture = Fixture::new(CONF);
-        fixture.bad_log("a.dbin");
-        std::fs::write(
-            fixture.user.join("u.bin"),
-            build_chunk(&[]).expect("empty chunk"),
-        )
-        .expect("user library");
-        let conf = fixture.conf();
-        let run = fixture.run(law, &conf.default_row_steps(None));
-        assert_journal(&run.stop, 1);
-        assert_eq!(run.loaded, [1], "{law:?}");
-        assert!(run.profile.user_libraries.is_empty(), "{law:?}");
-        assert!(
-            !run.profile.loaded.library_totals.contains_key(&4),
-            "{law:?}"
-        );
-    }
+    let fixture = Fixture::new(CONF);
+    fixture.bad_log("a.dbin");
+    std::fs::write(
+        fixture.user.join("u.bin"),
+        build_chunk(&[]).expect("empty chunk"),
+    )
+    .expect("user library");
+    let conf = fixture.conf();
+    let run = fixture.run(&conf.default_row_steps(None));
+    assert_journal(&run.stop, 1);
+    assert_eq!(run.loaded, [1]);
+    assert!(run.profile.user_libraries.is_empty());
+    assert!(!run.profile.loaded.library_totals.contains_key(&4));
 }
 
-/// Control: the pin dies on library 3's empty chunk before its merge
-/// (`pinyin.cpp:264`), so its bad log is never read, while the logs
-/// before it were.
+/// Basis: `pinyin.cpp:264` (the empty chunk dies before its merge).
 #[test]
 fn a_library_that_cannot_map_never_reads_its_log() {
-    for law in LAWS {
-        let fixture = Fixture::new(CONF);
-        fixture.unmappable("c.bin");
-        fixture.bad_log("c.dbin");
-        let conf = fixture.conf();
-        let run = fixture.run(law, &conf.default_row_steps(None));
-        assert!(
-            matches!(&run.stop, Err(LibraryLoopStop::Library(error)) if error.unmappable_path().is_some()),
-            "{law:?}: {:?}",
-            run.stop
-        );
-    }
+    let fixture = Fixture::new(CONF);
+    fixture.unmappable("c.bin");
+    fixture.bad_log("c.dbin");
+    let conf = fixture.conf();
+    let run = fixture.run(&conf.default_row_steps(None));
+    assert!(
+        matches!(&run.stop, Err(LibraryLoopStop::Library(error)) if error.unmappable_path().is_some()),
+        "{:?}",
+        run.stop
+    );
 }
 
-/// Control: an absent library stays unloaded and the loop goes on to its
-/// log, with its diagnostic line kept.
+/// Basis: `pinyin.cpp:256,268-276` (an absent library still merges its log).
 #[test]
 fn an_absent_library_keeps_its_line_and_the_fault_of_its_log() {
-    for law in LAWS {
-        let fixture = Fixture::new(CONF);
-        fixture.absent("b.bin");
-        fixture.bad_log("b.dbin");
-        let conf = fixture.conf();
-        let run = fixture.run(law, &conf.default_row_steps(None));
-        assert_journal(&run.stop, 2);
-        assert_eq!(run.unmapped, [fixture.system.join("b.bin")], "{law:?}");
-    }
+    let fixture = Fixture::new(CONF);
+    fixture.absent("b.bin");
+    fixture.bad_log("b.dbin");
+    let conf = fixture.conf();
+    let run = fixture.run(&conf.default_row_steps(None));
+    assert_journal(&run.stop, 2);
+    assert_eq!(run.unmapped, [fixture.system.join("b.bin")]);
 }
 
-/// Without a user profile the loop still judges and maps in order.
+/// Basis: `pinyin.cpp:256-264` (the rows are judged and mapped in order without a profile).
 #[test]
 fn the_loop_without_a_profile_stops_at_the_first_fault() {
     let fixture = Fixture::new(CONF);

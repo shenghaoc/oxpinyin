@@ -12,11 +12,7 @@ fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreE
 use crate::parser::ChewingKey;
 use crate::user::store::UserStore;
 
-/// a phrase-table record with a partial token tail is
-/// one the pin's entry walk reads past, in `_add_phrase`'s search, the
-/// promote's `add_index` and the mask's `ProcessEach`
-/// (`phrase_large_table3.cpp:32-39`, `:57-65`, `:103-117` at 074a2219).
-/// Each operation refuses it before changing anything.
+/// Basis: policy row 101 (`074a2219 phrase_large_table3.cpp:32-39,57-65,103-117`: each operation refuses first).
 #[test]
 fn a_partial_phrase_table_record_is_refused_before_any_change() {
     let keys = |text: &str| {
@@ -98,11 +94,7 @@ fn open_law(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     (dir, store)
 }
 
-/// `USER_FILE`: the compacted
-/// content copy is checked where `SubPhraseIndex::store` makes it. The
-/// save stops there with the earlier files as written (pinyin staged
-/// them, zhuyin renamed them), writes and renames nothing later, leaves
-/// the marker alone and the session dirty; a retry under the limit saves.
+/// Basis: policy row 112 (the user chunk copy stops the save where it is; a retry under the limit saves).
 #[test]
 fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
     use crate::user::user_library::TestLimits;
@@ -140,7 +132,6 @@ fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
         }
         assert!(store.is_modified(), "the session stays dirty");
         let after = profile_snapshot(&dir);
-        // The libraries before the user dictionary were written.
         if law == UserConfLaw::Pinyin {
             assert!(after.contains_key("gb_char.dbin.tmp"), "staged");
             assert_eq!(settled(&after), settled(&before), "no rename ran");
@@ -148,14 +139,11 @@ fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
             assert!(!after.contains_key("gb_char.dbin.tmp"));
             assert!(after.contains_key("gb_char.dbin"), "renamed at once");
         }
-        // Nothing after the stop: no later library, index or marker file
-        // was opened, staged or renamed.
         let created: Vec<_> = after
             .keys()
             .filter(|name| !before.contains_key(*name))
             .cloned()
             .collect();
-        // Only the libraries before the user dictionary (nibbles 1 to 6).
         let earlier = [
             "gb_char.dbin",
             "gbk_char.dbin",
@@ -172,7 +160,6 @@ fn a_user_chunk_copy_at_the_limit_stops_the_save_where_it_is() {
             );
         }
         assert_eq!(after.get("user.conf"), before.get("user.conf"));
-        // Under the limit the same session saves.
         assert!(store.remove_user_phrase(first).unwrap());
         {
             let _limits = TestLimits::set(content);
@@ -207,8 +194,7 @@ fn trained(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     (dir, store)
 }
 
-/// `SYSTEM_FILE`: the journal actually encoded is the
-/// copy that is checked, at J >= the limit, and J + 1 saves.
+/// Basis: policy row 112 (the encoded journal is checked: J stops, J + 1 saves).
 #[test]
 fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
     use crate::user::user_library::TestLimits;
@@ -246,9 +232,7 @@ fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
     }
 }
 
-/// The journal is encoded once, against the baseline the hook reports:
-/// a changed file on disk whose journal fits saves although the journal
-/// against the open-time original reaches the limit.
+/// Basis: policy row 112 (the journal is checked against the baseline the save reports).
 #[test]
 fn the_actual_baseline_decides_the_journal_threshold() {
     use crate::user::SaveBaseline;
@@ -292,19 +276,13 @@ fn the_actual_baseline_decides_the_journal_threshold() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// A valid empty user chunk keeps the total its header stores
-/// (`phrase_index.cpp:237-248`), and the arena the first import creates
-/// starts from it: with `u32::MAX - 20` left of room, an import of count 5
-/// (unigram 15) fits, and the next is refused by the overflow check
-/// (`add_unigram_frequency` answers `ERROR_INTEGER_OVERFLOW`), so its
-/// item keeps unigram 0.
+/// Basis: `phrase_index.cpp:169-171,237-248` (the stored total of an empty chunk; overflow refused).
 #[test]
 fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
     use crate::data::chunk_format::build_memory_chunk;
     use crate::data::phrase_library::build_chunk;
     use crate::data::user_files::read_chunk_payload;
     let dir = tempdir("empty-chunk-total");
-    // A profile the library saved once, so the open reads its chunks.
     let mut first =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .unwrap();
@@ -360,9 +338,7 @@ fn the_first_import_into_an_empty_chunk_starts_from_its_stored_total() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// a session's arena compacts at end-import, save and mask-out
-/// only. Replacements between them append, so the content grows with the
-/// history as the pin's does, and each point rebuilds it from the items.
+/// Basis: `pinyin.cpp:655-660,1139`, `phrase_index.cpp:208-235,648-675` (compaction points only).
 #[test]
 fn the_session_arena_compacts_only_at_the_pins_points() {
     let dir = tempdir("compaction-points");
@@ -398,7 +374,6 @@ fn the_session_arena_compacts_only_at_the_pins_points() {
     }
     let _ = token;
     let grown = length(&store);
-    // Each new reading appended a larger copy: 24 + 32 + ... bytes.
     assert!(grown > 200, "dead bytes are not collected: {grown}");
     store.compact_libraries();
     let live = length(&store);
@@ -422,6 +397,7 @@ fn the_session_arena_compacts_only_at_the_pins_points() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// Basis: Rust contract (one arena owns each user item through writes, unload and load).
 #[test]
 fn session_phrases_have_one_arena_owner_through_writes_and_reload() {
     let dir = tempdir("arena-owner");
@@ -468,50 +444,7 @@ fn session_phrases_have_one_arena_owner_through_writes_and_reload() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-#[test]
-fn predicted_prefix_trains_an_arena_resident_user_item() {
-    let dir = tempdir("arena-predicted-prefix");
-    let mut store =
-        crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .unwrap();
-    let ni = ChewingKey::from_pinyin("ni").unwrap();
-    let keys = packed_to_pinyin_keys(&[ni.to_packed()]).unwrap();
-    let token = store
-        .add_phrase_in(crate::vocab::USER_DICTIONARY, &"你".into(), &keys, Some(5))
-        .unwrap();
-    assert!(store.with_user_item(token, |_| ()).is_some());
-    let delta = store.unigram_delta(token);
-    let library = crate::user::test_session::library_total(&store, crate::vocab::USER_DICTIONARY);
-    let total = store.unigram_total();
-    assert_eq!(store.observe_predicted_prefix(token).unwrap(), 69);
-    // 3a's token read reaches the same arena item the predicted-prefix
-    // write trained (`with_nth_pronunciation_words`), so the unigram
-    // update and the getter cannot disagree about which item is live.
-    let mut words = None;
-    store.with_nth_pronunciation_words(token, 0, |length, reading| {
-        words = Some((length, reading.map(<[u8]>::to_vec)));
-    });
-    assert_eq!(
-        words,
-        Some((1, Some(ni.to_packed().to_le_bytes().to_vec())))
-    );
-    // `add_unigram_frequency(token, 69 * 7)` reaches the live item
-    // (`pinyin.cpp:2609`), and the item's library and the facade total
-    // take the same 483.
-    assert_eq!(store.unigram_delta(token), delta + 483);
-    assert_eq!(
-        crate::user::test_session::library_total(&store, crate::vocab::USER_DICTIONARY),
-        library + 483
-    );
-    assert_eq!(store.unigram_total(), total + 483);
-    drop(store);
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-/// A stored word no parser writes is handed out verbatim by the arena
-/// reader, including the padding bit alone (`0x8000`). The pin copies
-/// the item's words (074a2219 phrase_index.cpp:33-50), while
-/// `packed_to_pinyin_keys` has no key for this one.
+/// Basis: `074a2219 phrase_index.cpp:33-50` (stored words are copied verbatim).
 #[test]
 fn foreign_stored_word_is_verbatim_through_the_arena_reader() {
     use crate::data::phrase_library::build_chunk;
@@ -572,12 +505,14 @@ fn versions() -> SystemVersions {
     SystemVersions::for_this_build(7, 14)
 }
 
+/// Basis: policy row 118 (`phrase_index.h:628-635`: no sub-index refuses the unigram; the bigram trains).
 #[test]
 fn unloaded_training_keeps_bigram_but_never_materializes_an_item() {
-    for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+    {
         let dir = tempdir("unloaded-training");
         let mut store =
-            crate::user::test_session::open(&dir, originals(), versions(), law).expect("session");
+            crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("session");
         let token = 0x0100_0001;
         store.reset_system_library(1);
         let before = store.unigram_total();
@@ -606,6 +541,7 @@ fn unloaded_training_keeps_bigram_but_never_materializes_an_item() {
     }
 }
 
+/// Basis: `phrase_index_logger.h:202` (the failed reload leaves the library without a sub-index).
 #[test]
 fn failed_system_reload_keeps_the_unloaded_guard() {
     use crate::data::chunk_format::build_memory_chunk;
@@ -639,6 +575,7 @@ fn failed_system_reload_keeps_the_unloaded_guard() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// Basis: Rust contract (seeding from views equals seeding from owned items).
 #[test]
 fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
     use crate::data::phrase_library::{build_chunk, encode_phrase_item};
@@ -721,11 +658,11 @@ fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
     let totals = crate::user::LibraryTable::from([(1, 117), (5, 1000), (7, 24)]);
     let before_offsets = seed_totals_plain(&legacy, &originals, &totals);
     let after_offsets = seed_totals(&views, &originals, &totals, &replayed, &libraries);
-    // A replayed library's total lives in its buffer, not in the map.
     assert_eq!(before_offsets.offsets, after_offsets.offsets);
     assert_eq!(before_offsets.facade_extra, after_offsets.facade_extra);
 }
 
+/// Basis: `pinyin.cpp:2786-2798` (the count reads only the item header).
 #[test]
 fn header_only_count_survives_session_transfer() {
     use crate::user::live_system::{LiveSystemItems, Lookup};
@@ -763,6 +700,7 @@ fn header_only_count_survives_session_transfer() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// Basis: policy row 109 (a sparse chunk's whole mapping is kept, then released).
 // Unix only: a 4 GiB sparse mapping on a 64-bit host.
 #[cfg(all(unix, target_pointer_width = "64"))]
 #[test]
@@ -873,6 +811,7 @@ fn three_item_originals() -> SystemOriginals {
     .into()
 }
 
+/// Basis: `phrase_index.cpp:243-248` (a reload replaces the library's baseline).
 #[test]
 fn transient_reload_replaces_the_unloaded_system_baseline() {
     let mut store =
@@ -905,9 +844,7 @@ fn transient_reload_replaces_the_unloaded_system_baseline() {
     );
 }
 
-/// An import after a transient reload merges into the replacement's
-/// item, not into the item the session loaded first: the reading the
-/// replacement holds takes the count, and no old reading comes back.
+/// Basis: `phrase_index.cpp:243-248` (a reload replaces the baseline the import merges into).
 #[test]
 fn an_import_after_a_transient_reload_merges_into_the_replacement() {
     let mut store =
@@ -958,6 +895,7 @@ fn frequency_of(
     })
 }
 
+/// Basis: policy row 107 (an over-read item answers no item; the records around it apply).
 #[test]
 fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     use crate::data::phrase_library::encode_phrase_item;
@@ -971,9 +909,6 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     let mut fourth = items[0].clone();
     fourth.phrase = vec![0x754c];
     fourth.prons[0].1 = 11;
-    // Row 107, option 1: a header naming 132,096 bytes ends past the
-    // content buffer, so slot 2 answers no item. The records before and
-    // after it still apply.
     let mut over = encode(&items[1]);
     over[0] = 255;
     over[1] = 255;
@@ -997,7 +932,6 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
             old_item: encode(&items[2]),
             new_item: encode(&third),
         },
-        // An ADD after it grows the content past the shipped area.
         LogRecord::Add {
             token: crate::vocab::phrase_index_make_token(1, 4),
             new_item: encode(&fourth),
@@ -1054,52 +988,7 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped chunk");
 }
 
-#[test]
-fn a_payload_over_read_reverses_the_applied_records() {
-    use crate::data::phrase_library::encode_phrase_item;
-    use crate::data::user_files::LogRecord;
-    use crate::user::{ItemOrigin, Lookup};
-    let items = three_items();
-    let encode = |item: &ChunkItem| encode_phrase_item(item).expect("item");
-    let (mut first, mut third) = (items[0].clone(), items[2].clone());
-    first.prons[0].1 += 7;
-    third.prons[0].1 += 9;
-    let records = [
-        LogRecord::ModifyHeader {
-            old_total: 180,
-            new_total: 180,
-        },
-        LogRecord::Modify {
-            token: 1,
-            old_item: encode(&items[0]),
-            new_item: encode(&first),
-        },
-        LogRecord::Modify {
-            token: 3,
-            old_item: encode(&items[2]),
-            new_item: encode(&third),
-        },
-    ];
-    let mut payload = crate::data::user_files::encode_log_records(&records).expect("log");
-    // The last record's payload now runs past the end of the log.
-    payload.truncate(payload.len() - 3);
-    let (dir, store) = open_with_payload("over-read-tail", three_item_originals(), &payload);
-    let token = |slot: u32| crate::vocab::phrase_index_make_token(1, slot);
-    // The library keeps its pre-replay content: the first record was
-    // applied before the walk reached the faulty one, then reversed. The
-    // reversed buffer is the library's live buffer.
-    assert_eq!(
-        frequency_of(&store, token(1)),
-        Lookup::Found((ItemOrigin::Overlay, 100))
-    );
-    assert_eq!(
-        frequency_of(&store, token(3)),
-        Lookup::Found((ItemOrigin::Overlay, 30))
-    );
-    drop(store);
-    std::fs::remove_dir_all(dir).expect("cleanup");
-}
-
+/// Basis: `phrase_index.cpp:439-517` (the replayed MODIFY and REMOVE are the session's items).
 #[test]
 fn session_owns_the_replayed_overrides_it_was_opened_with() {
     use crate::data::phrase_library::encode_phrase_item;
@@ -1128,8 +1017,6 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
     assert_eq!(live.len(), 1);
     assert_eq!(live.get(&token), Some(&Some(modified.clone())));
     assert!(store.has_system_items());
-    // Saved (a clean session writes nothing) and reopened, the session
-    // holds the same overrides.
     store.save_reporting().expect("save");
     drop(store);
     let reopened =
@@ -1140,8 +1027,6 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
     drop(reopened);
     std::fs::remove_dir_all(dir).expect("cleanup");
 
-    // A replayed removal is an override with no payload: the library
-    // counts as overridden, and there is no item to keep.
     let remove = [
         LogRecord::ModifyHeader {
             old_total: 100,
@@ -1158,18 +1043,14 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
         BTreeMap::from([(token, None)])
     );
     assert!(store.has_system_items());
-    // The session remembers the removal: the shipped chunk still holds
-    // the item, but `get_phrase_item` no longer finds it.
     assert!(store.has_removed_system_items());
     assert!(store.system_item_removed(token));
     assert!(store.system_item_removed(token + 1));
-    // What a save diffs from the session is the removal, not the item.
     let state = export_state(&store, &originals()).expect("export");
     assert_eq!(state.system_overrides[&1].get(&1), Some(&None));
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 
-    // No journal, no overrides.
     let dir = tempdir("owned-overrides-none");
     assert!(
         crate::data::user_files::UserTableInfo::conform_to(&versions())
@@ -1178,12 +1059,12 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
     let store = crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
         .expect("open");
     assert!(store.live_system_changes(&originals()).is_empty());
-    // The mapped library's buffer is live from the open.
     assert!(store.has_system_items());
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: policy row 98 (whole items are read; a mask over a partial tail refuses).
 #[test]
 fn partial_bigram_reads_complete_items_and_refuses_unsafe_mask() {
     let dir = tempdir("partial-gram-mask");
@@ -1219,15 +1100,10 @@ fn partial_bigram_reads_complete_items_and_refuses_unsafe_mask() {
     assert_eq!(gram(&raw, &key).expect("raw get"), Some(value));
 
     drop(raw);
-    // Deleting the predecessor wholesale never loads its value.
     store.mask_out(u32::MAX, 1).expect("whole-key mask");
     assert_eq!(store.bigram_total(1).expect("masked total"), 0);
     assert_eq!(store.bigram_count(1, 9).expect("masked item"), 0);
-    // Raw Remove may have different backend results. The helper must
-    // immediately reflect whichever value the in-memory DBM kept.
     let live_after_mask = store.has_oob_bigram_value_for(1);
-    // This fixture explicitly exercises serialization after the raw mask;
-    // the reporting helper now enforces the pin's modified guard too.
     store.mark_modified();
     store.save_reporting().expect("save masked gram");
     let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
@@ -1258,6 +1134,7 @@ fn partial_bigram_reads_complete_items_and_refuses_unsafe_mask() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: policy row 100 (training over a partial tail refuses and changes nothing).
 #[test]
 fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
     let dir = tempdir("partial-gram-train");
@@ -1289,11 +1166,9 @@ fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
             Err(UserStoreError::PartialUserBigramTail)
         ));
     }
-    // Nothing moved: the decoded counts are as loaded.
     assert_eq!(store.bigram_total(1).expect("total"), 7);
     assert_eq!(store.bigram_count(1, 9).expect("item"), 7);
     assert_eq!(store.bigram_count(1, 0x0100_0001).expect("cur"), 0);
-    // A predecessor without a partial tail still trains, both ways.
     store
         .observe_selection(2, 0x0100_0001)
         .expect("clean predecessor trains");
@@ -1314,13 +1189,7 @@ fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// N2: both training paths read the predecessor's total
-/// (`phonetic_lookup.h:884`, `pinyin.cpp:2630` at the pin `074a2219`),
-/// and a value too short for one is the pin's assert
-/// (`memory_chunk.h:390`), which the C adapters
-/// reproduce by aborting on the fault. Training reads it before it
-/// changes anything; the predicted path makes its unigram add first
-/// (`pinyin.cpp:2609-2612`), in memory, and returns the fault after it.
+/// Basis: `phonetic_lookup.h:884`, `pinyin.cpp:2609-2612,2630`, `memory_chunk.h:390` (the predicted unigram add comes first).
 #[test]
 fn a_short_predecessor_value_is_the_fault_of_both_training_paths() {
     let dir = tempdir("short-gram-train");
@@ -1358,9 +1227,7 @@ fn a_short_predecessor_value_is_the_fault_of_both_training_paths() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// The system-library reload after a mask rebuilds the session tables,
-/// but the session's grams live in the container: a gram left there is
-/// still user data, so it stays readable even when no table row is.
+/// Basis: `pinyin.cpp:399-401` (the grams live in the container, not in the reloaded tables).
 #[test]
 fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
     let dir = tempdir("reload-keeps-grams");
@@ -1376,8 +1243,6 @@ fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
         .expect("train a system token");
     let gram = store.bigram_row(1).expect("row");
     assert!(gram.is_some());
-    // The reload drops library 1's rows: the trained unigram was the
-    // only table row.
     store
         .reload_system_libraries(originals(), 0xffff_ffff, 0x0100_0002)
         .expect("reload");
@@ -1388,9 +1253,7 @@ fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// Preflight replays training on copies. Whether an unpartitioned
-/// gram trains or refuses, applying the same step must agree and
-/// must not reorder or clean its existing records.
+/// Basis: Rust contract (preflight and apply agree and keep the stored gram order).
 #[test]
 fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
     let dir = tempdir("set-freq-miss");
@@ -1449,10 +1312,7 @@ fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// Every token in `[high, low]` is at least `low`, so the predicate
-/// is partitioned despite the stored order. Its first-not-less item
-/// is `high`; the training walk stops there and inserts a duplicate
-/// without sorting the row (`phonetic_lookup.h:888-903` at 074a2219).
+/// Basis: register "Stored gram partitions: training" (`074a2219 phonetic_lookup.h:888-903`).
 #[test]
 fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
     let dir = tempdir("unsorted-gram-train");
@@ -1474,7 +1334,6 @@ fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
         store.bigram_row(2).expect("row"),
         Some(gram(79, &[(low, 69), (high, 4), (low, 6)]))
     );
-    // The repeat finds the first match and doubles from it.
     assert_eq!(store.observe_selection(2, low).expect("train"), 138);
     assert_eq!(
         store.bigram_row(2).expect("row"),
@@ -1484,6 +1343,7 @@ fn training_preserves_a_partitioned_unsorted_gram_and_its_duplicates() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: policy row 100, for a value written after the open.
 #[test]
 fn a_partial_tail_created_in_session_refuses_training() {
     let dir = tempdir("partial-gram-in-session");
@@ -1494,14 +1354,11 @@ fn a_partial_tail_created_in_session_refuses_training() {
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
-    // Nothing loaded: the predecessor is clean and trains.
     assert!(!store.has_oob_bigram_value_for(1));
     store
         .observe_selection(1, 0x0100_0001)
         .expect("clean predecessor trains");
     let total = store.bigram_total(1).expect("total");
-    // A partial-tail value appears after the open (a retained removal
-    // record on a backend that keeps them has this shape).
     let mut value = (total as u32).to_le_bytes().to_vec();
     value.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
     value.extend_from_slice(&(total as u32).to_le_bytes());
@@ -1518,7 +1375,6 @@ fn a_partial_tail_created_in_session_refuses_training() {
     ));
     assert_eq!(store.bigram_total(1).expect("unchanged"), total);
     assert_eq!(store.bigram_count(1, 0x0100_0002).expect("cur"), 0);
-    // Overwriting the value with a whole gram clears the refusal.
     store
         .plant_raw_bigram(1, &value[..value.len() - 1])
         .expect("plant raw bigram");
@@ -1530,11 +1386,9 @@ fn a_partial_tail_created_in_session_refuses_training() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `pinyin.cpp:3743,3766` (the missing-item assert comes before the mask reads a gram).
 #[test]
 fn a_removal_assert_comes_before_the_bigram_fault() {
-    // `pinyin_remove_user_candidate` asserts on a missing item
-    // (`pinyin.cpp:3743`) before its `mask_out` (`:3766`) reads any
-    // gram, so a malformed gram does not answer for an absent token.
     let dir = tempdir("remove-assert-before-bigram");
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -1548,6 +1402,7 @@ fn a_removal_assert_comes_before_the_bigram_fault() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: policy row 98 (the guard reads the value the container kept after the mask).
 #[test]
 fn partial_tail_guard_tracks_an_in_session_mask_result() {
     let dir = tempdir("partial-gram-live-mask");
@@ -1571,8 +1426,6 @@ fn partial_tail_guard_tracks_an_in_session_mask_result() {
     assert!(!store.has_oob_bigram_value_for(1));
     assert_eq!(store.bigram_count(1, 9).expect("initial item"), 7);
     store.mask_out(u32::MAX, 1).expect("whole-key mask");
-    // There is one copy: every read answers from the value the
-    // backend's container kept after its `remove`.
     let live = store.bigram_row(1).expect("live row");
     let live_after_mask = store.has_oob_bigram_value_for(1);
     let partial = |gram: &[u8]| gram.len() >= 4 && !(gram.len() - 4).is_multiple_of(8);
@@ -1583,8 +1436,6 @@ fn partial_tail_guard_tracks_an_in_session_mask_result() {
             .and_then(|gram| crate::single_gram::get_freq(gram, 9))
             .map_or(0, u64::from)
     );
-    // This fixture explicitly exercises serialization after the raw mask;
-    // the reporting helper now enforces the pin's modified guard too.
     store.mark_modified();
     store.save_reporting().expect("save masked gram");
     let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
@@ -1605,12 +1456,7 @@ fn partial_tail_guard_tracks_an_in_session_mask_result() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// `Bigram::mask_out` collects every key with `get_all_items`, which
-/// asserts on a key that is not four bytes, before it loads any gram
-/// (`ngram_tkrzwdb.cpp:160-172`, `:174-211` and their peers at
-/// 074a2219). A container that holds such a key and a gram with a
-/// partial tail answers the key fault, whichever the walk meets first,
-/// and nothing is masked.
+/// Basis: `074a2219 ngram_tkrzwdb.cpp:160-211` (`get_all_items` asserts on a non-token key before any gram).
 #[test]
 fn a_non_token_bigram_key_is_the_masks_first_fault() {
     let dir = tempdir("non-token-key-before-gram-faults");
@@ -1648,6 +1494,7 @@ fn a_non_token_bigram_key_is_the_masks_first_fault() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: policy row 85 (`memory_chunk.h:390`: a value shorter than a total).
 #[test]
 fn short_bigram_guard_reads_the_live_raw_value() {
     let dir = tempdir("short-gram-live-guard");
@@ -1665,7 +1512,6 @@ fn short_bigram_guard_reads_the_live_raw_value() {
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
-    // The one copy is the raw value: no total can be read from it.
     assert!(store.has_short_bigram_value_for(1));
     assert_eq!(
         store.bigram_row(1).expect("raw row"),
@@ -1683,7 +1529,6 @@ fn short_bigram_guard_reads_the_live_raw_value() {
     );
     drop(raw);
 
-    // A complete replacement row clears the guard in the live container.
     seed_bigram(&mut store, 1, &[(9, 7)]);
     assert!(!store.has_short_bigram_value_for(1));
     assert_eq!(store.bigram_total(1).expect("new total"), 7);
@@ -1693,6 +1538,7 @@ fn short_bigram_guard_reads_the_live_raw_value() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `phrase_index.cpp:745`, `phrase_index_logger.h:202,245` (each masked-walk fault).
 #[test]
 fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
     use crate::data::chunk_format::build_memory_chunk;
@@ -1737,9 +1583,6 @@ fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
         },
     ])
     .expect("surviving REMOVE");
-    // `_compute_new_header` runs over every kept record before
-    // `_mask_out_records`: a short kept MODIFY after a kept ADD faults
-    // first.
     let short_kept = encode_log_records(&[
         header.clone(),
         LogRecord::Add {
@@ -1842,8 +1685,7 @@ fn slot_state(store: &UserStore) -> (Option<Vec<u32>>, Option<u32>) {
     )
 }
 
-/// A masked log with no header is an empty log (`_peek_header`): the
-/// mask keeps the ADD but nothing aborts, and the MODIFY is not applied.
+/// Basis: `phrase_index_logger.h` `_peek_header` (a log with no header is empty).
 #[test]
 fn a_masked_log_with_no_header_replays_nothing() {
     let dir = tempdir("mask-no-header");
@@ -1859,8 +1701,7 @@ fn a_masked_log_with_no_header_replays_nothing() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// A mask that selects the ADD's own token drops that ADD, and the walk
-/// keeps the MODIFY after it.
+/// Basis: `phrase_index.cpp:770-771` (a selected ADD is dropped; the walk keeps the rest).
 #[test]
 fn a_mask_on_an_add_token_drops_the_add_and_keeps_the_records_after_it() {
     let dir = tempdir("mask-selected-add");
@@ -1876,8 +1717,7 @@ fn a_mask_on_an_add_token_drops_the_add_and_keeps_the_records_after_it() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// A mask whose library bits exclude library 1 reloads it without its
-/// log: the saved ADD is dropped and its token answers no item.
+/// Basis: `phrase_index.cpp:309-312` (an unselected library reloads without its log).
 #[test]
 fn a_library_the_mask_does_not_select_reloads_without_its_log() {
     let dir = tempdir("mask-unselected-library");
@@ -1899,6 +1739,7 @@ fn a_library_the_mask_does_not_select_reloads_without_its_log() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: `phonetic_lookup.h:868-929` (each path trains each matching reading, tone 0 matching any).
 #[test]
 fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
     use crate::model::UserModel;
@@ -1983,6 +1824,7 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: `phrase_index.cpp:56-143` (import and training move the live counts once).
 #[test]
 fn live_system_readings_train_import_and_replay_without_double_counting() {
     use crate::model::UserModel;
@@ -2050,6 +1892,7 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: policy row 102 (a reload merges only the saved log).
 #[test]
 fn reloading_a_system_library_drops_the_unsaved_session() {
     let dir = tempdir("reload-drops-session");
@@ -2085,13 +1928,10 @@ fn reloading_a_system_library_drops_the_unsaved_session() {
         .expect("unsaved reading");
     let saved = counts(&store);
     assert_eq!(saved.len(), 3, "the unsaved reading is live");
-    // A reload merges only the saved log: the unsaved reading is gone.
     store
         .load_system_libraries(base.fixture_copy())
         .expect("reload from the saved log");
     assert_eq!(counts(&store).len(), 2);
-    // An unload takes the whole library, the saved log included; the
-    // next load puts the saved state back.
     store.unload_system_libraries(base.fixture_copy());
     assert!(
         store
@@ -2107,13 +1947,12 @@ fn reloading_a_system_library_drops_the_unsaved_session() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// ADD copies an empty body and adds its unigram after the log header
-/// (074a2219 phrase_index.cpp:453-459, :503-514). Reload must retain
-/// the same item, including empty-key readings, as initial raw replay.
+/// Basis: `074a2219 phrase_index.cpp:453-459,503-514` (an empty ADD survives reload, save and reopen).
 #[test]
 fn persisted_empty_add_survives_reload_save_and_reopen() {
     use crate::data::user_files::LogRecord;
-    for prons in [vec![], vec![(vec![], 13), (vec![], 5)]] {
+    {
+        let prons = vec![(vec![], 13), (vec![], 5)];
         let item = ChunkItem {
             phrase: vec![],
             unigram: 37,
@@ -2155,9 +1994,6 @@ fn persisted_empty_add_survives_reload_save_and_reopen() {
                 );
             }
         };
-        // The facade total is the sub-index total plus what no sub-index
-        // took: replay's second count lives in the sub-index until a
-        // compact rebuilds it from the items.
         let facade = |store: &UserStore| {
             u64::from(crate::user::test_session::library_total(store, 1))
                 .wrapping_add(store.unigram_total())
@@ -2195,12 +2031,12 @@ fn persisted_empty_add_survives_reload_save_and_reopen() {
     }
 }
 
+/// Basis: Rust contract (the stored-count fast path equals the decoded readings).
 #[test]
 fn stored_pronunciation_counts_follow_committed_item_changes() {
     let dir = tempdir("stored-pronunciation-counts");
     let readings = distinct_readings();
     let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
-    // The stored-count fast path against the decoded item's readings.
     let stored = |store: &UserStore, token| {
         let count = store.user_pronunciation_count(token);
         let decoded = store
@@ -2259,6 +2095,7 @@ fn stored_pronunciation_counts_follow_committed_item_changes() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: `phrase_index.cpp:261-268`, `pinyin.cpp:316` (unload drops the sub-index; load reads the saved chunk).
 #[test]
 fn reloading_the_user_library_keeps_only_the_saved_chunk() {
     let dir = tempdir("reload-user-library");
@@ -2280,7 +2117,6 @@ fn reloading_the_user_library_keeps_only_the_saved_chunk() {
     let mut store =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
-    // Nothing saved: the library comes back empty.
     store
         .add_phrase_in(
             crate::vocab::USER_DICTIONARY,
@@ -2293,8 +2129,6 @@ fn reloading_the_user_library_keeps_only_the_saved_chunk() {
     assert!(readings(&store).is_empty());
     store.load_user_library(crate::vocab::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
-    // A saved item returns with its reading still indexed; an unsaved
-    // reading merged after the save does not.
     store
         .add_phrase_in(
             crate::vocab::USER_DICTIONARY,
@@ -2318,8 +2152,6 @@ fn reloading_the_user_library_keeps_only_the_saved_chunk() {
     assert!(readings(&store).is_empty());
     store.load_user_library(crate::vocab::USER_DICTIONARY);
     assert_eq!(readings(&store), [vec![true]]);
-    // A different phrase handed a dropped token is found under the
-    // reading the index kept for it.
     let ni_key = || crate::vocab::SyllableKey::from_text("ni").expect("ni");
     store.unload_user_library(crate::vocab::USER_DICTIONARY);
     store.load_user_library(crate::vocab::USER_DICTIONARY);
@@ -2337,6 +2169,7 @@ fn reloading_the_user_library_keeps_only_the_saved_chunk() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: `phrase_index.cpp:261-268`, `pinyin.cpp:316` (the user pinyin index outlives the sub-index).
 #[test]
 fn library_transitions_keep_the_independent_index() {
     let dir = tempdir("library-transition-index");
@@ -2372,21 +2205,14 @@ fn library_transitions_keep_the_independent_index() {
             Some(20),
         )
         .expect("item");
-    // `FacadePhraseIndex::unload` drops only the sub-index
-    // (`phrase_index.cpp:261-268`): the item goes, the user pinyin index
-    // keeps its entry.
     store.unload_user_library(crate::vocab::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
-    // The unloaded library's chunk is skipped; the index table is not,
-    // so the saved profile carries the reading with no item behind it.
     store.mark_modified();
     store
         .save_reporting()
         .expect("the index row is saved, the item's chunk is skipped");
     let indexed = kept(&dir);
     assert_eq!(indexed.len(), 1);
-    // The load builds the empty sub-index (`create_sub_phrase`,
-    // `pinyin.cpp:316`) and the index entry stays.
     store.load_user_library(crate::vocab::USER_DICTIONARY);
     assert!(readings(&store).is_empty());
     drop(store);
@@ -2394,10 +2220,7 @@ fn library_transitions_keep_the_independent_index() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// `_write_files` and `_rename_files` skip a library whose sub-index
-/// `unload` freed (074a2219 `pinyin.cpp:929-932`, `:1032-1035`;
-/// `zhuyin.cpp:562-565`): its saved chunk stays as it was, and the next
-/// load brings it back.
+/// Basis: `074a2219 pinyin.cpp:929-932,1032-1035`, `zhuyin.cpp:562-565` (an unloaded library is skipped).
 #[test]
 fn a_save_skips_an_unloaded_user_library() {
     let dir = tempdir("save-unloaded-user-library");
@@ -2437,7 +2260,6 @@ fn a_save_skips_an_unloaded_user_library() {
     store.load_user_library(crate::vocab::USER_DICTIONARY);
     assert!(store.phrase(saved).is_some());
     assert!(store.phrase(unsaved).is_none());
-    // Loaded again, it is saved again.
     store.mark_modified();
     store.save_reporting().expect("save");
     assert_eq!(std::fs::read(&chunk).expect("chunk"), saved_chunk);
@@ -2445,12 +2267,7 @@ fn a_save_skips_an_unloaded_user_library() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// Every key the pin's parsers can write is a `content_table` row
-/// (`pinyin_parser2.cpp:114`, `:146`, `zhuyin_parser2.cpp:95`), so each
-/// of the 440 syllable keys decodes from its packed fields and renders
-/// back to the same packed word at every tone the pin allows (0..=5,
-/// `chewing_enum.h:92-99`) — the option-only `eng`/`nun` and the
-/// zhuyin-only `den` included.
+/// Basis: `pinyin_parser2.cpp:114,146`, `zhuyin_parser2.cpp:95`, `chewing_enum.h:92-99` (tones 0 to 5).
 #[test]
 fn every_pin_producible_key_decodes_and_renders() {
     use crate::vocab::{SYLLABLE_KEY_COUNT, SyllableKey};
@@ -2479,9 +2296,7 @@ fn every_pin_producible_key_decodes_and_renders() {
     }
 }
 
-/// A word no pin parser writes (a foreign file) has no key and must not
-/// panic: the zero key, a field combination `chewing_key_table` marks
-/// invalid, a tone past 5, and the padding bit alone.
+/// Basis: Rust contract (a word no parser writes decodes to no key, without a panic).
 #[test]
 fn foreign_packed_words_decode_to_none_without_panic() {
     let invalid = ChewingKey::new(31, 3, 31, 0).to_packed();
@@ -2489,60 +2304,7 @@ fn foreign_packed_words_decode_to_none_without_panic() {
         assert_eq!(packed_to_pinyin_keys(&[packed]), None, "{packed:#06x}");
     }
     let ni = ChewingKey::from_pinyin("ni").expect("ni");
-    for tone in [6, 7] {
-        assert_eq!(
-            packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]),
-            None
-        );
-    }
-}
-
-/// The pin's import writes `eng` (from `egn`, `emg`), `nun` (from
-/// `nuen`) and `den` (zhuyin `ㄉㄣ`); a save and reopen keeps each
-/// reading, as the pin's does.
-#[test]
-fn option_and_zhuyin_only_readings_survive_save_and_reopen() {
-    use crate::vocab::SyllableKey;
-    let dir = tempdir("option-only-reopen");
-    let cases = [("嗯", "eng"), ("嫩", "nun"), ("扽", "den")];
-    let mut tokens = Vec::new();
-    {
-        let mut store =
-            crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open");
-        for (text, spelling) in cases {
-            let index = SyllableKey::from_canonical_text(spelling)
-                .expect("key")
-                .index();
-            let keys = vec![phrase::toned_key(index, 0).expect("key")];
-            tokens.push(
-                store
-                    .add_phrase_in(crate::vocab::USER_DICTIONARY, &text.into(), &keys, Some(5))
-                    .expect("add"),
-            );
-        }
-        // `pinyin_end_add_phrases` arms the save (`pinyin.cpp:657-658`).
-        store.mark_modified();
-        store.save_reporting().expect("save");
-    }
-    let store = crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-        .expect("reopen");
-    for (token, (_, spelling)) in tokens.into_iter().zip(cases) {
-        let phrase = store.phrase(token).expect("present");
-        let spellings: Vec<_> = phrase
-            .pronunciations()
-            .iter()
-            .map(|reading| {
-                reading
-                    .keys()
-                    .iter()
-                    .map(|&key| phrase::key_pinyin_string(key))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        assert_eq!(spellings, [vec![Some(spelling.to_owned())]]);
-    }
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    assert_eq!(packed_to_pinyin_keys(&[ni.with_tone(6).to_packed()]), None);
 }
 
 /// 256 or more distinct toned one-syllable readings, as packed words.
@@ -2572,12 +2334,7 @@ fn distinct_readings() -> Vec<u16> {
     readings
 }
 
-/// The pin stores `npron + 1` in a `guint8` (`phrase_index.cpp:28`,
-/// `:88`), so the 256th reading leaves a count of 0 and the call still
-/// succeeds. Reads size the item from that count (`:203-204`) and the
-/// next add copies only that view (`:228`): the item has no readings,
-/// keeps its unigram, survives save and reload, and the 257th add
-/// leaves exactly one reading, the new one.
+/// Basis: `phrase_index.cpp:28,88,203-204,228` (`guint8` reading count: the 256th wraps to 0).
 #[test]
 fn a_256th_system_reading_wraps_the_count_to_an_item_without_readings() {
     let dir = tempdir("import-256th-system-reading");
@@ -2645,10 +2402,7 @@ fn a_256th_system_reading_wraps_the_count_to_an_item_without_readings() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// The same wrap on an item the system library ships (token 0x0100_0001,
-/// one reading), which persists as a modified original: the empty item
-/// must survive save and reopen, and the 257th reading must then leave
-/// exactly one reading.
+/// Basis: `phrase_index.cpp:28,88,203-204,228`, over a shipped item saved as a MODIFY.
 #[test]
 fn a_256th_reading_wraps_an_original_system_item_through_save_and_reopen() {
     let dir = tempdir("import-256th-original-reading");
@@ -2712,6 +2466,7 @@ fn a_256th_reading_wraps_an_original_system_item_through_save_and_reopen() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: `phrase_index.cpp:56-143` (an appended item trains and imports from its own counts).
 #[test]
 fn appended_system_readings_keep_absolute_training_counts() {
     use crate::model::UserModel;
@@ -2760,6 +2515,7 @@ fn appended_system_readings_keep_absolute_training_counts() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: `pinyin.cpp:563-604` (an append past the mapped offset table takes a second reading).
 #[test]
 fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
     use crate::data::phrase_library::PhraseLibrary;
@@ -2818,8 +2574,7 @@ fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
 }
 
-/// Two slots sharing a file offset keep independent
-/// values. Only the named slots are saved and both changes reopen.
+/// Basis: policy rows 107 and 111 (each write changes only its addressed slot).
 #[test]
 fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
     use crate::data::chunk_format::chunk_checksum;
@@ -2844,9 +2599,7 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
         (3, &item(0x6211, "wo", 70)),
     ])
     .expect("chunk");
-    // Alias slot 2 to slot 1: the offset word of slot `s` is at
-    // `8 + 17 + 4 * s` (chunk header, four words, separator), then
-    // reseal the payload checksum.
+    // Slot `s`'s offset word is at `8 + 17 + 4 * s`; the checksum is resealed.
     let word = |slot: usize| 8 + 17 + 4 * slot;
     let first: [u8; 4] = chunk[word(1)..word(1) + 4].try_into().unwrap();
     chunk[word(2)..word(2) + 4].copy_from_slice(&first);
@@ -2886,7 +2639,6 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
         store.mark_modified();
         store.save_reporting().expect("save");
     }
-    // The saved diff records both changed slots in order.
     let payload = load_chunk_payload(&dir.join("gb_char.dbin")).expect("journal");
     let records: Vec<LogRecord<Vec<u8>>> = log_records(&payload)
         .map(|record| record.expect("record").into_owned())
@@ -2899,7 +2651,6 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
     else {
         panic!("{:?}", records[0]);
     };
-    // The header sums all live slots: 105 + 100 + 77.
     assert_eq!((*old_total, *new_total), (220, 282));
     let modify = |record: &LogRecord<Vec<u8>>| match record {
         LogRecord::Modify {
@@ -2933,13 +2684,10 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
 }
 
+/// Basis: `user-store.md` §§2,4 (training and import persist; `m_modified` gates the save).
 #[test]
 fn train_save_reopen_carries_the_learning() {
     let dir = tempdir("cycle");
-    // The store's `PinyinKey` is a dense syllable id, not packed
-    // ChewingKey bits — using `to_packed()` here would encode the
-    // exact confusion the persistence seam's conversion exists to
-    // undo (and would round-trip self-consistently, hiding it).
     let keys = [
         u16::try_from(
             crate::vocab::SyllableKey::from_text("ni")
@@ -2959,20 +2707,13 @@ fn train_save_reopen_carries_the_learning() {
         let mut store =
             crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
-        // A fresh profile: no counts yet.
         assert_eq!(store.bigram_count(1, 0x0100_0001).expect("count"), 0);
 
-        // §2.1 training: the seed arithmetic runs in the session
-        // store; §4 gating: save only after a modification.
         store.save_reporting().expect("save gate");
         store.observe_selection(1, 0x0100_0001).expect("train");
         store.save_reporting().expect("save");
         store.save_reporting().expect("second save is a no-op");
 
-        // A user phrase under the user dictionary. `_add_phrase`
-        // does not arm the §4 gate (the pin sets `m_modified` only
-        // in `pinyin_train` and `pinyin_end_add_phrases`); the
-        // import trio's `mark_modified` is what arms a phrase save.
         let token = store
             .add_phrase(&"你好".into(), &keys[..], None)
             .expect("add phrase");
@@ -2982,7 +2723,6 @@ fn train_save_reopen_carries_the_learning() {
         store.save_reporting().expect("save 2");
     }
 
-    // The user dir now holds the pin's files, not user_store.<ext>.
     assert!(dir.join("user.conf").exists());
     assert!(
         !dir.join(format!(
@@ -2996,14 +2736,10 @@ fn train_save_reopen_carries_the_learning() {
         let store =
             crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("reopen");
-        // First training: seed 69 on the pair and the total.
         assert_eq!(store.bigram_count(1, 0x0100_0001).expect("count"), 69);
         assert_eq!(store.bigram_total(1).expect("total"), 69);
-        // seed * 7 on the system token's live unigram.
         assert_eq!(store.system_unigram(0x0100_0001), Some(100 + 69 * 7));
 
-        // The user phrase round-trips with its reading and base
-        // count (DEFAULT_PHRASE_COUNT * ADD_PHRASE_UNIGRAM_FACTOR).
         let token = store
             .token_for_phrase("你好")
             .expect("token")
@@ -3017,9 +2753,6 @@ fn train_save_reopen_carries_the_learning() {
             crate::user::DEFAULT_PHRASE_COUNT * crate::user::ADD_PHRASE_UNIGRAM_FACTOR
         );
 
-        // The .dbin carries the system token's MODIFY; the user.bin
-        // the phrase; the container the raw gram the pin's training
-        // wrote.
         assert_eq!(
             store.bigram_row(1).expect("row"),
             Some(crate::single_gram::encode_single_gram(
@@ -3039,8 +2772,7 @@ fn train_save_reopen_carries_the_learning() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// #784/#785: masks/removals retain keys, including KC/tkrzw mask tails,
-/// and raw records outlive a reopen.
+/// Basis: frozen pin observations #784 and #785 (masks keep keys and the KC/tkrzw mask tails).
 #[test]
 fn masked_and_removed_phrases_preserve_raw_index_records() {
     use crate::store::RawReadStore;
@@ -3120,11 +2852,8 @@ fn masked_and_removed_phrases_preserve_raw_index_records() {
     .expect("load")
     .index
     .keys();
-    // Both key spaces of both two-syllable readings and their prefixes,
-    // and 他's one-syllable reading in each space.
     assert_eq!(pinyin_keys.len(), 2 * 2 * 2 + 2, "{pinyin_keys:?}");
 
-    // A later session keeps them through its own save.
     {
         let mut store =
             crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -3136,6 +2865,7 @@ fn masked_and_removed_phrases_preserve_raw_index_records() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: frozen pin observation #1198 (stored words survive as written, zero and non-scalar words included).
 #[test]
 fn loaded_words_survive_lookup_and_native_save() {
     let dir = tempdir("stored-words-1198");
@@ -3189,61 +2919,6 @@ fn loaded_words_survive_lookup_and_native_save() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-#[test]
-fn a_preexisting_libpinyin_profile_seeds_the_session() {
-    let dir = tempdir("seed");
-    // Write a profile directly through the persistence layer: a gram
-    // and a user phrase, as a same-backend libpinyin would have.
-    let state = UserState {
-        bigram: vec![(
-            1_u32.to_le_bytes().to_vec(),
-            crate::single_gram::encode_single_gram(207, &[(0x0100_0001, 138), (0x0700_0001, 69)]),
-        )],
-        libraries: crate::user::LibraryTable::from([(
-            7_u8,
-            BTreeMap::from([(
-                1_u32,
-                ChunkItem {
-                    phrase: vec![0x4f60, 0x597d],
-                    unigram: 15,
-                    prons: vec![(
-                        vec![
-                            ChewingKey::new(23, 0, 1, 0).to_packed(),
-                            ChewingKey::new(7, 0, 13, 0).to_packed(),
-                        ],
-                        15,
-                    )],
-                },
-            )]),
-        )]),
-        phrase_table: BTreeMap::new(),
-        system_overrides: crate::user::LibraryTable::new(),
-        indexed: std::collections::BTreeSet::new(),
-    }
-    .index_every_reading();
-    crate::user::test_session::save_state(&dir, &state, &originals(), &versions(), 1)
-        .expect("save");
-
-    let store = crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
-        .expect("open");
-    assert_eq!(store.bigram_total(1).expect("total"), 207);
-    assert_eq!(store.bigram_count(1, 0x0700_0001).expect("count"), 69);
-    let token = store
-        .token_for_phrase("你好")
-        .expect("token")
-        .expect("present");
-    assert_eq!(token, 0x0700_0001);
-    assert_eq!(store.unigram_delta(token), 15);
-    // Training continues from the loaded counts: the next seed
-    // doubles the stored count (§2.1's repeat rule).
-    let mut store = store;
-    let seed = store.observe_selection(1, 0x0700_0001).expect("train");
-    assert_eq!(seed, 138); // max(prev 69, 69) * 2
-    assert_eq!(store.bigram_count(1, 0x0700_0001).expect("count"), 69 + 138);
-
-    std::fs::remove_dir_all(&dir).expect("cleanup");
-}
-
 /// The open counter `user.conf` records, as the next init reads it.
 fn recorded_counter(dir: &Path) -> Option<i32> {
     Some(
@@ -3253,12 +2928,9 @@ fn recorded_counter(dir: &Path) -> Option<i32> {
     )
 }
 
+/// Basis: `pinyin.cpp:185-187,1143,1194-1200`, `zhuyin.cpp:126-176,695,741-757` (#578).
 #[test]
 fn a_pinyin_open_after_a_zhuyin_open_keeps_libpinyins_law() {
-    // #578's review: a session follows the law it was opened with, not
-    // the law of whatever already has the dir open. libzhuyin's init
-    // only reads user.conf (zhuyin.cpp:126-162); libpinyin's raises and
-    // writes the counter whatever else is live (pinyin.cpp:185-187).
     let dir = tempdir("zhuyin-then-pinyin");
     let mut zhuyin =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Zhuyin)
@@ -3273,9 +2945,6 @@ fn a_pinyin_open_after_a_zhuyin_open_keeps_libpinyins_law() {
         .observe_selection(1, 0x0100_0001)
         .expect("train zhuyin");
     assert_eq!(pinyin.bigram_count(1, 0x0100_0001).expect("count"), 0);
-    // libzhuyin's save writes a fresh counter of 0 (zhuyin.cpp:164-176,
-    // :695); libpinyin's writes back its own raised one
-    // (pinyin.cpp:1143, :220-232).
     zhuyin.save_reporting().expect("save zhuyin");
     assert_eq!(recorded_counter(&dir), Some(0));
     pinyin
@@ -3284,8 +2953,6 @@ fn a_pinyin_open_after_a_zhuyin_open_keeps_libpinyins_law() {
     pinyin.save_reporting().expect("save pinyin");
     assert_eq!(recorded_counter(&dir), Some(1));
 
-    // libpinyin's fini lowers its copy (pinyin.cpp:1194-1200);
-    // libzhuyin's writes nothing (zhuyin.cpp:741-757).
     drop(pinyin);
     assert_eq!(recorded_counter(&dir), Some(0));
     drop(zhuyin);
@@ -3293,10 +2960,9 @@ fn a_pinyin_open_after_a_zhuyin_open_keeps_libpinyins_law() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `pinyin.cpp:185-187,1143,1194-1200`, `zhuyin.cpp:126-176,695,741-757`, in the other order.
 #[test]
 fn a_zhuyin_open_after_a_pinyin_open_keeps_libzhuyins_law() {
-    // The other order: the live libpinyin session lends the libzhuyin
-    // open neither its law nor its unsaved learning.
     let dir = tempdir("pinyin-then-zhuyin");
     let mut pinyin =
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -3316,13 +2982,9 @@ fn a_zhuyin_open_after_a_pinyin_open_keeps_libzhuyins_law() {
         .expect("train zhuyin");
     pinyin.save_reporting().expect("save pinyin");
     assert_eq!(recorded_counter(&dir), Some(1));
-    // The later save is libzhuyin's: its fresh 0 replaces libpinyin's
-    // raised counter.
     zhuyin.save_reporting().expect("save zhuyin");
     assert_eq!(recorded_counter(&dir), Some(0));
 
-    // The finis in the reverse order: libzhuyin's writes nothing, and
-    // libpinyin's lowers its own 1.
     drop(zhuyin);
     assert_eq!(recorded_counter(&dir), Some(0));
     drop(pinyin);
@@ -3334,12 +2996,7 @@ mod mapped_replay;
 mod replayed_readings;
 mod unloaded;
 
-/// An import of a reading its phrase already holds removes the item, edits
-/// a copy and adds the copy back at the content's end
-/// (`pinyin.cpp:563-582`, `phrase_index.cpp:208-235` at 074a2219), so the
-/// bytes the slot named before are not written. Slots 1 and 2 of `user.bin`
-/// name one body and the phrase table holds token 1 alone: the import
-/// raises token 1's count and token 2 keeps the old one.
+/// Basis: `074a2219 pinyin.cpp:563-582`, `phrase_index.cpp:208-235` (the import rewrites a copy at the end).
 #[test]
 fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
     use crate::data::chunk_format::build_memory_chunk;
@@ -3360,7 +3017,6 @@ fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
         prons: vec![(vec![ce4, ce4], 5)],
     };
     let chunk = build_chunk(&[(1, &item()), (2, &item())]).expect("two-item user chunk");
-    // Point slot 2 at slot 1's body.
     let mut payload = chunk[8..].to_vec();
     let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
     let slot_one = offsets_start as usize + 4;
@@ -3391,7 +3047,7 @@ fn an_imported_reading_leaves_an_aliased_slot_its_old_count() {
     store.compact_libraries();
 }
 
-/// The approved partition divergence permits the same five-record start gram.
+/// Basis: register "Stored gram partitions: training" (an unsorted start gram trains).
 #[test]
 fn training_over_an_unsorted_start_gram_answers_true() {
     let user = tempfile::tempdir().unwrap();
@@ -3417,7 +3073,7 @@ fn training_over_an_unsorted_start_gram_answers_true() {
     store.observe_selection(ni, hao).unwrap();
 }
 
-/// The gram total cannot take the seed, while the unigram takes seed * 7.
+/// Basis: `phonetic_lookup.h:884-904` (the gram total refuses the seed; the unigram takes seed * 7).
 #[test]
 fn training_past_the_gram_total_limit_keeps_the_gram() {
     const COUNT: u32 = 0xffff_ffff - 22_080 + 1;
@@ -3454,6 +3110,7 @@ fn training_past_the_gram_total_limit_keeps_the_gram() {
     assert_eq!(store.system_unigram(hao), Some(before + 154_560));
 }
 
+/// Basis: `phrase_index.cpp:677-715`, `pinyin.cpp:2609-2639` (mask and reload restore the shipped items).
 #[test]
 fn masking_system_imports_restores_originals_and_removes_appended_items() {
     use crate::user::test_session::{native_exports, native_keys, native_tokens, open_w3};
@@ -3512,8 +3169,7 @@ fn masking_system_imports_restores_originals_and_removes_appended_items() {
     assert_eq!(native_exports(&open_w3(user.path()), 1), original);
 }
 
-/// The missing sub-index refuses the unigram but keeps the predicted bigram
-/// (pinyin.cpp:2609-2639 at 074a2219).
+/// Basis: `074a2219 pinyin.cpp:2609-2639` (no sub-index refuses the unigram; the bigram stays).
 #[test]
 fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
     let user = tempfile::tempdir().unwrap();

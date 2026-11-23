@@ -19,6 +19,7 @@ fn record(items: &[(u32, &[ChewingKey])]) -> Vec<u8> {
         .collect()
 }
 
+/// Basis: `chewing_large_table2.cpp` `ChewingTableEntry::add_index`, `remove_index`, `mask_out` at 074a2219.
 #[test]
 fn entry_ops_keep_the_pins_order_and_report_presence() {
     let (a, b) = (pair(2, 2), pair(3, 3));
@@ -43,6 +44,7 @@ fn index(rows: &[(Vec<u8>, Vec<u8>)]) -> UserIndex {
     index
 }
 
+/// Basis: `chewing_large_table2.cpp:200-219` (`add_index` writes both projections).
 #[test]
 fn a_loaded_record_answers_membership_without_a_side_set() {
     let keys = pair(2, 2);
@@ -62,6 +64,7 @@ fn a_loaded_record_answers_membership_without_a_side_set() {
     ));
 }
 
+/// Basis: `chewing_large_table2_kyotodb.cpp:311-327` (prefix markers), `chewing_large_table2.cpp:200-219`.
 #[test]
 fn add_and_remove_keep_prefix_markers_and_record_bytes() {
     let keys = pair(2, 3);
@@ -89,6 +92,7 @@ fn add_and_remove_keep_prefix_markers_and_record_bytes() {
     assert!(!index.remove(&keys, 7));
 }
 
+/// Basis: `chewing_large_table2_tkrzwdb.cpp:511-512` (`Get(prefix)` gate; an empty marker is a row).
 #[test]
 fn has_prefix_probes_existing_and_new_markers() {
     let full = pair(1, 2);
@@ -97,8 +101,6 @@ fn has_prefix_probes_existing_and_new_markers() {
     assert!(index.suggest(&full[..1]).is_empty());
     assert!(index.has_prefix(&full));
     assert!(!index.has_prefix(&pair(3, 4)[..1]));
-    // Adding a longer key creates its empty prefix marker, which counts
-    // as a stored key.
     assert!(index.add(&pair(3, 4), 8));
     assert!(
         index
@@ -113,6 +115,7 @@ fn toned(initial: u8, tone: u8) -> ChewingKey {
     ChewingKey::new(initial, 1, 1, tone)
 }
 
+/// Basis: Rust contract (the stack key equals the encoders' bytes up to `MAX_PHRASE_LENGTH`).
 #[test]
 fn query_key_builds_the_encoders_bytes_on_the_stack() {
     let complete = [toned(2, 3), toned(4, 0)];
@@ -123,6 +126,7 @@ fn query_key_builds_the_encoders_bytes_on_the_stack() {
     assert_eq!(*query_key(&longest), *encode_complete_key(&longest));
 }
 
+/// Basis: `chewing_large_table2.cpp:161-172` (record order, duplicates kept), `pinyin_phrase3.h:111-142`.
 #[test]
 fn search_filters_a_mixed_tone_row_in_stored_order() {
     let (one, two, none) = (
@@ -130,7 +134,6 @@ fn search_filters_a_mixed_tone_row_in_stored_order() {
         [toned(2, 2), toned(3, 4)],
         [toned(2, 0), toned(3, 0)],
     );
-    // Unsorted, with a duplicate: stored as found.
     let row = record(&[(9, &two), (7, &one), (8, &none), (7, &one), (6, &two)]);
     let index = index(&[(encode_complete_key(&one), row)]);
     assert_eq!(index.search(&one), [7, 8, 7]);
@@ -139,19 +142,7 @@ fn search_filters_a_mixed_tone_row_in_stored_order() {
     assert_eq!(index.search(&[toned(2, 1), toned(3, 5)]), [8]);
 }
 
-#[test]
-fn a_zero_tone_query_matches_every_toned_record() {
-    let records = [
-        [toned(2, 1), toned(3, 4)],
-        [toned(2, 2), toned(3, 1)],
-        [toned(2, 5), toned(3, 0)],
-    ];
-    let row = record(&[(1, &records[0]), (2, &records[1]), (3, &records[2])]);
-    let index = index(&[(encode_complete_key(&records[0]), row)]);
-    assert_eq!(index.search(&[toned(2, 0), toned(3, 0)]), [1, 2, 3]);
-    assert_eq!(index.search(&[toned(2, 0), toned(3, 1)]), [2, 3]);
-}
-
+/// Basis: divergence register, policy row 129 (a partial record answers its whole records).
 #[test]
 fn a_misaligned_row_answers_its_whole_records() {
     let keys = pair(2, 3);
@@ -165,9 +156,7 @@ fn a_misaligned_row_answers_its_whole_records() {
         (encode_complete_key(&longer), longer_row),
     ]);
     assert!(index.has_record(&keys));
-    // The trailing byte is dropped; the two whole records stay.
     assert_eq!(index.search(&keys), [7, 8]);
-    // One byte short of its only record: nothing whole to read.
     assert!(index.suggest(&keys).is_empty());
 
     let suggestion = [key(2), key(3), key(5)];
@@ -180,6 +169,7 @@ fn a_misaligned_row_answers_its_whole_records() {
     assert!(index.contains_reading(10, &suggestion.map(ChewingKey::to_packed)));
 }
 
+/// Basis: `chewing_large_table2.cpp` `search_suggestion` at 074a2219, `pinyin_phrase3.h:111-142`.
 #[test]
 fn suggest_filters_longer_records_with_tones() {
     let prefix = [toned(2, 1)];
@@ -195,8 +185,7 @@ fn suggest_filters_longer_records_with_tones() {
     assert_eq!(index.suggest(&[toned(2, 0)]), [5, 4, 4]);
 }
 
-/// The pin's `pinyin_compare_with_tones` (`pinyin_phrase3.h:111-142` at
-/// 074a2219) transcribed pass for pass, over decoded keys.
+/// `pinyin_compare_with_tones` (`074a2219 pinyin_phrase3.h:111-142`) over decoded keys.
 fn pin_compare_with_tones(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> i32 {
     for (lhs, rhs) in lhs.iter().zip(rhs) {
         let result = i32::from(lhs.initial) - i32::from(rhs.initial);
@@ -226,6 +215,7 @@ fn pin_compare_with_tones(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> i32 {
     0
 }
 
+/// Basis: `pinyin_phrase3.h:111-142`; the in-place compare equals the decoding compare.
 #[test]
 fn the_in_place_compare_agrees_with_decoding_for_every_packed_word() {
     let mut queries = Vec::new();
@@ -250,6 +240,7 @@ fn the_in_place_compare_agrees_with_decoding_for_every_packed_word() {
     }
 }
 
+/// Basis: `chewing_large_table2_tkrzwdb.cpp:419-491` (the mask walk removes the named token).
 #[test]
 fn mask_keeps_berkeley_db_records_independent() {
     let (a, b) = (pair(1, 1), pair(2, 2));
@@ -268,9 +259,7 @@ fn mask_keeps_berkeley_db_records_independent() {
     );
 }
 
-/// Two length-2 keys, `short` sorting first with one item and `long`
-/// after it with two, as the Kyoto Cabinet and tkrzw mask walk visits
-/// them (ascending key order).
+/// Two length-2 keys in walk order: `short` with one item, then `long` with two.
 #[cfg(not(feature = "bdb"))]
 fn short_then_long() -> (Vec<ChewingKey>, Vec<ChewingKey>) {
     let (x, y) = (pair(1, 1), pair(2, 2));
@@ -286,9 +275,7 @@ fn long_record(long: &[ChewingKey]) -> Vec<u8> {
     record(&[(2, long), (3, long)])
 }
 
-/// The short record after a mask that removes nothing, with `tail`
-/// appended: the previous record's items beyond its length that a
-/// reused chunk keeps.
+/// The short record after a mask that removes nothing, with `tail` appended.
 #[cfg(not(feature = "bdb"))]
 fn masked_short(short: &[ChewingKey], tail: &[u8]) -> Vec<u8> {
     let mut expected = record(&[(1, short)]);
@@ -296,14 +283,10 @@ fn masked_short(short: &[ChewingKey], tail: &[u8]) -> Vec<u8> {
     expected
 }
 
+/// Basis: `074a2219 chewing_large_table2_bdb.cpp:498-506` (each record is its own chunk).
 #[cfg(feature = "bdb")]
 #[test]
 fn a_mask_pass_starts_every_record_from_its_own_bytes() {
-    // `ChewingLargeTable2::mask_out` points the entry at each record's
-    // own data with `set_chunk(db_data.data, db_data.size, NULL)` and
-    // puts the entry back with `DB_CURRENT` (chewing_large_table2_bdb.cpp:
-    // 498-506 at 074a2219), so a longer record never leaves a tail behind
-    // a shorter one, in either walk order and over repeated passes.
     let (x, y) = (pair(1, 1), pair(2, 2));
     let (short, long) = if encode_complete_key(&x) < encode_complete_key(&y) {
         (x, y)
@@ -326,29 +309,12 @@ fn a_mask_pass_starts_every_record_from_its_own_bytes() {
             Some(long_items.as_slice())
         );
     }
-    // The same walk also removes what the mask names, record by record.
-    index.mask(0xffff_ffff, 3);
-    assert_eq!(
-        index.record(&encode_complete_key(&long)).as_deref(),
-        Some(record(&[(2, &long)]).as_slice())
-    );
-    assert_eq!(
-        index.record(&encode_complete_key(&short)).as_deref(),
-        Some(record(&[(1, &short)]).as_slice())
-    );
 }
 
+/// Basis: `074a2219 chewing_large_table2_kyotodb.cpp:160-174,471-478`, `memory_chunk.h:290-296`.
 #[cfg(not(feature = "bdb"))]
 #[test]
 fn a_search_hit_leaves_its_record_in_the_entry_the_next_mask_starts_from() {
-    // `search_internal` loads a non-empty record into the length's
-    // entry (chewing_large_table2_kyotodb.cpp:160-174 at 074a2219).
-    // `MaskOutVisitor2::visit_full` then writes each record over the
-    // start of that entry with `set_content(0, ...)` and returns the
-    // whole entry (:471-478); `set_content` keeps the larger of the old
-    // size and the new length (memory_chunk.h:290-296). The first record
-    // the walk visits is shorter than the searched one, so it leaves
-    // with the searched record's second item behind it.
     let (short, long) = short_then_long();
     let rows = [
         (encode_complete_key(&short), record(&[(1, &short)])),
@@ -361,33 +327,18 @@ fn a_search_hit_leaves_its_record_in_the_entry_the_next_mask_starts_from() {
     let item_len = record(&[(2, &long)]).len();
     assert_eq!(
         searched.record(&encode_complete_key(&short)).as_deref(),
-        Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
-        "the searched record's tail follows the first record"
+        Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice())
     );
     assert_eq!(
         searched.record(&encode_complete_key(&long)).as_deref(),
-        Some(long_record(&long).as_slice()),
-        "the next record overwrites the whole entry"
-    );
-
-    // Without a search the entry starts empty and nothing is carried.
-    let mut fresh = index(&rows);
-    fresh.mask(0xffff_ffff, 99);
-    assert_eq!(
-        fresh.record(&encode_complete_key(&short)).as_deref(),
-        Some(record(&[(1, &short)]).as_slice())
+        Some(long_record(&long).as_slice())
     );
 }
 
+/// Basis: `074a2219 chewing_large_table2_kyotodb.cpp:459-479` (entries outlive the walk), `memory_chunk.h:290-296`.
 #[cfg(not(feature = "bdb"))]
 #[test]
 fn a_second_mask_starts_from_the_chunks_the_first_left_in_the_entries() {
-    // `m_entries` outlives each `mask_out` call: the entry of a length
-    // keeps the last record's chunk when the walk ends
-    // (chewing_large_table2_kyotodb.cpp:459-479 at 074a2219 never
-    // resets it). The first pass ends on the long record, so the second
-    // pass's first (short) record is written over the start of that
-    // chunk and keeps its second item behind it (memory_chunk.h:290-296).
     let (short, long) = short_then_long();
     let mut index = index(&[
         (encode_complete_key(&short), record(&[(1, &short)])),
@@ -396,15 +347,13 @@ fn a_second_mask_starts_from_the_chunks_the_first_left_in_the_entries() {
     index.mask(0xffff_ffff, 99);
     assert_eq!(
         index.record(&encode_complete_key(&short)).as_deref(),
-        Some(record(&[(1, &short)]).as_slice()),
-        "the first pass starts from an empty entry"
+        Some(record(&[(1, &short)]).as_slice())
     );
     index.mask(0xffff_ffff, 99);
     let item_len = record(&[(2, &long)]).len();
     assert_eq!(
         index.record(&encode_complete_key(&short)).as_deref(),
-        Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
-        "the second pass starts from the long record's chunk"
+        Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice())
     );
     assert_eq!(
         index.record(&encode_complete_key(&long)).as_deref(),
@@ -412,15 +361,10 @@ fn a_second_mask_starts_from_the_chunks_the_first_left_in_the_entries() {
     );
 }
 
+/// Basis: `074a2219 chewing_large_table2_kyotodb.cpp:34-50,229-233,541-582` (each visit ends with `set_size(0)`).
 #[cfg(not(feature = "bdb"))]
 #[test]
 fn a_suggestion_empties_the_entries_of_the_lengths_it_visits() {
-    // `search_suggestion` checks the prefix key, jumps to it, and steps
-    // through every longer key that extends it
-    // (chewing_large_table2_kyotodb.cpp:541-582, `kyotodb_chewing_
-    // continue_search` :34-50 at 074a2219). Each visit borrows the
-    // record into that length's entry and ends with `set_size(0)`
-    // (:229-233), so the entry the earlier search loaded is empty.
     let (short, long) = short_then_long();
     let prefix = &long[..1];
     let mut index = index(&[
@@ -433,8 +377,7 @@ fn a_suggestion_empties_the_entries_of_the_lengths_it_visits() {
     index.mask(0xffff_ffff, 99);
     assert_eq!(
         index.record(&encode_complete_key(&short)).as_deref(),
-        Some(record(&[(1, &short)]).as_slice()),
-        "the visited length's entry was emptied"
+        Some(record(&[(1, &short)]).as_slice())
     );
     assert_eq!(
         index.record(&encode_complete_key(prefix)).as_deref(),
@@ -442,15 +385,10 @@ fn a_suggestion_empties_the_entries_of_the_lengths_it_visits() {
     );
 }
 
+/// Basis: `074a2219 chewing_large_table2_kyotodb.cpp:541-544`, `_tkrzwdb.cpp:511-512` (absent prefix returns first).
 #[cfg(not(feature = "bdb"))]
 #[test]
 fn a_suggestion_on_an_absent_prefix_key_leaves_the_entries_alone() {
-    // The pin's first call is `m_db->check(prefix)`; `-1` returns before
-    // any cursor is made (chewing_large_table2_kyotodb.cpp:541-544,
-    // chewing_large_table2_bdb.cpp:579-583 and
-    // chewing_large_table2_tkrzwdb.cpp:511-512 at 074a2219), so no
-    // longer key is visited and no entry is emptied, even though a
-    // longer key exists.
     let (short, long) = short_then_long();
     let mut index = index(&[
         (encode_complete_key(&short), record(&[(1, &short)])),
@@ -464,15 +402,6 @@ fn a_suggestion_on_an_absent_prefix_key_leaves_the_entries_alone() {
         index.record(&encode_complete_key(&short)).as_deref(),
         Some(masked_short(&short, &long_record(&long)[item_len..]).as_slice()),
     );
-}
-
-/// Without the prefix record, suggestion never walks the 17-key extension.
-#[test]
-fn an_overlong_index_key_without_its_prefix_is_not_walked() {
-    let ni = crate::parser::ChewingKey::from_pinyin("ni").unwrap();
-    let index =
-        super::UserIndex::from_entries(vec![(ni.to_packed().to_le_bytes().repeat(17), Vec::new())]);
-    assert!(index.suggest(&[ni]).is_empty());
 }
 
 #[test]

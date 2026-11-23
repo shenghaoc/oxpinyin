@@ -113,8 +113,7 @@ pub(super) fn header(old_total: u32, new_total: u32) -> LogRecord {
     }
 }
 
-/// A journal ADD writes the slot's offset, and the next item read uses that
-/// word (074a2219 phrase_index.cpp:180-215,453-457).
+/// Basis: `074a2219 phrase_index.cpp:180-215,453-457`, `pinyin.cpp:545-569` (the ADD writes the offset; a merge finds it).
 #[test]
 fn a_journal_add_into_a_mapped_hole_is_readable() {
     let original = item(0x4e94, 10);
@@ -155,8 +154,6 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     );
     assert_eq!(store.live_pronunciation_count(LIBRARY | 5), Some(2));
     assert!(store.with_user_item(LIBRARY | 5, |_| ()).is_none());
-    // The pin merges a reading into the live item at the token found by
-    // the phrase table (pinyin.cpp:545-569).
     let keys = super::super::packed_to_pinyin_keys(&item(0x56db, 7).prons[0].0).unwrap();
     assert_eq!(
         store
@@ -170,8 +167,7 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     );
 }
 
-/// A truncated record cannot be used as a
-/// MODIFY comparison or change its neighbour's saved value.
+/// Basis: policy rows 107 and 111 (a record cannot reach its neighbour's bytes).
 #[test]
 fn a_truncated_system_record_cannot_modify_the_next_record() {
     let mut old = vec![1, 2];

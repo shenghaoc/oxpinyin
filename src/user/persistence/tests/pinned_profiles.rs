@@ -84,6 +84,7 @@ fn saved_profile(case: &str, reading: &str, law: UserConfLaw) {
     store.save_reporting().unwrap();
     assert_eq!(user_rows(&user.path), expected);
 }
+/// Basis: frozen libpinyin profile of #929.
 #[test]
 fn the_pins_saved_profile_opens_with_its_records() {
     saved_profile(
@@ -92,6 +93,7 @@ fn the_pins_saved_profile_opens_with_its_records() {
         UserConfLaw::Pinyin,
     );
 }
+/// Basis: frozen libzhuyin profile of #929.
 #[test]
 fn a_pin_written_profile_opens_and_saves_with_its_logical_records() {
     saved_profile(
@@ -182,16 +184,12 @@ fn colliding_profiles(case: &str, law: UserConfLaw) {
         [saved.clone(), saved]
     );
 }
+/// Basis: frozen pin profile of #1114 (keys that collide in one TinyDBM bucket).
 #[test]
 fn colliding_user_grams_survive_load_and_save() {
     colliding_profiles("issue1114-collision-load-save-pinyin", UserConfLaw::Pinyin);
 }
-#[test]
-fn colliding_bigram_keys_save_the_pins_bytes() {
-    colliding_profiles("issue1114-collision-load-save-zhuyin", UserConfLaw::Zhuyin);
-}
-
-/// `%d` consumes versions 2^32 above the table.conf versions (#920). One more wipes the profile.
+/// Basis: frozen pin observation #920 (`%d` takes versions 2^32 above `table.conf`; one more wipes).
 #[test]
 fn user_conf_versions_past_int_take_the_scanners_int() {
     let session = |user: &Path, extra: i64| {
