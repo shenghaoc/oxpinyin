@@ -1,10 +1,7 @@
 # Backends — building under each store backend
 
 This procedure builds and tests oxpinyin under each store backend.
-`oxpinyin` compiles exactly one peer backend into each binary.
-The store refuses zero backends, or more than one, with a `compile_error!`. tkrzw is
-the workspace default. The [architecture](../architecture.md#backend-selection)
-gives the reasons.
+See the [backend selection rule](../architecture.md#backend-selection).
 
 ## Selecting a backend
 
@@ -14,8 +11,7 @@ cargo nextest run --locked --workspace --no-default-features --features kyotocab
 cargo nextest run --locked --workspace --no-default-features --features bdb
 ```
 
-A peer requires `--no-default-features`: the default set already
-selects one backend, and the store refuses two backends at once.
+Disable default features when selecting a peer to avoid also enabling `tkrzw`.
 The store build script finds tkrzw through `pkg-config tkrzw` and, on macOS,
 the compression libraries through their pkg-config modules.
 The platform's tkrzw installation is described in [setup](setup.md). Linux

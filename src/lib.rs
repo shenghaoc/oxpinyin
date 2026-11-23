@@ -1,7 +1,6 @@
 //! Provides shared parsing, decoding, and storage for the libpinyin and libzhuyin C libraries.
 //!
 //! Native Rust interfaces are unsupported internal details.
-//! Each build selects exactly one database backend. The default is `tkrzw`.
 //!
 //! ## Aborts
 //!
@@ -13,7 +12,7 @@
 //! ## Further reading
 //!
 //! - [Supported external interfaces](https://github.com/shenghaoc/oxpinyin/blob/main/docs/constitution.md#external-interfaces)
-//! - [Backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/runbooks/backends.md#selecting-a-backend)
+//! - [Backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#backend-selection)
 //! - [Upstream pin](https://github.com/shenghaoc/oxpinyin/blob/main/tools/oracle/oracle-pin.txt)
 #![deny(unsafe_code)]
 #![warn(missing_docs)]

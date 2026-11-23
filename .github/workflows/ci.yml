@@ -41,11 +41,8 @@ concurrency:
 #           and kyotocabinet store suites and the C ABI tests under the sanitizers
 # Fuzz execution stays nightly.
 #
-# The store backends. Kyoto Cabinet, tkrzw and Berkeley DB are equal
-# implementations behind the store's trait surface. Exactly one is compiled per
-# build: two `compile_error!` guards in `src/store/mod.rs` enforce it. So
-# cross-peer equivalence is proven by running the same test suite through
-# separate builds, one per peer. tkrzw is the workspace default, but Ubuntu's
+# See docs/architecture.md#backend-selection. To check cross-peer equivalence,
+# run the same test suite in a separate build for each backend. Ubuntu's
 # libtkrzw is defective at run time (docs/findings/tkrzw-distro-compat.md), so
 # Linux runs no tkrzw code: every Linux job uses the one Linux cell, Kyoto
 # Cabinet from Ubuntu's packages (LOCAL_CELL in tools/dev/cell.py;
@@ -273,7 +270,7 @@ jobs:
   # `#[cfg(feature = "<peer>")]` code (e.g. the per-backend mask walks in
   # oxpinyin's `user_index.rs` and `user_phrase_table.rs`) skipped even while
   # `DefaultStore` resolves to the peer. The bare-name form is the documented
-  # public interface. The exactly-one-backend invariant is unchanged.
+  # public interface (docs/architecture.md#backend-selection).
   #
   # The KMM crate depends on the backend: its operations run on the selected
   # store backend and its integration tests spawn the seven utilities against

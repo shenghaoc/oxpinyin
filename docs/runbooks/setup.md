@@ -13,8 +13,8 @@ Pin-comparison measurements run natively on a Linux host, with no container
 
 ## Storage backend
 
-Storage-dependent crates build against one DBM backend per build. The
-[default backend](backends.md), tkrzw, is the pin oracle's reference cell. The build finds tkrzw through pkg-config,
+See the [backend selection rule](../architecture.md#backend-selection).
+tkrzw is the pin oracle's reference cell. The build finds tkrzw through pkg-config,
 and the macOS and Windows sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
 are non-default backends ([backends](backends.md)). Linux has one cell,
 Kyoto Cabinet: see [Linux](#linux).

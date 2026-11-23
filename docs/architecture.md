@@ -95,7 +95,7 @@ This is a rule, not a build option:
 - Every build links the C library through the `libc` crate and GLib through `glib-sys`.
   `input`'s native module makes the pin's `g_build_filename`, `g_free` and `g_rename` calls, so GLib is not optional.
   The utilities use the same GLib dependency for their native option calls.
-- Every build links exactly one store backend: tkrzw, Kyoto Cabinet or Berkeley DB ([backend selection](#backend-selection)).
+- See [backend selection](#backend-selection) for the native store dependency.
 
 Unsafe code is confined by module:
 
@@ -124,12 +124,12 @@ Each C crate forwards its backend selection to the library.
 
 ## Backend selection
 
-The library builds with exactly one backend.
-Every build of the library, the C libraries included, enables exactly one of the `tkrzw`, `kyotocabinet` and `bdb` features.
-`src/store/mod.rs` emits `compile_error!` when zero backends or two or more are enabled.
-`DefaultStore` is a `#[cfg]` alias for the enabled backend.
-See [backend selection](runbooks/backends.md) for the Cargo default.
-A peer is selected with `--no-default-features --features {bdb|kyotocabinet}`.
+Every build of the library, including the C libraries, enables exactly one of the `tkrzw`, `kyotocabinet` and `bdb` features.
+The root `build.rs` checks this before probing native libraries or generating code.
+`DefaultStore` is a `#[cfg]` alias for the selected backend.
+Cargo enables `tkrzw` by default.
+Select a peer with `--no-default-features --features <backend>`.
+See the [backend runbook](runbooks/backends.md) for commands.
 This follows libpinyin's `--with-dbm` model.
 Runtime dispatch and fallback are not added.
 

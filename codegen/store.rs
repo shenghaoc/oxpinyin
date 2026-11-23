@@ -1,12 +1,5 @@
-//! Generates the backends' native bindings.
-//!
-//! tkrzw is the workspace's default selected backend, so a normal
-//! build generates and compiles the cxx bridge over tkrzw's classes and
-//! links libtkrzw. With `--no-default-features` — and with no backend
-//! feature enabled — this script does nothing: no bindgen, no C++, no
-//! extra library. Selecting a peer backend explicitly
-//! (`--no-default-features --features {kyotocabinet|bdb}`) skips the
-//! binding steps of the ones it does not build.
+//! Generates native bindings for the selected backend. See the
+//! [backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#backend-selection) rule.
 //!
 //! * `kyotocabinet` — the cxx bridge over Kyoto Cabinet's concrete classes
 //!   (`src/store/kyotocabinet/bridge.rs`, `src/store/kyotocabinet/adapter.cc`).
@@ -28,52 +21,62 @@
 //! DB without pkg-config (`AC_CHECK_HEADER([db.h])` and
 //! `AC_SEARCH_LIBS([db_create], [db])`).
 
-/// The backend's `database format` token, the pin's `DATABASE_FORMAT`:
-/// `configure.ac:134-135` sets it once from `--with-dbm` and substitutes it
-/// into both `libpinyin.pc.in` and `libzhuyin.pc.in`, and `user.conf`'s
-/// conformance check compares the same string (`table_info.cpp`'s
-/// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
-/// `KyotoCabinet`, `Tkrzw` upstream). This is the one mapping from backend
-/// feature to token in Rust. The library reads it as
-/// `DEFAULT_STORE_DB_FORMAT`. The `.pc` files take the same tokens from
-/// `BACKEND_FORMATS` in `tools/dev/cell.py`. The
-/// exactly-one-backend guard in `src/store/mod.rs` refuses any build that enables
-/// two backend features, so the chain's order picks nothing.
-#[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
-const DATABASE_FORMAT: &str = if cfg!(feature = "kyotocabinet") {
-    "KyotoCabinet"
-} else if cfg!(feature = "tkrzw") {
-    "Tkrzw"
-} else {
-    "BerkeleyDB"
-};
-
-#[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
-pub(super) fn build() {
-    println!("cargo:rerun-if-changed=codegen/store.rs");
-    println!("cargo:rustc-env=OXPINYIN_STORE_DATABASE_FORMAT={DATABASE_FORMAT}");
-    println!("cargo:rerun-if-env-changed=DOCS_RS");
-    // docs.rs has no network access and no tkrzw. Documentation needs no
-    // native probe, C++ compile or link line for tkrzw or Kyoto Cabinet.
-    if cfg!(not(feature = "bdb")) && std::env::var_os("DOCS_RS").is_some() {
-        return;
-    }
-    // Berkeley DB keeps its step: src/store/bdb/ffi.rs includes its bindgen output, and docs.rs builds only the default feature.
-    #[cfg(feature = "bdb")]
-    bdb::pin_defaults();
-    let dependencies = probe();
+/// Backend feature and its `database format` token. The pin sets
+/// `DATABASE_FORMAT` from `--with-dbm` (`configure.ac:134-135`) for the
+/// `.pc` files and uses the same token to check `user.conf` conformance
+/// (`table_info.cpp`). Packaging uses `BACKEND_FORMATS` in `tools/dev/cell.py`.
+const BACKENDS: &[(&str, &str)] = &[
     #[cfg(feature = "tkrzw")]
-    tkrzw::build(&dependencies);
+    ("tkrzw", "Tkrzw"),
     #[cfg(feature = "kyotocabinet")]
-    kyotocabinet::build(&dependencies);
+    ("kyotocabinet", "KyotoCabinet"),
     #[cfg(feature = "bdb")]
-    bdb::build(&dependencies);
+    ("bdb", "BerkeleyDB"),
+];
+
+pub(super) fn select_backend() -> Option<&'static str> {
+    if let &[(_, database_format)] = BACKENDS {
+        return Some(database_format);
+    }
+    let selected = if BACKENDS.is_empty() {
+        "none".to_owned()
+    } else {
+        BACKENDS
+            .iter()
+            .map(|&(name, _)| name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    println!(
+        "cargo::error=oxpinyin: select exactly one store backend (tkrzw, kyotocabinet, or bdb); \
+         selected: {selected}. Use `--no-default-features --features <backend>`."
+    );
+    None
 }
 
-/// With no C backend selected there is nothing to find or bind.
-#[cfg(not(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb")))]
-pub(super) fn build() {
+pub(super) fn build(database_format: &str) {
     println!("cargo:rerun-if-changed=codegen/store.rs");
+    println!("cargo:rustc-env=OXPINYIN_STORE_DATABASE_FORMAT={database_format}");
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+    #[cfg(any(feature = "tkrzw", feature = "kyotocabinet", feature = "bdb"))]
+    {
+        // docs.rs has no network access and no tkrzw. Documentation needs no
+        // native probe, C++ compile or link line for tkrzw or Kyoto Cabinet.
+        if cfg!(not(feature = "bdb")) && std::env::var_os("DOCS_RS").is_some() {
+            return;
+        }
+        // Berkeley DB still needs bindgen output for src/store/bdb/ffi.rs.
+        // docs.rs builds only the default feature.
+        #[cfg(feature = "bdb")]
+        bdb::pin_defaults();
+        let dependencies = probe();
+        #[cfg(feature = "tkrzw")]
+        tkrzw::build(&dependencies);
+        #[cfg(feature = "kyotocabinet")]
+        kyotocabinet::build(&dependencies);
+        #[cfg(feature = "bdb")]
+        bdb::build(&dependencies);
+    }
 }
 
 /// Probes the selected backend's `[package.metadata.system-deps]` entry.

@@ -83,18 +83,9 @@ feature = "bdb"
 version = "0"
 
 [features]
-# The backends (kyotocabinet, tkrzw, bdb) are peer
-# implementations behind the store's `ReadStore`/`WriteStore` traits.
-# **Exactly one** is compiled in per build; a `compile_error!` in
-# `src/store/mod.rs` refuses builds that enable zero or two-or-more. The
-# corresponding implementation is the only one compiled, so an
-# unselected peer's dependency (bindgen) is not pulled in
-# either.
-#
-# `tkrzw` is the enabled feature in the workspace's default set
-# (maintainer decision 2026-10-30 UTC: maintained upstream), which is what
-# "default" means here — select any peer explicitly with
-# `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
+# See docs/architecture.md#backend-selection. Optional build dependencies
+# such as bindgen are enabled only by the features that use them.
+# tkrzw is maintained upstream (maintainer decision 2026-10-30 UTC).
 # Linux runs no tkrzw code (decision 2026-11-21): every Linux build, CI included,
 # selects kyotocabinet (LOCAL_CELL in tools/dev/cell.py;
 # docs/runbooks/setup.md#linux).
@@ -173,9 +164,9 @@ sha2 = "0.11"
 num_enum = { version = "0.7.6", default-features = false }
 # The store-backend chain crates carry default-features = false at the
 # workspace table so `--no-default-features` builds actually reach the
-# store's compile-time backend selection; each crate's [features] block
-# passes the backend choice to its next dependency toward the store (see
-# oxpinyin's [features] for the model and precedence). Cargo unifies
+# store's backend selection (docs/architecture.md#backend-selection).
+# Each crate's [features] block forwards the backend choice to its next
+# dependency toward the store. Cargo unifies
 # features, so one forwarding edge per crate reaches the store; every crate
 # that is built on its own keeps its `default` and peer features.
 oxpinyin = { path = ".", version = "=0.1.0-alpha.2", default-features = false }

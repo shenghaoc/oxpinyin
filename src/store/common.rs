@@ -2,11 +2,9 @@
 //! Berkeley DB) and by the file-backed ones that hand a path to a C
 //! library (tkrzw). It owns the range-bound test and path check.
 //!
-//! Each item is compiled only for the backends that use it, so a
-//! single-backend build (the exactly-one-backend invariant) carries no
-//! dead helper.
+//! Each item compiles only for the backends that use it, so the selected
+//! backend carries no unused helper. See [backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#backend-selection).
 
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 use std::ops::Bound;
 #[cfg(feature = "tkrzw")]
 use std::path::Path;
@@ -23,7 +21,6 @@ pub(crate) type Row = (Vec<u8>, Vec<u8>);
 /// special case here: `key >= []` holds for every key, and `key <= []`
 /// for none but the empty key, which is what the shared read suite pins
 /// (`empty_bounds_never_match_or_error`).
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
     let above_lo = match lo {
         Bound::Unbounded => true,

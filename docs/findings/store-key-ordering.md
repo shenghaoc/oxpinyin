@@ -64,11 +64,10 @@ contract.
 
 - `src/store/mod.rs`, the `tests::key_ordering` module:
   each build proves that *its* `DefaultStore` walks and ranges equal the
-  mathematically byte-ordered sequence on key sets that cross 256. A binary
-  holds exactly one backend (the two `compile_error!` guards in `lib.rs`
-  refuse every pairwise combination and the zero-backend build), so no
-  process can compare peers. CI runs every peer build (`rust` for tkrzw, the
-  `store` job for Berkeley DB and Kyoto Cabinet), and so turns those independent results into
+  mathematically byte-ordered sequence on key sets that cross 256. The
+  [backend selection rule](../architecture.md#backend-selection) prevents an
+  in-process comparison. [CI](../runbooks/verification.md#10-ci-merge-conditions)
+  exercises the peers in separate builds, so their independent results establish
   **Kyoto Cabinet == tkrzw == Berkeley DB**.
 - The same module's key sets hold both `0x00` and `0xFF` lead bytes, so a
   *signed*-char comparison, which sorts `0xFF` before `0x00`, fails them.

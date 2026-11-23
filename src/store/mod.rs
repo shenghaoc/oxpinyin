@@ -11,7 +11,7 @@
 #![cfg_attr(not(feature = "tkrzw"), doc = " `TkrzwStore` on tkrzw, and")]
 #![cfg_attr(feature = "bdb", doc = " [`BdbStore`] on Berkeley DB.")]
 #![cfg_attr(not(feature = "bdb"), doc = " `BdbStore` on Berkeley DB.")]
-//! Each build selects one backend through [`DefaultStore`]. The backend determines the
+//! See [backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#backend-selection). The backend determines the
 //! database container and its native iteration order.
 //!
 //! # Key ordering
@@ -36,44 +36,6 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
-
-// ── Exactly-one-backend invariant, enforced at compile time ────────────
-//
-// The store backends (kyotocabinet, tkrzw, bdb) are peer
-// implementations behind the store's trait surface, and every oxpinyin
-// build has exactly one of them. Cargo features are additive under
-// unification, so a plausible-looking `cargo build --features kyotocabinet`
-// silently combines kyotocabinet with the default tkrzw feature — precisely the
-// slide these guards refuse. Every consumer crate forwards its own
-// `{kyotocabinet, tkrzw, bdb}` features onto this crate, so
-// this one guard suffices for the whole workspace.
-
-// The zero-backend case is refused too — a build with no backend has no
-// `DefaultStore` type to assemble the runtime around, and the resulting
-// "unresolved type" error a downstream consumer would hit is a worse
-// diagnostic than saying "select a backend" here.
-
-#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb",)))]
-compile_error!(
-    "oxpinyin: no store backend selected. Enable exactly one of \
-     `tkrzw` (the default), `kyotocabinet`, or `bdb`. On the \
-     command line: `cargo build` for the default (tkrzw), or \
-     `cargo build --no-default-features --features {kyotocabinet|bdb}` \
-     for a peer."
-);
-
-#[cfg(any(
-    all(feature = "kyotocabinet", feature = "tkrzw"),
-    all(feature = "kyotocabinet", feature = "bdb"),
-    all(feature = "tkrzw", feature = "bdb"),
-))]
-compile_error!(
-    "oxpinyin: more than one store backend selected. Exactly one \
-     of `bdb`, `kyotocabinet`, `tkrzw` may be enabled per \
-     build. A build that names an alternate peer must also disable the \
-     workspace's default feature set: \
-     `cargo build --no-default-features --features {kyotocabinet|tkrzw}`."
-);
 
 use std::fmt;
 use std::ops::{Bound, ControlFlow};
@@ -778,25 +740,9 @@ pub(crate) fn remove_if_present(path: &Path) -> Result<(), StoreError> {
 }
 
 // ── The default backend: compile-time selection ───────────────────────
-//
-// One backend per oxpinyin binary. The backend implementations
-// (Kyoto Cabinet, tkrzw, Berkeley DB) are peers behind the
-// store's trait interface, so `DefaultStore` resolves to a single
-// concrete type at compile time and everything above it is already
-// generic over `RawReadStore` / `WriteStore`. The cfg chain below is
-// exactly that selection: it picks the enabled backend feature; a
-// multi-feature build resolves deterministically along the chain order
-// (kyotocabinet > tkrzw > bdb). The chain order is a
-// tie-break for the additive unification, not a hierarchy — tkrzw
-// is only the enabled feature that the workspace's default set carries,
-// and any single `--features <backend>` on `--no-default-features`
-// selects that backend's peer implementation instead.
+// See https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#backend-selection.
 
-// Each `cfg(feature = ...)` block below is exclusive — the exactly-one-
-// backend guards at the top of this file refuse builds where more than
-// one feature is enabled — so a build compiles at most one `DefaultStore` alias.
-
-/// The default store backend — Kyoto Cabinet, on
+/// The selected store backend on
 /// `--no-default-features --features kyotocabinet`.
 #[cfg(feature = "kyotocabinet")]
 pub type DefaultStore = KcStore;
@@ -819,12 +765,10 @@ pub type DefaultStore = BdbStore;
 /// script selects it once from the backend feature, the pin's
 /// `DATABASE_FORMAT`. Both `.pc` files carry the same token, from
 /// `tools/dev/cell.py`.
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub const DEFAULT_STORE_DB_FORMAT: &str = env!("OXPINYIN_STORE_DATABASE_FORMAT");
 
 /// Helpers shared by the backends' raw walks and path checks; every item is
 /// gated to the backends that use it (see the module docs).
-#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 mod common;
 /// The record copy of the pin's tkrzw and Berkeley DB `load_db` and
 /// `save_db`, which aborts where the pin's copy asserts.

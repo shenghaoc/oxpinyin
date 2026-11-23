@@ -52,7 +52,10 @@ const TABLES: &[(&[&str], &str)] = &[
 mod store;
 
 fn main() {
-    store::build();
+    let Some(database_format) = store::select_backend() else {
+        return;
+    };
+    store::build(database_format);
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/table_data/syllable_inventory.rs");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by cargo"));

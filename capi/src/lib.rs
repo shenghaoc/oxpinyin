@@ -2,14 +2,13 @@
 //!
 //! Linux packages provide `libpinyin.so.15`.
 //! Native Rust interfaces are unsupported internal details.
-//! Each build selects exactly one database backend. The default is `tkrzw`.
 //!
 //! ## Further reading
 //!
 //! - [C header](https://github.com/shenghaoc/oxpinyin/blob/main/capi/pinyin.h)
 //! - [Exported symbols](https://github.com/shenghaoc/oxpinyin/blob/main/capi/libpinyin.ver)
 //! - [C library packaging](https://github.com/shenghaoc/oxpinyin/blob/main/docs/packaging.md)
-//! - [Backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/runbooks/backends.md#selecting-a-backend)
+//! - [Backend selection](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#backend-selection)
 //! - [Supported external interfaces](https://github.com/shenghaoc/oxpinyin/blob/main/docs/constitution.md#external-interfaces)
 //! - [Upstream pin](https://github.com/shenghaoc/oxpinyin/blob/main/tools/oracle/oracle-pin.txt)
 //! - [Failure behaviour](https://github.com/shenghaoc/oxpinyin/blob/main/docs/findings/compatibility-policy.md#failure-behaviour)
