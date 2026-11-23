@@ -20,7 +20,6 @@
 //! loaded is invisible, upstream's `NULL == head` skip.
 
 use crate::vocab::phrase_index_library_index;
-use std::fmt;
 use std::path::Path;
 
 use crate::{
@@ -39,40 +38,17 @@ use crate::data::phrase_table::PhraseTable;
 use crate::data::{FileType, TableConf, TableRow};
 
 /// Error conditions for dictionary lookups.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum DictError {
     /// A table-level error (I/O, the store backend).
-    Table(TableError),
+    #[error("table error: {0}")]
+    Table(#[from] TableError),
     /// Stored bytes did not decode under libpinyin's record layout.
+    #[error("parse error")]
     Parse,
     /// A phrase-library chunk file failed to verify.
-    Library(crate::data::phrase_library::LibraryError),
-}
-
-impl fmt::Display for DictError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Table(e) => write!(f, "table error: {e}"),
-            Self::Parse => f.write_str("parse error"),
-            Self::Library(e) => write!(f, "phrase library error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for DictError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Table(e) => Some(e),
-            Self::Parse => None,
-            Self::Library(e) => Some(e),
-        }
-    }
-}
-
-impl From<TableError> for DictError {
-    fn from(e: TableError) -> Self {
-        Self::Table(e)
-    }
+    #[error("phrase library error: {0}")]
+    Library(#[source] LibraryError),
 }
 
 /// `token`'s entry: its text, priced against `keys`; `None` when the
