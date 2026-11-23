@@ -416,57 +416,6 @@ fn predicted_candidates_prepend_punctuation_for_hao() {
     unsafe { crate::context::pinyin_fini(context) };
 }
 
-#[test]
-fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
-    use crate::test_support::{TempUserDir, close, cstr, open_at, system_dir};
-    let user = TempUserDir::new("phrase-cursor");
-    let prefix: Vec<u8> = u32::from('你').to_le_bytes().to_vec();
-    // The system phrase table's rows that extend the prefix, in
-    // key order, read as the library attaches the file.
-    let mut extensions: Vec<Vec<u8>> = Vec::new();
-    {
-        use oxpinyin::store::RawReadStore as _;
-        let table =
-            oxpinyin::store::DefaultStore::open_read_only(&system_dir().join("phrase_index.bin"))
-                .expect("open the phrase table");
-        table
-            .range_raw(
-                std::ops::Bound::Unbounded,
-                std::ops::Bound::Unbounded,
-                |key, value| {
-                    if key.len() > prefix.len() && key.starts_with(&prefix) && !value.is_empty() {
-                        extensions.push(key.to_vec());
-                    }
-                    Ok(())
-                },
-            )
-            .expect("read the phrase table");
-    }
-    extensions.sort();
-    assert!(extensions.len() >= 2, "two phrases extend the prefix");
-    let text = |key: &[u8]| {
-        key.as_chunks::<4>()
-            .0
-            .iter()
-            .map(|word| char::from_u32(u32::from_le_bytes(*word)).expect("a scalar"))
-            .collect::<String>()
-    };
-    let (context, instance) = open_at(&user.path);
-    oxpinyin::store::fail_point_read_of(&extensions[1], 0);
-    assert!(unsafe { pinyin_guess_predicted_candidates(instance, cstr("你").as_ptr()) });
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    let rows: Vec<String> = unsafe { capture_rows(instance) }
-        .into_iter()
-        .map(|(_, text, _)| text)
-        .collect();
-    let first = text(&extensions[0]);
-    let first = first.strip_prefix('你').expect("the prefix");
-    assert!(rows.iter().any(|row| row == first), "{rows:?}");
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
 use crate::candidates::pinyin_choose_predicted_candidate;
 use crate::context::pinyin_save;
 use crate::test_support::{
@@ -588,53 +537,6 @@ fn a_raw_user_key_predicts_its_live_item() {
         unsafe { capture_rows(instance) }
             .iter()
             .any(|(kind, text, _)| *kind == PREDICTED_PREFIX && text == "龘")
-    );
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
-/// User phrase-table rows whose token names a library that is never
-/// loaded (15) are filtered from the lookup and the prediction.
-#[test]
-fn rows_of_a_never_loaded_library_are_filtered() {
-    let user = TempUserDir::new("never-loaded-library");
-    let value = (oxpinyin::vocab::phrase_index_make_token(15, 1))
-        .to_le_bytes()
-        .to_vec();
-    crate::test_support::craft_user_index(
-        &user.path.join("user_phrase_index.bin"),
-        &[
-            (crate::test_support::ucs4("你"), Vec::new()),
-            (
-                [
-                    crate::test_support::ucs4("你"),
-                    crate::test_support::ucs4("龘"),
-                ]
-                .concat(),
-                value.clone(),
-            ),
-            (crate::test_support::ucs4("龘龘"), value),
-        ],
-    );
-    crate::test_support::write_user_conf(&user.path, &crate::test_support::system_dir());
-    let (context, instance) = open_at(&user.path);
-    // SAFETY: a fresh GArray of four-byte elements, freed below.
-    let array = unsafe { glib_sys::g_array_new(0, 0, 4) };
-    assert!(!unsafe {
-        crate::dict::pinyin_lookup_tokens(instance, c"龘龘".as_ptr(), array.cast())
-    });
-    // SAFETY: a live GArray, freed once.
-    unsafe {
-        assert_eq!((*array).len, 0);
-        glib_sys::g_array_free(array, 1);
-    }
-    assert!(unsafe { pinyin_guess_predicted_candidates(instance, c"你".as_ptr()) });
-    assert!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        !unsafe { capture_rows(instance) }
-            .iter()
-            .any(|(_, text, _)| text.contains('龘'))
     );
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.

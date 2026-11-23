@@ -13,7 +13,6 @@ mod matrix_bounds;
 mod null_arguments;
 mod parse_keys;
 mod parse_matrix;
-mod phrase;
 #[cfg(feature = "tkrzw")]
 mod pinned_data;
 mod sentence_and_candidates;

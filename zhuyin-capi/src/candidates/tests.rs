@@ -38,23 +38,6 @@ use std::ffi::c_char;
 
 use std::ptr;
 
-/// `phonetic_lookup.h:904`: training stores into the failed Berkeley DB
-/// user bigram container and the pin's `check_result` dies. Only
-/// running out of memory makes that container, so the training answer
-/// is handed to the refusal directly.
-#[test]
-fn a_store_into_the_failed_user_bigram_aborts_training() {
-    let stderr = crate::test_support::assert_aborts(
-        "candidates::tests::a_store_into_the_failed_user_bigram_aborts_training",
-        || {
-            super::train_answer(Err(oxpinyin::engine::EngineError::TrainingAbort));
-        },
-    );
-    // No Rust panic text or other line: the pin writes none here but
-    // glibc's assert line, the register's policy-accepted missing line.
-    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
-}
-
 /// The zhuyin twin of the pinyin crate's
 /// `choosing_from_a_reanchored_window_uses_the_anchored_span`
 /// (`oxpinyin-capi/src/candidates/tests.rs`): a

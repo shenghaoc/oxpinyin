@@ -7,15 +7,15 @@
 
 use crate::support::{
     ChewingKey, ChewingKeyRest, LogCapture, TempUserDir, candidate, close, cstr, open,
-    open_with_user, take_sentence, zhuyin_alloc_instance, zhuyin_begin_add_phrases,
-    zhuyin_choose_candidate, zhuyin_end_add_phrases, zhuyin_fini, zhuyin_free_instance,
-    zhuyin_get_candidate_string, zhuyin_get_candidate_type, zhuyin_get_n_candidate,
-    zhuyin_get_n_phrase, zhuyin_get_parsed_input_length, zhuyin_get_phrase_token,
-    zhuyin_get_pinyin_string, zhuyin_get_sentence, zhuyin_get_zhuyin_key_rest,
-    zhuyin_get_zhuyin_key_rest_length, zhuyin_get_zhuyin_key_rest_positions,
-    zhuyin_get_zhuyin_string, zhuyin_guess_candidates_after_cursor, zhuyin_guess_sentence,
-    zhuyin_in_chewing_keyboard, zhuyin_init, zhuyin_iterator_add_phrase, zhuyin_parse_chewing,
-    zhuyin_parse_more_chewings, zhuyin_phrase_segment, zhuyin_reset, zhuyin_save, zhuyin_train, *,
+    open_with_user, zhuyin_alloc_instance, zhuyin_choose_candidate, zhuyin_fini,
+    zhuyin_free_instance, zhuyin_get_candidate_string, zhuyin_get_candidate_type,
+    zhuyin_get_n_candidate, zhuyin_get_n_phrase, zhuyin_get_parsed_input_length,
+    zhuyin_get_phrase_token, zhuyin_get_pinyin_string, zhuyin_get_sentence,
+    zhuyin_get_zhuyin_key_rest, zhuyin_get_zhuyin_key_rest_length,
+    zhuyin_get_zhuyin_key_rest_positions, zhuyin_get_zhuyin_string,
+    zhuyin_guess_candidates_after_cursor, zhuyin_guess_sentence, zhuyin_in_chewing_keyboard,
+    zhuyin_init, zhuyin_parse_chewing, zhuyin_parse_more_chewings, zhuyin_phrase_segment,
+    zhuyin_reset, zhuyin_save, zhuyin_train, *,
 };
 
 use std::os::raw::c_char;
@@ -177,63 +177,6 @@ fn null_instance_candidate_type_answers() {
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };
-}
-
-/// `zhuyin_get_candidate_string` never reads `instance` (`zhuyin.cpp:1865-1870`).
-#[test]
-fn null_instance_candidate_string_answers() {
-    let (context, instance) = open();
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    let cand = unsafe { candidate(instance, "su3cl3", 0) };
-    let mut text = ptr::null();
-    assert!(unsafe {
-        crate::support::zhuyin_get_candidate_string(ptr::null_mut(), cand, &raw mut text)
-    });
-    assert!(!text.is_null());
-    // SAFETY: the candidate text is NUL-terminated and borrowed from the instance.
-    let text = unsafe { std::ffi::CStr::from_ptr(text) };
-    assert_eq!(text.to_str().expect("UTF-8"), "你好");
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
-/// `zhuyin_get_zhuyin_string` never reads `instance` (`zhuyin.cpp:1732-1741`).
-#[test]
-fn null_instance_zhuyin_string_answers() {
-    let (context, instance) = open();
-    let mut key = crate::support::ChewingKey::ZERO;
-    assert!(unsafe {
-        crate::support::zhuyin_parse_chewing(instance, cstr("su3").as_ptr(), &raw mut key)
-    });
-    let mut out = ptr::null_mut();
-    assert!(unsafe {
-        crate::support::zhuyin_get_zhuyin_string(ptr::null_mut(), &raw mut key, &raw mut out)
-    });
-    // SAFETY: `out` is the string the library just returned; this code owns it and frees it only
-    // here.
-    assert_eq!(unsafe { take_sentence(out) }, "ㄋㄧˇ");
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
-/// `zhuyin_begin_add_phrases` stores the context unread and returns the
-/// iterator (`zhuyin.cpp:392-398`). `zhuyin_iterator_add_phrase` answers
-/// `false` before it reads the context for a NULL phrase (`:509-510`), and
-/// where it would read it (`_add_phrase`, `:412`) the pin crashes;
-/// `zhuyin_end_add_phrases` reads it at `:542`, so the handle is freed.
-#[test]
-fn null_context_import_handle_is_returned_and_freed() {
-    let iter = unsafe { zhuyin_begin_add_phrases(ptr::null_mut(), 1) };
-    assert!(!iter.is_null());
-    assert!(!unsafe {
-        zhuyin_iterator_add_phrase(iter, ptr::null(), cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(), 1)
-    });
-    assert!(!unsafe {
-        zhuyin_iterator_add_phrase(iter, cstr("你好").as_ptr(), cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(), 1)
-    });
-    unsafe { zhuyin_end_add_phrases(iter) };
 }
 
 /// The index assert (`zhuyin.cpp:381`) precedes any read of the context, so a

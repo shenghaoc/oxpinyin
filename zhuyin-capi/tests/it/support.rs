@@ -21,7 +21,7 @@ pub use oxzhuyin_capi::{
     cursor::{
         zhuyin_get_left_zhuyin_offset, zhuyin_get_right_zhuyin_offset, zhuyin_get_zhuyin_key,
         zhuyin_get_zhuyin_key_rest, zhuyin_get_zhuyin_key_rest_length,
-        zhuyin_get_zhuyin_key_rest_positions, zhuyin_get_zhuyin_offset,
+        zhuyin_get_zhuyin_key_rest_positions,
     },
     dict::{
         zhuyin_lookup_tokens, zhuyin_token_get_n_pronunciation, zhuyin_token_get_nth_pronunciation,
@@ -336,41 +336,4 @@ pub(crate) unsafe fn candidate_text(instance: *mut ZhuyinInstance, index: usize)
         .to_str()
         .expect("candidate text is UTF-8")
         .to_owned()
-}
-
-/// Opens `user_dir` over the fixture, answering the raw handle.
-pub(crate) fn init_at(user_dir: &std::path::Path) -> *mut crate::support::ZhuyinContext {
-    let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-    let user = cstr(user_dir.to_str().expect("UTF-8 path"));
-    unsafe { zhuyin_init(system.as_ptr(), user.as_ptr()) }
-}
-
-/// One call over a private system directory whose library is a directory: init maps `merged.bin` (`zhuyin.cpp:199`), the save and
-/// the mask-out map it again (`:589`, `:800`), and the reload of the
-/// unloaded library 2 maps `gbk_char.bin` (`:200`).
-#[cfg(unix)]
-pub(crate) fn map_a_directory_library(site: &str) -> bool {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let system = crate::support::private_system(scratch.path());
-    let user = scratch.path().join("user");
-    std::fs::create_dir_all(&user).expect("user dir");
-    let system_c = cstr(system.to_str().expect("UTF-8 path"));
-    let user_c = cstr(user.to_str().expect("UTF-8 path"));
-    if site == "init" {
-        crate::support::directory_library(&system, "merged.bin");
-        return !unsafe { zhuyin_init(system_c.as_ptr(), user_c.as_ptr()) }.is_null();
-    }
-    let context = unsafe { zhuyin_init(system_c.as_ptr(), user_c.as_ptr()) };
-    assert!(!context.is_null());
-    match site {
-        "mask" => {
-            crate::support::directory_library(&system, "merged.bin");
-            unsafe { crate::support::zhuyin_mask_out(context, 0xff00_0000, 0x0400_0000) }
-        }
-        _ => {
-            assert!(unsafe { crate::support::zhuyin_unload_phrase_library(context, 2) });
-            crate::support::directory_library(&system, "gbk_char.bin");
-            unsafe { crate::support::zhuyin_load_phrase_library(context, 2) }
-        }
-    }
 }
