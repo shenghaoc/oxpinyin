@@ -46,8 +46,7 @@ The `errno` that a successful call leaves is not compared unless the API gives i
 
 libpinyin selects Berkeley DB, Kyoto Cabinet or tkrzw through `--with-dbm`.
 Bare `./configure` selects Berkeley DB.
-oxpinyin builds with one of the same three backends, selected by cargo feature, and with no other.
-The [default cell](runbooks/backends.md) follows Cargo.
+oxpinyin supports the same backends (see [backend selection](architecture.md#backend-selection)).
 oxpinyin handles the selected backend's files natively and identically:
 
 - **System data:** the directory opened by `pinyin_init`.

@@ -243,8 +243,7 @@ A build that breaks libpinyin's ABI or data formats does not claim libpinyin's b
 That identity is SONAME `libpinyin.so.15`, `libpinyin.pc` and the `libpinyin-<version>` header directory.
 A departure that changes only output states the departure in its build metadata.
 
-A departure uses only libpinyin's three backends, one for each build.
-It does not add a backend.
+A departure uses only libpinyin's backends. See [backend selection](architecture.md#backend-selection).
 
 ## Pinned behaviour and oxpinyin improvements
 

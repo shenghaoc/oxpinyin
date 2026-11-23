@@ -115,19 +115,13 @@ def _rustc_host(tools, environment, nightly=None):
     return ''
 
 
-def _toolchain_failure(backend, nightly, environment, out, err):
-    """Print the missing-toolchain diagnostic on the stream the old gate used."""
+def _toolchain_failure(backend, nightly, out, err):
+    """Report the missing sanitizer toolchain and return failure."""
     stream = out if backend.name == 'kc' else err
     print(f'{nightly} is not installed.', file=stream, flush=True)
     print(f'  install it with: rustup toolchain install {nightly} --profile minimal',
           file=stream, flush=True)
-    if environment.get('OXPINYIN_SANITIZER_ALLOW_SKIP'):
-        print('  SKIP: OXPINYIN_SANITIZER_ALLOW_SKIP is set; the gate did NOT run.',
-              file=stream, flush=True)
-        return 0
-    print('  ERROR: the sanitizer gate cannot run. Install the toolchain, or set',
-          file=stream, flush=True)
-    print('  OXPINYIN_SANITIZER_ALLOW_SKIP=1 to allow skipping it.', file=stream, flush=True)
+    print('  ERROR: the sanitizer gate cannot run.', file=stream, flush=True)
     return 1
 
 
@@ -314,7 +308,7 @@ def _run_sanitizer_backend(backend, sanitizer, *, environment, out, err, tools, 
         return 2
     nightly = _nightly(environment)
     if not _toolchain_installed(tools, nightly, environment):
-        return _toolchain_failure(backend, nightly, environment, out, err)
+        return _toolchain_failure(backend, nightly, out, err)
     if backend.target_from_nightly:
         target = environment.get('OXPINYIN_SANITIZER_TARGET') or _rustc_host(
             tools, environment, nightly)

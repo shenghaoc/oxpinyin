@@ -12,8 +12,7 @@ A bare `./configure` of the pin selects Berkeley DB; oxpinyin selects it with
 
 ## What the backend is
 
-The `bdb` cargo feature selects the backend. A binary has exactly one
-backend, as with the other peers.
+The `bdb` Cargo feature selects this backend. See the [backend selection rule](../architecture.md#backend-selection).
 
 - `src/store/bdb/{mod.rs,ffi.rs,wrapper.h}` hold
   `BdbStore`. Every file is one raw keyspace, opened with no subdatabase

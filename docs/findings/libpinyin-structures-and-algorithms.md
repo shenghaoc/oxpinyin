@@ -133,7 +133,7 @@ dependencies (`docs/architecture.md` has the full map):
 | Base (`src/include/`) | `oxpinyin` (keys and content tables), `oxpinyin` (`chunk_format`, the `MemoryChunk` reader) |
 | Storage: keys, parsers, matrix helpers, `SingleGram` | `oxpinyin` |
 | Storage: system tables and their file formats | `oxpinyin` |
-| Storage: the DBM backends | `oxpinyin`, one backend per build by cargo feature behind one ordered byte-KV seam |
+| Storage: the DBM backends | `oxpinyin`, [backend selection](../architecture.md#backend-selection) behind one ordered byte-KV seam |
 | Storage: user tables and user files | `oxpinyin` |
 | Lookup, and the output logic in `pinyin.cpp` | `oxpinyin` |
 | Wiring done in `pinyin_init` | `oxpinyin` |
