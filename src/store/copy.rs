@@ -110,6 +110,7 @@ mod tests {
 
     use super::*;
 
+    // 074a2219 bdb_utils.h:67 and tkrzwdb_utils.h:72 assert after the last successful copy.
     #[test]
     fn source_walk_failure_aborts() {
         let stderr = crate::store::death_test::assert_aborts(
@@ -132,6 +133,7 @@ mod tests {
         assert_eq!(stderr, b"wrote one\nread two failed\n");
     }
 
+    // 074a2219 bdb_utils.h:61 and tkrzwdb_utils.h:65 assert at the failed write.
     #[test]
     fn destination_write_failure_aborts() {
         let stderr = crate::store::death_test::assert_aborts(
