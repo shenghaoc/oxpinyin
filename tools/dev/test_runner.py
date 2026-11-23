@@ -67,6 +67,13 @@ BACKEND_DATA = {
 }
 
 
+def sanitizer_environment(environment):
+    """Copy a sanitizer gate's environment without Cargo's higher-priority flags."""
+    child = dict(environment)
+    child.pop('CARGO_ENCODED_RUSTFLAGS', None)
+    return child
+
+
 def sanitizer_nightly():
     """Return the nightly that SANITIZER_TOOLCHAIN_FILE names.
 
@@ -189,9 +196,8 @@ def sanitize_abi(settings, environment):
         print(f'ABI gate needs the sanitizer toolchain: rustup toolchain install {nightly}',
               file=sys.stderr)
         return 1
-    child = dict(environment, RUSTFLAGS=BACKEND_DATA[settings.cell].flags['address'],
+    child = dict(sanitizer_environment(environment), RUSTFLAGS=BACKEND_DATA[settings.cell].flags['address'],
                  ASAN_OPTIONS='detect_leaks=1:abort_on_error=0', OXPINYIN_ABI_PYTHON=sys.executable)
-    child.pop('CARGO_ENCODED_RUSTFLAGS', None)
     command = ['cargo', f'+{nightly}', 'nextest', 'run', '--locked', '--target', target,
                '-p', 'oxpinyin-abi-tests', *settings.feature_args(), '--features', 'abi-test',
                '--test', 'abi', '--fail-fast']
@@ -330,7 +336,7 @@ def sanitize(argv):
     """
     arguments = list(argv)
     out, err = sys.stdout, sys.stderr
-    environment = dict(os.environ)
+    environment = sanitizer_environment(os.environ)
     check = False
     if arguments[:1] == ['--check']:
         check = True
