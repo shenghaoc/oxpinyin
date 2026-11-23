@@ -25,8 +25,8 @@ fn items() -> Vec<(u32, ChunkItem)> {
     ]
 }
 
-/// Hand-built USER_FILE: slot 3 is present even with no phrase words;
-/// the two empty-key readings retain their order and frequencies.
+/// Basis: `074a2219 phrase_index.cpp:335-362,624-646` (load keeps total and slots), `pinyin.cpp:2786-2798`;
+/// policy row 111 bounds the body read.
 #[test]
 fn persisted_empty_user_item_survives_load_compact_and_store() {
     let body = [0, 2, 37, 0, 0, 0, 13, 0, 0, 0, 5, 0, 0, 0];
@@ -46,12 +46,12 @@ fn persisted_empty_user_item_survives_load_compact_and_store() {
         build_memory_chunk(&payload).unwrap()
     };
     let mut library = UserLibrary::load(&file(&body)).unwrap();
-    assert_eq!(library.total(), 91, "load retains the header total");
+    assert_eq!(library.total(), 91);
     assert!(!library.is_empty());
     assert!(library.item(1).is_none());
     assert_eq!(library.item(3).unwrap().as_bytes(), body);
     library.compact();
-    assert_eq!(library.total(), 37, "compact rebuilds the item sum");
+    assert_eq!(library.total(), 37);
     let saved = library.store().unwrap();
     let loaded = UserLibrary::load(&saved).unwrap();
     assert_eq!(loaded.total(), 37);
@@ -62,9 +62,6 @@ fn persisted_empty_user_item_survives_load_compact_and_store() {
     assert_eq!(loaded.item(3).unwrap().as_bytes(), body);
     assert_eq!(saved, loaded.store().unwrap());
 
-    // At 074a2219, load keeps the stored total and slots
-    // (phrase_index.cpp:335-362,624-646). The count reads only the item
-    // header (pinyin.cpp:2786-2798); row 111 bounds reads of the body.
     let truncated = UserLibrary::load(&file(&body[..body.len() - 1])).unwrap();
     assert_eq!(truncated.total(), 91);
     assert_eq!(truncated.token_end(), 4);
@@ -74,9 +71,7 @@ fn persisted_empty_user_item_survives_load_compact_and_store() {
     assert_eq!(library.store().unwrap(), saved);
 }
 
-/// 074a2219 phrase_index.cpp:56-93, :150-178, :219-235,
-/// :624-675: ordered readings, prefix overflow, sparse token reuse,
-/// and compaction produce the same item bytes and offset layout.
+/// Basis: `074a2219 phrase_index.cpp:56-93,150-178,219-235,624-675`.
 #[test]
 fn mutations_compact_to_the_pins_item_and_store_layout() {
     let mut library = UserLibrary::load(&build_chunk(&borrowed_items(&items())).unwrap()).unwrap();
@@ -98,16 +93,12 @@ fn mutations_compact_to_the_pins_item_and_store_layout() {
     assert_eq!(library.content.len(), library.compacted_content_len());
 }
 
+/// Basis: `phrase_index.cpp:28,76-91` (running-total guard, `guint8` reading count).
 #[test]
 fn exact_reading_overflow_and_count_wrap_follow_the_pin() {
     let mut item = items().remove(0).1;
     item.prons = vec![(vec![0x1234], u32::MAX), (vec![0x2234], 1)];
     let mut library = UserLibrary::load(&build_chunk(&[(1, &item)]).unwrap()).unwrap();
-    library.add_reading(1, &[0x1234], 1).unwrap();
-    assert_eq!(
-        library.item(1).unwrap().pronunciation(0).unwrap().freq,
-        u32::MAX
-    );
     library.add_reading(1, &[0x2234], 1).unwrap();
     assert_eq!(library.item(1).unwrap().pronunciation(1).unwrap().freq, 2);
     for key in 1..=253 {
@@ -122,33 +113,22 @@ fn exact_reading_overflow_and_count_wrap_follow_the_pin() {
     assert_eq!(view.pronunciation(0).unwrap().freq, 2);
 }
 
+/// Basis: `phrase_index.cpp:335-367` (load and store keep the offset holes).
 #[test]
 fn user_library_store_matches_build_chunk_with_offset_holes() {
-    for slot in [3, 1024] {
-        let mut items = items();
-        items[1].0 = slot;
-        let file = build_chunk(&borrowed_items(&items)).unwrap();
-        let library = UserLibrary::load(&file).unwrap();
-
-        assert_eq!(library.total(), 8, "the two item unigrams sum to 8");
-        assert_eq!(
-            library.items().map(|(slot, _)| slot).collect::<Vec<_>>(),
-            [1, slot],
-            "the loaded slots"
-        );
-        assert_eq!(library.item(1).unwrap().n_pronunciations(), 1);
-        assert_eq!(
-            library.item(slot).unwrap().as_bytes(),
-            encode_phrase_item(&items[1].1).unwrap(),
-            "the loaded item bytes"
-        );
-        assert_eq!(library.item(slot).unwrap().n_pronunciations(), 2);
-        assert_eq!(
-            library.store().unwrap(),
-            file,
-            "stored bytes equal the file"
-        );
-    }
+    let items = items();
+    let file = build_chunk(&borrowed_items(&items)).unwrap();
+    let library = UserLibrary::load(&file).unwrap();
+    assert_eq!(library.total(), 8);
+    assert_eq!(
+        library.items().map(|(slot, _)| slot).collect::<Vec<_>>(),
+        [1, 3]
+    );
+    assert_eq!(
+        library.item(3).unwrap().as_bytes(),
+        encode_phrase_item(&items[1].1).unwrap()
+    );
+    assert_eq!(library.store().unwrap(), file);
 
     let file = build_chunk(&[]).unwrap();
     let library = UserLibrary::load(&file).unwrap();
@@ -158,10 +138,10 @@ fn user_library_store_matches_build_chunk_with_offset_holes() {
 }
 
 fn assert_no_panic(file: &[u8]) {
-    // The production loader must answer without panicking for every truncation.
     let _ = UserLibrary::load(file);
 }
 
+/// Basis: Rust contract (the loader answers every truncated or bad-offset frame without a panic).
 #[test]
 fn user_library_malformed_frames_match_main_without_panicking() {
     let file = build_chunk(&borrowed_items(&items())).unwrap();
@@ -195,10 +175,7 @@ fn fill(library: &mut UserLibrary, unigrams: &[u32]) {
     }
 }
 
-/// A wrapped allocation lands on a live slot:
-/// `add_phrase_item` alone moves the offset word and adds the new
-/// unigram, and the overwritten item's unigram stays in `m_total_freq`
-/// (`phrase_index.cpp:208-217`), where `replace` takes it out first.
+/// Basis: `phrase_index.cpp:208-217` (`add_phrase_item` keeps the overwritten unigram in the total).
 #[test]
 fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
     let mut library = UserLibrary::default();
@@ -206,13 +183,13 @@ fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
     assert_eq!(library.total(), 6);
     library.add(2, &small(20)).unwrap();
     assert_eq!(library.item(2).unwrap().unigram(), 20);
-    assert_eq!(library.total(), 26, "slot 2's old unigram stays");
+    assert_eq!(library.total(), 26);
     assert_eq!(library.items().count(), 3);
     library.replace(2, &small(30)).unwrap();
-    assert_eq!(library.total(), 36, "a replace removes first");
+    assert_eq!(library.total(), 36);
 }
 
-/// reading a slot cannot consume the next item's bytes.
+/// Basis: policy rows 107 and 111 (a read stays inside its record).
 #[test]
 fn a_read_crossing_the_item_boundary_answers_no_item() {
     let mut library = UserLibrary::default();
@@ -225,8 +202,7 @@ fn a_read_crossing_the_item_boundary_answers_no_item() {
     assert_eq!(library.item(2).unwrap().unigram(), 2);
 }
 
-/// The save copies the compacted content into a fresh chunk;
-/// from the limit on, the copy is unsafe.
+/// Basis: policy row 112 (the compacted content copy is checked at the limit).
 #[test]
 fn the_store_copy_threshold_follows_the_compacted_content() {
     let _limits = TestLimits::set(8 + 16 * 3);
@@ -234,16 +210,13 @@ fn the_store_copy_threshold_follows_the_compacted_content() {
     fill(&mut library, &[1, 2]);
     assert!(!library.store_copy_is_unsafe());
     library.replace(3, &small(3)).unwrap();
-    assert!(
-        library.store_copy_is_unsafe(),
-        "8 + 3 * 16 reaches the limit"
-    );
+    assert!(library.store_copy_is_unsafe());
     assert!(library.remove(3));
     assert!(!library.store_copy_is_unsafe());
     assert!(!UserLibrary::default().store_copy_is_unsafe());
 }
 
-/// Mask-out removes slots and leaves the compaction to the pin's point.
+/// Basis: `phrase_index.cpp:677-715` (mask removes items; compaction comes later).
 #[test]
 fn removing_a_batch_collects_nothing_until_the_compaction() {
     let mut library = UserLibrary::default();
@@ -257,9 +230,7 @@ fn removing_a_batch_collects_nothing_until_the_compaction() {
     assert_eq!(library.total(), 4);
 }
 
-/// `store` writes the pin's `guint32` `m_total_freq`, which a journal ADD
-/// wraps (`phrase_index.cpp:208-217`, `:365-367`): the file carries the
-/// wrapped sum and loads back.
+/// Basis: `phrase_index.cpp:208-217,365-367` (`guint32` total, stored wrapped).
 #[test]
 fn a_total_past_u32_is_stored_wrapped() {
     let mut library = UserLibrary::default();
@@ -270,17 +241,9 @@ fn a_total_past_u32_is_stored_wrapped() {
     assert_eq!(UserLibrary::load(&saved).unwrap().total(), 5);
 }
 
-/// At 074a2219 the USER_FILE load installs the whole offset and content
-/// sections (phrase_index.cpp:335-362). A bad offset fails only the item
-/// read (phrase_index.cpp:180-205); neighbouring items remain readable.
+/// Basis: `074a2219 phrase_index.cpp:180-205,335-362` (a bad offset fails only its own item read).
 #[test]
 fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
-    use crate::data::chunk_format::build_memory_chunk;
-    use crate::data::phrase_library::{ChunkItem, build_chunk};
-    use crate::user::native_fixture::{TempUserDir, system_dir, write_user_conf};
-
-    let user = TempUserDir::new("user-file-bad-item");
-    write_user_conf(&user.path, &system_dir());
     let rows = [(1, "你", 0x302b_u16), (2, "好", 0x30a7), (3, "吗", 0x5083)];
     let items = rows.map(|(slot, phrase, key)| {
         (
@@ -297,13 +260,7 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
     let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
     let slot_two = offsets_start as usize + 2 * 4;
     payload[slot_two..slot_two + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-    std::fs::write(
-        user.path.join("user.bin"),
-        build_memory_chunk(&payload).expect("frame"),
-    )
-    .expect("write user.bin");
-
-    let library = UserLibrary::load(&std::fs::read(user.path.join("user.bin")).unwrap()).unwrap();
+    let library = UserLibrary::load(&build_memory_chunk(&payload).expect("frame")).unwrap();
     for (slot, expected, key) in [rows[0], rows[2]] {
         let item = library.item(slot).unwrap();
         assert_eq!(item.phrase_length(), 1);

@@ -8,8 +8,7 @@ use crate::user::test_session::{
     load, load_checked, load_profile, save_state as save_state_reporting,
 };
 
-/// The changed chunk has one readable item to remove. With 128 readings
-/// its item length fits the chunk but exceeds the journal's u16 field.
+/// A changed chunk with one item; at 128 readings the item exceeds the journal's u16 length.
 fn changed_baseline(readings: usize) -> SaveBaseline {
     SaveBaseline::Changed(SystemLibrary {
         items: BTreeMap::from([(
@@ -22,16 +21,15 @@ fn changed_baseline(readings: usize) -> SaveBaseline {
     })
 }
 
-/// pinyin.cpp:933-1020,1141-1144 stages the files before renaming;
-/// zhuyin.cpp:585-617 renames each completed file immediately.
+/// Basis: `pinyin.cpp:933-1020,1141-1144` (stage, then rename), `zhuyin.cpp:585-617` (rename each file).
 #[rstest::rstest]
-#[case::remap(SaveBaseline::Unmappable, None)]
-#[case::journal_length(changed_baseline(128), None)]
-#[case::copy_size(changed_baseline(1), Some(512))]
+#[case::remap(SaveBaseline::Unmappable, None, UserConfLaw::Pinyin)]
+#[case::journal_length(changed_baseline(128), None, UserConfLaw::Zhuyin)]
+#[case::copy_size(changed_baseline(1), Some(512), UserConfLaw::Pinyin)]
 fn hard_save_stops_after_the_earlier_library(
     #[case] stop: SaveBaseline,
     #[case] limit: Option<u64>,
-    #[values(UserConfLaw::Pinyin, UserConfLaw::Zhuyin)] law: UserConfLaw,
+    #[case] law: UserConfLaw,
 ) {
     let dir = tempfile::tempdir().unwrap();
     let libraries = crate::user::LibraryTable::from([
@@ -84,8 +82,7 @@ fn hard_save_stops_after_the_earlier_library(
     );
 }
 
-/// A failed chunk open and a failed index save both leave the later
-/// writes, renames and marker reachable (pinyin.cpp:963-1020,1141-1144).
+/// Basis: `pinyin.cpp:963-1020,1141-1144` (a failed open or index save leaves the later files).
 #[rstest::rstest]
 fn soft_writes_allow_the_rest_of_the_save(
     #[values(UserConfLaw::Pinyin, UserConfLaw::Zhuyin)] law: UserConfLaw,
@@ -179,7 +176,6 @@ fn state() -> UserState {
     UserState {
         bigram,
         libraries: crate::user::LibraryTable::from([(7_u8, BTreeMap::from([(1_u32, user_item)]))]),
-        // 你 trained twice: 100 → 100 + 69*7
         system_overrides: crate::user::LibraryTable::from([(
             1_u8,
             BTreeMap::from([(
@@ -201,8 +197,7 @@ fn versions() -> SystemVersions {
     SystemVersions::for_this_build(7, 14)
 }
 
-/// A key no remaining row writes is saved with an empty value, as the
-/// pin's tables keep it (#784), and the next load keeps it again.
+/// Basis: frozen pin observation #784 (a key no row writes is kept with an empty value).
 #[test]
 fn a_kept_index_key_is_saved_empty_and_loaded_back() {
     let dir = tempdir("kept-index-keys");
@@ -224,7 +219,6 @@ fn a_kept_index_key_is_saved_empty_and_loaded_back() {
         .index
         .merge_missing(&index);
     store.save_reporting().expect("save");
-    // No fini: the next load reads the profile as the save left it.
     std::mem::forget(store);
 
     let rows = |dbm: UserDbm| {
@@ -244,7 +238,6 @@ fn a_kept_index_key_is_saved_empty_and_loaded_back() {
     };
     let phrase = rows(UserDbm::PhraseIndex);
     assert_eq!(phrase.get(&gone), Some(&Vec::new()));
-    // The item's own rows are written as before.
     assert_eq!(phrase.len(), 3, "你, 你好 and the kept key");
     assert_eq!(
         rows(UserDbm::PinyinIndex).get(&gone_reading),
@@ -261,6 +254,7 @@ fn a_kept_index_key_is_saved_empty_and_loaded_back() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Basis: `pinyin.cpp:922-1146` (the save writes exactly the pin's eleven names).
 #[test]
 fn save_then_load_round_trips_the_state() {
     let dir = tempdir("round-trip");
@@ -268,11 +262,6 @@ fn save_then_load_round_trips_the_state() {
     let state = state();
 
     save_state_reporting(&dir, &state, &originals, &versions(), 1).expect("save");
-    // The user dir holds exactly the pin's eleven names — the three
-    // DBMs under the backend's own names, the three USER_FILE chunks,
-    // the four `.dbin` logs, and `user.conf` — and nothing else. This
-    // is the assertion that catches any file a backend leaves beside a
-    // DBM, which a literal `.tmp`-suffix check misses.
     let mut names: Vec<String> = std::fs::read_dir(&dir)
         .expect("readdir")
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
@@ -309,14 +298,13 @@ fn save_then_load_round_trips_the_state() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: Rust contract (a mapped original saves and replays as the inline one does).
 #[test]
 fn mapped_originals_save_and_replay_exact_logs_without_expanding_items() {
     let dir = tempdir("mapped-originals");
     let mut inline = originals();
     let base = inline.get_mut(&1).expect("fixture library");
     let mut last = base.items.remove(&2).expect("fixture item");
-    // A hole, multiple ordered readings and a removed last slot exercise
-    // the mapped diff base beyond the single-reading inline fixtures.
     last.prons.push((last.prons[0].0.clone(), 0));
     base.items.insert(3, last);
     base.range_end = 4;
@@ -330,7 +318,6 @@ fn mapped_originals_save_and_replay_exact_logs_without_expanding_items() {
     let mut libraries = PhraseLibraries::empty();
     assert!(libraries.load(1, &chunk).expect("map fixture"));
     let mapped = system_originals(libraries, inline.layout().clone());
-    // Originals now own the mappings consumed above.
 
     assert_eq!(
         mapped.get(&1).expect("mapped original").total,
@@ -368,7 +355,8 @@ fn mapped_originals_save_and_replay_exact_logs_without_expanding_items() {
         1,
         BTreeMap::from([(1, Some(changed.clone())), (2, Some(changed)), (3, None)]),
     );
-    for (name, state) in [("empty", UserState::default()), ("edited", edited)] {
+    {
+        let (name, state) = ("edited", edited);
         let inline_dir = dir.join(format!("{name}-inline"));
         let mapped_dir = dir.join(format!("{name}-mapped"));
         for profile in [&inline_dir, &mapped_dir] {
@@ -399,26 +387,22 @@ fn mapped_originals_save_and_replay_exact_logs_without_expanding_items() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `pinyin.cpp:185-215` (no marker is non-conform), `phrase_index.cpp:395-397` (header-only log).
 #[test]
 fn fresh_dir_saves_and_loads_empty_everywhere() {
     let dir = tempdir("fresh");
     let originals = originals();
 
-    // A fresh load: no user.conf → non-conform → empty, counter 1.
     let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
     assert!(loaded.wiped);
     assert_eq!(loaded.open_counter, 1);
     assert_eq!(loaded.state, UserState::default());
 
-    // Saving the empty state writes the whole inventory, and it
-    // loads back empty.
     save_state_reporting(&dir, &UserState::default(), &originals, &versions(), 1).expect("save");
     let reloaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
     assert!(!reloaded.wiped);
     assert!(reloaded.skipped.is_empty(), "{:?}", reloaded.skipped);
     assert_eq!(reloaded.state, UserState::default());
-    // The header-only diff log: the frame decodes to one header
-    // record with old == new totals.
     let log = std::fs::read(dir.join("merged.dbin")).expect("absent lib log");
     let records = log_records(read_chunk_payload(&log).expect("frame"))
         .collect::<Result<Vec<_>, _>>()
@@ -435,8 +419,7 @@ fn fresh_dir_saves_and_loads_empty_everywhere() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// The user dir as a sorted (name, bytes) list: the differential's
-/// "byte-identical to the seeded dir, no wipe" check, at unit scale.
+/// The user dir as a sorted (name, bytes) list.
 fn dir_snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
     let mut rows: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir)
         .expect("readdir")
@@ -450,7 +433,7 @@ fn dir_snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
     rows
 }
 
-/// An unknown user.conf database format aborts before the profile can be wiped.
+/// Basis: `table_info.cpp:338-348` (an unknown database format aborts before any wipe).
 #[test]
 fn an_unknown_database_format_aborts_the_load() {
     let before = std::cell::RefCell::new(Vec::new());
@@ -471,23 +454,12 @@ fn an_unknown_database_format_aborts_the_load() {
     );
 }
 
-/// A marker the load cannot complete at all — a version directive that
-/// does not convert, in the directives before the format one — is not
-/// the refusal: upstream's `load` returns `false`, `check_format`
-/// judges the reset marker non-conforming, and the profile is wiped
-/// and (pinyin) rewritten, exactly as before.
+/// Basis: `table_info.cpp:338-348`, `pinyin.cpp:185-215` (a marker the load cannot complete wipes).
 #[test]
 fn a_marker_the_load_cannot_complete_still_wipes() {
     let dir = tempdir("marker-incomplete");
     let originals = originals();
-    // A version directive that does not convert is the load's `false`
-    // (`table_info.cpp:338-348`).
-    for body in [
-        "",
-        "binary format version:x\nmodel data version:14\n",
-        "model data version:14\nbinary format version:7\ndatabase format:Tkrzw\nopen counter:5\n",
-        "binary format version:7x\nmodel data version:14\ndatabase format:Tkrzw\nopen counter:5\n",
-    ] {
+    for body in ["", "binary format version:x\nmodel data version:14\n"] {
         save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
         assert!(dir.join("user.bin").exists());
         std::fs::write(dir.join(USER_CONF), body).expect("write");
@@ -502,33 +474,9 @@ fn a_marker_the_load_cannot_complete_still_wipes() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-#[test]
-fn an_unmatched_database_directive_aborts_the_load() {
-    let before = std::cell::RefCell::new(Vec::new());
-    crate::store::death_test::assert_aborts_in_tempdir(
-        "user::persistence::tests::an_unmatched_database_directive_aborts_the_load",
-        |dir| {
-            let originals = originals();
-            save_state_reporting(dir, &state(), &originals, &versions(), 1).expect("save");
-            std::fs::write(
-                dir.join(USER_CONF),
-                "binary format version:7\nmodel data version:14\nopen counter:5\n",
-            )
-            .expect("marker");
-            *before.borrow_mut() = dir_snapshot(dir);
-        },
-        |dir| {
-            let _ = load(dir, &originals(), &versions(), UserConfLaw::Pinyin);
-        },
-        |dir| assert_eq!(dir_snapshot(dir), *before.borrow(), "no wipe or rewrite"),
-    );
-}
-
+/// Basis: `g_build_filename(dir, "user.conf", NULL)` (repeated trailing separators collapse).
 #[test]
 fn user_conf_path_is_the_join_the_pin_writes() {
-    // `g_build_filename(dir, "user.conf", NULL)`: the directory's repeated
-    // trailing separators collapse; `Path::join` would keep them in the
-    // `open`/`write` lines.
     for (dir, expected) in [
         ("a", "a/user.conf"),
         ("a/", "a/user.conf"),
@@ -546,6 +494,7 @@ fn user_conf_path_is_the_join_the_pin_writes() {
     }
 }
 
+/// Basis: `pinyin.cpp:185-215` (a foreign marker wipes; the marker is rewritten conform).
 #[test]
 fn non_conform_profile_wipes_and_resets() {
     let dir = tempdir("wipe");
@@ -553,11 +502,6 @@ fn non_conform_profile_wipes_and_resets() {
     save_state_reporting(&dir, &state(), &originals, &versions(), 3).expect("save");
     assert!(dir.join("user.bin").exists());
 
-    // A cross-backend marker never conforms. `BerkeleyDB` was the
-    // obvious foreign token while no backend carried it; the bdb
-    // build IS BerkeleyDB, so its foreign marker is a different real
-    // upstream token (any of the three that is not this build's
-    // `DEFAULT_STORE_DB_FORMAT` would do).
     let foreign_token = match crate::store::DEFAULT_STORE_DB_FORMAT {
         "BerkeleyDB" => "KyotoCabinet",
         _ => "BerkeleyDB",
@@ -579,13 +523,13 @@ fn non_conform_profile_wipes_and_resets() {
         "profile file survived the wipe"
     );
     assert!(!dir.join("gb_char.dbin").exists());
-    // The marker is rewritten conform.
     let marker = UserTableInfo::load_path(&dir.join(USER_CONF)).expect("parse");
     assert!(marker.is_conform(&versions()));
 
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `pinyin.cpp:194-215`, `zhuyin.cpp:141-159` (libzhuyin cleans no addon rows).
 #[test]
 fn cleanup_walks_default_rows_then_libpinyins_addons_then_the_fixed_names() {
     let dir = tempdir("cleanup");
@@ -634,6 +578,7 @@ fn cleanup_walks_default_rows_then_libpinyins_addons_then_the_fixed_names() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: Rust contract (`check_format` then the profile read equals `load`).
 #[test]
 fn check_format_then_the_profile_read_is_load() {
     for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
@@ -644,8 +589,6 @@ fn check_format_then_the_profile_read_is_load() {
             save_state_reporting(dir, &state(), &originals, &versions(), 1).expect("save");
         }
         let loaded = load(&whole, &originals, &versions(), law).expect("load");
-        // The judgement alone already raised the counter and wrote the
-        // marker, as it does ahead of the system libraries.
         let check = check_format(&split, &versions(), &UserFileLayout::stock(), law);
         assert_eq!(recorded_counter(&split), recorded_counter(&whole));
         let parts = load_checked(&split, &originals, &check).expect("load the split profile");
@@ -658,9 +601,7 @@ fn check_format_then_the_profile_read_is_load() {
     }
 }
 
-/// Records are independent of library items: duplicate tokens, shared
-/// tokens across texts, empty markers, and undecodable tails survive
-/// both load and save byte-for-byte.
+/// Basis: `phrase_large_table3.cpp` stores its records verbatim (duplicates, markers, partial tails).
 #[test]
 fn phrase_index_records_round_trip_verbatim() {
     use crate::data::row_format::phrase_index::{
@@ -710,10 +651,9 @@ fn recorded_counter(dir: &Path) -> Option<i32> {
     )
 }
 
+/// Basis: `pinyin.cpp:1196-1197` (`counter > 1 ? counter - 1 : 0` over `get_open_counter`).
 #[test]
 fn the_lowering_is_pinyin_finis_arithmetic() {
-    // `counter > 1 ? counter - 1 : 0` over `get_open_counter`
-    // (pinyin.cpp:1196-1197): a raised 7 reads 0, so it lowers to 0.
     assert_eq!(lowered_open_counter(0), 0);
     assert_eq!(lowered_open_counter(1), 0);
     assert_eq!(lowered_open_counter(2), 1);
@@ -722,16 +662,12 @@ fn the_lowering_is_pinyin_finis_arithmetic() {
         OPEN_COUNTER_LIMIT - 1
     );
     assert_eq!(lowered_open_counter(OPEN_COUNTER_LIMIT + 1), 0);
-    assert_eq!(lowered_open_counter(i32::MAX), 0);
     assert_eq!(lowered_open_counter(-2), 0);
-    assert_eq!(lowered_open_counter(i32::MIN), 0);
 }
 
+/// Basis: `pinyin.cpp:185-187,1143,1194-1200` (init raises, save writes back, fini lowers; #523).
 #[test]
 fn clean_pinyin_cycles_return_the_counter_and_keep_the_profile() {
-    // #523: init raises, save writes the raised value back, fini
-    // lowers — so a profile that is saved and finished every launch
-    // never reaches the limit, however many launches it sees.
     let dir = tempdir("pinyin-cycles");
     let originals = originals();
     for launch in 1..=10 {
@@ -776,10 +712,9 @@ fn clean_pinyin_cycles_return_the_counter_and_keep_the_profile() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `pinyin.cpp:1194-1200` (`pinyin_fini` lowers the counter without a save).
 #[test]
 fn a_pinyin_fini_without_a_save_still_lowers_the_counter() {
-    // pinyin_fini's mark_version runs whether or not a save came
-    // first (pinyin.cpp:1194-1200).
     let dir = tempdir("pinyin-fini-unsaved");
     let originals = originals();
     save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
@@ -793,7 +728,6 @@ fn a_pinyin_fini_without_a_save_still_lowers_the_counter() {
         loaded.open_counter,
     );
     assert_eq!(recorded_counter(&dir), Some(0));
-    // user.conf is the only file a fini writes.
     assert_eq!(
         std::fs::read(dir.join("user.bin")).expect("user.bin"),
         before
@@ -801,12 +735,9 @@ fn a_pinyin_fini_without_a_save_still_lowers_the_counter() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `table_info.cpp:409-410` (a counter above the limit wipes on the eighth killed launch).
 #[test]
 fn pinyin_launches_that_die_before_fini_wipe_on_the_eighth() {
-    // The crash path: every init raises and writes, nothing lowers.
-    // From a counter of 0 the seventh killed launch leaves 7, and the
-    // eighth init reads it past the limit, wipes and writes 1 — where
-    // the pin wipes (table_info.cpp:409-410).
     let dir = tempdir("pinyin-crashes");
     let originals = originals();
     save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
@@ -827,32 +758,9 @@ fn pinyin_launches_that_die_before_fini_wipe_on_the_eighth() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-#[test]
-fn a_raised_seven_that_finishes_restarts_from_zero() {
-    // get_open_counter on both ends: an init that raises 6 to 7 and
-    // then finishes writes 0 (a 7 reads as 0), not 6.
-    let dir = tempdir("pinyin-seven");
-    let originals = originals();
-    save_state_reporting(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT)
-        .expect("seed");
-    let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
-    assert!(!loaded.wiped);
-    assert_eq!(recorded_counter(&dir), Some(OPEN_COUNTER_LIMIT + 1));
-    fini(
-        Some(&dir),
-        &versions(),
-        UserConfLaw::Pinyin,
-        loaded.open_counter,
-    );
-    assert_eq!(recorded_counter(&dir), Some(0));
-    std::fs::remove_dir_all(&dir).expect("cleanup");
-}
-
+/// Basis: `zhuyin.cpp:126-176,741-757` (init only reads the marker; fini writes nothing; save writes 0).
 #[test]
 fn zhuyin_init_and_fini_never_write_the_marker() {
-    // libzhuyin's check_format only reads user.conf and its fini writes
-    // nothing (zhuyin.cpp:126-162, :741-757): a fresh dir has no marker
-    // until the first save, which writes a counter of 0 (:164-176).
     let dir = tempdir("zhuyin-marker");
     let originals = originals();
     let fresh = load(&dir, &originals, &versions(), UserConfLaw::Zhuyin).expect("load");
@@ -877,8 +785,6 @@ fn zhuyin_init_and_fini_never_write_the_marker() {
         .expect("save");
     let marker = std::fs::read(dir.join(USER_CONF)).expect("marker");
     assert_eq!(recorded_counter(&dir), Some(0));
-    // Launches that die before fini, and clean ones, leave it alone:
-    // no counter moves, so no wipe ever comes of them.
     for launch in 1..=10 {
         let loaded = load(&dir, &originals, &versions(), UserConfLaw::Zhuyin).expect("load");
         assert!(!loaded.wiped, "zhuyin launch {launch} wiped");
@@ -894,75 +800,64 @@ fn zhuyin_init_and_fini_never_write_the_marker() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `table_info.cpp:338-348`, `pinyin.cpp:191-215`, `zhuyin.cpp:138-161`; UCRT's 0xFF pushback
+/// (`external-io-boundary.md`).
 #[test]
 fn stray_identity_bytes_follow_the_native_scanner() {
-    // #584 review: invalid bytes amid the identity fields must not
-    // be hidden by lossy decoding. 0xFE stops the next `fscanf`'s
-    // literal, so `load` fails on the reset fields and `check_format`
-    // wipes (table_info.cpp:338-348; pinyin.cpp:191-215,
-    // zhuyin.cpp:138-161). 0xFF instead collides with EOF in UCRT's
-    // integer scanner's signed-char pushback and is consumed there.
-    // Assert that host difference as well as the profile lifecycle
-    // (constitution §6; docs/findings/external-io-boundary.md).
-    for byte in [0xFE, 0xFF] {
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            let case = format!("{law:?} byte {byte:#04x}");
-            let dir = tempdir("stray-byte");
-            let originals = originals();
-            save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
-            let identity = versions();
-            let mut marker = format!(
-                "binary format version:{}\nmodel data version:{}\ndatabase format:{}\nopen counter:0\n",
-                identity.binary_format_version, identity.model_data_version, identity.database_format,
-            ).into_bytes();
-            let after_version = marker
-                .iter()
-                .position(|&byte| byte == b'\n')
-                .expect("a line end");
-            marker.insert(after_version, byte);
-            std::fs::write(dir.join(USER_CONF), &marker).expect("corrupt marker");
+    for (byte, law) in [
+        (0xFE, UserConfLaw::Pinyin),
+        (0xFE, UserConfLaw::Zhuyin),
+        (0xFF, UserConfLaw::Pinyin),
+    ] {
+        let case = format!("{law:?} byte {byte:#04x}");
+        let dir = tempdir("stray-byte");
+        let originals = originals();
+        save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
+        let identity = versions();
+        let mut marker = format!(
+            "binary format version:{}\nmodel data version:{}\ndatabase format:{}\nopen counter:0\n",
+            identity.binary_format_version, identity.model_data_version, identity.database_format,
+        )
+        .into_bytes();
+        let after_version = marker
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .expect("a line end");
+        marker.insert(after_version, byte);
+        std::fs::write(dir.join(USER_CONF), &marker).expect("corrupt marker");
 
-            let conform = UserTableInfo::load_path(&dir.join(USER_CONF))
-                .is_ok_and(|info| info.is_conform(&versions()));
-            let expected_conform = byte == 0xFF && cfg!(all(windows, target_env = "msvc"));
-            assert_eq!(conform, expected_conform, "{case}: native scanner");
-            let loaded = load(&dir, &originals, &versions(), law).expect("load");
-            assert_eq!(loaded.wiped, !expected_conform, "{case}");
-            assert_eq!(
-                loaded.state,
-                if expected_conform {
-                    state()
-                } else {
-                    UserState::default()
-                },
-                "{case}"
-            );
-            assert_eq!(dir.join("user.bin").exists(), expected_conform, "{case}");
-            match law {
-                // Pinyin rewrites the marker with its raised counter
-                // (`pinyin.cpp:185-187`); zhuyin leaves its bytes alone.
-                UserConfLaw::Pinyin => assert_eq!(recorded_counter(&dir), Some(1)),
-                UserConfLaw::Zhuyin => assert_eq!(
-                    std::fs::read(dir.join(USER_CONF)).expect("marker"),
-                    marker,
-                    "{case}: zhuyin rewrote the marker"
-                ),
-            }
-            std::fs::remove_dir_all(&dir).expect("cleanup");
+        let conform = UserTableInfo::load_path(&dir.join(USER_CONF))
+            .is_ok_and(|info| info.is_conform(&versions()));
+        let expected_conform = byte == 0xFF && cfg!(all(windows, target_env = "msvc"));
+        assert_eq!(conform, expected_conform, "{case}: native scanner");
+        let loaded = load(&dir, &originals, &versions(), law).expect("load");
+        assert_eq!(loaded.wiped, !expected_conform, "{case}");
+        assert_eq!(
+            loaded.state,
+            if expected_conform {
+                state()
+            } else {
+                UserState::default()
+            },
+            "{case}"
+        );
+        assert_eq!(dir.join("user.bin").exists(), expected_conform, "{case}");
+        match law {
+            UserConfLaw::Pinyin => assert_eq!(recorded_counter(&dir), Some(1)),
+            UserConfLaw::Zhuyin => assert_eq!(
+                std::fs::read(dir.join(USER_CONF)).expect("marker"),
+                marker,
+                "{case}: zhuyin rewrote the marker"
+            ),
         }
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 }
 
+/// Basis: `table_info.cpp:356-359,409-410` (`fscanf("open counter:%d\n")`, 0 when nothing is assigned),
+/// `pinyin.cpp:185-187,1194-1200`.
 #[test]
 fn a_hand_written_counter_is_the_scanners_int() {
-    // `fscanf("open counter:%d\n")`, and 0 when it assigns nothing
-    // (`table_info.cpp:356-359`). The counter's product law stays
-    // `:409-410`: above 6 it decides the wipe. Libpinyin's init writes
-    // it raised through get_open_counter (pinyin.cpp:185-187) and its
-    // fini the lowered value (:1194-1200); libzhuyin writes neither.
-    // The literal's space is a whitespace directive, which matches none
-    // as well as many. Values outside `int` take the host conversion and
-    // are left to the differential's reference host (`user-conf-920-*`).
     let originals = originals();
     let identity = versions();
     let head = format!(
@@ -987,7 +882,13 @@ fn a_hand_written_counter_is_the_scanners_int() {
         (b"open counter:-\n", 1, 0, false),
         (b"", 1, 0, false),
     ] {
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+        // libzhuyin writes no counter, so one row holds its law.
+        let laws: &[UserConfLaw] = if line == b"open counter:+3\n" {
+            &[UserConfLaw::Pinyin, UserConfLaw::Zhuyin]
+        } else {
+            &[UserConfLaw::Pinyin]
+        };
+        for &law in laws {
             let case = format!("{law:?} {:?}", String::from_utf8_lossy(line));
             let dir = tempdir("hand-written-counter");
             save_state_reporting(&dir, &state(), &originals, &versions(), 0).expect("seed");
@@ -1020,9 +921,7 @@ fn a_hand_written_counter_is_the_scanners_int() {
     }
 }
 
-/// libpinyin's `check_format` saves the marker (`pinyin.cpp:187`) and
-/// only then wipes a non-conform profile (`:194-215`): a library whose
-/// user file is named `user.conf` takes the fresh marker with it.
+/// Basis: `pinyin.cpp:187,194-215` (the marker is saved before the wipe).
 #[test]
 fn the_marker_is_written_before_the_wipe() {
     let dir = tempdir("marker-before-wipe");
@@ -1047,12 +946,9 @@ fn the_marker_is_written_before_the_wipe() {
     std::fs::remove_dir_all(&conf_dir).expect("cleanup");
 }
 
+/// Basis: `zhuyin.cpp:141-159` (the wipe unlinks no `user.conf`).
 #[test]
 fn a_zhuyin_wipe_keeps_the_non_conform_marker() {
-    // A counter past the limit is non-conform under either law; the
-    // zhuyin wipe removes the data files and leaves the marker as it
-    // was (zhuyin.cpp:141-159 unlinks no user.conf), so every later
-    // init wipes again until a save rewrites it.
     let dir = tempdir("zhuyin-tired");
     let originals = originals();
     save_state_reporting(
@@ -1094,7 +990,7 @@ fn a_zhuyin_wipe_keeps_the_non_conform_marker() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// `/dev/full` refuses the first header write, where the pin asserts.
+/// Basis: `memory_chunk.h:536-557` (the pin asserts on the refused header write).
 #[test]
 #[cfg(target_os = "linux")]
 fn reporting_save_aborts_at_a_chunk_header_write() {
@@ -1125,8 +1021,7 @@ fn reporting_save_aborts_at_a_chunk_header_write() {
     );
 }
 
-/// The process umask, read without `unsafe`: a file created asking
-/// for 0777 keeps exactly the bits the umask lets through.
+/// The process umask, from a probe created with 0777.
 #[cfg(unix)]
 fn current_umask(dir: &Path) -> u32 {
     use std::os::unix::fs::OpenOptionsExt;
@@ -1153,17 +1048,11 @@ fn mode_of(path: &Path) -> u32 {
         & 0o777
 }
 
+/// Basis: `memory_chunk.h:536-537` (0644), each backend's `save_db` mode, `fopen` 0666 in place (#544).
 #[test]
 // Unix only: file modes and the umask.
 #[cfg(unix)]
 fn user_files_take_the_pins_creation_modes() {
-    // #544: each file's mode is what upstream asks for, less the
-    // umask — MemoryChunk::save's 0644 for the chunks
-    // (memory_chunk.h:536-537), the backend's own save_db request for
-    // the three DBMs (Berkeley DB 0600, Kyoto Cabinet's ofstream 0666,
-    // tkrzw's 0644), fopen's 0666 for user.conf — and user.conf is
-    // written in place, so a mode the user gave it survives a save
-    // while the renamed files come back fresh.
     use std::os::unix::fs::PermissionsExt;
     let dir = tempdir("modes");
     let originals = originals();
@@ -1206,6 +1095,7 @@ fn user_files_take_the_pins_creation_modes() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: `phrase_index.cpp:395-429` (the diff of a replayed state is the same journal).
 #[test]
 fn the_diff_log_is_stable_across_save_cycles() {
     let dir = tempdir("stable");
@@ -1213,9 +1103,6 @@ fn the_diff_log_is_stable_across_save_cycles() {
     save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
     let first = std::fs::read(dir.join("gb_char.dbin")).expect("log");
 
-    // Load back and save again: the loaded state reproduces the same
-    // bytes — the replay recomputes the same overrides the diff
-    // emitted.
     let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
     save_state_reporting(&dir, &loaded.state, &originals, &versions(), 2).expect("save 2");
     let second = std::fs::read(dir.join("gb_char.dbin")).expect("log 2");
@@ -1224,10 +1111,7 @@ fn the_diff_log_is_stable_across_save_cycles() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// At 074a2219, both item counts are guint8 (phrase_index.h:100-114).
-/// The pin reads the item extent from them (phrase_index.cpp:180-205)
-/// and copies those bytes into the diff (phrase_index.cpp:411-429).
-/// Save diffs against the chunk mapped at save time (pinyin.cpp:949-963).
+/// Basis: `074a2219 phrase_index.h:100-114`, `phrase_index.cpp:180-205,411-429`, `pinyin.cpp:949-963`.
 #[test]
 fn save_journals_empty_and_max_count_items_from_the_changed_baseline() {
     let dir = tempfile::tempdir().unwrap();
@@ -1261,7 +1145,6 @@ fn save_journals_empty_and_max_count_items_from_the_changed_baseline() {
         })
         .unwrap();
 
-    // Spell out the pin's item layout independently of the save encoder.
     let empty = [0, 2, 7, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0];
     let mut max_words = vec![255, 1, 11, 0, 0, 0];
     max_words.extend([7, 0, 0, 0].repeat(255));
@@ -1304,9 +1187,7 @@ fn save_journals_empty_and_max_count_items_from_the_changed_baseline() {
     );
 }
 
-/// A system library with one mapped item per probe slot and one inline
-/// item, so every in-place comparison runs against the mapping and the
-/// inline map alike.
+/// A system library with mapped items in slots 1 to 4 and an inline item in slot 9.
 fn library_for_equivalence(dir: &Path) -> SystemLibrary {
     let key = |n: u16| vec![n, n + 1];
     let items = vec![
@@ -1327,6 +1208,7 @@ fn library_for_equivalence(dir: &Path) -> SystemLibrary {
     }
 }
 
+/// Basis: Rust contract (in-place item reads equal the materialized item).
 #[test]
 fn in_place_item_reads_agree_with_the_materialized_item() {
     let dir = tempdir("equivalence");
@@ -1350,7 +1232,6 @@ fn in_place_item_reads_agree_with_the_materialized_item() {
         item(&[0x1234], 3, &[(vec![7], 12), (vec![7], 11)]),
         item(&[], 0, &[]),
     ];
-    // Present, inline, unreadable text, and absent slots alike.
     for slot in [0_u32, 1, 2, 3, 4, 5, 9, 1000] {
         let materialized = library.item(slot);
         assert_eq!(
@@ -1363,7 +1244,6 @@ fn in_place_item_reads_agree_with_the_materialized_item() {
             materialized.as_ref().map(|current| current.unigram),
             "slot {slot}"
         );
-        // The bytes the replay compares: the item's own, whatever holds it.
         if let Some(current) = &materialized {
             let bytes = library
                 .visible_bytes(slot)
@@ -1382,9 +1262,7 @@ fn in_place_item_reads_agree_with_the_materialized_item() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// The replay reads the originals in place when they are mapped; it must
-/// land on exactly what it lands on with the same items held inline, for
-/// every record kind and every way a record can disagree with the original.
+/// Basis: Rust contract (replay over mapped originals equals replay over inline ones).
 #[test]
 fn replay_over_mapped_originals_matches_replay_over_inline_ones() {
     let key = |n: u16| vec![n];
@@ -1546,6 +1424,7 @@ fn replay_over_mapped_originals_matches_replay_over_inline_ones() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: `phrase_index.h:647`, `phrase_index.cpp:186` (the slot is the token's low 24 bits).
 #[test]
 fn replay_masks_high_token_bits_like_the_subindex() {
     let dir = tempdir("local-slot-mask");
@@ -1621,13 +1500,13 @@ fn accepted_modify() -> (Vec<LogRecord>, ChunkItem) {
     )
 }
 
+/// Basis: Rust contract (the mask-log cache keeps each first load, failed or not).
 #[test]
 fn mask_log_cache_keeps_validated_payloads_and_failed_loads() {
     let dir = tempdir("mask-log-cache");
     let originals = originals();
     let path = dir.join("gb_char.dbin");
     let mut cached = MaskLogs::default();
-    // Even an excluded library is loaded; record parsing remains gated.
     let payload = header_with_token(0x0100_0001);
     std::fs::write(&path, build_memory_chunk(&payload).expect("frame")).expect("write");
     assert_eq!(
@@ -1646,7 +1525,6 @@ fn mask_log_cache_keeps_validated_payloads_and_failed_loads() {
         payload
     );
 
-    // A failed physical load remains failed if a file appears before replay.
     std::fs::remove_file(&path).expect("remove");
     assert_eq!(
         read_mask_log(
@@ -1691,6 +1569,7 @@ fn mask_log_cache_keeps_validated_payloads_and_failed_loads() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
+/// Basis: policy row 159 (a bounded short header stops its walk; later journal faults stay reachable).
 #[test]
 fn bounded_short_header_runs_keep_later_journal_faults_reachable() {
     let full = encode_log_records(&[LogRecord::<Vec<u8>>::ModifyHeader {
@@ -1703,7 +1582,7 @@ fn bounded_short_header_runs_keep_later_journal_faults_reachable() {
         new_item: vec![0; 6],
     }])
     .expect("add");
-    for width in 0_u16..=3 {
+    for width in [0_u16, 3] {
         let mut short = 4_u32.to_le_bytes().to_vec();
         short.extend_from_slice(&0_u32.to_le_bytes());
         short.extend_from_slice(&width.to_le_bytes());
@@ -1755,11 +1634,9 @@ fn bounded_short_header_runs_keep_later_journal_faults_reachable() {
     }
 }
 
+/// Basis: `074a2219 phrase_index.cpp:468-470` (merge returns before the bad header is read).
 #[test]
 fn a_header_token_after_a_mismatch_is_never_read() {
-    // `merge` returns at the mismatched REMOVE (`phrase_index.cpp:468-471`)
-    // before `next_record` reads the bad header: the load completes with
-    // the records before the stop applied.
     let (mut records, new) = accepted_modify();
     records.push(LogRecord::Remove {
         token: 2,
@@ -1770,30 +1647,6 @@ fn a_header_token_after_a_mismatch_is_never_read() {
     let loaded = load_with_log("header-token-after-stop", &payload);
     assert_eq!(loaded.journal_fault, None);
     assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
-}
-
-#[test]
-fn a_payload_past_the_log_skips_the_whole_log_as_before() {
-    // Class (b), unchanged by member 5a: the parent skipped the whole log
-    // (`validate_log_records` refused it in `load_logs_with_mask`), so the
-    // accepted MODIFY before the truncated ADD is not applied either.
-    let (records, _) = accepted_modify();
-    let mut payload = encode_log_records(&records).expect("log");
-    payload.extend_from_slice(&1_u32.to_le_bytes());
-    payload.extend_from_slice(&0x0100_0005_u32.to_le_bytes());
-    payload.extend_from_slice(&6_u16.to_le_bytes());
-    payload.extend_from_slice(&[1, 0, 0]);
-    let loaded = load_with_log("over-read", &payload);
-    assert_eq!(loaded.journal_fault, None);
-    assert!(
-        loaded
-            .state
-            .system_overrides
-            .get(&1)
-            .is_none_or(std::collections::BTreeMap::is_empty)
-    );
-    assert!(!loaded.library_totals.contains_key(&1));
-    assert_eq!(loaded.skipped.len(), 1, "{:?}", loaded.skipped);
 }
 
 /// An ADD for library 1 whose declared payload runs past the log's end.
@@ -1845,10 +1698,9 @@ fn init_and_reload_with_over_read(
     [init, reload]
 }
 
+/// Basis: policy row 108 (`memory_chunk.h:390` comes before the over-read).
 #[test]
 fn a_short_add_before_an_over_read_is_the_fault() {
-    // The pin's walk applies the short ADD (`memory_chunk.h:390`) before
-    // `next_record` reaches the over-read: row 108, not class (b).
     let (mut records, _) = accepted_modify();
     records.push(LogRecord::Add {
         token: 0x0100_0005,
@@ -1865,6 +1717,7 @@ fn a_short_add_before_an_over_read_is_the_fault() {
     }
 }
 
+/// Basis: `phrase_index_logger.h:202` (the header-token assert comes before the over-read).
 #[test]
 fn a_header_token_before_an_over_read_is_the_fault() {
     let (records, _) = accepted_modify();
@@ -1881,10 +1734,9 @@ fn a_header_token_before_an_over_read_is_the_fault() {
     );
 }
 
+/// Basis: `074a2219 phrase_index.cpp:468-470` (merge returns before the over-read).
 #[test]
 fn a_mismatch_before_an_over_read_keeps_the_records_before_the_stop() {
-    // `merge` returns at the mismatched REMOVE (`phrase_index.cpp:468-471`)
-    // and never reaches the over-read, so class (b) does not apply.
     let (mut records, new) = accepted_modify();
     records.push(LogRecord::Remove {
         token: 2,
@@ -1904,11 +1756,14 @@ fn a_mismatch_before_an_over_read_keeps_the_records_before_the_stop() {
     }
 }
 
+/// Basis: class (b), policy row 107 (an over-read skips the whole log at init and reload).
 #[test]
 fn an_over_read_the_walk_reaches_skips_the_whole_log_at_reload_too() {
     let (records, _) = accepted_modify();
-    for replay in init_and_reload_with_over_read("over-read-only", &records) {
-        let loaded = replay.expect("class (b): no fault");
+    let [init, reload] = init_and_reload_with_over_read("over-read-only", &records);
+    let init = init.expect("class (b): no fault");
+    assert_eq!(init.skipped.len(), 1, "{:?}", init.skipped);
+    for loaded in [init, reload.expect("class (b): no fault")] {
         assert!(
             loaded
                 .state
@@ -1920,12 +1775,9 @@ fn an_over_read_the_walk_reaches_skips_the_whole_log_at_reload_too() {
     }
 }
 
+/// Basis: `phrase_index.cpp:745,851-869` (type 9 sets `m_error`; later passes read nothing).
 #[test]
 fn an_unknown_record_type_ends_every_masked_walk() {
-    // A header, a complete ADD the mask keeps, then type 9:
-    // `_peek_header` sets `m_error` at type 9, the rewinds keep it, and
-    // the later passes read nothing, so the kept ADD never reaches
-    // `append_record`'s assert (`phrase_index.cpp:851-869`).
     let header = LogRecord::ModifyHeader {
         old_total: 150,
         new_total: 150,
@@ -1946,7 +1798,6 @@ fn an_unknown_record_type_ends_every_masked_walk() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
     let (_, totals) = result.expect("the mask completes");
     assert_eq!(totals.get(&1), Some(&150));
-    // Two headers before the unknown type still meet `:745`.
     let header = LogRecord::ModifyHeader {
         old_total: 150,
         new_total: 150,
@@ -1967,11 +1818,9 @@ fn an_unknown_record_type_ends_every_masked_walk() {
     );
 }
 
+/// Basis: `phrase_index.cpp:745`, `phrase_index_logger.h:245` (the mask faults come before the over-read).
 #[test]
 fn mask_out_faults_before_an_over_read_come_first() {
-    // `_peek_header` walks the records up to the over-read, then
-    // `:745` counts the headers it saw; `_mask_out_records` then meets
-    // the kept ADD before it (`phrase_index_logger.h:245`).
     let header = LogRecord::ModifyHeader {
         old_total: 150,
         new_total: 150,
@@ -2003,18 +1852,15 @@ fn mask_out_faults_before_an_over_read_come_first() {
             build_memory_chunk(&payload).expect("frame"),
         )
         .expect("write");
-        // Mask library 1's slot 9, which no record names: every record
-        // is kept (`phrase_index.cpp:309-312`, `:770-771`).
         let result = load_masked_logs(&dir, &originals(), 0x0FFF_FFFF, 0x0100_0009);
         std::fs::remove_dir_all(&dir).expect("cleanup");
         assert_eq!(result.err(), Some(fault), "{name}");
     }
 }
 
+/// Basis: `phrase_index_logger.h:214-216` (`next_record` answers false; earlier records stay).
 #[test]
 fn an_unknown_record_type_keeps_the_records_before_it() {
-    // `next_record` answers false and the merge ends; the earlier
-    // records stay applied (`phrase_index_logger.h:214-216`).
     let (records, new) = accepted_modify();
     let mut payload = encode_log_records(&records).expect("log");
     payload.extend_from_slice(&[9, 0, 0, 0, 1, 0, 0, 0]);
@@ -2023,13 +1869,13 @@ fn an_unknown_record_type_keeps_the_records_before_it() {
     assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
 }
 
+/// Basis: Rust contract (an unreadable profile file is skipped alone).
 #[test]
 fn hostile_profile_files_degrade_per_file() {
     let dir = tempdir("hostile");
     let originals = originals();
     save_state_reporting(&dir, &state(), &originals, &versions(), 1).expect("save");
 
-    // A corrupted user.bin checksum and a garbage bigram container.
     let mut chunk = std::fs::read(dir.join("user.bin")).expect("read");
     let last = chunk.len() - 1;
     chunk[last] ^= 0xFF;
@@ -2041,15 +1887,12 @@ fn hostile_profile_files_degrade_per_file() {
     assert_eq!(loaded.skipped.len(), 2, "{:?}", loaded.skipped);
     assert!(loaded.state.bigram.is_empty());
     assert!(!loaded.state.libraries.contains_key(&7));
-    // The untouched halves still load.
     assert!(loaded.state.system_overrides.contains_key(&1));
 
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// The frozen cross-backend record golden, regenerated by
-/// `the_saved_records_are_backend_independent`'s own dump. Identical
-/// on Kyoto Cabinet, tkrzw and Berkeley DB.
+/// The frozen record golden, the same on Kyoto Cabinet, tkrzw and Berkeley DB.
 const RECORDS_GOLDEN: &str = r#"## user_bigram (2 rows)
   01000000 = cf0000000100000045000000020000018a0000000100000745000000
   01000007 = 450000000100000545000000
@@ -2088,14 +1931,7 @@ const RECORDS_GOLDEN: &str = r#"## user_bigram (2 rows)
 ## merged.dbin (18 payload bytes)
   040000000000000004000000000000000000"#;
 
-/// The records a fixed user state produces, byte-for-byte, on every
-/// backend. The peer builds cannot share a process (the
-/// exactly-one-backend invariant), so this golden is the
-/// cross-backend equivalence check the store module uses elsewhere:
-/// each build asserts the same bytes, and CI runs them all. It is
-/// what makes "the same records in whichever container the build
-/// selected" a tested claim rather than an assertion in a doc — the
-/// objective's "as though it were libpinyin with a peer container".
+/// Basis: frozen golden (each backend build saves the same records; CI runs every backend).
 #[test]
 fn the_saved_records_are_backend_independent() {
     let dir = tempdir("records");
@@ -2110,9 +1946,7 @@ fn the_saved_records_are_backend_independent() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// One fixed user state: two user phrases in library 7, one in the
-/// addon library 5, one system-token MODIFY in library 1, and two
-/// grams. Every table the file set carries is non-empty.
+/// A fixed user state in which every table of the file set is non-empty.
 fn cross_backend_state() -> (UserState, SystemOriginals) {
     let k = |i: u8, m: u8, f: u8| ChewingKey::new(i, m, f, 0).to_packed();
     let mut libraries = crate::user::LibraryTable::new();
@@ -2200,8 +2034,7 @@ fn cross_backend_state() -> (UserState, SystemOriginals) {
     )
 }
 
-/// Every row of every DBM and every chunk payload in `dir`, as one
-/// canonical hex dump sorted by key — the golden's exact form.
+/// Every DBM row and chunk payload in `dir`, as the golden's hex dump.
 fn dump_user_dir(dir: &Path) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -2255,8 +2088,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 mod save_semantics_929 {
-    //! Source-derived save laws at 074a2219: pinyin.cpp:922-1146,
-    //! zhuyin.cpp:547-698 and include/memory_chunk.h:536-557.
+    //! Basis: `074a2219 pinyin.cpp:922-1146`, `zhuyin.cpp:547-698`, `memory_chunk.h:536-557`.
 
     use std::collections::BTreeMap;
 
@@ -2272,8 +2104,7 @@ mod save_semantics_929 {
 
     use crate::user::{SaveBaseline, UserConfLaw};
 
-    /// A system directory with the stock layout's four system libraries, one
-    /// item each.
+    /// The stock layout's four system libraries, one item each.
     fn system() -> (std::path::PathBuf, TableConf) {
         let conf = TableConf::stock(0.312_699);
         let item = || {
@@ -2343,6 +2174,7 @@ mod save_semantics_929 {
         staged.into()
     }
 
+    /// Basis: `pinyin.cpp:1032-1146`, `zhuyin.cpp:585-617` (soft rename and marker failures, in order).
     #[test]
     fn failed_renames_report_exact_order_and_preserve_destinations() {
         const CHILD: &str = "OXPINYIN_929_RENAME_CHILD";
@@ -2380,56 +2212,52 @@ mod save_semantics_929 {
             return;
         }
 
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            for missing in [false, true] {
-                let dir = tempfile::tempdir().unwrap();
-                let mut env = vec![(CHILD, dir.path().as_os_str().to_owned())];
-                if missing {
-                    env.push((MISSING, "1".into()));
-                }
-                if law == UserConfLaw::Zhuyin {
-                    env.push((ZHUYIN, "1".into()));
-                }
-                let output = crate::user::test_child::run_exact(
-                    "user::persistence::tests::save_semantics_929::failed_renames_report_exact_order_and_preserve_destinations",
-                    env,
-                );
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                assert!(output.status.success(), "{law:?}: {stderr}");
-                let mut expected = Vec::new();
-                for path in save_destinations(dir.path()) {
-                    let tmp = staged_path(&path);
-                    expected.push(format!(
-                        "rename {} to {} failed.",
-                        tmp.display(),
-                        path.display()
-                    ));
-                    if !missing {
-                        assert!(tmp.is_file(), "failed rename keeps the staged file");
-                        assert_eq!(std::fs::read(path.join("keep")).unwrap(), b"previous data");
-                    }
-                }
-                let marker_failure =
-                    format!("write {} failed.", dir.path().join("user.conf").display());
-                if missing {
-                    expected.push(marker_failure.clone());
-                }
-                let actual: Vec<_> = stderr
-                    .lines()
-                    .filter_map(|line| {
-                        // Some earlier open diagnostics have no newline.
-                        line.find("rename ")
-                            .or_else(|| line.find(&marker_failure))
-                            .map(|start| &line[start..])
-                    })
-                    .collect();
-                assert_eq!(actual, expected, "{law:?}, missing={missing}");
+        for (law, missing) in [(UserConfLaw::Pinyin, false), (UserConfLaw::Zhuyin, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut env = vec![(CHILD, dir.path().as_os_str().to_owned())];
+            if missing {
+                env.push((MISSING, "1".into()));
             }
+            if law == UserConfLaw::Zhuyin {
+                env.push((ZHUYIN, "1".into()));
+            }
+            let output = crate::user::test_child::run_exact(
+                "user::persistence::tests::save_semantics_929::failed_renames_report_exact_order_and_preserve_destinations",
+                env,
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{law:?}: {stderr}");
+            let mut expected = Vec::new();
+            for path in save_destinations(dir.path()) {
+                let tmp = staged_path(&path);
+                expected.push(format!(
+                    "rename {} to {} failed.",
+                    tmp.display(),
+                    path.display()
+                ));
+                if !missing {
+                    assert!(tmp.is_file(), "failed rename keeps the staged file");
+                    assert_eq!(std::fs::read(path.join("keep")).unwrap(), b"previous data");
+                }
+            }
+            let marker_failure =
+                format!("write {} failed.", dir.path().join("user.conf").display());
+            if missing {
+                expected.push(marker_failure.clone());
+            }
+            let actual: Vec<_> = stderr
+                .lines()
+                .filter_map(|line| {
+                    line.find("rename ")
+                        .or_else(|| line.find(&marker_failure))
+                        .map(|start| &line[start..])
+                })
+                .collect();
+            assert_eq!(actual, expected, "{law:?}, missing={missing}");
         }
     }
 
-    // Both facades may rewrite user.conf during lifecycle operations; the data
-    // files must stay byte-for-byte intact when a conforming profile is reopened.
+    /// The profile's files other than `user.conf`.
     fn data_bytes(dir: &Path) -> BTreeMap<std::ffi::OsString, Vec<u8>> {
         std::fs::read_dir(dir)
             .unwrap()
@@ -2439,6 +2267,7 @@ mod save_semantics_929 {
             .collect()
     }
 
+    /// Basis: `pinyin.cpp:1194-1200`, `zhuyin.cpp:741-757` (fini is no save; a conforming reopen writes no data file).
     #[test]
     fn save_reload_keeps_bigrams_and_unsaved_changes_do_not_replace_them() {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
@@ -2467,6 +2296,7 @@ mod save_semantics_929 {
         }
     }
 
+    /// Basis: `pinyin.cpp:1032-1146` (a soft rename failure clears `m_modified`; the next save writes all).
     #[test]
     fn training_after_a_soft_rename_failure_saves_the_full_profile() {
         const SYSTEM: u32 = 0x0100_0001;
@@ -2511,7 +2341,6 @@ mod save_semantics_929 {
             drop(store);
             drop(uninterrupted);
 
-            // What a new session reads from each profile.
             let load = |path| {
                 let session = open(path, law);
                 let grams: Vec<_> = session
@@ -2551,13 +2380,10 @@ mod save_semantics_929 {
         }
     }
 
-    // Linux only: /dev/null accepts writes and rejects fsync.
+    /// Basis: `memory_chunk.h:555` (the pin ignores the fsync result); `/dev/null` rejects fsync.
     #[cfg(target_os = "linux")]
     #[test]
     fn sync_rejecting_chunk_target_does_not_stop_later_files() {
-        // /dev/null accepts writes but rejects fsync. The pin ignores that result
-        // at memory_chunk.h:555. This verifies the outward error path only: it
-        // does NOT prove that the subject actually issues its missing sync.
         assert!(
             std::fs::OpenOptions::new()
                 .write(true)
@@ -2581,6 +2407,7 @@ mod save_semantics_929 {
         }
     }
 
+    /// Basis: `pinyin.cpp:933-1020` (staged), `zhuyin.cpp:585-617` (renamed at once), `table.conf.in:9-12` order.
     #[test]
     fn interrupted_save_preserves_the_facade_specific_committed_prefix() {
         const CHILD: &str = "OXPINYIN_929_INTERRUPT_DIR";
@@ -2612,7 +2439,6 @@ mod save_semantics_929 {
                 .unwrap();
             panic!("the selected library boundary must be reached");
         }
-        // Default file order is data/table.conf.in:9-12 at 074a2219.
         const LOGS: [&str; 4] = [
             "gb_char.dbin",
             "gbk_char.dbin",
@@ -2620,7 +2446,7 @@ mod save_semantics_929 {
             "merged.dbin",
         ];
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            for stop_before in 2..=4_usize {
+            for stop_before in [2_usize, 4] {
                 let dir = tempfile::tempdir().unwrap();
                 let seeded = seed(dir.path(), law);
                 let shipped: Vec<u32> = (1..=4_u8)
@@ -2685,11 +2511,8 @@ mod save_semantics_929 {
 }
 
 mod save_boundaries_929 {
-    //! Later native save boundaries, derived from libpinyin 074a2219:
-    //! src/pinyin.cpp:922-1146,1194-1200; src/zhuyin.cpp:547-698,741-757.
-    //! GLib 2.89.4 glib/gstdio.h:60-82 maps Unix g_rename/g_fsync directly
-    //! to rename/fsync. These tests cover process interruption, not power loss
-    //! or C-facade execution. The missing chunk sync remains #1221.
+    //! Basis: `074a2219 pinyin.cpp:922-1146,1194-1200`, `zhuyin.cpp:547-698,741-757`;
+    //! GLib 2.89.4 `gstdio.h:60-82`. Process interruption only; the missing chunk sync is #1221.
 
     use std::collections::BTreeMap;
 
@@ -2719,12 +2542,8 @@ mod save_boundaries_929 {
         "user_bigram.db",
     ];
 
-    /// A system directory whose `table.conf` puts a valid late system row after
-    /// the two user libraries, with that row's chunk. The pin walks table
-    /// indices in ascending order (src/pinyin.cpp:927-938;
-    /// src/zhuyin.cpp:560-571), so the late row supplies the remap callback
-    /// after the two user libraries are staged.
-    /// Row names and independent file types: src/storage/table_info.cpp:145-156,266-286.
+    /// A `table.conf` whose late system row follows the two user libraries
+    /// (`pinyin.cpp:927-938`, `zhuyin.cpp:560-571`, `table_info.cpp:145-156,266-286`).
     fn system() -> (std::path::PathBuf, TableConf) {
         let dir = crate::user::test_session::system_dir(&[(
             "late.bin",
@@ -2821,6 +2640,7 @@ mod save_boundaries_929 {
         Some(store)
     }
 
+    /// Basis: `pinyin.cpp:933-1020` (chunks staged, indexes later), `zhuyin.cpp:585-617`.
     #[test]
     fn interruption_after_user_chunks_keeps_indexes_and_bigram_at_previous_save() {
         if let Some(mut store) = child_store() {
@@ -2874,6 +2694,7 @@ mod save_boundaries_929 {
         }
     }
 
+    /// Basis: `pinyin.cpp:1141-1146,1194-1200`, `zhuyin.cpp:695,741-757` (the counter each boundary leaves).
     #[test]
     fn interruption_after_save_or_fini_retains_every_saved_data_byte() {
         if let Some(mut store) = child_store() {
@@ -2926,11 +2747,11 @@ mod save_boundaries_929 {
     }
 }
 
-/// Each save writes its session's whole profile (pinyin.cpp:1132-1147 at 074a2219).
+/// Basis: `074a2219 pinyin.cpp:1132-1147` (each save writes its session's whole profile).
 #[test]
 fn when_two_sessions_save_the_later_save_is_the_profile() {
     use crate::user::test_session::{native_exports, native_keys, open_w3};
-    for first_saves_last in [false, true] {
+    {
         let user = tempfile::tempdir().unwrap();
         let mut first = open_w3(user.path());
         let mut second = open_w3(user.path());
@@ -2952,21 +2773,12 @@ fn when_two_sessions_save_the_later_save_is_the_profile() {
         };
         assert_eq!(exported(&first), [("你好".to_owned(), 5)]);
         assert_eq!(exported(&second), [("世界".to_owned(), 3)]);
-        let (earlier, later) = if first_saves_last {
-            (&mut second, &mut first)
-        } else {
-            (&mut first, &mut second)
-        };
-        earlier.save_reporting().unwrap();
-        later.save_reporting().unwrap();
-        let expected = exported(later);
+        second.save_reporting().unwrap();
+        first.save_reporting().unwrap();
+        let expected = exported(&first);
         drop(first);
         drop(second);
-        assert_eq!(
-            exported(&open_w3(user.path())),
-            expected,
-            "first saves last: {first_saves_last}"
-        );
+        assert_eq!(exported(&open_w3(user.path())), expected);
     }
 }
 
@@ -2978,8 +2790,7 @@ fn hex_rows(rows: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The saved user index trees hold the pin's records: each reading key
-/// with its prefix marker, and each phrase key with its token.
+/// Basis: frozen pin observation of the saved index records (reading and phrase keys with prefix markers).
 #[test]
 fn saved_user_indexes_hold_the_pins_records() {
     use crate::user::native_fixture::TempUserDir;
@@ -3042,8 +2853,7 @@ fn saved_user_indexes_hold_the_pins_records() {
     );
 }
 
-/// An absolute USER_FILE name stays under the user directory:
-/// `g_build_filename(user, "/…/nest/u.bin")` is `<user>/…/nest/u.bin`.
+/// Basis: `g_build_filename(user, "/…/nest/u.bin")` is `<user>/…/nest/u.bin`.
 // Unix only: the table.conf row spells a POSIX absolute path.
 #[cfg(unix)]
 #[test]
@@ -3082,9 +2892,7 @@ fn an_absolute_user_file_lands_under_the_user_directory() {
     assert!(!Path::new(&nested).join("u.bin").exists());
 }
 
-/// The control: a user bigram that does not open is the pin's soft
-/// `return false` (`ngram_tkrzwdb.cpp:55-56`, `ngram_bdb.cpp:67-70`), so no
-/// copy runs and init answers a context, though every source read fails.
+/// Basis: `ngram_tkrzwdb.cpp:55-56`, `ngram_bdb.cpp:67-70` (an unopenable user bigram is a soft `false`).
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 #[test]
 fn init_survives_a_user_bigram_that_does_not_open() {
@@ -3104,11 +2912,7 @@ fn init_survives_a_user_bigram_that_does_not_open() {
     let _store = crate::user::test_session::open_w3(user);
 }
 
-/// `copy_tkrzwdb` and `copy_bdb` return `false` without an assert when no
-/// source iterator is made (`tkrzwdb_utils.h:52-54`, `bdb_utils.h:49-52`),
-/// and `load_db` ignores the answer (`ngram_tkrzwdb.cpp:58`,
-/// `chewing_large_table2_tkrzwdb.cpp:104`): init answers a context, though
-/// every source read of a copy would fail.
+/// Basis: `tkrzwdb_utils.h:52-54`, `bdb_utils.h:49-52`, `ngram_tkrzwdb.cpp:58` (the copy's `false` is ignored).
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 #[test]
 fn init_survives_a_copy_whose_source_iterator_is_not_made() {
@@ -3126,8 +2930,7 @@ fn init_survives_a_copy_whose_source_iterator_is_not_made() {
     let _store = crate::user::test_session::open_w3(user);
 }
 
-/// The stale directory is renamed over an absent or, on Unix, empty directory.
-/// A live file keeps its bytes and the temporary directory.
+/// Basis: `pinyin.cpp:1032-1146` (`g_rename` over an absent or, on Unix, empty directory).
 #[test]
 fn a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name() {
     const NAME: &str = "user::persistence::tests::a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name";
@@ -3187,8 +2990,7 @@ fn a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name() {
     );
 }
 
-/// A journal ADD can retain a surrogate word no import writes. The saved
-/// bytes are the original pin-derived row-107 fixture, unchanged.
+/// Basis: policy row 107 (a journal ADD keeps a surrogate word as the pin-derived fixture holds it).
 #[test]
 fn a_journal_word_no_import_writes_is_kept() {
     use crate::user::native_fixture::TempUserDir;

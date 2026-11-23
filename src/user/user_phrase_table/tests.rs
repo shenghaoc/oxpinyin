@@ -1,5 +1,6 @@
 use super::*;
 
+/// Basis: `074a2219 phrase_large_table3_bdb.cpp:297-315` (prefix markers), `_tkrzwdb.cpp:253-256` (absent removal).
 #[test]
 fn add_remove_and_prefix_markers_match_the_entry_ops() {
     let mut table = UserPhraseTable::new();

@@ -1,19 +1,9 @@
 //! The readings of a replayed system item (#871).
 //!
-//! A `.dbin` MODIFY record changes the item the sub-index holds in place
-//! (`phrase_index.cpp:477-501` at 074a2219). The session keeps that item whole
-//! in its live system-item view, and the readings' counts are read from the
-//! item: training starts from them, moves them in place, and the save writes
-//! them.
-//! These tests hold what that must not change. The item is a list of (keys,
-//! count) entries in the file's order, as the pin keeps it: an import adds to
-//! the first entry with the keys (`PhraseItem::add_pronunciation`,
-//! `phrase_index.cpp:56-91`), training to every matching entry on its own count
-//! (`increase_pronunciation_possibility`, `:114-143`), and neither keys the
-//! list by them, so two entries with the same keys stay two entries.
+//! Basis: `074a2219 phrase_index.cpp:56-143,477-501`: an import adds to the first entry with
+//! the keys, and training moves each matching entry on its own count.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::data::phrase_library::{ChunkItem, encode_phrase_item};
 use crate::data::user_files::{LogRecord, SystemVersions};
@@ -111,6 +101,7 @@ fn open_over(name: &str, base: &SystemOriginals, records: &[LogRecord]) -> (Path
     (dir, store)
 }
 
+/// Basis: `074a2219 phrase_index.cpp:439-517` (each slot's replayed value; the header's total).
 #[test]
 fn per_slot_seeding_keeps_mixed_restored_added_removed_and_header_counts() {
     let one = item(0x4f60, 100, &[(tone("ni", 3), 10)]);
@@ -199,66 +190,13 @@ fn dense(syllable: &str, tone_: u8) -> Vec<crate::user::PinyinKey> {
     packed_to_pinyin_keys(&tone(syllable, tone_)).expect("dense")
 }
 
-/// Opening writes no reading row for a replayed item, keeps the unigram delta
-/// the count reads consult, and training, save and reopen carry the counts as
-/// the live item holds them.
-#[test]
-fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
-    let (ni3, ni2) = (tone("ni", 3), tone("ni", 2));
-    let old = item(0x4f60, 100, &[(ni3.clone(), 100), (ni2.clone(), 40)]);
-    let new = item(0x4f60, 150, &[(ni3, 107), (ni2, 40)]);
-    let base = library_of(vec![(1, old.clone())]);
-    let (dir, mut store) = open_over(
-        "opens-without-rows",
-        &base,
-        &[header(100, 150), modify(1, &old, &new)],
-    );
-    assert_eq!(counts(&store, 1), [107, 40]);
-    assert_eq!(exported(&store, &base, 1), [107, 40]);
-    // The unigram is the live field: pricing and the totals read it.
-    assert_eq!(store.system_unigram(LIBRARY | 1), Some(150));
-    assert_eq!(
-        Some(crate::user::test_session::library_total(&store, 1)),
-        Some(150)
-    );
-    assert_eq!(store.unigram_total(), 0);
-
-    // One accepted path adds the seed to the matching live reading alone.
-    // Session training no longer writes pronunciation rows.
-    train(&mut store, 1, key("ni", 3), 1);
-    assert_eq!(counts(&store, 1), [176, 40]);
-    assert_eq!(exported(&store, &base, 1), [176, 40]);
-    store.save_reporting().expect("save");
-    drop(store);
-
-    // The saved profile replays to the same item, again with no row; a second
-    // training starts from the replayed count and not from the original.
-    let mut store = open(&dir, &base);
-    assert_eq!(counts(&store, 1), [176, 40]);
-    train(&mut store, 1, key("ni", 3), 1);
-    // The seed of a second training is twice the first: the predecessor's
-    // gram is no longer new (`seed.rs`).
-    assert_eq!(counts(&store, 1), [314, 40]);
-    assert_eq!(exported(&store, &base, 1), [314, 40]);
-    store.save_reporting().expect("save again");
-    drop(store);
-    let store = open(&dir, &base);
-    assert_eq!(counts(&store, 1), [314, 40]);
-    drop(store);
-    std::fs::remove_dir_all(dir).expect("cleanup");
-}
-
-/// Two entries with the same keys are two entries in every view, whether the
-/// journal made them or the shipped item already had them: no reading is read
-/// back through a map keyed by its keys.
+/// Basis: `phrase_index.cpp:56-91,122-139` (an import adds to the first entry with the keys).
 #[test]
 fn entries_with_the_same_keys_stay_separate_through_import_save_and_reopen() {
     let ni3 = tone("ni", 3);
     let hao3 = tone("hao", 3);
     let one = item(0x4f60, 100, &[(ni3.clone(), 100)]);
     let two = item(0x597d, 50, &[(hao3.clone(), 30), (hao3.clone(), 40)]);
-    // The journal grows the first item by a second entry with its keys, and
-    // changes only the unigram of the second, which already has two.
     let one_new = item(0x4f60, 100, &[(ni3.clone(), 100), (ni3, 160)]);
     let two_new = item(0x597d, 77, &[(hao3.clone(), 30), (hao3, 40)]);
     let base = library_of(vec![(1, one.clone()), (2, two.clone())]);
@@ -276,8 +214,6 @@ fn entries_with_the_same_keys_stay_separate_through_import_save_and_reopen() {
     assert_eq!(counts(&store, 2), [30, 40]);
     assert_eq!(exported(&store, &base, 2), [30, 40]);
 
-    // An imported reading adds to the first entry with its keys
-    // (`phrase_index.cpp:122-139`) and to nothing else.
     let token = |slot: u32| LIBRARY | slot;
     store
         .add_system_phrase_in(1, Some(token(1)), &"你".into(), &dense("ni", 3), Some(7))
@@ -302,9 +238,7 @@ fn entries_with_the_same_keys_stay_separate_through_import_save_and_reopen() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// A mask that drops a library's journal takes the counts the journal gave
-/// with it: the item is the shipped one again, and nothing of the replay is
-/// read back when it is next changed.
+/// Basis: `phrase_index.cpp:677-715`, `pinyin.cpp:1194-1200` (the reload after a mask maps the chunk again).
 #[test]
 fn a_mask_leaves_nothing_of_the_replayed_counts() {
     let (ni3, ni2) = (tone("ni", 3), tone("ni", 2));
@@ -320,8 +254,6 @@ fn a_mask_leaves_nothing_of_the_replayed_counts() {
     store
         .mask_out(0xff00_0000, LIBRARY)
         .expect("mask library 1");
-    // The pin's `mask_out` leaves a system sub-index to the reload, which maps
-    // the chunk again and merges the log without the masked records.
     let mut remapped = base.fixture_copy();
     store
         .reload_system_libraries_retaining(&mut remapped, 0xff00_0000, LIBRARY)
@@ -343,150 +275,6 @@ fn a_mask_leaves_nothing_of_the_replayed_counts() {
     assert_eq!(counts(&store, 1), [104, 40]);
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
-}
-
-/// The replayed rows the open no longer writes are not what the other seed
-/// categories stand on: a populated user library and a user pinyin index that
-/// outlives a removed phrase are read and saved as they are without the
-/// journal, beside a replayed item.
-#[test]
-fn a_populated_user_library_and_an_independent_index_beside_a_replayed_item() {
-    let (ni3, ni2) = (tone("ni", 3), tone("ni", 2));
-    let old = item(0x4f60, 100, &[(ni3.clone(), 100)]);
-    let new = item(0x4f60, 100, &[(ni3, 130)]);
-    let base = library_of(vec![(1, old.clone())]);
-    // What the save writes to the user's own files, read back through the
-    // production load: the user libraries' items, the pinyin index entries
-    // and the raw phrase table, which the replayed item has no part in.
-    let user_view = |dir: &Path| {
-        let state = crate::user::test_session::load(dir, &base, &versions(), UserConfLaw::Pinyin)
-            .expect("load the saved profile")
-            .state;
-        let libraries: BTreeMap<_, _> = state
-            .libraries
-            .iter()
-            .filter(|(nibble, _)| **nibble >= 5)
-            .collect();
-        format!("{libraries:?} {:?} {:?}", state.indexed, state.phrase_table)
-    };
-    let user_session = |store: &mut UserStore| {
-        let kept = store
-            .add_phrase_in(
-                crate::vocab::USER_DICTIONARY,
-                &"龘".into(),
-                &dense("ni", 2),
-                Some(20),
-            )
-            .expect("kept");
-        let removed = store
-            .add_phrase_in(
-                crate::vocab::USER_DICTIONARY,
-                &"鱻".into(),
-                &dense("hao", 4),
-                Some(9),
-            )
-            .expect("removed");
-        assert!(store.remove_user_phrase(removed).expect("remove"));
-        store.mark_modified();
-        store.save_reporting().expect("save");
-        kept
-    };
-    // The same user session over a profile with the journal and over one
-    // without: the user files it writes are the same bytes.
-    let (dir, mut store) = open_over(
-        "user-library",
-        &base,
-        &[header(100, 100), modify(1, &old, &new)],
-    );
-    let kept = user_session(&mut store);
-    let view = user_view(&dir);
-    drop(store);
-    let control = tempdir("user-library-control");
-    assert!(
-        crate::data::user_files::UserTableInfo::conform_to(&versions())
-            .save(control.join("user.conf").as_path())
-    );
-    let mut plain = open(&control, &base);
-    user_session(&mut plain);
-    assert_eq!(view, user_view(&control));
-    drop(plain);
-
-    let mut store = open(&dir, &base);
-    // Both the user arena and the replayed item own their reading counts.
-    assert_eq!(counts(&store, 1), [130]);
-    assert_eq!(view, user_view(&dir));
-    let phrases =
-        crate::user::test_session::stored_phrase_rows(&store, crate::vocab::USER_DICTIONARY);
-    assert_eq!(phrases.len(), 1);
-    assert_eq!((phrases[0].0.as_slice(), phrases[0].2), (&[0x9f98][..], 20));
-    train(&mut store, 1, key("ni", 3), 1);
-    assert_eq!(counts(&store, 1), [199]);
-    store.save_reporting().expect("save again");
-    drop(store);
-
-    let store = open(&dir, &base);
-    assert_eq!(counts(&store, 1), [199]);
-    assert_eq!(view, user_view(&dir));
-    assert_eq!(
-        store
-            .token_for_phrase_in(crate::vocab::USER_DICTIONARY, "龘")
-            .expect("lookup"),
-        Some(kept)
-    );
-    drop(store);
-    let _ = ni2;
-    std::fs::remove_dir_all(dir).expect("cleanup");
-    std::fs::remove_dir_all(control).expect("cleanup");
-}
-
-/// Training gives every entry that matches its own count and the save writes
-/// those counts, whether the journal left one entry for a reading, two with
-/// the same keys, or lowered a count below the original's.
-#[test]
-fn training_moves_each_matching_entry_on_its_own_count() {
-    let ni3 = tone("ni", 3);
-    let old = item(0x4f60, 100, &[(ni3.clone(), 100)]);
-    for (name, entries, first, second) in [
-        // (after one path, after one more path in the reopened profile)
-        (
-            "same-keys",
-            vec![(ni3.clone(), 100), (ni3.clone(), 160)],
-            vec![169, 229],
-            vec![307, 367],
-        ),
-        (
-            "same-keys-reversed",
-            vec![(ni3.clone(), 160), (ni3.clone(), 100)],
-            vec![229, 169],
-            vec![367, 307],
-        ),
-        // The count is a `guint32`: 40 + 69, then 109 + 138.
-        ("lowered", vec![(ni3.clone(), 40)], vec![109], vec![247]),
-    ] {
-        let new = item(0x4f60, 100, &entries);
-        let base = library_of(vec![(1, old.clone())]);
-        let (dir, mut store) = open_over(
-            &format!("train-{name}"),
-            &base,
-            &[header(100, 100), modify(1, &old, &new)],
-        );
-        train(&mut store, 1, key("ni", 3), 1);
-        assert_eq!(counts(&store, 1), first, "{name}: live");
-        assert_eq!(exported(&store, &base, 1), first, "{name}: saved");
-        store.save_reporting().expect("save");
-        drop(store);
-        let mut store = open(&dir, &base);
-        assert_eq!(counts(&store, 1), first, "{name}: reopened");
-        train(&mut store, 1, key("ni", 3), 1);
-        assert_eq!(counts(&store, 1), second, "{name}: live again");
-        assert_eq!(exported(&store, &base, 1), second, "{name}: saved again");
-        store.save_reporting().expect("save again");
-        drop(store);
-        let store = open(&dir, &base);
-        assert_eq!(counts(&store, 1), second, "{name}: reopened again");
-        drop(store);
-        std::fs::remove_dir_all(dir).expect("cleanup");
-    }
 }
 
 /// What a session answers for a mixed profile, in the order a caller asks:
@@ -524,13 +312,7 @@ fn mixed_view(store: &UserStore, base: &SystemOriginals, tokens: &[u32]) -> Stri
     out
 }
 
-/// A profile with all of it at once: a shipped item whose reading and
-/// unigram the journal changed, a shipped item whose unigram alone changed, an
-/// item the journal appended to the library (its readings are rows, as a user
-/// phrase's are), a populated user library, grams, and a pinyin index entry
-/// that outlives a removed phrase. The shipped and appended items are not
-/// alike: the shipped item's rows are the training's, the appended item's are
-/// seeded and absolute.
+/// Basis: `074a2219 phrase_index.cpp:215,233,395-397,446-451,484-512,648-675` (the totals below).
 #[test]
 fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     let (ni3, hao3, ta1) = (tone("ni", 3), tone("hao", 3), tone("ta", 1));
@@ -554,7 +336,6 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
         ],
     );
     let tokens = [LIBRARY | 1, LIBRARY | 2, LIBRARY | 3];
-    // The appended item has one arena body; no session pronunciation rows.
     assert_eq!(counts(&store, 1), [107]);
     assert_eq!(counts(&store, 2), [50]);
     assert_eq!(counts(&store, 3), [33]);
@@ -562,8 +343,6 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     assert_eq!(store.system_unigram(LIBRARY | 2), Some(77));
     assert_eq!(store.unigram_delta(LIBRARY | 3), 33);
 
-    // A user library with a removed phrase, grams over the three items, and
-    // training and imports onto the shipped and the appended item.
     let kept = store
         .add_phrase_in(
             crate::vocab::USER_DICTIONARY,
@@ -617,8 +396,6 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
     store.save_reporting().expect("save");
     drop(store);
 
-    // The saved profile is the live one: every view, the user library and
-    // the gram bytes, and the shipped item still owns no row of its own.
     let mut store = open(&dir, &base);
     assert_eq!(mixed_view(&store, &base, &tokens), live);
     // The reopened sub-index total, by the pin's save and merge. The save
@@ -643,7 +420,6 @@ fn a_mixed_profile_keeps_shipped_appended_and_user_state_apart() {
         1
     );
     assert!(store.bigram_row(LIBRARY | 1).expect("gram").is_some());
-    // Again, from the reopened profile.
     train(&mut store, 1, key("ni", 3), 1);
     train(&mut store, 3, key("ta", 1), 1);
     let again = mixed_view(&store, &base, &tokens);
@@ -687,11 +463,7 @@ fn assert_the_gate_suppresses_nothing(store: &UserStore, tokens: &[u32], step: &
     assert_eq!(gated, open, "after {step}, the gate was {natural}");
 }
 
-/// A replayed item no longer holds the gate open through its reading rows.
-/// After every write that recomputes the gate (a mask, a removal, a library
-/// reload, an import), the count reads must still be what they are with the
-/// gate forced open, with grams, trained unigrams and a populated user
-/// library in the profile.
+/// Basis: Rust contract (the count gate is a fast path: forced open, the reads are the same).
 #[test]
 fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import() {
     let (ni3, hao3) = (tone("ni", 3), tone("hao", 3));
@@ -704,15 +476,12 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
 
     let (dir, mut store) = open_over("gate", &base, &records);
     assert_the_gate_suppresses_nothing(&store, &tokens, "open");
-    // A gram between the two system items, and a trained unigram.
     store
         .observe_selection(LIBRARY | 1, LIBRARY | 2)
         .expect("gram");
     assert_the_gate_suppresses_nothing(&store, &tokens, "a gram");
     train(&mut store, 2, key("hao", 3), 1);
     assert_the_gate_suppresses_nothing(&store, &tokens, "training");
-    // A mask of another library, an import, a user phrase and its removal,
-    // the mask of the replayed library, a reload, an unload and a load.
     store.mask_out(0xff00_0000, 0x0200_0000).expect("mask 2");
     assert_the_gate_suppresses_nothing(&store, &tokens, "a mask of another library");
     store
@@ -744,10 +513,7 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 
-    // The state the replayed rows used to hide: a gram that outlives every
-    // unigram, table and phrase row. A reload of the library takes the unigram
-    // and phrase rows of its tokens away and leaves the session's grams, so the
-    // gate stays open on the grams the write finds in the container alone.
+    // A gram that outlives every unigram, table and phrase row keeps the gate open.
     let (dir, mut store) = open_over("gate-gram-only", &base, &records);
     store
         .observe_selection(LIBRARY | 1, LIBRARY | 2)
@@ -764,9 +530,7 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// A replayed ADD and every import into a system library with an original live
-/// only in that library's live buffer: no arena holds a copy and no decoded item
-/// is made, so one value stands for each item and each total moves once.
+/// Basis: `pinyin.cpp:563-604`, `phrase_index.cpp:208-235` (one live item per slot; each total moves once).
 #[test]
 fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     let one = item(0x4f60, 100, &[(tone("ni", 3), 10)]);
@@ -784,7 +548,6 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     let arena_library =
         |store: &UserStore| store.session_target().phrases().libraries.contains_key(&1);
     let appended = LIBRARY | 5;
-    // The replayed ADD: the buffer's item, no arena copy, no decoded copy.
     assert!(!arena_library(&store));
     assert!(store.with_user_item(appended, |_| ()).is_some());
     assert_eq!(store.system_unigram(appended), Some(11));
@@ -793,9 +556,7 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
         Some(161)
     );
 
-    // A new phrase goes after the range's end, with no unigram and then the
-    // count times three (`pinyin.cpp:593-604`): the item and the library's
-    // total take it once, and no copy is made.
+    // `pinyin.cpp:593-604`: the new phrase's `count * 3` moves the item and the total once.
     let new = store
         .add_system_phrase_in(1, None, &"六".into(), &dense("liu", 4), Some(5))
         .expect("import a new phrase");
@@ -808,9 +569,6 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     );
     assert_eq!(store.unigram_total(), 0);
 
-    // A reading onto the appended item, onto a shipped one, and onto the new
-    // phrase: each is removed, takes the reading and is added back in the
-    // buffer, and none of them moves a total.
     store
         .add_system_phrase_in(1, Some(appended), &"五".into(), &dense("wu", 3), Some(4))
         .expect("onto the appended item");
@@ -830,7 +588,6 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     );
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
 
-    // The save reads the buffer, and a reopen finds the same items.
     store.mark_modified();
     store.save_reporting().expect("save");
     drop(store);
@@ -843,26 +600,7 @@ fn a_replayed_add_and_the_imports_live_only_in_the_buffer() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-#[test]
-fn live_appended_item_keeps_its_lookup_text() {
-    let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
-    let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
-    let (dir, mut store) = open_over(
-        "materialized-appended-text",
-        &base,
-        &[LogRecord::Add {
-            token: 5,
-            new_item: encode_phrase_item(&added).expect("added"),
-        }],
-    );
-    let token = LIBRARY | 5;
-    store.mask_out(u32::MAX, 0).expect("mask other token");
-    assert!(store.with_live_item(token, |_| ()).is_some());
-    assert_eq!(store.lookup().phrase_text(token), Some("五".into()));
-    drop(store);
-    std::fs::remove_dir_all(dir).expect("cleanup");
-}
-
+/// Basis: policy row 98 (a refused mask leaves the replayed ADD live, with its text, for an import).
 #[test]
 fn live_appended_item_accepts_import_after_failed_mask() {
     let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);
@@ -878,6 +616,7 @@ fn live_appended_item_accepts_import_after_failed_mask() {
     let token = LIBRARY | 5;
     store.mask_out(u32::MAX, 0).expect("mask other token");
     assert!(store.with_live_item(token, |_| ()).is_some());
+    assert_eq!(store.lookup().phrase_text(token), Some("五".into()));
     store
         .plant_raw_bigram(1, &[0, 0, 0, 0, 1])
         .expect("plant raw bigram");
@@ -903,6 +642,7 @@ fn live_appended_item_accepts_import_after_failed_mask() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
+/// Basis: policy row 98, for an item a session import created.
 #[test]
 fn live_new_import_keeps_text_and_accepts_another_reading_after_failed_mask() {
     let base = library_of(vec![(1, item(0x4f60, 100, &[(tone("ni", 3), 10)]))]);

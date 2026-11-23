@@ -1,5 +1,6 @@
 use super::{LibrarySet, LibraryTable};
 
+/// Basis: Rust contract (a table over library indexes 0 to 15, walked in ascending order).
 #[test]
 fn a_table_walks_its_present_libraries_in_ascending_order() {
     let mut table: LibraryTable<&str> =
@@ -18,6 +19,7 @@ fn a_table_walks_its_present_libraries_in_ascending_order() {
     assert_eq!(table.into_iter().collect::<Vec<_>>(), [(1, "gb again")]);
 }
 
+/// Basis: `novel_types.h:43` (`PHRASE_INDEX_LIBRARY_COUNT` 16): an index of 16 or more names no slot.
 #[test]
 fn an_index_past_the_last_library_names_no_slot() {
     let mut table = LibraryTable::new();

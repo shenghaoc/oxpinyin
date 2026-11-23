@@ -34,6 +34,7 @@ fn three_item_originals() -> SystemOriginals {
     .into()
 }
 
+/// Basis: `phrase_index.cpp:150-176` (a refused add moves no sub-index total; a reload keeps the saved one).
 #[test]
 fn training_creates_a_live_buffer_with_the_saved_library_total() {
     let originals = three_item_originals();

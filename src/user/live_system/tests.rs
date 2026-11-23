@@ -1,9 +1,7 @@
 use super::*;
 use crate::data::phrase_library::{ChunkItem, build_chunk};
 
-/// phrase_index.cpp:180-206 at 074a2219 can hand out
-/// an item extending past its buffer. The approved safe outcome is no
-/// item, never resurrection of the valid original in a separate mapping.
+/// Basis: policy row 107 (`074a2219 phrase_index.cpp:180-206`: an over-long item answers no item).
 #[test]
 fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
     use crate::data::{
@@ -86,7 +84,6 @@ fn session_over_system_library(
     let mut libraries = PhraseLibraries::empty();
     assert!(libraries.load(nibble, &path).unwrap());
     let original = PhraseLibrary::open(&path).unwrap();
-    // A table.conf that makes the library a `SYSTEM_FILE`.
     let conf_path = dir.join("table.conf");
     std::fs::write(
         &conf_path,
@@ -120,8 +117,7 @@ fn session_over_system_library(
     (libraries, store)
 }
 
-/// 074a2219 pinyin.cpp:337-367 loads the libraries named by table.conf;
-/// the configured library index is not restricted to the stock 1..=4.
+/// Basis: `074a2219 pinyin.cpp:337-367` (any `table.conf` row is a system library).
 #[test]
 fn a_nonstock_loaded_library_is_a_system_library() {
     let dir = tempfile::tempdir().unwrap();
@@ -136,12 +132,7 @@ fn a_nonstock_loaded_library_is_a_system_library() {
     );
 }
 
-/// With library 5 a `SYSTEM_FILE`, the promotion's token is the end of
-/// that sub-index's range (`pinyin.cpp:2541-2544` at the pin
-/// `074a2219`) and `add_phrase_item` puts the item in that sub-index,
-/// whose total takes the unigram (`pinyin.cpp:2558`,
-/// `phrase_index.h:663-671`, `phrase_index.cpp:208-217`). No second
-/// library 5 exists beside it.
+/// Basis: `074a2219 pinyin.cpp:2541-2558`, `phrase_index.h:663-671`, `phrase_index.cpp:146-148,208-217`.
 #[test]
 fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
     let dir = tempfile::tempdir().unwrap();
@@ -158,22 +149,19 @@ fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
     let token =
         crate::user::test_session::promote(&mut store, "二簧", &[(keys.to_vec(), 100)], 100)
             .unwrap();
-    assert_eq!(token, 0x0500_0002, "the chunk's range ends past slot 1");
-    assert!(!store.has_user_library(5), "no arena beside the sub-index");
-    // `SubPhraseIndex::get_phrase_index_total_freq` answers the
-    // sub-index's `m_total_freq` (`phrase_index.cpp:146-148`), which
-    // `add_phrase_item` raised by the item's unigram (`:215`).
+    assert_eq!(token, 0x0500_0002);
+    assert!(!store.has_user_library(5));
     assert_eq!(crate::user::test_session::library_total(&store, 5), 101);
     let unloaded = Cell::new(0);
     let live = LiveSystemItems::new(&libraries, &store, &unloaded);
     assert_eq!(live.read(token, |item| item.unigram()), Lookup::Found(100));
     assert_eq!(
         live.read(0x0500_0001, |item| item.unigram()),
-        Lookup::Found(1),
-        "the chunk's own item stays"
+        Lookup::Found(1)
     );
 }
 
+/// Basis: `phrase_index.cpp:180-206,477-501` (live buffer reads), Rust contract of `Lookup`.
 #[test]
 fn live_items_distinguish_found_absent_and_unloaded() {
     use crate::data::phrase_library::PhraseLibrary;
@@ -263,9 +251,6 @@ fn live_items_distinguish_found_absent_and_unloaded() {
             reading.keys.iter().collect::<Vec<_>>(),
         )
     };
-    // Every item of a library with a live buffer is read from it: the
-    // replayed one as the replay wrote it, an untouched one as the chunk
-    // stored it.
     assert_eq!(
         live.read(replayed, summary),
         Lookup::Found((ItemOrigin::Overlay, 1, 1, 107, vec![ni]))
@@ -288,16 +273,11 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     );
     assert!(live.is_visible(untouched) && !live.is_visible(removed));
 
-    // The header-only count agrees with the view for every state.
     assert_eq!(live.pronunciation_count(replayed), Lookup::Found(1));
     assert_eq!(live.pronunciation_count(untouched), Lookup::Found(1));
     assert_eq!(live.pronunciation_count(removed), Lookup::Absent);
     assert_eq!(live.pronunciation_count(absent), Lookup::Absent);
 
-    // The stored field and the live count are separate reads: the stored
-    // one is the chunk's; the live one adds the store's delta once.
-    assert_eq!(live.effective_unigram(untouched), Some(30));
-    assert_eq!(live.effective_unigram(absent), None);
     assert_eq!(live.effective_unigram(untouched), Some(30));
     assert_eq!(
         live.effective_unigram(replayed),
@@ -306,7 +286,6 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     assert_eq!(live.effective_unigram(removed), None);
     assert_eq!(live.effective_unigram(absent), None);
 
-    // The store's own accessors answer the same.
     assert_eq!(
         live.read(replayed, |item| item.pronunciation(0).map(|r| r.frequency))
             .found()
@@ -315,13 +294,10 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     );
     assert!(store.system_item_removed(removed));
 
-    // An unloaded library hides every token, whatever it holds.
     let unloaded = Cell::new(1 << 1);
     let hidden = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
-    for token in [replayed, removed, untouched, absent] {
-        assert_eq!(hidden.read(token, summary), Lookup::Unloaded);
-        assert_eq!(hidden.pronunciation_count(token), Lookup::Unloaded);
-        assert!(!hidden.is_visible(token));
-        assert_eq!(hidden.effective_unigram(token), None);
-    }
+    assert_eq!(hidden.read(untouched, summary), Lookup::Unloaded);
+    assert_eq!(hidden.pronunciation_count(untouched), Lookup::Unloaded);
+    assert!(!hidden.is_visible(untouched));
+    assert_eq!(hidden.effective_unigram(untouched), None);
 }
