@@ -39,6 +39,8 @@
 //!   valid and aligned for a write of its pointee type.
 //! - **Serial calls.** Serialize calls that use the same context or its
 //!   instances or iterators.
+//!   For key and key-rest pointers, also follow the
+//!   [shared static-slot rule](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#threat-model).
 //!
 //! ### Borrowed objects
 //!
@@ -46,6 +48,8 @@
 //! [`candidates::zhuyin_get_candidate`]. The pointer becomes invalid when the instance's
 //! candidate list is rebuilt or cleared, including by [`instance::zhuyin_reset`], or
 //! when [`instance::zhuyin_free_instance`] frees the instance.
+//! [`candidates::zhuyin_choose_candidate`] can read a row from another live
+//! instance. It only reads the donor row; the borrowed-row requirements still apply.
 //!
 //! A key pointer is null or points to a [`types::ChewingKey`] valid for reads. A
 //! key-rest pointer is null or points to a [`types::ChewingKeyRest`] valid for reads.
