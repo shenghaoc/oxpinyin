@@ -31,7 +31,8 @@ use oxpinyin::vocab::{MAX_PHRASE_LENGTH, NULL_TOKEN, SENTENCE_START};
 use rustc_hash::FxHashMap;
 
 use oxpinyin::model::PhraseList;
-use oxpinyin::vocab::{PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin::parser::ChewingKey;
+use oxpinyin::vocab::{PhraseEntry, PhraseToken};
 
 use super::model::EvalLanguageModel;
 
@@ -43,7 +44,7 @@ const NBEAM: usize = 32;
 pub trait PhraseSource {
     /// The highest-frequency pronunciation of `token` as syllable keys, or
     /// `None` when the token has no pronunciation.
-    fn best_keys(&self, token: PhraseToken) -> Option<Vec<SyllableKey>>;
+    fn best_keys(&self, token: PhraseToken) -> Option<Vec<ChewingKey>>;
 
     /// The phrase text of `token`, or `None` when it is unknown.
     fn text(&self, token: PhraseToken) -> Option<String>;
@@ -76,7 +77,7 @@ pub fn correction_rate<D, P>(
     sentences: &[Vec<PhraseToken>],
 ) -> Option<EvalReport>
 where
-    D: PhraseList<Syllable = SyllableKey>,
+    D: PhraseList<Syllable = ChewingKey>,
     P: PhraseSource,
 {
     let mut tested = 0;
@@ -117,7 +118,7 @@ where
 fn sentence_keys<P: PhraseSource>(
     phrases: &P,
     sentence: &[PhraseToken],
-) -> Option<Vec<SyllableKey>> {
+) -> Option<Vec<ChewingKey>> {
     let mut keys = Vec::new();
     for &token in sentence {
         keys.extend(phrases.best_keys(token)?);
@@ -182,22 +183,22 @@ impl Step {
 }
 
 /// Scoring context shared by the C++-shaped helpers.
-struct ScoreCtx<'a> {
-    model: &'a EvalLanguageModel,
+struct ScoreCtx<'a, 'tables> {
+    model: &'a EvalLanguageModel<'tables>,
     bigram_lambda: f32,
     unigram_lambda: f32,
 }
 
-/// `PhoneticLookup<1, 1>::get_nbest_match` over a clean chain of complete
+/// `PhoneticLookup<1, 1>::get_nbest_match` over a chain of stored
 /// keys, one per cell, prefixed by `sentence_start`, then
 /// `extract_result`: the best token sequence in order.
 fn get_nbest_match<D>(
     dictionary: &D,
     model: &EvalLanguageModel,
-    keys: &[SyllableKey],
+    keys: &[ChewingKey],
 ) -> Option<Vec<PhraseToken>>
 where
-    D: PhraseList<Syllable = SyllableKey>,
+    D: PhraseList<Syllable = ChewingKey>,
 {
     if keys.is_empty() {
         return Some(Vec::new());
@@ -225,8 +226,14 @@ where
             continue;
         }
         let topresults = steps[i].top_results(NBEAM);
-        let last = (i + MAX_PHRASE_LENGTH).min(nstep - 1);
-        for m in i + 1..=last {
+        let mut phrase_keys = 0;
+        for m in i + 1..nstep {
+            // search_matrix skips zero cells and limits the collected keys
+            // (`phonetic_key_matrix.cpp:362-369,389-393`).
+            phrase_keys += usize::from(keys[m - 1] != ChewingKey::default());
+            if phrase_keys > MAX_PHRASE_LENGTH {
+                break;
+            }
             let span = &keys[i..m];
             let entries = priced_entries(dictionary, span)?;
             if !entries.is_empty() {
@@ -246,25 +253,15 @@ where
 
 /// `search_matrix` for one key span: the phrases the span spells exactly, in
 /// token order, each priced with its pronunciation possibility.
-fn priced_entries<D>(dictionary: &D, span: &[SyllableKey]) -> Option<Vec<PhraseEntry>>
+fn priced_entries<D>(dictionary: &D, span: &[ChewingKey]) -> Option<Vec<PhraseEntry>>
 where
-    D: PhraseList<Syllable = SyllableKey>,
+    D: PhraseList<Syllable = ChewingKey>,
 {
     let mut entries = dictionary.lookup(span).ok()?;
     // Library-then-token order (`prepare_ranges` walk): token ascending, so
     // ties resolve as the pin's do.
     entries.sort_by_key(|entry| entry.token());
-    // The search carries tokens only; each step prices its item
-    // (`compute_pronunciation_possibility`, `phonetic_lookup.h:646-656`).
-    let mut priced = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let item = dictionary.trellis_item(span, &[], entry.token()).ok()?;
-        priced.push(match item.and_then(|item| item.pronunciation) {
-            Some((matched, total)) => entry.with_pronunciation_possibility(matched, total),
-            None => entry,
-        });
-    }
-    Some(priced)
+    Some(entries)
 }
 
 /// The token path ending at the last step's best node (`get_tails` and `extract_result`).
@@ -301,7 +298,7 @@ fn search_unigram2(
     end: usize,
     max: &Node,
     entries: &[PhraseEntry],
-    ctx: &ScoreCtx<'_>,
+    ctx: &ScoreCtx<'_, '_>,
 ) {
     for entry in entries {
         unigram_gen_next_step(steps, start, end, max, entry, ctx);
@@ -317,18 +314,25 @@ fn search_bigram2(
     end: usize,
     topresults: &[Node],
     entries: &[PhraseEntry],
-    ctx: &ScoreCtx<'_>,
+    ctx: &ScoreCtx<'_, '_>,
 ) {
     for value in topresults {
         // merge_single_gram fails without a system row: skip the node.
-        if !ctx.model.has_bigram_row(value.token) {
+        let Some(row) = ctx.model.bigram_row(value.token) else {
             continue;
-        }
+        };
         for entry in entries {
-            let Some(bigram_poss) = ctx.model.bigram_poss(value.token, entry.token()) else {
-                continue;
-            };
-            bigram_gen_next_step(steps, start, end, value, entry, bigram_poss, ctx);
+            let token = entry.token();
+            let first = row.records.partition_point(|&(next, _)| next < token);
+            // SingleGram::search visits every matching stored record,
+            // including duplicates (`ngram.cpp:153-173`).
+            for &(_, count) in row.records[first..]
+                .iter()
+                .take_while(|&&(next, _)| next == token)
+            {
+                let bigram_poss = count as f32 / row.total as f32;
+                bigram_gen_next_step(steps, start, end, value, entry, bigram_poss, ctx);
+            }
         }
     }
 }
@@ -352,7 +356,7 @@ fn unigram_gen_next_step(
     end: usize,
     cur: &Node,
     entry: &PhraseEntry,
-    ctx: &ScoreCtx<'_>,
+    ctx: &ScoreCtx<'_, '_>,
 ) {
     let token = entry.token();
     let elem_poss = ctx.model.unigram_poss(token);
@@ -388,7 +392,7 @@ fn bigram_gen_next_step(
     cur: &Node,
     entry: &PhraseEntry,
     bigram_poss: f32,
-    ctx: &ScoreCtx<'_>,
+    ctx: &ScoreCtx<'_, '_>,
 ) {
     let token = entry.token();
     let unigram_poss = ctx.model.unigram_poss(token);

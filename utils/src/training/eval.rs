@@ -20,8 +20,6 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 
-#[cfg(test)]
-mod counts;
 mod decode;
 mod model;
 

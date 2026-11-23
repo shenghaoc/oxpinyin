@@ -535,6 +535,8 @@ wraps the merged u32 field.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
+| Correction-rate model | `PhoneticLookup` borrows its tables; each beam node and span loads one bigram row, then deletes it (`lookup/phonetic_lookup.h:588-636,707-728`). Unigram counts are read during scoring (`:646-651,674-679`). | `utils/src/training/eval/model.rs` borrows the loaded libraries and hash. It reads only requested unigrams and rows, without a cache or an eager map. | same / argued; stored totals remain authoritative; range search visits duplicate successor records in order (`storage/ngram.cpp:153-173`) |
+| Correction-rate pronunciation keys | Highest-frequency stored reading, first on ties and index 0 when all frequencies are zero (`utils/training/eval_correction_rate.cpp:47-60`). `fill_matrix` retains packed fields and tones; search and pronunciation pricing skip zero cells (`storage/phonetic_key_matrix.cpp:54-59,389-393,567-574`). | `LibraryPhraseSource` compares borrowed pronunciation views, converts only the winner to `ChewingKey`, and preserves tones. `EvalDictionary` skips zero cells; the decoder limits nonzero keys to 16 per phrase. | same / argued; no spelling round trip |
 | K-mixture model | `utils/training` (`k_mixture_model.h` and tools) | `oxpinyin-utils` `k_mixture_model` | same / argued ([training algorithm](training-algorithm.md) §7); abort sites reproduced ([record](upstream-divergences.md#kmm-tool-asserts-write-no-macro-text)) |
 | System data | `gen_binary_files`, `import_interpolation`, `gen_unigram` | `oxpinyin-utils`' utilities of the same names, run in the pin's `data/Makefile.am` sequence | different / argued — byte-identical output |
 
