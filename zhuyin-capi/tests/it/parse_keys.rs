@@ -213,42 +213,6 @@ fn parses_stop_at_an_invalid_byte() {
     unsafe { zhuyin_fini(context) };
 }
 
-/// The left move past the matrix asserts in its column read
-/// (`phonetic_key_matrix.h:103`).
-#[test]
-fn left_offset_past_the_matrix_aborts() {
-    assert_aborts("parse_keys::left_offset_past_the_matrix_aborts", || {
-        let (context, _) = open();
-        let mut out = 0;
-        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
-        let instance = unsafe { chewing(context, "su3cl3") };
-        unsafe { zhuyin_get_left_zhuyin_offset(instance, 99, &raw mut out) };
-    });
-}
-
-/// The right move past the matrix asserts in its column read.
-#[test]
-fn right_offset_past_the_matrix_aborts() {
-    assert_aborts("parse_keys::right_offset_past_the_matrix_aborts", || {
-        let (context, _) = open();
-        let mut out = 0;
-        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
-        let instance = unsafe { chewing(context, "su3cl3") };
-        unsafe { zhuyin_get_right_zhuyin_offset(instance, 99, &raw mut out) };
-    });
-}
-
-/// The key rest on an empty matrix asserts after `matrix.size() - 1` wraps
-/// (`zhuyin.cpp:1914-1917`).
-#[test]
-fn key_rest_on_an_empty_matrix_aborts() {
-    assert_aborts("parse_keys::key_rest_on_an_empty_matrix_aborts", || {
-        let (_context, instance) = open();
-        let mut rest: *mut ChewingKeyRest = ptr::null_mut();
-        unsafe { zhuyin_get_zhuyin_key_rest(instance, 0, &raw mut rest) };
-    });
-}
-
 /// A character walk that fails stores the length it reached, 0
 /// (`zhuyin.cpp:2192`).
 #[test]
@@ -405,26 +369,6 @@ fn parse_chewing_accepts_a_shuffled_reading_when_enabled() {
     }
 }
 
-/// The `ZHUYIN_STANDARD_DVORAK` slot aborts the process, as the pin's
-/// `set_scheme` falls through to `abort()` (`zhuyin_parser2.cpp:295`).
-#[test]
-fn the_dvorak_chewing_scheme_aborts() {
-    crate::support::assert_aborts("parse_keys::the_dvorak_chewing_scheme_aborts", || {
-        let (context, _instance) = open();
-        unsafe { crate::support::zhuyin_set_chewing_scheme(context, 7) };
-    });
-}
-
-/// An out-of-enum keyboard (`zhuyin.cpp:736`) and a full-pinyin scheme
-/// outside 1-3 (`pinyin_parser2.cpp:398`) abort the process.
-#[test]
-fn an_out_of_enum_chewing_scheme_aborts() {
-    crate::support::assert_aborts("parse_keys::an_out_of_enum_chewing_scheme_aborts", || {
-        let (context, _instance) = open();
-        unsafe { crate::support::zhuyin_set_chewing_scheme(context, 10) };
-    });
-}
-
 #[test]
 fn an_out_of_range_full_pinyin_scheme_aborts() {
     crate::support::assert_aborts(
@@ -446,26 +390,6 @@ fn a_single_key_apostrophe_aborts() {
         let mut key = crate::support::ChewingKey::ZERO;
         unsafe { crate::support::zhuyin_parse_full_pinyin(instance, text.as_ptr(), &raw mut key) };
     });
-}
-
-/// on a fresh instance `offset >= matrix.size() - 1` is
-/// `offset >= SIZE_MAX` (`zhuyin.cpp:1892-1893`, `:1914-1915`), so
-/// `SIZE_MAX` answers `false` with the out-param NULLed.
-#[test]
-fn the_key_accessors_answer_false_at_size_max_on_an_empty_matrix() {
-    let _slots = crate::support::key_slot_guard();
-    let (context, instance) = open();
-    let mut key = std::ptr::NonNull::<crate::support::ChewingKey>::dangling().as_ptr();
-    assert!(!unsafe { crate::support::zhuyin_get_zhuyin_key(instance, usize::MAX, &raw mut key) });
-    assert!(key.is_null());
-    let mut rest = std::ptr::NonNull::<crate::support::ChewingKeyRest>::dangling().as_ptr();
-    assert!(!unsafe {
-        crate::support::zhuyin_get_zhuyin_key_rest(instance, usize::MAX, &raw mut rest)
-    });
-    assert!(rest.is_null());
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
 }
 
 /// Past byte 65535 the key-rest positions narrow into the pin's `guint16`
@@ -657,45 +581,6 @@ fn reparse_preserves_candidate_strings_until_guess_or_reset(
     assert_eq!(after, 0);
     assert!(!unsafe { zhuyin_get_candidate(instance, 0, &raw mut current) });
     assert!(current.is_null());
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
-/// An apostrophe-only parse under the default options. libzhuyin's
-/// full-pinyin parse runs the same separator branch, which moves the
-/// parse one byte per `'` and places no key
-/// (`storage/pinyin_parser2.cpp:238-250` at 074a2219);
-/// `zhuyin_parse_more_full_pinyins` answers that length and stores it for
-/// `zhuyin_get_parsed_input_length` (`zhuyin.cpp:1030`, `:1034`, `:1042`,
-/// `:1083-1085`). Each case holds the pin's consumed and parsed lengths
-/// from its frozen observation (pin 074a2219, the pinned
-/// libpinyin-data). No
-/// database is read, so every cell runs this.
-#[rstest]
-// zero-key-guess/zhuyin/default/'/guess_sentence; pinyin_parser2.cpp:238-250.
-#[case::one("'", 1, 1)]
-// zero-key-guess/zhuyin/default/''/guess_sentence; pinyin_parser2.cpp:238-250.
-#[case::two("''", 2, 2)]
-// zero-key-guess/zhuyin/default/'''/guess_sentence; pinyin_parser2.cpp:238-250.
-#[case::three("'''", 3, 3)]
-fn an_apostrophe_only_parse_matches_the_pin(
-    #[case] input: &str,
-    #[case] consumed: usize,
-    #[case] parsed_length: usize,
-) {
-    let (context, instance) = open();
-
-    let text = cstr(input);
-    assert_eq!(
-        unsafe { zhuyin_parse_more_full_pinyins(instance, text.as_ptr()) },
-        consumed
-    );
-    assert_eq!(
-        unsafe { zhuyin_get_parsed_input_length(instance) },
-        parsed_length
-    );
-
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };

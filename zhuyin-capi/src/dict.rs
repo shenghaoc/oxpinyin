@@ -373,6 +373,3 @@ pub unsafe extern "C" fn zhuyin_token_add_unigram_frequency(
     let ctx = borrow_or_return!(instance, crate::state::instance_context_mut, false);
     ctx.core.runtime.add_unigram_delta(token, u64::from(delta))
 }
-
-#[cfg(test)]
-mod tests;

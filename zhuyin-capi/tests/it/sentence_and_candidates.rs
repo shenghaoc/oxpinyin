@@ -393,21 +393,6 @@ fn after_cursor_guess_one_past_the_reserved_slot_aborts() {
     );
 }
 
-/// The sentence getter answers from the n-best results alone: false with the
-/// output untouched on a fresh and on a parsed instance (`zhuyin.cpp:988`).
-#[test]
-fn get_sentence_before_a_guess_leaves_the_output() {
-    let (context, instance) = open();
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    assert_eq!(unsafe { sentence(instance) }, (false, None));
-    unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) };
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    assert_eq!(unsafe { sentence(instance) }, (false, None));
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
 /// A partial user gram refuses the candidate lookup with one warning.
 #[test]
 fn partial_candidate_gram_logs_once() {

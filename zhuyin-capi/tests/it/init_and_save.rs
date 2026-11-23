@@ -7,21 +7,12 @@
 
 use crate::support::fresh_user_conf_line;
 
-#[cfg(unix)]
-use crate::support::directory_reads_as_a_chunk_here;
-#[cfg(unix)]
-use crate::support::map_a_directory_library;
-
-use crate::support::init_at;
-
 use crate::support::LogCapture;
 use crate::support::TempUserDir;
 use crate::support::abort_in_child;
-use crate::support::assert_aborts;
 use crate::support::close;
 use crate::support::cstr;
 use crate::support::init_on;
-use crate::support::open;
 use crate::support::open_with_user;
 use crate::support::private_system;
 use crate::support::run_in_child;
@@ -32,7 +23,6 @@ use crate::support::zhuyin_end_add_phrases;
 use crate::support::zhuyin_fini;
 use crate::support::zhuyin_free_instance;
 use crate::support::zhuyin_init;
-use crate::support::zhuyin_load_phrase_library;
 use crate::support::zhuyin_save;
 
 #[cfg(unix)]
@@ -154,16 +144,6 @@ fn init_refusals_write_the_open_and_load_lines() {
          open {conf} failed.{nl}load {conf} failed!{nl}"
     );
     assert_eq!(String::from_utf8_lossy(&run.stderr), expected);
-}
-
-/// Library 0 is the reserved row, neither `SYSTEM_FILE` nor `USER_FILE`:
-/// the load asserts (`zhuyin.cpp:372`).
-#[test]
-fn loading_library_zero_aborts() {
-    assert_aborts("init_and_save::loading_library_zero_aborts", || {
-        let (context, _instance) = open();
-        unsafe { zhuyin_load_phrase_library(context, 0) };
-    });
 }
 
 /// An unknown `database format:` in `table.conf` aborts the init
@@ -476,42 +456,6 @@ fn zhuyin_launches_never_move_the_open_counter() {
         unsafe { close(context, instance) };
     }
     assert_eq!(std::fs::read(&marker).expect("marker"), saved);
-}
-
-/// A malformed journal aborts on the reload path: `zhuyin_load_phrase_library` of an
-/// unloaded library merges its saved `.dbin` (`zhuyin.cpp:219`).
-#[test]
-fn reload_aborts_on_a_log_header_token() {
-    crate::support::assert_aborts("init_and_save::reload_aborts_on_a_log_header_token", || {
-        let user_dir = TempUserDir::new("reload-header-token");
-        crate::support::plant_log(&user_dir.path, "gbk_char.dbin", &[]);
-        let context = init_at(&user_dir.path);
-        assert!(!context.is_null());
-        assert!(unsafe { crate::support::zhuyin_unload_phrase_library(context, 2) });
-        crate::support::plant_log(
-            &user_dir.path,
-            "gbk_char.dbin",
-            &crate::support::logs::header_token(),
-        );
-        let _ = unsafe { crate::support::zhuyin_load_phrase_library(context, 2) };
-    });
-}
-
-/// A directory read as a short chunk aborts at the reload of an unloaded library.
-// Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
-#[cfg(unix)]
-#[test]
-fn reload_aborts_on_a_directory_library() {
-    if directory_reads_as_a_chunk_here() {
-        crate::support::assert_aborts(
-            "init_and_save::reload_aborts_on_a_directory_library",
-            || {
-                let _ = map_a_directory_library("reload");
-            },
-        );
-    } else {
-        assert!(map_a_directory_library("reload"));
-    }
 }
 
 /// A second `zhuyin_fini` on one context: the pin

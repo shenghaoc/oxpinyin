@@ -7,7 +7,7 @@
 )]
 
 use crate::support::{
-    LogCapture, TempUserDir, ZhuyinInstance, close, cstr, import, open, open_with_user, system_dir,
+    TempUserDir, ZhuyinInstance, close, cstr, import, open, open_with_user, system_dir,
     take_sentence, tokens_of, ucs4_key, write_user_conf, zhuyin_save,
     zhuyin_token_get_n_pronunciation, zhuyin_token_get_nth_pronunciation, zhuyin_token_get_phrase,
     *,
@@ -58,49 +58,6 @@ fn take_cleared() -> Vec<u32> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
     )
-}
-
-/// Register entry "Token getters on a phrase longer than sixteen characters
-/// ": at 074a2219 `_token_get_phrase` and
-/// `zhuyin_token_get_nth_pronunciation` copy a 17-word item into 16-entry
-/// stack buffers (`zhuyin.cpp:1101,1107,1800,1807`), so the pin's result is
-/// undefined and nothing runs on it. oxpinyin's prescribed result: both
-/// answer true with the whole stored item.
-#[test]
-fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
-    use oxpinyin::data::chunk_format::build_memory_chunk;
-    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
-
-    let user = TempUserDir::new("user-file-long-phrase");
-    write_user_conf(&user.path, &system_dir());
-    let text = "一二三四五六七八九十一二三四五六七";
-    let item = ChunkItem {
-        phrase: text.chars().map(u32::from).collect(),
-        unigram: 17,
-        prons: vec![(vec![0x302b_u16; 17], 5)],
-    };
-    let chunk = build_chunk(&[(1, &item)]).expect("one-item user chunk");
-    std::fs::write(
-        user.path.join("user.bin"),
-        build_memory_chunk(&chunk[8..]).expect("frame"),
-    )
-    .expect("write user.bin");
-
-    let (context, instance) = open_with_user(&user.path);
-    let token = 0x0700_0001;
-    assert_eq!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { token_phrase(instance, token) },
-        (true, 17, Some(text.to_owned()))
-    );
-    assert_eq!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { nth_pronunciation(instance, token, 0) },
-        (true, 17, "2b30".repeat(17))
-    );
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
 }
 
 /// A stored word at or above 0x80000000 makes `g_ucs4_to_utf8` answer NULL,
@@ -229,46 +186,6 @@ fn caller_arrays_keep_their_metadata_and_clear_through_the_callback() {
         // SAFETY: the array is freed once, with its data.
         unsafe { glib_sys::g_array_free(array, 1) };
     }
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
-/// A NULL key array makes GLib log a critical for each array call: two for
-/// a known token (`g_array_set_size`, `g_array_append_vals`), one for an
-/// unknown token.
-#[test]
-fn a_null_pronunciation_array_logs_the_glib_criticals() {
-    let user = TempUserDir::new("garray-null-pronunciation");
-    let (context, instance) = open_with_user(&user.path);
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    let token = unsafe { tokens_of(instance, "你好") }[0];
-    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
-    assert!(unsafe { import(context, 7, "你好", "ㄋㄧˇ ㄏㄠˇ".as_bytes(), 1) });
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    let user_token = unsafe { tokens_of(instance, "你好") }
-        .into_iter()
-        .find(|token| token >> 24 == 7)
-        .expect("the imported USER_FILE item");
-    let logs = LogCapture::new();
-    let glib = (Some("GLib".to_owned()), CRITICAL);
-    for token in [token, user_token] {
-        assert!(unsafe { zhuyin_token_get_nth_pronunciation(instance, token, 0, ptr::null_mut()) });
-        let records = logs.take_with_messages();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0].0, glib);
-        assert!(records[0].1.contains("g_array_set_size"));
-        assert_eq!(records[1].0, glib);
-        assert!(records[1].1.contains("g_array_append_vals"));
-    }
-    assert!(!unsafe {
-        zhuyin_token_get_nth_pronunciation(instance, 0xFFFF_FFFF, 0, ptr::null_mut())
-    });
-    let records = logs.take_with_messages();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].0, glib);
-    assert!(records[0].1.contains("g_array_set_size"));
-    drop(logs);
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };

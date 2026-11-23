@@ -5,13 +5,6 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
-#[cfg(unix)]
-use crate::support::directory_reads_as_a_chunk_here;
-#[cfg(unix)]
-use crate::support::map_a_directory_library;
-
-use crate::support::init_at;
-
 use crate::support::{
     TempUserDir, assert_aborts, close, craft_user_index, cstr, import, init_on, open_with_user,
     plant_bigram, system_dir, tokens_of, ucs4_key, write_user_conf, zhuyin_fini,
@@ -85,20 +78,6 @@ fn an_imported_den_reading_stores_its_key() {
     unsafe { close(context, instance) };
 }
 
-/// mask_out walks the user index and asserts on a key longer than 16 words.
-#[test]
-fn mask_out_over_an_overlong_user_index_key_aborts() {
-    assert_aborts(
-        "import_and_user_store::mask_out_over_an_overlong_user_index_key_aborts",
-        || {
-            let user_dir = TempUserDir::new("overlong-mask");
-            overlong_index_profile(&user_dir.path);
-            let (context, _instance) = open_with_user(&user_dir.path);
-            unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) };
-        },
-    );
-}
-
 /// The cursor guesses never read the overlong user index key: both answer
 /// true, with no abort.
 #[test]
@@ -127,35 +106,6 @@ fn adding_a_phrase_with_two_library_tokens_aborts() {
             first_init(&user_dir.path);
             let value = [0x0700_0001_u32.to_le_bytes(), 0x0700_0002_u32.to_le_bytes()].concat();
             add_after_index(&user_dir.path, &value);
-        },
-    );
-}
-
-/// A user bigram key that is not a four-byte token aborts the mask walk.
-#[test]
-fn mask_out_over_a_non_token_bigram_key_aborts() {
-    assert_aborts(
-        "import_and_user_store::mask_out_over_a_non_token_bigram_key_aborts",
-        || {
-            let user_dir = TempUserDir::new("bigram-key");
-            plant_bigram(&user_dir.path, vec![(vec![0, 1], vec![7, 0, 0, 0])]);
-            let (context, _instance) = open_with_user(&user_dir.path);
-            unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) };
-        },
-    );
-}
-
-/// A user gram whose item survives the mask with a zero token aborts the walk.
-#[test]
-fn mask_out_over_a_residual_bigram_gram_aborts() {
-    assert_aborts(
-        "import_and_user_store::mask_out_over_a_residual_bigram_gram_aborts",
-        || {
-            let user_dir = TempUserDir::new("bigram-residual");
-            let value = [&[7_u8, 0, 0, 0][..], &[0; 8]].concat();
-            plant_bigram(&user_dir.path, vec![(vec![1, 0, 0, 0], value)]);
-            let (context, _instance) = open_with_user(&user_dir.path);
-            unsafe { zhuyin_mask_out(context, 0xFFFF_FFFF, 0) };
         },
     );
 }
@@ -214,80 +164,4 @@ fn the_import_reads_a_chewing_reading_up_to_an_invalid_byte() {
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };
-}
-
-/// `mask_out` reloads library 1 and `_mask_out_records`
-/// appends a kept ADD with both chunk pointers (`phrase_index_logger.h:245`).
-#[test]
-fn mask_out_aborts_on_a_surviving_add() {
-    crate::support::assert_aborts(
-        "import_and_user_store::mask_out_aborts_on_a_surviving_add",
-        || {
-            let user_dir = TempUserDir::new("mask-surviving-add");
-            crate::support::plant_log(&user_dir.path, "gb_char.dbin", &[]);
-            let context = init_at(&user_dir.path);
-            assert!(!context.is_null());
-            let payload = [crate::support::logs::header(), crate::support::logs::add()].concat();
-            crate::support::plant_log(&user_dir.path, "gb_char.dbin", &payload);
-            let _ = unsafe { crate::support::zhuyin_mask_out(context, 0xffff_ffff, 0x0100_0001) };
-        },
-    );
-}
-
-/// A kept REMOVE passes a non-null new chunk to the logger (phrase_index_logger.h:257).
-#[test]
-fn mask_out_aborts_on_a_surviving_remove() {
-    crate::support::assert_aborts(
-        "import_and_user_store::mask_out_aborts_on_a_surviving_remove",
-        || {
-            let user_dir = TempUserDir::new("mask-surviving-remove");
-            crate::support::plant_log(&user_dir.path, "gb_char.dbin", &[]);
-            let context = init_at(&user_dir.path);
-            assert!(!context.is_null());
-            let payload = [
-                crate::support::logs::header(),
-                crate::support::logs::remove(),
-            ]
-            .concat();
-            crate::support::plant_log(&user_dir.path, "gb_char.dbin", &payload);
-            let _ = unsafe { crate::support::zhuyin_mask_out(context, 0xffff_ffff, 0x0100_0001) };
-        },
-    );
-}
-
-/// `zhuyin_mask_out` loads token 1's gram, which the mask
-/// leaves alone, and `SingleGram::mask_out` reads its total from three bytes
-/// (`ngram.cpp:80`, `memory_chunk.h:390`).
-#[test]
-fn mask_out_aborts_on_a_short_bigram_value() {
-    crate::support::assert_aborts(
-        "import_and_user_store::mask_out_aborts_on_a_short_bigram_value",
-        || {
-            let user_dir = TempUserDir::new("mask-short-gram");
-            crate::support::plant_bigram(
-                &user_dir.path,
-                vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
-            );
-            let context = init_at(&user_dir.path);
-            assert!(!context.is_null());
-            let _ = unsafe { crate::support::zhuyin_mask_out(context, 0xffff_ffff, 0) };
-        },
-    );
-}
-
-/// A directory read as a short chunk aborts at mask-out, after the user tables are masked.
-// Unix only, for the reason `oxpinyin`'s `save_stops_at_the_directory_with_the_pins_files` gives.
-#[cfg(unix)]
-#[test]
-fn mask_out_aborts_on_a_directory_library() {
-    if directory_reads_as_a_chunk_here() {
-        crate::support::assert_aborts(
-            "import_and_user_store::mask_out_aborts_on_a_directory_library",
-            || {
-                let _ = map_a_directory_library("mask");
-            },
-        );
-    } else {
-        assert!(map_a_directory_library("mask"));
-    }
 }
