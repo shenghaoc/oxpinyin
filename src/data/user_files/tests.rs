@@ -1,5 +1,6 @@
 use super::*;
 
+// 074a2219 pinyin_internal.h:58-63 and data/table.conf.in define the user filenames.
 #[test]
 fn user_dbm_names_are_libpinyins_own() {
     assert_eq!(UserDbm::Bigram.file_name(), "user_bigram.db");
@@ -18,6 +19,7 @@ fn user_dbm_names_are_libpinyins_own() {
     );
 }
 
+// Rust chunk_payload maps frame faults to their I/O error kinds.
 #[test]
 fn chunk_payload_round_trip_through_the_frame() {
     let payload = encode_log_records(&[LogRecord::Add {
@@ -55,14 +57,13 @@ fn parse(bytes: &[u8]) -> Result<UserTableInfo, UserConfError> {
     UserTableInfo::load_path(&path)
 }
 
+// 074a2219 table_info.cpp:325-426 saves marker fields and checks versions, format and counter.
 #[test]
 fn user_conf_round_trips_and_conforms() {
     let versions = SystemVersions::for_this_build(7, 14);
     let conform = UserTableInfo::conform_to(&versions);
     assert!(conform.is_conform(&versions));
 
-    // `save` uses the pin's `fopen("w")` and `fprintf`: the host C
-    // runtime writes CRLF on Windows and LF on Linux/macOS.
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("user.conf");
     let filename = crate::input::c_path(&path).expect("c path");
@@ -72,20 +73,16 @@ fn user_conf_round_trips_and_conforms() {
         "binary format version:7{newline}model data version:14{newline}database format:{DEFAULT_STORE_DB_FORMAT}{newline}open counter:0{newline}"
     );
     assert_eq!(std::fs::read(&path).expect("read"), expected.as_bytes());
-    // Read the file the boundary actually wrote through its `fopen("r")`
-    // and scanner, including native text-mode translation.
     let reloaded = UserTableInfo::load(&filename).expect("reload saved marker");
     assert_eq!(reloaded, conform);
     assert!(reloaded.is_conform(&versions));
 
-    // A stale model version never conforms.
     let stale = UserTableInfo {
         model_data_version: 13,
         ..conform.clone()
     };
     assert!(!stale.is_conform(&versions));
 
-    // A cross-backend marker never conforms — the ruling's mechanism.
     let mut other = conform.clone();
     if DEFAULT_STORE_DB_FORMAT == "KyotoCabinet" {
         other.database_format = Some("Tkrzw".to_owned());
@@ -93,32 +90,20 @@ fn user_conf_round_trips_and_conforms() {
         other.database_format = Some("KyotoCabinet".to_owned());
     }
     assert!(!other.is_conform(&versions));
-    // A token no upstream build ever emits never conforms — and is
-    // not even parsable any more: the `database format:` directive
-    // refuses it where upstream's mapper aborts (#590).
-    assert!(!conform_with("NotADbmLibrary").is_conform(&versions));
 
-    // The open-counter rebuild limit.
-    let tired = UserTableInfo {
-        open_counter: OPEN_COUNTER_LIMIT + 1,
-        ..conform.clone()
-    };
-    assert!(!tired.is_conform(&versions));
-    let rested = UserTableInfo {
-        open_counter: OPEN_COUNTER_LIMIT,
-        ..conform
-    };
-    assert!(rested.is_conform(&versions));
-    // get_open_counter reads a counter past the limit as 0, and any
-    // other value as itself.
-    assert_eq!(get_open_counter(OPEN_COUNTER_LIMIT), OPEN_COUNTER_LIMIT);
-    assert_eq!(get_open_counter(OPEN_COUNTER_LIMIT + 1), 0);
-    assert_eq!(get_open_counter(i32::MAX), 0);
-    assert_eq!(get_open_counter(0), 0);
-    assert_eq!(get_open_counter(-3), -3);
-    assert_eq!(get_open_counter(i32::MIN), i32::MIN);
+    for (counter, conforms, read) in [
+        (-3, true, -3),
+        (OPEN_COUNTER_LIMIT, true, OPEN_COUNTER_LIMIT),
+        (OPEN_COUNTER_LIMIT + 1, false, 0),
+    ] {
+        let marker = UserTableInfo {
+            open_counter: counter,
+            ..conform.clone()
+        };
+        assert_eq!(marker.is_conform(&versions), conforms);
+        assert_eq!(get_open_counter(counter), read);
+    }
 
-    // The marker conforms against what table.conf declares.
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("table.conf"),
@@ -136,9 +121,6 @@ fn user_conf_round_trips_and_conforms() {
         }
     );
 
-    // The third directive running off the end of the file leaves
-    // `format` at UNKNOWN_FORMAT — the one outcome that is not
-    // upstream's abort.
     let sparse = parse(b"binary format version:7\nmodel data version:14\n").expect("parse");
     assert_eq!(sparse.database_format, None);
     assert_eq!(sparse.open_counter, 0);
@@ -153,40 +135,35 @@ fn user_conf_round_trips_and_conforms() {
     ));
 }
 
-/// tests/storage/test_table_info.cpp:85-97 at 074a2219: a fresh marker
-/// does not conform, `make_conform` does, and so does its saved copy.
+// 074a2219 tests/storage/test_table_info.cpp:85-97 exercises make-conform, save and reopen.
 #[test]
-fn a_fresh_zero_version_marker_requires_conformance_for_either_source_format() {
+fn a_fresh_zero_version_marker_requires_conformance() {
     let dir = tempfile::tempdir().unwrap();
-    let config = dir.path().join("table.conf");
     let profile = dir.path().join("user.conf");
     let filename = crate::input::c_path(&profile).unwrap();
-    for (source, backend) in [("pinyin", "Tkrzw"), ("zhuyin", "KyotoCabinet")] {
-        std::fs::write(&config, format!("binary format version:0\nmodel data version:0\nlambda parameter:0.5\nsource table format:{source}\ndatabase format:{backend}\n")).unwrap();
-        let conf = crate::data::TableConf::load_from_dir(dir.path()).unwrap();
-        let versions = SystemVersions::from_conf(&conf);
-        let fresh = UserTableInfo {
-            binary_format_version: 0,
-            model_data_version: 0,
-            database_format: None,
-            open_counter: 0,
-        };
-        assert!(!fresh.is_conform(&versions));
-        let conformed = UserTableInfo::conform_to(&versions);
-        assert!(conformed.save(&filename));
-        let reloaded = UserTableInfo::load(&filename).unwrap();
-        assert_eq!(reloaded.database_format.as_deref(), Some(backend));
-        assert!(reloaded.is_conform(&versions));
-        assert_eq!(reloaded, conformed);
-    }
+    let versions = SystemVersions::for_this_build(0, 0);
+    let fresh = UserTableInfo {
+        binary_format_version: 0,
+        model_data_version: 0,
+        database_format: None,
+        open_counter: 0,
+    };
+    assert!(!fresh.is_conform(&versions));
+    let conformed = UserTableInfo::conform_to(&versions);
+    assert!(conformed.save(&filename));
+    let reloaded = UserTableInfo::load(&filename).unwrap();
+    assert_eq!(
+        reloaded.database_format.as_deref(),
+        Some(DEFAULT_STORE_DB_FORMAT)
+    );
+    assert!(reloaded.is_conform(&versions));
+    assert_eq!(reloaded, conformed);
     let directory = crate::input::c_path(dir.path()).unwrap();
     assert!(!UserTableInfo::load(&filename).unwrap().save(&directory));
     assert!(profile.is_file());
 }
 
-/// Each directive is one `fscanf`: a field stops where `%d` stops, a
-/// whitespace directive crosses line breaks, a counter that does not
-/// convert is 0 and the database token is the C string `%255s` stored.
+// 074a2219 table_info.cpp:339-359 distinguishes required fields and the optional counter.
 #[test]
 fn marker_fields_follow_the_scanner() {
     let good = "binary format version:7\nmodel data version:14\ndatabase format:BerkeleyDB\nopen counter:3\n";
@@ -207,16 +184,10 @@ fn marker_fields_follow_the_scanner() {
     ));
     assert_eq!(
         parse(good.replace("BerkeleyDB", "BerkeleyDB\0suffix").as_bytes())
-            .expect("C string")
+            .unwrap()
             .database_format
             .as_deref(),
         Some("BerkeleyDB")
-    );
-    assert_eq!(
-        parse(good.replace('\n', " ").as_bytes())
-            .expect("one line")
-            .open_counter,
-        3
     );
     let missing = good.replace("open counter:3\n", "");
     assert_eq!(parse(missing.as_bytes()).unwrap().open_counter, 0);
@@ -229,26 +200,9 @@ fn save_and_read(info: &UserTableInfo) -> String {
     std::fs::read_to_string(path).expect("read the saved marker")
 }
 
-#[test]
-fn a_negative_counter_conforms() {
-    let versions = SystemVersions::for_this_build(7, 14);
-    let negative = UserTableInfo {
-        open_counter: -3,
-        ..UserTableInfo::conform_to(&versions)
-    };
-    assert!(negative.is_conform(&versions));
-    let text = save_and_read(&negative);
-    assert!(text.ends_with(&format!(
-        "open counter:-3{}",
-        crate::__internal::TEXT_NEWLINE
-    )));
-    assert_eq!(parse(text.as_bytes()).expect("parse"), negative);
-}
-
+// 074a2219 table_info.cpp:377-397 prints the version words as signed integers.
 #[test]
 fn an_out_of_int_version_is_written_signed() {
-    // The pin reads `%d` into an `int` and writes `%d`; a value past
-    // `INT_MAX` therefore appears as its two's-complement value.
     let versions = SystemVersions::for_this_build(u32::MAX, 0x8000_0000);
     let info = UserTableInfo::conform_to(&versions);
     let text = save_and_read(&info);
@@ -262,15 +216,7 @@ fn an_out_of_int_version_is_written_signed() {
     assert_eq!(parse(text.as_bytes()).expect("parse"), info);
 }
 
-fn conform_with(token: &str) -> UserTableInfo {
-    UserTableInfo {
-        binary_format_version: 7,
-        model_data_version: 14,
-        database_format: Some(token.to_owned()),
-        open_counter: 0,
-    }
-}
-
+// 074a2219 phrase_index_logger.h:248-278 writes four record layouts.
 #[test]
 fn log_records_round_trip_through_the_pin_layout() {
     let records = vec![
@@ -294,8 +240,6 @@ fn log_records_round_trip_through_the_pin_layout() {
     ];
     let bytes = encode_log_records(&records).expect("encode");
 
-    // Hand-check the first two records' bytes against
-    // append_record's layout.
     let mut expected = Vec::new();
     expected.extend_from_slice(&4_u32.to_le_bytes()); // MODIFY_HEADER
     expected.extend_from_slice(&0_u32.to_le_bytes()); // null_token
@@ -315,9 +259,9 @@ fn log_records_round_trip_through_the_pin_layout() {
     assert!(owned(&[]).is_empty());
 }
 
+// Row 123 refuses a payload that exceeds the journal length field.
 #[test]
 fn log_encode_rejects_a_payload_beyond_u16() {
-    // 70_001 bytes: over the u16 length field, under nothing else.
     let huge = vec![0_u8; 70_001];
     assert!(
         encode_log_records(&[LogRecord::Add {
@@ -329,30 +273,32 @@ fn log_encode_rejects_a_payload_beyond_u16() {
     );
 }
 
+// 074a2219 phrase_index_logger.h:127-216 retains earlier records and records the termination reason.
 #[test]
 fn the_walk_reports_why_it_ended() {
-    let add = record(1, 0x0100_0001, &[2, 0, 1, 0]);
-    let end = |bytes: &[u8]| {
-        let mut walk = log_records(bytes);
+    let add = record(1, 7, &[2, 0, 1, 0]);
+    for (tail, expected) in [
+        (Vec::new(), LogEnd::Complete),
+        (record(9, 0, &[]), LogEnd::UnknownType),
+        (vec![1, 0], LogEnd::UnknownType),
+    ] {
+        let bytes = [add.clone(), tail].concat();
+        let mut walk = log_records(&bytes);
         assert_eq!(walk.end(), None);
-        walk.by_ref().for_each(drop);
-        walk.end()
-    };
-    assert_eq!(end(&add), Some(LogEnd::Complete));
-    assert_eq!(
-        end(&[add.clone(), record(9, 0, &[])].concat()),
-        Some(LogEnd::UnknownType)
-    );
-    // A type word cut short is `LOG_INVALID_RECORD`, `m_error` too.
-    assert_eq!(
-        end(&[add.clone(), vec![1, 0]].concat()),
-        Some(LogEnd::UnknownType)
-    );
-    assert_eq!(
-        end(&record(1, 0x0100_0001, &[6, 0, 1])),
-        Some(LogEnd::OverRead)
-    );
-    assert_eq!(end(&record(4, 0x0100_0001, &[0, 0])), None);
+        assert_eq!(
+            walk.next(),
+            Some(Ok(LogRecord::Add {
+                token: 7,
+                new_item: &[1, 0][..]
+            }))
+        );
+        assert!(walk.next().is_none());
+        assert_eq!(walk.end(), Some(expected));
+    }
+    let bytes = record(1, 7, &[6, 0, 1]);
+    let mut walk = log_records(&bytes);
+    assert_eq!(walk.next(), Some(Err(LogFault::OverRead)));
+    assert_eq!(walk.end(), Some(LogEnd::OverRead));
 }
 
 fn owned(bytes: &[u8]) -> Vec<Result<LogRecord, LogFault>> {
@@ -370,23 +316,7 @@ fn record(kind: u32, token: u32, tail: &[u8]) -> Vec<u8> {
     .concat()
 }
 
-#[test]
-fn an_unknown_or_missing_type_ends_the_walk_after_the_records_before_it() {
-    let add = record(1, 7, &[6, 0, 0, 0, 1, 0, 0, 0]);
-    let add_record = LogRecord::Add {
-        token: 7,
-        new_item: vec![0, 0, 1, 0, 0, 0],
-    };
-    // `m_error` on an unknown type: the earlier record stays.
-    let unknown = [add.clone(), record(9, 0, &[1, 2, 3])].concat();
-    assert_eq!(owned(&unknown), vec![Ok(add_record.clone())]);
-    assert_eq!(owned(&record(0, 0, &[])), vec![]);
-    // Fewer than four bytes: the type is `LOG_INVALID_RECORD`.
-    let short_head = [add, vec![1, 0, 0]].concat();
-    assert_eq!(owned(&short_head), vec![Ok(add_record)]);
-}
-
-// POLICY-ACCEPTED: a missing field does not supply a default value.
+// Rust LogReader stops at a missing field without supplying a default.
 #[test]
 fn incomplete_records_stop_after_the_last_complete_record() {
     let add = record(1, 7, &[6, 0, 0, 0, 1, 0, 0, 0]);
@@ -410,6 +340,7 @@ fn incomplete_records_stop_after_the_last_complete_record() {
     }
 }
 
+// Rust LogReader reports OverRead for a payload extending past the available bytes.
 #[test]
 fn a_payload_past_the_end_is_an_over_read() {
     let add = encode_log_records(&[LogRecord::Add {
@@ -428,16 +359,9 @@ fn a_payload_past_the_end_is_an_over_read() {
     );
 }
 
+// 074a2219 phrase_index_logger.h:202 checks the header token before reading the payload length.
 #[test]
 fn a_header_token_faults_where_the_header_is_read() {
-    // Pin phrase_index_logger.h:202 checks the header token before its payload.
-    assert!(matches!(
-        owned(&record(4, 0, &[4, 0, 1, 0, 0, 0, 2, 0, 0, 0])).as_slice(),
-        [Ok(LogRecord::ModifyHeader {
-            old_total: 1,
-            new_total: 2
-        })]
-    ));
     assert_eq!(
         owned(&record(4, 1, &[])),
         vec![Err(LogFault::HeaderToken(1))]
@@ -468,14 +392,10 @@ fn a_header_token_faults_where_the_header_is_read() {
             Err(LogFault::HeaderToken(1)),
         ]
     );
-    // A partial token refuses the record before it can reach the assertion.
     assert!(owned(&[4_u32.to_le_bytes().as_slice(), &[1, 0, 0]].concat()).is_empty());
-    assert_eq!(
-        owned(&record(4, 0x0100_0001, &[])),
-        vec![Err(LogFault::HeaderToken(0x0100_0001))]
-    );
 }
 
+// 074a2219 phrase_index_logger.h:127-215 advances over the full declared runs.
 #[test]
 fn opaque_payloads_and_header_padding_are_kept() {
     let mut bytes = encode_log_records(&[

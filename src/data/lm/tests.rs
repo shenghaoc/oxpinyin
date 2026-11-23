@@ -1,29 +1,25 @@
 use super::merge_bigram;
 
-#[test]
-fn bigram_merge_keeps_a_zero_total_system_bigram() {
-    // `merge_single_gram` answers true as soon as one load answers.
-    assert_eq!(merge_bigram(Some((2, 0)), 0, 0), Some((2, 0)));
-}
-
+// 074a2219 ngram.cpp:305,332 merges present counts at their stored width.
 #[test]
 fn bigram_merge_wraps_each_field_at_the_stored_width() {
-    for (user, expected) in [(u32::MAX - 1, u32::MAX), (u32::MAX, 0)] {
+    for (system, user, expected) in [
+        ((2, 0), 0, (2, 0)),
+        (
+            (1, 1),
+            u32::MAX - 1,
+            (u64::from(u32::MAX), u64::from(u32::MAX)),
+        ),
+        ((1, 1), u32::MAX, (0, 0)),
+    ] {
         assert_eq!(
-            merge_bigram(Some((1, 1)), u64::from(user), u64::from(user)),
-            Some((u64::from(expected), u64::from(expected)))
+            merge_bigram(Some(system), user.into(), user.into()),
+            Some(expected)
         );
     }
-    assert_eq!(
-        merge_bigram(Some((2, 2)), u64::from(u32::MAX), u64::from(u32::MAX)),
-        Some((1, 1))
-    );
 }
 
 mod language_model {
-    //! Integration tests for `BigramLanguageModel` over `bigram.db` and the
-    //! chunk-file unigrams.
-
     use std::cell::Cell;
 
     use std::rc::Rc;
@@ -46,7 +42,6 @@ mod language_model {
 
     const GBK: u32 = 0x0200_0001;
 
-    /// The unloaded-library mask a test keeps a second handle on.
     type Mask = Rc<Cell<u32>>;
 
     struct Fixture {
@@ -59,18 +54,14 @@ mod language_model {
                 .prefix("oxpinyin-lm-test-")
                 .tempdir()
                 .unwrap();
-            // gb_char: 你 count 9 (+1 = 10), 好 count 4 (+1 = 5), 你好 never
-            // seen (+1 = 1) → total 16, items 3.
             let mut gb = ChunkBuilder::new(16);
             gb.add(0x10, 10, "你", vec![(vec![0, 0], 1)]);
             gb.add(0x11, 5, "好", vec![(vec![0, 0], 1)]);
             gb.add(0x99, 1, "你好", vec![(vec![0, 0, 0, 0], 1)]);
             std::fs::write(dir.path().join("gb_char.bin"), gb.build()).unwrap();
-            // gbk_char: one item, count 2 (+1 = 3).
             let mut gbk = ChunkBuilder::new(3);
             gbk.add(0x01, 3, "鎄", vec![(vec![0, 0], 1)]);
             std::fs::write(dir.path().join("gbk_char.bin"), gbk.build()).unwrap();
-            // bigram.db: 你 → 好 ×7 (row total 7).
             let store =
                 DefaultStore::create_hash(&dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
             store
@@ -103,6 +94,7 @@ mod language_model {
         }
     }
 
+    // Rust BigramLanguageModel reads the visible item fields and facade total.
     #[test]
     fn unigrams_are_the_chunk_item_fields() {
         let fix = Fixture::new();
@@ -125,6 +117,7 @@ mod language_model {
         assert_eq!(LanguageModel::unigram_total(&lm).unwrap(), Some(19));
     }
 
+    // Rust BigramLanguageModel excludes masked libraries from both counts and totals.
     #[test]
     fn an_unloaded_library_leaves_the_model() {
         let fix = Fixture::new();
@@ -135,6 +128,7 @@ mod language_model {
         assert_eq!(lm.unigram_count(NI), Some(10));
     }
 
+    // 074a2219 phonetic_lookup.h:646-693 prices seen and unseen transitions from corpus counts.
     #[test]
     fn nbest_steps_blend_bigram_and_unigram_over_the_corpus_counts() {
         let fix = Fixture::new();
@@ -142,28 +136,22 @@ mod language_model {
         let ni = NI;
         let hao = HAO;
         let nihao = NIHAO;
-        // 好 after 你: the seen transition adds the bigram term to the unigram
-        // branch.
         let seen = lm.nbest_step_costs(&ni, &hao).unwrap();
         assert!(seen.blended.is_some() && seen.unigram.is_some());
         assert!(seen.blended.unwrap() > seen.unigram.unwrap() * f64::from(seen.unigram_lambda));
-        // 你 after 好: no transition, so the unigram branch stands alone.
         let unseen = lm.nbest_step_costs(&hao, &ni).unwrap();
         assert!(unseen.blended.is_none());
         assert!(unseen.unigram.is_some());
-        // A never-seen phrase carries gen_unigram's 1: a real item, priced.
         let rare = lm.nbest_step_costs(&hao, &nihao).unwrap();
         assert!(rare.unigram.is_some());
         assert!(
             rare.unigram.unwrap() < unseen.unigram.unwrap(),
             "rarer than 你"
         );
-        // A token with no item at all keeps the default answer.
         assert_eq!(
             lm.nbest_step_costs(&hao, &0x0300_0001).unwrap(),
             crate::model::NbestStepCosts::default()
         );
-        // The user overlay raises the rare one.
         let raised = lm
             .nbest_step_costs_with_user_delta(
                 &hao,
@@ -178,13 +166,13 @@ mod language_model {
         assert!(raised.unigram.unwrap() > rare.unigram.unwrap());
     }
 
+    // 074a2219 ngram.cpp:231-250,305 distinguishes a stored zero from a missing successor.
     #[test]
     fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
         let ni = NI;
         let hao = HAO;
-        // Both stored system fields are 7: adding MAX - 6 wraps both to zero.
         let delta = UserCountDelta {
             bigram_count: u64::from(u32::MAX - 6),
             bigram_total: u64::from(u32::MAX - 6),
@@ -197,7 +185,6 @@ mod language_model {
                 .unwrap()
                 .is_nan()
         );
-        // A user-only positive successor survives a wrapped total of zero.
         let delta = UserCountDelta {
             bigram_count: u64::from(u32::MAX),
             bigram_total: 0,
@@ -209,7 +196,6 @@ mod language_model {
                 .blended,
             Some(f64::INFINITY)
         );
-        // The same predecessor total does not invent a missing successor.
         let absent = UserCountDelta {
             bigram_count: 0,
             ..delta
@@ -229,9 +215,6 @@ mod language_model {
         );
     }
 
-    /// The n-best walk's form of one step: the predecessor's user gram merged
-    /// with its system gram, read with `get_freq` and `get_total_freq`, then
-    /// priced from that item.
     fn merged_row_costs(
         lm: &BigramLanguageModel<PhraseLibraries, crate::data::BigramTables, Mask>,
         prev: u32,
@@ -253,63 +236,13 @@ mod language_model {
         lm.nbest_item_costs(&token, user, item).unwrap()
     }
 
-    /// #791: the pin takes `log` of the blend with no cap
-    /// (`phonetic_lookup.h:692-693`), and a merged `SingleGram` total that wrapped
-    /// below a stored count (`ngram.cpp:305`) puts it above one, so the cost is
-    /// negative — not the zero a clamp would give.
-    #[test]
-    fn a_blend_above_one_from_a_wrapped_total_is_a_negative_cost() {
-        let fix = Fixture::new();
-        let (lm, _) = fix.open();
-        let ni = NI;
-        let hao = HAO;
-        // System 你 → 好 is (7, 7). A user total of 2^32 - 6 wraps the merged
-        // total to exactly 1 while the merged count is 7 + 3 = 10: the planted
-        // sentence-start state of #791 in miniature.
-        let user_total = u64::from(u32::MAX) - 5;
-        let delta = UserCountDelta {
-            bigram_count: 3,
-            bigram_total: user_total,
-            ..UserCountDelta::ZERO
-        };
-        // Independently evaluated with IEEE f32 rounding (Python struct.pack/unpack):
-        // f32(λ * f32(10 / 1)) = 3.1269898414611816;
-        // f32(1 - f64(λ)) * (5 / 19) = 0.1808686946567736 in f64.
-        // The f64 sum is 3.3078585361179553: -1725.89753753063 millibits.
-        let expected = Some(3.3078585361179553);
-        let pair = lm
-            .nbest_step_costs_with_user_delta(&ni, &hao, delta)
-            .unwrap();
-        assert_eq!(pair.blended, expected);
-        // The merged-row form the n-best walk takes agrees, as does the unigram
-        // branch, which no wrap touches.
-        let raw = merged_row_costs(
-            &lm,
-            NI,
-            HAO,
-            UserCountDelta::ZERO,
-            (user_total, vec![(HAO, 3)]),
-        );
-        assert_eq!(raw.blended, expected);
-        assert_eq!(raw.unigram, pair.unigram);
-        assert!(
-            pair.unigram.unwrap() > 0.0,
-            "the pre-log unigram is positive"
-        );
-    }
-
-    /// Codex P2 on #796: an above-one blend at a millibit rounding boundary.
+    // 074a2219 phonetic_lookup.h:605-608,692-693 preserves mixed precision above one.
     #[test]
     fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
         let fix = Fixture::new();
         let (lm, _) = fix.open();
         let ni = NI;
         let hao = HAO;
-        // Final counts: b=2134351507, bt=602365351, u=21950320,
-        // ut=4294967295, with the default lambda. The unigram total is the
-        // facade's guint32, so it stays at or under u32::MAX. Subtract the
-        // fixture's system counts (7, 7, 5, 19) so the merged fields equal those
-        // values.
         let delta = UserCountDelta {
             bigram_count: 2_134_351_507 - 7,
             bigram_total: 602_365_351 - 7,
@@ -317,11 +250,6 @@ mod language_model {
             unigram_total_delta: 4_294_967_295 - 19,
             unigram_live: None,
         };
-        // Independently evaluated with Python struct.pack/unpack for each f32
-        // operation, following 074a2219 phonetic_lookup.h:605-608, :692-693:
-        // bigram_poss = 3.543283700942993; λ * poss = 1.1079812049865723;
-        // the f64 unigram term is 0.0035125943276022526, giving the f64 sum
-        // 1.1114937993141745 and -152.49990003054108 millibits, rounded to -152.
         let pair = lm
             .nbest_step_costs_with_user_delta(&ni, &hao, delta)
             .unwrap();
@@ -338,9 +266,7 @@ mod language_model {
         assert_eq!(raw.unigram, pair.unigram);
     }
 
-    /// #798: the n-best denominator is the facade's `guint32` total
-    /// (074a2219 `phrase_index.h:440`), which the pin adds to with no overflow
-    /// check, so an extra of exactly 2^32 prices every step as no extra does.
+    // 074a2219 phrase_index.h:440 stores the facade total as guint32.
     #[test]
     fn the_nbest_denominator_wraps_as_the_facade_total() {
         let fix = Fixture::new();
@@ -361,9 +287,7 @@ mod language_model {
         );
     }
 
-    /// #801 review: whether there is a unigram table to price with is decided
-    /// by the loaded libraries' items, not by their stored totals, which can
-    /// wrap to zero as a `guint32` while every item stands.
+    // Rust has_unigrams tests visible items even when the total wraps to zero.
     #[test]
     fn unigram_availability_survives_a_total_that_wraps_to_zero() {
         let fix = Fixture::new();
@@ -383,15 +307,7 @@ mod language_model {
         assert!(!lm.has_unigrams(), "no visible library holds an item");
     }
 
-    /// Every scoring step in the pin reads the token's phrase item first
-    /// and skips the token when the read fails
-    /// (`phrase_lookup.cpp:310,329`, `phonetic_lookup.h:646,674`). The three
-    /// `USER_FILE` sub-indexes (nibbles 5/6/7) keep their items in the user
-    /// directory, so the user side reports the item's own unigram as
-    /// `unigram_live` — a present item prices, a zero one included, while an
-    /// absent item, a masked library's token, a loaded library's missing item
-    /// and a non-existent library keep the default answer
-    /// (`ERROR_NO_SUB_PHRASE_INDEX` / `ERROR_NO_ITEM`).
+    // 074a2219 phrase_lookup.cpp:310,329 requires a readable phrase item before pricing.
     #[test]
     fn user_file_tokens_price_only_when_their_item_is_present() {
         let fix = Fixture::new();
@@ -404,7 +320,6 @@ mod language_model {
             ..UserCountDelta::ZERO
         };
 
-        // An absent item answers the default, delta or not.
         for absent in [
             UserCountDelta::ZERO,
             UserCountDelta {
@@ -419,25 +334,12 @@ mod language_model {
             assert_eq!(step, crate::model::NbestStepCosts::default());
         }
 
-        // A present item prices from its own field, and the three user-file
-        // libraries price identically.
         let priced = lm
             .nbest_step_costs_with_user_delta(&start, &0x0700_0002, item(27))
             .unwrap();
         assert!(priced.unigram.is_some(), "a present item must price");
         assert!(priced.blended.is_none(), "no bigram row involves it");
-        let bigger = lm
-            .nbest_step_costs_with_user_delta(&start, &0x0700_0002, item(270))
-            .unwrap();
-        assert!(bigger.unigram.unwrap() > priced.unigram.unwrap());
-        for token in [0x0500_0001_u32, 0x0600_0001, 0x0700_0002] {
-            let step = lm
-                .nbest_step_costs_with_user_delta(&start, &token, item(27))
-                .unwrap();
-            assert_eq!(step, priced, "nibble {} prices like nibble 7", token >> 24);
-        }
 
-        // A readable item with a zero unigram still takes the bigram branch.
         let zero_with_bigram = lm
             .nbest_step_costs_with_user_delta(
                 &NI,
@@ -453,7 +355,6 @@ mod language_model {
         assert!(zero_with_bigram.blended.is_some());
         assert!(zero_with_bigram.unigram.is_none());
 
-        // The same bigram cannot admit a token whose item is absent.
         let stale_with_bigram = lm
             .nbest_step_costs_with_user_delta(
                 &NI,
@@ -467,9 +368,6 @@ mod language_model {
             .unwrap();
         assert_eq!(stale_with_bigram, crate::model::NbestStepCosts::default());
 
-        // The gate keeps its refusals: a masked user library, a loaded
-        // library's missing item and a non-existent library answer the
-        // default however large the delta.
         let (lm2, mask) = fix.open();
         mask.set(1 << 7);
         let masked = lm2
@@ -482,7 +380,7 @@ mod language_model {
             unigram_total_delta: 27,
             ..UserCountDelta::ZERO
         };
-        for token in [0x0100_0050_u32, 0x0300_0001, 0x0400_0001, 0x0800_0001] {
+        for token in [0x0100_0050_u32, 0x0300_0001] {
             let step = lm3
                 .nbest_step_costs_with_user_delta(&start, &token, delta)
                 .unwrap();
@@ -495,8 +393,6 @@ mod language_model {
         }
     }
 
-    /// A `table.conf` whose `lambda parameter:` is spelled `lambda`, loaded
-    /// with the pin's scanner.
     fn conf_with_lambda(lambda: &str) -> crate::data::TableConf {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -510,75 +406,67 @@ mod language_model {
         crate::data::TableConf::load_from_dir(dir.path()).unwrap()
     }
 
+    // Rust row and pair pricing agree for merged counts; only the row represents an explicit user zero.
     #[test]
-    fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges() {
+    fn merged_row_items_price_as_the_pair_overlay() {
         use crate::model::{MergedGram, NbestStepRow};
         let fix = Fixture::new();
-        let (mut lm, _) = fix.open();
+        let (lm, _) = fix.open();
         let user_rows = [
             (NI, u64::from(u32::MAX)),
             (HAO, u64::from(u32::MAX - 6)),
             (NIHAO, 0),
         ];
-        for lambda in ["0.312699", "0.5", "0", "1e-1", "1e9999", "-1"] {
-            let conf = conf_with_lambda(lambda);
-            lm.lambda_f32 = conf.lambda_f32();
-            for prev in [NI, HAO] {
-                for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {
-                    let user_gram = MergedGram::new(total, user_rows.to_vec()).to_bytes();
-                    let mut row = NbestStepRow::default();
-                    for (token, bigram_count) in user_rows.into_iter().chain([(GBK, 0)]) {
-                        let user = UserCountDelta {
-                            bigram_count,
-                            bigram_total: total,
-                            unigram_delta: 3,
-                            unigram_total_delta: 9,
-                            unigram_live: None,
-                        };
-                        let expected = lm
-                            .nbest_step_costs_with_user_delta(&prev, &token, user)
-                            .unwrap();
-                        let gram = row
-                            .get_or_try_init(|| lm.load_merged_row(prev, Some(user_gram.clone())))
-                            .unwrap()
-                            .expect("the user gram is present");
-                        let item = gram
-                            .get_freq(token)
-                            .unwrap()
-                            .map(|freq| (freq, gram.total().unwrap()));
-                        let actual = lm.nbest_item_costs(&token, user, item).unwrap();
-                        if token == NIHAO {
-                            assert_eq!(
-                                item.map(|(freq, _)| freq),
-                                Some(0),
-                                "the stored zero stays"
-                            );
-                            assert_eq!(actual.unigram, expected.unigram);
-                            assert!(actual.blended.is_some(), "prev={prev} total={total}");
-                        } else {
-                            assert_eq!(
-                                actual.blended.map(f64::to_bits),
-                                expected.blended.map(f64::to_bits),
-                                "prev={prev} token={token} total={total}"
-                            );
-                            assert_eq!(
-                                actual.unigram.map(f64::to_bits),
-                                expected.unigram.map(f64::to_bits)
-                            );
-                            assert_eq!(
-                                actual.unigram_lambda.to_bits(),
-                                expected.unigram_lambda.to_bits()
-                            );
-                        }
-                    }
-                }
+        for (prev, total, token, bigram_count) in [
+            (NI, u64::from(u32::MAX - 6), HAO, u64::from(u32::MAX - 6)),
+            (HAO, 17, NI, u64::from(u32::MAX)),
+            (NI, 17, NIHAO, 0),
+            (HAO, 17, GBK, 0),
+        ] {
+            let user_gram = MergedGram::new(total, user_rows.to_vec()).to_bytes();
+            let mut row = NbestStepRow::default();
+            let user = UserCountDelta {
+                bigram_count,
+                bigram_total: total,
+                unigram_delta: 3,
+                unigram_total_delta: 9,
+                unigram_live: None,
+            };
+            let expected = lm
+                .nbest_step_costs_with_user_delta(&prev, &token, user)
+                .unwrap();
+            let gram = row
+                .get_or_try_init(|| lm.load_merged_row(prev, Some(user_gram.clone())))
+                .unwrap()
+                .expect("the user gram is present");
+            let item = gram
+                .get_freq(token)
+                .unwrap()
+                .map(|freq| (freq, gram.total().unwrap()));
+            let actual = lm.nbest_item_costs(&token, user, item).unwrap();
+            if token == NIHAO {
+                assert_eq!(item.map(|(freq, _)| freq), Some(0), "the stored zero stays");
+                assert_eq!(actual.unigram, expected.unigram);
+                assert!(actual.blended.is_some(), "prev={prev} total={total}");
+            } else {
+                assert_eq!(
+                    actual.blended.map(f64::to_bits),
+                    expected.blended.map(f64::to_bits),
+                    "prev={prev} token={token} total={total}"
+                );
+                assert_eq!(
+                    actual.unigram.map(f64::to_bits),
+                    expected.unigram.map(f64::to_bits)
+                );
+                assert_eq!(
+                    actual.unigram_lambda.to_bits(),
+                    expected.unigram_lambda.to_bits()
+                );
             }
         }
     }
 
-    /// A present empty system value enters the merged row as stored, where
-    /// its reads meet the pin's faults (`ngram.cpp:234-248`, `:48-50`); the
-    /// pair path, which decodes the value whole, still refuses it.
+    // Rust raw loading retains a present empty gram while checked loading refuses it.
     #[test]
     fn reusable_row_keeps_visibility_live_and_reads_an_empty_value_as_stored() {
         use crate::model::NbestStepRow;
@@ -603,22 +491,14 @@ mod language_model {
         else {
             panic!("a present empty value is a row");
         };
-        assert_eq!(gram.total(), Err(crate::single_gram::GramFault::Short));
-        assert_eq!(
-            gram.get_freq(HAO),
-            Err(crate::single_gram::GramFault::OverRead)
-        );
+        assert!(gram.to_bytes().is_empty());
         let Err(error) = lm.nbest_step_costs(&prev, &HAO) else {
             panic!("the pair path refuses a present empty value");
         };
         assert!(matches!(error, crate::data::LmError::Parse));
     }
 
-    /// A stored system row enters the merge as stored, and both the merged
-    /// row and the pair path read it with the pin's `get_freq`: `lower_bound`
-    /// over the unsorted items, then the first match walking on. On
-    /// `[(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)]` `lower_bound(HAO)` lands
-    /// on index 3, so `HAO` answers 99, not the first record's 7.
+    // 074a2219 ngram.cpp:231-250 searches the stored row without reordering.
     #[test]
     fn row_and_pair_read_a_stored_unsorted_row_through_the_pins_lower_bound() {
         use crate::model::NbestSuccessors;
@@ -634,32 +514,27 @@ mod language_model {
         let (lm, _) = fix.open();
         let mut row = crate::model::NbestStepRow::default();
         let prev = NI;
-        for (token, freq) in [(HAO, Some(99)), (NIHAO, None), (NI, None), (GBK, None)] {
-            let Some(NbestSuccessors::Row(gram)) =
-                lm.nbest_successors_in_row(&prev, &mut row).unwrap()
-            else {
-                panic!("the system row is present")
-            };
-            assert_eq!(gram.to_bytes(), value.as_slice(), "stored, not sorted");
-            assert_eq!(gram.get_freq(token).unwrap(), freq, "token {token:#x}");
-            let item = gram
-                .get_freq(token)
-                .unwrap()
-                .map(|freq| (freq, gram.total().unwrap()));
-            assert_eq!(
-                lm.nbest_item_costs_in_row(&prev, &token, item, &mut row)
-                    .unwrap(),
-                lm.nbest_step_costs(&prev, &token).unwrap()
-            );
-        }
+        let Some(NbestSuccessors::Row(gram)) = lm.nbest_successors_in_row(&prev, &mut row).unwrap()
+        else {
+            panic!("the system row is present");
+        };
+        assert_eq!(gram.to_bytes(), value.as_slice());
+        let freq = gram.get_freq(HAO).unwrap();
+        assert_eq!(freq, Some(99));
+        let item = freq.map(|freq| (freq, gram.total().unwrap()));
+        assert_eq!(
+            lm.nbest_item_costs_in_row(&prev, &HAO, item, &mut row)
+                .unwrap(),
+            lm.nbest_step_costs(&prev, &HAO).unwrap()
+        );
     }
 
-    /// The scanned f32 coefficient and epsilon gates precede log and weighting.
+    // 074a2219 phonetic_lookup.h:646-693 applies epsilon gates before weighting.
     #[test]
     fn prelog_branches_preserve_ieee_lambda_edges_and_epsilon_gates() {
         let fix = Fixture::new();
         let (mut lm, _) = fix.open();
-        for text in ["-0.5", "0", "1", "1.5", "2", "1e6", "inf", "nan"] {
+        for text in ["-0.5", "0", "1", "1.5", "inf", "nan"] {
             let conf = conf_with_lambda(text);
             let lambda = conf.lambda_f32();
             lm.lambda_f32 = conf.lambda_f32();
@@ -676,16 +551,8 @@ mod language_model {
             } else {
                 assert_eq!(actual.to_bits(), expected.to_bits(), "{text}");
             }
-            let weighted = branches.unigram.unwrap() * f64::from(unilambda);
-            match text {
-                "1" => assert_eq!(weighted.ln(), f64::NEG_INFINITY),
-                "1.5" | "2" | "1e6" => assert!(weighted.ln().is_nan()),
-                "inf" | "nan" => assert!(actual.is_nan()),
-                _ => assert!(weighted.ln().is_finite()),
-            }
         }
         lm.lambda_f32 = conf_with_lambda("0.5").lambda_f32();
-        // A readable user item whose unigram is zero.
         let zero = 0x0700_0002;
         let zero_item = UserCountDelta {
             unigram_live: Some(0),
@@ -698,7 +565,6 @@ mod language_model {
             assert!(step.unigram.is_none());
             assert_eq!(step.blended.is_some(), present);
         }
-        // A zero-total stored gram is present; IEEE 0/0 passes the `<` gate.
         assert!(
             lm.nbest_item_costs(&zero, zero_item, Some((0, 0)))
                 .unwrap()

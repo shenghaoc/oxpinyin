@@ -1,4 +1,3 @@
-// Nextest isolates the process-wide read-fault key by running each test in its own process.
 use super::*;
 
 use std::collections::BTreeMap;
@@ -54,10 +53,10 @@ impl ChewingDbm for MemoryDbm {
     }
 }
 
+// 074a2219 phrase_large_table3_tkrzwdb.cpp:155-190 scans descendants only for a present prefix.
 #[test]
 fn search_suggestion_collects_every_longer_phrase_under_the_prefix() {
     let dbm = MemoryDbm::new();
-    // 你 is a marker, 你好 / 你们 / 你好吗 are phrases, 好 is a neighbour.
     dbm.put(encode_ucs4_key("你"), Vec::new());
     dbm.put(
         encode_ucs4_key("你好"),
@@ -74,11 +73,8 @@ fn search_suggestion_collects_every_longer_phrase_under_the_prefix() {
         tokens,
         vec![0x0100_0098, 0x0100_0099, 0x0200_0001, 0x0300_0005]
     );
-    // The prefix's own tokens are not suggestions.
     let tokens = table.search_suggestion(&words("你好")).unwrap();
     assert_eq!(tokens, vec![0x0300_0005]);
-    // A prefix that is no key at all answers nothing, even though
-    // longer phrases would extend it.
     let dbm = MemoryDbm::new();
     dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099]));
     let table = PhraseTable::new(dbm);
@@ -86,43 +82,21 @@ fn search_suggestion_collects_every_longer_phrase_under_the_prefix() {
     assert!(table.search_suggestion(&[]).unwrap().is_empty());
 }
 
+// 074a2219 phrase_large_table3_tkrzwdb.cpp:124-150 decodes the exact row.
 #[test]
-fn search_finds_exact_phrase() {
+fn exact_search_distinguishes_populated_marker_missing_and_empty_keys() {
     let dbm = MemoryDbm::new();
-    let key = encode_ucs4_key("你好");
-    let value = encode_tokens(&[0x0100_0099]);
-    dbm.put(key, value);
-
+    dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099]));
+    dbm.put(encode_ucs4_key("你"), Vec::new());
     let table = PhraseTable::new(dbm);
-    let tokens = table.search("你好").unwrap();
-    assert_eq!(tokens, vec![0x0100_0099]);
-}
-
-#[test]
-fn search_miss_returns_empty() {
-    let dbm = MemoryDbm::new();
-    let table = PhraseTable::new(dbm);
-    let tokens = table.search("不存在").unwrap();
-    assert!(tokens.is_empty());
-}
-
-#[test]
-fn search_empty_input_returns_empty() {
-    let dbm = MemoryDbm::new();
-    let table = PhraseTable::new(dbm);
-    let tokens = table.search("").unwrap();
-    assert!(tokens.is_empty());
-}
-
-#[test]
-fn search_prefix_marker_returns_empty() {
-    let dbm = MemoryDbm::new();
-    let key = encode_ucs4_key("你");
-    dbm.put(key, Vec::new());
-
-    let table = PhraseTable::new(dbm);
-    let tokens = table.search("你").unwrap();
-    assert!(tokens.is_empty());
+    for (query, expected) in [
+        ("你好", &[0x0100_0099][..]),
+        ("你", &[]),
+        ("不存在", &[]),
+        ("", &[]),
+    ] {
+        assert_eq!(table.search(query).unwrap(), expected);
+    }
 }
 
 fn native_table() -> PhraseTable {
@@ -135,8 +109,7 @@ fn native_table() -> PhraseTable {
     )
 }
 
-/// SEARCH_NONE on failed get/check (phrase_large_table3_tkrzwdb.cpp:136-139,
-/// _bdb.cpp:196-198, _kyotodb.cpp:174-177 at 074a2219).
+// 074a2219 phrase_large_table3_tkrzwdb.cpp:136-139 returns SEARCH_NONE on a failed get.
 #[test]
 fn a_failed_phrase_table_read_is_a_miss() {
     let table = native_table();
@@ -144,8 +117,7 @@ fn a_failed_phrase_table_read_is_a_miss() {
     assert!(table.search("测测").unwrap().is_empty());
 }
 
-/// A failed cursor read ends the walk after the prior rows
-/// (phrase_large_table3_tkrzwdb.cpp:171-186 at 074a2219).
+// 074a2219 phrase_large_table3_tkrzwdb.cpp:171-186 retains rows preceding a failed cursor read.
 #[test]
 fn a_failed_phrase_table_cursor_read_keeps_the_rows_before_it() {
     use crate::store::RawReadStore as _;

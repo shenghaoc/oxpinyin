@@ -2,6 +2,7 @@ use super::*;
 
 use crate::data::memory_dbm::MemoryDbm;
 
+// Rust PunctTable::empty exposes no open table or entries.
 #[test]
 fn an_empty_table_answers_nothing() {
     let table = PunctTable::<MemoryDbm>::empty();
@@ -9,6 +10,7 @@ fn an_empty_table_answers_nothing() {
     assert!(table.punctuations(0x0100_0295).unwrap().is_empty());
 }
 
+// 074a2219 punct_table.cpp:148-164 returns the entry for the requested token.
 #[test]
 fn lookup_finds_punctuation() {
     let dbm = MemoryDbm::new();
@@ -20,14 +22,7 @@ fn lookup_finds_punctuation() {
     dbm.put(token.to_le_bytes().to_vec(), value);
 
     let table = PunctTable::new(dbm);
-    let result = table.punctuations(token).unwrap();
-    assert_eq!(result, ["，", "。"]);
-}
-
-#[test]
-fn lookup_miss_returns_empty() {
-    let dbm = MemoryDbm::new();
-    let table = PunctTable::new(dbm);
-    let result = table.punctuations(0x0100_0295).unwrap();
-    assert!(result.is_empty());
+    for (query, expected) in [(token, &["，", "。"][..]), (token + 1, &[][..])] {
+        assert_eq!(table.punctuations(query).unwrap(), expected);
+    }
 }
