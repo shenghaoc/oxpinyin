@@ -131,11 +131,6 @@ impl<T> LibraryTable<T> {
         self.iter_mut().map(|(_, value)| value)
     }
 
-    /// The present values, owned, in ascending library order.
-    pub fn into_values(self) -> impl Iterator<Item = T> {
-        self.into_iter().map(|(_, value)| value)
-    }
-
     /// Keeps the libraries `keep` answers `true` for.
     pub fn retain(&mut self, mut keep: impl FnMut(&u8, &mut T) -> bool) {
         for (library, slot) in LIBRARIES.iter().zip(&mut self.slots) {
@@ -325,14 +320,6 @@ impl Extend<u8> for LibrarySet {
         for library in libraries {
             self.insert(library);
         }
-    }
-}
-
-impl FromIterator<u8> for LibrarySet {
-    fn from_iter<I: IntoIterator<Item = u8>>(libraries: I) -> Self {
-        let mut set = Self::new();
-        set.extend(libraries);
-        set
     }
 }
 

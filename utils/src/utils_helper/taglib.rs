@@ -65,12 +65,6 @@ pub struct TagLib {
     stack: Vec<Vec<TagEntry>>,
 }
 
-impl Default for TagLib {
-    fn default() -> Self {
-        Self::init()
-    }
-}
-
 impl TagLib {
     /// `taglib_init` (`:70-79`): one empty state.
     #[must_use]

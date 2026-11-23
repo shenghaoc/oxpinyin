@@ -139,18 +139,6 @@ struct ValidatedLayout {
     double_pinyin: bool,
 }
 
-impl std::ops::Deref for InstanceCore {
-    type Target = InstanceState;
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
-}
-impl std::ops::DerefMut for InstanceCore {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.state
-    }
-}
-
 /// One operation's composition and storage borrows.
 pub struct InstanceView<'a, S, E> {
     /// Composition borrowed with current dictionary and model readers.

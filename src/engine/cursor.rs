@@ -107,17 +107,6 @@ impl KeySpans for [(usize, usize)] {
     }
 }
 
-impl KeySpans for [MatrixKey] {
-    fn span_count(&self) -> usize {
-        self.len()
-    }
-
-    fn span(&self, index: usize) -> (usize, usize) {
-        let key = self[index];
-        (key.syllable_start, key.end)
-    }
-}
-
 /// One matrix column: the range of real keys placed there, plus the
 /// zero-key entry when the position holds one.
 struct Column<'a, S: KeySpans + ?Sized> {
