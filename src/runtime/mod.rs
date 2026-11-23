@@ -17,7 +17,7 @@ pub(crate) use crate::data::phrase_library::{LibraryError, PhraseItemView, RowFa
 use crate::data::user_files::{SystemVersions, UserFileLayout};
 use crate::data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
-    SystemDictionary,
+    SystemDictionary, SystemTables,
 };
 pub(crate) use crate::data::{FileType, TableConfSite};
 pub(crate) use crate::data::{TableConf, TableConfError};
@@ -227,7 +227,7 @@ fn chewing_query(syllables: &[SyllableKey]) -> Vec<crate::parser::ChewingKey> {
 /// It borrows the runtime's tables and store for one operation.
 #[derive(Clone, Copy)]
 pub struct RuntimeDict<'a> {
-    system: SystemDictionary<&'a crate::data::PhraseLibraries, &'a crate::data::SystemTables>,
+    system: SystemDictionary<'a>,
     user: &'a UserStore,
     addons: &'a RefCell<AddonSet>,
     punct: &'a PunctTable,
@@ -499,9 +499,7 @@ impl<'a> RuntimeDict<'a> {
 
     /// The underlying system table set, without the user overlay.
     #[must_use]
-    pub fn system(
-        &self,
-    ) -> &SystemDictionary<&'a crate::data::PhraseLibraries, &'a crate::data::SystemTables> {
+    pub fn system(&self) -> &SystemDictionary<'a> {
         &self.system
     }
 
@@ -1172,11 +1170,7 @@ impl Dictionary for RuntimeDict<'_> {
 /// The bigram language model with the user-count overlay.
 #[derive(Clone, Copy)]
 pub struct RuntimeLm<'a> {
-    inner: BigramLanguageModel<
-        &'a crate::data::PhraseLibraries,
-        &'a crate::data::BigramTables,
-        &'a Cell<u32>,
-    >,
+    inner: BigramLanguageModel<'a>,
     user: &'a UserStore,
     addons: &'a RefCell<AddonSet>,
 }
@@ -1545,10 +1539,10 @@ impl Runtime {
         let conf = TableConf::load_from_dir(system_dir).map_err(OpenError::TableConf)?;
         let early = check_profile_early(&conf, user_dir, law);
         let user_profile = user_dir.zip(early);
-        let pinyin = SystemDictionary::attach_pinyin(system_dir).map_err(OpenError::Dict)?;
+        let pinyin = SystemTables::attach_pinyin(system_dir).map_err(OpenError::Dict)?;
         let user_pinyin = crate::user::LoadedPinyinIndex::open(user_profile);
         let dict =
-            SystemDictionary::attach_phrase(system_dir, &conf, pinyin).map_err(OpenError::Dict)?;
+            SystemTables::attach_phrase(system_dir, &conf, pinyin).map_err(OpenError::Dict)?;
         let mut profile = user_pinyin.load_phrase_table();
         // The library mask is shared with the language model: an unloaded
         // library's items leave both the lookups and the unigram denominator,

@@ -22,11 +22,11 @@ fn bigram_merge_wraps_each_field_at_the_stored_width() {
 mod language_model {
     use std::cell::Cell;
 
-    use std::rc::Rc;
-
     use crate::model::{LanguageModel, UserCountDelta};
 
-    use crate::data::{BigramLanguageModel, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm};
+    use crate::data::{
+        BigramLanguageModel, BigramTables, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm,
+    };
 
     use crate::store::{DefaultStore, WriteStore, WriteTxn};
 
@@ -42,7 +42,17 @@ mod language_model {
 
     const GBK: u32 = 0x0200_0001;
 
-    type Mask = Rc<Cell<u32>>;
+    struct ModelFixture {
+        tables: BigramTables,
+        libraries: PhraseLibraries,
+        mask: Cell<u32>,
+    }
+
+    impl ModelFixture {
+        fn model(&self) -> BigramLanguageModel<'_> {
+            self.tables.read(&self.libraries, &self.mask)
+        }
+    }
 
     struct Fixture {
         dir: TempDir,
@@ -75,22 +85,14 @@ mod language_model {
             Self { dir }
         }
 
-        fn open(
-            &self,
-        ) -> (
-            BigramLanguageModel<PhraseLibraries, crate::data::BigramTables, Mask>,
-            Mask,
-        ) {
+        fn open(&self) -> ModelFixture {
             let libraries = PhraseLibraries::open(self.dir.path(), SYSTEM_LIBRARY_FILES).unwrap();
-            let mask = Rc::new(Cell::new(0));
-            let lm = BigramLanguageModel::open_with_mask(
-                &self.dir.path().join(SystemDbm::Bigram.file_name()),
+            let path = self.dir.path().join(SystemDbm::Bigram.file_name());
+            ModelFixture {
+                tables: BigramTables::attach(&path, 0.312_699).unwrap(),
                 libraries,
-                Rc::clone(&mask),
-                0.312_699,
-            )
-            .unwrap();
-            (lm, mask)
+                mask: Cell::new(0),
+            }
         }
     }
 
@@ -98,7 +100,8 @@ mod language_model {
     #[test]
     fn unigrams_are_the_chunk_item_fields() {
         let fix = Fixture::new();
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         assert_eq!(
             lm.unigram_count(NI),
             Some(10),
@@ -121,8 +124,9 @@ mod language_model {
     #[test]
     fn an_unloaded_library_leaves_the_model() {
         let fix = Fixture::new();
-        let (lm, mask) = fix.open();
-        mask.set(1 << 2);
+        let model = fix.open();
+        let lm = model.model();
+        model.mask.set(1 << 2);
         assert_eq!(lm.unigram_count(GBK), None);
         assert_eq!(lm.unigram_total(), 16, "gbk's total leaves");
         assert_eq!(lm.unigram_count(NI), Some(10));
@@ -132,7 +136,8 @@ mod language_model {
     #[test]
     fn nbest_steps_blend_bigram_and_unigram_over_the_corpus_counts() {
         let fix = Fixture::new();
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let ni = NI;
         let hao = HAO;
         let nihao = NIHAO;
@@ -170,7 +175,8 @@ mod language_model {
     #[test]
     fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
         let fix = Fixture::new();
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let ni = NI;
         let hao = HAO;
         let delta = UserCountDelta {
@@ -216,7 +222,7 @@ mod language_model {
     }
 
     fn merged_row_costs(
-        lm: &BigramLanguageModel<PhraseLibraries, crate::data::BigramTables, Mask>,
+        lm: &BigramLanguageModel<'_>,
         prev: u32,
         token: u32,
         user: UserCountDelta,
@@ -240,7 +246,8 @@ mod language_model {
     #[test]
     fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
         let fix = Fixture::new();
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let ni = NI;
         let hao = HAO;
         let delta = UserCountDelta {
@@ -270,7 +277,8 @@ mod language_model {
     #[test]
     fn the_nbest_denominator_wraps_as_the_facade_total() {
         let fix = Fixture::new();
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let ni = NI;
         let hao = HAO;
         assert_eq!(lm.facade_total(0), 19);
@@ -296,14 +304,15 @@ mod language_model {
         gb.add(0x11, 5, "好", vec![(vec![0, 0], 1)]);
         gb.add(0x99, 1, "你好", vec![(vec![0, 0, 0, 0], 1)]);
         std::fs::write(fix.dir.path().join("gb_char.bin"), gb.build()).unwrap();
-        let (lm, mask) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         assert_eq!(
             lm.unigram_total(),
             0,
             "gb_char's total plus gbk_char's 3 wraps"
         );
         assert!(lm.has_unigrams());
-        mask.set((1 << 1) | (1 << 2));
+        model.mask.set((1 << 1) | (1 << 2));
         assert!(!lm.has_unigrams(), "no visible library holds an item");
     }
 
@@ -311,7 +320,8 @@ mod language_model {
     #[test]
     fn user_file_tokens_price_only_when_their_item_is_present() {
         let fix = Fixture::new();
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let start = 1;
         let item = |unigram: u32| UserCountDelta {
             unigram_delta: u64::from(unigram),
@@ -368,13 +378,15 @@ mod language_model {
             .unwrap();
         assert_eq!(stale_with_bigram, crate::model::NbestStepCosts::default());
 
-        let (lm2, mask) = fix.open();
-        mask.set(1 << 7);
+        let masked_model = fix.open();
+        let lm2 = masked_model.model();
+        masked_model.mask.set(1 << 7);
         let masked = lm2
             .nbest_step_costs_with_user_delta(&start, &0x0700_0002, item(27))
             .unwrap();
         assert_eq!(masked, crate::model::NbestStepCosts::default());
-        let (lm3, _) = fix.open();
+        let fresh_model = fix.open();
+        let lm3 = fresh_model.model();
         let delta = UserCountDelta {
             unigram_delta: 27,
             unigram_total_delta: 27,
@@ -411,7 +423,8 @@ mod language_model {
     fn merged_row_items_price_as_the_pair_overlay() {
         use crate::model::{MergedGram, NbestStepRow};
         let fix = Fixture::new();
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let user_rows = [
             (NI, u64::from(u32::MAX)),
             (HAO, u64::from(u32::MAX - 6)),
@@ -477,10 +490,11 @@ mod language_model {
             .write(|txn| txn.put_raw(&NI.to_le_bytes(), &[]))
             .unwrap();
         drop(store);
-        let (lm, mask) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let mut row = NbestStepRow::default();
         let prev = NI;
-        mask.set(1 << 2);
+        model.mask.set(1 << 2);
         assert_eq!(
             lm.nbest_item_costs_in_row(&prev, &GBK, Some((1, 1)), &mut row)
                 .unwrap(),
@@ -511,7 +525,8 @@ mod language_model {
             .write(|txn| txn.put_raw(&NI.to_le_bytes(), &value))
             .unwrap();
         drop(store);
-        let (lm, _) = fix.open();
+        let model = fix.open();
+        let lm = model.model();
         let mut row = crate::model::NbestStepRow::default();
         let prev = NI;
         let Some(NbestSuccessors::Row(gram)) = lm.nbest_successors_in_row(&prev, &mut row).unwrap()
@@ -533,11 +548,12 @@ mod language_model {
     #[test]
     fn prelog_branches_preserve_ieee_lambda_edges_and_epsilon_gates() {
         let fix = Fixture::new();
-        let (mut lm, _) = fix.open();
+        let mut model = fix.open();
         for text in ["-0.5", "0", "1", "1.5", "inf", "nan"] {
             let conf = conf_with_lambda(text);
             let lambda = conf.lambda_f32();
-            lm.lambda_f32 = conf.lambda_f32();
+            model.tables.lambda_f32 = lambda;
+            let lm = model.model();
             let branches = lm
                 .nbest_item_costs(&HAO, UserCountDelta::ZERO, Some((7, 7)))
                 .unwrap();
@@ -552,7 +568,8 @@ mod language_model {
                 assert_eq!(actual.to_bits(), expected.to_bits(), "{text}");
             }
         }
-        lm.lambda_f32 = conf_with_lambda("0.5").lambda_f32();
+        model.tables.lambda_f32 = conf_with_lambda("0.5").lambda_f32();
+        let lm = model.model();
         let zero = 0x0700_0002;
         let zero_item = UserCountDelta {
             unigram_live: Some(0),

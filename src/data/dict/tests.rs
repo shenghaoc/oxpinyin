@@ -1,5 +1,26 @@
 use super::AddonDictionary;
 
+pub(crate) fn open_dictionary_parts(
+    system_dir: &std::path::Path,
+) -> Result<(super::SystemTables, super::PhraseLibraries), super::DictError> {
+    use super::{
+        ChewingTable, DictError, PhraseLibraries, PhraseTable, SystemDbm, SystemTables, TableError,
+    };
+    use crate::data::{SYSTEM_LIBRARY_FILES, chewing_table::RawChewingDbm};
+    use crate::store::{DefaultStore, RawReadStore};
+
+    let open = |dbm: SystemDbm| {
+        let path = crate::input::build_path(system_dir, std::ffi::OsStr::new(&dbm.file_name()));
+        DefaultStore::open_read_only(&path).map_err(TableError::from)
+    };
+    let pinyin = ChewingTable::new(RawChewingDbm::new(open(SystemDbm::PinyinIndex)?));
+    let phrase = PhraseTable::new(RawChewingDbm::new(open(SystemDbm::PhraseIndex)?));
+    let tables = SystemTables::new(pinyin, phrase, 0);
+    let libraries =
+        PhraseLibraries::open(system_dir, SYSTEM_LIBRARY_FILES).map_err(DictError::Library)?;
+    Ok((tables, libraries))
+}
+
 // 074a2219 pinyin.cpp:477-494 reaches the missing system filename at 284-290.
 #[test]
 fn addon_without_chunk_reports_null_chunk_name() {
@@ -50,8 +71,8 @@ mod system_dictionary {
             Self { dir }
         }
 
-        fn dict(&self) -> SystemDictionary {
-            SystemDictionary::open(self.dir.path()).unwrap()
+        fn open(&self) -> (crate::data::SystemTables, crate::data::PhraseLibraries) {
+            super::open_dictionary_parts(self.dir.path()).unwrap()
         }
     }
 
@@ -118,7 +139,8 @@ mod system_dictionary {
     #[test]
     fn a_step_prices_the_pronunciation_possibility_of_its_token() {
         let fix = Fixture::new();
-        let dict = fix.dict();
+        let (tables, libraries) = fix.open();
+        let dict = tables.read(&libraries);
         let entries = dict.lookup(&syls("ni")).unwrap();
         assert!(
             entries
@@ -146,7 +168,8 @@ mod system_dictionary {
     #[test]
     fn phrase_prefix_exists_follows_search_continued() {
         let fix = Fixture::new();
-        let dict = fix.dict();
+        let (tables, libraries) = fix.open();
+        let dict = tables.read(&libraries);
         assert!(dict.phrase_prefix_exists(&[]));
     }
 
@@ -154,7 +177,8 @@ mod system_dictionary {
     #[test]
     fn token_surface_resolves_through_the_chunk_file() {
         let fix = Fixture::new();
-        let dict = fix.dict();
+        let (tables, libraries) = fix.open();
+        let dict = tables.read(&libraries);
         assert_eq!(
             dict.phrase_text(0x0100_0099)
                 .as_ref()
@@ -170,12 +194,12 @@ mod system_dictionary {
         assert_eq!(prons[1], ("ni".to_owned(), 3));
     }
 
-    // Rust SystemDictionary::open requires the phrase index.
+    // Rust The read-only fixture requires the phrase index.
     #[test]
     fn a_missing_dbm_fails_open() {
         let fix = Fixture::new();
         std::fs::remove_file(fix.dir.path().join(SystemDbm::PhraseIndex.file_name())).unwrap();
-        assert!(SystemDictionary::open(fix.dir.path()).is_err());
+        assert!(super::open_dictionary_parts(fix.dir.path()).is_err());
     }
 
     fn convert_fixture() -> Fixture {
@@ -213,7 +237,7 @@ mod system_dictionary {
 
     type Spans = Vec<Vec<(u32, u32)>>;
 
-    fn convert_ranges(dict: &SystemDictionary, tones: &[u8]) -> (Spans, Vec<String>) {
+    fn convert_ranges(dict: &SystemDictionary<'_>, tones: &[u8]) -> (Spans, Vec<String>) {
         let mut ranges = PhraseIndexRanges::new();
         dict.trellis_ranges(&syls("ni"), tones, &mut ranges)
             .unwrap();
@@ -239,7 +263,8 @@ mod system_dictionary {
     #[test]
     fn the_lookup_answers_that_it_met_an_unreadable_item() {
         let fix = convert_fixture();
-        let dict = fix.dict();
+        let (tables, libraries) = fix.open();
+        let dict = tables.read(&libraries);
         let mut entries = Vec::new();
         assert!(dict.lookup_into_flagged(&syls("ni"), &mut entries).unwrap());
         let tokens: Vec<u32> = entries.iter().map(|entry| entry.token()).collect();
@@ -251,7 +276,8 @@ mod system_dictionary {
     #[test]
     fn trellis_ranges_merge_runs_past_unloaded_items_under_the_tone_filter() {
         let fix = convert_fixture();
-        let dict = fix.dict();
+        let (tables, libraries) = fix.open();
+        let dict = tables.read(&libraries);
         for (tones, expected_spans, expected_texts) in [
             (
                 &[3][..],
@@ -279,7 +305,8 @@ mod system_dictionary {
     #[test]
     fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
         let fix = convert_fixture();
-        let dict = fix.dict();
+        let (tables, libraries) = fix.open();
+        let dict = tables.read(&libraries);
         let mut scratch = Vec::new();
         for (path, tones) in [
             ("ni", &[3][..]),

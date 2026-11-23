@@ -3114,7 +3114,8 @@ fn masking_system_imports_restores_originals_and_removes_appended_items() {
 fn choosing_a_predicted_word_of_an_unloaded_library_keeps_its_bigram() {
     let user = tempfile::tempdir().unwrap();
     let system = crate::user::native_fixture::system_dir();
-    let dict = crate::data::SystemDictionary::open(&system).unwrap();
+    let (tables, libraries) = crate::data::dict_tests::open_dictionary_parts(&system).unwrap();
+    let dict = tables.read(&libraries);
     let ni_key = crate::vocab::SyllableKey::from_text("ni").unwrap();
     let gbk = dict
         .lookup(&[ni_key])

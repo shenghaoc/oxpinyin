@@ -12,6 +12,8 @@ mod c_stderr;
 pub(crate) mod chewing_table;
 pub mod chunk_format;
 mod dict;
+#[cfg(test)]
+pub(crate) use dict::tests as dict_tests;
 mod lm;
 mod phrase_libraries;
 pub mod phrase_library;

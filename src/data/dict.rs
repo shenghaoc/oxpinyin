@@ -23,23 +23,15 @@ use crate::vocab::phrase_index_library_index;
 use std::fmt;
 use std::path::Path;
 
-#[cfg(test)]
-use crate::store::{DefaultStore, RawReadStore};
 use crate::{
     model::{Dictionary, PhraseIndexRanges, PhraseItemRead, TokenPhrase, TrellisItem},
     parser::ChewingKey,
     vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey},
 };
 
-#[cfg(test)]
-use crate::data::FileName;
 use crate::data::PhraseLibraries;
-#[cfg(test)]
-use crate::data::SYSTEM_LIBRARY_FILES;
 use crate::data::SystemDbm;
 use crate::data::TableError;
-#[cfg(test)]
-use crate::data::chewing_table::RawChewingDbm;
 use crate::data::chewing_table::{ChewingTable, prefix_keys_match};
 use crate::data::phrase_library::LibraryError;
 use crate::data::phrase_library::RowFault;
@@ -121,9 +113,9 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
 /// The default dictionary's pinyin index, phrase index and phrase libraries selected by
 /// the system rows in the table configuration.
 #[derive(Clone, Copy)]
-pub struct SystemDictionary<L = PhraseLibraries, T = SystemTables> {
-    tables: T,
-    libraries: L,
+pub struct SystemDictionary<'a> {
+    tables: &'a SystemTables,
+    libraries: &'a PhraseLibraries,
 }
 
 /// System DBM handles and row classification, separate from chunk ownership.
@@ -136,10 +128,10 @@ pub struct SystemTables {
     user_nibbles: u32,
 }
 
-impl<L, T: std::borrow::Borrow<SystemTables>> std::ops::Deref for SystemDictionary<L, T> {
+impl std::ops::Deref for SystemDictionary<'_> {
     type Target = SystemTables;
     fn deref(&self) -> &Self::Target {
-        self.tables.borrow()
+        self.tables
     }
 }
 
@@ -190,96 +182,12 @@ impl SystemTables {
     }
 
     /// Borrow these tables and the owner's phrase storage for one operation.
-    pub fn read<'a>(
-        &'a self,
-        libraries: &'a PhraseLibraries,
-    ) -> SystemDictionary<&'a PhraseLibraries, &'a Self> {
+    pub fn read<'a>(&'a self, libraries: &'a PhraseLibraries) -> SystemDictionary<'a> {
         SystemDictionary {
             tables: self,
             libraries,
         }
     }
-}
-
-impl SystemDictionary {
-    /// Separate unique phrase storage from the immutable table handles.
-    #[cfg(test)]
-    pub fn into_parts(self) -> (SystemTables, PhraseLibraries) {
-        (self.tables, self.libraries)
-    }
-
-    /// Opens the default facade from the backend's native system data
-    /// directory — whether a libpinyin build or `oxpinyin-utils`' ports
-    /// of its programs wrote it
-    /// ([`SystemDbm::file_name`] names the DBMs, [`SYSTEM_LIBRARY_FILES`]
-    /// the chunk files).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when either DBM cannot be opened or a present
-    /// chunk file does not verify. A missing chunk file leaves that
-    /// library unloaded, as `FacadePhraseIndex::load` failing does.
-    #[cfg(test)]
-    pub fn open(system_dir: &Path) -> Result<Self, DictError> {
-        Self::open_files(
-            &crate::input::build_path(
-                system_dir,
-                std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
-            ),
-            &crate::input::build_path(
-                system_dir,
-                std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
-            ),
-            system_dir,
-        )
-    }
-
-    /// [`Self::open`] with every path spelled out.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::open`].
-    #[cfg(test)]
-    pub fn open_files(
-        pinyin_index: &Path,
-        phrase_index: &Path,
-        library_dir: &Path,
-    ) -> Result<Self, DictError> {
-        Self::open_files_with(
-            pinyin_index,
-            phrase_index,
-            library_dir,
-            SYSTEM_LIBRARY_FILES,
-        )
-    }
-
-    /// [`Self::open`] with the libraries `conf`'s `SYSTEM_FILE` rows name.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::open`].
-    #[cfg(test)]
-    pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
-        let stems: Vec<(u8, &FileName)> = conf
-            .system_libraries()
-            .filter_map(|(index, row)| row.system.as_ref().map(|file| (index, file)))
-            .collect();
-        let mut dict = Self::open_files_with(
-            &crate::input::build_path(
-                system_dir,
-                std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
-            ),
-            &crate::input::build_path(
-                system_dir,
-                std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
-            ),
-            system_dir,
-            &stems,
-        )?;
-        dict.tables.user_nibbles = user_nibbles(conf);
-        Ok(dict)
-    }
-
     /// The system half of the first index pair in init (pinyin.cpp:357).
     pub(crate) fn attach_pinyin(system_dir: &Path) -> Result<ChewingTable, DictError> {
         Ok(ChewingTable::new(
@@ -298,8 +206,8 @@ impl SystemDictionary {
         system_dir: &Path,
         conf: &TableConf,
         pinyin: ChewingTable,
-    ) -> Result<SystemTables, DictError> {
-        Ok(SystemTables::new(
+    ) -> Result<Self, DictError> {
+        Ok(Self::new(
             pinyin,
             PhraseTable::new(crate::data::chewing_table::DefaultDbm::attach(
                 &crate::input::build_path(
@@ -311,27 +219,6 @@ impl SystemDictionary {
             user_nibbles(conf),
         ))
     }
-
-    #[cfg(test)]
-    fn open_files_with(
-        pinyin_index: &Path,
-        phrase_index: &Path,
-        library_dir: &Path,
-        stems: &[(u8, impl AsRef<std::ffi::OsStr>)],
-    ) -> Result<Self, DictError> {
-        Ok(Self {
-            tables: SystemTables {
-                pinyin: ChewingTable::new(RawChewingDbm::new(
-                    DefaultStore::open_read_only(pinyin_index).map_err(TableError::from)?,
-                )),
-                phrase: PhraseTable::new(RawChewingDbm::new(
-                    DefaultStore::open_read_only(phrase_index).map_err(TableError::from)?,
-                )),
-                user_nibbles: 0,
-            },
-            libraries: PhraseLibraries::open(library_dir, stems).map_err(DictError::Library)?,
-        })
-    }
 }
 
 /// The sub-indexes of `conf`'s `USER_FILE` rows, as a bit mask.
@@ -340,9 +227,7 @@ fn user_nibbles(conf: &TableConf) -> u32 {
         .fold(0, |mask, (index, _)| mask | (1_u32 << index))
 }
 
-impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>>
-    SystemDictionary<L, T>
-{
+impl SystemDictionary<'_> {
     /// The system lookup: the tokens `ChewingLargeTable2::search` finds for
     /// `syllables`, each with its text, in the order the table stores them
     /// (`chewing_large_table2.h:91-133` at 074a2219). The pin's search
@@ -409,7 +294,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// (the unigram counts live in the chunk items).
     #[must_use]
     pub fn libraries(&self) -> &PhraseLibraries {
-        self.libraries.borrow()
+        self.libraries
     }
 
     /// Phrase text for `token`, if its library is loaded and owns it.
@@ -634,9 +519,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     }
 }
 
-impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>>
-    SystemDictionary<L, T>
-{
+impl SystemDictionary<'_> {
     /// Looks up the entries matching `syllables` in the system table.
     ///
     /// # Errors
@@ -712,9 +595,7 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     }
 }
 
-impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTables>> Dictionary
-    for SystemDictionary<L, T>
-{
+impl Dictionary for SystemDictionary<'_> {
     type Syllable = SyllableKey;
     type Error = DictError;
     type PathMemo = ();
@@ -1077,4 +958,4 @@ impl AddonDictionary {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
