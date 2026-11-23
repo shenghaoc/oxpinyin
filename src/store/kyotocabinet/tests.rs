@@ -2,7 +2,9 @@ use rstest::rstest;
 use std::ops::{Bound, ControlFlow};
 
 use super::{KcStore, KcUserBigramDb};
-use crate::store::{RawReadOwned, RawReadStore, UserBigramDb, WriteStore, WriteTxn};
+use crate::store::{
+    AccessMode, DbmKind, RawReadOwned, RawReadStore, UserBigramDb, WriteStore, WriteTxn,
+};
 
 const OREADER: u32 = 1;
 const OWRITER: u32 = 2;
@@ -14,12 +16,13 @@ fn opened_system_attachments_synchronize_before_close() {
     use super::ffi::{NativeCall, take_native_calls};
     use crate::store::SystemAttachment;
 
-    for hash in [false, true] {
+    for kind in [DbmKind::Tree, DbmKind::Hash] {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("store.db");
-        let SystemAttachment::Open(store) = SystemAttachment::attach(&file, hash, false).unwrap()
+        let SystemAttachment::Open(store) =
+            SystemAttachment::attach(&file, kind, AccessMode::ReadWrite).unwrap()
         else {
-            panic!("{hash}: writable attach failed");
+            panic!("{kind:?}: writable attach failed");
         };
         let handle = store.db.address();
         take_native_calls();
@@ -35,11 +38,11 @@ fn opened_system_attachments_synchronize_before_close() {
                 (handle, NativeCall::Close),
                 (handle, NativeCall::Delete),
             ],
-            "writable hash: {hash}"
+            "writable kind: {kind:?}"
         );
 
-        let SystemAttachment::Open(store) = SystemAttachment::open(&file, hash).unwrap() else {
-            panic!("{hash}: an existing file did not open");
+        let SystemAttachment::Open(store) = SystemAttachment::open(&file, kind).unwrap() else {
+            panic!("{kind:?}: an existing file did not open");
         };
         take_native_calls();
         let handle = store.db.address();
@@ -51,7 +54,7 @@ fn opened_system_attachments_synchronize_before_close() {
                 (handle, NativeCall::Close),
                 (handle, NativeCall::Delete),
             ],
-            "hash: {hash}"
+            "kind: {kind:?}"
         );
     }
 }
@@ -65,15 +68,15 @@ fn a_failed_bigram_attach_attempts_the_open_and_releases_the_object() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("missing/bigram.db");
-    for read_only in [true, false] {
+    for access in [AccessMode::ReadOnly, AccessMode::ReadWrite] {
         take_native_calls();
         assert!(matches!(
-            SystemAttachment::attach_bigram(&path, read_only).unwrap(),
+            SystemAttachment::attach_bigram(&path, access).unwrap(),
             SystemAttachment::Unopened
         ));
         let calls = take_native_calls();
         let handle = calls.first().expect("native open").0;
-        let mode = if read_only {
+        let mode = if access == AccessMode::ReadOnly {
             OREADER
         } else {
             OREADER | OWRITER | OCREATE
@@ -87,7 +90,7 @@ fn a_failed_bigram_attach_attempts_the_open_and_releases_the_object() {
                 ),
                 (handle, NativeCall::Delete),
             ],
-            "read only: {read_only}"
+            "access: {access:?}"
         );
         assert!(!path.exists());
     }

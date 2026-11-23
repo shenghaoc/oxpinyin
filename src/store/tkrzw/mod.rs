@@ -835,18 +835,6 @@ impl WriteStore for TkrzwStore {
     fn flush(&self) -> Result<(), StoreError> {
         self.db.synchronize(false)
     }
-
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn compact(&mut self) -> Result<(), StoreError> {
-        if self.read_only {
-            return Err(StoreError::ReadOnly);
-        }
-        // A file-backed store's one stable-storage point. It is no
-        // longer where `pinyin_save` reaches storage:
-        // `UserStore::save_reporting` still calls this, but on the in-memory session store (#621),
-        // where the synchronize has nothing to do.
-        self.db.synchronize(true)
-    }
 }
 
 impl TkrzwStore {

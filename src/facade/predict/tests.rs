@@ -72,11 +72,7 @@ mod native {
             (short, hao),
             (long, number),
         ] {
-            crate::user::native_fixture::seed_bigram(
-                context.user_store_mut(),
-                previous,
-                &[(next, 1_000_000)],
-            );
+            crate::user::seed_bigram(context.user_store_mut(), previous, &[(next, 1_000_000)]);
         }
         context.set_options(OptionBits::DYNAMIC_ADJUST);
         assert!(!prefix_guess(&context, &mut instance, "你好"));

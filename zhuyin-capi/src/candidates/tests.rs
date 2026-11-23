@@ -380,19 +380,19 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         ))
     );
     // The saved user bigram holds no record.
-    let mut bigram_rows = 0;
     {
-        use oxpinyin::store::RawReadStore as _;
-        oxpinyin::store::DefaultStore::open_user_bigram(
+        use oxpinyin::store::{DefaultUserBigramDb, UserBigramDb as _};
+        let bigram = DefaultUserBigramDb::load_db(
             &user_dir
                 .path
                 .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name()),
         )
-        .expect("the saved user bigram")
-        .copy_raw(|_, _| bigram_rows += 1)
-        .expect("walk the user bigram");
+        .expect("the saved user bigram");
+        assert!(
+            bigram.is_empty().expect("count user grams"),
+            "no user bigram record"
+        );
     }
-    assert_eq!(bigram_rows, 0, "no user bigram record");
 
     // No user dir: the corpus driver's shape — training degrades to
     // refusing, never to a write.

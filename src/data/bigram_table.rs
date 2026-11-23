@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use crate::data::DictError;
-use crate::data::chewing_table::{ChewingDbm, DefaultDbm};
+use crate::data::chewing_table::{DefaultDbm, RawChewingDbm};
 // The key layout (`crate::data::row_format`) and the value layout
 // (`crate::single_gram`) have one owner each.
 use crate::data::row_format::encode_token_key;
@@ -21,20 +21,23 @@ use crate::single_gram::encode_single_gram;
 ///
 /// Does not materialize the entire database at open time. Each
 /// `load_raw_successors` call reads the attached DBM, including sentence start.
-pub struct BigramTable<D = DefaultDbm> {
-    dbm: D,
+pub struct BigramTable<S = crate::store::DefaultStore> {
+    dbm: RawChewingDbm<S>,
 }
 
 impl BigramTable {
     pub(crate) fn attach(path: &Path) -> Result<Self, DictError> {
-        Ok(Self::new(DefaultDbm::attach(path, true)?))
+        Ok(Self::new(DefaultDbm::attach(
+            path,
+            crate::store::DbmKind::Hash,
+        )?))
     }
 }
 
-impl<D: ChewingDbm> BigramTable<D> {
+impl<S: crate::store::RawReadStore> BigramTable<S> {
     /// Wraps an open native DBM.
     #[doc(hidden)]
-    pub const fn new(dbm: D) -> Self {
+    pub const fn new(dbm: RawChewingDbm<S>) -> Self {
         Self { dbm }
     }
 

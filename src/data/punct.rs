@@ -18,7 +18,7 @@ use std::path::Path;
 use crate::vocab::PhraseText;
 
 use crate::data::DictError;
-use crate::data::chewing_table::{ChewingDbm, DefaultDbm};
+use crate::data::chewing_table::DefaultDbm;
 // The key and value layout this reader shares with `gen_binary_files`'s
 // writer: one written copy (`crate::data::row_format`).
 use crate::data::row_format::encode_token_key;
@@ -28,12 +28,12 @@ use crate::data::row_format::punct::decode_puncts;
 ///
 /// Does not materialize the table at open time. Each lookup is a single
 /// point read.
-pub struct PunctTable<D = DefaultDbm> {
-    dbm: Option<D>,
+pub struct PunctTable {
+    dbm: Option<DefaultDbm>,
 }
 
-impl<D: ChewingDbm> PunctTable<D> {
-    pub(crate) const fn new(dbm: D) -> Self {
+impl PunctTable {
+    pub(crate) const fn new(dbm: DefaultDbm) -> Self {
         Self { dbm: Some(dbm) }
     }
 
@@ -67,7 +67,7 @@ impl<D: ChewingDbm> PunctTable<D> {
     pub(crate) fn attachment_finished(&self) -> bool {
         self.dbm
             .as_ref()
-            .is_none_or(ChewingDbm::attachment_finished)
+            .is_none_or(DefaultDbm::attachment_finished)
     }
 
     // PunctTable::load_entry, punct_table_tkrzwdb.cpp:58–73.
@@ -102,7 +102,10 @@ impl PunctTable {
     /// # Errors
     /// Returns failures before native attach.
     pub fn attach(path: &Path) -> Result<Self, DictError> {
-        Ok(Self::new(DefaultDbm::attach(path, false)?))
+        Ok(Self::new(DefaultDbm::attach(
+            path,
+            crate::store::DbmKind::Tree,
+        )?))
     }
 }
 

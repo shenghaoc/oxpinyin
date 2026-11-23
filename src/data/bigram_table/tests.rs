@@ -17,8 +17,12 @@ impl ScriptedDbm {
     }
 }
 
-impl ChewingDbm for &ScriptedDbm {
-    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+impl crate::store::RawReadStore for &ScriptedDbm {
+    fn open_read_only(_path: &Path) -> Result<Self, crate::store::StoreError> {
+        unreachable!("the scripted store is borrowed")
+    }
+
+    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::store::StoreError> {
         self.reads.lock().unwrap().push(key.to_vec());
         value.clear();
         let stored = self.answers.lock().unwrap().pop().expect("a scripted read");
@@ -30,16 +34,16 @@ impl ChewingDbm for &ScriptedDbm {
         }
     }
 
-    fn contains(&self, _key: &[u8]) -> Result<bool, DictError> {
+    fn contains_raw(&self, _key: &[u8]) -> Result<bool, crate::store::StoreError> {
         unreachable!("the bigram reader never checks")
     }
 
-    fn walk(
+    fn scan_raw(
         &self,
-        _lo: &[u8],
-        _hi: Option<&[u8]>,
-        _visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
-    ) -> Result<(), DictError> {
+        _lo: std::ops::Bound<&[u8]>,
+        _hi: std::ops::Bound<&[u8]>,
+        _visit: impl FnMut(&[u8], &[u8]) -> Result<crate::store::Flow, crate::store::StoreError>,
+    ) -> Result<(), crate::store::StoreError> {
         unreachable!("the bigram reader never walks")
     }
 }
@@ -55,7 +59,7 @@ fn every_predecessor_is_read_on_each_load() {
     let first = stored(3, &[(0x0100_0002, 3)]);
     let second = stored(5, &[(0x0100_0002, 5)]);
     let dbm = ScriptedDbm::new(vec![Some(first.clone()), Some(second.clone()), None]);
-    let table = BigramTable::new(&dbm);
+    let table = BigramTable::new(RawChewingDbm::new(&dbm));
     assert_eq!(table.load_raw_successors(token).unwrap(), Some(first));
     assert_eq!(table.load_raw_successors(token).unwrap(), Some(second));
     assert!(table.load_raw_successors(token).unwrap().is_none());

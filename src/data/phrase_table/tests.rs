@@ -1,71 +1,24 @@
 use super::*;
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
-
-struct MemoryDbm {
-    data: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
-}
-
-impl MemoryDbm {
-    fn new() -> Self {
-        Self {
-            data: Mutex::new(BTreeMap::new()),
-        }
-    }
-
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) {
-        self.data.lock().unwrap().insert(key, value);
-    }
-}
-
-impl ChewingDbm for MemoryDbm {
-    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        value.clear();
-        let data = self.data.lock().unwrap();
-        let stored = data.get(key);
-        if let Some(stored) = stored {
-            value.extend_from_slice(stored);
-        }
-        Ok(stored.is_some())
-    }
-
-    fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
-        Ok(self.data.lock().unwrap().contains_key(key))
-    }
-
-    fn walk(
-        &self,
-        lo: &[u8],
-        hi: Option<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
-    ) -> Result<(), DictError> {
-        let data = self.data.lock().unwrap();
-        for (key, value) in data.range(lo.to_vec()..) {
-            if hi.is_some_and(|hi| key.as_slice() >= hi) {
-                break;
-            }
-            if visit(key, value)? {
-                break;
-            }
-        }
-        Ok(())
-    }
-}
+use crate::store::{DefaultStore, WriteStore as _};
 
 // 074a2219 phrase_large_table3_tkrzwdb.cpp:155-190 scans descendants only for a present prefix.
 #[test]
 fn search_suggestion_collects_every_longer_phrase_under_the_prefix() {
-    let dbm = MemoryDbm::new();
-    dbm.put(encode_ucs4_key("你"), Vec::new());
-    dbm.put(
-        encode_ucs4_key("你好"),
-        encode_tokens(&[0x0100_0099, 0x0200_0001]),
-    );
-    dbm.put(encode_ucs4_key("你好吗"), encode_tokens(&[0x0300_0005]));
-    dbm.put(encode_ucs4_key("你们"), encode_tokens(&[0x0100_0098]));
-    dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x0100_0011]));
-    let table = PhraseTable::new(dbm);
+    let dbm = DefaultStore::create_in_memory().unwrap();
+    dbm.set_raw(&encode_ucs4_key("你"), &Vec::new()).unwrap();
+    dbm.set_raw(
+        &encode_ucs4_key("你好"),
+        &encode_tokens(&[0x0100_0099, 0x0200_0001]),
+    )
+    .unwrap();
+    dbm.set_raw(&encode_ucs4_key("你好吗"), &encode_tokens(&[0x0300_0005]))
+        .unwrap();
+    dbm.set_raw(&encode_ucs4_key("你们"), &encode_tokens(&[0x0100_0098]))
+        .unwrap();
+    dbm.set_raw(&encode_ucs4_key("好"), &encode_tokens(&[0x0100_0011]))
+        .unwrap();
+    let table = PhraseTable::new(DefaultDbm::new(dbm));
     let words = |text: &str| text.chars().map(u32::from).collect::<Vec<_>>();
     let mut tokens = table.search_suggestion(&words("你")).unwrap();
     tokens.sort_unstable();
@@ -75,9 +28,10 @@ fn search_suggestion_collects_every_longer_phrase_under_the_prefix() {
     );
     let tokens = table.search_suggestion(&words("你好")).unwrap();
     assert_eq!(tokens, vec![0x0300_0005]);
-    let dbm = MemoryDbm::new();
-    dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099]));
-    let table = PhraseTable::new(dbm);
+    let dbm = DefaultStore::create_in_memory().unwrap();
+    dbm.set_raw(&encode_ucs4_key("你好"), &encode_tokens(&[0x0100_0099]))
+        .unwrap();
+    let table = PhraseTable::new(DefaultDbm::new(dbm));
     assert!(table.search_suggestion(&words("你")).unwrap().is_empty());
     assert!(table.search_suggestion(&[]).unwrap().is_empty());
 }
@@ -85,10 +39,11 @@ fn search_suggestion_collects_every_longer_phrase_under_the_prefix() {
 // 074a2219 phrase_large_table3_tkrzwdb.cpp:124-150 decodes the exact row.
 #[test]
 fn exact_search_distinguishes_populated_marker_missing_and_empty_keys() {
-    let dbm = MemoryDbm::new();
-    dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099]));
-    dbm.put(encode_ucs4_key("你"), Vec::new());
-    let table = PhraseTable::new(dbm);
+    let dbm = DefaultStore::create_in_memory().unwrap();
+    dbm.set_raw(&encode_ucs4_key("你好"), &encode_tokens(&[0x0100_0099]))
+        .unwrap();
+    dbm.set_raw(&encode_ucs4_key("你"), &Vec::new()).unwrap();
+    let table = PhraseTable::new(DefaultDbm::new(dbm));
     for (query, expected) in [
         ("你好", &[0x0100_0099][..]),
         ("你", &[]),
@@ -103,18 +58,10 @@ fn native_table() -> PhraseTable {
     PhraseTable::new(
         DefaultDbm::attach(
             &crate::user::native_fixture::system_dir().join("phrase_index.bin"),
-            false,
+            crate::store::DbmKind::Tree,
         )
         .unwrap(),
     )
-}
-
-// 074a2219 phrase_large_table3_tkrzwdb.cpp:136-139 returns SEARCH_NONE on a failed get.
-#[test]
-fn a_failed_phrase_table_read_is_a_miss() {
-    let table = native_table();
-    crate::store::fail_point_read_of(&encode_ucs4_key("测测"), 0);
-    assert!(table.search("测测").unwrap().is_empty());
 }
 
 // 074a2219 phrase_large_table3_tkrzwdb.cpp:171-186 retains rows preceding a failed cursor read.

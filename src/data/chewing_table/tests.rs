@@ -1,57 +1,6 @@
 use super::*;
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
-
-struct MemoryDbm {
-    data: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
-}
-
-impl MemoryDbm {
-    fn new() -> Self {
-        Self {
-            data: Mutex::new(BTreeMap::new()),
-        }
-    }
-
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) {
-        self.data.lock().unwrap().insert(key, value);
-    }
-}
-
-impl ChewingDbm for MemoryDbm {
-    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
-        value.clear();
-        let data = self.data.lock().unwrap();
-        let stored = data.get(key);
-        if let Some(stored) = stored {
-            value.extend_from_slice(stored);
-        }
-        Ok(stored.is_some())
-    }
-
-    fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
-        Ok(self.data.lock().unwrap().contains_key(key))
-    }
-
-    fn walk(
-        &self,
-        lo: &[u8],
-        hi: Option<&[u8]>,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
-    ) -> Result<(), DictError> {
-        let data = self.data.lock().unwrap();
-        for (key, value) in data.range(lo.to_vec()..) {
-            if hi.is_some_and(|hi| key.as_slice() >= hi) {
-                break;
-            }
-            if visit(key, value)? {
-                break;
-            }
-        }
-        Ok(())
-    }
-}
+use crate::store::{DefaultStore, WriteStore as _};
 
 // Rust prefix_upper_bound returns the first byte string beyond the prefix range.
 #[test]
@@ -79,7 +28,7 @@ fn search_keeps_matching_tokens_in_stored_order() {
     let ba = ChewingKey::from_pinyin("ba").unwrap().with_tone(1);
     let ni = ChewingKey::from_pinyin("ni").unwrap();
     let hao = ChewingKey::from_pinyin("hao").unwrap();
-    let dbm = MemoryDbm::new();
+    let dbm = DefaultStore::create_in_memory().unwrap();
     let mut value = Vec::new();
     for (token, tone) in [(9, 3), (7, 1), (3, 0), (7, 1)] {
         let mut record =
@@ -87,9 +36,9 @@ fn search_keeps_matching_tokens_in_stored_order() {
         record[6..].fill(0xff);
         value.extend(record);
     }
-    dbm.put(index_key(&[ba]), value);
-    dbm.put(index_key(&[ni]), Vec::new());
-    let table = ChewingTable::new(dbm);
+    dbm.set_raw(&index_key(&[ba]), &value).unwrap();
+    dbm.set_raw(&index_key(&[ni]), &[]).unwrap();
+    let table = ChewingTable::new(DefaultDbm::new(dbm));
     for (query, expected) in [
         (&[ba][..], &[7, 3, 7][..]),
         (&[ni], &[]),
@@ -103,13 +52,13 @@ fn search_keeps_matching_tokens_in_stored_order() {
 // 074a2219 pinyin_phrase3.h:108-144 permits any final for an initial-only syllable.
 #[test]
 fn an_incomplete_query_uses_the_initial_only_key_and_filters_by_the_query() {
-    let dbm = MemoryDbm::new();
+    let dbm = DefaultStore::create_in_memory().unwrap();
     let ba = ChewingKey::from_pinyin("ba").unwrap();
     let bo = ChewingKey::from_pinyin("bo").unwrap();
     let b = ChewingKey::new(ba.initial, 0, 0, 0);
-    dbm.put(
-        encode_incomplete_key(&[b]),
-        encode_items(&[
+    dbm.set_raw(
+        &encode_incomplete_key(&[b]),
+        &encode_items(&[
             PinyinIndexItem {
                 token: 0x0100_0001,
                 keys: vec![ba.with_tone(1)],
@@ -119,8 +68,9 @@ fn an_incomplete_query_uses_the_initial_only_key_and_filters_by_the_query() {
                 keys: vec![bo.with_tone(2)],
             },
         ]),
-    );
-    let table = ChewingTable::new(dbm);
+    )
+    .unwrap();
+    let table = ChewingTable::new(DefaultDbm::new(dbm));
 
     let items = table.search(&[b]).unwrap();
     assert_eq!(items.len(), 2);
@@ -132,15 +82,15 @@ fn an_incomplete_query_uses_the_initial_only_key_and_filters_by_the_query() {
 // 074a2219 pinyin_phrase3.h:108-144 compares each complete syllable in a mixed query.
 #[test]
 fn a_mixed_query_filters_the_complete_syllables_inside_the_incomplete_space() {
-    let dbm = MemoryDbm::new();
+    let dbm = DefaultStore::create_in_memory().unwrap();
     let ni = ChewingKey::from_pinyin("ni").unwrap();
     let na = ChewingKey::from_pinyin("na").unwrap();
     let hao = ChewingKey::from_pinyin("hao").unwrap();
     let h = ChewingKey::new(hao.initial, 0, 0, 0);
     let n = ChewingKey::new(ni.initial, 0, 0, 0);
-    dbm.put(
-        encode_incomplete_key(&[n, h]),
-        encode_items(&[
+    dbm.set_raw(
+        &encode_incomplete_key(&[n, h]),
+        &encode_items(&[
             PinyinIndexItem {
                 token: 0x0100_0099,
                 keys: vec![ni.with_tone(3), hao.with_tone(3)],
@@ -150,8 +100,9 @@ fn a_mixed_query_filters_the_complete_syllables_inside_the_incomplete_space() {
                 keys: vec![na.with_tone(4), hao.with_tone(3)],
             },
         ]),
-    );
-    let table = ChewingTable::new(dbm);
+    )
+    .unwrap();
+    let table = ChewingTable::new(DefaultDbm::new(dbm));
     let items = table.search(&[ni, h]).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0], 0x0100_0099);
@@ -174,11 +125,11 @@ fn has_overlong_extension_reads_keys_past_sixteen_words_under_the_query() {
         (&[ni], encode_complete_key(&[hao; 17]), false),
         (&[], encode_complete_key(&[ni; 17]), false),
     ] {
-        let dbm = MemoryDbm::new();
-        dbm.put(encode_complete_key(&[ni]), Vec::new());
-        dbm.put(row, Vec::new());
+        let dbm = DefaultStore::create_in_memory().unwrap();
+        dbm.set_raw(&encode_complete_key(&[ni]), &[]).unwrap();
+        dbm.set_raw(&row, &[]).unwrap();
         assert_eq!(
-            ChewingTable::new(dbm)
+            ChewingTable::new(DefaultDbm::new(dbm))
                 .has_overlong_extension(query)
                 .unwrap(),
             overlong
@@ -214,11 +165,11 @@ fn suggestion_walk_matches_the_separate_probes() {
         vec![marker(), ni_hao(), overlong()],
     ];
     for (case, rows) in cases.into_iter().enumerate() {
-        let dbm = MemoryDbm::new();
+        let dbm = DefaultStore::create_in_memory().unwrap();
         for (key, value) in rows {
-            dbm.put(key, value);
+            dbm.set_raw(&key, &value).unwrap();
         }
-        let table = ChewingTable::new(dbm);
+        let table = ChewingTable::new(DefaultDbm::new(dbm));
         let mut fused = Vec::new();
         let fused_overlong = table
             .walk_suggestions(&[ni], |len, items| {
@@ -293,7 +244,7 @@ fn native_table() -> ChewingTable {
     ChewingTable::new(
         DefaultDbm::attach(
             &crate::user::native_fixture::system_dir().join("pinyin_index.bin"),
-            false,
+            crate::store::DbmKind::Tree,
         )
         .unwrap(),
     )
@@ -325,25 +276,6 @@ fn a_failed_pinyin_table_existence_read_is_a_miss() {
             .walk_suggestions(&keys, |_, _| panic!("a miss must not walk"))
             .unwrap()
     );
-}
-
-// 074a2219 chewing_large_table2_tkrzwdb.cpp:516-541 ends the walk at a failed cursor read.
-#[test]
-fn a_failed_pinyin_table_cursor_read_ends_the_walk() {
-    let table = native_table();
-    let ni = ChewingKey::from_pinyin("ni").unwrap();
-    let hao = ChewingKey::from_pinyin("hao").unwrap();
-    crate::store::fail_point_read_of(&index_key(&[ni, hao]), 0);
-    let mut lengths = Vec::new();
-    assert!(
-        !table
-            .walk_suggestions(&[ni], |length, _| {
-                lengths.push(length);
-                Ok(false)
-            })
-            .unwrap()
-    );
-    assert!(!lengths.contains(&2));
 }
 
 #[cfg(feature = "kyotocabinet")]

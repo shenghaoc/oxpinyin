@@ -136,7 +136,7 @@ const TEST: &str = "store::bdb::tests::a_failed_system_attachment_makes_no_call_
 fn a_failed_system_attachment_makes_no_call_on_its_handle() {
     if let Some(path) = std::env::var_os(CHILD) {
         assert!(matches!(
-            SystemAttachment::open(Path::new(&path), false).expect("attach"),
+            SystemAttachment::open(Path::new(&path), crate::store::DbmKind::Tree).expect("attach"),
             SystemAttachment::Unopened
         ));
         return;

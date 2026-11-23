@@ -3,7 +3,7 @@ use super::{
     SENTENCE_START,
 };
 use crate::ucs4::PhraseTextConcat;
-use crate::user::native_fixture::seed_bigram;
+use crate::user::seed_bigram;
 use crate::vocab::PhraseText;
 use std::collections::HashMap;
 

@@ -294,7 +294,7 @@ impl SystemDictionary {
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PinyinIndex.file_name()),
                 ),
-                false,
+                crate::store::DbmKind::Tree,
             )?,
         ))
     }
@@ -312,7 +312,7 @@ impl SystemDictionary {
                     system_dir,
                     std::ffi::OsStr::new(&SystemDbm::PhraseIndex.file_name()),
                 ),
-                false,
+                crate::store::DbmKind::Tree,
             )?),
             user_nibbles(conf),
         ))
@@ -896,13 +896,13 @@ impl AddonDictionary {
             pinyin: Some(ChewingTable::new(
                 crate::data::chewing_table::DefaultDbm::attach(
                     &path(SystemDbm::AddonPinyinIndex),
-                    false,
+                    crate::store::DbmKind::Tree,
                 )?,
             )),
             phrase: Some(PhraseTable::new(
                 crate::data::chewing_table::DefaultDbm::attach(
                     &path(SystemDbm::AddonPhraseIndex),
-                    false,
+                    crate::store::DbmKind::Tree,
                 )?,
             )),
             libraries: PhraseLibraries::empty(),

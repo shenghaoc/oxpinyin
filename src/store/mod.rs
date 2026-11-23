@@ -222,7 +222,7 @@ pub trait WriteTxn {
     fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError>;
 }
 
-/// The write tier: creation, raw writes, and compaction.
+/// The write tier: creation and raw writes.
 ///
 /// Adds mutation on top of [`RawReadStore`], whose reads a writable backend
 /// necessarily also provides.
@@ -325,21 +325,6 @@ pub trait WriteStore: RawReadStore {
     {
         Self::create(path)
     }
-    /// [`WriteStore::create_user`]'s hash form: the user bigram, where a
-    /// backend writes it as a hash container. The default is
-    /// [`WriteStore::create_hash`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the store cannot be created.
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn create_user_hash(path: &Path) -> Result<Self, StoreError>
-    where
-        Self: Sized,
-    {
-        Self::create_hash(path)
-    }
-
     /// Writes one user phrase/pinyin index in the backend's pin format,
     /// with the calls the pin's `save_db` makes. `records` hands each
     /// record, in ascending key order, to the sink it is given; nothing
@@ -362,60 +347,6 @@ pub trait WriteStore: RawReadStore {
     {
         let store = Self::create_user(path)?;
         store.write(|txn| records(&mut |key, value| txn.put_raw(key, value)))
-    }
-
-    /// Writes `rows` to `path` as the **user** bigram container.
-    ///
-    /// The write half of [`RawReadStore::open_user_bigram`], and for the
-    /// same reason it is not [`Self::create_hash`]: libpinyin's Kyoto
-    /// Cabinet user bigram is a snapshot stream, produced by filling an
-    /// in-memory `StashDB` and calling `dump_snapshot`
-    /// (`ngram_kyotodb.cpp:82-101`), not by creating a hash file at the
-    /// path. tkrzw writes a genuine container there, so
-    /// the default is [`Self::create_hash`] plus a raw write — what that
-    /// backend already did correctly.
-    ///
-    /// Rows arrive already sorted by key; the container's own order is
-    /// what matters on read.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the container cannot be written.
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError>
-    where
-        Self: Sized,
-    {
-        // Atomic replacement: build the whole container at a sibling
-        // temporary, compact it, close it, then rename it over `path`.
-        // Removing `path` up front and writing in place would destroy
-        // the previous file if creation, insertion, or compaction
-        // failed — and a rename(2) over an existing file is itself
-        // atomic, so this file is always the old one or the new one,
-        // never a mix.
-        let tmp = sibling_temp(path);
-        // libpinyin unlinks the temporary before `save_db` creates it
-        // (`pinyin.cpp:1017`, and `save_db` unlinks again): a stale one
-        // left by a crashed save is not reopened, so its rows and its
-        // mode do not carry into the new file.
-        remove_if_present(&tmp)?;
-        let mut store = Self::create_user_hash(&tmp)?;
-        store.write(|txn| {
-            for (key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })?;
-        // The hard sync sits with this `compact`, and only one of
-        // this default's users still owes it there: tkrzw's `write`
-        // reaches the operating system and its `compact` the device,
-        // so the device sync must land before the rename.
-        // Berkeley DB already reaches stable storage in `write`;
-        // its `compact` here is compaction work, not durability.
-        store.compact()?;
-        drop(store);
-        std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
-        Ok(())
     }
 
     /// Run `f` inside a write transaction. An `Err` from `f` writes
@@ -498,23 +429,6 @@ pub trait WriteStore: RawReadStore {
     ///
     /// Returns [`StoreError`] when the flush fails.
     fn flush(&self) -> Result<(), StoreError>;
-
-    /// Perform backend-dependent compaction work, and put the store on
-    /// **stable storage**.
-    ///
-    /// Berkeley DB syncs
-    /// instead — `DB->compact` wants a transaction this backend never
-    /// opens — and the file does not shrink. Kyoto Cabinet and tkrzw hard-sync here —
-    /// see [`WriteStore::write`]'s durability note, which explains why
-    /// the device-level sync sits on this call and not on every commit
-    /// for those two. Berkeley DB has already paid it at every commit,
-    /// so for that peer this call adds no durability.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when compaction fails.
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn compact(&mut self) -> Result<(), StoreError>;
 }
 
 // ── Read tier ─────────────────────────────────────────────────────
@@ -772,138 +686,140 @@ pub trait RawReadStore {
     {
         Self::open_read_only(path)
     }
-
-    /// Opens the **user** bigram container at `path` for reading.
-    ///
-    /// This is *not* [`Self::open_hash_read_only`], and the two must not
-    /// share one implementation: libpinyin keeps its system and user
-    /// bigrams in different containers on Kyoto Cabinet. The system
-    /// `bigram.db` is a `HashDB` file (`attach`, `ngram_kyotodb.cpp:110`),
-    /// while the user `user_bigram.db` is a snapshot stream of an
-    /// in-memory `StashDB` (`load_db`'s `load_snapshot`,
-    /// `ngram_kyotodb.cpp:54-64`) — magic `KCSS`, which a hash open
-    /// rejects with "missing magic data of the file". On tkrzw both are
-    /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), so the default —
-    /// the hash container — is correct for both.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend open fails.
-    #[cfg(any(test, feature = "test-hooks"))]
-    fn open_user_bigram(path: &std::path::Path) -> Result<Self, StoreError>
-    where
-        Self: Sized,
-    {
-        Self::open_hash_read_only(path)
-    }
 }
 
-/// libpinyin's user bigram container as the pin holds it between
-/// `pinyin_init` and `pinyin_fini`: `Bigram::m_db` after `load_db` — an
-/// **in-memory** container of the backend's own type, filled from
-/// `user_bigram.db` by the backend's own copy loop, mutated by `store` /
-/// `remove`, walked by `get_all_items`, and written back by `save_db`.
-///
-/// The container is the pin's by construction — the same library, the
-/// same database type, the same default tuning, the same sequence of
-/// inserts — so its walk order is the pin's walk order: tkrzw `TinyDBM`
-/// copied from the `HashDBM` file by iterator (`ngram_tkrzwdb.cpp:48-63`,
-/// `tkrzwdb_utils.h`), Kyoto Cabinet `StashDB` filled by
-/// `load_snapshot` (`ngram_kyotodb.cpp:54-64`), Berkeley DB an
-/// in-memory `DB_HASH` filled by cursor copy (`ngram_bdb.cpp:47-79`,
-/// `bdb_utils.h:43-74`). Keys are the 4-byte native-endian predecessor
-/// token; values the `SingleGram` chunk.
-pub(crate) trait UserBigramDb: Sized {
-    /// A fresh, empty in-memory container — what `load_db` works on
-    /// before the copy.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] for a linked library this backend does not
-    /// support. A container the pin cannot create ends the process, as the
-    /// pin's assert or uncaught `std::bad_alloc` does.
-    fn empty() -> Result<Self, StoreError>;
+mod user_bigram {
+    use super::StoreError;
+    use std::path::Path;
 
-    /// `Bigram::load_db`: a fresh in-memory container, then the file's
-    /// records in the file's own walk order. An absent or unreadable
-    /// file leaves the container empty, as the pin's does — its
-    /// `load_db` fails after the in-memory database already exists.
+    /// libpinyin's user bigram container as the pin holds it between
+    /// `pinyin_init` and `pinyin_fini`: `Bigram::m_db` after `load_db` — an
+    /// **in-memory** container of the backend's own type, filled from
+    /// `user_bigram.db` by the backend's own copy loop, mutated by `store` /
+    /// `remove`, walked by `get_all_items`, and written back by `save_db`.
     ///
-    /// # Errors
-    ///
-    /// As [`Self::empty`].
-    fn load_db(path: &Path) -> Result<Self, StoreError>;
+    /// The container is the pin's by construction — the same library, the
+    /// same database type, the same default tuning, the same sequence of
+    /// inserts — so its walk order is the pin's walk order: tkrzw `TinyDBM`
+    /// copied from the `HashDBM` file by iterator (`ngram_tkrzwdb.cpp:48-63`,
+    /// `tkrzwdb_utils.h`), Kyoto Cabinet `StashDB` filled by
+    /// `load_snapshot` (`ngram_kyotodb.cpp:54-64`), Berkeley DB an
+    /// in-memory `DB_HASH` filled by cursor copy (`ngram_bdb.cpp:47-79`,
+    /// `bdb_utils.h:43-74`). Keys are the 4-byte native-endian predecessor
+    /// token; values the `SingleGram` chunk.
+    #[doc(hidden)]
+    pub trait UserBigramDb: Sized {
+        /// A fresh, empty in-memory container — what `load_db` works on
+        /// before the copy.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StoreError`] for a linked library this backend does not
+        /// support. A container the pin cannot create ends the process, as the
+        /// pin's assert or uncaught `std::bad_alloc` does.
+        fn empty() -> Result<Self, StoreError>;
 
-    /// `Bigram::load`'s read: the stored value for `key`, into `value`
-    /// with [`RawReadStore::get_raw`]'s buffer contract — cleared, filled on a
-    /// hit, and the answer is whether `key` was found. The pin reads into
-    /// the chunk the `Bigram` owns and reuses (`ngram_kyotodb.cpp:136-139`
-    /// at 074a2219).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the read fails.
-    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
+        /// `Bigram::load_db`: a fresh in-memory container, then the file's
+        /// records in the file's own walk order. An absent or unreadable
+        /// file leaves the container empty, as the pin's does — its
+        /// `load_db` fails after the in-memory database already exists.
+        ///
+        /// # Errors
+        ///
+        /// As [`Self::empty`].
+        fn load_db(path: &Path) -> Result<Self, StoreError>;
 
-    /// `Bigram::store`: set `key` to `value`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the write fails.
-    fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
+        /// `Bigram::load`'s read: the stored value for `key`, into `value`
+        /// with [`super::RawReadStore::get_raw`]'s buffer contract — cleared, filled on a
+        /// hit, and the answer is whether `key` was found. The pin reads into
+        /// the chunk the `Bigram` owns and reuses (`ngram_kyotodb.cpp:136-139`
+        /// at 074a2219).
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StoreError`] when the read fails.
+        fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
 
-    /// `Bigram::remove`: delete `key`; an absent key is not an error.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the delete fails.
-    fn remove(&self, key: &[u8]) -> Result<(), StoreError>;
+        /// `Bigram::store`: set `key` to `value`.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StoreError`] when the write fails.
+        fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
 
-    /// `Bigram::get_all_items`: every key in the container's walk order,
-    /// collected into one vector as the pin collects `phrase_token_t`s
-    /// into one `GArray` (`ngram_kyotodb.cpp:163-196` at 074a2219). A key
-    /// that is not four bytes, which the pin's visitor asserts against,
-    /// comes back as `None` in its place, for the caller to refuse.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the walk fails.
-    fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError>;
+        /// `Bigram::remove`: delete `key`; an absent key is not an error.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StoreError`] when the delete fails.
+        fn remove(&self, key: &[u8]) -> Result<(), StoreError>;
 
-    /// Whether the container holds no record. Not a pin call: oxpinyin's
-    /// own check of whether a session holds grams, answered without the
-    /// full [`Self::keys`] walk where the backend keeps a record count.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the container cannot be read.
-    fn is_empty(&self) -> Result<bool, StoreError> {
-        Ok(self.keys()?.is_empty())
+        /// `Bigram::get_all_items`: every key in the container's walk order,
+        /// collected into one vector as the pin collects `phrase_token_t`s
+        /// into one `GArray` (`ngram_kyotodb.cpp:163-196` at 074a2219). A key
+        /// that is not four bytes, which the pin's visitor asserts against,
+        /// comes back as `None` in its place, for the caller to refuse.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StoreError`] when the walk fails.
+        fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError>;
+
+        /// Whether the container holds no record. Not a pin call: oxpinyin's
+        /// own check of whether a session holds grams, answered without the
+        /// full [`Self::keys`] walk where the backend keeps a record count.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StoreError`] when the container cannot be read.
+        fn is_empty(&self) -> Result<bool, StoreError> {
+            Ok(self.keys()?.is_empty())
+        }
+
+        /// Whether this backend has a failed container at all: only Berkeley
+        /// DB's `load_db` carries on after its in-memory `DB->open` fails
+        /// (`ngram_bdb.cpp:54-57` at 074a2219). The other backends cannot fail
+        /// to create the container and carry on, so a caller's check of
+        /// [`Self::is_failed`] behind this constant is a constant `false` there.
+        const CAN_FAIL: bool = false;
+
+        /// Whether this is the failed container a Berkeley DB `load_db` leaves
+        /// when its in-memory `DB->open` fails: reads miss, walks are empty,
+        /// and `store` fails. It never changes after creation.
+        fn is_failed(&self) -> bool {
+            false
+        }
+
+        /// `Bigram::save_db`: remove `path`, then write the container to it
+        /// the pin's way (a fresh file of the backend's user-bigram form,
+        /// filled in this container's walk order).
+        ///
+        /// # Errors
+        ///
+        /// Returns [`StoreError`] when the file cannot be written.
+        fn save_db(&self, path: &Path) -> Result<(), StoreError>;
     }
 
-    /// Whether this backend has a failed container at all: only Berkeley
-    /// DB's `load_db` carries on after its in-memory `DB->open` fails
-    /// (`ngram_bdb.cpp:54-57` at 074a2219). The other backends cannot fail
-    /// to create the container and carry on, so a caller's check of
-    /// [`Self::is_failed`] behind this constant is a constant `false` there.
-    const CAN_FAIL: bool = false;
-
-    /// Whether this is the failed container a Berkeley DB `load_db` leaves
-    /// when its in-memory `DB->open` fails: reads miss, walks are empty,
-    /// and `store` fails. It never changes after creation.
-    fn is_failed(&self) -> bool {
-        false
-    }
-
-    /// `Bigram::save_db`: remove `path`, then write the container to it
-    /// the pin's way (a fresh file of the backend's user-bigram form,
-    /// filled in this container's walk order).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the file cannot be written.
-    fn save_db(&self, path: &Path) -> Result<(), StoreError>;
+    /// The compiled-in backend's [`UserBigramDb`].
+    #[cfg(feature = "kyotocabinet")]
+    #[doc(hidden)]
+    pub type DefaultUserBigramDb = super::KcUserBigramDb;
+    /// The compiled-in backend's [`UserBigramDb`].
+    #[cfg(feature = "tkrzw")]
+    #[doc(hidden)]
+    pub type DefaultUserBigramDb = super::TkrzwUserBigramDb;
+    /// The compiled-in backend's [`UserBigramDb`].
+    #[cfg(feature = "bdb")]
+    #[doc(hidden)]
+    pub type DefaultUserBigramDb = super::BdbUserBigramDb;
 }
+
+// Downstream C-ABI fixtures use the native container only with test hooks.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use user_bigram::{DefaultUserBigramDb, UserBigramDb};
+#[cfg(not(feature = "test-hooks"))]
+pub(crate) use user_bigram::{DefaultUserBigramDb, UserBigramDb};
 
 /// Removes `path`; absence is not an error — libpinyin's
 /// `unlink`-before-create, which ignores `ENOENT`.
@@ -913,18 +829,6 @@ pub(crate) fn remove_if_present(path: &Path) -> Result<(), StoreError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(StoreError::Io(error)),
     }
-}
-
-/// `<name>.<ext>.tmp` beside `path` — the staged-replacement sibling
-/// [`WriteStore::write_user_bigram`] builds before the atomic rename.
-#[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn sibling_temp(path: &Path) -> std::path::PathBuf {
-    let mut name = path
-        .file_name()
-        .map(std::ffi::OsStr::to_os_string)
-        .unwrap_or_default();
-    name.push(".tmp");
-    path.with_file_name(name)
 }
 
 // ── The default backend: compile-time selection ───────────────────────
@@ -960,16 +864,6 @@ pub type DefaultStore = TkrzwStore;
 /// (`DBM` is `BerkeleyDB`), not oxpinyin's default.
 #[cfg(feature = "bdb")]
 pub type DefaultStore = BdbStore;
-
-/// The compiled-in backend's [`UserBigramDb`].
-#[cfg(feature = "kyotocabinet")]
-pub(crate) type DefaultUserBigramDb = KcUserBigramDb;
-/// The compiled-in backend's [`UserBigramDb`].
-#[cfg(feature = "tkrzw")]
-pub(crate) type DefaultUserBigramDb = TkrzwUserBigramDb;
-/// The compiled-in backend's [`UserBigramDb`].
-#[cfg(feature = "bdb")]
-pub(crate) type DefaultUserBigramDb = BdbUserBigramDb;
 
 /// The backend's `database format:` token — the string `user.conf`'s
 /// conformance check compares (`table_info.cpp`'s
@@ -1022,7 +916,7 @@ pub mod kyotocabinet;
 pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
 
 mod system_attach;
-pub use system_attach::SystemAttachment;
+pub use system_attach::{AccessMode, DbmKind, SystemAttachment};
 
 // ── tests ──────────────────────────────────────────────────────────
 
