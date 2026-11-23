@@ -169,6 +169,10 @@ impl Diagnostic {
             }
         }
     }
+    #[expect(
+        clippy::unused_self,
+        reason = "The dump is attached to the diagnostic snapshot at shared call sites"
+    )]
     pub(crate) fn dump(&self, directory: &str, tag: &str, stage: &str) {
         for (what, source) in [
             ("maps", "/proc/self/maps"),
@@ -193,6 +197,10 @@ pub(crate) fn trim() -> &'static str {
 #[cfg(target_env = "gnu")]
 mod allocator {
     use super::*;
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "The non-GNU allocator cannot provide arena counters"
+    )]
     pub(super) fn arena() -> Option<[u64; 6]> {
         // SAFETY: mallinfo2 has no preconditions and returns a value snapshot.
         let info = unsafe { libc::mallinfo2() };

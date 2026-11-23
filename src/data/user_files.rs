@@ -493,7 +493,7 @@ impl std::error::Error for UserConfError {}
 /// The stream is records concatenated with no header; every field is
 /// native-endian (`u32` `LOG_TYPE`/token, `u16` lengths) and each record
 /// carries whole `PhraseItem` chunks as its payloads.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LogRecord<P = Vec<u8>> {
     /// `LOG_ADD_RECORD` — a phrase item the system chunk lacks.
     Add {

@@ -66,7 +66,7 @@ pub fn parse_direct(input: &[u8], options: oxpinyin::OptionBits, zhuyin: bool) -
                 )?;
                 ChewingKey::from_pinyin(key.text()).map(|key| key.with_tone(tone))
             } else {
-                FullPinyinParser.parse_one_key(options, segment)
+                FullPinyinParser::parse_one_key(options, segment)
             }
         },
         |key, span| keys.push(Key { key, span }),

@@ -554,7 +554,7 @@ fn a_short_sentence_start_gram_aborts_the_guess_after_parsing() {
             let user = TempUserDir::new("short-start-gram");
             crate::support::plant_bigram(
                 &user.path,
-                vec![(SENTENCE_START.to_le_bytes().to_vec(), vec![7, 0, 0])],
+                &[(SENTENCE_START.to_le_bytes().to_vec(), vec![7, 0, 0])],
             );
             let context = init_fixture_at(&user.path);
             assert!(!context.is_null());

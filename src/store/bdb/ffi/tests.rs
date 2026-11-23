@@ -28,8 +28,8 @@ fn reads(cursor: &mut Cursor<'_>, seeks: &[Seek<'_>]) -> Vec<OwnedRow> {
         .collect()
 }
 
-fn row(key: &[u8], value: &[u8]) -> OwnedRow {
-    Some((key.to_vec(), value.to_vec()))
+fn row(key: &[u8], value: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    (key.to_vec(), value.to_vec())
 }
 
 // Cursor owns its DB_DBT_USERMEM buffers until drop, including while a nested cursor runs.
@@ -59,8 +59,8 @@ fn reused_cursors_read_what_fresh_cursors_read_while_another_row_is_live() {
     assert_eq!(
         reused,
         [
-            row(b"a", b"overwritten during walk"),
-            row(b"b", b"second"),
+            Some(row(b"a", b"overwritten during walk")),
+            Some(row(b"b", b"second")),
             None
         ]
     );
@@ -70,7 +70,7 @@ fn reused_cursors_read_what_fresh_cursors_read_while_another_row_is_live() {
     db.put(b"a", b"overwritten after walk").unwrap();
     let next = reads(&mut db.cursor().unwrap(), &WALK);
     assert_eq!(next, reads(&mut fresh_cursor(&db), &WALK));
-    assert_eq!(next[0], row(b"a", b"overwritten after walk"));
+    assert_eq!(next[0], Some(row(b"a", b"overwritten after walk")));
 }
 
 // Cursor::read retries DB_BUFFER_SMALL with the original seek and retains independent key and value buffers.
@@ -114,11 +114,11 @@ fn reused_cursor_reads_match_fresh_cursors_across_growth_and_misses() {
         assert_eq!(
             reused,
             [
-                row(&key, &value),
-                row(&key, &value),
-                row(b"a", b"first"),
-                row(&key, &value),
-                row(b"z", b"last"),
+                Some(row(&key, &value)),
+                Some(row(&key, &value)),
+                Some(row(b"a", b"first")),
+                Some(row(&key, &value)),
+                Some(row(b"z", b"last")),
                 None,
                 None
             ]

@@ -18,7 +18,6 @@ fn a_step_prices_system_tokens_the_user_table_indexes() {
         let item = runtime
             .dict()
             .trellis_item(&[ni], &[], token)
-            .unwrap()
             .expect("the step finds the item");
         assert!(item.pronunciation.is_some(), "token {token:#x} is priced");
     }
@@ -766,7 +765,7 @@ mod backend_files {
                 .unwrap();
             assert!(pair.iter().eq(fused.iter()));
             assert_eq!(continued, expected_continuation, "{spellings:?}");
-            assert_eq!(continued, dict.phrase_prefix_exists(&keys).unwrap());
+            assert_eq!(continued, dict.phrase_prefix_exists(&keys));
         }
     }
 
@@ -1050,16 +1049,12 @@ mod pin_data {
             .expect("你好");
         let item = dict
             .trellis_item(&syllables("ni'hao"), &[], entry.token())
-            .expect("trellis item")
             .expect("你好 is ranged on ni'hao");
         assert!(
             item.pronunciation.is_some_and(|(m, t)| m > 0 && m <= t),
             "possibility from the chunk pronunciations"
         );
-        assert!(
-            dict.phrase_prefix_exists(&syllables("zhong"))
-                .expect("probe")
-        );
+        assert!(dict.phrase_prefix_exists(&syllables("zhong")));
 
         let lone = SyllableKey::from_text("beng").expect("frozen syllable");
         let _ = dict.lookup(&[lone]).expect("lookup");
@@ -1934,10 +1929,7 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
     let empty = crate::data::phrase_library::build_chunk(&[]).unwrap();
     for present in [false, true] {
         std::fs::write(&file, if present { &original } else { &empty }).unwrap();
-        native_fixture::plant_bigram(
-            &user.path,
-            vec![(1_u32.to_le_bytes().to_vec(), gram.clone())],
-        );
+        native_fixture::plant_bigram(&user.path, &[(1_u32.to_le_bytes().to_vec(), gram.clone())]);
         let runtime = Runtime::open_with_law(&system_dir(), Some(&user.path), law).unwrap();
         assert_eq!(
             runtime

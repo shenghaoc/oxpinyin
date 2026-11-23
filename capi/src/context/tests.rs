@@ -71,7 +71,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
     let run = crate::test_support::assert_aborts_in_dir(
         "context::tests::save_aborts_where_a_copy_fails_a_destination_write",
         |user| {
-            plant_bigram(user, two_bigram_rows());
+            plant_bigram(user, &two_bigram_rows());
             let context = init_at(&system_dir(), user);
             assert!(!context.is_null());
             // `pinyin_save` saves a modified context only (`pinyin.cpp:1136`).

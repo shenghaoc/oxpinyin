@@ -2392,6 +2392,13 @@ pub mod lookup_tests {
 /// the encoding alone: NULs, existence and filename validity are not
 /// examined.
 #[must_use]
+#[cfg_attr(
+    unix,
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "Unix accepts all bytes; Windows can reject a path that is not UTF-8"
+    )
+)]
 pub fn path_from_bytes_checked(bytes: &[u8]) -> Option<PathBuf> {
     #[cfg(unix)]
     {

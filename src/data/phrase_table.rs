@@ -129,7 +129,7 @@ impl PhraseTable {
             return Ok(Vec::new());
         }
         let key = encode_ucs4_key_scalars(prefix);
-        if !self.dbm.contains(&key)? {
+        if !self.dbm.contains(&key) {
             return Ok(Vec::new());
         }
         let upper = prefix_upper_bound(&key);

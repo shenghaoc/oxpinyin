@@ -683,20 +683,6 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         self.trellis_ranges_with(syllables, tones, ranges, |_| true)
     }
 
-    /// The stored length and text of `token`'s loaded library item.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
-    pub fn trellis_text(
-        &self,
-        _syllables: &[SyllableKey],
-        _tones: &[u8],
-        token: u32,
-    ) -> Result<Option<TokenPhrase>, DictError> {
-        Ok(self.libraries().token_phrase(token))
-    }
-
     /// [`Self::lookup`] into a caller-owned buffer, also answering whether the
     /// lookup met a token of a loaded library whose item could not be read.
     ///
@@ -716,9 +702,10 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
     /// phrase or as a marker for longer phrases — one point read, no
     /// record decode (the bit is set whenever the key exists).
     #[cfg(test)]
-    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
+    #[must_use]
+    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
         if syllables.is_empty() {
-            return Ok(true);
+            return true;
         }
         let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
         self.pinyin.key_exists(&keys)
@@ -755,15 +742,15 @@ impl<L: std::borrow::Borrow<PhraseLibraries>, T: std::borrow::Borrow<SystemTable
         Ok(self.trellis_item(syllables, token))
     }
 
-    /// [`Self::trellis_text`]; the facts are not used.
+    /// The stored length and text of the token in its loaded library.
     fn trellis_text_with_facts(
         &self,
-        syllables: &[SyllableKey],
-        tones: &[u8],
+        _syllables: &[SyllableKey],
+        _tones: &[u8],
         token: u32,
         _facts: &mut crate::sentence_facts::SentenceFacts,
     ) -> Result<Option<TokenPhrase>, DictError> {
-        self.trellis_text(syllables, tones, token)
+        Ok(self.libraries().token_phrase(token))
     }
 
     fn candidate_search_into(

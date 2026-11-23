@@ -936,7 +936,7 @@ mod native {
                 std::fs::create_dir(&user).unwrap();
                 plant_bigram(
                     &user,
-                    vec![
+                    &[
                         (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
                         (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
                     ],
@@ -1222,7 +1222,7 @@ mod native {
         let user = TempUserDir::new("issue677");
         let key = 0x0700_0001_u32.to_le_bytes().to_vec();
         let gram = gram_bytes(100, &[(0x0100_0001, 100)]);
-        plant_bigram(&user.path, vec![(key.clone(), gram.clone())]);
+        plant_bigram(&user.path, &[(key.clone(), gram.clone())]);
         let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
         let stored = || {
             store_rows(&user.path.join("user_bigram.db"), true)

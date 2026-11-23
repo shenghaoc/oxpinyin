@@ -114,10 +114,7 @@ fn adding_a_phrase_with_two_library_tokens_aborts() {
 #[test]
 fn an_import_after_a_refused_bigram_mask_still_adds() {
     let user_dir = TempUserDir::new("partial-mask");
-    plant_bigram(
-        &user_dir.path,
-        vec![(vec![1, 0, 0, 0], vec![0, 0, 0, 0, 1])],
-    );
+    plant_bigram(&user_dir.path, &[(vec![1, 0, 0, 0], vec![0, 0, 0, 0, 1])]);
     let (context, instance) = open_with_user(&user_dir.path);
     let reading = "ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ ㄋㄧˇ".as_bytes();
     // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.

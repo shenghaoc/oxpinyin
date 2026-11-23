@@ -40,7 +40,8 @@ impl UserModel for UserStore {
     ) -> Result<(), Self::Error> {
         let last = history.last().map_or(SENTENCE_START, |t| *t);
         let seed = self.observe_selection(last, *token)?;
-        self.train_pronunciations(*token, readings, seed)
+        self.train_pronunciations(*token, readings, seed);
+        Ok(())
     }
 }
 

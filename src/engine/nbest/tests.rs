@@ -997,7 +997,7 @@ fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
 
     let unsafe_read = EngineError::UnsafeLookupPredecessor;
     let alone = || MergedGram::merge(None, Some(vec![0, 0]));
-    assert_eq!(expand_with_row(alone(), Some(1)), Err(unsafe_read.clone()));
+    assert_eq!(expand_with_row(alone(), Some(1)), Err(unsafe_read));
     let tailed = || MergedGram::merge(None, Some(gram_value(3, &[(1, 3)], &[9])));
     assert_eq!(expand_with_row(tailed(), None), Err(unsafe_read));
     assert_eq!(expand_with_row(tailed(), Some(1)), Ok(()));

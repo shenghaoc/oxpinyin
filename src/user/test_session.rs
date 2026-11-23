@@ -172,6 +172,10 @@ impl Rows {
 }
 
 /// A session on `user_dir` over `originals`' libraries and layout.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "The fixture releases its original mapping bundle when this open helper returns"
+)]
 pub(crate) fn open(
     user_dir: &Path,
     originals: SystemOriginals,
@@ -212,12 +216,12 @@ pub(crate) fn load_profile_checked(
     dir: &Path,
     originals: &SystemOriginals,
     check: &crate::user::ProfileCheck,
-) -> Result<crate::user::LoadedProfile, crate::user::PersistenceError> {
+) -> crate::user::LoadedProfile {
     let rows = Rows::new(originals);
     let mut mapped =
         SystemOriginals::new(crate::user::LibraryTable::new(), originals.layout().clone());
     let (mut profile, stop) =
-        crate::user::load_session_in_loop(dir, &mut mapped, &rows.rows(), check)?;
+        crate::user::load_session_in_loop(dir, &mut mapped, &rows.rows(), check);
     match stop {
         Ok(()) => {}
         Err(crate::user::library_loop::LibraryLoopStop::Journal(fault)) => {
@@ -225,7 +229,7 @@ pub(crate) fn load_profile_checked(
         }
         Err(stop) => panic!("the library loop stopped: {stop}"),
     }
-    Ok(profile)
+    profile
 }
 
 /// [`load_profile_checked`] after `check_format`.
@@ -234,7 +238,7 @@ pub(crate) fn load_profile(
     originals: &SystemOriginals,
     versions: &SystemVersions,
     law: UserConfLaw,
-) -> Result<crate::user::LoadedProfile, crate::user::PersistenceError> {
+) -> crate::user::LoadedProfile {
     let check = crate::user::check_format(dir, versions, originals.layout(), law);
     load_profile_checked(dir, originals, &check)
 }
@@ -253,7 +257,7 @@ pub(crate) fn load_checked(
         index,
         phrase_table,
         ..
-    } = load_profile_checked(dir, originals, check)?;
+    } = load_profile_checked(dir, originals, check);
     let state = &mut loaded.state;
     let bigram = crate::input::build_path(
         dir,

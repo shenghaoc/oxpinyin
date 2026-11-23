@@ -16,7 +16,7 @@ fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 fn container_rows(path: &Path, hash: bool) -> Vec<(String, String)> {
-    let mut rows = super::hex_rows(store_rows(path, hash));
+    let mut rows = super::hex_rows(&store_rows(path, hash));
     rows.sort();
     rows
 }
@@ -138,7 +138,7 @@ fn collision_cycles(
     law: UserConfLaw,
 ) -> Vec<(usize, String)> {
     let path = user.join("user_bigram.db");
-    let mut expected = super::hex_rows(collision_rows());
+    let mut expected = super::hex_rows(&collision_rows());
     expected.sort();
     let readings = match law {
         UserConfLaw::Pinyin => ["da2'da2", "ni3'ni3"],

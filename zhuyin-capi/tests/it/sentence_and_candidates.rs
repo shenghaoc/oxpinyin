@@ -407,7 +407,7 @@ fn partial_candidate_gram_logs_once() {
     gram.extend_from_slice(&token.to_le_bytes());
     gram.extend_from_slice(&7_u32.to_le_bytes());
     gram.push(1);
-    crate::support::plant_bigram(&user.path, vec![(token.to_le_bytes().to_vec(), gram)]);
+    crate::support::plant_bigram(&user.path, &[(token.to_le_bytes().to_vec(), gram)]);
     let (context, instance) = open_with_user(&user.path);
     assert!(unsafe {
         crate::support::zhuyin_set_options(context, oxpinyin::OptionBits::DYNAMIC_ADJUST.bits())

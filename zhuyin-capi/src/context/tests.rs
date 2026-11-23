@@ -74,7 +74,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
         |user| {
             plant_bigram(
                 user,
-                vec![
+                &[
                     (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
                     (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
                 ],

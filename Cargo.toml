@@ -153,6 +153,14 @@ missing_safety_doc = "deny"
 # Grows #[must_use] coverage on value-returning queries; kept at zero hits —
 # new sites must annotate or consume.
 must_use_candidate = "warn"
+# Keep these lints at zero diagnostics. Use local, reasoned expectations.
+option_option = "deny"
+unnecessary_wraps = "deny"
+unused_self = "deny"
+struct_excessive_bools = "deny"
+fn_params_excessive_bools = "deny"
+ref_option = "deny"
+needless_pass_by_value = "deny"
 
 [workspace.dependencies]
 rustc-hash = "2.1.3"

@@ -1221,9 +1221,8 @@ impl UserStore {
         token: PhraseToken,
         readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
         seed: u64,
-    ) -> Result<(), UserStoreError> {
+    ) {
         self.arena_train(token, readings, seed as u32);
-        Ok(())
     }
 
     /// Record an accepted *predicted* candidate `cur` after `last` (the
@@ -2190,37 +2189,28 @@ impl UserStore {
 
     #[cfg(test)]
     /// The imported/replayed system item, with its current unigram field.
-    ///
-    /// # Errors
-    /// Returns an error if the scratch payload or count cannot be read.
     pub(crate) fn system_item_override(
         &self,
         token: PhraseToken,
-    ) -> Result<Option<crate::data::phrase_library::ChunkItem>, UserStoreError> {
+    ) -> Option<crate::data::phrase_library::ChunkItem> {
         if !(1..=4).contains(&(token >> 24)) {
-            return Ok(None);
+            return None;
         }
-        let Some(mut item) = self.with_effective_system_item(token, Clone::clone) else {
-            return Ok(None);
-        };
+        let mut item = self.with_effective_system_item(token, Clone::clone)?;
         if let Some(unigram) = self.system_unigram(token) {
             item.unigram = unigram;
         }
-        Ok(Some(item))
+        Some(item)
     }
 
     /// The stored pronunciations of the item this store holds behind
     /// `token`, as `(keys, frequency)` rows in stored order (074a2219
     /// `phrase_index.h` `get_nth_pronunciation`): an imported or trained
     /// system item, or a user-file library's phrase.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`UserStoreError`] when a user phrase cannot be read.
     pub fn item_pronunciations(
         &self,
         token: PhraseToken,
-    ) -> Result<Option<crate::model::PronunciationRows>, UserStoreError> {
+    ) -> Option<crate::model::PronunciationRows> {
         use crate::user::store_libpinyin::pinyin_keys_to_packed;
         if let Some(readings) = self.with_user_item(token, |item| {
             item.pronunciations()
@@ -2238,10 +2228,10 @@ impl UserStore {
                 })
                 .collect()
         }) {
-            return Ok(Some(readings));
+            return Some(readings);
         }
         if self.is_system_library(phrase_index_library_index(token)) {
-            return Ok(self.with_effective_system_item(token, |item| {
+            return self.with_effective_system_item(token, |item| {
                 item.prons
                     .iter()
                     .map(|(packed, frequency)| {
@@ -2252,9 +2242,9 @@ impl UserStore {
                         (keys, *frequency)
                     })
                     .collect()
-            }));
+            });
         }
-        Ok(self.phrase(token).map(|phrase| {
+        self.phrase(token).map(|phrase| {
             phrase
                 .pronunciations()
                 .iter()
@@ -2267,7 +2257,7 @@ impl UserStore {
                     Some((keys, frequency))
                 })
                 .collect()
-        }))
+        })
     }
 
     /// The live sub-index's range end for the export probe. A promotion can
@@ -2339,9 +2329,9 @@ impl UserStore {
         &self,
         token: PhraseToken,
         read: impl FnOnce(&[u8]) -> R,
-    ) -> Option<Option<R>> {
+    ) -> crate::user::system_items::LiveItemFields<R> {
         if !self.has_system_items() {
-            return None;
+            return crate::user::system_items::LiveItemFields::NoLiveLibrary;
         }
         self.inner
             .system_items
@@ -2497,7 +2487,7 @@ impl UserStore {
             }
         }
         phrases.index = crate::user::user_index::UserIndex::from_entries(
-            crate::data::pinyin_index_entries(&crate::user::chewing_rows(state, &self.originals)),
+            &crate::data::pinyin_index_entries(&crate::user::chewing_rows(state, &self.originals)),
         );
         for (key, value) in &state.phrase_table {
             phrases.phrase_table.push_record(key, value).unwrap();

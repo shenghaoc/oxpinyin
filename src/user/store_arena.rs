@@ -16,6 +16,7 @@ fn packed(keys: &[PinyinKey]) -> Result<Vec<u16>, UserStoreError> {
 }
 
 /// Which phrase-table result the add operation uses.
+#[derive(Clone, Copy)]
 pub(super) enum PhraseSelection {
     SearchTable,
     NewPhrase,

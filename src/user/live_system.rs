@@ -20,6 +20,7 @@ use crate::data::phrase_library::PhraseItemView;
 use crate::vocab::PhraseText;
 
 use crate::user::store::UserStore;
+use crate::user::system_items::LiveItemFields;
 use crate::vocab::PhraseToken;
 
 /// Where a [`SystemItem`] lives.
@@ -324,12 +325,14 @@ impl<'a> LiveSystemItems<'a> {
             return gate;
         }
         let mut read = Some(read);
-        if let Some(live) = self.user.with_live_item_fields(token, |bytes| {
+        match self.user.with_live_item_fields(token, |bytes| {
             let view = PhraseItemView::fields(bytes)?;
             let f = read.take()?;
             Some(f(SystemItem::Replayed(view)))
         }) {
-            return live.flatten().map_or(Lookup::Absent, Lookup::Found);
+            LiveItemFields::Read(result) => return result.map_or(Lookup::Absent, Lookup::Found),
+            LiveItemFields::NoReadableItem => return Lookup::Absent,
+            LiveItemFields::NoLiveLibrary => {}
         }
         match (
             self.libraries

@@ -183,13 +183,11 @@ fn largest_journal(dir: &std::path::Path) -> u64 {
 
 fn trained(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     let (dir, mut store) = open_law(name, law);
-    store
-        .train_pronunciations(
-            crate::vocab::phrase_index_make_token(1, 1),
-            std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
-            5,
-        )
-        .unwrap();
+    store.train_pronunciations(
+        crate::vocab::phrase_index_make_token(1, 1),
+        std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
+        5,
+    );
     store.mark_modified();
     (dir, store)
 }
@@ -439,9 +437,7 @@ fn session_phrases_have_one_arena_owner_through_writes_and_reload() {
     let token = store
         .add_phrase_in(crate::vocab::USER_DICTIONARY, &"你".into(), &keys, Some(5))
         .unwrap();
-    store
-        .train_pronunciations(token, std::iter::once(vec![ni]), 7)
-        .unwrap();
+    store.train_pronunciations(token, std::iter::once(vec![ni]), 7);
     assert_eq!(store.phrase(token).unwrap().pronunciations()[0].count(), 12);
     store.mark_modified();
     store.save_reporting().unwrap();
@@ -552,13 +548,11 @@ fn unloaded_training_keeps_bigram_but_never_materializes_an_item() {
             crate::user::UnigramAdd::Missing
         );
         assert_eq!(store.observe_selection(1, token).unwrap(), 69);
-        store
-            .train_pronunciations(
-                token,
-                std::iter::from_fn(|| panic!("unloaded pronunciation step consumed a reading")),
-                69,
-            )
-            .unwrap();
+        store.train_pronunciations(
+            token,
+            std::iter::from_fn(|| panic!("unloaded pronunciation step consumed a reading")),
+            69,
+        );
         assert_eq!(store.unigram_total(), before);
         assert!(!store.has_system_items());
         assert_eq!(store.count_delta(Some(1), token).unwrap().bigram_count, 69);
@@ -659,7 +653,7 @@ fn user_library_and_add_views_seed_stored_totals() {
     let mut merge = crate::user::replay::Merge::new(originals.get(&1));
     assert!(
         merge
-            .apply_owned(LogRecord::Add {
+            .apply_fixture(&LogRecord::Add {
                 token: 0x0100_0003,
                 new_item: encode_phrase_item(&added).unwrap(),
             })
@@ -1636,10 +1630,7 @@ fn mask_out_replays_the_log_it_reads_and_returns_its_faults() {
         .reload_system_libraries(original.fixture_copy(), 0x00ff_ffff, 0)
         .expect("replay");
     assert_eq!(
-        store
-            .system_item_override(0x0100_0001)
-            .expect("item")
-            .expect("override"),
+        store.system_item_override(0x0100_0001).expect("override"),
         new,
     );
     drop(store);
@@ -1678,7 +1669,7 @@ fn add_and_modify_log(header: bool) -> Vec<u8> {
 /// The replayed phrase of slot 1 (`None` keeps the original 你) and the
 /// unigram of slot 2 in library 1.
 fn slot_state(store: &UserStore) -> (Option<Vec<u32>>, Option<u32>) {
-    let item = store.system_item_override(0x0100_0001).expect("item");
+    let item = store.system_item_override(0x0100_0001);
     (
         item.map(|item| item.phrase),
         store.system_unigram(0x0100_0002),
@@ -1933,12 +1924,7 @@ fn reloading_a_system_library_drops_the_unsaved_session() {
         .expect("reload from the saved log");
     assert_eq!(counts(&store).len(), 2);
     store.unload_system_libraries(base.fixture_copy());
-    assert!(
-        store
-            .system_item_override(0x0100_0001)
-            .expect("item")
-            .is_none()
-    );
+    assert!(store.system_item_override(0x0100_0001).is_none());
     store
         .load_system_libraries(base)
         .expect("reload after unload");
@@ -1978,10 +1964,7 @@ fn persisted_empty_add_survives_reload_save_and_reopen() {
                 Some(Some(vec![]))
             );
             assert_eq!(store.unigram_delta(token), 37);
-            assert_eq!(
-                store.system_item_override(token).unwrap(),
-                Some(item.clone())
-            );
+            assert_eq!(store.system_item_override(token), Some(item.clone()));
             assert_eq!(
                 store.user_pronunciation_count(token),
                 Some(item.prons.len() as u32)
@@ -2006,7 +1989,7 @@ fn persisted_empty_add_survives_reload_save_and_reopen() {
         assert_eq!(store.unigram_total(), 0);
         store.unload_system_libraries(originals());
         assert!(store.with_user_item(token, |_| ()).is_none());
-        assert!(store.system_item_override(token).unwrap().is_none());
+        assert!(store.system_item_override(token).is_none());
         store.load_system_libraries(originals()).unwrap();
         observe(&store);
         assert_eq!(facade(&store), 174);
@@ -2418,13 +2401,8 @@ fn a_256th_reading_wraps_an_original_system_item_through_save_and_reopen() {
             .with_effective_system_item(token, |item| item.prons.clone())
             .expect("live item")
     };
-    let unigram_of = |store: &UserStore| {
-        store
-            .system_item_override(token)
-            .expect("override")
-            .expect("present")
-            .unigram
-    };
+    let unigram_of =
+        |store: &UserStore| store.system_item_override(token).expect("present").unigram;
     let unigram;
     {
         let mut store =
@@ -2849,7 +2827,6 @@ fn masked_and_removed_phrases_preserve_raw_index_records() {
         &versions(),
         UserConfLaw::Pinyin,
     )
-    .expect("load")
     .index
     .keys();
     assert_eq!(pinyin_keys.len(), 2 * 2 * 2 + 2, "{pinyin_keys:?}");
@@ -3063,7 +3040,7 @@ fn training_over_an_unsorted_start_gram_answers_true() {
     ];
     crate::user::native_fixture::plant_bigram(
         user.path(),
-        vec![(
+        &[(
             1_u32.to_le_bytes().to_vec(),
             crate::user::native_fixture::gram_bytes(5, &items),
         )],

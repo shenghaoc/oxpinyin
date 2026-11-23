@@ -28,7 +28,7 @@ impl From<EngineError> for TrainingPrepFault {
 }
 
 /// Anything a session can fail at.
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum EngineError {
     /// A lookup offset lay beyond the raw input's one-past-end position —
     /// upstream reads its matrix out of bounds there, so the range has no

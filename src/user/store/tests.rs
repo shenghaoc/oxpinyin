@@ -1399,7 +1399,7 @@ fn mask_out_of_a_selected_short_key_completes() {
     let user = tempfile::tempdir().unwrap();
     crate::user::native_fixture::plant_bigram(
         user.path(),
-        vec![(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
+        &[(1_u32.to_le_bytes().to_vec(), vec![7, 0, 0])],
     );
     let mut store = crate::user::test_session::open_w3(user.path());
     store.mask_out(0xffff_ffff, 1).unwrap();
@@ -1572,7 +1572,7 @@ fn training_past_the_gram_total_limit_keeps_the_gram() {
     let gram = crate::user::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)]);
     crate::user::native_fixture::plant_bigram(
         user.path(),
-        vec![
+        &[
             (ni.to_le_bytes().to_vec(), gram.clone()),
             (zhong.to_le_bytes().to_vec(), gram),
             (1_u32.to_le_bytes().to_vec(), vec![0; 4]),

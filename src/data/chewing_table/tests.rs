@@ -177,7 +177,7 @@ fn suggestion_walk_matches_the_separate_probes() {
                 Ok(false)
             })
             .unwrap();
-        let exists = table.key_exists(&[ni]).unwrap();
+        let exists = table.key_exists(&[ni]);
         let separate_overlong = exists && table.has_overlong_extension(&[ni]).unwrap();
         assert_eq!(fused_overlong, separate_overlong, "case {case}");
         if !separate_overlong {
@@ -268,9 +268,9 @@ fn a_failed_pinyin_table_read_is_a_miss() {
 fn a_failed_pinyin_table_existence_read_is_a_miss() {
     let table = native_table();
     let keys = [ChewingKey::from_pinyin("ni").unwrap()];
-    assert!(table.key_exists(&keys).unwrap());
+    assert!(table.key_exists(&keys));
     crate::store::fail_point_read_of(&index_key(&keys), 0);
-    assert!(!table.key_exists(&keys).unwrap());
+    assert!(!table.key_exists(&keys));
     assert!(
         !table
             .walk_suggestions(&keys, |_, _| panic!("a miss must not walk"))

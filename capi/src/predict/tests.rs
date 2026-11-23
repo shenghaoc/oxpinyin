@@ -55,9 +55,9 @@ fn predicted_bigram_rows_abort_on_a_zero_facade_total() {
             let gram = gram_bytes(20, &[(hao, 20)]);
             plant_bigram(
                 &user.path,
-                ni.iter()
+                &ni.iter()
                     .map(|token| (token.to_le_bytes().to_vec(), gram.clone()))
-                    .collect(),
+                    .collect::<Vec<_>>(),
             );
             let (_context, instance) = open_at(&user.path);
             // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
@@ -177,7 +177,7 @@ fn predicted_rows_ignore_dynamic_adjust_and_the_bigram_counts() {
         successors.sort_unstable_by_key(|&(token, _)| token);
         crate::test_support::plant_bigram(
             &user.path,
-            vec![(
+            &[(
                 ni.to_le_bytes().to_vec(),
                 crate::test_support::gram_bytes(hao_count + zhong_count, &successors),
             )],
@@ -292,7 +292,7 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
     unsafe { close(context, instance) };
     crate::test_support::plant_bigram(
         &user_dir.path,
-        vec![(
+        &[(
             prev.to_le_bytes().to_vec(),
             crate::test_support::gram_bytes(19, &[(nine, 9), (ten, 10)]),
         )],

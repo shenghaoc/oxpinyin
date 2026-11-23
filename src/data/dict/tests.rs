@@ -147,7 +147,7 @@ mod system_dictionary {
     fn phrase_prefix_exists_follows_search_continued() {
         let fix = Fixture::new();
         let dict = fix.dict();
-        assert!(dict.phrase_prefix_exists(&[]).unwrap());
+        assert!(dict.phrase_prefix_exists(&[]));
     }
 
     // Rust SystemDictionary resolves token fields and renders readings through the selected library.
@@ -290,7 +290,7 @@ mod system_dictionary {
             let path = syls(path);
             let mut pair = PhraseIndexRanges::new();
             dict.trellis_ranges(&path, tones, &mut pair).unwrap();
-            let continued = dict.phrase_prefix_exists(&path).unwrap();
+            let continued = dict.phrase_prefix_exists(&path);
             let mut fused = PhraseIndexRanges::new();
             let fused_continued = dict
                 .trellis_ranges_continued(&path, tones, &mut fused, &mut scratch)

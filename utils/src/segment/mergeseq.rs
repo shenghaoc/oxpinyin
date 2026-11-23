@@ -52,7 +52,7 @@ impl Merger {
     /// then `check_result`'s `assert`. A token with no item, or an item
     /// GLib cannot convert, is where the pin's `strcmp(NULL, …)` is
     /// undefined: oxpinyin refuses instead of reproducing the fault.
-    fn validate(&self, search: &PhraseSearch<'_>, token: u32, phrase: &CStr) -> bool {
+    fn validate(search: &PhraseSearch<'_>, token: u32, phrase: &CStr) -> bool {
         let text = tag_token_text(
             token,
             usize::from(phrase_index_library_index(token)) == 0,
@@ -137,7 +137,7 @@ impl Merger {
         }
 
         let phrase = &parts[1];
-        if !self.validate(search, token, phrase) {
+        if !Self::validate(search, token, phrase) {
             // `check_result(taglib_validate_token_with_string(...))`.
             abort_on_pin_assert();
         }

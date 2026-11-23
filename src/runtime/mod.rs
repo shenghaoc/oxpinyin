@@ -388,15 +388,11 @@ impl<'a> RuntimeDict<'a> {
     /// (`phonetic_key_matrix.cpp:562,575` at 074a2219), and a nonzero
     /// query tone matches only an equal or zero stored tone
     /// (`pinyin_compare_tone3`, `pinyin_phrase3.h:96-105`).
-    fn path_pricing(
-        &self,
-        syllables: &[SyllableKey],
-        tones: &[u8],
-    ) -> Result<PathPricing, DictError> {
-        Ok(PathPricing {
+    fn path_pricing(&self, syllables: &[SyllableKey], tones: &[u8]) -> PathPricing {
+        PathPricing {
             user: self.user_lookup().lookup(syllables),
             keys: Self::trellis_query(syllables, tones),
-        })
+        }
     }
 
     /// The item a step prices for `token`, including an unranged ONESTEP
@@ -410,11 +406,11 @@ impl<'a> RuntimeDict<'a> {
         tones: &[u8],
         token: u32,
         want_text: bool,
-    ) -> Result<Option<PricedToken>, DictError> {
+    ) -> Option<PricedToken> {
         if syllables.is_empty() {
-            return Ok(None);
+            return None;
         }
-        Ok(self.priced_on_path(&self.path_pricing(syllables, tones)?, token, want_text))
+        self.priced_on_path(&self.path_pricing(syllables, tones), token, want_text)
     }
 
     /// [`Self::priced_token`] over a non-empty path's [`PathPricing`].
@@ -851,7 +847,7 @@ impl RuntimeDict<'_> {
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         let mut out = Vec::new();
         for (token, ()) in ranges.walk_tokens() {
-            if let Some(priced) = self.priced_token(syllables, tones, token, true)? {
+            if let Some(priced) = self.priced_token(syllables, tones, token, true) {
                 // An entry needs a text; an item whose text does not convert
                 // is not listed.
                 let Some(text) = priced.text.and_then(|phrase| phrase.text) else {
@@ -892,20 +888,16 @@ impl RuntimeDict<'_> {
     /// What one trellis step prices of `token` over `syllables` and
     /// `tones`, without a path memo; `None` when the token has no readable
     /// item there.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
+    #[must_use]
     pub fn trellis_item(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<TrellisItem>, DictError> {
-        Ok(self
-            .priced_token(syllables, tones, token, false)?
-            .map(|priced| priced.item))
+    ) -> Option<TrellisItem> {
+        self.priced_token(syllables, tones, token, false)
+            .map(|priced| priced.item)
     }
 
     /// [`Self::trellis_item`], reading the user lookup and the keys once
@@ -921,7 +913,8 @@ impl RuntimeDict<'_> {
         if syllables.is_empty() {
             return Ok(None);
         }
-        let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
+        let path =
+            memo.get_or_try_init(|| Ok::<_, DictError>(self.path_pricing(syllables, tones)))?;
         Ok(self
             .priced_on_path(path, token, false)
             .map(|priced| priced.item))
@@ -959,12 +952,9 @@ impl RuntimeDict<'_> {
 
     /// `SEARCH_CONTINUED`: whether a stored phrase's pinyin can extend
     /// `syllables`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
+    #[must_use]
+    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
         // `SEARCH_CONTINUED` comes from the pinyin table's DB get alone, before
         // any token or library check (`chewing_large_table2_tkrzwdb.cpp:146-152`,
         // `chewing_large_table2_bdb.cpp:182-187`,
@@ -972,16 +962,13 @@ impl RuntimeDict<'_> {
         // only drops a token at `convert`'s NULL range
         // (`chewing_large_table2.h:107-111`), and a journal REMOVE clears only the
         // sub-index, so neither reaches this answer.
-        let system_extends = self.system.phrase_prefix_exists(syllables)?;
+        let system_extends = self.system.phrase_prefix_exists(syllables);
         // The pin searches the system table and then the user table with no
         // early return (`facade_chewing_table2.h:120-126` at 074a2219), so
         // the user lookup and its search note come before the answer.
         let user = self.user_lookup();
         self.note_user_search(syllables);
-        if system_extends {
-            return Ok(true);
-        }
-        Ok(user.phrase_prefix_exists(syllables))
+        system_extends || user.phrase_prefix_exists(syllables)
     }
 
     /// The addon facade's entries for `syllables`.
@@ -1036,7 +1023,8 @@ impl Dictionary for RuntimeDict<'_> {
         if syllables.is_empty() {
             return Ok(None);
         }
-        let path = memo.get_or_try_init(|| self.path_pricing(syllables, tones))?;
+        let path =
+            memo.get_or_try_init(|| Ok::<_, DictError>(self.path_pricing(syllables, tones)))?;
         Ok(self
             .priced_with_facts(path, token, false, facts)
             .map(|priced| priced.item))
@@ -1053,7 +1041,7 @@ impl Dictionary for RuntimeDict<'_> {
             return Ok(None);
         }
         Ok(self
-            .priced_with_facts(&self.path_pricing(syllables, tones)?, token, true, facts)
+            .priced_with_facts(&self.path_pricing(syllables, tones), token, true, facts)
             .and_then(|priced| priced.text))
     }
 
@@ -1174,11 +1162,7 @@ impl Dictionary for RuntimeDict<'_> {
         if !self.library_visible_token(value) {
             return Ok(PhraseItemRead::NoItem);
         }
-        if let Some(rows) = self
-            .user
-            .item_pronunciations(value)
-            .map_err(|_| DictError::Parse)?
-        {
+        if let Some(rows) = self.user.item_pronunciations(value) {
             return Ok(PhraseItemRead::Item(rows));
         }
         self.system.phrase_item_pronunciations(token)
@@ -1562,8 +1546,7 @@ impl Runtime {
         let early = check_profile_early(&conf, user_dir, law);
         let user_profile = user_dir.zip(early);
         let pinyin = SystemDictionary::attach_pinyin(system_dir).map_err(OpenError::Dict)?;
-        let user_pinyin = crate::user::LoadedPinyinIndex::open(user_profile)
-            .map_err(|error| OpenError::UserSession(error.into()))?;
+        let user_pinyin = crate::user::LoadedPinyinIndex::open(user_profile);
         let dict =
             SystemDictionary::attach_phrase(system_dir, &conf, pinyin).map_err(OpenError::Dict)?;
         let mut profile = user_pinyin.load_phrase_table();

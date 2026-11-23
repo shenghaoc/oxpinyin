@@ -181,7 +181,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         {
             return parse_one_scheme_key(options, text.as_bytes(), index);
         }
-        FullPinyinParser.parse_one_key(options, text.as_bytes())
+        FullPinyinParser::parse_one_key(options, text.as_bytes())
     }
 
     /// The one-key double-pinyin probe — pinyin-facade-only, over the

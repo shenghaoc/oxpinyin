@@ -27,7 +27,15 @@ impl Counter {
     pub(crate) fn open() -> Result<Self> {
         Err(std::io::Error::from_raw_os_error(78).into())
     }
+    #[expect(
+        clippy::unused_self,
+        reason = "The unprofiled stub keeps the Linux instruction counter's receiver at shared call sites"
+    )]
     pub(crate) fn enable(&mut self) {}
+    #[expect(
+        clippy::unused_self,
+        reason = "The unprofiled stub keeps the Linux instruction counter's receiver at shared call sites"
+    )]
     pub(crate) fn sample(&mut self) -> Option<u64> {
         None
     }
@@ -49,7 +57,15 @@ impl Diagnostic {
     pub(crate) fn read() -> Self {
         Self
     }
+    #[expect(
+        clippy::unused_self,
+        reason = "The unprofiled diagnostic preserves the Linux receiver at shared call sites"
+    )]
     pub(crate) fn dump(&self, _directory: &str, _tag: &str, _stage: &str) {}
+    #[expect(
+        clippy::unused_self,
+        reason = "The unprofiled diagnostic preserves the Linux receiver at shared call sites"
+    )]
     pub(crate) fn write(&self, out: &mut impl std::io::Write, stage: &str) -> std::io::Result<()> {
         write!(
             out,

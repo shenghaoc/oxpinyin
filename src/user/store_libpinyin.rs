@@ -193,7 +193,7 @@ impl UserStore {
         law: UserConfLaw,
         check: crate::user::ProfileCheck,
     ) -> Result<Self, UserStoreError> {
-        let (profile, stop) = persistence::load_session_in_loop(user_dir, originals, rows, &check)?;
+        let (profile, stop) = persistence::load_session_in_loop(user_dir, originals, rows, &check);
         stop.map_err(UserStoreError::LibraryLoop)?;
         Self::open_session(Some(user_dir), originals, versions, law, profile)
     }

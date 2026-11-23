@@ -70,7 +70,6 @@ unsafe fn import_readings(
 unsafe fn stored_readings(instance: *mut PinyinInstance, token: u32) -> Vec<(u16, u32)> {
     // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
     (unsafe { with_store(instance, |store| store.item_pronunciations(token)) })
-        .expect("readable store")
         .expect("an item")
         .iter()
         .map(|(keys, freq)| (keys[0].to_packed(), *freq))
@@ -336,7 +335,6 @@ fn remember_user_input_adds_along_every_complete_path() {
     let readings = |instance| {
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
         (unsafe { with_store(instance, |store| store.item_pronunciations(token)) })
-            .expect("readable store")
             .expect("an item")
             .iter()
             .map(|(keys, freq)| (keys.len(), *freq))

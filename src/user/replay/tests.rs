@@ -28,14 +28,14 @@ fn add_candidates_preserve_sparse_additions() {
                 old_item: one(),
             },
         ] {
-            assert!(merge.apply_owned(record).is_ok());
+            assert!(merge.apply_fixture(&record).is_ok());
         }
     };
     let modified = || {
         let mut merge = Merge::new(Some(original.view()));
         assert!(
             merge
-                .apply_owned(modify(1, one(), with_freq(one(), 77)))
+                .apply_fixture(&modify(1, one(), with_freq(one(), 77)))
                 .is_ok()
         );
         merge
@@ -45,7 +45,7 @@ fn add_candidates_preserve_sparse_additions() {
     let mut replaced = Merge::new(Some(original.view()));
     assert!(
         replaced
-            .apply_owned(LogRecord::Add {
+            .apply_fixture(&LogRecord::Add {
                 token: 1,
                 new_item: with_freq(one(), 77),
             })
@@ -125,7 +125,7 @@ fn merge_of(library: &SystemLibrary, records: Vec<LogRecord>) -> Merged {
     let mut merge = Merge::new(Some(library.view()));
     let mut outcome = Ok(());
     for record in records {
-        if let Err(stop) = merge.apply_owned(record) {
+        if let Err(stop) = merge.apply_fixture(&record) {
             outcome = Err(stop);
             break;
         }
@@ -376,7 +376,7 @@ fn an_empty_phrase_is_an_item_of_its_header_length() {
 fn assert_rollback_restores(original: &SystemLibrary, records: Vec<LogRecord>) {
     let mut merge = Merge::new(Some(original.view()));
     for record in records {
-        assert!(merge.apply_owned(record).is_ok());
+        assert!(merge.apply_fixture(&record).is_ok());
     }
     assert!(!merge.live.changes.is_empty());
     let rolled = merge.rollback();
@@ -455,7 +455,7 @@ fn rollback_restores_a_mapped_buffer() {
         let mut merge = Merge::from_live(Some(library.view()), live);
         assert!(matches!(merge.live.baseline, Baseline::Mapped(_)));
         for record in records {
-            assert!(merge.apply_owned(record).is_ok());
+            assert!(merge.apply_fixture(&record).is_ok());
         }
         assert!(!merge.live.changes.is_empty());
         let rolled = merge.rollback();

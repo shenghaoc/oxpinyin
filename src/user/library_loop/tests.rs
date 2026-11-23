@@ -78,9 +78,7 @@ impl Fixture {
         let versions = SystemVersions::from_conf(&conf);
         let check = check_format(&self.user, &versions, &layout, UserConfLaw::Pinyin);
         let mut originals = system_originals(crate::data::PhraseLibraries::empty(), layout);
-        let mut profile = LoadedPinyinIndex::open(Some((&self.user, check)))
-            .unwrap()
-            .load_phrase_table();
+        let mut profile = LoadedPinyinIndex::open(Some((&self.user, check))).load_phrase_table();
         let mut unmapped = Vec::new();
         let stop = run(
             rows,

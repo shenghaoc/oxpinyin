@@ -226,7 +226,7 @@ impl PhraseList for EvalDictionary<'_> {
         if keys.is_empty() {
             return Ok(true);
         }
-        pinyin.key_exists(&keys)
+        Ok(pinyin.key_exists(&keys))
     }
 }
 
