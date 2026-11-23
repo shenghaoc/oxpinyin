@@ -982,7 +982,7 @@ impl<'a> LoadedPinyinIndex<'a> {
         let mut index = UserIndex::default();
         let mut overlong = Vec::new();
         if let Some(dir) = conform_dir {
-            load_user_pinyin_index(dir, &mut loaded, &mut overlong, &mut index)?;
+            load_user_pinyin_index(dir, &mut loaded, &mut overlong, &mut index);
         }
         Ok(Self {
             conform_dir,
@@ -993,19 +993,19 @@ impl<'a> LoadedPinyinIndex<'a> {
     }
 
     /// The second user index, after the system phrase attach.
-    pub(crate) fn load_phrase_table(mut self) -> Result<LoadedProfile, PersistenceError> {
+    pub(crate) fn load_phrase_table(mut self) -> LoadedProfile {
         let mut phrase_table = UserPhraseTable::default();
         if let Some(dir) = self.conform_dir {
-            load_user_phrase_index(dir, &mut self.loaded, &mut phrase_table)?;
+            load_user_phrase_index(dir, &mut self.loaded, &mut phrase_table);
         }
-        Ok(LoadedProfile {
+        LoadedProfile {
             loaded: self.loaded,
             index: self.index,
             overlong_index_keys: self.overlong,
             phrase_table,
             user_libraries: Default::default(),
             replayed: Default::default(),
-        })
+        }
     }
 }
 
@@ -1045,7 +1045,7 @@ pub(crate) fn load_session_in_loop(
     check: &ProfileCheck,
 ) -> Result<(LoadedProfile, Result<(), crate::user::LibraryLoopStop>), PersistenceError> {
     let user = Some((dir, *check));
-    let mut profile = LoadedPinyinIndex::open(user)?.load_phrase_table()?;
+    let mut profile = LoadedPinyinIndex::open(user)?.load_phrase_table();
     let stop = profile.load_libraries(user, originals, rows, &mut |_| {});
     Ok((profile, stop))
 }
@@ -1183,10 +1183,10 @@ fn load_user_pinyin_index(
     loaded: &mut Loaded,
     overlong: &mut Vec<Vec<u16>>,
     index: &mut UserIndex,
-) -> Result<(), PersistenceError> {
+) {
     let path = build_path(dir, OsStr::new(&UserDbm::PinyinIndex.file_name()));
     if !path.exists() {
-        return Ok(());
+        return;
     }
     let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
@@ -1195,7 +1195,7 @@ fn load_user_pinyin_index(
                 &mut loaded.skip_notes(),
                 format_args!("{}: {error}", UserDbm::PinyinIndex.file_name()),
             );
-            return Ok(());
+            return;
         }
     };
     let mut exceptional = Vec::new();
@@ -1228,21 +1228,16 @@ fn load_user_pinyin_index(
                 .collect()
         })
         .collect();
-    Ok(())
 }
 
 /// Copy `user_phrase_index.bin` records without interpreting either key or value,
 /// as the pin's `PhraseLargeTable3::load_db` does. A missing file or one that
 /// does not open leaves the table empty; a failed copy is as for the pinyin
 /// index.
-fn load_user_phrase_index(
-    dir: &Path,
-    loaded: &mut Loaded,
-    arena: &mut UserPhraseTable,
-) -> Result<(), PersistenceError> {
+fn load_user_phrase_index(dir: &Path, loaded: &mut Loaded, arena: &mut UserPhraseTable) {
     let path = build_path(dir, OsStr::new(&UserDbm::PhraseIndex.file_name()));
     if !path.exists() {
-        return Ok(());
+        return;
     }
     let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
@@ -1251,7 +1246,7 @@ fn load_user_phrase_index(
                 &mut loaded.skip_notes(),
                 format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
             );
-            return Ok(());
+            return;
         }
     };
     // `PhraseLargeTable3::load_db`'s copy, as for the pinyin index.
@@ -1267,7 +1262,6 @@ fn load_user_phrase_index(
             format_args!("{}: {error}", UserDbm::PhraseIndex.file_name()),
         ),
     }
-    Ok(())
 }
 
 /// `pinyin_init`'s `m_user_bigram->load_db(user_bigram.db)`

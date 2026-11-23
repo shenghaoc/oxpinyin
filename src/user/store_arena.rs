@@ -15,6 +15,13 @@ fn packed(keys: &[PinyinKey]) -> Result<Vec<u16>, UserStoreError> {
     crate::user::store_libpinyin::pinyin_keys_to_packed(keys).ok_or(UserStoreError::InvalidPhrase)
 }
 
+/// Which phrase-table result the add operation uses.
+pub(super) enum PhraseSelection {
+    SearchTable,
+    NewPhrase,
+    UseToken(PhraseToken),
+}
+
 /// `_add_phrase`'s search of the phrase table before any change
 /// (`pinyin.cpp:536-542` at 074a2219): the token that `library` already holds
 /// for the phrase `words`, or `selected` when the caller chose one.
@@ -28,13 +35,15 @@ fn existing_phrase_token(
     table: &crate::user::user_phrase_table::UserPhraseTable,
     library: u8,
     words: &[u32],
-    selected: Option<Option<PhraseToken>>,
+    selected: PhraseSelection,
 ) -> Result<Option<PhraseToken>, UserStoreError> {
     table
         .check_add(words)
         .map_err(|_| UserStoreError::Persistence)?;
-    if let Some(token) = selected {
-        return Ok(token);
+    match selected {
+        PhraseSelection::SearchTable => {}
+        PhraseSelection::NewPhrase => return Ok(None),
+        PhraseSelection::UseToken(token) => return Ok(Some(token)),
     }
     let tokens: Vec<_> = table
         .tokens(&phrase_table::key_ucs4(words))
@@ -371,7 +380,7 @@ impl UserStore {
         words: &[u32],
         keys: &[PinyinKey],
         delta: u32,
-        selected: Option<Option<PhraseToken>>,
+        selected: PhraseSelection,
         range_end: u32,
     ) -> Result<PhraseToken, UserStoreError> {
         if self.originals.contains_key(&library) {
@@ -463,7 +472,7 @@ impl UserStore {
         words: &[u32],
         keys: &[PinyinKey],
         delta: u32,
-        selected: Option<Option<PhraseToken>>,
+        selected: PhraseSelection,
     ) -> Result<PhraseToken, UserStoreError> {
         let target = &self.inner.libpinyin;
         let original = self

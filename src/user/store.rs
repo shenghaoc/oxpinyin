@@ -1409,7 +1409,14 @@ impl UserStore {
         // C ABI hands its `gint`'s bit pattern over; a wider caller value
         // saturates.
         let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
-        self.arena_add_phrase(library, &words, keys, delta, None, 1)
+        self.arena_add_phrase(
+            library,
+            &words,
+            keys,
+            delta,
+            arena::PhraseSelection::SearchTable,
+            1,
+        )
     }
 
     /// `FacadePhraseIndex::get_range(ADDON_DICTIONARY, range)`'s
@@ -2412,15 +2419,16 @@ impl UserStore {
             .ok_or(UserStoreError::InvalidPhrase)?;
         let range_end = original.range_end;
         let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
-        if original_token.is_none()
-            || original_token.is_some_and(|token| self.with_appended_item(token, |_| ()).is_some())
-        {
+        if original_token.is_none_or(|token| self.with_appended_item(token, |_| ()).is_some()) {
             return self.arena_add_phrase(
                 library,
                 &words,
                 keys,
                 delta,
-                Some(original_token),
+                match original_token {
+                    None => arena::PhraseSelection::NewPhrase,
+                    Some(token) => arena::PhraseSelection::UseToken(token),
+                },
                 range_end,
             );
         }
