@@ -46,7 +46,7 @@ During iteration, run these checks for each changed crate:
 
 Diagnostics are fixed when they appear.
 
-Before a push for review or merge and after each rebase, one `cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings` runs on the final tree on Linux, as CI runs it; elsewhere it runs without the backend flags. These also run, only when the change calls for them:
+For code changes, one `cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings` runs on the final integrated tree on Linux, as CI runs it; elsewhere it runs without the backend flags. These also run, only when the change calls for them:
 
 - `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace` when doc comments or public items changed.
 - `just deny` when a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed. The recipe runs the cargo-deny checks of CI's `deny` job.
@@ -54,9 +54,7 @@ Before a push for review or merge and after each rebase, one `cargo clippy --loc
 - `just complexity` when Rust functions changed: the [complexity limit](#complexity-limit).
 - `just ruff` when Python under `tools/` changed.
 
-WIP checkpoint pushes: `cargo fmt --all --check` only.
-
-The WIP-checkpoint rule and [verification scope and precedence](#verification-scope-and-precedence), which covers documentation and source comments, override the pre-push requirement above.
+[Verification scope and precedence](#verification-scope-and-precedence), which covers documentation and source comments, selects when these checks apply.
 
 CI is the full gate. These local checks cover only the cfg arms and backend features of the host. A Linux pass is enough to merge: [section 10](#10-ci-merge-conditions) decides the platform and backend conditions.
 
@@ -79,13 +77,11 @@ Two alternatives are rejected:
 - A limit with no exceptions: some splits would serve the metric, not the reader.
 - An allowed count of warnings: a new violation could replace an old one without failing.
 
-### Rebases and stacks
+### Final integrated tree
 
-Immediately before a push, fetch and rebase the branch onto its current base: `origin/main` for independent work, the current parent for a stack member.
-Restack the descendants when a parent changes.
+Each independently reviewed change must pass its applicable verification on the final integrated tree.
 A fix goes on the stack member that introduces or exposes the defect.
-Each stack member must pass its required verification independently.
-Successful CI on the final source tree of that member satisfies the full-gate checks for the required package, feature and platform scope.
+Successful CI on that tree satisfies the full-gate checks for the required package, feature and platform scope.
 A check that is missing, cancelled or skipped when it applies does not count as a pass.
 A check that is skipped because it does not apply to the change is not a failure.
 The checks that CI does not cover run locally: the differentials of the issue, revert-and-check, and any measurement that a concrete unresolved question requires for a decision ([controlling rule](../source-policy.md#controlling-rule)).
@@ -150,22 +146,22 @@ The host conditions of the [measurement procedure](benches.md) apply.
 Re-verification is proportional to what changed since the last green gate.
 Documentation or comments only need the format check: `git diff --check`, plus `cargo fmt --all --check` for source comments; review changed text and check its links.
 Builds, tests, differentials and backend-selection checks do not run for these changes, including comments in backend files.
-A conflict-free rebase that brings in no file the change touches needs no local re-gate; CI covers it.
-These rules take precedence over the general local-gate and rebase requirements.
-For code changes and rebases that affect touched files, all applicable code-verification requirements remain: rule 5 applies, affected pin checks re-run when engine, capi or data changes affect the branch, and changed generators and their artifacts are verified.
+An integration that changes no relevant input needs no additional local gate; CI covers the final tree.
+These rules take precedence over the general local-gate requirements.
+For code changes and integrations that affect relevant inputs, all applicable code-verification requirements remain: rule 5 applies, affected pin checks re-run when engine, capi or data changes affect the integrated tree, and changed generators and their artifacts are verified.
 
 The local checks are those in [verification rule 5](#5-local-test-gate); they scale with the change and its stage.
 
 The changes since the last green gate select the checks:
 
-- **Documentation, comments or findings only, or a conflict-free rebase:** [verification scope and precedence](#verification-scope-and-precedence) applies.
-- **A review fix in code:** the iteration checks in verification rule 5 apply, then its pre-push checks on the final tree.
+- **Documentation, comments or findings only:** [verification scope and precedence](#verification-scope-and-precedence) applies.
+- **A review fix in code:** the iteration checks in verification rule 5 apply, then its applicable checks on the final integrated tree.
   The differentials of the issue run on the reference cell.
   CI is the full gate.
 - **Revert-and-check:** it is repeated only if the differential changed.
-- **A stack:** the checks in verification rule 5 run on the new head of each member.
+- **An integrated change:** the checks in verification rule 5 apply to its final tree.
   CI is the full gate.
-  The local checks that CI does not run are repeated only for the changed commit and for higher commits that touch the same files.
+  Local checks that CI does not run are repeated only when their relevant inputs changed.
 
 Verification ends when the applicable checks pass and concrete failures are addressed.
 An additional run requires a relevant input change, a specific unresolved failure or an explicit maintainer request.
@@ -174,7 +170,7 @@ A broken reproduction command, or a result that contradicts the claim beyond the
 
 Rules 5 and 7 describe the **completion gate**.
 
-When a coherent fix is ready, and before a push for review, the local checks that CI does not cover run.
+The completion gate includes the local checks that CI does not cover.
 Between completion gates, iteration feedback guides the fix while it takes shape:
 
 1. Run named unit tests of the touched crate.
@@ -190,9 +186,8 @@ It is not reported as one.
 A report gives the final results and the reproduction commands.
 Raw logs, profiler captures and intermediate output stay local: they are not committed, attached, uploaded or mirrored unless the maintainer asks for specific diagnostic material. Source, functional fixtures, pins, configuration files and release packages follow their own procedures.
 Failed or unrun required checks are disclosed as limitations.
-A fix is ready for review when the pre-push checks in verification rule 5 and the local checks that CI does not cover pass.
+A fix is ready for review when the applicable checks in verification rule 5 and the local checks that CI does not cover pass on the final integrated tree.
 A PR is not ready to merge until CI passes on its head.
-A `wip/` checkpoint push runs only the checkpoint check in verification rule 5.
 
 ### Backend reporting
 
@@ -281,7 +276,6 @@ These rules govern the CI gates. This section is the only place that states them
 1. **A Linux pass is enough to merge.** The required check is `ci-aggregate`, which requires the `checks`, `rust`, `store` and `shipping-sizes` jobs.
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
    The nightly runs their Rust checks. Dispatch it on the release commit before tagging.
-   A lane never dispatches a workflow.
 2. **Linux CI selects Kyoto Cabinet, from Ubuntu's packages.**
    tkrzw stays the Cargo default on every platform, and every Linux CI job selects Kyoto Cabinet with the backend flag instead: the `rust` lane (clippy, rustdoc, nextest, the archive build and the fuzz check), the cell gates, `shipping-sizes`, whose size table is therefore the Kyoto Cabinet libraries', and the nightly fuzz soak.
    `CI_LINUX_CELL` in `tools/dev/cell.py` names that cell. Every job that builds a backend names it explicitly; the local tooling follows the Cargo default ([Linux setup](setup.md#linux)).

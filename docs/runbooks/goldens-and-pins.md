@@ -101,12 +101,14 @@ A [pin capture](pin-captures.md) observation is used only where the source does 
 a pin bump must provide and document that step, with repeat-run stability checks and a review of
 architecture, OS and policy variants ([utility cases](tool-diff.md#pin-bumps-and-recapture)).
 
-After any rebase that touches engine, capi or data, the pins run again
-([verification scope and precedence](verification.md#verification-scope-and-precedence)).
-The person who merges later runs them again.
+When the final integrated tree changes engine, capi or data relevant to a pin check,
+that check runs again under
+[verification scope and precedence](verification.md#verification-scope-and-precedence).
 
-A conflict-free rebase does not verify a changed generation scheme: a dependency can change
-manifest layouts, fixture formats or builder recipes while old generated artifacts survive the
-textual rebase. Record the base with `git merge-base HEAD origin/main` before rebasing.
-After rebasing, list the committed artifacts whose generators changed between the recorded base and the new base on main, regenerate them, and re-verify under
+Textual integration alone does not verify a changed generation scheme.
+Before the base changes, record the old base with `git merge-base HEAD <base-ref>`,
+where `<base-ref>` is `origin/main` or the stack parent.
+After the move, `git diff --name-status <old-base> <new-base>` shows changes to generators,
+dependencies, manifest layouts, fixture formats and builder recipes.
+Identify the affected committed artifacts, regenerate them, and re-verify them under
 [verification scope and precedence](verification.md#verification-scope-and-precedence).

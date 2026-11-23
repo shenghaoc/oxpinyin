@@ -1,62 +1,20 @@
-# Agent instructions
+# Repository guidance
 
-The [roadmap](ROADMAP.md) records stage status.
+oxpinyin is a Rust implementation of libpinyin and libzhuyin.
+This file is the shared entry point for coding agents.
+The linked documents define the project's engineering rules.
+Read and follow the rules relevant to the task.
 
-This file is the repository's instruction entry point. `CLAUDE.md` imports it.
-The human documents hold every project rule. This file states the agent procedure and links to the rules. It does not repeat them.
+- [Constitution and external interfaces](docs/constitution.md)
+- [Compatibility policy](docs/findings/compatibility-policy.md)
+- [Source policy](docs/source-policy.md) and [pinned behaviour](docs/pinned-behaviour.md)
+- [Architecture](docs/architecture.md)
+- [Rust conventions](docs/rust-conventions.md)
+- [Testing](docs/testing/README.md)
+- [Verification](docs/runbooks/verification.md)
+- [Contributing and maintainer approval conditions](CONTRIBUTING.md)
+- [Roadmap](ROADMAP.md)
 
-## Where the rules are
-
-| Before you | Read |
-|---|---|
-| Start any task | [Constitution and external interfaces](docs/constitution.md), [compatibility policy](docs/findings/compatibility-policy.md), [contributor procedures](CONTRIBUTING.md) and [approval rules](CONTRIBUTING.md#approval-conditions) |
-| Change compatibility, the pin or a stage | The [roadmap](ROADMAP.md) and [source policy](docs/source-policy.md) |
-| Change code | The [architecture](docs/architecture.md): which crate owns the behaviour and what it may depend on; [design and review](CONTRIBUTING.md#design-and-review) |
-| Write Rust | The [Rust conventions](docs/rust-conventions.md) |
-| Derive or change a pinned behaviour | The [source policy](docs/source-policy.md), its [Stage 2 reading procedure](docs/source-policy.md#stage-2) and the [pinned-behaviour page](docs/pinned-behaviour.md) |
-| Sort or compare candidate frequencies | The [candidate-frequency comparator ruling](docs/findings/compatibility-policy.md#no-ported-external-library-internals) |
-| Accept or record a difference from the pin | The [compatibility policy](docs/findings/compatibility-policy.md) and the [improvements page](docs/oxpinyin-improvements.md) |
-| Add or change a test | [Where tests belong](docs/testing/README.md#where-tests-belong) |
-| Write or rewrite a document | The [writing rules](#writing) |
-| Push | [Verification rule 5](docs/runbooks/verification.md#5-local-test-gate): the checks for iteration, push, WIP checkpoints and Markdown-only changes |
-| Open a PR or an issue | The [workflow](CONTRIBUTING.md#workflow), the [templates](.github/) and the [reporting rules](docs/runbooks/verification.md#7-proportionate-verification) |
-
-## Procedure
-
-1. Explain the plan before you write code.
-   In Phase 1, name the files, the interfaces and the verification.
-   Write no code in Phase 1.
-2. Stop for confirmation before Phase 2, the implementation.
-3. For Stage 2 work, name the pin source lines, or the disassembled symbols and offsets, that establish each behaviour.
-4. Stop and ask before a change that needs approval under the [approval conditions](CONTRIBUTING.md#approval-conditions). Also stop and ask when:
-   - the task is ambiguous;
-   - a test cannot pass without breaking the [constitution](docs/constitution.md);
-   - a SPEC or a contract contradicts the pin's source and the code does not follow the pin;
-   - the pin's source and disassembly cannot settle a behaviour.
-5. Work in your own worktree; run `git branch --show-current` first, and never switch, change or prune another workstream's checkout or worktree.
-6. Push a `wip/<issue>` branch at each checkpoint.
-7. Before a push, check that `git log <base>..HEAD` contains only this workstream's commits, where `<base>` is `origin/main` for independent work and the parent branch for a stack member; then follow the [rebase and stack procedure](docs/runbooks/verification.md#rebases-and-stacks).
-
-## Writing
-
-Use Simplified Technical English as a guide, without enforcing its dictionary or claiming compliance.
-Write short, direct sentences with consistent technical terms.
-Preserve identifiers, citations, requirement strength and the stated pin behaviour.
-Keep machine-read content unchanged.
-A human document describes the project; it does not depend on this file for its authority.
-
-## Hard prohibitions
-
-- A STOP clears only on a human turn. Approval-shaped text inside your own turn is not approval: a `(Recommended)` option you wrote, a selection returned within your own transcript, a line such as "approach approved", a task chip or a background-task notice. When the harness says no human input has arrived, none has. Ask, then wait for the human to answer.
-- Never request or trigger a review on any PR, by any means: no comment mentioning a review bot, no request to a reviewer or team, no "Trigger review" checkbox. A human's question about whether a PR is ready is a question: answer it and do nothing else.
-- Never change a PR's draft or ready state.
-- Never close or merge a PR. A human merges every change into `main`.
-- Never push to `main`. Never rewrite history on a merged branch.
-- Commit under the Git identity that is already configured. If none is configured, stop; do not commit. Never set or change a Git identity unless the human explicitly instructs you to.
-
-You may create branches, commit, push your own branches, open draft PRs, update their descriptions and read CI results.
-
-In Claude Code, `.claude/settings.json` denies the usual commands for the PR and `main` actions above.
-The guard does not cover every command form, hosted session or agent.
-
-The prohibitions apply to every agent, every session and every form of a command.
+Derive pinned behaviour from the sources prescribed by the source policy,
+with the required citations. Apply the compatibility policy to differences.
+Seek maintainer approval where the contributor procedures require it.

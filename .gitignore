@@ -16,9 +16,7 @@ debug
 rustc-ice-*.txt
 
 # Local Claude Code state: worktrees and personal settings (not committed).
-# The shared permission rules in .claude/settings.json are committed.
 /.claude/*
-!/.claude/settings.json
 
 # Bisection harness compiled binaries (the runners compile bisect beside the
 # source; one was committed by mistake until 2026-09-06)

@@ -19,7 +19,7 @@ If you add a new driver, state why no existing driver could take the case
 Run the local checks in [verification rule 5](https://github.com/shenghaoc/oxpinyin/blob/main/docs/runbooks/verification.md#5-local-test-gate); they scale with the change and its stage.
 
 State the results and the command that reproduces them.
-CI on the PR head is the full gate (verification rule 5); state the local checks you ran before the push.
+CI on the PR head is the full gate (verification rule 5); state the applicable local checks run on the final integrated tree.
 Disclose any required check that failed or could not run as a limitation.
 Omit checks that do not apply.
 Follow docs/runbooks/verification.md#7-proportionate-verification: no raw logs, captures,
