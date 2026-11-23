@@ -319,11 +319,11 @@ impl UserIndex {
         // `add_index_internal` walks shorter keys downward and stops at the
         // first prefix the table already holds.
         for words in (1..key.len() / CHEWING_KEY_SIZE).rev() {
-            let prefix = key[..CHEWING_KEY_SIZE * words].to_vec();
-            if self.contains_key(&prefix) {
+            let prefix = &key[..CHEWING_KEY_SIZE * words];
+            if self.contains_key(prefix) {
                 break;
             }
-            if self.records.insert(&prefix, &[]).is_err() {
+            if self.records.insert(prefix, &[]).is_err() {
                 return false;
             }
         }
@@ -564,23 +564,27 @@ impl UserIndex {
         }
         let prefix_key = query_key(prefix);
         let mut tokens = Vec::new();
-        for key in self.records.keys_starting_with(&prefix_key) {
-            if key.len() <= prefix_key.len() || !key.len().is_multiple_of(CHEWING_KEY_SIZE) {
-                continue;
-            }
-            let len = key.len() / CHEWING_KEY_SIZE;
-            let Some(value) = self.record(&key) else {
-                continue;
-            };
-            // `search_suggestion` reads whole records the same way
-            // (`chewing_large_table2.h:182-200`).
-            tokens.extend(
-                value
-                    .chunks_exact(item2_stride(len))
-                    .filter(|record| record_matches_with_tones(prefix, record))
-                    .map(record_token),
+        let Ok(()) = self
+            .records
+            .for_each_record_starting_with::<std::convert::Infallible>(
+                &prefix_key,
+                |key, value| {
+                    if key.len() <= prefix_key.len() || !key.len().is_multiple_of(CHEWING_KEY_SIZE)
+                    {
+                        return Ok(());
+                    }
+                    let len = key.len() / CHEWING_KEY_SIZE;
+                    // `search_suggestion` reads whole records the same way
+                    // (`chewing_large_table2.h:182-200`).
+                    tokens.extend(
+                        value
+                            .chunks_exact(item2_stride(len))
+                            .filter(|record| record_matches_with_tones(prefix, record))
+                            .map(record_token),
+                    );
+                    Ok(())
+                },
             );
-        }
         tokens
     }
 

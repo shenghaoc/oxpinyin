@@ -67,7 +67,9 @@ pub fn merged_suggestions(
     let mut user_rows = user.lookup().suggest_after(&prefix);
     // PhraseTableEntry::search skips disabled library arrays
     // (074a2219 phrase_large_table3.cpp:40-42) in both tables.
-    user_rows.retain(|(token, _)| dict.phrase_table_token_enabled(*token));
+    for (_, tokens) in &mut user_rows {
+        tokens.retain(|token| dict.phrase_table_token_enabled(*token));
+    }
     // Search visits raw keys; the candidate's text comes from its live item
     // (074a2219 pinyin.cpp:2391-2395, 2018-2022), including keys containing
     // UCS-4 values that cannot be represented by a Rust String.

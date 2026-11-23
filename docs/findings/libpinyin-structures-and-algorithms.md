@@ -211,6 +211,19 @@ texts costs O(M log N + output words) in the worst case: at most 16
 libraries, then a dense slot read or sparse O(log N) slot lookup, and text
 decoding. Prediction's suffix search runs at most 16 times.
 
+Suggestion searches consume each native cursor's key and value together.
+The exact prefix must exist before the walk. Phrase suggestions own each
+raw key once with its stored token array, in ascending key-byte order.
+Runtime concatenates those tokens after the system tokens and groups them
+stably by library; it does not copy or sort the user rows again.
+The facade retains the enabled-library filter before grouping.
+For R matching rows, B key bytes and T stored tokens, the user result
+owns O(B + T + R) bytes, rather than copying each key for every token and
+again before sorting already ordered rows. The cursor's value is decoded once;
+there is no second point read. Kyoto Cabinet's cursor reads values without
+the checked point-read assertion (`chewing_large_table2_kyotodb.cpp:560-570`,
+`phrase_large_table3_kyotodb.cpp:225-232` at `074a2219`).
+
 ### Journal replay
 
 Journal replay follows `SubPhraseIndex::merge`

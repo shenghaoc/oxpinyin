@@ -11,7 +11,7 @@ use crate::user::phrase_table::{PhraseTableEntry, key_ucs4, search_bytes};
 use crate::user::records::NativeTable;
 
 /// One suggestion row: the raw key and its stored tokens.
-type SuggestionRows = Vec<(Vec<u8>, Vec<u32>)>;
+pub(crate) type SuggestionRows = Vec<(Vec<u8>, Vec<u32>)>;
 
 #[derive(Debug, Default)]
 pub(crate) struct UserPhraseTable {
@@ -73,11 +73,11 @@ impl UserPhraseTable {
         };
         if new {
             for length in (1..words.len()).rev() {
-                let prefix = key[..length * 4].to_vec();
-                if self.contains_key(&prefix) {
+                let prefix = &key[..length * 4];
+                if self.contains_key(prefix) {
                     break;
                 }
-                self.records.insert(&prefix, &[])?;
+                self.records.insert(prefix, &[])?;
             }
         }
         Ok(())
@@ -158,17 +158,16 @@ impl UserPhraseTable {
             return Ok(Vec::new());
         }
         let mut out = Vec::new();
-        for key in self.records.keys_starting_with(prefix) {
-            if key.len() <= prefix.len() {
-                continue;
-            }
-            let Some(bytes) = self.record(&key) else {
-                continue;
-            };
-            let mut tokens = Vec::new();
-            search_bytes(&bytes, &mut tokens, |_| true)?;
-            out.push((key, tokens));
-        }
+        self.records
+            .for_each_record_starting_with(prefix, |key, bytes| {
+                if key.len() <= prefix.len() {
+                    return Ok(());
+                }
+                let mut tokens = Vec::new();
+                search_bytes(bytes, &mut tokens, |_| true)?;
+                out.push((key.to_vec(), tokens));
+                Ok(())
+            })?;
         Ok(out)
     }
 }

@@ -2502,7 +2502,8 @@ fn rows_of_a_never_loaded_library_are_filtered() {
     assert!(
         suggestions
             .iter()
-            .all(|(token, _)| !runtime.dict().phrase_table_token_enabled(*token))
+            .flat_map(|(_, tokens)| tokens)
+            .all(|token| !runtime.dict().phrase_table_token_enabled(*token))
     );
 }
 
