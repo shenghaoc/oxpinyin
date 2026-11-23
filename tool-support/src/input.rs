@@ -594,16 +594,20 @@ impl OutputStream {
         drop(self);
     }
 
-    /// `fclose(output)` (`ngseg.cpp:260`), including when the pin's
-    /// `output` is the C runtime's `stdout` (`ngseg.cpp:106`, `:260`): the
-    /// stream is closed exactly once, and a later exit has no buffered
-    /// line left to flush.
-    pub fn close_including_stdout(self) {
+    /// Close the output stream with `fclose(output)`, including C `stdout`
+    /// (`ngseg.cpp:109,260`).
+    ///
+    /// # Safety
+    ///
+    /// For C `stdout`, the stream must still be open. No other code on any
+    /// thread, including teardown and exit handlers, may use C `stdout`
+    /// during or after this call.
+    pub unsafe fn close_including_stdout(self) {
         let stream = self.stream;
         // The owned case would otherwise be closed again by `Drop`.
         core::mem::forget(self);
         // SAFETY: the stream is open, was never closed, and is not used
-        // again; for `stdout` the C runtime keeps the object itself alive.
+        // again. The caller guarantees this for C `stdout`.
         unsafe {
             libc::fclose(stream.as_ptr());
         }

@@ -189,6 +189,15 @@ mod native {
             .opt_level(2)
             .flag_if_supported("-fvisibility=hidden")
             .flag_if_supported("-fvisibility-inlines-hidden");
+        let compiler = build.get_compiler();
+        // Stable CXX assertion filenames keep build directories out of the
+        // linked code. MSVC and clang-cl do not use this GCC/Clang option.
+        if !compiler.is_like_msvc() && (compiler.is_like_gnu() || compiler.is_like_clang()) {
+            let mut map = std::ffi::OsString::from("-fmacro-prefix-map=");
+            map.push(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+            map.push("=/oxpinyin-generated");
+            build.flag(map);
+        }
         if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
             && std::env::var("CARGO_CFG_SANITIZE")
                 .unwrap_or_default()

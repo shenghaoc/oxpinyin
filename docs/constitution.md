@@ -30,7 +30,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    - In `oxpinyin::input`, `native` owns the library's libc, GLib and mapping operations. The test-only `config::tests::numeric_locale` module queries and restores the process locale.
    - The store exceptions are scoped to `store::bdb::ffi`, `store::kyotocabinet::bridge`, `store::kyotocabinet::ffi` and `store::tkrzw::bridge`.
    - Public C ABI marshalling stays in `oxpinyin-capi` and `oxzhuyin-capi`.
-   - The private `oxpinyin-tool-support` crate denies unsafe code and scopes its exceptions to native utility I/O and the two C-ABI drivers. The utilities and REPL forbid unsafe code.
+   - The private `oxpinyin-tool-support` crate denies unsafe code and scopes its exceptions to native utility I/O and the two C-ABI drivers. The REPL forbids unsafe code. The utilities forbid it outside the three standalone segmentation entry points and their binary calls. Those scoped exceptions state and uphold the C stdout close contract.
    - Each scoped unsafe exception states its reason. Every unsafe block has a `// SAFETY:` comment.
 
    `undocumented_unsafe_blocks` requires a safety comment on every unsafe block.
