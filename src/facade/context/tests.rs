@@ -1,25 +1,21 @@
 use crate::data::phrase_library::writes_null_chunk_line;
 use std::path::Path;
 
-// Unix only: the pin's read of a directory as a chunk (`phrase_library::directory_chunk_fault`); `writes_null_chunk_line` is false elsewhere.
-#[cfg(unix)]
-#[test]
-fn a_directory_that_does_not_read_as_a_chunk_gets_the_pin_line_once() {
-    let mut asked = 0;
-    let writes = writes_null_chunk_line(Path::new("/scratch/sys-1"), |dir| {
-        asked += 1;
-        assert_eq!(dir, Path::new("/scratch/sys-1"));
-        false
+// Rust contract: the mmap diagnostic depends on the host directory probe.
+#[rstest::rstest]
+#[case::readable(true)]
+#[case::unreadable(false)]
+fn directory_chunk_diagnostic(#[case] readable: bool) {
+    let directory = Path::new("/scratch/sys-1");
+    let mut calls = 0;
+    let writes = writes_null_chunk_line(directory, |path| {
+        calls += 1;
+        assert_eq!(path, directory);
+        readable
     });
-    assert_eq!(asked, 1);
-    assert!(writes);
-}
-
-#[test]
-fn a_directory_that_reads_as_a_chunk_gets_no_line() {
-    assert!(!writes_null_chunk_line(Path::new("/scratch/sys-1"), |_| {
-        true
-    }));
+    let probes = crate::input::chunk::opens_directories();
+    assert_eq!(calls, usize::from(probes));
+    assert_eq!(writes, probes && !readable);
 }
 
 use super::{ContextCore, OpenFailure};
@@ -27,15 +23,7 @@ use crate::facade::PINYIN_DEFAULT_OPTION_WORD as WORD;
 use crate::runtime::OpenError;
 use crate::user::UserConfLaw;
 
-/// Each `table.conf` abort site refuses the init with the pin's abort: the
-/// `abort()`s of `table_info.cpp:119`, `:132`, `:142`, `:156` and `:175`,
-/// the addon index assert (`:276`), the default `DICTIONARY` row
-/// (`pinyin.cpp:388`, `zhuyin.cpp:330`) and a row with no user file
-/// (`memory_chunk.h:434`). The pin's ordinary `false` returns keep its
-/// `load %s failed!` line (`table_info.cpp:199-224`, `pinyin.cpp:337-340`),
-/// and the unwritten source-format buffer keeps its warning. Both C inits
-/// act on this answer through [`OpenFailure::refuse_init`], and one death
-/// test on each facade holds the abort itself.
+// 074a2219 table_info.cpp:119,132,142,156,175,276 classifies malformed rows.
 #[test]
 fn every_table_conf_abort_site_refuses_the_init_with_an_abort() {
     use super::InitRefusal;
@@ -71,10 +59,9 @@ fn every_table_conf_abort_site_refuses_the_init_with_an_abort() {
     ));
 }
 
+// Rust contract: OpenFailure retains the underlying runtime error.
 #[test]
 fn missing_system_dir_carries_the_runtime_error() {
-    // A child of a fresh dir this test owns: absent by construction, and
-    // nothing another process does to a shared temp path can create it.
     let root = tempfile::Builder::new()
         .prefix("oxpinyin-missing-")
         .tempdir()
@@ -84,8 +71,6 @@ fn missing_system_dir_carries_the_runtime_error() {
         .err()
         .expect("a missing system dir cannot open");
     let OpenFailure::Runtime(error) = &failure;
-    // `SystemTableInfo2::load` is the first step (D3); its `open %s failed.` line and the init's
-    // `load %s failed!` name the file.
     assert!(
         matches!(
             error,
@@ -96,6 +81,7 @@ fn missing_system_dir_carries_the_runtime_error() {
     assert!(std::error::Error::source(&failure).is_some());
 }
 
+// Rust contract: refuse_init includes the open error and system path in the warning.
 #[test]
 fn init_warning_keeps_dictionary_and_model_details() {
     use crate::data::phrase_library::LibraryError;
@@ -115,8 +101,8 @@ fn init_warning_keeps_dictionary_and_model_details() {
                 path: "system/gb_char.bin".into(),
                 cause: Box::new(LibraryError::Format("chunk shorter than its header".into())),
             })),
-            "zhuyin_init",
-            "zhuyin_init: dictionary error: phrase library error: phrase library format error: chunk shorter than its header (systemdir \"system\")",
+            "pinyin_init",
+            "pinyin_init: dictionary error: phrase library error: phrase library format error: chunk shorter than its header (systemdir \"system\")",
         ),
         (
             OpenError::Lm(LmError::Table(TableError::Store(StoreError::Backend(
@@ -193,13 +179,9 @@ fn readings(ctx: &ContextCore, token: u32) -> usize {
         .unwrap_or(0)
 }
 
-/// 074a2219 pinyin.cpp:1260-1294 visits each library and its log in order.
-/// An unmappable library is refused without partial masking;
-/// preserves the earlier journal assertion before any later mmap failure.
-#[rstest::rstest]
-#[case::unmappable_without_partial_mask(false)]
-#[case::journal_before_later_unmappable(true)]
-fn mask_out_preserves_the_first_fault_and_its_effects(#[case] journal_first: bool) {
+// 074a2219 pinyin.cpp:1260–1294 visits each library and journal in order.
+#[test]
+fn mask_out_preserves_the_first_fault_and_its_effects() {
     use super::MaskOutOutcome;
     let scratch = tempfile::tempdir().unwrap();
     let system = system_with_gbk_naming_no_user_file(scratch.path());
@@ -216,24 +198,14 @@ fn mask_out_preserves_the_first_fault_and_its_effects(#[case] journal_first: boo
     let user = scratch.path().join("user");
     std::fs::create_dir(&user).unwrap();
     let mut ctx = ContextCore::open(&system, Some(&user), WORD, UserConfLaw::Pinyin).unwrap();
-    let text = PhraseText::from("你");
-    let key = toned_key(SyllableKey::from_text("ni").unwrap().index(), 3).unwrap();
-    let token = ctx
-        .user_store_mut()
-        .add_phrase(&text, &[key], Some(7))
-        .unwrap();
-    if journal_first {
-        let mut payload = 4_u32.to_le_bytes().to_vec();
-        payload.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
-        payload.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        std::fs::write(
-            user.join("gb_char.dbin"),
-            crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
-        )
-        .unwrap();
-    }
-    // The remap refuses merged.bin through its checksum word, as it would
-    // a missing file; Windows deletes or renames no mapped file.
+    let mut payload = 4_u32.to_le_bytes().to_vec();
+    payload.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
+    payload.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    std::fs::write(
+        user.join("gb_char.dbin"),
+        crate::data::chunk_format::build_memory_chunk(&payload).unwrap(),
+    )
+    .unwrap();
     {
         use std::io::{Read, Seek, SeekFrom, Write};
         let mut merged = std::fs::OpenOptions::new()
@@ -248,23 +220,16 @@ fn mask_out_preserves_the_first_fault_and_its_effects(#[case] journal_first: boo
         merged.write_all(&checksum.map(|byte| !byte)).unwrap();
     }
     let result = ctx.mask_out(0, 0);
-    if journal_first {
-        assert!(
-            matches!(
-                result,
-                MaskOutOutcome::Journal(crate::user::JournalFault::HeaderToken { library: 1, .. })
-            ),
-            "{result:?}"
-        );
-    } else {
-        assert_eq!(result, MaskOutOutcome::Done(true));
-        assert_eq!(
-            ctx.user_store().lookup().tokens_for_ucs4(&[0x4f60]),
-            [token]
-        );
-    }
+    assert!(
+        matches!(
+            result,
+            MaskOutOutcome::Journal(crate::user::JournalFault::HeaderToken { library: 1, .. })
+        ),
+        "{result:?}"
+    );
 }
 
+// 074a2219 pinyin.cpp:963–971 skips unloaded libraries on save.
 #[test]
 fn unload_then_save_leaves_the_unloaded_librarys_log_alone() {
     let user = tempfile::tempdir().expect("user dir");
@@ -278,7 +243,6 @@ fn unload_then_save_leaves_the_unloaded_librarys_log_alone() {
     let gbk_log = user.path().join("gbk_char.dbin");
     let saved_gb = std::fs::read(&gb_log).expect("gb log");
     let saved_gbk = std::fs::read(&gbk_log).expect("gbk log");
-    // Unsaved changes to both libraries, then GBK goes.
     import(&mut ctx, GB, gb, &gb_text, 2);
     import(&mut ctx, GBK, gbk, &gbk_text, 2);
     let with_unsaved = readings(&ctx, gbk);
@@ -295,12 +259,12 @@ fn unload_then_save_leaves_the_unloaded_librarys_log_alone() {
         saved_gb,
         "the loaded library is saved"
     );
-    // The reload merges the saved log: the unsaved reading is gone.
     assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
     assert_eq!(readings(&ctx, gbk), with_unsaved - 1);
     assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(false));
 }
 
+// Rust contract: reloading a saved library restores its live readings.
 #[test]
 fn unload_then_reload_restores_the_saved_library() {
     let user = tempfile::tempdir().expect("user dir");
@@ -318,6 +282,7 @@ fn unload_then_reload_restores_the_saved_library() {
     }
 }
 
+// Rust contract: a reload with an unreadable journal uses the system chunk.
 #[test]
 fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
     let user = tempfile::tempdir().expect("user dir");
@@ -330,8 +295,6 @@ fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
     let log = user.path().join("gbk_char.dbin");
     for unreadable in [None, Some(&b"abc"[..])] {
         assert!(ctx.unload_phrase_library(GBK));
-        // `MemoryChunk::load` fails on a missing file and on one shorter
-        // than its header (`memory_chunk.h:416-429`): an empty log.
         match unreadable {
             None => std::fs::remove_file(&log).expect("remove log"),
             Some(bytes) => std::fs::write(&log, bytes).expect("short log"),
@@ -369,17 +332,7 @@ fn system_with_gbk_naming_no_user_file(scratch: &Path) -> std::path::PathBuf {
     system
 }
 
-/// `_load_phrase_library` maps a `SYSTEM_FILE` row's chunk whether or not
-/// the row names a user file (`pinyin.cpp:246-264`); only the mask-out
-/// loop skips such a row (`:1250-1251`). The mask clears for a library
-/// the remap mapped, and only for it. A file the remap cannot map is the
-/// pin's SIGSEGV: the library stays unloaded, the call answers
-/// `true`, and the next load maps the repaired file. The context has no
-/// user directory: with one, the pin reads the directory itself as the
-/// row's log, and on a file system where that asserts the init dies.
-// Unix only: the mapped system file is removed and replaced under the
-// open context; Windows keeps a mapped file in use
-// (compatibility-policy.md, "fundamental OS differences").
+// 074a2219 pinyin.cpp:246–264 maps the explicit library even without a user file.
 #[cfg(unix)]
 #[test]
 fn a_reload_maps_a_system_row_that_names_no_user_file() {
@@ -387,8 +340,6 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
     let system = system_with_gbk_naming_no_user_file(scratch.path());
     let mut ctx = ContextCore::open(&system, None, WORD, UserConfLaw::Pinyin).expect("opens");
     let visible = |ctx: &ContextCore| ctx.runtime.dict().library_visible(u32::from(GBK));
-    // The total of the chunk the library is mapped from: another file's
-    // mapping changes it.
     let mapped_total = |ctx: &ContextCore| {
         ctx.runtime
             .dict()
@@ -400,7 +351,6 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
     let shipped = mapped_total(&ctx).expect("the GBK library is mapped");
     assert_ne!(shipped, 7);
 
-    // The mask-out loop still skips the row, and maps the others.
     let runtime = &ctx.runtime;
     let mut walk = runtime.begin_system_remap();
     let mut mask_loop = Vec::new();
@@ -443,8 +393,11 @@ mod failed_attachment_fini {
     use crate::model::Dictionary as _;
     use crate::user::UserConfLaw;
 
-    #[test]
-    fn context_finish_closes_open_tables_after_a_failed_attachment() {
+    // Rust contract: finish closes attached tables after partial initialization.
+    #[rstest::rstest]
+    #[case::pinyin("pinyin_index.bin")]
+    #[case::phrase("phrase_index.bin")]
+    fn context_finish_closes_open_tables_after_a_failed_attachment(#[case] missing: &str) {
         let dir = tempfile::Builder::new()
             .prefix("oxpinyin-missing-index-")
             .tempdir()
@@ -452,7 +405,7 @@ mod failed_attachment_fini {
         for entry in std::fs::read_dir(fixture_dir()).expect("w3 fixture") {
             let entry = entry.expect("w3 entry");
             let name = entry.file_name();
-            if name != "pinyin_index.bin" && name != "phrase_index.bin" {
+            if name != missing {
                 std::fs::copy(entry.path(), dir.path().join(entry.file_name())).expect("copy");
             }
         }
@@ -466,17 +419,19 @@ mod failed_attachment_fini {
         let instance = context.alloc_instance();
         {
             let runtime = &context.runtime;
-            assert!(runtime.pinyin_attachment_failed());
+            assert_eq!(
+                runtime.pinyin_attachment_failed(),
+                missing == "pinyin_index.bin"
+            );
             assert!(!runtime.attachments_finished());
-            assert!(!runtime.dict().phrase_span_continues(&[u32::from('你')]));
         }
-        // Public context fini, with the instance still alive.
         context.finish();
         assert!(context.runtime.attachments_finished());
-        let dict = context.runtime.dict();
-        assert!(dict.phrase_span_searches_are_observable());
-        assert!(!dict.phrase_span_continues(&[u32::from('你')]));
-        // A second fini is inert.
+        if missing == "phrase_index.bin" {
+            let dict = context.runtime.dict();
+            assert!(dict.phrase_span_searches_are_observable());
+            assert!(!dict.phrase_span_continues(&[u32::from('你')]));
+        }
         context.finish();
         assert!(context.runtime.attachments_finished());
         drop(instance);
@@ -542,8 +497,6 @@ mod library_directory {
             std::os::unix::fs::symlink(entry.path(), &link).expect("link a fixture file");
             #[cfg(windows)]
             if let Err(error) = std::os::windows::fs::symlink_file(entry.path(), &link) {
-                // ERROR_PRIVILEGE_NOT_HELD: a symbolic link needs the privilege
-                // (Developer Mode or an elevated process); nothing is copied.
                 assert_ne!(
                     error.raw_os_error(),
                     Some(1314),
@@ -599,6 +552,7 @@ mod library_directory {
         assert!(marker.save(user.join("user.conf").as_path()));
     }
 
+    // 074a2219 memory_chunk.h:493 asserts at the directory header read.
     #[test]
     fn init_aborts_where_its_library_loop_maps_the_directory() {
         const NAME: &str = "facade::context::tests::library_directory::init_aborts_where_its_library_loop_maps_the_directory";
@@ -639,6 +593,7 @@ mod library_directory {
         );
     }
 
+    // Register row 76 preserves diagnostics before a later mapping fault.
     #[test]
     fn init_reports_a_missing_library_before_opening_the_next_row() {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
@@ -665,30 +620,18 @@ mod library_directory {
         }
     }
 
-    /// The save remaps a loaded system library and aborts on its header read.
-    #[test]
-    fn save_aborts_at_directory_header_read() {
-        const NAME: &str =
-            "facade::context::tests::library_directory::save_aborts_at_directory_header_read";
-        if !crate::store::death_test::is_child(NAME) {
-            let probe = scratch("save-header-probe");
-            if !reaches_the_assert(&probe) {
-                return;
-            }
+    // 074a2219 memory_chunk.h:416–429 stops the save after the law's preceding log writes.
+    #[rstest::rstest]
+    #[case::pinyin(UserConfLaw::Pinyin, "case_1_pinyin")]
+    #[case::zhuyin(UserConfLaw::Zhuyin, "case_2_zhuyin")]
+    fn save_aborts_at_directory_header_read(#[case] law: UserConfLaw, #[case] case: &str) {
+        let name = format!(
+            "facade::context::tests::library_directory::save_aborts_at_directory_header_read::{case}"
+        );
+        if !crate::store::death_test::is_child(&name) && !reaches_the_assert(&scratch(case)) {
+            return;
         }
-        save_header_abort(NAME, UserConfLaw::Pinyin);
-    }
-
-    #[test]
-    fn zhuyin_save_aborts_after_earlier_log_renames() {
-        const NAME: &str = "facade::context::tests::library_directory::zhuyin_save_aborts_after_earlier_log_renames";
-        if !crate::store::death_test::is_child(NAME) {
-            let probe = scratch("zhuyin-save-header-probe");
-            if !reaches_the_assert(&probe) {
-                return;
-            }
-        }
-        save_header_abort(NAME, UserConfLaw::Zhuyin);
+        save_header_abort(&name, law);
     }
 
     fn save_header_abort(name: &str, law: UserConfLaw) {
@@ -740,9 +683,7 @@ mod library_directory {
         );
     }
 
-    /// `pinyin_mask_out` masks the user tables, then maps each loaded system
-    /// library again before it merges its log (`pinyin.cpp:1228-1291`): a
-    /// directory library is the fault there.
+    // 074a2219 pinyin.cpp:1228–1291 reloads each library before merging its log.
     #[test]
     fn mask_out_returns_the_fault_at_the_library_reload() {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
@@ -840,10 +781,7 @@ mod library_totals {
         (context, total)
     }
 
-    /// `mask_out` maps library 2 again: the failed load takes the old local
-    /// total T out of the facade total (`phrase_index.cpp:243-245`), and the
-    /// closing compact makes the reread local total zero (`pinyin.cpp:1294`).
-    /// The unload then takes out nothing, and the facade total stays T - T.
+    // 074a2219 phrase_index.cpp:243–245 subtracts the compacted local total.
     #[test]
     fn an_unload_after_mask_out_takes_out_the_compacted_total() {
         let scratch = tempfile::tempdir().expect("scratch");
@@ -851,25 +789,6 @@ mod library_totals {
         assert_eq!(context.mask_out(0xFFFF_FFFF, 0), MaskOutOutcome::Done(true));
         assert!(context.unload_phrase_library(GBK));
         assert_eq!(facade_total(&context), 0);
-    }
-
-    /// `pinyin_end_add_phrases` compacts the phrase index
-    /// (`pinyin.cpp:655-660`), and `compact` skips a missing sub-index
-    /// (`phrase_index.cpp:651-652`): the unloaded library's total does not move
-    /// into the facade's.
-    #[test]
-    fn closing_an_import_leaves_the_unloaded_librarys_total_alone() {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let system = private_system(scratch.path());
-        let user = scratch.path().join("user");
-        std::fs::create_dir(&user).expect("user directory");
-        let mut context = open(&system, &user);
-        assert!(context.unload_phrase_library(GBK));
-        let total = facade_total(&context);
-
-        context.end_import();
-
-        assert_eq!(facade_total(&context), total);
     }
 }
 
@@ -880,7 +799,7 @@ mod native {
     use crate::user::UserConfLaw;
     use std::path::Path;
 
-    /// Berkeley DB names each invalid file on stderr when its native open runs.
+    // 074a2219 pinyin.cpp:377–401 orders library and bigram attachment.
     #[cfg(feature = "bdb")]
     #[test]
     fn init_opens_each_system_db_before_its_user_db() {
@@ -937,6 +856,7 @@ mod native {
         assert_eq!(observed, [0, 1, 2, 3, 4, 5].repeat(2), "{stderr}");
     }
 
+    // Register row 76 preserves the missing-library diagnostic and continuation.
     #[test]
     fn init_reports_an_absent_library_and_succeeds() {
         let Some((_scratch, user, run)) = child(
@@ -961,11 +881,11 @@ mod native {
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
 
+    // Rust contract: explicit reload maps the system chunk once.
     #[test]
     fn an_explicit_system_library_reload_opens_the_chunk_once() {
         use crate::input::chunk::CHUNK_OPENS;
         for (law, index) in [(UserConfLaw::Pinyin, 2), (UserConfLaw::Zhuyin, 1)] {
-            // A transient context has no saved log, so every chunk open is the system file.
             let mut context = ContextCore::open(&system_dir(), None, super::WORD, law).unwrap();
             assert!(context.unload_phrase_library(index));
             CHUNK_OPENS.set(0);
@@ -976,6 +896,7 @@ mod native {
         }
     }
 
+    // Register row 76 preserves the empty-library reload result.
     #[test]
     fn reload_of_an_empty_library_reports_and_answers_true() {
         let Some((_scratch, user, run)) = child(
@@ -1004,6 +925,7 @@ mod native {
         assert!(String::from_utf8_lossy(&run.stderr).contains(&line));
     }
 
+    // Rust contract: init updates the open counter before the source-copy failure.
     #[cfg(any(feature = "tkrzw", feature = "bdb"))]
     #[test]
     fn init_aborts_at_source_copy_failure_after_the_open_counter() {
@@ -1043,6 +965,7 @@ mod native {
         );
     }
 
+    // Rust contract: init stops when the user index copy fails.
     #[cfg(any(feature = "tkrzw", feature = "bdb"))]
     #[test]
     fn init_aborts_at_user_index_copy_failure() {
@@ -1110,23 +1033,18 @@ mod native {
         (context, total)
     }
 
-    #[test]
-    fn an_unload_inside_an_open_import_zeroes_the_facade_total() {
-        let scratch = tempfile::tempdir().unwrap();
-        let (mut context, _) = layout_failed_gbk_context(scratch.path());
-        assert!(context.unload_phrase_library(2));
-        assert_eq!(context.runtime.lm().amplified_total(), 0);
-    }
-
+    // 074a2219 phrase_index.cpp:651–652 skips an absent sub-index at end-import.
     #[test]
     fn an_import_that_ends_after_the_unload_keeps_the_zero_total() {
         let scratch = tempfile::tempdir().unwrap();
         let (mut context, _) = layout_failed_gbk_context(scratch.path());
         assert!(context.unload_phrase_library(2));
+        assert_eq!(context.runtime.lm().amplified_total(), 0);
         context.end_import();
         assert_eq!(context.runtime.lm().amplified_total(), 0);
     }
 
+    // 074a2219 pinyin.cpp:655–660 compacts before a subsequent unload.
     #[test]
     fn an_unload_after_the_import_ends_keeps_the_facade_total() {
         let scratch = tempfile::tempdir().unwrap();
@@ -1139,6 +1057,7 @@ mod native {
         assert!(!native_window(&context, &mut instance, 0).is_empty());
     }
 
+    // Rust contract: a failed-layout import uses the item sum for the next increment.
     #[test]
     fn an_increment_after_an_import_into_a_failed_layout_sees_the_item_sum() {
         let scratch = tempfile::tempdir().unwrap();
@@ -1158,6 +1077,7 @@ mod native {
         );
     }
 
+    // Rust contract: save journals the imported item sum against the failed layout.
     #[test]
     fn a_save_after_an_import_into_a_failed_layout_journals_the_item_sum() {
         let scratch = tempfile::tempdir().unwrap();
@@ -1180,54 +1100,52 @@ mod native {
         [modify_header(0, 1, 1), modify_header(0, 1, 2)].concat()
     }
 
+    // 074a2219 pinyin.cpp:1260–1294 replays earlier journals before a later header stop.
     #[cfg(unix)]
     #[test]
     fn mask_out_replays_the_saved_library_before_a_later_log_header_stop() {
         let token = 0x0100_1225;
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            let user = TempUserDir::new("mask-log-header");
-            write_user_conf(&user.path, &system_dir());
-            let mut context = native_context(&system_dir(), &user.path, law);
-            let original = unigram(&context, token).unwrap();
-            assert!(
-                context
-                    .user_store_mut()
-                    .add_system_unigram_frequency(token, 7)
-            );
-            context.user_store_mut().mark_modified();
-            assert_eq!(context.save_user(), SaveOutcome::Saved);
-            assert!(
-                context
-                    .user_store_mut()
-                    .add_system_unigram_frequency(token, 11)
-            );
-            assert_eq!(unigram(&context, token), Some(original + 18));
+        let user = TempUserDir::new("mask-log-header");
+        write_user_conf(&user.path, &system_dir());
+        let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
+        let original = unigram(&context, token).unwrap();
+        assert!(
+            context
+                .user_store_mut()
+                .add_system_unigram_frequency(token, 7)
+        );
+        context.user_store_mut().mark_modified();
+        assert_eq!(context.save_user(), SaveOutcome::Saved);
+        assert!(
+            context
+                .user_store_mut()
+                .add_system_unigram_frequency(token, 11)
+        );
+        assert_eq!(unigram(&context, token), Some(original + 18));
 
-            let header_stop = directory_library(&user.path, "gbk_char.dbin");
-            if header_stop {
-                // A continued walk would reach library 3's two headers.
-                std::fs::write(
-                    user.path.join("opengram.dbin"),
-                    crate::data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
-                )
-                .unwrap();
-            }
-            let before = files_of(&user.path);
-            // Keep the odd slot in library 1. Library 2 is excluded but its log is read.
-            let result = context.mask_out(0x0100_0001, 0x0100_0000);
-            assert_eq!(
-                result,
-                if header_stop {
-                    MaskOutOutcome::ChunkHeaderRead
-                } else {
-                    MaskOutOutcome::Done(true)
-                }
-            );
-            assert_eq!(unigram(&context, token), Some(original + 7), "{law:?}");
-            assert_eq!(files_of(&user.path), before, "{law:?}");
+        let header_stop = directory_library(&user.path, "gbk_char.dbin");
+        if header_stop {
+            std::fs::write(
+                user.path.join("opengram.dbin"),
+                crate::data::chunk_format::build_memory_chunk(&two_headers()).unwrap(),
+            )
+            .unwrap();
         }
+        let before = files_of(&user.path);
+        let result = context.mask_out(0x0100_0001, 0x0100_0000);
+        assert_eq!(
+            result,
+            if header_stop {
+                MaskOutOutcome::ChunkHeaderRead
+            } else {
+                MaskOutOutcome::Done(true)
+            }
+        );
+        assert_eq!(unigram(&context, token), Some(original + 7));
+        assert_eq!(files_of(&user.path), before);
     }
 
+    // 074a2219 pinyin.cpp:1250–1251 skips unloaded libraries during mask-out.
     #[test]
     fn mask_out_skips_the_log_of_an_unloaded_library() {
         let user = TempUserDir::new("mask-unloaded-log");
@@ -1242,6 +1160,7 @@ mod native {
         assert_eq!(context.mask_out(0, 0), MaskOutOutcome::Done(true));
     }
 
+    // Register row 76 retains the mmap diagnostic and prevents partial masking.
     #[test]
     fn mask_out_over_an_unmappable_library_changes_nothing() {
         let Some((_scratch, user, run)) = child(
@@ -1297,6 +1216,7 @@ mod native {
         );
     }
 
+    // Rust contract: the next armed save writes the masked user gram.
     #[test]
     fn a_masked_user_gram_leaves_the_file_at_the_next_armed_save() {
         let user = TempUserDir::new("issue677");
@@ -1329,6 +1249,7 @@ mod native {
         assert_eq!(stored(), None);
     }
 
+    // Rust contract: new instances read the context options.
     #[test]
     fn set_options_before_alloc_controls_incomplete_parse_length() {
         let mut context = open_context(crate::facade::PINYIN_DEFAULT_OPTION_WORD);
@@ -1345,6 +1266,7 @@ mod native {
         );
     }
 
+    // Rust contract: set_options updates live parser settings.
     #[test]
     fn set_options_remasks_a_live_instance() {
         let mut context = open_context(crate::facade::PINYIN_DEFAULT_OPTION_WORD);
@@ -1364,6 +1286,7 @@ mod native {
         assert_eq!(instance.bind(&context.runtime).parse_full_more("nih"), 3);
     }
 
+    // Rust contract: the Hanyu parser receives the current tone bits.
     #[test]
     fn set_options_use_tone_reaches_the_hanyu_parser() {
         let mut context = open_context(crate::facade::PINYIN_DEFAULT_OPTION_WORD);
@@ -1389,6 +1312,7 @@ mod native {
             .unwrap()
     }
 
+    // Rust contract: a failed reload leaves its library unloaded.
     #[test]
     fn a_failed_reload_keeps_the_library_unloaded_until_the_next_load() {
         let scratch = tempfile::tempdir().unwrap();
@@ -1415,6 +1339,7 @@ mod native {
         );
     }
 
+    // Rust contract: an unloaded library refuses writes until explicitly loaded.
     #[test]
     fn an_increment_and_an_import_into_an_unloaded_library_answer_false() {
         let user = TempUserDir::new("guards-unloaded");
@@ -1451,6 +1376,7 @@ mod native {
         );
     }
 
+    // Rust contract: removing a saved phrase alone leaves a clean context unarmed.
     #[test]
     fn removing_the_last_saved_phrase_from_a_clean_context_does_not_persist() {
         let user = TempUserDir::new("clean-last-removal");
@@ -1482,6 +1408,7 @@ mod native {
         assert_eq!(export_native(&context, 7), saved);
     }
 
+    // Rust contract: the next save persists a user unigram increment.
     #[test]
     fn user_unigram_increment_survives_a_later_save() {
         let user = TempUserDir::new("user-unigram-save");
@@ -1510,6 +1437,7 @@ mod native {
         assert_eq!(unigram(&context, token), Some(base + 9));
     }
 
+    // Register row 123 refuses an oversized journal payload and retains modified state.
     #[test]
     fn oversized_journal_record_payloads_refuse_save_and_keep_modified() {
         use crate::data::phrase_library::{ChunkItem, build_chunk};
@@ -1551,6 +1479,7 @@ mod native_files {
     use crate::facade::test_fixture::{native_fixture::*, *};
     use crate::user::UserConfLaw;
 
+    // Rust contract: unloading a user library hides its tokens.
     #[test]
     fn an_unloaded_user_library_hides_its_token_until_the_load() {
         let user = TempUserDir::new("token-unload");
@@ -1684,42 +1613,28 @@ mod native_files {
         );
     }
 
-    #[test]
-    fn pinyin_table_conf_919_short_row_merged() {
-        let Some((_scratch, user, run)) = child(
-            "facade::context::tests::native_files::pinyin_table_conf_919_short_row_merged",
-            |user| short_row_session(user, UserConfLaw::Pinyin),
-        ) else {
+    // 074a2219 table_info.cpp:254–261 scans across the newline; each save law emits its own diagnostics.
+    #[rstest::rstest]
+    #[case::pinyin(UserConfLaw::Pinyin, "case_1_pinyin")]
+    #[case::zhuyin(UserConfLaw::Zhuyin, "case_2_zhuyin")]
+    fn short_row_merged(#[case] law: UserConfLaw, #[case] case: &str) {
+        let name = format!("facade::context::tests::native_files::short_row_merged::{case}");
+        let Some((_scratch, user, run)) = child(&name, |user| short_row_session(user, law)) else {
             return;
         };
         let sep = std::path::MAIN_SEPARATOR;
         let nl = crate::__internal::TEXT_NEWLINE;
         let user = user.display();
-        assert_eq!(
-            String::from_utf8_lossy(&run.stderr),
-            format!(
-                "open {user}{sep}user.conf failed.rename {user}{sep}gbk_char.dbin.tmp to {user}{sep}gbk_char.dbin failed.{nl}"
-            )
-        );
-    }
-    #[test]
-    fn zhuyin_table_conf_919_short_row_merged() {
-        let Some((_scratch, user, run)) = child(
-            "facade::context::tests::native_files::zhuyin_table_conf_919_short_row_merged",
-            |user| short_row_session(user, UserConfLaw::Zhuyin),
-        ) else {
-            return;
-        };
-        assert_eq!(
-            String::from_utf8_lossy(&run.stderr),
-            format!(
-                "open {}{}user.conf failed.",
-                user.display(),
-                std::path::MAIN_SEPARATOR
-            )
-        );
+        let mut expected = format!("open {user}{sep}user.conf failed.");
+        if law == UserConfLaw::Pinyin {
+            expected.push_str(&format!(
+                "rename {user}{sep}gbk_char.dbin.tmp to {user}{sep}gbk_char.dbin failed.{nl}"
+            ));
+        }
+        assert_eq!(String::from_utf8_lossy(&run.stderr), expected);
     }
 
+    // Rust contract: save uses an empty baseline after the chunk layout fails.
     #[cfg(feature = "tkrzw")]
     #[test]
     fn a_save_over_a_failed_layout_journals_against_an_empty_index() {

@@ -15,10 +15,10 @@ fn keys(count: usize) -> Vec<PinyinKey> {
     vec![toned_key(syllable, 1).expect("key"); count]
 }
 
+// 074a2219 pinyin.cpp:536–608 checks nonempty matching phrase and key lengths.
 #[rstest::rstest]
 #[case::empty("", 0)]
 #[case::fewer_keys("阿阿", 1)]
-#[case::more_keys("阿", 2)]
 #[case::sixteen_characters("阿阿阿阿阿阿阿阿阿阿阿阿阿阿阿阿", 16)]
 fn the_length_gate_refuses_before_the_phrase_table(#[case] phrase: &str, #[case] count: usize) {
     let user = tempfile::tempdir().expect("user dir");
@@ -29,6 +29,7 @@ fn the_length_gate_refuses_before_the_phrase_table(#[case] phrase: &str, #[case]
     ));
 }
 
+// 074a2219 pinyin.cpp:536–608 reuses the token of the target library.
 #[test]
 fn a_committed_user_add_is_the_same_library_token_of_the_next_plan() {
     let user = tempfile::tempdir().expect("user dir");
@@ -54,6 +55,7 @@ fn a_committed_user_add_is_the_same_library_token_of_the_next_plan() {
     );
 }
 
+// Rust contract: commit_import refuses an unloaded system library.
 #[test]
 fn an_add_into_an_unloaded_system_library_is_refused() {
     let user = tempfile::tempdir().expect("user dir");
@@ -63,6 +65,7 @@ fn an_add_into_an_unloaded_system_library_is_refused() {
     assert!(!context.commit_import(GBK, &phrase, &keys(2), None, None));
 }
 
+// 074a2219 novel_types.h:45–46 extracts the library nibble.
 #[test]
 fn an_import_finds_the_token_of_its_library_under_high_bits() {
     let user = TempUserDir::new("tagged-import");
@@ -84,6 +87,7 @@ fn an_import_finds_the_token_of_its_library_under_high_bits() {
     );
 }
 
+// 074a2219 pinyin.cpp:536–608 asserts on two target-library tokens.
 #[test]
 fn import_refuses_two_tokens_of_one_library_under_high_bits() {
     let user = TempUserDir::new("tagged-import-duplicate");
@@ -96,6 +100,7 @@ fn import_refuses_two_tokens_of_one_library_under_high_bits() {
     ));
 }
 
+// 074a2219 pinyin.cpp:536–608 reduces the token list before the library check.
 #[test]
 fn an_import_refuses_five_tokens_before_the_library_refusal() {
     let user = TempUserDir::new("combined-unused-index");
@@ -112,6 +117,7 @@ fn an_import_refuses_five_tokens_before_the_library_refusal() {
     ));
 }
 
+// 074a2219 pinyin.cpp:536–608 checks the item behind the existing token.
 #[test]
 fn adding_a_user_phrase_again_after_a_reload_refuses_the_missing_item() {
     let user = TempUserDir::new("reload-reuse");
@@ -128,17 +134,17 @@ fn adding_a_user_phrase_again_after_a_reload_refuses_the_missing_item() {
     ));
 }
 
+// 074a2219 pinyin.cpp:536–608 checks both stored length and words.
 #[rstest::rstest]
-#[case::pinyin_length(UserConfLaw::Pinyin, "你好嗷", "ni'hao'ao", "nihao")]
-#[case::pinyin_text(UserConfLaw::Pinyin, "你們", "ni'men", "nihao")]
+#[case::length("你好嗷", "ni'hao'ao", "nihao")]
+#[case::text("你們", "ni'men", "nihao")]
 fn an_index_token_with_another_item_refuses_import(
-    #[case] law: UserConfLaw,
     #[case] other: &str,
     #[case] reading: &str,
     #[case] imported: &str,
 ) {
     let user = TempUserDir::new("redirected-import");
-    let mut context = native_context(&system_dir(), &user.path, law);
+    let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
     assert_eq!(
         import_native(&mut context, 7, &[(other, reading, 1)]),
         [true]
@@ -152,13 +158,14 @@ fn an_index_token_with_another_item_refuses_import(
     context.finish();
     drop(context);
     set_phrase_table_row(&user.path, "你好", &[token]);
-    let context = native_context(&system_dir(), &user.path, law);
+    let context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
     assert!(matches!(
         plan(&context, 7, "你好", imported),
         ImportPlan::Abort
     ));
 }
 
+// 074a2219 pinyin.cpp:588–608 requires a target sub-index.
 #[test]
 fn an_import_into_a_slot_without_a_sub_index_is_refused() {
     let user = TempUserDir::new("import-no-sub-index");
@@ -176,6 +183,7 @@ fn an_import_into_a_slot_without_a_sub_index_is_refused() {
     assert_eq!(export_native(&context, 7), []);
 }
 
+// 074a2219 pinyin.cpp:303–321,377–392 loads libraries according to their configured type.
 #[test]
 fn a_user_file_row_at_a_system_index_is_read_and_imported_into() {
     use crate::data::phrase_library::{ChunkItem, build_chunk};

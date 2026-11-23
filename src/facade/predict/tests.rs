@@ -3,8 +3,7 @@ use crate::facade::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
 use crate::user::{UserConfLaw, toned_key};
 use crate::vocab::SyllableKey;
 
-/// 074a2219 pinyin.cpp:1413-1415 and :2389-2395 search the current
-/// phrase table on every prefix/prediction call, including after import.
+// 074a2219 pinyin.cpp:1413–1415,2389–2395 searches live prefix and suggestion tables.
 #[test]
 fn prediction_reads_imports_after_its_first_query() {
     let user = tempfile::tempdir().unwrap();
@@ -49,6 +48,7 @@ mod native {
             .unwrap()
     }
 
+    // Rust contract: a prefix seeds a sentence guess on an active matrix.
     #[test]
     fn prefix_seeded_sentence_guess() {
         let (context, mut instance) = pinyin_instance();
@@ -59,7 +59,7 @@ mod native {
         assert!(!prefix_guess(&context, &mut fresh, "你好"));
     }
 
-    /// pinyin.cpp:1711-1740,2200-2215 and zhuyin.cpp:1146-1175,1473-1489.
+    // 074a2219 zhuyin.cpp:1146–1175,1473–1489 ranks with the longest retained prefix.
     #[test]
     fn dynamic_ranking_uses_the_longest_retained_prefix() {
         let user = TempUserDir::new("prefix-ranking");

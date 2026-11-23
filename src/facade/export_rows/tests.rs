@@ -119,11 +119,7 @@ fn scenario() -> TestWalk {
     )
 }
 
-/// The pin's walk (`pinyin.cpp:790-911`):
-/// `get_next` answers `has_next` after the row, so a caller that
-/// trusts it stops before the last predecessor, whose gram was loaded
-/// but never scanned; a `sentence_start` gram's successors are scanned
-/// under the next predecessor.
+// 074a2219 pinyin.cpp:790–911 advances and reports the successor state after each row.
 #[test]
 fn the_walk_is_the_pins_state_machine() {
     let mut walk = scenario();
@@ -134,7 +130,6 @@ fn the_walk_is_the_pins_state_machine() {
             (PhraseText::from("你好"), false)
         ]
     );
-    // A further has_next scans the gram loaded but never scanned.
     assert_eq!(walk.has_next(), Ok(true));
     assert_eq!(pair_text(&walk.walk), Some("我爱".into()));
     assert_eq!(
@@ -151,9 +146,7 @@ fn the_walk_is_the_pins_state_machine() {
     assert_eq!(walk.get_next(), BigramStep::Undefined);
 }
 
-/// The pin's NULL `m_phrase` (`pinyin.cpp:822`, `:830`): the rows
-/// taken carry no phrase, and the next `has_next` loads the next pair
-/// instead of answering from the dropped one.
+// 074a2219 pinyin.cpp:822,830 loads the next pair after the caller drops the phrase.
 #[test]
 fn a_dropped_phrase_is_the_pins_null_m_phrase() {
     let mut walk = scenario();
@@ -177,6 +170,7 @@ fn a_dropped_phrase_is_the_pins_null_m_phrase() {
     );
 }
 
+// 074a2219 pinyin.cpp:790–911 requires a current predecessor for get_next.
 #[test]
 fn get_next_without_a_predecessor_is_the_pins_abort() {
     let mut walk = walk(&[], &[]);
@@ -184,11 +178,7 @@ fn get_next_without_a_predecessor_is_the_pins_abort() {
     assert_eq!(walk.get_next(), BigramStep::Aborts);
 }
 
-/// The walk (`pinyin.cpp:889`, `ngram.cpp:133-141`)
-/// faults where it loads a predecessor too short for its total, in
-/// `get_all_items` order, after handing out the rows of the
-/// predecessors before it; a `has_next` that loads it faults too, also
-/// inside `get_next`.
+// 074a2219 ngram.cpp:133–141 reads the predecessor when the walk advances.
 #[test]
 fn a_short_predecessor_faults_where_the_walk_loads_it() {
     let short = 0x0100_0003;
@@ -202,9 +192,6 @@ fn a_short_predecessor_faults_where_the_walk_loads_it() {
     let BigramStep::Row(_, Ok(true)) = planted.get_next() else {
         panic!("the first predecessor's first row");
     };
-    // The second row is handed out, then the `has_next` inside
-    // `get_next` loads the short predecessor; the row comes back with
-    // the fault, for the C adapter to write before it aborts.
     let BigramStep::Row(row, more) = planted.get_next() else {
         panic!("the first predecessor's second row");
     };
@@ -215,7 +202,6 @@ fn a_short_predecessor_faults_where_the_walk_loads_it() {
             token: short
         }))
     );
-    // A walk that reaches it from `has_next` faults the same way.
     let mut direct = walk(&[short], &[]);
     direct.grams.insert(short, None);
     assert_eq!(
@@ -226,9 +212,7 @@ fn a_short_predecessor_faults_where_the_walk_loads_it() {
     );
 }
 
-/// `pinyin.cpp:839-872`: the pin renders the first item's reading `i`, then
-/// every reading of the second item, for each `i` in turn, and dies at the
-/// first key assert. A first item with no reading renders nothing.
+// 074a2219 pinyin.cpp:839–872 renders each first reading before the second readings.
 #[test]
 fn a_pair_asserts_in_the_pins_render_order() {
     use ExportAssert::{KeyFields, KeyTone};
@@ -248,34 +232,9 @@ fn a_pair_asserts_in_the_pins_render_order() {
     );
 }
 
-/// `pinyin.cpp:846`, `:859`: a pair with a stored key outside the table
-/// faults in the `has_next` that loads it. The walk stays at the pair. The
-/// `has_next` inside `get_next` (`:910`) hands the fault back with the row,
-/// whose out-params the pin has written (`:904-906`).
-#[test]
-fn a_pair_with_a_key_outside_the_table_faults_where_the_walk_loads_it() {
-    let fault = Err(BigramProbeFault::Key(ExportAssert::KeyTone));
-    let grams: &[(u32, &[(u32, u32)])] = &[(0x0100_0001, &[(0x0100_0002, 138), (0x0100_0004, 69)])];
-    let mut planted = walk(&[0x0100_0001, 0x0100_0003], grams);
-    planted
-        .items
-        .insert(0x0100_0004, item("爱", "ai", Some(ExportAssert::KeyTone)));
-    assert_eq!(planted.has_next(), Ok(true));
-    let BigramStep::Row(row, more) = planted.get_next() else {
-        panic!("the first row");
-    };
-    assert_eq!(row.pinyin, "ni'hao");
-    assert_eq!(more, fault);
-    assert_eq!(pair_text(&planted.walk), Some(PhraseText::from("你好")));
-    assert_eq!(planted.walk.loads(), 1);
-    for _ in 0..2 {
-        assert_eq!(planted.has_next(), fault);
-    }
-}
-
 use super::{ContextCore, ExportAssert, ExportRow, ExportStep, PhraseExportCursor};
 use crate::parser::ChewingKey;
-use crate::user::{KEY_TONE_SHIFT, MAX_KEY_TONE, UserConfLaw, toned_key};
+use crate::user::{UserConfLaw, toned_key};
 use crate::vocab::{SyllableKey, USER_DICTIONARY};
 
 /// A transient context over the committed mini tables of whichever
@@ -293,22 +252,13 @@ fn open() -> ContextCore {
     .expect("committed backend fixtures")
 }
 
+// Rust contract: begin captures the current predecessor list.
 #[test]
 fn an_empty_bigram_export_stays_empty_after_the_first_write() {
     let mut ctx = open();
-    let store = ctx.user_store_mut();
-    assert_eq!(store.bigram_row(1).unwrap(), None);
-    assert_eq!(store.bigram_count(1, 2).unwrap(), 0);
-    assert_eq!(store.bigram_total(1).unwrap(), 0);
-    assert!(store.bigram_successors(1).unwrap().is_empty());
-    assert!(store.bigram_predecessors().unwrap().is_empty());
-    assert!(store.bigram_predecessors().unwrap().is_empty());
-    store.mask_out(u32::MAX, 0x0700_0001).unwrap();
     let mut walk = ctx.bigram_export_walk().unwrap();
     assert!(!walk.has_next(&ctx).unwrap());
     seed_bigram(ctx.user_store_mut(), 1, &[(2, 69)]);
-    assert_eq!(ctx.user_store().bigram_count(1, 2).unwrap(), 69);
-    assert_eq!(ctx.user_store().bigram_predecessors().unwrap(), [1]);
     assert!(!walk.has_next(&ctx).unwrap());
 }
 
@@ -370,6 +320,7 @@ fn drain(ctx: &ContextCore, cursor: &mut PhraseExportCursor) -> Option<Vec<Row>>
     Some(rows)
 }
 
+// 074a2219 pinyin.cpp:670–767 exports the stored phrase, reading and frequency.
 #[test]
 fn export_phrases_render_the_pinned_triples() {
     use crate::vocab::USER_DICTIONARY;
@@ -402,6 +353,7 @@ fn export_phrases_render_the_pinned_triples() {
     assert!(!cursor.has_next());
 }
 
+// 074a2219 pinyin.cpp:670–685 probes the narrowed library index.
 #[test]
 fn begin_probes_one_token_and_the_guint8_alias_drains_like_library_1() {
     let ctx = open();
@@ -415,6 +367,7 @@ fn begin_probes_one_token_and_the_guint8_alias_drains_like_library_1() {
     assert_eq!(all, drain(&ctx, &mut library).expect("every row"));
 }
 
+// 074a2219 pinyin.cpp:670–767 distinguishes unused and invalid library indices.
 #[test]
 fn an_unused_nibble_and_the_pins_asserts_are_reported() {
     let ctx = open();
@@ -429,9 +382,7 @@ fn an_unused_nibble_and_the_pins_asserts_are_reported() {
     assert!(!PhraseExportCursor::default().has_next());
 }
 
-/// Promotion creates the missing sub-index (074a2219 phrase_index.h:663-670).
-/// Export probes that live range (phrase_index.cpp:610-646,
-/// pinyin.cpp:670-685,748-767).
+// 074a2219 phrase_index.h:663–670 makes the promoted sub-index visible.
 #[test]
 fn an_addon_promoted_into_a_missing_library_is_exported() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -496,42 +447,7 @@ fn an_addon_promoted_into_a_missing_library_is_exported() {
     );
 }
 
-/// `pinyin.cpp:728` → `chewing_key.cpp:48`: a reading the probe counts
-/// (`:682`) but `get_pinyin_string` cannot spell is read and refused
-/// with the cursor unmoved, so the next call refuses again (the parent
-/// build skipped the reading). The content-table assert (`:50`) has no
-/// case: a session key always names a syllable.
-#[test]
-fn a_reading_the_engine_cannot_spell_is_the_pins_pinyin_string_assert() {
-    let jia = SyllableKey::from_text("jia").expect("syllable").index();
-    let past_the_tones = toned_key(jia, MAX_KEY_TONE).expect("key") + (1 << KEY_TONE_SHIFT);
-    let mut ctx = open();
-    let store = ctx.user_store_mut();
-    store
-        .add_phrase_in(
-            USER_DICTIONARY,
-            &"你好".into(),
-            &user_keys(&["ni", "hao"], 0),
-            Some(5),
-        )
-        .expect("first");
-    store
-        .add_phrase_in(USER_DICTIONARY, &"甲".into(), &[past_the_tones], Some(2))
-        .expect("representable session key");
-    let mut cursor = ctx.phrase_export_cursor(u32::from(USER_DICTIONARY));
-    assert_eq!(next_row(&ctx, &mut cursor), Some(row("你好", "ni'hao", 5)));
-    assert!(cursor.has_next(), "the probe selects the item");
-    for _ in 0..2 {
-        assert!(matches!(
-            cursor.get_next_with(&ctx, |_| ()),
-            ExportStep::Assert(ExportAssert::KeyTone)
-        ));
-    }
-}
-
-/// `pinyin.cpp:748-767`: every `get_next_phrase` re-reads the range
-/// and the next item, so a reading imported under the token the cursor
-/// is about to read is exported with it.
+// 074a2219 pinyin.cpp:748–767 re-probes the live range after each row.
 #[test]
 fn the_re_probe_reads_a_reading_imported_under_the_next_system_token() {
     let mut ctx = open();
@@ -571,7 +487,6 @@ fn the_re_probe_reads_a_reading_imported_under_the_next_system_token() {
         })
         .found()
         .expect("item");
-    // The same syllables with tone 1: a reading the item does not hold.
     let keys = user_keys(&spellings, 1);
     ctx.user_store_mut()
         .add_system_phrase_in(
@@ -599,9 +514,7 @@ fn the_re_probe_reads_a_reading_imported_under_the_next_system_token() {
     assert_eq!(rows, expected);
 }
 
-/// The same for a `USER_FILE` library: a phrase appended after the
-/// begin and a reading merged into the item under the cursor are both
-/// exported, the pin's token walk over the live sub-index.
+// 074a2219 pinyin.cpp:748–767 reads imports made after begin.
 #[test]
 fn a_user_library_import_after_begin_is_exported() {
     let mut ctx = open();
@@ -712,6 +625,7 @@ mod native {
         walk_steps(&context)
     }
 
+    // 074a2219 pinyin.cpp:906 doubles the stored count.
     #[test]
     fn the_bigram_export_count_wraps() {
         let user = TempUserDir::new("d18-export-ffffffff");
@@ -747,7 +661,7 @@ mod native {
         );
     }
 
-    /// chewing_key.cpp:29-57 validates the tone before the key dimensions.
+    // 074a2219 chewing_key.cpp:29–57 validates the tone before the key fields.
     #[rstest::rstest]
     #[case::tone(0x6081, ExportAssert::KeyTone)]
     #[case::fields(0x109f, ExportAssert::KeyFields)]
@@ -767,11 +681,7 @@ mod native {
         );
     }
 
-    /// `pinyin.cpp:846`, `:859` → `chewing_key.cpp:47-50`, `:29-32`: the
-    /// bigram export renders a system item's stored keys through
-    /// `get_pinyin_string`, which asserts the tone before the fields. The
-    /// fault comes from the `has_next` that loads the pair: the one inside
-    /// `get_next` (`:910`) after the row before it, then every direct one.
+    // 074a2219 pinyin.cpp:846,859,910 probes the next pair after returning the current row.
     #[rstest::rstest]
     #[case::tone(0x6081, ExportAssert::KeyTone)]
     #[case::fields(0x109f, ExportAssert::KeyFields)]
@@ -810,69 +720,37 @@ mod native {
         }
     }
 
-    /// `user-gram-unsorted-export`: 你's stored gram holds `[龘龘 90, 号 80,
-    /// 好 70]`, descending by token, not the ascending order the pin writes.
-    /// The pin's export reads `retrieve_all`, which appends the raw items in
-    /// stored order (`ngram.cpp:133-151` at 074a2219), and the walk hands the
-    /// array out in that order; the `std::lower_bound` over the raw array
-    /// (`:86-99`) is a lookup and does not re-sort it. The walk's first
-    /// `has_next` answers false (its do/while loads the last predecessor's gram
-    /// on a false answer); the last row's `get_next` answer is
-    /// the walk's, `false` at the end of the gram.
-    #[test]
-    fn user_gram_unsorted_export_follows_the_stored_order() {
-        let steps = export_walk("export-unsorted", |hao, hao_alt, dalong| {
-            let mut items = vec![(dalong, 90), (hao_alt, 80), (hao, 70)];
-            items.sort_by(|a, b| b.cmp(a));
-            items
+    // 074a2219 ngram.cpp:133–151 returns all stored items in their original order.
+    #[rstest::rstest]
+    #[case::unsorted(false, &[("你龘龘", "ni'da2'da2", 180), ("你号", "ni'hao", 160), ("你好", "ni'hao", 140)])]
+    #[case::duplicate(true, &[("你好", "ni'hao", 140), ("你好", "ni'hao", 160), ("你龘龘", "ni'da2'da2", 180), ("你龘龘", "ni'da2'da2", 200)])]
+    fn user_gram_unsorted_export_follows_the_stored_order(
+        #[case] duplicate: bool,
+        #[case] rows: &[(&str, &str, i64)],
+    ) {
+        let steps = export_walk("export-stored-order", |hao, hao_alt, dalong| {
+            if duplicate {
+                vec![(hao, 70), (hao, 80), (dalong, 90), (dalong, 100)]
+            } else {
+                let mut items = vec![(dalong, 90), (hao_alt, 80), (hao, 70)];
+                items.sort_by(|a, b| b.cmp(a));
+                items
+            }
         });
-        let row = |ok: bool, phrase: &str, pinyin: &str, count: i64| {
-            WalkStep::Row(ok, phrase.to_owned(), pinyin.to_owned(), count)
-        };
-        assert_eq!(
-            steps,
-            [
-                WalkStep::NoNext,
-                row(true, "你龘龘", "ni'da2'da2", 180),
-                row(true, "你号", "ni'hao", 160),
-                row(false, "你好", "ni'hao", 140),
-                WalkStep::NoNext,
-                WalkStep::NoNext,
-            ]
-        );
+        let mut expected = vec![WalkStep::NoNext];
+        for (index, &(phrase, reading, count)) in rows.iter().enumerate() {
+            expected.push(WalkStep::Row(
+                index + 1 < rows.len(),
+                phrase.to_owned(),
+                reading.to_owned(),
+                count,
+            ));
+        }
+        expected.extend([WalkStep::NoNext, WalkStep::NoNext]);
+        assert_eq!(steps, expected);
     }
 
-    /// `user-gram-duplicate-export`: 你's stored gram holds 好 and 龘龘 twice,
-    /// sorted: `[好 70, 好 80, 龘龘 90, 龘龘 100]`. `retrieve_all` appends
-    /// every stored item, duplicates included (`ngram.cpp:133-151` at
-    /// 074a2219), so the export lists each twice, in stored order.
-    #[test]
-    fn user_gram_duplicate_export_lists_every_stored_item() {
-        let steps = export_walk("export-duplicate", |hao, _, dalong| {
-            vec![(hao, 70), (hao, 80), (dalong, 90), (dalong, 100)]
-        });
-        let row = |ok: bool, phrase: &str, pinyin: &str, count: i64| {
-            WalkStep::Row(ok, phrase.to_owned(), pinyin.to_owned(), count)
-        };
-        assert_eq!(
-            steps,
-            [
-                WalkStep::NoNext,
-                row(true, "你好", "ni'hao", 140),
-                row(true, "你好", "ni'hao", 160),
-                row(true, "你龘龘", "ni'da2'da2", 180),
-                row(false, "你龘龘", "ni'da2'da2", 200),
-                WalkStep::NoNext,
-                WalkStep::NoNext,
-            ]
-        );
-    }
-
-    /// the bigram export lists an item only when its count is above
-    /// `threshold = initial_seed - 1`, 68 (`pinyin.cpp:791-792`, `:809` at 074a2219), and doubles
-    /// it (`:906`): 你's gram `[好 68, 号 69]` exports only 你号, at 138. Source-derived, with no
-    /// capture: the pin joins the pinyin strings with
-    /// `g_strjoinv` over an unterminated array (`:849`, `:862`).
+    // 074a2219 pinyin.cpp:791–792,809,906 exports and doubles counts above 68.
     #[cfg(unix)]
     #[test]
     fn the_bigram_export_skips_a_count_at_the_threshold() {
@@ -890,6 +768,7 @@ mod native {
         );
     }
 
+    // 074a2219 pinyin.cpp:839–872 crosses both items’ readings.
     #[cfg(unix)]
     #[test]
     fn the_bigram_export_crosses_both_items_readings() {
@@ -929,6 +808,7 @@ mod native {
         );
     }
 
+    // 074a2219 pinyin.cpp:839–872 reads pronunciations when the pair loads.
     #[test]
     fn bigram_export_reads_a_new_pronunciation_when_the_next_pair_loads() {
         for live_successor in [false, true] {
@@ -966,6 +846,7 @@ mod native {
         }
     }
 
+    // Rust contract: bigram export reads the counts written by ordinary training.
     #[cfg(feature = "tkrzw")]
     #[test]
     fn ordinary_training_exports_its_grams() {

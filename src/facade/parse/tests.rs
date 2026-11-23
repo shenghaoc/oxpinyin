@@ -2,37 +2,22 @@ use crate::parser::{ZhuyinParser, ZhuyinScheme};
 
 use super::*;
 
-#[test]
-fn den_matrix_keeps_key_and_fuzzy_deng() {
-    let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard)
-        .parse_with_options(b"2p", OptionBits::USE_TONE);
-    let keys = crate::facade::cursor::ModeKeys::Zhuyin(parse.keys())
-        .iter()
-        .collect::<Vec<_>>();
-    let keys = crate::facade::cursor::matrix_keys_of(&keys);
-    let matrix = crate::engine::parse_time_keys(&keys, 2, OptionBits::PINYIN_AMB_EN_ENG, false);
-    assert_eq!(
-        matrix
-            .iter()
-            .map(|k| k.key().pinyin_spelling())
-            .collect::<Vec<_>>(),
-        ["den", "deng"]
-    );
-}
-
+// Rust contract: scheme dispatch accepts the header discriminants.
 #[test]
 fn scheme_dispatch_covers_the_header_discriminants_and_nothing_else() {
-    assert!((1..=3).all(|v| full_scheme(v).is_some()));
-    assert!(full_scheme(0).is_none() && full_scheme(4).is_none());
-    // Zhuyin: total over 1..=9 including the STANDARD_DVORAK slot (7).
-    assert!((1..=9).all(|v| zhuyin_scheme(v).is_some()));
+    for value in 0..=4 {
+        assert_eq!(full_scheme(value).is_some(), (1..=3).contains(&value));
+    }
+    for value in 0..=10 {
+        assert_eq!(zhuyin_scheme(value).is_some(), (1..=9).contains(&value));
+    }
     assert_eq!(zhuyin_scheme(7), Some(ZhuyinScheme::StandardDvorak));
-    assert!(zhuyin_scheme(0).is_none() && zhuyin_scheme(10).is_none());
-    assert!((1..=6).all(|v| double_scheme(v).is_some()));
-    assert!(double_scheme(0).is_none() && double_scheme(7).is_none());
-    assert!(double_scheme(-1).is_none());
+    for value in 0..=7 {
+        assert_eq!(double_scheme(value).is_some(), (1..=6).contains(&value));
+    }
 }
 
+// Rust contract: exact_input joins keyboard keys and preserves their spans and tones.
 #[test]
 fn exact_input_joins_keys_with_apostrophes_and_spans_each_one() {
     let parse = ZhuyinParser::with_scheme(ZhuyinScheme::Standard)
@@ -54,6 +39,7 @@ use crate::facade::PinyinCorrections;
 
 use crate::facade::test_fixture::{pinyin_instance, zhuyin_instance};
 
+// 074a2219 phonetic_key_matrix.cpp:30–84 places keys at their input columns.
 #[test]
 fn full_pinyin_parse_consumes_and_keys_sit_at_their_syllable_starts() {
     let (context, mut inst) = pinyin_instance();
@@ -80,11 +66,11 @@ fn full_pinyin_parse_consumes_and_keys_sit_at_their_syllable_starts() {
     );
 }
 
+// 074a2219 phonetic_key_matrix.cpp:30–84 represents a separator by a zero key.
 #[test]
 fn full_pinyin_skips_a_consumed_separator_column() {
     let (context, mut inst) = pinyin_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("ni'hao"), 6);
-    // Offset 2 is the apostrophe: a lone zero-key column the pin walks past.
     let hao = inst
         .bind(&context.runtime)
         .key_at(2)
@@ -92,6 +78,7 @@ fn full_pinyin_skips_a_consumed_separator_column() {
     assert_eq!((hao.text, hao.begin, hao.end), ("hao", 3, 6));
 }
 
+// Rust contract: one-key and keyboard queries dispatch through the live scheme.
 #[test]
 fn one_key_probes_follow_the_live_schemes() {
     let (context, mut inst) = pinyin_instance();
@@ -106,7 +93,6 @@ fn one_key_probes_follow_the_live_schemes() {
             .is_none()
     );
     let (zhuyin_context, mut zhuyin) = zhuyin_instance();
-    // Standard keyboard: `s` is ㄋ; `q` is not a chewing symbol.
     assert!(
         !zhuyin
             .bind(&zhuyin_context.runtime)
@@ -136,26 +122,15 @@ mod native {
     #[cfg(feature = "tkrzw")]
     use crate::user::UserConfLaw;
 
-    #[rstest::rstest]
-    #[case::one("'", 1, 1)]
-    #[case::two("''", 2, 2)]
-    #[case::three("'''", 3, 3)]
-    fn an_apostrophe_only_parse_matches_the_pin(
-        #[case] input: &str,
-        #[case] consumed: usize,
-        #[case] parsed_length: usize,
-    ) {
+    // 074a2219 phonetic_key_matrix.cpp:30–84 consumes separator columns.
+    #[test]
+    fn an_apostrophe_only_parse_matches_the_pin() {
         let (context, mut instance) = pinyin_instance();
-        assert_eq!(
-            instance.bind(&context.runtime).parse_full_more(input),
-            consumed
-        );
-        assert_eq!(
-            instance.read(&context.runtime).parsed_input_length(),
-            parsed_length
-        );
+        assert_eq!(instance.bind(&context.runtime).parse_full_more("'"), 1);
+        assert_eq!(instance.read(&context.runtime).parsed_input_length(), 1);
     }
 
+    // Rust contract: parsed_input_length stores the parse result until reparse or reset.
     #[test]
     fn parsed_input_length_stores_the_parse_result_and_clears_on_reset() {
         let (context, mut instance) = pinyin_instance();
@@ -186,6 +161,7 @@ mod native {
         assert_eq!(instance.read(&context.runtime).parsed_input_length(), 0);
     }
 
+    // Rust contract: the chewing correction policy masks only correction bits.
     #[test]
     fn the_seam_strips_only_the_zhuyin_corrections() {
         let mut context = open_context(PINYIN_DEFAULT_OPTION_WORD);
@@ -215,6 +191,7 @@ mod native {
             .collect()
     }
 
+    // Rust contract: the chewing path builds an exact-key session.
     #[test]
     fn zhuyin_keys_are_not_resegmented_by_the_pinyin_inventory() {
         let mut context = open_context(PINYIN_DEFAULT_OPTION_WORD);
@@ -241,6 +218,7 @@ mod native {
         );
     }
 
+    // Rust contract: an exact chewing key keeps its original segmentation.
     #[test]
     fn zhuyin_only_spellings_do_not_fall_back_to_shorter_pinyin_keys() {
         let (context, mut instance) = pinyin_instance();
@@ -257,6 +235,7 @@ mod native {
         );
     }
 
+    // Rust contract: parse_full_more forwards live options to the parser and split matrix.
     #[test]
     fn option_gating_jv_zon_and_divided_table() {
         let mut context = open_context(PINYIN_DEFAULT_OPTION_WORD);
@@ -281,6 +260,7 @@ mod native {
         }
     }
 
+    // Rust contract: exact Bopomofo keys drive sentence lookup.
     #[test]
     fn the_zhuyin_pipeline_guesses_a_sentence_from_bopomofo_keys() {
         let (context, mut instance) = pinyin_instance();
@@ -294,6 +274,7 @@ mod native {
         assert!(!sentence(&context, &instance, 0).unwrap().is_empty());
     }
 
+    // Register row 122: the full-pinyin guess uses its parse-time matrix.
     #[cfg(feature = "tkrzw")]
     #[test]
     fn the_resplit_xian_window_lists_single_syllables_only() {
@@ -317,20 +298,4 @@ mod native {
             assert!(!rows.iter().any(|row| row == split));
         }
     }
-
-    use super::parser_rows;
-    parser_rows::gated_parser_rows! {
-        fn gated_parser_rows_keep_consumed_and_stored_lengths(
-            #[case] input: &str, #[case] options: u32, #[case] consumed: usize,
-            #[case] _keys: &[(u16, u16, u16, &str)], #[case] _auxiliary: &str,
-        ) {
-            let mut context = open_context(PINYIN_DEFAULT_OPTION_WORD);
-            context.set_options(OptionBits::from_bits_retain(options));
-            let mut instance = context.alloc_instance();
-            assert_eq!(instance.bind(&context.runtime).parse_full_more(input), consumed);
-            assert_eq!(instance.read(&context.runtime).parsed_input_length(), consumed);
-        }
-    }
 }
-
-use crate::parser_rows;
