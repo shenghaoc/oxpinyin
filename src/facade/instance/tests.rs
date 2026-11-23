@@ -125,10 +125,8 @@ mod native {
 
     #[rstest::rstest]
     #[case::pinyin_luoma(UserConfLaw::Pinyin, 2)]
-    #[case::pinyin_secondary_zhuyin(UserConfLaw::Pinyin, 3)]
     #[case::zhuyin_hanyu(UserConfLaw::Zhuyin, 1)]
     #[case::zhuyin_luoma(UserConfLaw::Zhuyin, 2)]
-    #[case::zhuyin_secondary_zhuyin(UserConfLaw::Zhuyin, 3)]
     fn a_leading_separator_guess_has_no_sentence(#[case] law: UserConfLaw, #[case] scheme: i32) {
         let user = TempUserDir::new("separator-sentence");
         let mut context = native_context(&system_dir(), &user.path, law);

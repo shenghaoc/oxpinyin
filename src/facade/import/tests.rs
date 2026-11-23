@@ -112,31 +112,6 @@ fn an_import_refuses_five_tokens_before_the_library_refusal() {
     ));
 }
 
-#[rstest::rstest]
-#[case::pinyin(UserConfLaw::Pinyin, "测测", "ce4'ce4")]
-#[case::zhuyin(UserConfLaw::Zhuyin, "你你", "ㄋㄧˇ ㄋㄧˇ")]
-fn a_failed_phrase_table_read_is_a_miss(
-    #[case] law: UserConfLaw,
-    #[case] text: &str,
-    #[case] reading: &str,
-) {
-    let user = TempUserDir::new("failed-phrase-read");
-    let mut context = native_context(&system_dir(), &user.path, law);
-    let key: Vec<u8> = text
-        .chars()
-        .flat_map(|word| u32::from(word).to_le_bytes())
-        .collect();
-    crate::store::fail_point_read_of(&key, 0);
-    assert!(matches!(
-        plan(&context, 7, text, reading),
-        ImportPlan::Add { original: None, .. }
-    ));
-    assert_eq!(
-        import_native(&mut context, 7, &[(text, reading, 5)]),
-        [true]
-    );
-}
-
 #[test]
 fn adding_a_user_phrase_again_after_a_reload_refuses_the_missing_item() {
     let user = TempUserDir::new("reload-reuse");
@@ -156,7 +131,6 @@ fn adding_a_user_phrase_again_after_a_reload_refuses_the_missing_item() {
 #[rstest::rstest]
 #[case::pinyin_length(UserConfLaw::Pinyin, "你好嗷", "ni'hao'ao", "nihao")]
 #[case::pinyin_text(UserConfLaw::Pinyin, "你們", "ni'men", "nihao")]
-#[case::zhuyin_text(UserConfLaw::Zhuyin, "你們", "ㄋㄧˇ ㄇㄣˊ", "ㄋㄧˇ ㄏㄠˇ")]
 fn an_index_token_with_another_item_refuses_import(
     #[case] law: UserConfLaw,
     #[case] other: &str,

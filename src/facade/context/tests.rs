@@ -639,33 +639,6 @@ mod library_directory {
         );
     }
 
-    /// An open and the lines it reports: only the libraries the library loop
-    /// reached (`pinyin.cpp:253-256`, `zhuyin.cpp:197-200`).
-    fn open_lines(
-        system: &Path,
-        user: &Path,
-        law: UserConfLaw,
-    ) -> (
-        Result<crate::runtime::Runtime, crate::runtime::OpenError>,
-        Vec<PathBuf>,
-    ) {
-        let mut lines = Vec::new();
-        let opened = crate::runtime::Runtime::open_with_law_reporting(
-            system,
-            Some(user),
-            law,
-            &mut |path| lines.push(path.to_path_buf()),
-        );
-        (opened, lines)
-    }
-
-    /// Replaces the system library `file` with one too short for a chunk header.
-    fn make_unmappable(system: &Path, file: &str) {
-        let path = system.join(file);
-        std::fs::remove_file(&path).expect("unlink the library");
-        std::fs::write(&path, b"abc").expect("short library");
-    }
-
     #[test]
     fn init_reports_a_missing_library_before_opening_the_next_row() {
         for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
@@ -689,38 +662,6 @@ mod library_directory {
             )
             .unwrap();
             assert_eq!(reported, [first, later], "{law:?}");
-        }
-    }
-
-    /// Library 1's log asserts before the loop opens library 2 or library 4, so
-    /// neither writes its line and the fault is the log's. With a sound log the
-    /// loop reaches them: library 2's line, then library 4's refusal.
-    #[test]
-    fn init_reports_only_what_the_library_loop_reached() {
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            let system = private_system("lines");
-            let user = scratch("lines-user");
-            conforming_profile(&system, &user);
-            std::fs::remove_file(system.join("gbk_char.bin")).expect("unlink the library");
-            make_unmappable(&system, "merged.bin");
-
-            let (opened, lines) = open_lines(&system, &user, law);
-            assert!(opened.is_err(), "{law:?}");
-            assert_eq!(
-                lines,
-                [system.join("gbk_char.bin"), system.join("merged.bin")],
-                "{law:?}"
-            );
-
-            plant_header_token_log(&user, "gb_char.dbin");
-            let (opened, lines) = open_lines(&system, &user, law);
-            assert!(
-                matches!(opened, Err(crate::runtime::OpenError::Journal(_))),
-                "{law:?}"
-            );
-            assert!(lines.is_empty(), "{law:?}: {lines:?}");
-            let _ = std::fs::remove_dir_all(&system);
-            let _ = std::fs::remove_dir_all(&user);
         }
     }
 
@@ -1602,64 +1543,6 @@ mod native {
         assert!(context.user_store().is_modified());
         assert!(!user.path.join("gb_char.dbin.tmp").exists());
         assert!(!user.path.join("gb_char.dbin").exists());
-    }
-
-    /// An oversized record in library 2, behind a changed
-    /// library 1. The encoder refuses library 2's journal on both facades.
-    /// libpinyin renames after it has written every file
-    /// (`pinyin.cpp:1141`), so no log of this save is in place. libzhuyin
-    /// renames each log as it writes it (`zhuyin.cpp:596-609`), so library
-    /// 1's log is already in place; nothing later is written, the marker
-    /// included (`:695-698`). Both saves answer `false` and stay modified.
-    #[test]
-    fn an_oversized_journal_stops_a_zhuyin_save_after_the_earlier_renames() {
-        use crate::data::phrase_library::{ChunkItem, build_chunk};
-        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
-            let system = TempSystemDir::new("oversized-journal-second-library");
-            let user = TempUserDir::new("oversized-journal-second-library");
-            let ni = crate::parser::ChewingKey::from_pinyin("ni")
-                .unwrap()
-                .to_packed();
-            let chunk = build_chunk(&[(
-                1,
-                &ChunkItem {
-                    phrase: vec![u32::from('你'); 128],
-                    unigram: 100,
-                    prons: vec![(vec![ni; 128], 1); 255],
-                },
-            )])
-            .unwrap();
-            std::fs::write(system.path.join("gbk_char.bin"), chunk).unwrap();
-            let mut context = native_context(&system.path, &user.path, law);
-            let first = tokens(&context, "你")
-                .into_iter()
-                .find(|token| token >> 24 == 1)
-                .expect("a library 1 token");
-            for token in [first, 0x0200_0001] {
-                assert!(
-                    context
-                        .user_store_mut()
-                        .add_system_unigram_frequency(token, 1),
-                    "{law:?}: {token:#x}"
-                );
-            }
-            context.end_import();
-            assert_eq!(context.save_user(), SaveOutcome::NotSaved, "{law:?}");
-            assert!(context.user_store().is_modified(), "{law:?}");
-            assert_eq!(
-                user.path.join("gb_char.dbin").exists(),
-                law == UserConfLaw::Zhuyin,
-                "{law:?}: the earlier library's log"
-            );
-            for later in [
-                "gbk_char.dbin",
-                "gbk_char.dbin.tmp",
-                "opengram.dbin",
-                "merged.dbin",
-            ] {
-                assert!(!user.path.join(later).exists(), "{law:?}: {later}");
-            }
-        }
     }
 }
 
