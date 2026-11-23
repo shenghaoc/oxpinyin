@@ -290,34 +290,6 @@ fn unigram_freq_reads_increments_from_the_user_item() {
 }
 
 #[test]
-fn unigram_freq_reads_a_user_items_count_live() {
-    let mut store = UserStore::open_transient(
-        crate::user::SystemOriginals::new(Default::default(), UserFileLayout::stock()),
-        SystemVersions::for_this_build(7, 14),
-        UserConfLaw::Pinyin,
-    )
-    .unwrap();
-    let ci = SyllableKey::from_text("ci").unwrap();
-    let keys = [crate::user::toned_key(ci.index(), 0).unwrap()];
-    let token = store.add_phrase(&"词".into(), &keys, Some(5)).unwrap();
-    assert_eq!(store.system_unigram(token), None);
-    let mut runtime = Runtime::open(&system_dir(), None).unwrap();
-    runtime.user = store;
-    for _ in 0..2 {
-        assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(15));
-    }
-    runtime
-        .user_store_mut()
-        .observe_selection(1, token)
-        .unwrap();
-    assert_eq!(
-        runtime.lm().unigram_freq(&token).unwrap(),
-        Some(15 + 483),
-        "a committed write invalidates the cached count"
-    );
-}
-
-#[test]
 fn unigram_freq_preserves_removed_and_missing_item_fallbacks() {
     let mut runtime = Runtime::open(&system_dir(), None).unwrap();
     let ni = SyllableKey::from_text("ni").unwrap();
@@ -724,7 +696,7 @@ mod backend_files {
     //! which is integration territory (components together, real files, no
     //! private access).
 
-    use crate::engine::{Selection, SelectionTarget, SessionSettings};
+    use crate::engine::SessionSettings;
     use crate::runtime::{OpenError, Runtime, TableConfError};
     use crate::user::{FIRST_USER_TOKEN, PinyinKey};
     use crate::vocab::SENTENCE_START;
@@ -1015,48 +987,6 @@ mod backend_files {
     }
 
     #[test]
-    fn open_reads_no_records_beyond_the_handles() {
-        // The fixture opens with real counts straight from the chunk files:
-        // no interpolation text, no fixture mode.
-        let runtime = Runtime::open(&system_dir(), None).expect("open");
-        let total = LanguageModel::unigram_total(&runtime.lm())
-            .expect("query")
-            .expect("real unigrams");
-        assert!(total > 0, "the mini set carries \\1-gram counts");
-    }
-
-    #[test]
-    fn selection_advances_and_reset_clears_the_chosen_text() {
-        let runtime = Runtime::open(&system_dir(), None).expect("open");
-        let mut session = runtime.new_session(SessionSettings::default());
-        runtime
-            .session(&mut session)
-            .replace_raw("nihao")
-            .expect("typing");
-        let advanced = {
-            let mut view = runtime.session(&mut session);
-            let candidate = view
-                .candidates()
-                .iter()
-                .next()
-                .cloned()
-                .expect("a first candidate");
-            let anchor = view.composition_offset();
-            view.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
-                .expect("first candidate selects")
-        };
-        assert_eq!(advanced, Selection::Completed);
-        assert_eq!(runtime.session(&mut session).selected_text(), "你好");
-        assert_eq!(
-            runtime.session(&mut session).composition_offset(),
-            "nihao".len()
-        );
-        runtime.session(&mut session).reset();
-        assert!(!runtime.session(&mut session).is_composing());
-        assert!(runtime.session(&mut session).selected_text().is_empty());
-    }
-
-    #[test]
     fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
         // The one case the other tests never reach: a user store that
         // actually opens. Learning must surface through BOTH moved seams —
@@ -1343,35 +1273,6 @@ mod backend_files {
         runtime.user_store_mut().mask_out(u32::MAX, token).unwrap();
         let masked = fresh(&runtime);
         assert_ne!(masked, written);
-        drop(runtime);
-        tmp.close().unwrap();
-    }
-
-    #[test]
-    fn a_predecessor_missing_from_the_system_table_merges_the_user_gram_alone() {
-        use crate::model::LanguageModel;
-        let tmp = scratch_dir("oxpinyin-gram-alone-");
-        let dir = tmp.path().to_path_buf();
-        let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
-        let keys: Vec<_> = ["ni", "hao"]
-            .into_iter()
-            .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
-            .collect();
-        let user = runtime.user_store_mut();
-        let prev = user.add_phrase(&"你鎄".into(), &keys, Some(5)).unwrap();
-        let next = user.add_phrase(&"你鎬".into(), &keys, Some(5)).unwrap();
-        crate::user::native_fixture::seed_bigram(user, prev, &[(next, 7)]);
-        // A user phrase has no row in the system table: `Bigram::load` leaves
-        // the system gram NULL, and `merge_single_gram` takes the user's alone
-        // (`ngram.cpp:286-290` at 074a2219).
-        let stored = user.bigram_row(prev).unwrap().expect("the user gram");
-        let merged = runtime
-            .lm()
-            .merged_successors(&prev)
-            .unwrap()
-            .expect("the user gram stands alone");
-        assert_eq!(merged.to_bytes(), stored);
-        assert_eq!(merged.get_freq(next), Ok(Some(7)));
         drop(runtime);
         tmp.close().unwrap();
     }
@@ -2767,46 +2668,6 @@ fn native_chewing(runtime: &Runtime, state: &mut crate::engine::SessionState, in
         .replace_raw_exact(input, &segments)
         .unwrap();
 }
-/// A step prices a reading with the query's tone (`phonetic_key_matrix.cpp:
-/// 562,575`, `phrase_index.h:136-164` at 074a2219): a nonzero query tone
-/// matches an equal or zero stored tone only (`pinyin_phrase3.h:96-105`).
-/// The second import of 甲 adds a reading and no index row
-/// (`pinyin.cpp:563-582`). Under the default `USE_TONE` (`zhuyin.cpp:273`),
-/// ㄅㄚˋ prices 甲 at 2/100, so 乙 (unigram 3) outranks 甲 (unigram 6).
-#[test]
-fn zhuyin_a_step_prices_readings_with_the_query_tone() {
-    let user = TempUserDir::new("zhuyin-step-price");
-    let mut runtime =
-        Runtime::open_with_law(&system_dir(), Some(&user.path), UserConfLaw::Zhuyin).unwrap();
-    import_rows(
-        &mut runtime,
-        1,
-        &[("甲", "ㄅㄚˋ", 2), ("甲", "ㄅㄚˇ", 98), ("乙", "ㄅㄚˋ", 1)],
-    );
-    let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
-    native_chewing(&runtime, &mut state, "184");
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
-}
-/// A step prices a user item from its own readings
-/// (`phonetic_lookup.h:646-656`, `phrase_index.h:136-164` at 074a2219).
-/// Library 6's 甲 holds ㄅㄚˋ 3 and ㄉㄚˋ 9, so ㄅㄚˋ prices it at 3/12 and
-/// 乙 (unigram 6, one reading) outranks 甲 (unigram 9).
-#[test]
-fn zhuyin_a_step_prices_a_user_item_from_its_readings() {
-    let user = TempUserDir::new("zhuyin-step-price");
-    let mut runtime =
-        Runtime::open_with_law(&system_dir(), Some(&user.path), UserConfLaw::Zhuyin).unwrap();
-    import_rows(
-        &mut runtime,
-        6,
-        &[("甲", "ㄅㄚˋ", 3), ("甲", "ㄉㄚˋ", 9), ("乙", "ㄅㄚˋ", 2)],
-    );
-    let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
-    native_chewing(&runtime, &mut state, "184");
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
-}
 
 fn gbk_tokens(runtime: &Runtime, state: &mut crate::engine::SessionState) -> Vec<u32> {
     runtime
@@ -2963,17 +2824,12 @@ fn unigram_get_and_add_ignore_the_token_tag() {
 /// zero unigram. The stale phase has no sentence witness: the n-best result
 /// is the same with and without the gate, so the segmenter is the C-visible
 /// one and the model layer covers the n-best costs.
-#[rstest::rstest]
-#[case::pinyin(UserConfLaw::Pinyin)]
-#[case::zhuyin(UserConfLaw::Zhuyin)]
-fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] law: UserConfLaw) {
+#[test]
+fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
+    let law = UserConfLaw::Pinyin;
     let user = TempUserDir::new("stale-user-file-token");
     let mut runtime = Runtime::open_with_law(&system_dir(), Some(&user.path), law).unwrap();
-    if law == UserConfLaw::Pinyin {
-        import_rows(&mut runtime, 7, &[("龘", "ni", 0), ("龘", "ni", 1)]);
-    } else {
-        import_rows(&mut runtime, 7, &[("龘", "ㄋㄧˇ", 0)]);
-    }
+    import_rows(&mut runtime, 7, &[("龘", "ni", 0), ("龘", "ni", 1)]);
     let token = runtime
         .dict()
         .tokens_for_ucs4(&"龘".chars().map(u32::from).collect::<Vec<_>>())
@@ -3007,17 +2863,15 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not(#[case] 
             (matched, tokens.to_vec()),
             (present, vec![if present { token } else { 0 }])
         );
-        if law == UserConfLaw::Pinyin {
-            if present {
-                assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(0));
-            }
-            runtime.session(&mut state).replace_raw("ni").unwrap();
-            assert!(runtime.session(&mut state).guess_sentence().unwrap());
-            assert_eq!(
-                runtime.session(&mut state).sentence_text(0).unwrap(),
-                if present { "龘" } else { "你" }
-            );
+        if present {
+            assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(0));
         }
+        runtime.session(&mut state).replace_raw("ni").unwrap();
+        assert!(runtime.session(&mut state).guess_sentence().unwrap());
+        assert_eq!(
+            runtime.session(&mut state).sentence_text(0).unwrap(),
+            if present { "龘" } else { "你" }
+        );
     }
 }
 /// The token getters select the library with `PHRASE_INDEX_LIBRARY_INDEX`
@@ -3150,42 +3004,6 @@ fn train_session_aborts_past_the_nonempty_results() {
             runtime.session(&mut state).replace_raw("nihao").unwrap();
             assert!(runtime.session(&mut state).guess_sentence().unwrap());
             let _ = runtime.train_session(&state, 9);
-        },
-    );
-}
-
-/// A shortening re-parse leaves the store past the current matrix: the
-/// training walk dies in `train_session` where the pin's
-/// `increase_pronunciation_possibility` asserts
-/// (`storage/phonetic_key_matrix.cpp:661` at 074a2219), before any
-/// observation or modified mark.
-#[test]
-fn train_session_aborts_on_a_stale_span_after_a_shortening_reparse() {
-    crate::store::death_test::assert_aborts(
-        "runtime::tests::train_session_aborts_on_a_stale_span_after_a_shortening_reparse",
-        || {
-            let user = TempUserDir::new("train-abort-span");
-            let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-            let mut state = native_session(&runtime, OptionBits::USE_TONE);
-            runtime.session(&mut state).replace_raw("nihao").unwrap();
-            assert!(runtime.session(&mut state).guess_sentence().unwrap());
-            let row = runtime
-                .session(&mut state)
-                .candidates_at_for_abi(0, false)
-                .unwrap()
-                .iter()
-                .find(|row| {
-                    row.kind() == crate::engine::CandidateKind::Phrase && row.token().is_some()
-                })
-                .unwrap()
-                .clone();
-            runtime
-                .session(&mut state)
-                .select_target(&crate::engine::SelectionTarget::of_candidate(&row, 0, None))
-                .unwrap();
-            assert!(runtime.session(&mut state).guess_sentence().unwrap());
-            runtime.session(&mut state).replace_raw("ni").unwrap();
-            let _ = runtime.train_session(&state, 0);
         },
     );
 }

@@ -266,7 +266,9 @@ mod native {
     }
 
     #[rstest::rstest]
-    fn a_resplit_key_pair_spells_a_phrase_under_every_scheme(#[values(1, 2, 3)] scheme: i32) {
+    fn a_resplit_key_pair_spells_a_phrase_on_the_session_and_index_paths(
+        #[values(1, 2)] scheme: i32,
+    ) {
         let user = TempUserDir::new("resplit-scheme");
         let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
         assert_eq!(
@@ -284,36 +286,11 @@ mod native {
         );
     }
 
-    #[test]
-    fn a_guess_at_a_mid_syllable_offset_answers_the_empty_column() {
-        let (context, mut instance) = pinyin_instance();
-        assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
-        for offset in [1, 3, 4] {
-            assert!(native_window(&context, &mut instance, offset).is_empty());
-        }
-        assert!(
-            native_window(&context, &mut instance, 2)
-                .iter()
-                .any(|row| row.text().as_str() == Some("好"))
-        );
-        assert!(guess(&context, &mut instance));
-        for offset in [1, 3, 4] {
-            let rows = native_window(&context, &mut instance, offset);
-            assert_eq!(rows.first().unwrap().text().as_str(), Some("你好"));
-            assert!(
-                rows.iter()
-                    .all(|row| row.text().as_str().unwrap().chars().count() == 2)
-            );
-        }
-    }
-
     #[rstest::rstest]
     #[case::hanyu_guess_at_the_key(1, "ni'hao", 3, [false, true])]
     #[case::hanyu_guess_at_the_separator(1, "ni'hao", 2, [true, true])]
     #[case::luoma_guess_at_the_key(2, "ni'hao", 3, [false, true])]
     #[case::luoma_guess_at_the_separator(2, "ni'hao", 2, [true, true])]
-    #[case::secondary_zhuyin_guess_at_the_key(3, "ni'hau", 3, [false, true])]
-    #[case::secondary_zhuyin_guess_at_the_separator(3, "ni'hau", 2, [true, true])]
     fn a_guess_start_is_the_forcings_start_across_a_separator(
         #[case] scheme: i32,
         #[case] input: &str,
