@@ -7,6 +7,7 @@
 //! directory first: a mapped library's own file, or a chunk built from a
 //! fixture's inline items with the fixture's stored total.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::data::phrase_library::{ChunkItem, build_chunk};
@@ -16,6 +17,63 @@ use crate::data::{DefaultRowStep, FileName, TableConf};
 use crate::user::LibraryLoopRows;
 use crate::user::store::{UserStore, UserStoreError};
 use crate::user::{SystemOriginals, UserConfLaw};
+
+/// The user state, in the value shapes the file set carries.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct UserState {
+    /// The user bigram's rows verbatim, `(key, SingleGram value)` in the
+    /// file's walk order: what a test reads back and seeds a session with.
+    /// A session never fills it — its grams live in the
+    /// pin's own container, which its saves write instead.
+    pub bigram: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The user phrase table's raw UCS-4 keys and token-array values.
+    /// Loaded and saved verbatim, including prefix markers, duplicate tokens,
+    /// and partial bytes, as `PhraseLargeTable3::load_db` / `save_db` copy
+    /// the records (074a2219, `phrase_large_table3_bdb.cpp:128-174`).
+    /// Phrase-table operations alone edit these records; library items do
+    /// not reconstruct their contents.
+    pub phrase_table: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The `USER_FILE` sub-indexes (5, 6, 7) by nibble, items by slot.
+    pub libraries: crate::user::LibraryTable<BTreeMap<u32, ChunkItem>>,
+    /// The `SYSTEM_FILE` libraries' touched items by nibble and slot:
+    /// `Some(item)` modifies the original, `None` removes it. A slot
+    /// absent here still answers its original item.
+    pub system_overrides: crate::user::LibraryTable<BTreeMap<u32, Option<ChunkItem>>>,
+    /// The `USER_FILE` readings the user pinyin index carries, as
+    /// `(token, packed ChewingKey words)`. `_add_phrase` indexes the
+    /// reading a phrase is created with and never one merged into an
+    /// existing phrase (`pinyin.cpp:569-600`), so the index is not a
+    /// derivative of the items: it is loaded from `user_pinyin_index.bin`
+    /// and saved from this set.
+    pub indexed: std::collections::BTreeSet<(u32, Vec<u16>)>,
+}
+
+impl UserState {
+    /// Fixture state whose `USER_FILE` phrases and readings were all indexed
+    /// when created. Production state never reconstructs phrase-table rows.
+    #[cfg(test)]
+    pub(crate) fn index_every_reading(mut self) -> Self {
+        let mut phrases = Vec::new();
+        for (&nibble, items) in &self.libraries {
+            for (&slot, item) in items {
+                phrases.push((
+                    item.phrase.clone(),
+                    crate::vocab::phrase_index_make_token(nibble, slot),
+                ));
+                for (packed, _) in &item.prons {
+                    self.indexed.insert((
+                        crate::vocab::phrase_index_make_token(nibble, slot),
+                        packed.clone(),
+                    ));
+                }
+            }
+        }
+        self.phrase_table = crate::data::phrase_index_entries(&phrases)
+            .into_iter()
+            .collect();
+        self
+    }
+}
 
 thread_local! {
     /// The scratch system directories of this thread's sessions. A save maps

@@ -453,9 +453,9 @@ impl ContextCore {
         // (`memory_chunk.h:493`, register row 96) stops the save there.
         let baseline =
             |nibble: u8, originals: &crate::user::SystemOriginals| -> crate::user::SaveBaseline {
-                match Runtime::read_save_baseline(originals, unloaded, nibble) {
+                match crate::user::read_save_baseline(originals, unloaded, nibble) {
                     Ok(baseline) => baseline,
-                    Err(crate::runtime::SaveRemapFault::Unmappable(path)) => {
+                    Err(crate::user::SaveRemapFault::Unmappable(path)) => {
                         data::mmap_failed(&path);
                         crate::user::SaveBaseline::Unmappable
                     }

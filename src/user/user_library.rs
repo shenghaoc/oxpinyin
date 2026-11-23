@@ -528,15 +528,18 @@ impl UserLibrary {
         let index_three = index_two
             .checked_add(u32::try_from(content_len).ok()?)
             .and_then(|end| end.checked_add(1))?;
-        let mut payload = Vec::with_capacity(index_three as usize + CHUNK_HEADER_SIZE);
-        payload.resize(index_two as usize, 0);
+        // Buffer positions include the file header; stored section offsets do not.
+        let entry_start = CHUNK_HEADER_SIZE + index_two as usize;
+        let mut file = Vec::with_capacity(index_three as usize + CHUNK_HEADER_SIZE);
+        file.resize(entry_start, 0);
+        let payload = &mut file[CHUNK_HEADER_SIZE..];
         payload[4..8].copy_from_slice(&INDEX_ONE.to_le_bytes());
         payload[8..12].copy_from_slice(&index_two.to_le_bytes());
         payload[12..16].copy_from_slice(&index_three.to_le_bytes());
         payload[INDEX_ONE as usize - 1] = SEPARATOR;
         payload[index_two as usize - 1] = SEPARATOR;
         if !self.is_empty() {
-            payload.resize(payload.len() + FIRST_ITEM_OFFSET as usize, 0);
+            file.resize(file.len() + FIRST_ITEM_OFFSET as usize, 0);
         }
         // `m_total_freq` is a `guint32` that `add_phrase_item` adds to with
         // no overflow check (`phrase_index.cpp:208-217`), and `store` writes
@@ -547,15 +550,16 @@ impl UserLibrary {
             if slot > crate::vocab::PHRASE_MASK {
                 return None;
             }
-            let offset = u32::try_from(payload.len() - index_two as usize).ok()?;
-            let at = INDEX_ONE as usize + slot as usize * 4;
-            payload[at..at + 4].copy_from_slice(&offset.to_le_bytes());
-            payload.extend_from_slice(view.as_bytes());
+            // Item offsets count from the entry area, including its initial hole.
+            let offset = u32::try_from(file.len() - entry_start).ok()?;
+            let at = CHUNK_HEADER_SIZE + INDEX_ONE as usize + slot as usize * 4;
+            file[at..at + 4].copy_from_slice(&offset.to_le_bytes());
+            file.extend_from_slice(view.as_bytes());
             total = total.wrapping_add(view.unigram());
         }
-        payload[..4].copy_from_slice(&total.to_le_bytes());
-        payload.push(SEPARATOR);
-        crate::data::chunk_format::build_memory_chunk_owned(payload)
+        file[CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + 4].copy_from_slice(&total.to_le_bytes());
+        file.push(SEPARATOR);
+        crate::data::chunk_format::finish_memory_chunk(file)
     }
 }
 

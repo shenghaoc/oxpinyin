@@ -227,6 +227,36 @@ fn a_system_journal_copy_at_the_limit_stops_the_save_and_retries() {
         }
         assert!(!store.is_modified());
         assert_eq!(largest_journal(&dir), journal);
+        // The u16 record-length refusal must beat the bulk-copy refusal,
+        // even after the header and an earlier record exceeded that limit.
+        let huge = ChunkItem {
+            phrase: vec![0x4f60; 255],
+            unigram: 1,
+            prons: vec![(vec![0; 255], 1); 128],
+        };
+        store.seed_from_state(&UserState {
+            system_overrides: crate::user::LibraryTable::from([(
+                1,
+                BTreeMap::from([(3, Some(huge))]),
+            )]),
+            ..UserState::default()
+        });
+        store.mark_modified();
+        let before_encoding = profile_snapshot(&dir);
+        {
+            let _limits = TestLimits::set(1);
+            let result = store.save_reporting();
+            assert!(
+                matches!(result, Err(UserStoreError::Persistence)),
+                "{law:?}: {result:?}"
+            );
+        }
+        assert!(store.is_modified());
+        assert_eq!(
+            profile_snapshot(&dir),
+            before_encoding,
+            "encoding precedes file output"
+        );
         drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -575,9 +605,9 @@ fn failed_system_reload_keeps_the_unloaded_guard() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-/// Basis: Rust contract (seeding from views equals seeding from owned items).
+/// Basis: `074a2219 phrase_index.cpp:237-248,345` (stored totals stay independent of item sums).
 #[test]
-fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
+fn user_library_and_add_views_seed_stored_totals() {
     use crate::data::phrase_library::{build_chunk, encode_phrase_item};
     use crate::data::user_files::LogRecord;
     use crate::user::user_library::UserLibrary;
@@ -613,18 +643,6 @@ fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
         prons: vec![(vec![ni | 0x8000], 5), (vec![ni], 12)],
     };
     let originals = originals();
-    let legacy = UserState {
-        libraries: crate::user::LibraryTable::from([(5, items.clone()), (7, items.clone())]),
-        system_overrides: crate::user::LibraryTable::from([(
-            1,
-            BTreeMap::from([(3, Some(added.clone()))]),
-        )]),
-        ..UserState::default()
-    }
-    .index_every_reading();
-    let mut views = legacy.clone();
-    views.libraries.clear();
-    views.system_overrides.clear();
     let libraries: crate::user::LibraryTable<_> = [5, 7]
         .into_iter()
         .map(|nibble| {
@@ -656,10 +674,13 @@ fn user_library_and_add_views_seed_identical_rows_to_owned_items() {
     assert!(skipped.is_empty());
     let replayed = crate::user::LibraryTable::from([(1, retained.unwrap())]);
     let totals = crate::user::LibraryTable::from([(1, 117), (5, 1000), (7, 24)]);
-    let before_offsets = seed_totals_plain(&legacy, &originals, &totals);
-    let after_offsets = seed_totals(&views, &originals, &totals, &replayed, &libraries);
-    assert_eq!(before_offsets.offsets, after_offsets.offsets);
-    assert_eq!(before_offsets.facade_extra, after_offsets.facade_extra);
+    let seeded = seed_totals(&originals, &totals, &replayed, &libraries);
+    assert_eq!(seeded.offsets, crate::user::LibraryTable::from([(5, 976)]));
+    assert_eq!(seeded.facade_extra, 1024);
+    assert!(
+        seeded.totals.is_empty(),
+        "the replayed library retains its own total"
+    );
 }
 
 /// Basis: `pinyin.cpp:2786-2798` (the count reads only the item header).

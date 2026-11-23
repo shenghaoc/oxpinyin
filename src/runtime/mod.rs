@@ -23,8 +23,8 @@ pub(crate) use crate::data::{FileType, TableConfSite};
 pub(crate) use crate::data::{TableConf, TableConfError};
 use crate::engine::{EngineError, Session, SessionSettings};
 use crate::user::{
-    ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, SaveBaseline, SystemLibrary,
-    UnigramAdd, UserConfLaw, UserLookup, UserStore, UserStoreError,
+    ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, UnigramAdd, UserConfLaw,
+    UserLookup, UserStore, UserStoreError,
 };
 use crate::{
     model::{
@@ -123,16 +123,6 @@ pub(crate) enum RemapStep {
     /// A directory whose header read the pin asserts on (`memory_chunk.h:493`,
     /// row 96). The walk is over.
     Directory,
-}
-
-/// Why `save_disk_baseline` could not give a baseline for a
-/// system library the save maps again at its `_write_files` position
-/// (`pinyin.cpp:955`, `zhuyin.cpp:588`).
-#[derive(Debug)]
-pub(crate) enum SaveRemapFault {
-    /// `MemoryChunk::mmap` refuses the file: the pin writes
-    /// `mmap %s failed!`.
-    Unmappable(PathBuf),
 }
 
 impl core::fmt::Display for OpenError {
@@ -1839,45 +1829,6 @@ impl Runtime {
     /// The current loaded-library mask, snapshotted for an exclusive save.
     pub(crate) fn unloaded_libraries(&self) -> u32 {
         self.library_mask.get()
-    }
-
-    /// Read a save baseline while its unique owner performs the operation.
-    ///
-    /// # Errors
-    /// The remap faults reported by `save_disk_baseline`.
-    pub(crate) fn read_save_baseline(
-        originals: &crate::user::SystemOriginals,
-        unloaded: u32,
-        nibble: u8,
-    ) -> Result<SaveBaseline, SaveRemapFault> {
-        // Nibble 0 is the reserved row the loop never visits.
-        if nibble == 0 {
-            return Ok(SaveBaseline::Keep);
-        }
-        // `_write_files` skips a default library whose sub-index is gone
-        // (`pinyin.cpp:928-933`, `zhuyin.cpp:563-568`), a `USER_FILE`
-        // library included: an unloaded library is neither remapped nor
-        // written, and its file on disk stays.
-        if unloaded & (1 << nibble) != 0 {
-            return Ok(SaveBaseline::Unloaded);
-        }
-        let Some((path, _)) = originals.phrase_libraries().loaded_path_library(nibble) else {
-            return Ok(SaveBaseline::Keep);
-        };
-        match crate::data::phrase_library::PhraseLibrary::open_retaining_layout(path) {
-            Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
-            Err(LibraryError::Row(RowFault::ChunkHeaderRead)) => std::process::abort(),
-            Err(
-                error @ (LibraryError::Io(_)
-                | LibraryError::Format(_)
-                | LibraryError::Layout(_)
-                | LibraryError::Unmappable { .. }
-                | LibraryError::Row(RowFault::NullChunkName)),
-            ) => match error.unmappable_path() {
-                Some(path) => Err(SaveRemapFault::Unmappable(path.to_path_buf())),
-                None => Ok(SaveBaseline::Keep),
-            },
-        }
     }
 
     /// Starts the single map for an explicit load. The facade uses the same

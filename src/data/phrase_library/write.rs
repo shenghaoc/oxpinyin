@@ -23,7 +23,7 @@
 // phrase_index.cpp:208–216; memory_chunk.h:536–557 specifies the frame. The builder
 // requires the item offsets to fit their output fields.
 
-use crate::data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk_owned};
+use crate::data::chunk_format::{CHUNK_HEADER_SIZE, finish_memory_chunk};
 use crate::data::phrase_library::{
     CHEWING_KEY_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, ITEM_HEADER_SIZE, SEPARATOR,
 };
@@ -75,28 +75,32 @@ pub fn build_chunk(items: &[(u32, &ChunkItem)]) -> Option<Vec<u8>> {
 
     let index_two = INDEX_ONE + 4 * slots + 1;
     let index_three = index_two.checked_add(content_len)?.checked_add(1)?;
-    let mut payload = Vec::with_capacity((index_three as usize).checked_add(CHUNK_HEADER_SIZE)?);
-    payload.resize(index_two as usize, 0);
+    // Buffer positions include the file header; stored section offsets do not.
+    let entry_start = CHUNK_HEADER_SIZE + index_two as usize;
+    let mut file = Vec::with_capacity((index_three as usize).checked_add(CHUNK_HEADER_SIZE)?);
+    file.resize(entry_start, 0);
+    let payload = &mut file[CHUNK_HEADER_SIZE..];
     payload[4..8].copy_from_slice(&INDEX_ONE.to_le_bytes());
     payload[8..12].copy_from_slice(&index_two.to_le_bytes());
     payload[12..16].copy_from_slice(&index_three.to_le_bytes());
     payload[INDEX_ONE as usize - 1] = SEPARATOR;
     payload[index_two as usize - 1] = SEPARATOR;
     if !items.is_empty() {
-        payload.resize(payload.len() + FIRST_ITEM_OFFSET as usize, 0);
+        file.resize(file.len() + FIRST_ITEM_OFFSET as usize, 0);
     }
 
     let mut total_freq = 0_u32;
     for (slot, item) in items {
-        let offset = u32::try_from(payload.len() - index_two as usize).ok()?;
-        let pos = (INDEX_ONE + 4 * slot) as usize;
-        payload[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
-        write_phrase_item(&mut payload, item)?;
+        // Item offsets count from the entry area, including its initial hole.
+        let offset = u32::try_from(file.len() - entry_start).ok()?;
+        let pos = CHUNK_HEADER_SIZE + (INDEX_ONE + 4 * slot) as usize;
+        file[pos..pos + 4].copy_from_slice(&offset.to_le_bytes());
+        write_phrase_item(&mut file, item)?;
         total_freq = total_freq.wrapping_add(item.unigram);
     }
-    payload[..4].copy_from_slice(&total_freq.to_le_bytes());
-    payload.push(SEPARATOR);
-    build_memory_chunk_owned(payload)
+    file[CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + 4].copy_from_slice(&total_freq.to_le_bytes());
+    file.push(SEPARATOR);
+    finish_memory_chunk(file)
 }
 
 /// Serialises one item into the `PhraseItem` wire form.
