@@ -159,24 +159,45 @@ impl Merger {
 }
 
 /// `main` (`mergeseq.cpp:200-281`).
-pub fn main(args: impl IntoIterator<Item = OsString>) {
-    let _ = tool::set_locale_from_environment();
-    let entries = [crate::segment::outputfile_entry()];
-    let parsed = crate::segment::parse_options(c"- merge word sequence", &entries, args);
-    let output = crate::segment::open_output(&parsed.values[0]);
-    crate::segment::refuse_extra_arguments(&parsed.args);
-    let mut input = Input::open(&parsed.args);
-    let tables = data::load_or_exit(false);
-    let search = PhraseSearch::new(tables.phrase.as_ref(), &tables.libraries);
-    let mut merger = Merger::new();
+///
+/// # Safety
+///
+/// If the entry point closes C `stdout`, it must still be open. No other
+/// code on any thread, including teardown and exit handlers, may use C
+/// `stdout` during or after that close.
+#[allow(
+    unsafe_code,
+    reason = "callers must uphold the process-level C stdout close precondition"
+)]
+pub unsafe fn main(args: impl IntoIterator<Item = OsString>) {
+    #[deny(unsafe_code)]
+    {
+        let _ = tool::set_locale_from_environment();
+        let entries = [crate::segment::outputfile_entry()];
+        let parsed = crate::segment::parse_options(c"- merge word sequence", &entries, args);
+        let output = crate::segment::open_output(&parsed.values[0]);
+        crate::segment::refuse_extra_arguments(&parsed.args);
+        let mut input = Input::open(&parsed.args);
+        let tables = data::load_or_exit(false);
+        let search = PhraseSearch::new(tables.phrase.as_ref(), &tables.libraries);
+        let mut merger = Merger::new();
 
-    while input.getline() {
-        if input.line().is_empty() {
-            continue;
+        while input.getline() {
+            if input.line().is_empty() {
+                continue;
+            }
+            merger.feed_line(&search, input.c_str(), &output);
         }
-        merger.feed_line(&search, input.c_str(), &output);
+        // `feed_line(..., "0 ", output)`: the stream's trailing separator.
+        merger.feed_line(&search, c"0 ", &output);
+        #[allow(
+            unsafe_code,
+            reason = "the utility closes its output including C stdout as the pin does"
+        )]
+        // SAFETY: This entry point's caller guarantees the C stdout close
+        // precondition. An owned file is closed only here.
+        unsafe {
+            output.close_including_stdout();
+        }
     }
-    // `feed_line(..., "0 ", output)`: the stream's trailing separator.
-    merger.feed_line(&search, c"0 ", &output);
-    output.close_including_stdout();
 }

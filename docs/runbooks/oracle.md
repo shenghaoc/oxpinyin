@@ -137,7 +137,7 @@ the libraries out of the published oracle image, or builds missing or stale
 libraries in the local `deps` image (the `deps` stage of
 `tools/oracle/Dockerfile.oracle`), fetches model20, regenerates missing or damaged
 data in the `deps` image, and validates every recorded output. Last, it writes the
-[environment file](cloud.md#the-environment-file) on Linux:
+[environment file](cloud.md#the-environment-file) on Linux if the selection includes kc:
 
 ```sh
 just provision-oracle --cells 'bdb kc tkrzw' --jobs 4
@@ -380,9 +380,8 @@ prefix in one environment, and compares only those two sets of library hashes. I
 Image verification separately checks current pin/recipe provenance, recorded
 library bytes and absence of model-derived data.
 
-`just provision-oracle` runs its container steps with this host command, after `just provision`,
-and then `provision oracle-env` writes the environment file. The command refuses to run on
-GitHub Actions:
+After `just provision`, `just provision-oracle` runs its container and environment-file
+steps with this host command. The command refuses to run on GitHub Actions:
 
 ```sh
 uv run --managed-python python -X utf8 -m tools.dev.provision oracle --cells 'bdb kc tkrzw' --jobs 4
