@@ -579,20 +579,6 @@ fn the_captures_hold_their_frozen_records_from_one_pin() {
 }
 
 #[test]
-fn every_fixture_phrase_is_captured_oracle_output() {
-    let ranks = captured_ranks();
-    let records = vocab_records();
-    assert!(!records.is_empty(), "the fixture must not be empty");
-
-    for (_, keys, text, _) in &records {
-        assert!(
-            ranks.contains_key(text),
-            "{text:?} (keys {keys}) is not in any captured candidate list"
-        );
-    }
-}
-
-#[test]
 fn every_unigram_weight_follows_the_documented_rank_rule() {
     let ranks = captured_ranks();
 

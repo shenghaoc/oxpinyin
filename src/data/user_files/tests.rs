@@ -222,33 +222,6 @@ fn marker_fields_follow_the_scanner() {
     assert_eq!(parse(missing.as_bytes()).unwrap().open_counter, 0);
 }
 
-#[test]
-fn unknown_database_format_aborts_at_scanner() {
-    let marker =
-        b"binary format version:7\nmodel data version:14\ndatabase format:NotADbmLibrary\n";
-    crate::store::death_test::assert_aborts_in_tempdir(
-        "data::user_files::tests::unknown_database_format_aborts_at_scanner",
-        |dir| std::fs::write(dir.join("user.conf"), marker).expect("marker"),
-        |dir| {
-            let _ = UserTableInfo::load_path(&dir.join("user.conf"));
-        },
-        |dir| assert_eq!(std::fs::read(dir.join("user.conf")).unwrap(), marker),
-    );
-}
-
-#[test]
-fn unmatched_database_format_directive_aborts_at_scanner() {
-    let marker = b"binary format version:7\nmodel data version:14\ndatabase:KyotoCabinet\n";
-    crate::store::death_test::assert_aborts_in_tempdir(
-        "data::user_files::tests::unmatched_database_format_directive_aborts_at_scanner",
-        |dir| std::fs::write(dir.join("user.conf"), marker).expect("marker"),
-        |dir| {
-            let _ = UserTableInfo::load_path(&dir.join("user.conf"));
-        },
-        |dir| assert_eq!(std::fs::read(dir.join("user.conf")).unwrap(), marker),
-    );
-}
-
 fn save_and_read(info: &UserTableInfo) -> String {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("user.conf");

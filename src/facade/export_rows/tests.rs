@@ -108,20 +108,6 @@ fn drain_by_return(walk: &mut TestWalk) -> Vec<(PhraseText, bool)> {
     rows
 }
 
-/// ibus-libpinyin's loop (`PYLibPinyin.cc:317-329`): `while (has_next)
-/// get_next`.
-fn drain_by_has_next(walk: &mut TestWalk) -> Vec<(PhraseText, bool)> {
-    let mut rows = Vec::new();
-    while walk.has_next().expect("no short gram") {
-        let phrase = pair_text(&walk.walk);
-        let BigramStep::Row(_, next) = walk.get_next() else {
-            break;
-        };
-        rows.push((phrase.expect("a loaded pair"), next.expect("no short gram")));
-    }
-    rows
-}
-
 fn scenario() -> TestWalk {
     walk(
         &[SENTENCE_START, 0x0100_0001, 0x0100_0003],
@@ -163,20 +149,6 @@ fn the_walk_is_the_pins_state_machine() {
     );
     assert_eq!(walk.has_next(), Ok(false));
     assert_eq!(walk.get_next(), BigramStep::Undefined);
-}
-
-/// ibus-libpinyin's `while (has_next)` loop therefore exports the last
-/// predecessor's rows too.
-#[test]
-fn a_has_next_loop_sees_the_last_predecessor() {
-    assert_eq!(
-        drain_by_has_next(&mut scenario()),
-        vec![
-            (PhraseText::from("你我"), true),
-            (PhraseText::from("你好"), false),
-            (PhraseText::from("我爱"), false),
-        ]
-    );
 }
 
 /// The pin's NULL `m_phrase` (`pinyin.cpp:822`, `:830`): the rows

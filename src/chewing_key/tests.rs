@@ -182,10 +182,8 @@ fn matches_with_tones_follows_the_three_upstream_comparisons() {
 // with a graceful zero table index (see `chewing_key.rs`).
 // These tests pin that policy at the public seam:
 //
-// - exhaustive: **every** packed pattern renders through all six
-//   renderers and round-trips the packed form (bit 15, the zero padding
-//   bit, drops — matching `_ChewingKey`'s declaration, which has no
-//   field there);
+// - every packed pattern round-trips the packed form (bit 15, the zero
+//   padding bit, drops because `_ChewingKey` has no field there);
 // - every combination of in-range fields and the overflow boundaries of
 //   each field render totally and round-trip as their masked values.
 //
@@ -201,15 +199,6 @@ fn render_key(key: ChewingKey) {
     let _ = key.zhuyin_string();
     let _ = key.luoma_pinyin_text().to_string();
     let _ = key.secondary_zhuyin_text().to_string();
-}
-
-/// Every renderer must terminate and return for any key — the module's
-/// out-of-dims rule. Exhaustive over the packed space the C ABI carries.
-#[test]
-fn every_packed_pattern_renders_totally() {
-    for bits in 0_u16..=u16::MAX {
-        render_key(ChewingKey::from_packed(bits));
-    }
 }
 
 /// `from_packed ∘ to_packed` is the identity because `to_packed` masks

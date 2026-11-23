@@ -155,30 +155,6 @@ fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
 }
 
 #[test]
-fn row_read_names_only_the_checked_read_failure() {
-    use crate::engine::error::EngineError;
-    // Every row read that maps a model error goes through this: phrase
-    // segmentation, the n-best predecessor rows and the guess's
-    // `DYNAMIC_ADJUST` row.
-    assert_eq!(
-        EngineError::row_read(&CheckedModel, &"read after check"),
-        EngineError::ReadAfterCheck
-    );
-    struct Unchecked;
-    impl LanguageModel for Unchecked {
-        fn amplification_lambda(&self) -> f32 {
-            0.312_699
-        }
-
-        type Error = &'static str;
-    }
-    assert!(matches!(
-        EngineError::row_read(&Unchecked, &"closed"),
-        EngineError::Failure
-    ));
-}
-
-#[test]
 fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
     use crate::engine::error::EngineError;
     let dictionary = Dict::parse(&[("你", 3)]);

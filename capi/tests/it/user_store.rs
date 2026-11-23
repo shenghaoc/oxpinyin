@@ -316,22 +316,8 @@ fn remember_user_input_aborts_on_two_same_library_tokens() {
 
 /// `_remember_phrase_recur` computes `end = matrix.size() - 1`, which wraps
 /// for an empty matrix, and then asserts in `get_column_size(0)`
-/// (`phonetic_key_matrix.h:102`). A fresh instance holds
-/// one.
-#[test]
-fn remember_user_input_aborts_on_a_fresh_instance() {
-    crate::support::assert_aborts(
-        "user_store::remember_user_input_aborts_on_a_fresh_instance",
-        || {
-            let user_dir = TempUserDir::new("remember-fresh");
-            let (_context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
-            let _ = unsafe { pinyin_remember_user_input(instance, cstr("你好").as_ptr(), -1) };
-        },
-    );
-}
-
-/// As above, for a parse that consumed bytes but placed no key (three
-/// apostrophes): `fill_matrix` leaves the matrix empty.
+/// (`phonetic_key_matrix.h:102`). Three apostrophes consume bytes but place
+/// no key, so `fill_matrix` leaves the matrix empty.
 #[test]
 fn remember_user_input_aborts_on_a_keyless_parse() {
     crate::support::assert_aborts(

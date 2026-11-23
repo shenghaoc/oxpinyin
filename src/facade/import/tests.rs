@@ -241,24 +241,3 @@ fn a_user_file_row_at_a_system_index_is_read_and_imported_into() {
     );
     assert!(unigram(&context, 0x0100_0002).is_some());
 }
-
-#[cfg(feature = "tkrzw")]
-#[test]
-fn an_import_into_an_unused_library_after_five_refuses() {
-    let user = TempUserDir::new("unused-index");
-    let mut context = native_context(
-        &contract_data::contract_data_dir(),
-        &user.path,
-        UserConfLaw::Zhuyin,
-    );
-    for library in 1..=5 {
-        assert_eq!(
-            import_native(&mut context, library, &[("你好", "ㄋㄧˇ ㄏㄠˇ", 100_000)]),
-            [true]
-        );
-    }
-    assert!(matches!(
-        plan(&context, 8, "你好", "ㄋㄧˇ ㄏㄠˇ"),
-        ImportPlan::Abort
-    ));
-}

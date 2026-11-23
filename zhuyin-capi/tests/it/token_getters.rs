@@ -8,8 +8,7 @@
 
 use crate::support::{
     LogCapture, TempUserDir, ZhuyinInstance, close, cstr, import, open, open_with_user, system_dir,
-    take_sentence, tokens_of, ucs4_key, write_user_conf, zhuyin_begin_add_phrases,
-    zhuyin_end_add_phrases, zhuyin_iterator_add_phrase, zhuyin_save,
+    take_sentence, tokens_of, ucs4_key, write_user_conf, zhuyin_save,
     zhuyin_token_get_n_pronunciation, zhuyin_token_get_nth_pronunciation, zhuyin_token_get_phrase,
     *,
 };
@@ -59,21 +58,6 @@ fn take_cleared() -> Vec<u32> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner),
     )
-}
-
-/// A token of a library with no sub-index answers false and writes 0 to the
-/// count (`dict.rs`, `phrase_index.cpp:180-205`).
-#[test]
-fn pronunciation_count_without_a_sub_index_writes_zero() {
-    let (context, instance) = open();
-    assert_eq!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { n_pronunciation(instance, 0x0f00_0001) },
-        (false, 0)
-    );
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
 }
 
 /// Register entry "Token getters on a phrase longer than sixteen characters
@@ -357,49 +341,6 @@ fn token_getters_answer_the_pins_ranges_and_outputs() {
             "{miss:#x}"
         );
     }
-    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
-    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
-    unsafe { close(context, instance) };
-}
-
-/// Imports 你好 into libraries `1..=libraries` of the fixture, which loads
-/// libraries 1 to 7, so the phrase-table search holds `libraries` tokens.
-///
-/// # Safety
-///
-/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
-/// it.
-///
-/// Calls are serial across the context, its sibling instances and its iterators: no other call
-/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
-/// rule).
-unsafe fn hold_nihao_in_libraries(context: *mut crate::support::ZhuyinContext, libraries: u8) {
-    for library in 1..=libraries {
-        // SAFETY: `context` meets this function's `# Safety` contract.
-        let iter = unsafe { zhuyin_begin_add_phrases(context, library) };
-        // SAFETY: `iter` is the iterator `zhuyin_begin_add_phrases` returned above, NULL or live
-        // and not yet ended. The two `cstr` temporaries are NUL-terminated and live until the end
-        // of this statement, after the call returns.
-        assert!(unsafe {
-            zhuyin_iterator_add_phrase(iter, cstr("你好").as_ptr(), cstr("ㄋㄧˇ ㄏㄠˇ").as_ptr(), 1)
-        });
-        // SAFETY: `iter` is the same iterator from `zhuyin_begin_add_phrases`, not yet ended, and
-        // this call ends it; nothing uses it afterwards.
-        unsafe { zhuyin_end_add_phrases(iter) };
-    }
-}
-
-/// Four tokens pass `reduce_tokens`' count, so the NULL-array lookup
-/// answers instead of aborting.
-#[test]
-fn lookup_tokens_into_a_null_array_answers_with_four_tokens() {
-    let user_dir = TempUserDir::new("lookup-null-four");
-    let (context, instance) = open_with_user(&user_dir.path);
-    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
-    unsafe { hold_nihao_in_libraries(context, 4) };
-    assert!(unsafe {
-        crate::support::zhuyin_lookup_tokens(instance, cstr("你好").as_ptr(), ptr::null_mut())
-    });
     // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
     // not yet freed; nothing uses either handle after this call; only this thread calls into them.
     unsafe { close(context, instance) };

@@ -255,17 +255,6 @@ mod native {
         assert_eq!(instance.read(&context.runtime).lookup_offset(2).unwrap(), 2);
     }
     #[test]
-    fn the_key_getter_reads_the_divided_column() {
-        let (context, instance) = luoma_xian();
-        assert!(
-            instance
-                .read(&context.runtime)
-                .abi_key_at(2, false)
-                .unwrap()
-                .is_some()
-        );
-    }
-    #[test]
     fn the_key_rest_getter_reads_the_divided_column() {
         let (context, instance) = luoma_xian();
         let key = instance

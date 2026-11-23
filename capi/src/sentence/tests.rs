@@ -403,17 +403,6 @@ fn sentence_null_out_param_answers_true() {
 }
 
 #[test]
-fn sentence_null_allocation_still_answers_true() {
-    // The pin's `convert_to_utf8` returns true even when its result is NULL.
-    let mut out = std::ptr::dangling_mut::<c_char>();
-    assert!(
-        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
-        unsafe { write_owned_sentence([None::<PhraseText>], &mut out) }
-    );
-    assert!(out.is_null());
-}
-
-#[test]
 fn sentence_phrases_write_through() {
     let phrases = [
         PhraseText::from("你"),

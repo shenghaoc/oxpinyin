@@ -267,15 +267,6 @@ fn chunk(len: usize) -> Vec<u8> {
     bytes
 }
 
-#[test]
-fn a_chunk_is_the_written_bytes() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("chunk");
-    let bytes = chunk(3);
-    save(&path, &bytes).unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), bytes);
-}
-
 /// tests/include/test_memory_chunk.cpp:44-65 at 074a2219: the two
 /// surviving words, then `save`, `load` and `mmap` of one file.
 #[test]

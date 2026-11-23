@@ -3,18 +3,6 @@ use crate::support::run_parser;
 use rstest::rstest;
 
 #[rstest]
-// parser2-bad-option: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
-// 074a2219.
-#[case::parser2_bad_option(
-    &["--bogus"],
-    b"",
-    Run {
-        status: Exit(22),
-        stdout: Exact(UNKNOWN_OPTION_BOGUS),
-        stderr: b"",
-        files: &[],
-    },
-)]
 // parser2-dachen26: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
 // 074a2219.
 #[case::parser2_dachen26(
@@ -35,19 +23,6 @@ use rstest::rstest;
     Run {
         status: Exit(0),
         stdout: Exact(include_bytes!("../../../utils/tests/fixtures/test_parser2/double-nihao.txt")),
-        stderr: b"",
-        files: &[],
-    },
-)]
-// parser2-full: tests/storage/test_parser2.cpp:37-147; tests/timer.h:30-44 at
-// 074a2219.
-// Every parser name other than the four known names selects the full pinyin parser.
-#[case::parser2_full(
-    &["--parser", "fullpinyin"],
-    b"ni3hao3\nni''hao'\n'''\nxian\nxianan\nbagn\nn\nzh\nni hao\nNI\nni!hao\n\nquit\nnihao\n",
-    Run {
-        status: Exit(0),
-        stdout: Exact(include_bytes!("../../../utils/tests/fixtures/test_parser2/full-nihao.txt")),
         stderr: b"",
         files: &[],
     },

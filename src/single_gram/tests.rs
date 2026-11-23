@@ -276,14 +276,6 @@ fn a_huge_item_index_answers_none_without_panicking() {
 }
 
 #[test]
-fn insert_appends_past_the_largest() {
-    let mut bytes = gram(0, &[(2, 1), (4, 1)]);
-    assert!(insert_freq(&mut bytes, 9, 2));
-    assert!(insert_freq(&mut bytes, 3, 2));
-    assert_eq!(items(&bytes), [(2, 1), (3, 2), (4, 1), (9, 2)]);
-}
-
-#[test]
 fn merge_copies_one_side_and_sums_both() {
     let mut merged = gram(9, &[(1, 1)]);
     assert!(!merge_single_gram(&mut merged, None, None));

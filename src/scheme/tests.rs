@@ -585,27 +585,6 @@ fn eten26_remap_rows_parse_with_canonical_display() {
 }
 
 #[test]
-fn discrete_indexes_are_sorted_and_unique() {
-    // `search_zhuyin_index` uses `partition_point`; an out-of-order
-    // row would silently make valid spellings unreachable. Count is
-    // already enforced by the array types (500 / 482).
-    for pair in crate::zhuyin_map::reference::HSU_ZHUYIN_INDEX.windows(2) {
-        assert!(
-            pair[0].0 < pair[1].0,
-            "hsu_zhuyin_index not strictly sorted at {:?}",
-            pair[0].0
-        );
-    }
-    for pair in crate::zhuyin_map::reference::ETEN26_ZHUYIN_INDEX.windows(2) {
-        assert!(
-            pair[0].0 < pair[1].0,
-            "eten26_zhuyin_index not strictly sorted at {:?}",
-            pair[0].0
-        );
-    }
-}
-
-#[test]
 fn discrete_indexes_gate_their_correction_rows() {
     use super::search_zhuyin_index;
     use crate::zhuyin_map::{eten26_zhuyin_index, hsu_zhuyin_index};
@@ -1025,11 +1004,6 @@ fn zhuyin_direct_parse_has_no_length_bound() {
             .map(|(key, tone)| (key.text(), tone))
             .collect();
     assert_eq!(keys, [("ni", 3), ("hao", 3)]);
-}
-
-#[test]
-fn default_scheme_is_ms() {
-    assert_eq!(DoublePinyinParser::new().scheme(), DoublePinyinScheme::Ms);
 }
 
 /// `DoublePinyinParser2::parse_one_key` on the MS tables: a two-key

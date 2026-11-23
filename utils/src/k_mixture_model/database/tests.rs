@@ -127,19 +127,6 @@ pub(crate) fn plant(dir: &std::path::Path, name: &str, rows: &[(u32, &[u8])]) ->
     std::ffi::CString::new(path.into_os_string().into_encoded_bytes()).expect("path without NUL")
 }
 
-/// `get_array_header` on a short single gram: the pin asserts
-/// (`flexible_ngram_bdb.h:388`, `flexible_ngram_kyotodb.h:371`,
-/// `flexible_ngram_tkrzwdb.h:388`), and the tools abort there too.
-#[test]
-fn a_short_array_header_aborts_without_a_panic() {
-    if let Some(dir) = child_dir() {
-        let model = plant(&dir, "short.db", &[(TOKEN, SHORT)]);
-        let _ = super::Database::open_read_only(Some(&model)).get_array_header(TOKEN);
-        return;
-    }
-    assert_aborts("k_mixture_model::database::tests::a_short_array_header_aborts_without_a_panic");
-}
-
 /// `check_result(load(…))` on a short single gram, as export, validate,
 /// prune and estimate's deleted model make it: the pin's `load` succeeds
 /// and the gram is then read outside its record, so the

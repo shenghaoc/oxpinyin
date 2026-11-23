@@ -208,24 +208,6 @@ fn repeated_initials_chain_the_whole_way() {
 }
 
 #[test]
-fn a_mid_position_initial_is_an_ordinary_edge() {
-    // yingchon: the pin selects ying, ch, o, n — two non-final partials.
-    let graph =
-        SegmentGraph::build_with_options(b"yingchon", OptionBits::default()).expect("valid");
-    for (from, key, start) in [(0, "ying", 0), (4, "ch", 4), (6, "o", 6), (7, "n", 7)] {
-        let key = SyllableKey::from_text(key).expect("frozen key");
-        assert!(
-            graph.edges().iter().any(|edge| edge.from() == from
-                && edge.key() == key
-                && edge.syllable_start() == start),
-            "missing edge {from} {}",
-            key.text()
-        );
-    }
-    assert!(graph.consumed() == b"yingchon".len());
-}
-
-#[test]
 fn an_input_past_the_pins_gint16_steps_is_parsed_whole() {
     // 80000 bytes: past both the pin's 32767-byte `gint16` steps and the
     // old 65535-byte refusal

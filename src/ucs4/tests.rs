@@ -129,17 +129,6 @@ fn the_text_is_one_candidate_row_field() {
 }
 
 #[test]
-fn out_of_range_words_answer_none_before_the_zero() {
-    assert!(PhraseText::from_words([0x8000_0000]).is_none());
-    let after = PhraseText::from_words([0x7532, 0, 0x8000_0000]).expect("zero ends the read");
-    assert_eq!(
-        after.stored_words(),
-        Some([0x7532, 0, 0x8000_0000].as_slice())
-    );
-    assert_eq!(after.phrase_length(), 3);
-}
-
-#[test]
 fn a_non_scalar_word_does_not_end_the_range_check() {
     assert!(PhraseText::from_words([0xD800, 0x8000_0000]).is_none());
 

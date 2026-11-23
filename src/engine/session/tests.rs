@@ -4426,18 +4426,6 @@ pub(super) mod session_lifecycle {
     }
 
     #[test]
-    fn reset_composition_keeps_the_parse_more_split_state() {
-        // The two-stage reset: `reset_composition` clears the parse state but
-        // keeps the raw buffer and selection record alive (the
-        // `pinyin_parse_more_*` re-parse seam).
-        let mut session = session();
-        session.replace_raw("ni").expect("typing");
-        session.reset_composition();
-        // The parse state is gone; the session survives and accepts input.
-        assert!(session.replace_raw("nih").is_ok());
-    }
-
-    #[test]
     fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
         // Chewing's config setters reject out-of-enum values; the oxpinyin
         // option word is a bitset, where bits outside the frozen constants

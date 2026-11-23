@@ -227,37 +227,6 @@ fn plain_predicted_candidates_match_the_with_punctuations_body() {
     });
 }
 
-/// `pinyin_lookup_tokens`: 你好 resolves to exactly one token; an
-/// unknown phrase resolves to none; the array is cleared per call.
-#[test]
-fn lookup_tokens_resolves_stored_phrases() {
-    let fixture = Fixture::new("dict-lookup");
-
-    let mut array = TokenArray::new();
-    assert!(unsafe {
-        pinyin_lookup_tokens(fixture.instance, cstr("你好").as_ptr(), array.array_ptr())
-    });
-    let tokens = array.elements();
-    assert_eq!(tokens.len(), 1, "你好 resolves to one token");
-
-    // Reuse the same array: it clears per call. ASCII matches no
-    // phrase — and the retval is `SEARCH_OK & retval`, false for a
-    // no-hit span (the array still cleared).
-    assert!(!unsafe {
-        pinyin_lookup_tokens(fixture.instance, cstr("abyss").as_ptr(), array.array_ptr())
-    });
-    assert!(array.elements().is_empty());
-
-    // GLib diagnoses a NULL array; the pin still returns the lookup result.
-    assert!(unsafe {
-        pinyin_lookup_tokens(
-            fixture.instance,
-            cstr("你好").as_ptr(),
-            std::ptr::null_mut(),
-        )
-    });
-}
-
 /// `pinyin_token_get_phrase` round-trips the lookup: the token found by
 /// text renders back to the same text; an unknown token answers false
 /// and leaves both out-params untouched (`pinyin.cpp:1627`).

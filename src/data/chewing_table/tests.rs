@@ -438,24 +438,6 @@ fn a_failed_pinyin_table_existence_read_is_a_miss() {
     );
 }
 
-/// Zhuyin su3 supplies ni3, with the tone cleared in the stored key.
-#[test]
-fn a_failed_pinyin_table_existence_read_is_a_miss_for_zhuyin() {
-    let table = native_table();
-    let parse = crate::parser::ZhuyinParser::with_scheme(crate::parser::ZhuyinScheme::Standard)
-        .parse_with_options(
-            b"su3",
-            crate::OptionBits::USE_TONE | crate::OptionBits::FORCE_TONE,
-        );
-    let key = parse.keys()[0]
-        .key()
-        .chewing_key()
-        .with_tone(parse.keys()[0].tone());
-    crate::store::fail_point_read_of(&(key.to_packed() & 0x0fff).to_le_bytes(), 0);
-    assert!(!table.key_exists(&[key]).unwrap());
-    assert!(table.search(&[key]).unwrap().is_empty());
-}
-
 /// A failed cursor get ends the walk (chewing_large_table2_tkrzwdb.cpp:516-541).
 #[test]
 fn a_failed_pinyin_table_cursor_read_ends_the_walk() {

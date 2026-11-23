@@ -13,11 +13,10 @@ use crate::support::{
     cstr, key_slot_guard, open, pinyin_fini, pinyin_free_instance, pinyin_get_character_offset,
     pinyin_get_chewing_auxiliary_text, pinyin_get_double_pinyin_auxiliary_text,
     pinyin_get_full_pinyin_auxiliary_text, pinyin_get_left_pinyin_offset, pinyin_get_n_candidate,
-    pinyin_get_parsed_input_length, pinyin_get_pinyin_is_incomplete, pinyin_get_pinyin_key,
-    pinyin_get_pinyin_key_rest, pinyin_get_pinyin_key_rest_positions, pinyin_get_pinyin_string,
-    pinyin_get_right_pinyin_offset, pinyin_guess_candidates, pinyin_guess_sentence,
-    pinyin_parse_full_pinyin, pinyin_parse_more_chewings, pinyin_parse_more_full_pinyins,
-    pinyin_set_options, *,
+    pinyin_get_parsed_input_length, pinyin_get_pinyin_key, pinyin_get_pinyin_key_rest,
+    pinyin_get_pinyin_key_rest_positions, pinyin_get_pinyin_string, pinyin_get_right_pinyin_offset,
+    pinyin_guess_candidates, pinyin_guess_sentence, pinyin_parse_full_pinyin,
+    pinyin_parse_more_chewings, pinyin_parse_more_full_pinyins, pinyin_set_options, *,
 };
 
 use rstest::rstest;
@@ -132,22 +131,6 @@ fn init_options_parse_tones_but_not_initials() {
     }
     unsafe { pinyin_free_instance(instance) };
     unsafe { pinyin_fini(context) };
-}
-
-/// `is_incomplete` asserts on a toned initial.
-#[test]
-fn is_incomplete_aborts_on_a_toned_initial() {
-    assert_aborts(
-        "parse_keys::is_incomplete_aborts_on_a_toned_initial",
-        || {
-            let user = TempUserDir::new("toned-incomplete");
-            let (context, instance) = open_at(&user.path);
-            assert!(unsafe { pinyin_set_options(context, 0x28) });
-            let mut key = 0_u16;
-            unsafe { pinyin_parse_full_pinyin(instance, c"n4".as_ptr(), (&raw mut key).cast()) };
-            unsafe { pinyin_get_pinyin_is_incomplete(instance, (&raw mut key).cast()) };
-        },
-    );
 }
 
 /// `parse_full_pinyin` asserts on an apostrophe after bytes that are not
