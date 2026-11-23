@@ -48,8 +48,8 @@ pub fn chunk_checksum(payload: &[u8]) -> u32 {
 /// output.
 ///
 /// The inverse of the header check every reader performs, and
-/// shared framing policy for borrowed payloads. The owned variant below
-/// applies the same header and overflow policy without a second buffer.
+/// shared framing policy for borrowed payloads. Whole-chunk builders reserve
+/// the header first and fill it after constructing the payload.
 ///
 /// The payload length must fit in `u32`.
 #[must_use]
@@ -62,19 +62,17 @@ pub fn build_memory_chunk(payload: &[u8]) -> Option<Vec<u8>> {
     Some(file)
 }
 
-/// Frames an owned payload in place. Reserve eight additional bytes when
-/// constructing the payload to avoid a second allocation for the header.
+/// Fills the reserved header of a complete chunk in place. The buffer starts
+/// with [`CHUNK_HEADER_SIZE`] header bytes, followed by the payload.
 ///
 /// The payload length must fit in `u32`.
-pub(crate) fn build_memory_chunk_owned(mut payload: Vec<u8>) -> Option<Vec<u8>> {
+pub(crate) fn finish_memory_chunk(mut file: Vec<u8>) -> Option<Vec<u8>> {
+    let payload = file.get(CHUNK_HEADER_SIZE..)?;
     let length = u32::try_from(payload.len()).ok()?;
-    let checksum = chunk_checksum(&payload);
-    let end = payload.len();
-    payload.resize(end + CHUNK_HEADER_SIZE, 0);
-    payload.copy_within(..end, CHUNK_HEADER_SIZE);
-    payload[..4].copy_from_slice(&length.to_le_bytes());
-    payload[4..CHUNK_HEADER_SIZE].copy_from_slice(&checksum.to_le_bytes());
-    Some(payload)
+    let checksum = chunk_checksum(payload);
+    file[..4].copy_from_slice(&length.to_le_bytes());
+    file[4..CHUNK_HEADER_SIZE].copy_from_slice(&checksum.to_le_bytes());
+    Some(file)
 }
 
 #[cfg(test)]

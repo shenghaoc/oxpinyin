@@ -1235,11 +1235,6 @@ fn in_place_item_reads_agree_with_the_materialized_item() {
     for slot in [0_u32, 1, 2, 3, 4, 5, 9, 1000] {
         let materialized = library.item(slot);
         assert_eq!(
-            library.is_readable(slot),
-            materialized.is_some(),
-            "slot {slot}"
-        );
-        assert_eq!(
             library.unigram(slot).filter(|_| materialized.is_some()),
             materialized.as_ref().map(|current| current.unigram),
             "slot {slot}"

@@ -270,6 +270,19 @@ mask operations may materialize all changed items. The private view shares
 clean file pages; MODIFY dirties private pages as the pin does, without
 writing the system file.
 
+Save diffs append borrowed item bytes directly to one buffer with its
+`MemoryChunk` header reserved. The record encoder checks every `u16` item
+length before the complete payload is checked against the bulk-copy limit;
+file output follows both checks. The slot walk and byte comparisons are
+unchanged. For S visited slots and B encoded bytes, encoding and framing
+still take O(B) time and O(B) output space, in addition to the unchanged
+slot reads. The owned record vector, its item copies and the second framed
+buffer are removed. Whole-library writers also reserve the header first,
+so they no longer shift the finished payload. Stored section and item
+offsets keep their payload and entry-area origins, respectively
+(`phrase_index.cpp:365-440`, `phrase_index_logger.h:248-293`,
+`memory_chunk.h:536-557` at `074a2219`).
+
 ### Exact-text lookup
 
 Exact-text lookup reads the system row, then the

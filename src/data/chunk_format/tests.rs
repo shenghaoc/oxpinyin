@@ -31,7 +31,8 @@ fn build_memory_chunk_frames_the_pin_layout() {
     assert_eq!(&file[4..8], &0x0003_0201_u32.to_le_bytes());
     assert_eq!(&file[8..], &payload);
     let mut owned = Vec::with_capacity(payload.len() + CHUNK_HEADER_SIZE);
+    owned.resize(CHUNK_HEADER_SIZE, 0);
     owned.extend_from_slice(&payload);
-    let framed = build_memory_chunk_owned(owned).expect("frame owned");
+    let framed = finish_memory_chunk(owned).expect("finish frame");
     assert_eq!(framed, file);
 }

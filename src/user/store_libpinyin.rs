@@ -37,17 +37,21 @@
 //!   observe.
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+#[cfg(test)]
 use crate::data::phrase_library::ChunkItem;
 use crate::data::user_files::SystemVersions;
 use crate::store::{DefaultUserBigramDb, UserBigramDb};
+#[cfg(test)]
+use crate::user::UserState;
 
 use crate::user::phrase;
 use crate::user::store::{StoreInner, UserStore, UserStoreError};
-use crate::user::{self as persistence, PersistenceError, SystemOriginals, UserConfLaw, UserState};
+use crate::user::{self as persistence, PersistenceError, SystemOriginals, UserConfLaw};
 
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
@@ -252,7 +256,6 @@ impl UserStore {
         // failure cannot leave a store without them: each is the pin's
         // death, never a degraded open, and leaves without finalizing.
         let seeded_totals = seed_totals(
-            &loaded.state,
             originals,
             &loaded.library_totals,
             &replayed,
@@ -320,87 +323,6 @@ impl UserStore {
     }
 }
 
-/// The totals the loaded profile seeds the session with — the seed half of
-/// the value mapping.
-///
-/// A replayed MODIFY of a shipped item seeds its unigram delta and no reading
-/// row: the session holds the item whole (`StoreInner::system_items`) and its
-/// readings' counts are read there, as a list of entries.
-///
-/// `state.phrase_table` is the pin's raw `m_phrase_table` read from
-/// `user_phrase_index.bin` ([`UserState::phrase_table`]). It is seeded verbatim,
-/// not derived from `state.libraries`, so a profile whose phrase index
-/// disagrees with `user.bin` keeps the disagreement and
-/// `pinyin_remove_user_candidate` reproduces the pin's `:3750` assert
-/// against it. Nothing else reads the rows.
-///
-/// `library_totals` is the total each loaded library holds in the pin
-/// ([`persistence::Loaded`]'s `library_totals`). Answers, per library, how
-/// far that total lies from the one the seeded rows make — the library's
-/// original total plus its seeded unigrams — as a wrapping `guint32`: the
-/// facade keeps that difference until the library is loaded again, since
-/// `compact` rebuilds the libraries' totals and never the facade's
-/// (074a2219 `phrase_index.cpp:648-675`).
-#[cfg(test)]
-pub(crate) fn seed_totals_plain(
-    state: &UserState,
-    originals: &impl crate::user::OriginalLibraries,
-    library_totals: &crate::user::LibraryTable<u32>,
-) -> SeedTotals {
-    seed_totals(
-        state,
-        originals,
-        library_totals,
-        &crate::user::LibraryTable::new(),
-        &crate::user::LibraryTable::new(),
-    )
-}
-
-/// The existing owned fixture values and the load's borrowed item share the
-/// same row conversion; no session reader or writer uses these views yet.
-enum SeedItem<'a> {
-    Owned(&'a ChunkItem),
-    View(crate::data::phrase_library::PhraseItemView<'a>),
-}
-
-impl SeedItem<'_> {
-    fn unigram(&self) -> u32 {
-        match self {
-            Self::Owned(item) => item.unigram,
-            Self::View(item) => item.unigram(),
-        }
-    }
-}
-
-/// The unigram mass the decoded overrides add to each system library on top of
-/// its original: the sub-index total a library without a live buffer starts
-/// from when no log total names it. A replayed library holds its own total.
-fn system_override_mass(
-    state: &UserState,
-    originals: &impl crate::user::OriginalLibraries,
-    seeded: &mut crate::user::LibraryTable<u32>,
-) {
-    for (&nibble, overrides) in &state.system_overrides {
-        let Some(original) = originals.get(&nibble) else {
-            continue;
-        };
-        for (&slot, item) in overrides {
-            let Some(new_item) = item else {
-                continue; // a replayed removal: the load's `skipped` list
-                // carries it
-            };
-            if !original.is_readable(slot) {
-                continue;
-            }
-            // `is_readable` held, so the item exists and this is its unigram.
-            let base = original.unigram(slot).unwrap_or(0);
-            if let Some(sum) = seeded.get_or_insert_with(nibble, || 0) {
-                *sum = sum.wrapping_add(new_item.unigram.wrapping_sub(base));
-            }
-        }
-    }
-}
-
 /// What the seed leaves the session's unigram model: the user libraries'
 /// stored-total differences, the sub-index totals of the system libraries
 /// without a live buffer, and what the facade total holds beyond the system
@@ -445,70 +367,29 @@ fn holds_user_data(
             .any(|library| !library.is_empty())
 }
 
-/// The unigrams seeded per library, as the facade would sum them: the
-/// state's libraries, the overrides that add an item, the user libraries'
-/// views, and what the decoded overrides add on top of an original.
+/// The unigram mass in the loaded USER_FILE arenas, used only to retain
+/// the difference from each library's stored total.
 fn seeded_mass(
-    state: &UserState,
-    originals: &impl crate::user::OriginalLibraries,
     user_libraries: &crate::user::LibraryTable<crate::user::user_library::UserLibrary>,
 ) -> crate::user::LibraryTable<u32> {
-    let mut seeded: crate::user::LibraryTable<u32> = crate::user::LibraryTable::new();
-
-    // ADD records own text/index rows just like USER_FILE items. MODIFY
-    // records do not gain index rows (pinyin.cpp:566-607 at 074a2219).
-    let mut libraries: crate::user::LibraryTable<BTreeMap<u32, &ChunkItem>> = state
-        .libraries
+    user_libraries
         .iter()
-        .map(|(&nibble, items)| {
-            (
-                nibble,
-                items.iter().map(|(&slot, item)| (slot, item)).collect(),
-            )
+        .map(|(&nibble, library)| {
+            let total = library
+                .items()
+                .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram()));
+            (nibble, total)
         })
-        .collect();
-    for (&nibble, overrides) in &state.system_overrides {
-        for (&slot, item) in overrides {
-            let Some(item) = item else {
-                continue;
-            };
-            if !originals
-                .get(&nibble)
-                .is_some_and(|original| original.contains_item(slot))
-                && let Some(items) = libraries.get_or_default(nibble)
-            {
-                items.insert(slot, item);
-            }
-        }
-    }
-    let mut seed = |nibble: u8, item: SeedItem<'_>| {
-        if let Some(sum) = seeded.get_or_insert_with(nibble, || 0) {
-            *sum = sum.wrapping_add(item.unigram());
-        }
-    };
-    for (&nibble, items) in &libraries {
-        for item in items.values() {
-            seed(nibble, SeedItem::Owned(item));
-        }
-    }
-    for (&nibble, library) in user_libraries {
-        for (_, item) in library.items() {
-            seed(nibble, SeedItem::View(item));
-        }
-    }
-
-    system_override_mass(state, originals, &mut seeded);
-    seeded
+        .collect()
 }
 
 fn seed_totals(
-    state: &UserState,
     originals: &impl crate::user::OriginalLibraries,
     library_totals: &crate::user::LibraryTable<u32>,
     replayed: &crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
     user_libraries: &crate::user::LibraryTable<crate::user::user_library::UserLibrary>,
 ) -> SeedTotals {
-    let seeded = seeded_mass(state, originals, user_libraries);
+    let seeded = seeded_mass(user_libraries);
 
     // The facade total is the sum of the loaded libraries' totals
     // (`phrase_index.cpp:237-248`). A system library's is its own scalar; a

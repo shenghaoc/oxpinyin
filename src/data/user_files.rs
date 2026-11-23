@@ -801,49 +801,63 @@ const LOG_TYPE_SIZE: usize = 4;
 #[must_use]
 pub fn encode_log_records(records: &[LogRecord]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
+    for record in records {
+        append_log_record(&mut out, record)?;
+    }
+    Some(out)
+}
+
+/// Appends one record to a payload or a whole-chunk buffer. Item bytes are
+/// borrowed until their copy into the destination; lengths must fit in `u16`.
+pub(crate) fn append_log_record(
+    out: &mut Vec<u8>,
+    record: &LogRecord<impl AsRef<[u8]>>,
+) -> Option<()> {
     let push_head = |log_type: u32, token: u32, out: &mut Vec<u8>| {
         out.extend_from_slice(&log_type.to_le_bytes());
         out.extend_from_slice(&token.to_le_bytes());
     };
-    for record in records {
-        match record {
-            LogRecord::Add { token, new_item } => {
-                push_head(1, *token, &mut out);
-                out.extend_from_slice(&u16::try_from(new_item.len()).ok()?.to_le_bytes());
-                out.extend_from_slice(new_item);
-            }
-            LogRecord::Remove { token, old_item } => {
-                push_head(2, *token, &mut out);
-                out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
-                out.extend_from_slice(old_item);
-            }
-            LogRecord::Modify {
-                token,
-                old_item,
-                new_item,
-            } => {
-                push_head(3, *token, &mut out);
-                out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
-                out.extend_from_slice(&u16::try_from(new_item.len()).ok()?.to_le_bytes());
-                out.extend_from_slice(old_item);
-                out.extend_from_slice(new_item);
-            }
-            LogRecord::ModifyHeader {
-                old_total,
-                new_total,
-            } => {
-                push_head(4, 0, &mut out);
-                // Upstream's MODIFY_HEADER carries the payload length
-                // once, then two runs of it — the diff appends a 4-byte
-                // old-header chunk and a 4-byte new-header chunk, so each
-                // run is one `u32` total.
-                out.extend_from_slice(&4_u16.to_le_bytes());
-                out.extend_from_slice(&old_total.to_le_bytes());
-                out.extend_from_slice(&new_total.to_le_bytes());
-            }
+    match record {
+        LogRecord::Add { token, new_item } => {
+            push_head(1, *token, out);
+            let new_item = new_item.as_ref();
+            out.extend_from_slice(&u16::try_from(new_item.len()).ok()?.to_le_bytes());
+            out.extend_from_slice(new_item);
+        }
+        LogRecord::Remove { token, old_item } => {
+            push_head(2, *token, out);
+            let old_item = old_item.as_ref();
+            out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
+            out.extend_from_slice(old_item);
+        }
+        LogRecord::Modify {
+            token,
+            old_item,
+            new_item,
+        } => {
+            push_head(3, *token, out);
+            let old_item = old_item.as_ref();
+            let new_item = new_item.as_ref();
+            out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
+            out.extend_from_slice(&u16::try_from(new_item.len()).ok()?.to_le_bytes());
+            out.extend_from_slice(old_item);
+            out.extend_from_slice(new_item);
+        }
+        LogRecord::ModifyHeader {
+            old_total,
+            new_total,
+        } => {
+            push_head(4, 0, out);
+            // Upstream's MODIFY_HEADER carries the payload length
+            // once, then two runs of it — the diff appends a 4-byte
+            // old-header chunk and a 4-byte new-header chunk, so each
+            // run is one `u32` total.
+            out.extend_from_slice(&4_u16.to_le_bytes());
+            out.extend_from_slice(&old_total.to_le_bytes());
+            out.extend_from_slice(&new_total.to_le_bytes());
         }
     }
-    Some(out)
+    Some(())
 }
 
 #[cfg(test)]

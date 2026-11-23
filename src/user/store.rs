@@ -1687,10 +1687,7 @@ impl UserStore {
     /// aborts at the failed operation.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
-        self.save_reporting_inner(
-            &[],
-            None::<fn(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline>,
-        )
+        self.save_reporting_compacted(&[])
     }
 
     // FacadePhraseIndex::compact, phrase_index.cpp:648–675.
@@ -1705,15 +1702,19 @@ impl UserStore {
     /// # Aborts
     ///
     /// As [`Self::save_reporting`].
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn save_reporting_compacted(
         &mut self,
         compacted: &[u8],
     ) -> Result<(), UserStoreError> {
-        self.save_reporting_inner(
-            compacted,
-            None::<fn(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline>,
-        )
+        self.save_reporting_with_baseline(compacted, |nibble, originals| {
+            match crate::user::read_save_baseline(originals, 0, nibble) {
+                Ok(baseline) => baseline,
+                Err(crate::user::SaveRemapFault::Unmappable(_)) => {
+                    crate::user::SaveBaseline::Unmappable
+                }
+            }
+        })
     }
 
     /// Saves with the current-on-disk baseline
@@ -1724,17 +1725,7 @@ impl UserStore {
     pub(crate) fn save_reporting_with_baseline(
         &mut self,
         compacted: &[u8],
-        baseline: impl FnMut(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline,
-    ) -> Result<(), UserStoreError> {
-        self.save_reporting_inner(compacted, Some(baseline))
-    }
-
-    fn save_reporting_inner<
-        B: FnMut(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline,
-    >(
-        &mut self,
-        compacted: &[u8],
-        mut baseline: Option<B>,
+        mut baseline: impl FnMut(u8, &crate::user::SystemOriginals) -> crate::user::SaveBaseline,
     ) -> Result<(), UserStoreError> {
         if !self.is_modified() {
             return Ok(());
@@ -1754,9 +1745,7 @@ impl UserStore {
                 open_counter: target.open_counter,
                 bigram_db,
                 interleaved: target.law == crate::user::UserConfLaw::Zhuyin,
-                baseline: baseline
-                    .as_mut()
-                    .map(|baseline| |nibble| baseline(nibble, originals)),
+                baseline: |nibble| baseline(nibble, originals),
             };
             crate::user::save_reporting(
                 dir,

@@ -473,7 +473,7 @@ fn rollback_restores_a_mapped_buffer() {
 #[test]
 fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() {
     use crate::data::user_files::{encode_log_records, log_records};
-    use crate::user::{LiveSubIndex, diff_live_records};
+    use crate::user::{LiveSubIndex, encode_live_diff};
 
     for total in [7, u32::MAX] {
         let old = SystemLibrary {
@@ -503,9 +503,15 @@ fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() 
             }
         }
         assert!(matches!(live.add_unigram(2, 1), UnigramAdd::Missing));
-        let records = diff_live_records(LiveSubIndex::Buffer(&live), old.view(), live.total());
-        assert_eq!(records, expected);
-        let payload = encode_log_records(&records).unwrap();
+        let mut payload = Vec::new();
+        encode_live_diff(
+            LiveSubIndex::Buffer(&live),
+            old.view(),
+            live.total(),
+            &mut payload,
+        )
+        .unwrap();
+        assert_eq!(payload, encode_log_records(&expected).unwrap());
         let file = crate::data::chunk_format::build_memory_chunk(&payload).unwrap();
         let decoded = log_records(crate::data::user_files::read_chunk_payload(&file).unwrap())
             .map(|record| record.map(LogRecord::into_owned))

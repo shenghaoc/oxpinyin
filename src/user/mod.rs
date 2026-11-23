@@ -66,6 +66,8 @@ pub use replay::{JournalFault, UnigramAdd};
 pub use store::{
     MaskCheck, TrainingCheck, TrainingFault, UserStore, UserStoreError, add_system_reading,
 };
+#[cfg(test)]
+pub use test_session::UserState;
 
 #[cfg(test)]
 #[path = "../../tests/support/native_fixture.rs"]
@@ -76,7 +78,7 @@ pub(crate) mod native_fixture;
 pub(crate) mod contract_data;
 
 pub use persistence::{
-    Loaded, OriginalLibraries, PersistenceError, SelectedOriginals, SystemLibraryRef, UserState,
+    Loaded, OriginalLibraries, PersistenceError, SelectedOriginals, SystemLibraryRef,
     check_format_unnamed, fini, lowered_open_counter,
 };
 pub use seed::{
@@ -89,12 +91,12 @@ pub use phrase_table::{
 };
 
 pub(crate) use persistence::{
-    LiveSubIndex, LoadedPinyinIndex, LoadedProfile, MaskStop, SaveReporting, SaveSource,
-    SessionProfile, check_format, load_library_logs_live, load_masked_logs_live,
-    load_session_in_loop, load_user_bigram_db, load_user_library, read_mask_log, record_skip,
-    save_reporting,
+    LiveSubIndex, LoadedPinyinIndex, LoadedProfile, MaskStop, SaveRemapFault, SaveReporting,
+    SaveSource, SessionProfile, check_format, load_library_logs_live, load_masked_logs_live,
+    load_session_in_loop, load_user_bigram_db, load_user_library, read_mask_log,
+    read_save_baseline, record_skip, save_reporting,
 };
 
 #[cfg(test)]
-pub(crate) use persistence::{chewing_rows, diff_live_records};
+pub(crate) use persistence::{chewing_rows, encode_live_diff};
 pub(crate) use phrase::add_phrase_token;
