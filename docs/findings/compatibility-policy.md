@@ -319,9 +319,8 @@ It does not skip or ignore the case.
 
 ## Rust/C++ interoperability
 
-**Principle.** Agents write the code and one person reviews it.
-A boundary that the compiler checks does not depend on who wrote it; a boundary that a comment describes does.
-The checked boundary is preferred.
+**Principle.** Compiler-checked boundaries make interface assumptions mechanically verifiable.
+Prefer them to boundaries enforced only by comments.
 This ruling rests on safety, maintainability and review load, not on performance.
 
 **Rule.**
