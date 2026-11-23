@@ -14,7 +14,6 @@
 
 use crate::vocab::phrase_index_library_index;
 use std::cell::Cell;
-use std::fmt;
 use std::path::Path;
 
 use crate::{
@@ -26,39 +25,17 @@ use crate::{
 use crate::data::{BigramTable, DictError, PhraseLibraries, TableError};
 
 /// Error conditions for bigram lookups.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum LmError {
     /// A table-level error (I/O, backend, etc.).
-    Table(TableError),
+    #[error("table error: {0}")]
+    Table(#[from] TableError),
     /// Value bytes did not parse under the frozen bigram schema.
+    #[error("parse error")]
     Parse,
     /// The user-count overlay failed (a read on the user store).
+    #[error("user store error")]
     User,
-}
-
-impl fmt::Display for LmError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Table(e) => write!(f, "table error: {e}"),
-            Self::Parse => f.write_str("parse error"),
-            Self::User => f.write_str("user store error"),
-        }
-    }
-}
-
-impl std::error::Error for LmError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Table(e) => Some(e),
-            Self::Parse | Self::User => None,
-        }
-    }
-}
-
-impl From<TableError> for LmError {
-    fn from(e: TableError) -> Self {
-        Self::Table(e)
-    }
 }
 
 impl From<DictError> for LmError {
