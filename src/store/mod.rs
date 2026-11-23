@@ -106,49 +106,21 @@ pub enum StoreError {
     ReadAfterCheck,
 }
 
-/// A non-I/O failure the storage backend reported: its message, and the
-/// backend's own status code where the library gives one (tkrzw).
-///
-/// Every backend builds this the same way — from the library's message
-/// text — so the store's error type carries no erased payload.
+/// A non-I/O failure reported by the storage backend.
 #[derive(Debug)]
 pub struct BackendError {
-    code: Option<i32>,
     message: String,
-}
-
-impl BackendError {
-    /// A failure with a message and the backend's status `code`.
-    #[must_use]
-    pub const fn with_code(code: i32, message: String) -> Self {
-        Self {
-            code: Some(code),
-            message,
-        }
-    }
-
-    /// The backend's status code, where the library reports one.
-    #[must_use]
-    pub const fn code(&self) -> Option<i32> {
-        self.code
-    }
 }
 
 impl From<&str> for BackendError {
     fn from(message: &str) -> Self {
-        Self {
-            code: None,
-            message: message.to_owned(),
-        }
+        Self::from(message.to_owned())
     }
 }
 
 impl From<String> for BackendError {
     fn from(message: String) -> Self {
-        Self {
-            code: None,
-            message,
-        }
+        Self { message }
     }
 }
 
@@ -275,20 +247,14 @@ pub trait WriteStore: RawReadStore {
     /// libpinyin's `bigram.db` is a KC **`HashDB`** / Tkrzw **`HashDBM`**
     /// while its other DBMs are tree containers; `import_interpolation`
     /// writes the bigram through this constructor so the reader's hash
-    /// open finds a hash file. The default implementation delegates to
-    /// [`WriteStore::create`] (correct for a backend with no
-    /// hash/tree distinction). KC and Tkrzw override this to select the
-    /// hash container class.
+    /// open finds a hash file.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the store cannot be created.
     fn create_hash(path: &Path) -> Result<Self, StoreError>
     where
-        Self: Sized,
-    {
-        Self::create(path)
-    }
+        Self: Sized;
     /// A fresh, empty, **in-memory** tree store: the backend's own
     /// on-memory ordered container, which touches no file, reads no
     /// environment, and dies with the handle — what a libpinyin session
@@ -328,13 +294,12 @@ pub trait WriteStore: RawReadStore {
     /// Writes one user phrase/pinyin index in the backend's pin format,
     /// with the calls the pin's `save_db` makes. `records` hands each
     /// record, in ascending key order, to the sink it is given; nothing
-    /// is buffered between it and the backend. Each shipping backend
-    /// overrides this with its `save_db` sequence: tkrzw's `RemoveFile`,
+    /// is buffered between it and the backend. Each backend follows its
+    /// `save_db` sequence: tkrzw's `RemoveFile`,
     /// `TreeDBM` open, one `Set` per record, `Synchronize(false)` and close;
     /// Berkeley DB's unlink, `DB_BTREE` open, one `put` per record and
     /// close; Kyoto Cabinet's unlink and `ProtoTreeDB` `dump_snapshot`.
-    /// The default writes through [`WriteStore::write`]. The caller owns
-    /// staging and the rename.
+    /// The caller owns staging and the rename.
     ///
     /// # Errors
     /// Returns an error when creation or a record write fails.
@@ -343,11 +308,7 @@ pub trait WriteStore: RawReadStore {
         records: impl FnOnce(&mut RecordSink<'_>) -> Result<(), StoreError>,
     ) -> Result<(), StoreError>
     where
-        Self: Sized,
-    {
-        let store = Self::create_user(path)?;
-        store.write(|txn| records(&mut |key, value| txn.put_raw(key, value)))
-    }
+        Self: Sized;
 
     /// Run `f` inside a write transaction. An `Err` from `f` writes
     /// nothing provided the rollback succeeds. On Kyoto Cabinet the
@@ -618,24 +579,13 @@ pub trait RawReadStore {
     /// (`ngram_tkrzwdb.cpp:143-172`, `ngram_bdb.cpp`,
     /// `ngram_kyotodb.cpp`): Berkeley DB and Kyoto Cabinet advance a
     /// cursor, tkrzw calls `ProcessEach`, and a hash container's order is
-    /// the library's bucket order, not ascending byte order. Tree
-    /// containers fall back to [`RawReadStore::range_raw`]'s ascending
-    /// walk.
-    ///
-    /// The default is the ascending walk, which is a tree container's own
-    /// order. The hash peers override it so a caller that must reproduce
-    /// the pin's collection order does not substitute a sorted one.
+    /// the library's bucket order, not ascending byte order.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend walk fails. Keys visited before
     /// the failure stay in `keys`.
-    fn native_keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError> {
-        self.range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
-            keys.push(key.to_vec());
-            Ok(())
-        })
-    }
+    fn native_keys(&self, keys: &mut Vec<Vec<u8>>) -> Result<(), StoreError>;
 
     /// The number of raw (unframed) rows — the count half of the raw
     /// keyspace [`RawReadStore::range_raw`] walks. The hash containers
@@ -663,20 +613,14 @@ pub trait RawReadStore {
     /// Opens a hash-DB file in read-only mode (for `bigram.db`).
     ///
     /// libpinyin's `bigram.db` uses KC **`HashDB`** / Tkrzw **`HashDBM`**,
-    /// while the other DBM files use TreeDB/TreeDBM. The default
-    /// implementation delegates to [`RawReadStore::open_read_only`] (correct
-    /// for a backend with no hash/tree distinction). KC and
-    /// Tkrzw override this to select the hash container class.
+    /// while the other DBM files use TreeDB/TreeDBM.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend open fails.
     fn open_hash_read_only(path: &std::path::Path) -> Result<Self, StoreError>
     where
-        Self: Sized,
-    {
-        Self::open_read_only(path)
-    }
+        Self: Sized;
 
     /// Opens a saved user phrase/pinyin index. KC uses snapshot streams
     /// (074a2219 chewing_large_table2_kyotodb.cpp:94-105); the default is
@@ -776,9 +720,7 @@ mod user_bigram {
         /// # Errors
         ///
         /// Returns [`StoreError`] when the container cannot be read.
-        fn is_empty(&self) -> Result<bool, StoreError> {
-            Ok(self.keys()?.is_empty())
-        }
+        fn is_empty(&self) -> Result<bool, StoreError>;
 
         /// Whether this backend has a failed container at all: only Berkeley
         /// DB's `load_db` carries on after its in-memory `DB->open` fails

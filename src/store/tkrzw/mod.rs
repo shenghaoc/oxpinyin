@@ -189,10 +189,7 @@ fn status_error(status: &ffi::NativeStatus) -> StoreError {
     let message = message_text(status);
     match status.code {
         STATUS_SYSTEM_ERROR => StoreError::Io(std::io::Error::other(message)),
-        code => StoreError::Backend(crate::store::BackendError::with_code(
-            code,
-            status_message(code, &message),
-        )),
+        code => StoreError::Backend(status_message(code, &message).into()),
     }
 }
 
