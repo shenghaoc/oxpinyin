@@ -5,9 +5,11 @@
 //! `m_WC`, `m_N_n_0` and `m_n_1` and takes the larger `m_Mr`; the array
 //! header and then the magic header sum field-wise. A token new to the
 //! target gets the source's stored value unchanged, in the source file's
-//! native token order (`merge_array_items`, `:131-200`). The magic
-//! header's `m_WC` and `m_total_freq` sums are checked against the pin's
-//! `sum < max(a, b)` overflow test; `EOVERFLOW` exits after the rows have
+//! native token order (`merge_array_items`, `:131-200`). For an existing
+//! predecessor, insertion sorts the emitted records by token and keeps the first
+//! emitted record for each token (`:185-190`; `flexible_single_gram.h:151-181`).
+//! The magic header's `m_WC` and `m_total_freq` sums are checked against the
+//! pin's `sum < max(a, b)` overflow test; `EOVERFLOW` exits after the rows have
 //! already been merged (`:96-129`, `:232-233`).
 
 use std::ffi::CStr;
@@ -78,14 +80,10 @@ fn merge_array_items(target: &Database, new_one: &Database) -> bool {
         let mut merged_array =
             merge_two_phrase_array(target_single_gram.items(), new_single_gram.items());
 
-        // Repeated insertion sorted even out-of-order input before storing the row.
-        merged_array.sort_unstable_by_key(|entry| entry.token);
-        if merged_array
-            .windows(2)
-            .any(|pair| pair[0].token == pair[1].token)
-        {
-            std::process::abort();
-        }
+        // The insert loop ignores duplicate refusals (`:185-190`;
+        // `flexible_single_gram.h:151-181`): the first emitted record wins.
+        merged_array.sort_by_key(|entry| entry.token);
+        merged_array.dedup_by_key(|entry| entry.token);
         let merged_single_gram = KmmGram::from_parts(merged_array_header, merged_array);
         target.store(token, &merged_single_gram);
     }
@@ -93,7 +91,9 @@ fn merge_array_items(target: &Database, new_one: &Database) -> bool {
 }
 
 /// `merge_two_phrase_array` (`:38-94`): a merge-join of two token-ascending
-/// arrays, copying the token and item of every record.
+/// arrays, copying unmatched records and combining matching records. Stored
+/// input order is preserved by the walk even when an input is unsorted. The
+/// caller reproduces insertion's token order and first-emission duplicate rule.
 #[must_use]
 pub fn merge_two_phrase_array(
     first: &[ArrayItemWithToken<KMixtureModelArrayItem>],
