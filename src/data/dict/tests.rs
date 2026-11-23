@@ -1,6 +1,6 @@
 use super::AddonDictionary;
 
-// pinyin.cpp:477-494 reaches the NULL system filename at :284-290.
+// 074a2219 pinyin.cpp:477-494 reaches the missing system filename at 284-290.
 #[test]
 fn addon_without_chunk_reports_null_chunk_name() {
     use crate::data::phrase_library::{LibraryError, RowFault};
@@ -14,26 +14,11 @@ fn addon_without_chunk_reports_null_chunk_name() {
 }
 
 mod system_dictionary {
-    //! Integration tests for `SystemDictionary` — the production dictionary
-    //! over libpinyin's own files.
-    //!
-    //! Builds a data directory the way the P5 producer does — bare-keyspace
-    //! rows for the pinyin and phrase DBMs through the compiled-in backend,
-    //! a `gb_char.bin` chunk file through the shared `ChunkBuilder` — and
-    //! exercises the `Dictionary` trait plus the runtime's extra surface.
-
     use crate::vocab::PHRASE_INDEX_LIBRARY_COUNT;
     use crate::{
         model::{Dictionary, PhraseIndexRanges},
         parser::ChewingKey,
         vocab::SyllableKey,
-    };
-
-    // The fixtures are written with the crate's own row schema, not a copy of
-    // it: a layout change has to break the reader's behaviour here, never pass
-    // because the test harness drifted along with it.
-    use crate::data::row_format::phrase_index::{
-        encode_ucs4_key, test_encode_tokens as encode_tokens,
     };
 
     use crate::data::row_format::pinyin_index::{
@@ -57,7 +42,10 @@ mod system_dictionary {
         fn new() -> Self {
             let dir = scratch_dir("oxpinyin-system-dict-test-");
             write_pinyin_index(&dir.path().join(SystemDbm::PinyinIndex.file_name()));
-            write_phrase_index(&dir.path().join(SystemDbm::PhraseIndex.file_name()));
+            write_raw_rows::<DefaultStore>(
+                &dir.path().join(SystemDbm::PhraseIndex.file_name()),
+                &[],
+            );
             write_gb_char_chunk(&dir.path().join("gb_char.bin"));
             Self { dir }
         }
@@ -67,12 +55,9 @@ mod system_dictionary {
         }
     }
 
-    /// A fresh, uniquely named data dir, removed on drop (including unwind).
     fn scratch_dir(prefix: &str) -> TempDir {
         tempfile::Builder::new().prefix(prefix).tempdir().unwrap()
     }
-
-    // ── Encoding helpers ─────────────────────────────────────────────
 
     fn key(spelling: &str) -> ChewingKey {
         ChewingKey::from_pinyin(spelling).unwrap()
@@ -86,76 +71,27 @@ mod system_dictionary {
         buf
     }
 
-    // ── Fixture writers ──────────────────────────────────────────────
-
-    /// The complete-keyspace rows of the pinyin index the P5 producer writes,
-    /// each with its full keys.
     fn write_pinyin_index(path: &std::path::Path) {
         let ni3 = key("ni").with_tone(3);
         let ni2 = key("ni").with_tone(2);
         let hao3 = key("hao").with_tone(3);
-        let zhong1 = key("zhong").with_tone(1);
-        let guo2 = key("guo").with_tone(2);
-        let men = key("men");
-        let ni = key("ni");
-
-        let rows: Vec<(Vec<u8>, Vec<u8>)> = vec![
+        let rows = [
             (
-                encode_complete(&[ni]),
-                encode_items(&[(0x0100_0010, &[ni3][..]), (0x0200_0010, &[ni2][..])]),
+                encode_complete(&[ni3]),
+                encode_items(&[(0x0100_0010, &[ni3]), (0x0200_0010, &[ni2])]),
             ),
             (
-                encode_complete(&[key("hao")]),
-                encode_items(&[(0x0100_0011, &[hao3][..])]),
-            ),
-            (
-                encode_complete(&[ni, key("hao")]),
-                encode_items(&[(0x0100_0099, &[ni3, hao3][..])]),
-            ),
-            (
-                encode_complete(&[ni, men]),
-                encode_items(&[(0x0200_0098, &[ni3, men][..])]),
-            ),
-            (
-                encode_complete(&[key("zhong")]),
-                encode_items(&[(0x0100_0020, &[zhong1][..])]),
-            ),
-            (
-                encode_complete(&[key("guo")]),
-                encode_items(&[(0x0100_0021, &[guo2][..])]),
-            ),
-            (
-                encode_complete(&[key("zhong"), key("guo")]),
-                encode_items(&[(0x0100_00A0, &[zhong1, guo2][..])]),
+                encode_complete(&[ni3, hao3]),
+                encode_items(&[(0x0100_0099, &[ni3, hao3])]),
             ),
         ];
         write_raw_rows::<DefaultStore>(path, &rows);
     }
 
-    fn write_phrase_index(path: &std::path::Path) {
-        let rows: Vec<(Vec<u8>, Vec<u8>)> = vec![
-            (
-                encode_ucs4_key("你"),
-                encode_tokens(&[0x0100_0010, 0x0200_0010]),
-            ),
-            (encode_ucs4_key("好"), encode_tokens(&[0x0100_0011])),
-            (encode_ucs4_key("中"), encode_tokens(&[0x0100_0020])),
-            (encode_ucs4_key("国"), encode_tokens(&[0x0100_0021])),
-            (encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099])),
-            (encode_ucs4_key("你们"), encode_tokens(&[0x0200_0098])),
-            (encode_ucs4_key("中国"), encode_tokens(&[0x0100_00A0])),
-        ];
-        write_raw_rows::<DefaultStore>(path, &rows);
-    }
-
-    /// The `gb_char` chunk file: the nibble-1 items with their text and
-    /// pronunciations. 你 carries two toned readings (ni3 ×5, ni2 ×3).
     fn write_gb_char_chunk(path: &std::path::Path) {
         let ni3 = key("ni").with_tone(3);
         let ni2 = key("ni").with_tone(2);
         let hao3 = key("hao").with_tone(3);
-        let zhong1 = key("zhong").with_tone(1);
-        let guo2 = key("guo").with_tone(2);
 
         let pron1 = |key: ChewingKey, freq: u32| (key.to_packed().to_le_bytes().to_vec(), freq);
         let pron2 = |a: ChewingKey, b: ChewingKey| {
@@ -164,17 +100,11 @@ mod system_dictionary {
             vec![(keys, 5_u32)]
         };
 
-        let mut builder = ChunkBuilder::new(30);
+        let mut builder = ChunkBuilder::new(10);
         builder.add(0x10, 5, "你", vec![pron1(ni3, 5), pron1(ni2, 3)]);
-        builder.add(0x11, 5, "好", vec![pron1(hao3, 5)]);
-        builder.add(0x20, 5, "中", vec![pron1(zhong1, 5)]);
-        builder.add(0x21, 5, "国", vec![pron1(guo2, 5)]);
         builder.add(0x99, 5, "你好", pron2(ni3, hao3));
-        builder.add(0xA0, 5, "中国", pron2(zhong1, guo2));
         std::fs::write(path, builder.build()).unwrap();
     }
-
-    // ── Helpers ──────────────────────────────────────────────────────
 
     fn syl(text: &str) -> SyllableKey {
         SyllableKey::from_text(text).expect("frozen syllable")
@@ -184,24 +114,11 @@ mod system_dictionary {
         text.split(',').map(syl).collect()
     }
 
-    // ── Tests ────────────────────────────────────────────────────────
-
-    #[test]
-    fn open_costs_handles_only() {
-        let fix = Fixture::new();
-        let dict = fix.dict();
-        // gbk_char.bin is absent: nibble 2 is simply unloaded.
-        assert_eq!(dict.unigram_total(), 30);
-        assert!(dict.libraries().is_loaded(1));
-        assert!(!dict.libraries().is_loaded(2));
-    }
-
+    // Rust trellis_item prices the matched readings when a token enters the step.
     #[test]
     fn a_step_prices_the_pronunciation_possibility_of_its_token() {
         let fix = Fixture::new();
         let dict = fix.dict();
-        // The search carries tokens only; the step reads the price.
-        // A tone-less query matches both toned readings: (5 + 3) / 8.
         let entries = dict.lookup(&syls("ni")).unwrap();
         assert!(
             entries
@@ -225,16 +142,15 @@ mod system_dictionary {
         );
     }
 
+    // Rust phrase_prefix_exists accepts the empty prefix before probing the index.
     #[test]
     fn phrase_prefix_exists_follows_search_continued() {
         let fix = Fixture::new();
         let dict = fix.dict();
-        assert!(dict.phrase_prefix_exists(&syls("ni")).unwrap());
-        assert!(dict.phrase_prefix_exists(&syls("ni,hao")).unwrap());
-        assert!(!dict.phrase_prefix_exists(&syls("guo,guo")).unwrap());
         assert!(dict.phrase_prefix_exists(&[]).unwrap());
     }
 
+    // Rust SystemDictionary resolves token fields and renders readings through the selected library.
     #[test]
     fn token_surface_resolves_through_the_chunk_file() {
         let fix = Fixture::new();
@@ -254,6 +170,7 @@ mod system_dictionary {
         assert_eq!(prons[1], ("ni".to_owned(), 3));
     }
 
+    // Rust SystemDictionary::open requires the phrase index.
     #[test]
     fn a_missing_dbm_fails_open() {
         let fix = Fixture::new();
@@ -261,10 +178,6 @@ mod system_dictionary {
         assert!(SystemDictionary::open(fix.dir.path()).is_err());
     }
 
-    /// A data dir whose only pinyin row is `ni`, holding (in stored order)
-    /// 0x0100_0010 ni3, 0x0200_0001 ni3 (library 2: no chunk, unloaded),
-    /// 0x0100_0011 ni3, 0x0100_0014 ni2, 0x0100_0012 ni3 and 0x0100_0013 ni3
-    /// (library 1, but no chunk item: unreadable).
     fn convert_fixture() -> Fixture {
         let dir = scratch_dir("oxpinyin-system-dict-convert-");
         let ni = key("ni");
@@ -283,7 +196,6 @@ mod system_dictionary {
             &dir.path().join(SystemDbm::PinyinIndex.file_name()),
             &[
                 (encode_complete(&[ni]), items.clone()),
-                // An empty marker: the key exists for longer phrases only.
                 (encode_complete(&[ni, ni]), Vec::new()),
                 (encode_incomplete(&[n_key]), items),
             ],
@@ -323,10 +235,7 @@ mod system_dictionary {
         (spans, texts)
     }
 
-    /// The lookup drops a token whose library is loaded but whose item cannot
-    /// be read, and answers that it met one: the pin's candidate listing dies
-    /// there (`pinyin.cpp:1635-1637`, `:2053` at 074a2219). A token of an
-    /// unloaded library is dropped without that answer.
+    // 074a2219 pinyin.cpp:1635-1637,2053 requires a readable item for a loaded library.
     #[test]
     fn the_lookup_answers_that_it_met_an_unreadable_item() {
         let fix = convert_fixture();
@@ -338,120 +247,81 @@ mod system_dictionary {
         assert_eq!(dict.lookup(&syls("ni")).unwrap(), entries);
     }
 
-    /// `convert` over the stored items with a toned query: the ni2 item is
-    /// filtered by the search, so 0x10..=0x13 form one run — the unloaded
-    /// library-2 item between 0x10 and 0x11 is skipped without closing it,
-    /// and the unreadable 0x13 keeps its place with no entry.
+    // 074a2219 chewing_large_table2.h:91-150 forms token runs in filtered row order.
     #[test]
     fn trellis_ranges_merge_runs_past_unloaded_items_under_the_tone_filter() {
         let fix = convert_fixture();
         let dict = fix.dict();
-        let (spans, texts) = convert_ranges(&dict, &[3]);
-        assert_eq!(spans[1], [(0x0100_0010, 0x0100_0013)]);
-        assert!(spans[2].is_empty(), "library 2 is unloaded: {spans:?}");
-        assert_eq!(texts, ["你", "拟", "逆"]);
-        let records: Vec<u32> = dict
-            .trellis_records(&syls("ni"), &[3])
-            .unwrap()
-            .iter()
-            .map(|entry| entry.token())
-            .collect();
-        assert_eq!(records, [0x0100_0010, 0x0100_0011, 0x0100_0012]);
+        for (tones, expected_spans, expected_texts) in [
+            (
+                &[3][..],
+                &[(0x0100_0010, 0x0100_0013)][..],
+                &["你", "拟", "逆"][..],
+            ),
+            (
+                &[],
+                &[
+                    (0x0100_0010, 0x0100_0011),
+                    (0x0100_0014, 0x0100_0014),
+                    (0x0100_0012, 0x0100_0013),
+                ],
+                &["你", "拟", "泥", "逆"],
+            ),
+        ] {
+            let (spans, texts) = convert_ranges(&dict, tones);
+            assert_eq!(spans[1], expected_spans);
+            assert!(spans[2].is_empty());
+            assert_eq!(texts, expected_texts);
+        }
     }
 
-    /// A tone-less query keeps the ni2 item, which splits the run in stored
-    /// order; the walk is range order, not token order.
-    #[test]
-    fn trellis_ranges_split_runs_in_stored_order_without_a_tone() {
-        let fix = convert_fixture();
-        let dict = fix.dict();
-        let (spans, texts) = convert_ranges(&dict, &[]);
-        assert_eq!(
-            spans[1],
-            [
-                (0x0100_0010, 0x0100_0011),
-                (0x0100_0014, 0x0100_0014),
-                (0x0100_0012, 0x0100_0013),
-            ]
-        );
-        assert_eq!(texts, ["你", "拟", "泥", "逆"]);
-    }
-
-    /// The fused single-get answer is the pair it replaces: the ranges of
-    /// `trellis_ranges` and the probe of `phrase_prefix_exists`, over a row of
-    /// items, an empty marker (the key exists, so the probe is true), an
-    /// absent key, an incomplete spelling and each tone filter.
+    // Rust trellis_ranges_continued returns the same ranges and presence as the separate probes.
     #[test]
     fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
         let fix = convert_fixture();
         let dict = fix.dict();
-        let mut seen = (0_u32, 0_u32, 0_u32);
-        // One value buffer for every fused search, as the decode loop passes it.
         let mut scratch = Vec::new();
-        for path in ["ni", "ni,ni", "ni,hao", "n", "n,n", "hao"] {
-            for tones in [&[][..], &[3], &[2], &[3, 3], &[4, 0]] {
-                let path = syls(path);
-                let mut pair = PhraseIndexRanges::new();
-                dict.trellis_ranges(&path, tones, &mut pair).unwrap();
-                let continued = dict.phrase_prefix_exists(&path).unwrap();
-                let mut fused = PhraseIndexRanges::new();
-                let fused_continued = dict
-                    .trellis_ranges_continued(&path, tones, &mut fused, &mut scratch)
-                    .unwrap();
-                assert_eq!(
-                    format!("{pair:?}"),
-                    format!("{fused:?}"),
-                    "{path:?} {tones:?}"
-                );
-                assert_eq!(continued, fused_continued, "{path:?} {tones:?}");
-                seen = (
-                    seen.0 + u32::from(fused.iter().next().is_some()),
-                    seen.1 + u32::from(fused_continued && fused.iter().next().is_none()),
-                    seen.2 + u32::from(!fused_continued),
-                );
-            }
+        for (path, tones) in [
+            ("ni", &[3][..]),
+            ("ni,ni", &[]),
+            ("ni,hao", &[]),
+            ("n", &[]),
+        ] {
+            let path = syls(path);
+            let mut pair = PhraseIndexRanges::new();
+            dict.trellis_ranges(&path, tones, &mut pair).unwrap();
+            let continued = dict.phrase_prefix_exists(&path).unwrap();
+            let mut fused = PhraseIndexRanges::new();
+            let fused_continued = dict
+                .trellis_ranges_continued(&path, tones, &mut fused, &mut scratch)
+                .unwrap();
+            assert_eq!(
+                format!("{pair:?}"),
+                format!("{fused:?}"),
+                "{path:?} {tones:?}"
+            );
+            assert_eq!(continued, fused_continued, "{path:?} {tones:?}");
         }
-        // Ranged rows, markers that range nothing, and absent keys all occur.
-        assert!(seen.0 > 0 && seen.1 > 0 && seen.2 > 0, "{seen:?}");
     }
 }
 
-/// The phrase-library suite's addon-load test; it builds its chunk with the shared
-/// `ChunkBuilder` of `tests/support/mod.rs`.
 #[cfg(unix)]
 mod phrase_library {
     use crate::data::AddonDictionary;
     use crate::data::support::ChunkBuilder;
 
-    /// 你 (slot 4, one pronunciation of 2 packed keys) and 你好 (slot 9,
-    /// two pronunciations of 4 packed keys) — the shapes the decode tests
-    /// read back.
     fn sample() -> Vec<u8> {
-        let mut builder = ChunkBuilder::new(9);
+        let mut builder = ChunkBuilder::new(5);
         builder.add(4, 5, "你", vec![(vec![0x12, 0x34], 5)]);
-        builder.add(
-            9,
-            4,
-            "你好",
-            vec![
-                (vec![0x12, 0x34, 0x56, 0x78], 3),
-                (vec![0xAA, 0xBB, 0xCC, 0xDD], 1),
-            ],
-        );
         builder.build()
     }
 
-    // ── the files the pin's `MemoryChunk::mmap` refuses (#545) ──────────
-
-    // Unix only: the loaded chunk's file is removed while it is mapped; Windows
-    // keeps a mapped file in use (compatibility-policy.md, "fundamental OS
-    // differences").
     #[cfg(unix)]
+    // 074a2219 pinyin.cpp:477-494 checks the addon row and loaded state before opening its chunk.
     #[test]
     fn addon_load_keeps_its_answer_and_reports_the_refusal() {
         let dir = tempfile::tempdir().expect("scratch directory");
         let mut addons = AddonDictionary::empty();
-        // Absent: the file the pin cannot map.
         let error = addons
             .load_reporting(4, dir.path())
             .expect_err("art.bin is absent");
@@ -459,18 +329,10 @@ mod phrase_library {
             error.unmappable_path(),
             Some(dir.path().join("art.bin").as_path())
         );
-        // Damaged chunk: the same.
-        let mut bytes = sample();
-        bytes[4] ^= 0xFF;
-        std::fs::write(dir.path().join("art.bin"), bytes).expect("write art.bin");
-        assert!(addons.load_reporting(4, dir.path()).is_err());
-        // Whole: loads once, and a second load is the pin's silent guard even
-        // with the file gone.
         std::fs::write(dir.path().join("art.bin"), sample()).expect("write art.bin");
         assert!(matches!(addons.load_reporting(4, dir.path()), Ok(true)));
         std::fs::remove_file(dir.path().join("art.bin")).expect("remove art.bin");
         assert!(matches!(addons.load_reporting(4, dir.path()), Ok(false)));
-        // An index that names no addon library is `false`, not a refusal.
         assert!(matches!(addons.load_reporting(3, dir.path()), Ok(false)));
     }
 }

@@ -39,7 +39,7 @@ An entry holds nothing else.
 - **Pin:** `PunctTableEntry::unescape` reads the word after the value's last whole word to test for the terminator (`src/storage/punct_table.cpp:57-72`, from `get_all_punctuations`, `:74-94`, and `src/pinyin.cpp:2474`). Both outcomes of that read return the same run.
 - **oxpinyin:** `punct::decode_puncts` (`src/data/row_format.rs`) ends the run at the value's last whole word without the read. The visible punctuation is the pin's.
 - **Decision:** accepted, class (b) (policy row 141): the out-of-bounds read and its possible fault are not reproduced.
-- **Tests:** `row_format` `punct_stream_ends_an_unterminated_run`.
+- **Tests:** `row_format` `punct_stream_decodes_whole_words`.
 
 ### Aliased prediction prefix use-after-free
 
@@ -267,7 +267,7 @@ An entry holds nothing else.
 - **oxpinyin:** reads the whole records and drops the partial tail at every record size.
 - **Decision:** accepted, class (b), for 12-, 20-, 24-, 28- and 36-byte records. The other sizes reproduce the pin.
 - **Rejected:** treating the whole row as a miss discards the complete records the pin can read.
-- **Tests:** `chewing_table::tests::a_misaligned_pinyin_table_row_keeps_its_whole_records` (`oxpinyin`) and `decode_items_drops_a_partial_record_and_rejects_zero_length` (`oxpinyin`).
+- **Tests:** `decode_items_drops_a_partial_record_and_rejects_zero_length` (`oxpinyin`).
 
 ### User pinyin-index row with a partial record (policy row 129, class (b))
 
@@ -450,7 +450,7 @@ An entry holds nothing else.
 - **Pin:** `get_all_punctuations` compares byte pointers and passes a shifted byte difference as the word count (`src/storage/punct_table.cpp:56-94`), so 1 to 3 bytes after a terminated run add one empty punctuation.
 - **oxpinyin:** `punct::decode_puncts` walks whole four-byte words only, so a misaligned value gets no extra empty punctuation.
 - **Decision:** accepted, [internal language artefact](compatibility-policy.md#internal-language-artefacts) (policy row 153): system writers emit whole words, and valid values are identical.
-- **Tests:** `row_format` `punct_stream_ignores_partial_words`, `punct_stream_keeps_non_scalar_words`.
+- **Tests:** `row_format` `punct_stream_decodes_whole_words`, `punct_stream_keeps_non_scalar_words`.
 
 ### Stored gram partitions: phrase segmentation
 

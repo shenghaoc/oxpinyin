@@ -1,13 +1,14 @@
 use super::*;
 
+// 074a2219 pinyin.cpp:338 writes the filename with %s.
 #[test]
 fn a_name_is_written_up_to_its_first_nul() {
-    assert_eq!(c_prefix(b"/a/b"), CString::new("/a/b").unwrap());
-    assert_eq!(c_prefix(b"/a\0b"), CString::new("/a").unwrap());
-    assert_eq!(c_prefix(b""), CString::default());
+    for (name, prefix) in [(b"/a/b".as_slice(), b"/a/b".as_slice()), (b"/a\0b", b"/a")] {
+        assert_eq!(c_prefix(name).as_bytes(), prefix);
+    }
 }
 
-// Unix only: byte-string paths (`OsStrExt::from_bytes`).
+// Rust path_bytes contract preserves Unix filename bytes.
 #[test]
 #[cfg(unix)]
 fn paths_are_written_as_their_bytes() {

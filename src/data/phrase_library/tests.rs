@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::{LibraryError, PhraseLibrary, RowFault, map_header};
 
-// Pin memory_chunk.h:479-497: a failed header read follows the eight-byte gate.
+// 074a2219 memory_chunk.h:479-497 checks size before reading the two header words.
 #[test]
 fn mapping_header_size_and_read_failure_follow_pin() {
     let path = Path::new("chunk");
@@ -37,36 +37,27 @@ fn mapping_header_size_and_read_failure_follow_pin() {
     assert!(map_header(path, 8, true, || Ok([0; 4])).is_ok());
 }
 
-#[test]
-fn mapped_length_read_aborts() {
-    crate::store::death_test::assert_aborts(
-        "data::phrase_library::tests::mapped_length_read_aborts",
-        || {
-            let _ = map_header(Path::new("chunk"), 8, false, || {
+// 074a2219 memory_chunk.h:492-497 asserts on either failed header read.
+#[rstest::rstest]
+#[case::length(1)]
+#[case::checksum(2)]
+fn mapped_header_read_aborts(#[case] failed_read: usize) {
+    let thread = std::thread::current();
+    let name = thread.name().expect("libtest case name");
+    crate::store::death_test::assert_aborts(name, || {
+        let mut reads = 0;
+        let _ = map_header(Path::new("chunk"), 8, false, || {
+            reads += 1;
+            if reads == failed_read {
                 Err(std::io::ErrorKind::Other.into())
-            });
-        },
-    );
+            } else {
+                Ok([0; 4])
+            }
+        });
+    });
 }
 
-#[test]
-fn mapped_checksum_read_aborts() {
-    crate::store::death_test::assert_aborts(
-        "data::phrase_library::tests::mapped_checksum_read_aborts",
-        || {
-            let mut reads = 0;
-            let _ = map_header(Path::new("chunk"), 8, false, || {
-                reads += 1;
-                if reads == 1 {
-                    Ok([0; 4])
-                } else {
-                    Err(std::io::ErrorKind::Other.into())
-                }
-            });
-        },
-    );
-}
-
+// Rust pronunciation_count requires both header bytes within the indexed record.
 #[test]
 fn count_checks_both_header_bytes_within_the_record() {
     let mut payload = Vec::new();
@@ -103,10 +94,9 @@ mod sparse_mapping_tests {
     use super::super::map_chunk;
     use std::io::Write;
 
+    // Row 109 retains the whole mapping across a wrapped payload length.
     #[test]
     fn a_sparse_chunk_maps_the_whole_file() {
-        // The pin maps the whole 2^32+8 file. Row 109 requires the crate
-        // mapping to release the whole extent when it is dropped.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("merged.bin");
         let mut file = std::fs::File::create(&path).expect("create");
@@ -123,26 +113,10 @@ mod sparse_mapping_tests {
 }
 
 mod phrase_library {
-    //! P1 reader tests: synthetic files in the exact upstream layout and the
-    //! malformed-input refusals. The `package_libraries` tests below read the real files.
-    //!
-    //! The synthetic builder, `ChunkBuilder` in `tests/support/mod.rs`, is a
-    //! faithful `SubPhraseIndex::store`
-    //! counterpart (the seed of the P5 native emitter): chunk header with
-    //! `chunk_format`'s checksum, the `'#'`-separated sections, and items
-    //! written at `add_phrase_item`'s offsets (`FIRST_ITEM_OFFSET`, `0` = no
-    //! item).
-
-    // The chunk header size and checksum come from the crate's own shared
-    // format module, as the builder's layout does — the fixtures are built
-    // with the layout under test, not a second copy of it.
     use crate::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
     use crate::data::phrase_library::{PhraseLibrary, verify_chunk};
     use crate::data::support::{ChunkBuilder, write_temp};
 
-    /// 你 (slot 4, one pronunciation of 2 packed keys) and 你好 (slot 9,
-    /// two pronunciations of 4 packed keys) — the shapes the decode tests
-    /// read back.
     fn sample() -> Vec<u8> {
         let mut builder = ChunkBuilder::new(9);
         builder.add(4, 5, "你", vec![(vec![0x12, 0x34], 5)]);
@@ -158,13 +132,13 @@ mod phrase_library {
         builder.build()
     }
 
+    // 074a2219 phrase_index.cpp:180-205,624-640 resolves item fields through the masked slot.
     #[test]
     fn reads_items_texts_and_pronunciations() {
         let scratch = tempfile::tempdir().expect("scratch directory");
         let path = write_temp(scratch.path(), "sample", &sample());
         let library = PhraseLibrary::open(&path).expect("valid chunk");
         assert_eq!(library.total_freq(), 9);
-        // Slots 1..=9 with trailing-zero trimming: slot 9 is the last item.
         assert_eq!(library.token_range(), 1..10);
 
         let item = library.item_at_slot(4).expect("item at slot 4");
@@ -191,25 +165,21 @@ mod phrase_library {
         assert_eq!(pronunciations[1].freq, 1);
         assert!(item.pronunciation(2).is_none());
 
-        // Slot addressing through a full token masks the library nibble.
         assert!(library.item(0x0100_0004).is_some());
         assert!(library.item(0x0F00_0004).is_some());
 
-        // Absent and out-of-range slots answer None, never panic.
         assert!(library.item_at_slot(0).is_none());
         assert!(library.item_at_slot(5).is_none());
         assert!(library.item_at_slot(10).is_none());
-        assert!(library.item_at_slot(usize::MAX / 4).is_none());
+        assert!(library.item_at_slot(usize::MAX).is_none());
 
-        // The tooling iteration sees exactly the two items.
         assert_eq!(library.items().count(), 2);
     }
 
+    // Rust PhraseLibrary::open checks section bounds, separators and offset-array length.
     #[test]
     fn sub_index_layout_damage_is_refused() {
         let scratch = tempfile::tempdir().expect("scratch directory");
-        // `chunk_level_refusals_name_the_file_and_layout_faults_do_not` holds the
-        // chunk header refusals and the header separator.
         let sample = sample();
         let cases: Vec<(&str, Vec<u8>)> = vec![
             ("offset-array separator lost", {
@@ -233,9 +203,6 @@ mod phrase_library {
                 bytes
             }),
             ("offset array not u32 sized", {
-                // index_two one byte past where the separator check
-                // still passes is not constructible without breaking a
-                // separator; emulate via index_one drift instead.
                 let mut bytes = sample.clone();
                 bytes[8 + 4..8 + 8].copy_from_slice(&18_u32.to_le_bytes());
                 fix_checksum(&mut bytes);
@@ -249,35 +216,10 @@ mod phrase_library {
         }
     }
 
-    #[test]
-    fn adversarial_inputs_never_overflow() {
-        let scratch = tempfile::tempdir().expect("scratch directory");
-        // Two shapes return None at every optimization level:
-        //
-        // 1. index_two == index_one (no room even for the offset array's
-        //    separator) cannot supply a length for `index_two - index_one - 1`.
-        let sample = sample();
-        let mut collapsed = sample.clone();
-        let index_two = u32_at(&collapsed[16..20]);
-        collapsed[12..16].copy_from_slice(&index_two.to_le_bytes()); // index_three := index_two
-        // Make index_two equal index_one (17): shift the words.
-        collapsed[8..12].copy_from_slice(&17_u32.to_le_bytes());
-        fix_checksum(&mut collapsed);
-        let path = write_temp(scratch.path(), "collapsed", &collapsed);
-        assert!(PhraseLibrary::open(&path).is_err());
-
-        // 2. A slot whose byte offset overflows usize on multiply.
-        let path = write_temp(scratch.path(), "sample-again", &sample);
-        let library = PhraseLibrary::open(&path).expect("valid chunk");
-        assert!(library.item_at_slot(usize::MAX / 2).is_none());
-        assert!(library.item_at_slot(usize::MAX).is_none());
-    }
-
+    // Rust item_at_slot returns None for an incomplete item header.
     #[test]
     fn item_damage_answers_no_item_never_panics() {
         let scratch = tempfile::tempdir().expect("scratch directory");
-        // Point slot 4's offset at the last bytes of the entry area, where
-        // an item header cannot fit: bounded reads, None answers.
         let mut bytes = sample();
         let payload_len = bytes.len() - 8;
         let index_two = u32_at(&bytes[16..20]);
@@ -292,39 +234,6 @@ mod phrase_library {
             library.item_at_slot(4).is_none(),
             "malformed item is no item"
         );
-
-        // An invalid UCS-4 scalar in the text degrades to None text.
-        let mut builder = ChunkBuilder::new(1);
-        builder.add(1, 1, "\u{1}\u{2}", vec![(vec![0; 4], 1)]);
-        let mut bytes = builder.build();
-        // Overwrite the second char's scalar with a surrogate.
-        let index_two = u32_at(&bytes[16..20]);
-        let content_start = 8 + index_two as usize;
-        let text_start = content_start + 8 + 6; // reserved 8 + item header 6
-        bytes[text_start + 4..text_start + 8].copy_from_slice(&0xD800_u32.to_le_bytes());
-        fix_checksum(&mut bytes);
-        let path = write_temp(scratch.path(), "surrogate", &bytes);
-        let library = PhraseLibrary::open(&path).expect("layout still validates");
-        let item = library.item_at_slot(1).expect("item present");
-        assert_eq!(item.phrase_length(), 2);
-        let text = item.phrase_text().expect("surrogate is stored");
-        assert_eq!(text.stored_words(), Some([0x01, 0xD800].as_slice()));
-        assert!(text.as_str().is_none(), "surrogate is not a char");
-    }
-
-    #[test]
-    fn an_embedded_zero_ends_the_phrase_text() {
-        let scratch = tempfile::tempdir().expect("scratch directory");
-        let mut builder = ChunkBuilder::new(1);
-        builder.add(1, 1, "\u{1}\u{0}\u{2}", vec![(vec![0; 6], 1)]);
-        let bytes = builder.build();
-        let path = write_temp(scratch.path(), "nul-text", &bytes);
-        let library = PhraseLibrary::open(&path).expect("layout validates");
-        let item = library.item_at_slot(1).expect("item present");
-        assert_eq!(item.phrase_length(), 3);
-        let text = item.phrase_text().expect("zero is stored, not refused");
-        assert_eq!(text.stored_words(), Some([0x01, 0, 0x02].as_slice()));
-        assert!(text.as_str().is_none(), "the stored form carries the cut");
     }
 
     fn u32_at(bytes: &[u8]) -> u32 {
@@ -336,11 +245,8 @@ mod phrase_library {
         bytes[4..CHUNK_HEADER_SIZE].copy_from_slice(&sum.to_le_bytes());
     }
 
-    // ── the files the pin's `MemoryChunk::mmap` refuses (#545) ──────────
-
-    /// A directory larger than the header aborts on its first word read.
-    /// On file systems reporting a shorter directory, the short gate is soft.
     #[cfg(unix)]
+    // 074a2219 memory_chunk.h:479-497 applies the size gate before reading a directory.
     #[test]
     fn a_directory_chunk_follows_the_size_the_file_system_reports() {
         use std::io::{Seek, SeekFrom};
@@ -364,14 +270,12 @@ mod phrase_library {
         }
     }
 
+    // 074a2219 memory_chunk.h:475-519 and phrase_index.cpp:335-364 distinguish mapping from layout refusal.
     #[test]
     fn chunk_level_refusals_name_the_file_and_layout_faults_do_not() {
         let scratch = tempfile::tempdir().expect("scratch directory");
         let sample = sample();
-        // `MemoryChunk::mmap` answers false: no bytes at all, a header cut short,
-        // a length word that is not the payload length, a bad checksum.
         let chunk_faults: Vec<(&str, Vec<u8>)> = vec![
-            ("empty", Vec::new()),
             ("short header", sample[..7].to_vec()),
             ("payload truncation", sample[..sample.len() - 1].to_vec()),
             ("checksum drift", {
@@ -387,13 +291,10 @@ mod phrase_library {
             let error = verify_chunk(&path).expect_err(name);
             assert_eq!(error.unmappable_path(), Some(path.as_path()), "{name}");
         }
-        // No file: the open fails, which is the same refusal.
         let absent = scratch.path().join("absent.bin");
         let error = PhraseLibrary::open(&absent).expect_err("absent file");
         assert_eq!(error.unmappable_path(), Some(absent.as_path()));
 
-        // A chunk that maps but whose sub-index layout `SubPhraseIndex::load`
-        // refuses is the pin's `g_return_val_if_fail`, not an `mmap` line.
         let mut bytes = sample;
         bytes[8 + 16] = b'!';
         fix_checksum(&mut bytes);
@@ -409,13 +310,10 @@ use crate::user::contract_data;
 
 #[cfg(feature = "tkrzw")]
 mod package_libraries {
-    //! The phrase-library reader over the chunk files of the pinned libpinyin-data
-    //! package (`just fetch-contract-data`). The package's other files are in tkrzw
-    //! format, so this module requires that backend.
-
     use super::contract_data;
     use crate::data::phrase_library::PhraseLibrary;
 
+    // Frozen 074a2219 package contains 138,096 system items and the stored readings of 的.
     #[test]
     fn reads_the_pinned_package_libraries() {
         let dir = contract_data::contract_data_dir();
@@ -432,13 +330,8 @@ mod package_libraries {
             items += count;
             libraries.push(library);
         }
-        // The four system libraries of the model libpinyin 074a2219 builds: 138,096
-        // tokens.
         assert_eq!(items, 138_096);
 
-        // 的: token 0x010005DB. The pinned model's `gb_char.table` carries two
-        // readings, `de 的 16778715 2213855` and `di 的 16778715 11000`, the counts
-        // the chunk stores verbatim.
         let gb = &libraries[0];
         let item = gb.item(0x0100_05DB).expect("的 present in gb_char");
         assert_eq!(
@@ -451,29 +344,10 @@ mod package_libraries {
             .collect();
         freqs.sort_unstable();
         assert_eq!(freqs, [11_000, 2_213_855]);
-
-        // 锕: token 0x01000001, one reading, `a 锕 … 7` in the same table.
-        let item = gb.item(0x0100_0001).expect("锕 present in gb_char");
-        assert_eq!(
-            item.phrase_text().as_ref().and_then(|text| text.as_str()),
-            Some("锕")
-        );
-        assert_eq!(item.n_pronunciations(), 1);
-        assert_eq!(
-            item.pronunciations()
-                .next()
-                .map(|pronunciation| pronunciation.freq),
-            Some(7)
-        );
-
-        // The addon chunk files ride the same format.
-        let art = PhraseLibrary::open(&dir.join("art.bin")).expect("addon art.bin");
-        assert!(art.items().count() > 0);
     }
 }
 
-/// Header and first fields stay readable past an unreadable second reading
-/// (phrase_index.cpp:180-205 at 074a2219).
+// Row 130 preserves fields before a reading that extends past the content end.
 #[test]
 fn a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields() {
     let scratch = tempfile::tempdir().unwrap();

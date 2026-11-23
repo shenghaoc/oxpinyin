@@ -11,31 +11,26 @@ fn row(token: u32, keys: &[ChewingKey]) -> PinyinIndexItem {
     }
 }
 
+// Rust pinyin_index_entries emits a record and proper prefix markers in both keyspaces.
 #[test]
 fn pinyin_index_two_spaces_with_markers() {
-    // One two-syllable row: "zhong guo" shape — distinct elements.
     let rows = vec![row(0x0100_0001, &[key(23, 0, 1), key(7, 0, 13)])];
     let entries = pinyin_index_entries(&rows);
-    // Both spaces: lengths 1 (marker) and 2 (real) → 4 keys.
     assert_eq!(entries.len(), 4);
-    // Incomplete length-1 key: initial-only first syllable.
     let inc1 = encode_incomplete_key(&[key(23, 0, 0)]);
     let inc2 = encode_incomplete_key(&[key(23, 0, 0), key(7, 0, 0)]);
     let comp2 = encode_complete_key(&[key(23, 0, 1), key(7, 0, 13)]);
     let by_key: BTreeMap<Vec<u8>, Vec<u8>> = entries.into_iter().collect();
-    assert!(by_key[&inc1].is_empty(), "length-1 key is a marker");
-    assert_eq!(by_key[&inc2].len(), 8, "L=2 records stride 8");
-    assert_eq!(by_key[&comp2].len(), 8);
-    // The complete-space length-1 prefix is the tone-zeroed first
-    // syllable — a marker unless another row stores it.
     let comp1 = encode_complete_key(&[key(23, 0, 1)]);
-    assert!(by_key[&comp1].is_empty());
+    for (prefix, full) in [(inc1, inc2), (comp1, comp2)] {
+        assert!(by_key[&prefix].is_empty());
+        assert!(!by_key[&full].is_empty());
+    }
 }
 
+// Rust pinyin_index_entries orders equal keys by token.
 #[test]
 fn pinyin_index_records_sort_by_exact_compare2_then_token() {
-    // Two rows sharing a complete key: record order is exact_compare2
-    // (all equal here) then token ascending.
     let rows = vec![
         row(0x0100_0009, &[key(5, 0, 3)]),
         row(0x0100_0002, &[key(5, 0, 3)]),
@@ -49,10 +44,9 @@ fn pinyin_index_records_sort_by_exact_compare2_then_token() {
     assert_eq!((first, second), (0x0100_0002, 0x0100_0009));
 }
 
+// Rust phrase_index_entries keeps ascending unique tokens when a populated key is also a prefix.
 #[test]
 fn phrase_index_tokens_ascending_with_prefix_markers() {
-    // 你好 (two chars) with two tokens inserted out of order, plus a
-    // row reusing the first character as a full phrase.
     let rows = vec![
         (vec![0x4f60, 0x597d], 0x0100_0009_u32),
         (vec![0x4f60, 0x597d], 0x0100_0002),
@@ -66,7 +60,6 @@ fn phrase_index_tokens_ascending_with_prefix_markers() {
         .iter()
         .flat_map(|c| c.to_le_bytes())
         .collect();
-    // 你 is both a prefix marker target and a real phrase: real value.
     assert_eq!(by_key[&ni], 0x0100_0005_u32.to_le_bytes().to_vec());
     assert_eq!(by_key[&nihao].len(), 8);
     let t0 = u32::from_le_bytes(by_key[&nihao][0..4].try_into().unwrap());

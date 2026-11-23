@@ -1,28 +1,27 @@
 use super::*;
 
-/// `memory_chunk.h`'s own example shape: whole words XOR, tail bytes
-/// folded in little-endian position order. Pinned vectors so a change
-/// to the shared implementation breaks both halves' tests at once.
+// 074a2219 memory_chunk.h:137-163 folds whole words and the final partial word.
 #[test]
 fn checksum_matches_the_pinned_word_xor() {
-    assert_eq!(chunk_checksum(&[]), 0);
-    assert_eq!(chunk_checksum(&[1, 0, 0, 0]), 1);
-    assert_eq!(chunk_checksum(&[1, 0, 0, 0, 2, 0, 0, 0]), 3);
-    // Tail bytes shift up by 8 per position: 0x030201.
-    assert_eq!(chunk_checksum(&[1, 2, 3]), 0x0003_0201);
-    // A leading zero word contributes nothing; the tail byte is the
-    // low byte of the checksum.
-    assert_eq!(chunk_checksum(&[0, 0, 0, 0, 9]), 9);
+    for (payload, checksum) in [
+        (&[][..], 0),
+        (&[1, 2, 3], 0x0003_0201),
+        (&[1, 0, 0, 0], 1),
+        (&[0, 0, 0, 0, 9], 9),
+        (&[1, 0, 0, 0, 2, 0, 0, 0], 3),
+    ] {
+        assert_eq!(chunk_checksum(payload), checksum);
+    }
 }
 
+// Rust build_memory_chunk rejects payload lengths outside u32.
 #[test]
 fn framing_refuses_a_payload_beyond_the_length_field() {
-    // A 2^32-byte payload cannot be named by the header's field;
-    // the single framing refuses rather than clamping.
     let huge = vec![0_u8; u32::MAX as usize + 1];
     assert!(build_memory_chunk(&huge).is_none());
 }
 
+// 074a2219 memory_chunk.h:536-557 writes length, checksum and payload.
 #[test]
 fn build_memory_chunk_frames_the_pin_layout() {
     let payload = [1_u8, 2, 3];
