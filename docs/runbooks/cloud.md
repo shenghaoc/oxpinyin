@@ -99,8 +99,8 @@ Work that does not touch the oracle does not need it. Then run:
 just provision-oracle
 ```
 
-It runs `just provision` first, then `provision oracle`, the container steps below, then
-`provision oracle-env`, which writes the environment file.
+It runs `just provision` first, then `provision oracle` for the container steps and the
+Linux environment file.
 
 The setup is idempotent. Every step checks its result and skips when the result holds,
 so a second run only verifies again. The options of `just provision-oracle` are:
@@ -118,8 +118,8 @@ Stdout includes an informational ext4 path report and one line for each cell:
 bdb prefix=<dir> libpinyin=<sha256> libzhuyin=<sha256> data manifest OK
 ```
 
-The setup is done when it prints one such line for each requested cell and
-`provision oracle-env` reports the environment file it wrote.
+The setup prints one such line for each requested cell. It also reports the
+environment file when the Linux selection includes the local cell.
 
 ### Python-only tools.dev hosts
 
@@ -149,13 +149,13 @@ use `--dev-tools` in place of `--python-only`.
 
 ### The environment file
 
-On Linux, `just provision-oracle` writes `oracle.env` in the
-[cache directory](setup.md#cache-directory) (`OXPINYIN_ORACLE_ENV`
-overrides the path) after its container steps succeed. `just cache-root` prints that directory.
-An earlier `~/.oxpinyin-oracle.env` is not read, moved or removed. Its private step
-`provision oracle-env` is the one writer; `just provision` never writes the file.
-The file names every cell of the provisioning cache that passes the checks below.
-Every run rewrites the file. A runner sources it first:
+On Linux, `just provision-oracle` writes `oracle.env` after its container steps succeed
+if the selection includes the local cell (kc). The default selection includes it.
+A selection that excludes kc leaves the file untouched, even if kc is cached.
+The file is in the [cache directory](setup.md#cache-directory) unless
+`OXPINYIN_ORACLE_ENV` overrides the path. `just cache-root` prints that directory.
+An earlier `~/.oxpinyin-oracle.env` is not read, moved or removed.
+`just provision` never writes the file. A runner sources it first:
 
 ```sh
 . "$(just cache-root)/oracle.env"   # the Linux cell, kc
@@ -266,7 +266,7 @@ the same implementation. A refusal is a failed run, never MATCH or SKIP.
 ## What it does
 
 `just provision` runs steps 0 and 3b. `just provision-oracle` runs `just provision`, then
-steps 1 to 4 in `provision oracle`, then step 5 in `provision oracle-env`.
+steps 1 to 5 in `provision oracle`.
 
 0. Bootstraps uv and managed CPython, after it checks the uv installation
    destination. The Python provisioning service then checks Cargo and the
@@ -349,10 +349,11 @@ steps 1 to 4 in `provision oracle`, then step 5 in `provision oracle-env`.
    staging area and published with its own manifest hashes. Reuse checks these
    recorded hashes and every listed file. The repository pin freezes no generated output.
    `provision oracle` then prints the per-cell lines.
-5. `provision oracle-env`, on Linux only, checks every Linux cell in the provisioning cache with the
-   [data verification](#data-verification), rewrites the `.pc` files of the verified prefixes to
-   the host location and writes the environment file above. With no verified cell it fails and
-   writes nothing. On macOS and Windows the host loads no oracle, so it writes neither.
+5. If the Linux selection includes the local cell, `provision oracle` checks its cached
+   prefix with the [data verification](#data-verification), rewrites that prefix's `.pc`
+   files to the host location and writes the environment file above. If that prefix
+   fails verification, the step fails before the rewrites. Other selections and
+   non-Linux hosts perform neither write.
 
 These host steps run only on Linux, and macOS and Windows
 skip them: the Valgrind check and apt install, the Kyoto Cabinet check, the apt install of the dump
@@ -458,7 +459,7 @@ side.
 
 `tools.dev.provision` is the single provisioning service. `just provision` runs
 the same module through `uv run`, which provisions the interpreter first.
-`just provision-oracle` runs its `oracle` and `oracle-env` subcommands.
+`just provision-oracle` then runs its `oracle` subcommand.
 
 Missing option values return status 1 with an `--option: requires an argument` diagnostic.
 Interpreter overrides are refused before the native prerequisite checks.
