@@ -192,6 +192,28 @@ The C crates retain ABI marshalling.
 `data` owns the native system-data readers.
 `user` owns the libpinyin session's user data: the user phrase arenas, the pin's user bigram container, the live system items and the user-file persistence over `DefaultStore`. There is no format-version row, which matches the unversioned user files ([user store §4](findings/user-store.md#4-persistence-and-the-save-cycle)). `UserStore::open_transient` opens the pin's NULL-user-directory session in memory, with no profile reads or writes; facade train and save refuse for it before they change training, locale or dirty state.
 
+### Threat model
+
+The assets are host-process memory, learned profile data, compatibility with the pin, and release integrity.
+The input boundaries are C arguments, input text, configuration, and on-disk system and user data.
+Callers must meet the [Pinyin Safety rules](https://github.com/shenghaoc/oxpinyin/blob/main/capi/src/lib.rs#L23) and [Zhuyin Safety rules](https://github.com/shenghaoc/oxpinyin/blob/main/zhuyin-capi/src/lib.rs#L23), including handle and borrowed-object lifetimes.
+The [native libraries](#native-libraries-and-unsafe-code) run in the host process and are not sandboxed.
+Malformed data and native failures can terminate that process under the [deliberate-abort policy](findings/compatibility-policy.md#failure-behaviour).
+
+**Shared static-slot rule.** A caller must finish reading or copying a returned key or key-rest pointer before any call from any context that can overwrite the same static slot, and must prevent such calls during that read or copy.
+Key and key-rest getters use separate slots, and the two C libraries have separate storage ([Pinyin slots](https://github.com/shenghaoc/oxpinyin/blob/main/capi/src/cursor.rs#L28), [Zhuyin slots](https://github.com/shenghaoc/oxpinyin/blob/main/zhuyin-capi/src/cursor.rs#L18)).
+
+Learned profile data follows the [save cycle](findings/user-store.md#4-persistence-and-the-save-cycle): Pinyin stages files and then renames them individually; Zhuyin can report success despite soft write, rename, or marker failures ([save implementation](https://github.com/shenghaoc/oxpinyin/blob/main/src/user/persistence.rs#L2031)).
+The explicit chunk fsync result is ignored, and the save path does not sync directories ([native chunk save](https://github.com/shenghaoc/oxpinyin/blob/main/src/input/native.rs#L603)).
+A save that reports success does not guarantee that every file was replaced, that the profile was replaced as a whole, or that the result survives power loss.
+[Raw store scans](https://github.com/shenghaoc/oxpinyin/blob/main/src/store/mod.rs#L565) define their own limits when writes occur during visits.
+Live `memmap2` backing files must not be modified or truncated; using a mapping after such a change can cause undefined behavior ([mapping owner](https://github.com/shenghaoc/oxpinyin/blob/main/src/input/chunk.rs#L240)).
+
+Compatibility remains governed by the [C and persistent-data contract](findings/compatibility-policy.md#decision-order), including its accepted safety differences.
+For release integrity, [external workflow actions](../.github/workflows/) are pinned by commit SHA, and the [toolchain file](../rust-toolchain.toml) and lockfiles ([Cargo](../Cargo.lock), [fuzz](../fuzz/Cargo.lock), [uv](../uv.lock)) record build inputs.
+The distribution images are intentionally rolling ([packaging details](packaging.md#release-artifacts-release-packagesyml)); [vcpkg.json](../vcpkg.json) has no builtin baseline.
+The [release `SHA256SUMS`](packaging.md#release-artifacts-release-packagesyml) verifies artifact integrity against a trusted manifest; it does not establish publisher authenticity.
+
 ## Centralized assembly
 
 Decodable engines are constructed in exactly one place, `runtime`.

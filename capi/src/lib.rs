@@ -39,6 +39,11 @@
 //!   valid and aligned for a write of its pointee type.
 //! - **Serial calls.** Serialize calls that use the same context or its
 //!   instances or iterators.
+//!   For key and key-rest pointers, also follow the
+//!   [shared static-slot rule](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#threat-model).
+//!   When [`candidates::pinyin_choose_candidate`] receives a row from another
+//!   context, serialize the call against both the donor and receiving contexts.
+//!   Addon promotion can write the donor row's type and token.
 //!
 //! ### Borrowed objects
 //!

@@ -415,8 +415,13 @@ by score, **descending**, into `estimate.sorted.index`.
 
 A token-ordered merge-join of two candidates. A matching (W1, W2) gets
 `m_WC +=; m_N_n_0 +=; m_n_1 +=; m_Mr = max`. Array headers and the magic
-header sum field by field (`m_N` too). Items are stored token-sorted
-(`retrieve_all` yields ascending `m_token`; the merge asserts it).
+header sum field by field (`m_N` too). Array-header `m_WC` and `m_freq` sums
+wrap. The merge walks records in their stored order. For an existing predecessor,
+the insert loop (`:185-190`) stores emitted items in token order and keeps the
+first emitted record for each token: `insert_array_item` refuses later duplicates,
+and the loop ignores its return value (`src/storage/flexible_single_gram.h:151-181`).
+The row is stored before the magic header is updated. A predecessor absent from
+the target is copied unchanged (`:142-146`).
 
 ### 7.5 `validate_k_mixture_model` (`:28-139`)
 

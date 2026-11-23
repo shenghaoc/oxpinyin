@@ -7,8 +7,22 @@ oxpinyin reproduces a pinned libpinyin: its behaviour follows the pin, defects i
 1. Set up native development with the [setup guide](docs/runbooks/setup.md) when the checks for the change need it.
 2. Find the crate that owns the behaviour in the [architecture](docs/architecture.md); the [Rust conventions](docs/rust-conventions.md) apply to Rust code.
 3. Make the change on a branch. The [verification procedure](docs/runbooks/verification.md#verification-scope-and-precedence) selects the checks for every change, documentation included; the [testing overview](docs/testing/README.md#where-tests-belong) describes where a test belongs.
-4. Open a pull request with the [PR template](.github/PULL_REQUEST_TEMPLATE.md), stating the result and the command that reproduces it. A stacked PR describes only its own diff and names its direct parent PR. An issue follows a search of open and closed issues, covers one outcome unless it tracks others, and uses an [issue template](.github/ISSUE_TEMPLATE/) and the existing labels.
+4. Open a pull request with the [PR template](.github/PULL_REQUEST_TEMPLATE.md), stating the result and the command that reproduces it. A PR that changes or removes Rust public items lists them in its description; the [external-interface rule](docs/constitution.md#external-interfaces) explains why. A stacked PR describes only its own diff and names its direct parent PR. An issue follows a search of open and closed issues, covers one outcome unless it tracks others, and uses an [issue template](.github/ISSUE_TEMPLATE/) and the existing labels.
 5. A PR merges after at least one bot review.
+
+## Design and review
+
+Phase 1 for a change to ownership, persistence, external interfaces or architecture is backed by source citations.
+It states the production call path, data ownership, allocation and borrowing, failure order, and the production caller of each new abstraction.
+Trivial edits are exempt.
+
+Design and review findings use four dispositions.
+A **CHANGE** entry describes a demonstrated defect or simplification, its current cost, replacement, affected callers and preserved behaviour.
+A **KEEP** entry justifies existing code with a one-line rationale in source or findings where the code is likely to be changed.
+A **DEFER** entry identifies the blocking question that must be settled.
+A **COVERED** entry links the plan that already covers the work.
+
+A review may conclude that no change is needed.
 
 ## Approval conditions
 

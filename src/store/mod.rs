@@ -525,6 +525,10 @@ pub trait RawReadStore {
     /// Visits rows between the supplied bounds in ascending key-byte order. Returning
     /// [`ControlFlow::Break`] from the visitor ends the walk successfully.
     ///
+    /// This walk is not a snapshot. Writes during visitor calls can change
+    /// subsequent records or provoke native backend errors. The effects depend
+    /// on the backend; this trait gives no uniform guarantee for such writes.
+    ///
     /// # Errors
     ///
     /// Returns a backend or visitor [`StoreError`]. Earlier visitor calls have already run.

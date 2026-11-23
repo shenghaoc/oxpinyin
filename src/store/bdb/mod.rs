@@ -237,6 +237,9 @@ impl BdbStore {
             seek = Seek::Next;
             rows.push((key, value));
         }
+        // Berkeley DB 5.3 adopts an existing hash file's duplicate flag even
+        // without DB_DUP (hash_open.c:199-206); stable sort keeps cursor order
+        // within equal keys.
         rows.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(rows)
     }

@@ -80,8 +80,7 @@ impl Fixture {
         let mut originals = system_originals(crate::data::PhraseLibraries::empty(), layout);
         let mut profile = LoadedPinyinIndex::open(Some((&self.user, check)))
             .unwrap()
-            .load_phrase_table()
-            .unwrap();
+            .load_phrase_table();
         let mut unmapped = Vec::new();
         let stop = run(
             rows,

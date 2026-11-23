@@ -110,6 +110,14 @@ pub(crate) struct RemapWalk {
     reload: bool,
 }
 
+impl RemapWalk {
+    /// Ends a remap walk and returns the libraries it mapped.
+    #[must_use]
+    pub(crate) fn into_originals(self) -> crate::user::SystemOriginals {
+        self.originals
+    }
+}
+
 /// What [`Runtime::remap_next`] reached. A library the walk skips (in the
 /// mask loop one that is not loaded or names no user file; in either a chunk
 /// that fails some other check) is not a step.
@@ -1558,9 +1566,7 @@ impl Runtime {
             .map_err(|error| OpenError::UserSession(error.into()))?;
         let dict =
             SystemDictionary::attach_phrase(system_dir, &conf, pinyin).map_err(OpenError::Dict)?;
-        let mut profile = user_pinyin
-            .load_phrase_table()
-            .map_err(|error| OpenError::UserSession(error.into()))?;
+        let mut profile = user_pinyin.load_phrase_table();
         // The library mask is shared with the language model: an unloaded
         // library's items leave both the lookups and the unigram denominator,
         // as freeing the sub-index does upstream.
@@ -1842,7 +1848,7 @@ impl Runtime {
     /// Starts the mask loop's remap over every loaded SYSTEM_FILE/DICTIONARY
     /// default library, in index order (074a2219 pinyin.cpp:1253-1273,
     /// zhuyin.cpp:788-808). Advance it with [`Self::remap_next`] and end it
-    /// with [`Self::finish_system_remap`].
+    /// with [`RemapWalk::into_originals`].
     #[must_use]
     pub(crate) fn begin_system_remap(&self) -> RemapWalk {
         self.begin_remap(1..16, false)
@@ -1912,12 +1918,6 @@ impl Runtime {
             }
         }
         None
-    }
-
-    /// Ends a remap walk and returns the libraries it mapped.
-    #[must_use]
-    pub(crate) fn finish_system_remap(&mut self, walk: RemapWalk) -> crate::user::SystemOriginals {
-        walk.originals
     }
 
     /// Unloads addon library `index` from this runtime's dictionary.

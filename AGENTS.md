@@ -11,7 +11,7 @@ The human documents hold every project rule. This file states the agent procedur
 |---|---|
 | Start any task | [Constitution and external interfaces](docs/constitution.md), [compatibility policy](docs/findings/compatibility-policy.md), [contributor procedures](CONTRIBUTING.md) and [approval rules](CONTRIBUTING.md#approval-conditions) |
 | Change compatibility, the pin or a stage | The [roadmap](ROADMAP.md) and [source policy](docs/source-policy.md) |
-| Change code | The [architecture](docs/architecture.md): which crate owns the behaviour and what it may depend on |
+| Change code | The [architecture](docs/architecture.md): which crate owns the behaviour and what it may depend on; [design and review](CONTRIBUTING.md#design-and-review) |
 | Write Rust | The [Rust conventions](docs/rust-conventions.md) |
 | Derive or change a pinned behaviour | The [source policy](docs/source-policy.md), its [Stage 2 reading procedure](docs/source-policy.md#stage-2) and the [pinned-behaviour page](docs/pinned-behaviour.md) |
 | Sort or compare candidate frequencies | The [candidate-frequency comparator ruling](docs/findings/compatibility-policy.md#no-ported-external-library-internals) |

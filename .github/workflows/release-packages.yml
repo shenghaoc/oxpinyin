@@ -171,8 +171,6 @@ jobs:
         with:
           safe-directory: 'true'
           rustup: 'true'
-          rust-cache: 'true'
-          rust-cache-key: release-${{ matrix.distro }}
           uv: 'true'
       - run: rustup show active-toolchain
 
