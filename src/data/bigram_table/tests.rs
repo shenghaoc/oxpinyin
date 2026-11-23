@@ -34,6 +34,14 @@ impl crate::store::RawReadStore for &ScriptedDbm {
         }
     }
 
+    fn open_hash_read_only(_path: &Path) -> Result<Self, crate::store::StoreError> {
+        unreachable!("the double never opens a hash")
+    }
+
+    fn native_keys(&self, _keys: &mut Vec<Vec<u8>>) -> Result<(), crate::store::StoreError> {
+        unreachable!("the bigram reader never enumerates keys")
+    }
+
     fn contains_raw(&self, _key: &[u8]) -> Result<bool, crate::store::StoreError> {
         unreachable!("the bigram reader never checks")
     }
@@ -82,6 +90,14 @@ impl crate::store::RawReadStore for FailingStore {
         } else {
             crate::store::StoreError::Backend("injected".into())
         })
+    }
+
+    fn open_hash_read_only(_path: &Path) -> Result<Self, crate::store::StoreError> {
+        unreachable!("the double never opens a hash")
+    }
+
+    fn native_keys(&self, _keys: &mut Vec<Vec<u8>>) -> Result<(), crate::store::StoreError> {
+        unreachable!("the bigram reader never enumerates keys")
     }
 
     fn contains_raw(&self, _key: &[u8]) -> Result<bool, crate::store::StoreError> {
