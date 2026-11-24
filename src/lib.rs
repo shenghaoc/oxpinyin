@@ -76,6 +76,8 @@ mod sentence_facts;
 #[forbid(unsafe_code)]
 pub mod single_gram;
 #[forbid(unsafe_code)]
+mod stable_sort;
+#[forbid(unsafe_code)]
 mod static_strings;
 pub mod store;
 #[forbid(unsafe_code)]

@@ -201,6 +201,37 @@ fn selection_compare(left: &BeamEntry, right: &BeamEntry, nstore: usize) -> Orde
         .then_with(|| left.batch_position.cmp(&right.batch_position))
 }
 
+/// [`ordered_poss_compare`] as an integer: ascending keys are best first, and
+/// equal keys are exactly its ties. `+inf` is the least key and every finite
+/// value orders by descending value, with -0 and +0 one key. `-inf` is the
+/// greatest non-NaN key, and every NaN, whatever its sign or payload, is the
+/// one key above it.
+fn poss_key(poss: f32) -> u32 {
+    if poss.is_nan() {
+        return u32::MAX;
+    }
+    let bits = if poss == 0.0 { 0 } else { poss.to_bits() };
+    let ascending = if bits >> 31 == 1 {
+        !bits
+    } else {
+        bits | (1 << 31)
+    };
+    !ascending
+}
+
+/// [`selection_compare`] as an integer, most significant field first: the
+/// length (one-slot shape only), the possibility key and the batch position.
+/// A batch position is unique, so no two entries share a key.
+fn selection_key(entry: &BeamEntry, nstore: usize) -> u128 {
+    let batch_position = entry.batch_position as u128;
+    if nstore == 1 {
+        return u128::from(entry.value.length) << 96
+            | u128::from(poss_key(entry.value.poss)) << 64
+            | batch_position;
+    }
+    u128::from(poss_key(adjusted_poss(&entry.value))) << 64 | batch_position
+}
+
 /// Select on the complete key, then order just the kept prefix. Batch
 /// positions are unique, so unstable selection cannot reorder equal keys.
 /// O(m + k log k) time and no allocation beyond the candidate batch.
@@ -215,7 +246,7 @@ fn select_top(mut values: Vec<BeamEntry>, count: usize, nstore: usize) -> Vec<Be
         values.select_nth_unstable_by(count - 1, compare);
         values.truncate(count);
     }
-    values.sort_unstable_by(compare);
+    crate::stable_sort::sort_by_key(&mut values, |entry| selection_key(entry, nstore));
     values
 }
 
@@ -223,7 +254,7 @@ fn select_top(mut values: Vec<BeamEntry>, count: usize, nstore: usize) -> Vec<Be
 /// (`phonetic_lookup.h:174-178,337 at 074a2219`), without integer truncation.
 /// Adjusted S is selection-only; raw possibility orders the final tails.
 fn tail_merge(values: &mut [Value]) {
-    values.sort_by(|left, right| ordered_poss_compare(left.poss, right.poss));
+    crate::stable_sort::sort_by_key(values, |value| u128::from(poss_key(value.poss)));
 }
 
 /// One `(position, token)` node: the pin's `trellis_node<nstore>`

@@ -418,7 +418,7 @@ impl UserLibrary {
             })
             .collect();
         let mut starts: Vec<_> = offsets.iter().map(|&(_, start)| start).collect();
-        starts.sort_unstable();
+        crate::stable_sort::sort_values(&mut starts);
         let shared_starts = starts
             .windows(2)
             .filter_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))

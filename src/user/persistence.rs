@@ -2031,7 +2031,7 @@ fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, Librar
                 .map(|(nibble, name)| (*nibble, name, LibraryFile::User)),
         )
         .collect();
-    libraries.sort_by_key(|&(nibble, _, _)| nibble);
+    crate::stable_sort::sort_by_key(&mut libraries, |&(nibble, _, _)| u128::from(nibble));
     libraries
 }
 

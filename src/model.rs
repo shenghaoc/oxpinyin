@@ -711,7 +711,9 @@ pub enum PhraseItemRead {
 /// Every caller sorts through this function, so the libraries hold one
 /// instance of the sort.
 pub(crate) fn sort_tokens_by_library(tokens: &mut [u32]) {
-    tokens.sort_by_key(|token| crate::vocab::phrase_index_library_index(*token));
+    crate::stable_sort::sort_by_key(tokens, |token| {
+        u128::from(crate::vocab::phrase_index_library_index(*token))
+    });
 }
 
 /// What one trellis step prices of a ranged token: the phrase's length in
