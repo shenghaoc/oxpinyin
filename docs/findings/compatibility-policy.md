@@ -160,7 +160,7 @@ For calls that the pin makes, the documented contract of the call governs, not o
 - The reference build passes no `-DNDEBUG` (autoconf's default `-g -O2`), so every `assert` at the pin is an abort site.
 - Before it aborts, oxpinyin does the pin's preceding observable work in the pin's order: files written, removed or renamed, and stderr bytes.
 - oxpinyin calls `std::process::abort()` at the corresponding failure point. This may occur in any crate when all affected call paths require termination. Shared code may instead return a typed error when the caller must determine the abort point.
-- `abort()` does not unwind or run destructors. Under the current unwind panic strategy, a Rust panic can run `Drop` implementations before termination and is not a substitute for the pin's abort. An unhandled panic in a Rust tool ordinarily exits with status 101; a panic attempting to cross a non-unwinding C ABI boundary aborts. `libc::abort()` is not used in a crate that forbids `unsafe`.
+- `abort()` does not unwind or run destructors. Release builds abort on panic; tests and profiling unwind. `std::process::abort()` therefore ends the process with SIGABRT and runs no destructors in every profile. An unhandled panic in a Rust tool ordinarily exits with status 101; a panic attempting to cross a non-unwinding C ABI boundary aborts. `libc::abort()` is not used in a crate that forbids `unsafe`.
 
 **Unreachable internal invariants.** A panic-producing assertion is permitted only where failure is proven unreachable under the applicable preconditions.
 No abort or panic is introduced where the pin continues or returns an error.
