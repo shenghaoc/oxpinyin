@@ -22,7 +22,7 @@ import sys
 from collections.abc import Mapping, Sequence
 
 from .. import host, pool, slot
-from ..cell import LOCAL_CELL
+from ..cell import CELLS, LOCAL_CELL
 from ..runners import Finished, emit, write
 from . import bench, identity, instructions, prepare, reports
 from .bench import Arm, Bench, fail, setting
@@ -50,21 +50,26 @@ def lines_of(path: Path, pattern: str, *, ignore_case: bool = False) -> list[str
     return [line for line in text.split('\n') if line and expression.search(line)]
 
 
-def roots(env: Mapping[str, str]) -> dict:
-    """Where `prepare callgrind` stages the three libraries the differential uses."""
-    return dict(lp=prepare.pin_prefix(env, LOCAL_CELL), ox=prepare.subject_stage(env, LOCAL_CELL),
-                nodebug=prepare.subject_stage(env, 'nodebug'))
+def roots(env: Mapping[str, str], cell_name: str = LOCAL_CELL) -> dict:
+    """Where `prepare callgrind` stages the three libraries the differential of CELL_NAME uses."""
+    return dict(lp=prepare.pin_prefix(env, cell_name),
+                ox=prepare.subject_stage(env, prepare.stage_name(cell_name, debug=True)),
+                nodebug=prepare.subject_stage(env, prepare.stage_name(cell_name, debug=False)))
 
 
-def data_dir(env: Mapping[str, str]) -> Path:
-    """The prepared local-cell pin's data directory, which every arm of the differential reads."""
-    return prepare.pin_prefix(env, LOCAL_CELL) / prepare.DATA_SUBDIRECTORY
+def data_dir(env: Mapping[str, str], cell_name: str = LOCAL_CELL) -> Path:
+    """The prepared pin's data directory of CELL_NAME, which every arm of the differential reads."""
+    return prepare.pin_prefix(env, cell_name) / prepare.DATA_SUBDIRECTORY
 
 
-def libraries(env: Mapping[str, str]) -> dict:
-    """The three libraries the differential needs, checked to exist before anything runs."""
+def libraries(env: Mapping[str, str], cell_name: str = LOCAL_CELL, *,
+              keys: frozenset[str] = frozenset(('lp', 'ox', 'nodebug')), data: bool = True) -> dict:
+    """The prepared libraries named by KEYS, and with DATA the prepared data directory, checked
+    to exist before anything runs."""
     found = {}
-    for key, root in roots(env).items():
+    for key, root in roots(env, cell_name).items():
+        if key not in keys:
+            continue
         # `find` on a root that is not there says so and ends the run; on one without the file it prints nothing.
         if not root.is_dir():
             fail(f"find: '{root}': No such file or directory")
@@ -72,9 +77,8 @@ def libraries(env: Mapping[str, str]) -> dict:
     for artifact in found.values():
         if artifact is None or not artifact.exists():
             fail(f"fatal: missing artifact: '{'' if artifact is None else artifact}'")
-    data = data_dir(env)
-    if not data.is_dir():
-        fail(f'fatal: data dir {data} missing')
+    if data and not data_dir(env, cell_name).is_dir():
+        fail(f'fatal: data dir {data_dir(env, cell_name)} missing')
     return found
 
 
@@ -232,7 +236,16 @@ def callgrind_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
 
 def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
-    """Instruction-level differential for the steady keystroke cycle: stages 0 through 6."""
+    """Instruction-level differential for the steady keystroke cycle: stages 0 through 6.
+
+    `--cell CELL` alone selects the cell (default: the local one) that `measure-prepare callgrind
+    --cells CELL` prepared.
+    """
+    cell_name = LOCAL_CELL
+    if len(argv) == 2 and argv[0] == '--cell':
+        cell_name, argv = argv[1], []
+        if cell_name not in CELLS:
+            fail(f'--cell must be one of: {" ".join(CELLS)}', 2)
     if argv:
         from . import sentence
         return sentence.run(argv, env)
@@ -254,13 +267,22 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     except OSError as error:
         fail(f"mkdir: cannot create directory '{out}': {error.strerror}")
 
-    found = libraries(env)
-    lp, ox, nodebug = (found[key] for key in ('lp', 'ox', 'nodebug'))
-    data = data_dir(env)
+    # A CG_* setting replaces its prepared input, which then need not exist.
+    pin_so, ox_so, data_setting = (env.get(name) for name in ('CG_PIN_SO', 'CG_OX_SO', 'CG_DATA'))
+    needed = frozenset(key for key, setting in (('lp', pin_so), ('ox', ox_so), ('nodebug', ox_so))
+                       if not setting)
+    found = libraries(env, cell_name, keys=needed, data=not data_setting)
+    lp = Path(pin_so) if pin_so else found['lp']
+    if ox_so:
+        ox = nodebug = Path(ox_so)
+    else:
+        ox, nodebug = found['ox'], found['nodebug']
+    data = Path(data_setting) if data_setting else data_dir(env, cell_name)
+    pin_prefix = lp.parent.parent if pin_so else prepare.pin_prefix(env, cell_name)
     harness = prepare.harness_path(env)
-    worker = Bench(label, env, harness, cpu, cell=LOCAL_CELL)
-    arms = {'lp': Arm(f'libpinyin-{LOCAL_CELL}', lp, data, lp.parent),
-            'ox': Arm(f'oxpinyin-{LOCAL_CELL}', ox, data, ox.parent),
+    worker = Bench(label, env, harness, cpu, cell=cell_name)
+    arms = {'lp': Arm(f'libpinyin-{cell_name}', lp, data, lp.parent),
+            'ox': Arm(f'oxpinyin-{cell_name}', ox, data, ox.parent),
             'nodebug': Arm('oxpinyin-nodebug', nodebug, data, nodebug.parent)}
     for key, arm in arms.items():
         worker.standalone('pin' if key == 'lp' else 'subject', arm)
@@ -268,7 +290,7 @@ def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
 
     # 0. environment
     bench.tee(out / 'environment.txt',
-              environment_table([lp, ox, nodebug], prepare.pin_prefix(env, LOCAL_CELL), data, env))
+              environment_table([lp, ox, nodebug], pin_prefix, data, env))
 
     # 1. collection anchors
     code, text = anchors_table(harness)
@@ -355,6 +377,15 @@ def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """
     label = SYSTEM_IMPORT
     arguments = list(argv)
+    if '--cell' in arguments:
+        # `--cell CELL` replaces PIN-SO OX-SO SYSTEM-DATA-DIR with the arms `measure-prepare callgrind
+        # --cells CELL` staged: the pin, the profiled subject and the pin's data.
+        index = arguments.index('--cell')
+        cell_name = arguments[index + 1] if index + 1 < len(arguments) else ''
+        if cell_name not in CELLS or index != 0:
+            fail(f'--cell CELL must lead the arguments, CELL one of: {" ".join(CELLS)}', 2)
+        found = libraries(env, cell_name)
+        arguments = [str(found['lp']), str(found['ox']), str(data_dir(env, cell_name)), *arguments[2:]]
     if len(arguments) == 3 or (len(arguments) > 3 and arguments[3] == '--jobs'):
         arguments.insert(3, str(prepare.results(env, SYSTEM_IMPORT)))
     for number, name in enumerate(('pin-so', 'ox-so', 'system-data-dir', 'new-output-dir'), 1):

@@ -17,8 +17,11 @@ BACKEND_TO_CELL = {backend: cell for cell, backend in CELL_TO_BACKEND.items()}
 CELLS = tuple(CELL_TO_BACKEND)
 BACKEND_FORMATS = {'bdb': 'BerkeleyDB', 'kyotocabinet': 'KyotoCabinet', 'tkrzw': 'Tkrzw'}
 BACKEND_EXTENSIONS = {'bdb': 'db', 'kyotocabinet': 'kct', 'tkrzw': 'tkt'}
-# Linux runs Kyoto Cabinet; the default tkrzw backend is exercised on macOS and
-# Windows because the Ubuntu tkrzw runtime is not supported.
+# The cell that CI selects on Linux. The crates' Cargo default backend is tkrzw on
+# every platform. GitHub's Ubuntu runners ship a defective libtkrzw, and Kyoto
+# Cabinet is reproducible there, so CI on Linux selects kc. Locally, Linux supports
+# all three cells; tkrzw needs a libtkrzw that passes the probes of
+# docs/runbooks/verification.md section 9.
 LOCAL_CELL = 'kc'
 
 

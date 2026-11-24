@@ -139,6 +139,50 @@ def prepare(args, env):
     return copies
 
 
+def hardware_report(counts, refused, args):
+    """User-space instructions per invocation, from the same native rounds as the time.
+
+    The counters are PERF_COUNT_HW_INSTRUCTIONS around the worker's anchor. A host that
+    refuses the counter (errno kept) reports nothing, and Callgrind stays the figure.
+    """
+    if any(len(values) != args.native_rounds for values in counts.values()):
+        return dict(available=False, errno=sorted(set(refused.values())))
+    controls = {arm: stats.stable_control(counts[arm], counts[control])
+                for arm, control in (('main', 'mctl'), ('pr__', 'pctl'))}
+    return dict(available=True, verdict='VALID' if all(row['stable'] for row in controls.values()) else 'DIAGNOSTIC',
+                per_invocation=counts, summaries={arm: stats.summary(values) for arm, values in counts.items()},
+                pr_over_main=stats.paired_ratio(counts['pr__'], counts['main']),
+                pr_over_pin=stats.paired_ratio(counts['pr__'], counts['pin_']), controls=controls)
+
+
+def memory_report(rollups, args):
+    """smaps_rollup after the last invocation of each native process, in KiB.
+
+    The headline is anonymous memory (Anonymous), which dictionary pages in the
+    page cache do not move. Pss sits beside it; USS (Private_Clean plus
+    Private_Dirty) and Rss are secondary, because mapped clean file pages swing
+    between sessions.
+    """
+    if any(len(values) != args.native_rounds for values in rollups.values()):
+        return dict(available=False)
+    fields = dict(anonymous=lambda r: r['anonymous_kib'], pss=lambda r: r['pss_kib'],
+                  uss=lambda r: r['private_clean_kib'] + r['private_dirty_kib'], rss=lambda r: r['rss_kib'])
+    series = {name: {arm: [read(row) for row in rows] for arm, rows in rollups.items()}
+              for name, read in fields.items()}
+    if any(value < 0 for per_arm in series.values() for values in per_arm.values() for value in values):
+        return dict(available=False)
+    anonymous = series['anonymous']
+    controls = {arm: stats.stable_residency(anonymous[arm], anonymous[control])
+                for arm, control in (('main', 'mctl'), ('pr__', 'pctl'))}
+    return dict(available=True, verdict='VALID' if all(row['stable'] for row in controls.values()) else 'DIAGNOSTIC',
+                kib={name: {arm: stats.summary(values) for arm, values in per_arm.items()}
+                     for name, per_arm in series.items()},
+                anonymous_pr_minus_pin=stats.paired_difference(anonymous['pr__'], anonymous['pin_']),
+                pr_over_pin={name: stats.paired_ratio(series[name]['pr__'], series[name]['pin_'])
+                             for name in fields},
+                controls=controls)
+
+
 def native_campaign(args, env, harness):
     """Time the same scoped worker natively, using plain shipping objects.
 
@@ -162,6 +206,9 @@ def native_campaign(args, env, harness):
     observed = copy.copy(args)
     observed.iterations = args.native_iterations
     samples = {arm: [] for arm in ARMS}
+    hardware = {arm: [] for arm in ARMS}
+    refused = {}
+    rollups = {arm: [] for arm in ARMS}
     answers = {}
     for round_index in range(args.native_rounds):
         order = ARMS[round_index % len(ARMS):] + ARMS[:round_index % len(ARMS)]
@@ -170,7 +217,8 @@ def native_campaign(args, env, harness):
             command = [str(harness), '--perf-' + args.workload, str(library),
                        str(args.system_dir), args.input, str(args.native_iterations)]
             child_env = dict(env, LD_LIBRARY_PATH=bench.loader_path(library.parent,
-                                                                  env.get('LD_LIBRARY_PATH')))
+                                                                  env.get('LD_LIBRARY_PATH')),
+                             PERF_HW='1', PERF_MODE='rss-diag')
             bench.guard('native sentence campaign', args.cell, 'pin' if arm == 'pin_' else 'subject',
                         library, command, env=child_env)
             done = bench.capture(bench.pinned(command, args.cpu), env=child_env)
@@ -189,6 +237,12 @@ def native_campaign(args, env, harness):
                 bench.fail(arm + ': native fresh-process observations differ', 3)
             answers[arm] = row['observations']
             samples[arm].append(row['elapsed_ns'] / args.native_iterations)
+            if type(row.get('hw_instructions')) is int and row['hw_instructions'] > 0:
+                hardware[arm].append(row['hw_instructions'] / args.native_iterations)
+            else:
+                refused[arm] = row.get('hw_errno', 0)
+            if isinstance(row.get('rollup_after'), dict):
+                rollups[arm].append(row['rollup_after'])
     if not (answers['main'] == answers['mctl'] == answers['pr__'] == answers['pctl']):
         bench.fail('native base/PR/control observations differ', 3)
     controls = {arm: stats.stable_control(samples[arm], samples[control])
@@ -197,6 +251,9 @@ def native_campaign(args, env, harness):
                   rounds=args.native_rounds, iterations=args.native_iterations,
                   ns_per_invocation=samples, summaries={arm: stats.summary(values) for arm, values in samples.items()},
                   pr_over_main=stats.paired_ratio(samples['pr__'], samples['main']), controls=controls,
+                  pr_over_pin=stats.paired_ratio(samples['pr__'], samples['pin_']),
+                  hardware=hardware_report(hardware, refused, args),
+                  memory=memory_report(rollups, args),
                   main_pr_observations_equal=True, main_pin_observations_equal=answers['main'] == answers['pin_'])
     (args.out / 'native.json').write_text(json.dumps(result, indent=2) + '\n')
     emit(json.dumps(result, indent=2))

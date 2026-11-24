@@ -85,6 +85,21 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         }
     )?;
     let mut elapsed = 0;
+    // `PERF_HW` counts user-space instructions around the same anchor, natively. A refused
+    // counter leaves its errno for the report and the run goes on.
+    let mut hw_errno = 0;
+    let mut counter = std::env::var_os("PERF_HW").and_then(|_| {
+        platform::Counter::open()
+            .map_err(|error| {
+                hw_errno = error
+                    .downcast_ref::<std::io::Error>()
+                    .and_then(|e| e.raw_os_error())
+                    .unwrap_or(0);
+            })
+            .ok()
+    });
+    // `None` once any sample is missing: a partial total is not reported.
+    let mut hw_instructions = Some(0u64);
     for repeat in 0..iterations {
         require((typing.reset)(instance.handle), "sentence workload failed")?;
         if repeat != 0 {
@@ -100,6 +115,9 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
             if !is_typing {
                 step.parsed = (typing.parse)(instance.handle, prefix.as_ptr());
             }
+            if let Some(c) = &mut counter {
+                c.enable();
+            }
             let start = platform::now_ns();
             if is_typing {
                 step = bisect_typing_unit(&typing, &guess, &sentence, instance.handle, prefix);
@@ -107,6 +125,11 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
                 step.sentence = bisect_sentence_unit(&sentence, instance.handle);
             }
             let end = platform::now_ns();
+            if let Some(c) = &mut counter {
+                hw_instructions = hw_instructions
+                    .zip(c.sample())
+                    .map(|(total, count)| total + count);
+            }
             require(
                 start != 0
                     && end >= start
@@ -132,7 +155,20 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         }
         out.write_all(b"]")?;
     }
-    writeln!(out, "],\"elapsed_ns\":{elapsed}}}")?;
+    write!(out, "],\"elapsed_ns\":{elapsed}")?;
+    match (counter.is_some(), hw_instructions) {
+        (true, Some(total)) => write!(out, ",\"hw_instructions\":{total}")?,
+        _ if hw_errno != 0 || std::env::var_os("PERF_HW").is_some() => {
+            write!(out, ",\"hw_errno\":{hw_errno}")?;
+        }
+        _ => {}
+    }
+    // `PERF_MODE=rss-diag` reads smaps_rollup once, after the last iteration, with the
+    // library still open.
+    if std::env::var("PERF_MODE").is_ok_and(|mode| mode == "rss-diag") {
+        platform::Diagnostic::read().write(&mut out, "after")?;
+    }
+    writeln!(out, "}}")?;
     Ok(())
 }
 

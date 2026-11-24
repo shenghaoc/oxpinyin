@@ -2,12 +2,13 @@
 
 Called by the `measure system-import-profile` recipe after it has checked the arms and built
 the driver. Every side (pin, ox) is profiled three ways: Callgrind phase
-instruction counts, the Massif heap peak and the Massif mapped-page peak. The
-six collections are independent: each has its own user store, reads only
-instruction and allocation counters, and shares no file with another. They run
-in tools/dev/pool.py's pool, one per allowed CPU, and their report
-lines print in the fixed order pin then ox, callgrind, heap, pages, whatever
-order they finish in. `--jobs 1` runs them in that order with no pool.
+instruction counts, the Massif heap peak and the Massif mapped-page peak. A
+`--cold-open` run adds a fourth, native collection: hardware user-space instructions
+over the same span, without Valgrind. The collections are independent: each has its
+own user store, reads only instruction and allocation counters, and shares no file
+with another. They run in tools/dev/pool.py's pool, one per allowed CPU, and their
+report lines print in the fixed order pin then ox, callgrind, heap, pages, hardware,
+whatever order they finish in. `--jobs 1` runs them in that order with no pool.
 
 Within one collection the attempts stay sequential: a run that overlapped a
 host suspend is discarded and the next attempt, in a fresh user store, decides.
@@ -28,7 +29,7 @@ if str(ROOT) not in sys.path:
 from tools.dev import pool, slot
 
 SIDES = ('pin', 'ox')
-MODES = ('callgrind', 'heap', 'pages')
+MODES = ('callgrind', 'heap', 'pages', 'hardware')
 ATTEMPTS = 6
 # A boot-time minus monotonic-time drift over this many ns means the host slept.
 SUSPEND_LIMIT_NS = 1_000_000
@@ -73,6 +74,14 @@ def report(side, mode, workload, stderr):
     Callgrind must hold one dump per phase; Massif must hold at least one heap
     snapshot. Anything else raises Failure.
     """
+    if mode == 'hardware':
+        found = re.search(rb'hw-instructions: (\d+)\s*$', stderr, re.M)
+        if not found:
+            # The pin's own message can leave no newline before the driver's line.
+            # A host that refuses the counter keeps the Callgrind figure.
+            reason = re.search(rb'hw-instructions: (.*)$', stderr, re.M)
+            return [f'{side} hardware: {reason[1].decode() if reason else "no count"}']
+        return [f'{side} cold-open hardware: {int(found[1])} instructions']
     if mode == 'callgrind':
         counts = [int(value) for value in re.findall(rb'^summary: (\d+)\s*$', stderr, re.M)]
         phases = ('cold-open',) if workload == '--cold-open' else ('open', 'import', 'save', 'close')
@@ -100,10 +109,11 @@ def collect(side, mode, plan, environment, context):
         before = suspend_offset()
         utc = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
         load = load_average()
+        # The hardware mode runs the driver natively; the others run it under Valgrind.
+        profiler = [] if mode == 'hardware' else ['valgrind', '--vgdb=no', '--log-fd=2', *valgrind_options(mode)]
         status, stdout, stderr = context.launch(
-            ['valgrind', '--vgdb=no', '--log-fd=2', *valgrind_options(mode),
-             str(plan['work'] / 'driver'), str(plan[side]), str(plan['data']), str(user), plan['workload']],
-            env=environment)
+            [*profiler, str(plan['work'] / 'driver'), str(plan[side]), str(plan['data']), str(user), plan['workload']],
+            env=dict(environment, PERF_HW='1') if mode == 'hardware' else environment)
         suspended = suspend_offset() - before
         if suspended > SUSPEND_LIMIT_NS:
             lines.append(f'DISCARD {side} {mode}: suspend_delta_ns={suspended}')
@@ -133,9 +143,10 @@ def run_collections(plan, jobs, emit):
     its size and serial and pooled runs must agree.
     """
     environment = dict(os.environ)
+    modes = MODES if plan['workload'] == '--cold-open' else MODES[:3]
     units = [(f'{side}-{mode}', lambda context, side=side, mode=mode:
-              collect(side, mode, plan, environment, context)) for side in SIDES for mode in MODES]
-    keys = {f'{side}-{mode}': (side, mode) for side in SIDES for mode in MODES}
+              collect(side, mode, plan, environment, context)) for side in SIDES for mode in modes]
+    keys = {f'{side}-{mode}': (side, mode) for side in SIDES for mode in modes}
     return pool.run_leased(units, cancelled=slot.CANCELLED.is_set,
                            serial=jobs == 1, max_workers=jobs, emit=lambda name, lines: emit(*keys[name], lines),
                            cancel_error=slot.Cancelled)
