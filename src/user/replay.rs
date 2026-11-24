@@ -498,6 +498,7 @@ impl ReplayedLibrary {
     }
 
     /// Decodes a complete item at the supplied slot.
+    #[must_use]
     pub fn item(&self, slot: u32) -> Option<ChunkItem> {
         decode_phrase_item(self.complete_item(slot)?)
     }

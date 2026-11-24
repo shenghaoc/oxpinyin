@@ -57,9 +57,10 @@ fn mapped_header_read_aborts(#[case] failed_read: usize) {
     });
 }
 
-// Rust pronunciation_count requires both header bytes within the indexed record.
+// `pronunciation_count` reads both header bytes, as `get_phrase_item` does: they must
+// lie inside the content, and the neighbouring records do not matter.
 #[test]
-fn count_checks_both_header_bytes_within_the_record() {
+fn count_checks_both_header_bytes_within_the_content() {
     let mut payload = Vec::new();
     let content = [vec![0; 8], vec![255, 17, 255, 29]].concat();
     let offsets = [0_u32, 8, 9, 10, 12];
@@ -82,9 +83,11 @@ fn count_checks_both_header_bytes_within_the_record() {
     )
     .expect("write");
     let library = PhraseLibrary::open(&path).expect("open");
+    assert_eq!(library.pronunciation_count(1), Some(17));
+    assert_eq!(library.pronunciation_count(2), Some(255));
     assert_eq!(library.pronunciation_count(3), Some(29));
     assert!(library.item(3).is_none(), "the body is truncated");
-    for token in [0, 1, 2, 4, 5, u32::MAX] {
+    for token in [0, 4, 5, u32::MAX] {
         assert_eq!(library.pronunciation_count(token), None, "token {token}");
     }
 }
