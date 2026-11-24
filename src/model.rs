@@ -1011,6 +1011,11 @@ impl MergedGram {
         }
     }
 
+    /// The row's bytes, for a reader to reuse as its next value buffer.
+    pub(crate) fn into_chunk(self) -> Vec<u8> {
+        self.chunk
+    }
+
     /// The fault the merge met, if any.
     #[must_use]
     pub const fn fault(&self) -> Option<GramFault> {
@@ -1089,6 +1094,11 @@ pub struct NbestStepRow {
 }
 
 impl NbestStepRow {
+    /// Empties the row and hands its bytes back to the caller.
+    pub(crate) fn take_chunk(&mut self) -> Option<Vec<u8>> {
+        self.loaded.take().flatten().map(MergedGram::into_chunk)
+    }
+
     /// Loads once on success, including a missing row. Errors are propagated
     /// without turning corruption into a loaded miss.
     ///
@@ -1283,6 +1293,10 @@ pub trait LanguageModel {
     ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
         Ok(None)
     }
+
+    /// Ends the step that loaded `row`: the model may reuse the row's bytes
+    /// for its next read. The default drops the row's contents.
+    fn release_row(&self, _row: &mut NbestStepRow) {}
 
     /// Whether `error` is a backend read that failed after its size check
     /// succeeded — the point where Kyoto Cabinet's `Bigram::load` asserts

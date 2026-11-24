@@ -253,6 +253,7 @@ impl BigramLanguageModel<'_> {
         };
         let count = single_gram::get_freq(&row, next);
         let total = single_gram::get_total_freq(&row).unwrap_or(0);
+        self.bigram.recycle(row);
         Ok(Some((count.unwrap_or(0), total, count.is_some())))
     }
 
@@ -482,6 +483,12 @@ impl LanguageModel for BigramLanguageModel<'_> {
         _row: &mut crate::model::NbestStepRow,
     ) -> Result<crate::model::NbestStepCosts, Self::Error> {
         self.nbest_item_costs(token, UserCountDelta::ZERO, item)
+    }
+
+    fn release_row(&self, row: &mut crate::model::NbestStepRow) {
+        if let Some(chunk) = row.take_chunk() {
+            self.bigram.recycle(chunk);
+        }
     }
 
     fn nbest_successors_in_row<'a>(

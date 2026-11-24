@@ -23,7 +23,15 @@ use crate::single_gram::encode_single_gram;
 /// `load_raw_successors` call reads the attached DBM, including sentence start.
 pub struct BigramTable<S = crate::store::DefaultStore> {
     dbm: RawChewingDbm<S>,
+    /// The value buffer the next read fills, kept with its capacity between
+    /// reads as the pin keeps the chunk of its reused `SingleGram`
+    /// (`ngram_kyotodb.cpp:131-139` at 074a2219). A row's consumer hands the
+    /// buffer back through [`Self::recycle`].
+    spare: std::cell::Cell<Vec<u8>>,
 }
+
+/// The largest buffer [`BigramTable::recycle`] keeps.
+const SPARE_LIMIT: usize = 1 << 20;
 
 impl BigramTable {
     pub(crate) fn attach(path: &Path) -> Result<Self, DictError> {
@@ -38,7 +46,24 @@ impl<S: crate::store::RawReadStore> BigramTable<S> {
     /// Wraps an open native DBM.
     #[doc(hidden)]
     pub const fn new(dbm: RawChewingDbm<S>) -> Self {
-        Self { dbm }
+        Self {
+            dbm,
+            spare: std::cell::Cell::new(Vec::new()),
+        }
+    }
+
+    /// Takes back a row's buffer for the next read, emptied, keeping the
+    /// larger of it and the one held. A buffer over [`SPARE_LIMIT`] is dropped.
+    pub(crate) fn recycle(&self, mut value: Vec<u8>) {
+        value.clear();
+        let held = self.spare.take();
+        self.spare.set(
+            if value.capacity() > held.capacity() && value.capacity() <= SPARE_LIMIT {
+                value
+            } else {
+                held
+            },
+        );
     }
 
     pub(crate) fn finish_attachment(&mut self) {
@@ -64,11 +89,19 @@ impl<S: crate::store::RawReadStore> BigramTable<S> {
     /// miss.
     pub fn load_raw_successors(&self, prev_token: u32) -> Result<Option<Vec<u8>>, DictError> {
         let key = encode_token_key(prev_token);
-        let mut value = Vec::new();
-        if !self.dbm.get_bigram(&key, &mut value)? {
-            return Ok(None);
+        // `get_bigram` empties the buffer and fills it, so its capacity carries over.
+        let mut value = self.spare.take();
+        match self.dbm.get_bigram(&key, &mut value) {
+            Ok(true) => Ok(Some(value)),
+            Ok(false) => {
+                self.recycle(value);
+                Ok(None)
+            }
+            Err(error) => {
+                self.recycle(value);
+                Err(error)
+            }
         }
-        Ok(Some(value))
     }
 
     /// [`Self::load_raw_successors`] for the callers that decode the value
@@ -86,6 +119,7 @@ impl<S: crate::store::RawReadStore> BigramTable<S> {
             return Ok(None);
         };
         if !crate::single_gram::is_complete(&value) {
+            self.recycle(value);
             return Err(DictError::Parse);
         }
         Ok(Some(value))

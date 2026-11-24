@@ -1473,6 +1473,8 @@ where
         }
         if index == 0 {
             head_row = loaded;
+        } else {
+            model.release_row(&mut loaded);
         }
     }
     // The pin's independent unigram pass uses only the best predecessor
@@ -1482,6 +1484,7 @@ where
         let branch = Branch::Unigram;
         expand_span_entries(pricing, &span, model, predecessor, row, trellis, branch)?;
     }
+    model.release_row(&mut head_row);
     Ok(())
 }
 
