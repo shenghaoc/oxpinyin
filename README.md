@@ -16,6 +16,32 @@ The [source policy](docs/source-policy.md#stages) defines the stages.
 Repository development supports Linux, macOS and Windows on x86_64 and arm64.
 CI tests Linux x86_64 on each PR that changes code, and macOS arm64 and Windows x64 nightly and on dispatch.
 
+## Performance
+
+oxpinyin, the library code of #2278 (measured at 7e66a2e, whose library code is this PR's), against Kali's libpinyin 2.11.92-1 package. Both are built with Debian's flags: `hardening=+all`, and Debian's cargo wrapper, which keeps `lto = "fat"` and `panic = "abort"`. All counts are hardware instructions (`perf_event_open`, user space).
+
+| Measure | oxpinyin | libpinyin | oxpinyin ÷ libpinyin |
+|---|---:|---:|---:|
+| Typing¹, instructions | 56,290,318 | 46,849,998 | 1.20 |
+| Candidate path, instructions per steady cycle | 100,539,521 | 127,358,169 | 0.79 |
+| Candidate path, steady time² | | | 0.52 |
+| Start-up (cold open), instructions | 16,519,000 | 18,508,294 | 0.89 |
+| Memory after typing, anonymous | 2,632 KiB | 2,868 KiB | 0.92 |
+| Memory after typing, Pss | 14,426.5 KiB | 14,361 KiB | 1.00 |
+| Install size, stripped (`strip --strip-unneeded`) `libpinyin.so.15` | 1,262,072 B | 927,824 B | 1.36 |
+
+¹ Typing is every prefix of `nihaozhongguo`: parse, sentence guess and candidates. The single full-sentence guess takes 1,660,784 instructions against 1,379,644 (1.20).
+
+² The ratio of the medians. The steady time of one run varies by 24.5% (libpinyin) and 27.0% (oxpinyin) across 20 runs on this host, so the table gives no absolute time.
+
+Callgrind counts are not given. Callgrind counts one cold invocation, and its count differs from the hardware count by more than the cold start explains, so it does not measure the same thing.
+
+Compiler: with libpinyin built by GCC 14 instead of GCC 16 on the same host, typing is 1.03 (56,230,730 against 54,384,760, default flags). With GCC 14, `std::__lower_bound<SingleGramItem>` (+7.81 M) and its comparator `token_less_than` (+1.75 M) become out-of-line calls, and `SingleGram::search` falls by 3.12 M; the ten functions that differ most explain 93% of the typing gap.
+
+Host: Intel Core i7-9750H, WSL 2, Linux 6.18.58.1, amd64; Kali GNU/Linux Rolling 2026.2; GCC 16.2.0 (Debian 16.2.0-4); tkrzw 1.0.34; libpinyin pin 074a2219 (2.11.92).
+
+Method: [docs/runbooks/benches.md](docs/runbooks/benches.md).
+
 ## Quickstart
 
 To contribute, start at [CONTRIBUTING.md](CONTRIBUTING.md).
