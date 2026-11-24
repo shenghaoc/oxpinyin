@@ -208,28 +208,30 @@ debug = 2
 [profile.dev-full.package."*"]
 debug = 2
 
-# Release .so size/speed lever: fat LTO + one codegen unit lets the linker
+# Release .so size lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
 # per-CGU codegen keeps.
 #
-# panic = "abort" was added here on 2026-09-05 (a41605ea, −65,536 B
-# stripped on ARM64/KC) and removed the same day: with it the ARM64/KC
-# keystroke cycle measured +5.5% steady / +6.4% cold, and a back-to-back
-# rebuild without it recovers the time at +64 KiB.
+# panic = "abort" drops the unwinding tables and landing pads. On amd64
+# with Kyoto Cabinet the stripped libpinyin is 90,112 B smaller and
+# libzhuyin 77,824 B smaller; the keystroke cycle executes +0.50% hardware
+# instructions, and its wall and CPU time are unchanged within noise
+# (B/A 0.98, 95% interval 0.95 to 1.02). `just measure compare` and
+# `just packaging sizes` reproduce both.
 # The panic discipline does not depend on the strategy. The lints
 # clippy::unwrap_used/expect_used/panic/panic_in_result_fn/unreachable
 # deny explicit panic forms in every library crate's non-test scope. They
 # do not make bodies panic-free or exclude other panic sources. Since
 # Rust 1.81 a panic reaching a non-unwinding ABI boundary aborts (Rust
-# Reference, "Unwinding"), so the removed catch sites stay removed under
-# either strategy. Re-adopting abort needs a keystroke-cycle number next
-# to the size number. The 116 KiB gimli/addr2line symbolizer is held by
+# Reference, "Unwinding"), so the C boundary needs no catch site under
+# either strategy. The 116 KiB gimli/addr2line symbolizer is held by
 # std's default panic hook and is unaffected by either strategy.
 # [profile.profiling] keeps its explicit `lto = "thin"` and `panic =
 # "unwind"` overrides and inherits codegen-units from here.
 [profile.release]
 lto = "fat"
 codegen-units = 1
+panic = "abort"
 
 # Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
 # `debug = "line-tables-only"` keeps the image small; samply/perf still map

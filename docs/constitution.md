@@ -18,7 +18,7 @@ The [roadmap](../ROADMAP.md) records the stages and their status.
    This may occur in any crate when all affected call paths require termination.
    Shared code may instead return a typed error when the caller must determine the abort point.
    `abort()` does not unwind or run destructors.
-   Under the current unwind panic strategy, a Rust panic can run `Drop` implementations before termination and is not a substitute for the pin's abort.
+   Release builds abort on panic; tests and profiling unwind. `std::process::abort()` therefore ends the process with SIGABRT and runs no destructors in every profile.
    An unhandled panic in a Rust tool ordinarily exits with status 101; a panic attempting to cross a non-unwinding C ABI boundary aborts.
    A panic-producing assertion is permitted only where failure is proven unreachable under the applicable preconditions.
    No abort or panic is introduced where the pin continues or returns an error.
