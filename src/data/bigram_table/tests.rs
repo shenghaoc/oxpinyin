@@ -60,7 +60,8 @@ fn stored(total: u32, records: &[(u32, u32)]) -> Vec<u8> {
     encode_single_gram(total, records)
 }
 
-// 074a2219 ngram_tkrzwdb.cpp:102-121 reads the attached DBM on each load.
+// 074a2219 ngram_tkrzwdb.cpp:102-121 reads the attached DBM on each load, and
+// ngram_kyotodb.cpp:131-139 into a chunk it reuses: a recycled row buffer is the next read's.
 #[test]
 fn every_predecessor_is_read_on_each_load() {
     let token = 1;
@@ -68,8 +69,13 @@ fn every_predecessor_is_read_on_each_load() {
     let second = stored(5, &[(0x0100_0002, 5)]);
     let dbm = ScriptedDbm::new(vec![Some(first.clone()), Some(second.clone()), None]);
     let table = BigramTable::new(RawChewingDbm::new(&dbm));
-    assert_eq!(table.load_raw_successors(token).unwrap(), Some(first));
-    assert_eq!(table.load_raw_successors(token).unwrap(), Some(second));
+    let one = table.load_raw_successors(token).unwrap().unwrap();
+    assert_eq!(one, first);
+    let address = one.as_ptr();
+    table.recycle(one);
+    let two = table.load_raw_successors(token).unwrap().unwrap();
+    assert_eq!(two, second);
+    assert_eq!(two.as_ptr(), address, "the read reuses the recycled buffer");
     assert!(table.load_raw_successors(token).unwrap().is_none());
     assert_eq!(*dbm.reads.lock().unwrap(), vec![encode_token_key(token); 3]);
 }

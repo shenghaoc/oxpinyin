@@ -1347,6 +1347,10 @@ impl LanguageModel for RuntimeLm<'_> {
         self.inner.nbest_item_costs(token, extra, item)
     }
 
+    fn release_row(&self, row: &mut crate::model::NbestStepRow) {
+        self.inner.release_row(row);
+    }
+
     fn nbest_successors_in_row<'a>(
         &self,
         prev: &PhraseToken,
