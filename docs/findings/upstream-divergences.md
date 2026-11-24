@@ -150,8 +150,8 @@ An entry holds nothing else.
 ### Shipped item with a reading past the content end (policy row 130, class (b))
 
 - **Pin:** the nth getter copies a reading out of the header-derived view (`src/storage/phrase_index.cpp:33–44,180–205`; `src/pinyin.cpp:2801–2818`; `src/zhuyin.cpp:1793–1810`). A reading past the allocation is undefined.
-- **oxpinyin:** the getters return the available header fields, text and complete readings inside the selected record. The nth getter returns false for an unavailable reading.
-- **Decision:** accepted, class (b), for an out-of-bounds read. The record boundary also applies when later records are present.
+- **oxpinyin:** the getters return the available header fields, text and complete readings inside the content. A reading inside the content follows the header extent across later records, as the pin does. The nth getter returns false for a reading past the content end.
+- **Decision:** accepted, class (b), for a read past the content end.
 - **Tests:** `a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields` and `an_unreadable_in_range_pronunciation_returns_false_and_an_empty_array`.
 
 ### Constraint checks use the current token's item (policy row 164)
@@ -233,12 +233,13 @@ An entry holds nothing else.
 - **Decision:** accepted, class (b): a dereference of an item the sub-index no longer owns.
 - **Tests:** `reloading_a_system_library_drops_the_unsaved_session` (store reload and saved readings).
 
-### Phrase reads and writes stay inside their record (policy rows 107, 111 and 130)
+### Phrase reads follow the header; writes and aliases stay in their record (policy rows 107, 111 and 130)
 
-- **Pin:** `SubPhraseIndex` uses header-derived item extents and narrowed content offsets (`src/storage/phrase_index.cpp:150–236,439–517,624–675`). Item views can cross into later records, retain prior payload bytes, overlap after offset wrap, or write through shared backing storage (`src/include/memory_chunk.h:102–130,372–390`).
-- **oxpinyin:** reads stop at the next indexed item or the end of content. Journal payloads stand alone. Each write changes only its addressed slot, even when two loaded offsets were equal. Partial last-item getters still return the fields present in that record.
-- **Decision:** accepted under the language-artefact rule. Reads that would leave the allocation retain the class (b) outcome.
-- **Tests:** `count_checks_both_header_bytes_within_the_record`, `a_read_crossing_the_item_boundary_answers_no_item`, `a_truncated_system_record_cannot_modify_the_next_record`, `aliased_offsets_keep_independent_values_through_save_and_reopen`, `a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields`.
+- **Pin:** `SubPhraseIndex::get_phrase_item` takes an item's extent from its header alone (`src/storage/phrase_index.cpp:180-206`), so a view can cross into later records or pass the content end. Writes through a view, shared backing storage and offset wrap reach other items (`:150-236,439-517,624-675`, `src/include/memory_chunk.h:102-130,372-390`).
+- **oxpinyin:** a read inside the content takes the header's extent, across later records, as the pin does; that is no divergence. A system getter whose read passes the content end returns the part inside the content (class (b)). A user item whose extent passes the content end is not readable (class (b)). Each write changes only its addressed slot, aliased offsets stay independent and an offset wrap overlaps nothing. Journal payloads stand alone. A write changes only its addressed item's record bytes; another item's read whose header extent crosses into those bytes sees them, as the pin's shared view does.
+- **Decision:** maintainer ruling, 2026-11-24: cross-record reads match the pin, reads past the content end stay class (b), and writes through shared storage, aliased offsets and offset-wrap overlap stay accepted under the language-artefact rule.
+- **Rejected:** stopping each read at the next indexed item. It cost a sorted table of every record end on the first read and refused items the pin reads.
+- **Tests:** `count_checks_both_header_bytes_within_the_content`, `a_read_crossing_the_item_boundary_follows_the_header_extent`, `a_system_record_crossing_the_next_record_cannot_modify_it`, `aliased_offsets_keep_independent_values_through_save_and_reopen`, `a_shipped_item_with_a_reading_past_the_content_end_keeps_its_fields`.
 
 ### An oversized user chunk or journal bulk save (policy row 112)
 

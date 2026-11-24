@@ -189,14 +189,23 @@ fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
     assert_eq!(library.total(), 36);
 }
 
-/// Basis: policy rows 107 and 111 (a read stays inside its record).
+/// Basis: `phrase_index.cpp:180-206` and policy rows 107, 111 and 130 (a read
+/// takes the header's extent, across records, and stops at the content end;
+/// a write to that extent changes only its addressed item).
 #[test]
-fn a_read_crossing_the_item_boundary_answers_no_item() {
+fn a_read_crossing_the_item_boundary_follows_the_header_extent() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2]);
     let start = library.slots.get(&1).unwrap().start;
     library.content[start + 1] = 2;
-    assert!(library.item(1).is_none());
+    assert_eq!(library.item(1).unwrap().as_bytes().len(), 22);
+    // The second reading of item 1 is the first bytes of item 2, key 0x0101 and count 2.
+    let crossing = crate::parser::ChewingKey::from_packed(0x0101);
+    library.train(1, std::iter::once(vec![crossing]), 5);
+    assert_eq!(library.item(1).unwrap().pronunciation(1).unwrap().freq, 7);
+    assert_eq!(library.item(2).unwrap().unigram(), 2);
+    // The write moved item 1 to a copy at the end of the content.
+    let start = library.slots.get(&1).unwrap().start;
     library.content[start + 1] = 255;
     assert!(library.item(1).is_none());
     assert_eq!(library.item(2).unwrap().unigram(), 2);
@@ -222,7 +231,7 @@ fn removing_a_batch_collects_nothing_until_the_compaction() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2, 3, 4]);
     let unreadable = library.slots[&3].start;
-    library.content[unreadable + 1] = 2;
+    library.content[unreadable + 1] = 255;
     let size = library.content.len();
     let visited = std::cell::RefCell::new(Vec::new());
     library.remove_matching(|slot| {
@@ -268,7 +277,7 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
     let offsets_start = u32::from_le_bytes(payload[4..8].try_into().expect("offset header"));
     let slot_two = offsets_start as usize + 2 * 4;
     payload[slot_two..slot_two + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-    let library = UserLibrary::load(&build_memory_chunk(&payload).expect("frame")).unwrap();
+    let mut library = UserLibrary::load(&build_memory_chunk(&payload).expect("frame")).unwrap();
     for (slot, expected, key) in [rows[0], rows[2]] {
         let item = library.item(slot).unwrap();
         assert_eq!(item.phrase_length(), 1);
@@ -276,6 +285,11 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
         assert_eq!(library.pronunciation_count(slot), Some(1));
         assert_eq!(item.pronunciation(0).unwrap().keys, key.to_le_bytes());
     }
+    assert!(library.item(2).is_none());
+    assert_eq!(library.pronunciation_count(2), None);
+    // An append that lands where the bad offset's range once began does not make it readable.
+    library.replace(4, &small(9)).unwrap();
+    assert!(library.item(4).is_some());
     assert!(library.item(2).is_none());
     assert_eq!(library.pronunciation_count(2), None);
 }

@@ -477,7 +477,6 @@ pub(crate) struct PhraseContent {
     mapping: crate::input::chunk::Mapping,
     offsets: Range<usize>,
     area: Range<usize>,
-    bounds: ItemBounds,
 }
 
 impl PhraseContent {
@@ -499,56 +498,23 @@ impl PhraseContent {
 
     pub(crate) fn item_fields(&self, slot: u32) -> Option<&[u8]> {
         let offset = self.slot_offset(slot)?;
-        self.bounds
-            .record(self.offsets(), self.as_slice(), slot as usize, offset)
-            .filter(|record| record.len() >= 2)
+        item_record(self.as_slice(), offset).filter(|record| record.len() >= 2)
     }
 }
 
-/// End of each indexed record in physical order. Build it on first item access,
-/// keeping subsequent lookups constant time and allowing out-of-order slots.
-#[derive(Default)]
-struct ItemBounds(std::cell::OnceCell<Box<[u32]>>);
-
-impl ItemBounds {
-    fn record<'a>(
-        &self,
-        offsets: &[u8],
-        content: &'a [u8],
-        slot: usize,
-        start: u32,
-    ) -> Option<&'a [u8]> {
-        if start == 0 || start as usize >= content.len() {
-            return None;
-        }
-        let ends = self
-            .0
-            .get_or_init(|| Self::record_ends(offsets, content.len()));
-        content.get(start as usize..*ends.get(slot)? as usize)
+/// `SubPhraseIndex::get_phrase_item`'s item view (074a2219
+/// `phrase_index.cpp:180-206`): from `start` in `content`, the length the
+/// record header declares, as far as the content goes. The extent ignores
+/// the neighbouring records, so it can cross into later ones as the pin's
+/// does. Only a read that would pass the content end is cut there (the
+/// allocation-end outcome, policy row 130). `None` for a zero or
+/// out-of-content start.
+fn item_record(content: &[u8], start: u32) -> Option<&[u8]> {
+    if start == 0 || start as usize >= content.len() {
+        return None;
     }
-
-    fn record_ends(offsets: &[u8], content_len: usize) -> Box<[u32]> {
-        let offsets = offsets.as_chunks::<4>().0;
-        let mut ends = vec![0; offsets.len()];
-        let mut physical: Vec<_> = offsets
-            .iter()
-            .map(|word| u32::from_le_bytes(*word))
-            .enumerate()
-            .filter(|&(_, start)| start != 0 && (start as usize) < content_len)
-            .collect();
-        physical.sort_unstable_by_key(|&(_, start)| start);
-        let mut next_start = content_len as u32;
-        for group in physical
-            .chunk_by(|&(_, left), &(_, right)| left == right)
-            .rev()
-        {
-            for &(slot, _) in group {
-                ends[slot] = next_start;
-            }
-            next_start = group[0].1;
-        }
-        ends.into_boxed_slice()
-    }
+    let tail = content.get(start as usize..)?;
+    Some(PhraseItemView::fields(tail).map_or(tail, |item| item.as_bytes()))
 }
 
 use backing::LibraryBacking;
@@ -593,7 +559,6 @@ pub struct PhraseLibrary {
     offsets: Range<usize>,
     /// The entry area, `[index_two, index_three)` in payload bytes.
     content: Range<usize>,
-    bounds: ItemBounds,
     /// True for the empty sub-index the pin leaves behind when its
     /// `SubPhraseIndex::load` refused the layout; the save path re-checks
     /// such a library exactly as the pin re-maps it.
@@ -709,7 +674,6 @@ impl PhraseLibrary {
             total_freq,
             offsets: 0..0,
             content: 0..0,
-            bounds: ItemBounds::default(),
             layout_failed: true,
             item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
@@ -775,7 +739,6 @@ impl PhraseLibrary {
             // before the final separator (`phrase_index.cpp:356-359`).
             offsets: index_one..index_two - 1,
             content: index_two..index_three - 1,
-            bounds: ItemBounds::default(),
             layout_failed: false,
             item_total: std::cell::OnceCell::new(),
             detached_range_end: None,
@@ -857,7 +820,8 @@ impl PhraseLibrary {
             .map(u32::from)
     }
 
-    /// The item's readable fields. Each field must fit in the indexed record.
+    /// The item's readable fields. Each field must fit in the item the header
+    /// declares, cut at the content end.
     /// Whole-item consumers use [`Self::item`].
     #[must_use]
     pub(crate) fn item_fields(&self, token: u32) -> Option<PhraseItemView<'_>> {
@@ -873,8 +837,7 @@ impl PhraseLibrary {
     pub(crate) fn item_bytes(&self, slot: usize) -> Option<&[u8]> {
         let offset = self.slot_offset(slot)?;
         let content = self.payload().get(self.content.clone())?;
-        self.bounds
-            .record(self.offset_array(), content, slot, offset)
+        item_record(content, offset)
     }
 
     /// The offset array: little-endian `u32` slots, `SubPhraseIndex`'s
@@ -910,7 +873,6 @@ impl PhraseLibrary {
                 ..(self.payload.start + self.offsets.end),
             area: (self.payload.start + self.content.start)
                 ..(self.payload.start + self.content.end),
-            bounds: std::mem::take(&mut self.bounds),
         })
     }
 

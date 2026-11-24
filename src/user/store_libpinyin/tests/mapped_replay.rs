@@ -167,9 +167,10 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     );
 }
 
-/// Basis: policy rows 107 and 111 (a record cannot reach its neighbour's bytes).
+/// Basis: policy rows 107 and 111 (a read takes the header's extent, across the
+/// next record; a write reaches only its addressed slot).
 #[test]
-fn a_truncated_system_record_cannot_modify_the_next_record() {
+fn a_system_record_crossing_the_next_record_cannot_modify_it() {
     let mut old = vec![1, 2];
     old.extend_from_slice(&100_u32.to_le_bytes());
     old.extend_from_slice(&0x4f60_u32.to_le_bytes());
@@ -205,14 +206,14 @@ fn a_truncated_system_record_cannot_modify_the_next_record() {
     )
     .expect("write overlapping chunk");
     let mut store = profile.open();
-    assert_eq!(store.system_unigram(LIBRARY | 1), None);
+    assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
     assert_eq!(store.system_unigram(LIBRARY | 2), Some(50));
     assert_eq!(store.live_pronunciation_count(LIBRARY | 2), Some(0));
     store.mark_modified();
     store.save_reporting().expect("save");
     drop(store);
     let reopened = profile.open();
-    assert_eq!(reopened.system_unigram(LIBRARY | 1), None);
+    assert_eq!(reopened.system_unigram(LIBRARY | 1), Some(100));
     assert_eq!(reopened.system_unigram(LIBRARY | 2), Some(50));
     assert_eq!(reopened.live_pronunciation_count(LIBRARY | 2), Some(0));
 }
