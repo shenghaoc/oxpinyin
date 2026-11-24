@@ -11,6 +11,32 @@
 仓库开发支持 x86_64 和 arm64 上的 Linux、macOS 与 Windows。
 对每个改动代码的 PR，CI 会测试 Linux x86_64；macOS arm64 和 Windows x64 则每晚测试，也可手动触发。
 
+## 性能
+
+oxpinyin，即 #2278 的库代码（在 7e66a2e 上测得，该提交的库代码即本 PR 的库代码），与 Kali 的 libpinyin 2.11.92-1 软件包对比。两者都用 Debian 的编译选项构建：`hardening=+all`，以及 Debian 的 cargo 包装器，该包装器保留 `lto = "fat"` 和 `panic = "abort"`。所有计数均为硬件指令数（`perf_event_open`，用户态）。
+
+| 指标 | oxpinyin | libpinyin | oxpinyin ÷ libpinyin |
+|---|---:|---:|---:|
+| 键入¹，指令数 | 56,290,318 | 46,849,998 | 1.20 |
+| 候选路径，每个稳态周期的指令数 | 100,539,521 | 127,358,169 | 0.79 |
+| 候选路径，稳态耗时² | | | 0.52 |
+| 启动（冷启动打开），指令数 | 16,519,000 | 18,508,294 | 0.89 |
+| 键入后内存，匿名内存 | 2,632 KiB | 2,868 KiB | 0.92 |
+| 键入后内存，Pss | 14,426.5 KiB | 14,361 KiB | 1.00 |
+| 安装体积，剥离后（`strip --strip-unneeded`）的 `libpinyin.so.15` | 1,262,072 B | 927,824 B | 1.36 |
+
+¹ 键入指 `nihaozhongguo` 的每个前缀：解析、整句猜测和候选。单次完整整句猜测为 1,660,784 条指令，libpinyin 为 1,379,644（1.20）。
+
+² 中位数之比。在这台主机上，单次运行的稳态耗时在 20 次运行之间相差 24.5%（libpinyin）和 27.0%（oxpinyin），因此表中不给出绝对耗时。
+
+表中不给出 Callgrind 计数。Callgrind 只统计一次冷调用，其计数与硬件计数之差超出冷启动所能解释的范围，因此二者测量的不是同一事物。
+
+编译器：在同一主机上改用 GCC 14 而非 GCC 16 构建 libpinyin 时，键入为 1.03（56,230,730 对 54,384,760，默认编译选项）。使用 GCC 14 时，`std::__lower_bound<SingleGramItem>`（+7.81 M）及其比较器 `token_less_than`（+1.75 M）变为非内联调用，`SingleGram::search` 减少 3.12 M；差异最大的十个函数解释了键入差距的 93%。
+
+测试主机：Intel Core i7-9750H，WSL 2，Linux 6.18.58.1，amd64；Kali GNU/Linux Rolling 2026.2；GCC 16.2.0（Debian 16.2.0-4）；tkrzw 1.0.34；libpinyin pin 为 074a2219（2.11.92）。
+
+方法见 [docs/runbooks/benches.md](docs/runbooks/benches.md)。
+
 ## 快速开始
 
 参与贡献请从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始。[环境搭建指南](docs/runbooks/setup.md)介绍如何在 Linux、macOS 和 Windows 上原生构建并测试 oxpinyin。
