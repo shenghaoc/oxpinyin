@@ -36,11 +36,17 @@ impl Counter {
     pub(crate) fn enable(&mut self) {
         let _ = self.0.enable();
     }
+    /// The count since `enable`, or `None` when the read fails or the kernel
+    /// has timeshared the counter: a sample counts only when the counter ran
+    /// for its whole span (`time_running == time_enabled`). A reset clears the
+    /// count, not the times, so a counter that was timeshared once gives no
+    /// further samples.
     pub(crate) fn sample(&mut self) -> Option<u64> {
         let _ = self.0.disable();
-        let count = self.0.read().ok();
+        let read = self.0.read_count_and_time().ok();
         let _ = self.0.reset();
-        count
+        read.filter(|read| read.time_running == read.time_enabled)
+            .map(|read| read.count)
     }
 }
 

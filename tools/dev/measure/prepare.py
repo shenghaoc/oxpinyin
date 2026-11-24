@@ -38,6 +38,13 @@ def pin_prefix(env, backend):
     return measure_root(env) / 'pinyin-oracle' / backend
 
 
+def stage_name(cell_name, *, debug):
+    """The stage name of the subject arm of CELL_NAME: the local cell keeps its historical names."""
+    if cell_name == LOCAL_CELL:
+        return LOCAL_CELL if debug else 'nodebug'
+    return cell_name if debug else f'nodebug-{cell_name}'
+
+
 def subject_stage(env, name):
     """The staged cargo-c install of the subject arm NAME (the local cell: profiled, nodebug: shipping)."""
     return measure_root(env) / f'oxpinyin-{name}' / 'stage'
@@ -126,11 +133,9 @@ def prepare(argv, env):
     require_local_measurement(env)
     parser = argparse.ArgumentParser(prog='python -m tools.dev.measure.prepare')
     parser.add_argument('mode', choices=('oracle', 'callgrind'))
-    # The one Linux measurement cell (docs/runbooks/setup.md#linux).
-    parser.add_argument('--cells', nargs='+', choices=(LOCAL_CELL,), default=None)
+    # The default Linux measurement cell is the local one; bdb and tkrzw are built on request.
+    parser.add_argument('--cells', nargs='+', choices=cell.CELLS, default=None)
     args = parser.parse_args(argv)
-    if args.cells is not None and args.mode != 'oracle':
-        parser.error('--cells is accepted only in oracle mode')
     cells = args.cells or [LOCAL_CELL]
     extracted = model.fetch(env=env)
     for backend in cells:
@@ -143,27 +148,30 @@ def prepare(argv, env):
         emit(f'{backend}: pin prefix {prefix}')
     if args.mode == 'oracle':
         return 0
-    # Build the subject on the same cell as the pin.
-    stages = {}
-    for name, debug in ((LOCAL_CELL, True), ('nodebug', False)):
-        stage = subject_stage(env, name)
-        shutil.rmtree(stage, ignore_errors=True)
-        build_env = dict(env, CARGO_TARGET_DIR=str(measure_root(env) / 'target' / name))
-        if debug:
-            build_env['RUSTFLAGS'] = '-Cdebuginfo=1 -Cstrip=none'
-        else:
-            build_env.pop('RUSTFLAGS', None)
-        bench.run(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
-                     '--no-default-features', '--features', cell.CELL_TO_BACKEND[LOCAL_CELL],
-                     f'--destdir={stage}', '--prefix=/usr'], env=build_env)
-        stages[name] = stage
+    # Build the subject on the same cell as the pin, one pair of arms per requested cell.
     harness = harness_path(env)
     harness.parent.mkdir(parents=True, exist_ok=True)
     bench.build_harness(harness, env=env)
     from . import valgrind
-    status = valgrind.callgrind_control([str(stages[LOCAL_CELL]), str(stages['nodebug'])], env)
-    if status:
-        raise Finished(status)
+    for cell_name in cells:
+        stages = {}
+        for debug in (True, False):
+            name = stage_name(cell_name, debug=debug)
+            stage = subject_stage(env, name)
+            shutil.rmtree(stage, ignore_errors=True)
+            build_env = dict(env, CARGO_TARGET_DIR=str(measure_root(env) / 'target' / name))
+            if debug:
+                build_env['RUSTFLAGS'] = '-Cdebuginfo=1 -Cstrip=none'
+            else:
+                build_env.pop('RUSTFLAGS', None)
+            bench.run(['cargo', 'cinstall', '--locked', '--release', '-p', 'oxpinyin-capi',
+                       '--no-default-features', '--features', cell.CELL_TO_BACKEND[cell_name],
+                       f'--destdir={stage}', '--prefix=/usr'], env=build_env)
+            stages[debug] = stage
+        emit(f'{cell_name}: subject arms {stages[True]} and {stages[False]}')
+        status = valgrind.callgrind_control([str(stages[True]), str(stages[False])], env)
+        if status:
+            raise Finished(status)
     status, report = valgrind.anchors_table(harness)
     emit(report)
     if status:

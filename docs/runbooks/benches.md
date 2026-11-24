@@ -222,7 +222,19 @@ separate equal-length copies of the supplied **plain shipping** libraries,
 the same CPU pin and worker anchors. It rotates base, PR, pin and both
 same-bytes controls. It validates every complete observation and reports
 native `elapsed_ns` per invocation in `native.json`, independently of the
-counters of the profiled arm. The options are:
+counters of the profiled arm. Each native process also reports:
+
+- `hardware`: user-space `PERF_COUNT_HW_INSTRUCTIONS` per invocation, counted around
+  the same anchor, with the same pairing, PR/base and PR/pin ratios and same-bytes
+  controls as the time. A host that refuses the counter gives
+  `available: false` with its errno; the Callgrind figure then stands alone.
+- `memory`: `/proc/self/smaps_rollup` after the last invocation, in KiB. The headline
+  is `anonymous` (Anonymous); `pss` sits beside it. `uss` (Private_Clean plus
+  Private_Dirty) and `rss` are secondary: clean file-backed dictionary pages count in
+  them and move between sessions. It has PR/pin ratios and the residency control of
+  `measure compare`, applied to `anonymous`.
+
+The options are:
 
 - `--native-rounds` requires at least 20. Its default is zero (off).
 - `--native-iterations` defaults to 20 and does not change
@@ -234,7 +246,7 @@ PR/base median ratios and 95% intervals, and the existing same-bytes time
 control stability check. Unstable controls are DIAGNOSTIC. Their tolerance
 is not permission for a product regression. A report states the interval and the control
 limits. An interval that contains one is not proof of exact
-time equality. This phase measures no heap usage.
+time equality. This phase measures residency, not heap usage.
 
 ## BDB guess, training, and import profiles
 
@@ -250,6 +262,10 @@ cp target/release/system-import-profile "$HARNESS"
 The default import workload prints four Callgrind dumps. `open` runs from just before the library
 load through `pinyin_init`, so it holds `dlopen` relocation, symbol lookup and context
 initialization, and not the process or driver start-up; `import`, `save` and `close` follow.
+With `--cold-open` the recipe collects one Callgrind dump from just before the library load
+through the first instance and the teardown, the Massif heap and page peaks, and a native
+`hardware` line with the user-space instruction count over the same span, teardown included
+(the driver's teardown is a collected phase in every mode). A host that refuses the counter prints why instead.
 
 Through a comparison, the BDB system data, a fresh empty user directory, the CPU, pin SO and
 subject SO stay the same. Each comparison identifies the subject build and uses

@@ -67,6 +67,13 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
     // Rust runtime and the driver's start-up, and collect the open phase from the load
     // through `pinyin_init`: relocation, symbol lookup and context initialization.
     platform::profiling_reset();
+    // `PERF_HW` also counts user-space instructions natively over the span of a cold open's
+    // single Callgrind dump: from before the library load to after the teardown. The count
+    // goes to stderr.
+    let mut counter = std::env::var_os("PERF_HW").map(|_| platform::Counter::open());
+    if let Some(Ok(c)) = &mut counter {
+        c.enable();
+    }
     let open = platform::Collection::new();
     let library = abi::Library::open(&args[1])?;
     let core = abi::Core::load(&library, "pinyin")?;
@@ -75,6 +82,7 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         Mode::Import(..) | Mode::Cold(..) => None,
         _ => Some(library.release()?),
     };
+    let cold = matches!(mode, Mode::Cold(..));
     let ctx = abi::Context::open(&core, &paths)?;
     // The open collection ends here; each later phase scopes its own.
     drop(open);
@@ -156,6 +164,16 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         let _collection = platform::Collection::new();
         drop(ctx);
         drop(library);
+    }
+    if cold {
+        match &mut counter {
+            Some(Ok(c)) => match c.sample() {
+                Some(count) => eprintln!("hw-instructions: {count}"),
+                None => eprintln!("hw-instructions: unavailable"),
+            },
+            Some(Err(error)) => eprintln!("hw-instructions: unavailable ({error})"),
+            None => {}
+        }
     }
     Ok(())
 }
