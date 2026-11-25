@@ -13,8 +13,8 @@ use oxpinyin::graph::SegmentGraph;
 use oxpinyin::user::{PinyinKey, toned_key};
 
 use crate::ffi::{
-    backing_mut, backing_ref, borrow_or_return, malloc_cstr_with, strconcat_pair, strdup,
-    strdup_raw, strjoinv, write_if_nonnull,
+    backing_mut, backing_ref, borrow_or_return, malloc_cstr, malloc_cstr_with, strconcat_pair,
+    strdup, strdup_raw, strjoinv, write_if_nonnull,
 };
 use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_ref};
 use crate::types::{
@@ -59,10 +59,7 @@ impl BigramHandle {
         };
         let encode = |text: &oxpinyin::vocab::PhraseText| {
             let bytes = phrase_text_bytes(text);
-            malloc_cstr_with(bytes.len(), |out| {
-                out.copy_from_slice(&bytes);
-                bytes.len()
-            })
+            malloc_cstr(&bytes)
         };
         let (first, second) = (encode(first), encode(second));
         // SAFETY: Both are NULL or this call's NUL-terminated buffers.
@@ -412,26 +409,25 @@ pub unsafe extern "C" fn pinyin_iterator_get_next_phrase(
     let step = handle.cursor.get_next_with(&context.core, |row| {
         // `pinyin.cpp:715-716`: the fallible `g_ucs4_to_utf8` conversion,
         // NULL on failure, unchecked.
+        // The bytes go straight from the item's stored words into the
+        // string of their exact length.
         let text = (!phrase.is_null()).then(|| {
-            row.with_text_bytes(|bytes| {
-                malloc_cstr_with(bytes.len(), |out| {
-                    out.copy_from_slice(bytes);
-                    bytes.len()
+            row.text_utf8_len().map_or(ptr::null_mut(), |len| {
+                malloc_cstr_with(len, |out| {
+                    let mut at = 0;
+                    row.for_each_text_utf8(|bytes| {
+                        if let Some(slots) = out.get_mut(at..at + bytes.len()) {
+                            slots.write_copy_of_slice(bytes);
+                            at += bytes.len();
+                        }
+                    });
+                    at
                 })
             })
-            .unwrap_or(ptr::null_mut())
         });
         // `:726-733`: the key strings joined by `g_strjoinv("'", …)`, which
         // GLib allocates.
-        let reading = (!pinyin.is_null()).then(|| {
-            let keys = row.pinyin_strings().map(|(spelling, digit)| {
-                let mut key = Vec::with_capacity(spelling.len() + 1);
-                key.extend_from_slice(spelling.as_bytes());
-                key.extend(digit);
-                key
-            });
-            strjoinv(c"'", keys)
-        });
+        let reading = (!pinyin.is_null()).then(|| strjoinv(c"'", row.pinyin_strings()));
         (text, reading, export_count(row.count()))
     });
     let (text, reading, frequency) = match step {

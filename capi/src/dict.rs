@@ -162,10 +162,7 @@ pub unsafe extern "C" fn pinyin_token_get_phrase(
         utf8_str,
         phrase.text.map_or(std::ptr::null_mut(), |text| {
             let text = phrase_text_bytes(&text);
-            crate::ffi::malloc_cstr_with(text.len(), |out| {
-                out.copy_from_slice(&text);
-                text.len()
-            })
+            crate::ffi::malloc_cstr(&text)
         })
     );
     true

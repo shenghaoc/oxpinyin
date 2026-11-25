@@ -4,7 +4,7 @@
 //! Pure Rust over the context's user store and optional runtime — no C
 //! types cross this boundary.
 
-use crate::marshal::phrase_text_bytes;
+use crate::marshal::{for_each_stored_word_utf8, phrase_text_bytes, stored_words_utf8_len};
 use crate::parser::ChewingKey;
 use crate::runtime::{PhraseItemView, RuntimeDict};
 use crate::user::{MAX_KEY_TONE, SystemItem, UserPronunciation, UserStore};
@@ -112,6 +112,7 @@ enum RowSource<'a> {
 /// The syllables of one pronunciation: each a spelling and the tone digit
 /// `ChewingKey::get_pinyin_string` appends to it (`chewing_key.cpp:47-57`
 /// at 074a2219: the content table's pinyin, then `%d` of a non-zero tone).
+#[derive(Clone)]
 enum Syllables<'a> {
     Packed(std::slice::Iter<'a, [u8; 2]>),
 }
@@ -167,7 +168,8 @@ fn reading_assert(mut keys: impl Iterator<Item = ChewingKey>) -> Option<ExportAs
 
 impl ExportRow<'_> {
     /// The row's stored phrase text. The C encoding is applied only in
-    /// [`Self::with_text_bytes`].
+    /// [`Self::with_text_bytes`]; [`Self::for_each_text_utf8`] hands out the
+    /// same bytes without this text.
     fn phrase_text(&self) -> Option<PhraseText> {
         match &self.0 {
             RowSource::Mapped { item, .. } => item.phrase_text(),
@@ -180,6 +182,27 @@ impl ExportRow<'_> {
     pub fn with_text_bytes<R>(&self, with: impl FnOnce(&[u8]) -> R) -> Option<R> {
         let text = self.phrase_text()?;
         Some(with(&phrase_text_bytes(&text)))
+    }
+
+    /// The length of [`Self::with_text_bytes`]'s bytes, read from the item's
+    /// stored words with no intermediate text, or `None` where the pin's
+    /// `g_ucs4_to_utf8` hands the caller a NULL phrase (`pinyin.cpp:715-716`):
+    /// [`crate::marshal::stored_words_utf8_len`].
+    #[must_use]
+    pub fn text_utf8_len(&self) -> Option<usize> {
+        match &self.0 {
+            RowSource::Mapped { item, .. } => stored_words_utf8_len(item.phrase_codes()),
+        }
+    }
+
+    /// Hands [`Self::with_text_bytes`]'s bytes to `emit` straight from the
+    /// item's stored words, one word at a time:
+    /// [`crate::marshal::for_each_stored_word_utf8`]. Together they are
+    /// [`Self::text_utf8_len`] bytes.
+    pub fn for_each_text_utf8(&self, emit: impl FnMut(&[u8])) {
+        match &self.0 {
+            RowSource::Mapped { item, .. } => for_each_stored_word_utf8(item.phrase_codes(), emit),
+        }
     }
 
     /// The `get_pinyin_string` assert the pin dies at while rendering this
@@ -200,7 +223,7 @@ impl ExportRow<'_> {
     /// `_ChewingKey::get_pinyin_string` (`pinyin.cpp:726-728`) as its
     /// spelling and the digit of a non-zero tone: the elements of the pin's
     /// `g_strjoinv("'", …)` (`:733`).
-    pub fn pinyin_strings(&self) -> impl Iterator<Item = (&'static str, Option<u8>)> + '_ {
+    pub fn pinyin_strings(&self) -> impl Iterator<Item = (&'static str, Option<u8>)> + Clone + '_ {
         self.syllables()
     }
 

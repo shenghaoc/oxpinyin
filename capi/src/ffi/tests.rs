@@ -31,18 +31,16 @@ fn ffi_output_helpers_preserve_ownership_and_bytes() {
     // SAFETY: `g_free` releases the final GLib allocation.
     unsafe { glib_sys::g_free(sentence.cast()) };
 
-    let filled = malloc_cstr_with(3, |out| {
-        out.copy_from_slice(b"abc");
-        3
-    });
+    let filled = malloc_cstr(b"abc");
     // SAFETY: The helper returned a NUL-terminated malloc string.
     assert_eq!(unsafe { CStr::from_ptr(filled) }.to_bytes(), b"abc");
     // SAFETY: `g_free` releases the returned allocation, as the C contract
     // tells callers.
     unsafe { glib_sys::g_free(filled.cast()) };
+    // A fill that writes another count than it was given hands out nothing.
     assert!(
-        malloc_cstr_with(1, |out| {
-            out[0] = 0;
+        malloc_cstr_with(2, |out| {
+            out[0].write(b'a');
             1
         })
         .is_null()
