@@ -4,6 +4,7 @@ Backend labels are advisory: certify the complete set the actual loader resolves
 against the explicitly configured healthy library. No caller infers loader trust.
 """
 import os
+import platform
 from pathlib import Path
 import re
 import subprocess
@@ -77,8 +78,11 @@ def check(cell, runner, side, obj, *, env=None, cwd=None):
     side = 'pin' if re.match(r'^(?:L$|A$|pin|oracle|reference|libpinyin)', side) else 'subject'
 
     def refuse(found, expected):
+        hint = (' On Linux, set OXPINYIN_TKRZW_LIBRARY to the host libtkrzw that the object loads,'
+                ' or select kc or bdb: PINYIN_ORACLE_DBM=kc, --cell kc or --cells kc'
+                ' (bdb in place of kc)' if platform.system() == 'Linux' else '')
         raise RuntimeRefused(f'{runner}: {side}: libtkrzw resolved to {found}; expected {expected} '
-                             f'(object {obj}, cwd {directory})')
+                             f'(object {obj}, cwd {directory}).{hint}')
     try:
         host, done, matches = resolve(obj, env=environment, cwd=directory)
     except LoaderOverride:

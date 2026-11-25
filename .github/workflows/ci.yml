@@ -34,7 +34,7 @@ concurrency:
 # Jobs after the gate:
 #   rust — rustfmt, cargo-deny, cargo-shear, Clippy, fuzz-target Clippy, the Lizard
 #          complexity limit and the workspace tests on Linux under Kyoto
-#          Cabinet, the one Linux cell; the default tkrzw backend runs on
+#          Cabinet, the cell that Linux CI selects; the default tkrzw backend runs on
 #          macOS and Windows in verify-nightly.yml
 #   shipping-sizes — the stripped shipping-library sizes
 #   store — Clippy, rustdoc and the workspace tests under bdb; then the bdb
@@ -42,11 +42,14 @@ concurrency:
 # Fuzz execution stays nightly.
 #
 # See docs/architecture.md#backend-selection. To check cross-peer equivalence,
-# run the same test suite in a separate build for each backend. Ubuntu's
-# libtkrzw is defective at run time (docs/findings/tkrzw-distro-compat.md), so
-# Linux runs no tkrzw code: every Linux job uses the one Linux cell, Kyoto
-# Cabinet from Ubuntu's packages (LOCAL_CELL in tools/dev/cell.py;
-# docs/runbooks/verification.md, section 10), selected with the backend flag.
+# run the same test suite in a separate build for each backend. Linux CI
+# selects Kyoto Cabinet because GitHub's Ubuntu runners ship a defective
+# libtkrzw (docs/findings/tkrzw-distro-compat.md): every Linux CI job selects
+# Kyoto Cabinet from Ubuntu's packages with the
+# backend flag (CI_LINUX_CELL in tools/dev/cell.py; docs/runbooks/verification.md,
+# section 10). tkrzw is the one maintained backend and the only default.
+# Kyoto Cabinet and Berkeley DB stay until distributions ship a sound
+# libtkrzw, and are then removed.
 # The tkrzw suite runs on macOS and Windows in verify-nightly.yml. Each
 # sanitizer run goes through the sanitizer service in tools/dev/test_runner.py,
 # which `just sanitize` also uses, on the date-pinned nightly that
@@ -86,7 +89,7 @@ jobs:
       - run: just ruff
       - run: just rust-tables --check
 
-  # The Linux Rust lane: every check that reads the workspace, under the Linux cell.
+  # The Linux Rust lane: every check that reads the workspace, under Kyoto Cabinet.
   rust:
     runs-on: ubuntu-26.04
     timeout-minutes: 120
@@ -196,7 +199,7 @@ jobs:
           done <<< "$packages"
 
           cd "$scratch"
-          # Every published package declares the kyotocabinet feature, the Linux cell.
+          # Every published package declares the kyotocabinet feature, the cell that Linux CI selects.
           while read -r name version; do
             cargo "+$toolchain" --config "$scratch/archives.toml" build --offline \
               --no-default-features --features kyotocabinet \
@@ -205,7 +208,7 @@ jobs:
 
   # Stripped shipping-library sizes (constitution section 2). Builds both
   # facades with the release recipe (`just packaging install`) on the
-  # Linux cell, strips them, checks their exports and writes the
+  # Kyoto Cabinet cell, strips them, checks their exports and writes the
   # base / PR table to the job summary. A failed build, install or export
   # check fails the job; a size increase does not.
   #
@@ -235,7 +238,7 @@ jobs:
           just: 'true'
       - run: rustup show active-toolchain
       # cargo-c is the distribution's own package, as in release-packages.yml.
-      # The size recipe names the Linux cell's package. Only the bdb feature
+      # The size recipe names Kyoto Cabinet's package. Only the bdb feature
       # runs bindgen, so the build needs no libclang.
       - name: Install build dependencies (apt)
         run: |
@@ -355,6 +358,8 @@ jobs:
         id: sanitize-kyotocabinet
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
+          # `just abi` builds the cell that PINYIN_ORACLE_DBM names (tools/dev/cell.py Settings).
+          PINYIN_ORACLE_DBM: kc
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS

@@ -384,7 +384,7 @@ It runs on every pull request and push to main.
 
 **What it builds.**
 For the PR head and for its base, the job exports the commit with `git archive`.
-It builds each facade with `just packaging install` and the release recipe on the Linux cell, Kyoto Cabinet (`LOCAL_CELL` in `tools/dev/cell.py`), without extra features.
+It builds each facade with `just packaging install` and the release recipe on Kyoto Cabinet, the cell that Linux CI selects (`CI_LINUX_CELL` in `tools/dev/cell.py`), without extra features.
 It copies `libpinyin.so.15.0.0` and `libzhuyin.so.15.0.0`, strips each copy with `strip --strip-unneeded`, and counts its bytes.
 It then checks that the stripped library exports exactly the symbols of its version script, `libpinyin.ver` (79) or `libzhuyin.ver` (52), and no `oxpinyin_*` symbol.
 It writes a table to the job summary: base bytes, PR bytes, difference and ratio for each library.
@@ -400,7 +400,7 @@ source and publishes no size record.
 
 **Reproduce the table locally.**
 The recipe is Linux-only.
-It runs on Linux, on committed work, on the Linux cell, Kyoto Cabinet ([verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions)):
+It runs on Linux, on committed work, on Kyoto Cabinet, the cell that Linux CI selects ([verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions)):
 
 ```bash
 just packaging sizes run --base origin/main

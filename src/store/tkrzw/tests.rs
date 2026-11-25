@@ -274,9 +274,10 @@ fn a_system_tree_synchronizes_before_close_and_a_hash_does_not() {
 fn tkrzw_library_honours_its_sentinel_protocol() {
     type Create = fn(&std::path::Path) -> Result<TkrzwStore, StoreError>;
 
-    const CAUSE: &str = "the linked libtkrzw does not recognise its own NOOP/REMOVE \
-             sentinels (known cause: an LTO build of tkrzw older than 1.0.34); see \
-             docs/findings/tkrzw-distro-compat.md";
+    const CAUSE: &str = "the loaded libtkrzw is defective \
+             (docs/findings/tkrzw-distro-compat.md); select another backend with \
+             `--no-default-features --features kyotocabinet` or \
+             `--no-default-features --features bdb`";
 
     #[expect(
         clippy::needless_pass_by_value,

@@ -127,11 +127,11 @@ measure *args:
 measure *args:
     @{{windows_args}} uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.measure.recipes import native, run; raise SystemExit(run(native))' @forwarded; exit $LASTEXITCODE
 
-# Run the native Rust tests through nextest. Linux runs the Kyoto Cabinet
-# backend, its one cell (tools/dev/cell.py); other hosts keep Cargo's default.
+# Run the native Rust tests through nextest with Cargo's default backend, tkrzw, unless
+# the arguments name another.
 [linux]
 test *args:
-    @cargo nextest run --profile local --no-default-features --features kyotocabinet "$@"
+    @cargo nextest run --profile local "$@"
 
 [macos]
 test *args:
@@ -159,10 +159,10 @@ fmt *args:
 fmt *args:
     @{{windows_args}} cargo fmt @forwarded; exit $LASTEXITCODE
 
-# Lint the workspace. Linux selects the Kyoto Cabinet backend, as `test` does.
+# Lint the workspace with Cargo's default backend, unless the arguments name another.
 [linux]
 clippy *args:
-    @cargo clippy --no-default-features --features kyotocabinet "$@"
+    @cargo clippy "$@"
 
 [macos]
 clippy *args:
@@ -271,7 +271,7 @@ capture-pin run:
 
 # Provision the pin oracle: native `just provision` first, then the oracle cells
 # in containers through the selected runtime into the provisioning cache (the
-# pin's entry of the cache root). The Linux environment file needs the local cell.
+# pin's entry of the cache root). The Linux environment file needs the host cell.
 [unix]
 provision-oracle *args: provision
     @uv run --managed-python python -X utf8 -m tools.dev.provision oracle "$@"

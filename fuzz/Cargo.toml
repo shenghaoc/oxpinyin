@@ -29,7 +29,7 @@ panic = "abort"
 # the library and the C API crate, so a
 # target's user store, data readers and facade all use the selected backend.
 # The default follows the library's. `just fuzz` builds the host's cell
-# (tools/dev/cell.py), and the CI compile check selects the Linux cell with
+# (tools/dev/cell.py), and the CI compile check selects Kyoto Cabinet with
 # `--no-default-features --features kyotocabinet` (docs/runbooks/verification.md,
 # section 10).
 [features]

@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import functools
 from pathlib import Path
-import platform
 import re
 import tomllib
 
@@ -17,12 +16,12 @@ BACKEND_TO_CELL = {backend: cell for cell, backend in CELL_TO_BACKEND.items()}
 CELLS = tuple(CELL_TO_BACKEND)
 BACKEND_FORMATS = {'bdb': 'BerkeleyDB', 'kyotocabinet': 'KyotoCabinet', 'tkrzw': 'Tkrzw'}
 BACKEND_EXTENSIONS = {'bdb': 'db', 'kyotocabinet': 'kct', 'tkrzw': 'tkt'}
-# The cell that CI selects on Linux. The crates' Cargo default backend is tkrzw on
-# every platform. GitHub's Ubuntu runners ship a defective libtkrzw, and Kyoto
-# Cabinet is reproducible there, so CI on Linux selects kc. Locally, Linux supports
-# all three cells; tkrzw needs a libtkrzw that passes the probes of
-# docs/runbooks/verification.md section 9.
-LOCAL_CELL = 'kc'
+# The cell that CI selects on Linux. GitHub's Ubuntu runners ship a defective libtkrzw,
+# and Kyoto Cabinet is reproducible there, so every Linux CI job names kc explicitly.
+# Every other host follows the crates' Cargo default backend, tkrzw (host_cell); on
+# Linux, tkrzw uses the distribution's libtkrzw
+# (docs/runbooks/verification.md section 9).
+CI_LINUX_CELL = 'kc'
 
 
 class CellError(ValueError):
@@ -52,8 +51,8 @@ def default_cell(root: Path = ROOT) -> str:
 
 
 def host_cell(root: Path = ROOT) -> str:
-    """Return Linux's Kyoto Cabinet cell, or the package default elsewhere."""
-    return LOCAL_CELL if platform.system() == 'Linux' else default_cell(root)
+    """Return the cell of the crates' Cargo default backend, which every host follows."""
+    return default_cell(root)
 
 
 def feature_flags(backend: str | None = None) -> list[str]:

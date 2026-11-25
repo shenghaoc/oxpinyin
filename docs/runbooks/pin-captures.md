@@ -94,15 +94,18 @@ asks for it.
 1. Provision the three cells with their build trees under a fresh cache root `ROOT` with
    [`just provision-oracle`](oracle.md#from-any-host). The cache root must be fresh because
    `just provision-oracle` builds a tree only when it regenerates the data. `CACHE` below is the
-   `pin-<commit>` entry of `ROOT`; the cells are `oracle/<cell>` there, and model20 is `model20`:
+   `pin-<commit>` entry of `ROOT`; the cells are `oracle/<cell>` there, and model20 is `model20`.
+   On Linux the tkrzw cell builds on the host, against the distribution's libtkrzw. Install its
+   development package first (`libtkrzw-dev` on Debian):
 
    ```bash
    OXPINYIN_CACHE=ROOT just provision-oracle --cells 'bdb kc tkrzw'
    ```
 
-   On Linux the default is the kc cell alone ([Linux setup](setup.md#linux)); the capture needs
-   all three, which the Debian deps image builds and checks. The Linux `oracle.env` still holds
-   kc only, and no tkrzw code runs on the host.
+   On Linux the default is the host cell alone ([Linux setup](setup.md#linux)); the capture needs
+   all three. The Debian deps image builds and checks the kc and bdb cells, and the host builds the
+   tkrzw cell. The Linux `oracle.env` holds the host cell only; the capture runs every cell in the
+   image.
 
    The data sequence needs a model20 extraction. `just provision-oracle` fetches it into
    the `model20-<digest>` entry of `ROOT`, as `extracted/` beside the `verified` marker

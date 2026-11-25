@@ -28,10 +28,11 @@ The oracle is never built or run on GitHub Actions; the recipes and the preparat
 
 Prepare the host as the [setup runbook](setup.md) states: `just doctor` checks Valgrind and cargo-c,
 and `just provision` checks Kyoto Cabinet's development package.
-Linux measurements run on the local cell, Kyoto Cabinet from the distribution
-([Linux setup](setup.md#linux)): it is reproducible, which the exact-count controls need.
-The pin's build needs the host packages that [`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json)
-lists as `common` and `kc`. kc is the one Linux measurement cell. Then prepare the inputs:
+Linux measurements run on the kc, bdb and tkrzw cells ([cells and settings](#cells-and-settings)).
+With no cell named, they use the host cell, the Cargo default, tkrzw. The pin's build needs the host
+packages that
+[`tools/oracle/dependencies.json`](../../tools/oracle/dependencies.json) lists as `common` and
+for the cell. Then prepare the inputs:
 
 ```sh
 just measure-prepare callgrind
@@ -44,7 +45,8 @@ These rules apply:
 - Builds match the host operating system and architecture.
   The [procedure-specific rules](verification.md#procedure-specific-rules) state the reference platform, the arm64 capture and the emulation ban.
 - Every prepared input lives under the `measure` entry of the cache root (`just cache-root`):
-  the pin prefixes in `pinyin-oracle/<cell>`, the subject stages in `oxpinyin-kc` and `oxpinyin-nodebug`,
+  the pin prefixes in `pinyin-oracle/<cell>`, the subject stages in `oxpinyin-kc` and `oxpinyin-nodebug`
+  (other cells: `oxpinyin-<cell>` and `oxpinyin-nodebug-<cell>`),
   their Cargo target directories in `target`, and the `bisect` driver in `tmp`.
 - Recipe outputs default to `results/<recipe>/` under that entry. Explicit
   output overrides stay supported.
@@ -56,20 +58,47 @@ These rules apply:
   and the subject share one base, and rebuilds changed or damaged inputs.
   The pin is linked as its recipe links it, with no RPATH or RUNPATH. `build.py` replaces `LD_LIBRARY_PATH`
   with the prefix's own library directories while it generates the data; the distribution's
-  libkyotocabinet is on the default loader path, so the prefix holds no library of its own.
-- `--cells` is valid only with `oracle` preparation.
+  backend library is on the default loader path, so the prefix holds no library of its own.
+- `--cells` selects the cells in both preparation modes.
 
 Preparation lives in `tools/dev/measure/prepare.py`.
-`just measure-prepare callgrind` selects the profiled and shipping Kyoto Cabinet arms, and
-`just measure-prepare oracle --cells kc` selects pin data only. Model data stays local.
-The pin, the subject and the recipes use the distribution's libkyotocabinet; no arm loads a libtkrzw,
-and the [runtime check](verification.md#9-sound-tkrzw-library) still refuses one that does.
+`just measure-prepare callgrind` builds the profiled and shipping arms of each selected cell, and
+`just measure-prepare oracle` builds pin data only. Model data stays local.
+The pin, the subject and the recipes use the distribution's backend library. On the tkrzw cell the
+[runtime check](verification.md#9-sound-tkrzw-library) accepts only the library that
+`OXPINYIN_TKRZW_LIBRARY` names; on the other cells it refuses an arm that loads a libtkrzw.
 Additional base or PR revisions are built on the same host as well,
 with separate Cargo target directories. The existing recipe options are set to
 the resulting paths.
 
 Pin-versus-subject numbers are comparable only within one session on one host.
-The host's compiler, C library and libkyotocabinet build both arms, and the recipes record them in `environment.txt`.
+The host's compiler, C library and backend library build both arms, and the recipes record them in `environment.txt`.
+
+### Cells and settings
+
+On Linux the recipes measure the kc, bdb and tkrzw cells. With no cell named, they use the host
+cell, the crates' Cargo default, tkrzw (`host_cell` in `tools/dev/cell.py`).
+
+- `just measure-prepare oracle|callgrind --cells kc bdb tkrzw` prepares the named cells.
+  `callgrind` stages a profiled and a shipping subject arm for each cell.
+- `just measure-callgrind-differential --cell CELL` runs the keystroke differential on that cell.
+  `--cell` is then the only argument.
+- `just measure-system-import-profile --cell CELL NEW-OUTPUT-DIR [--cold-open]` takes the cell's
+  pin, profiled subject and data in place of the three paths. `--cell` must lead the arguments.
+- The sentence and typing-sequence campaigns take `--cell CELL` with explicit library and data
+  paths.
+
+A tkrzw run needs `OXPINYIN_TKRZW_LIBRARY` set to a libtkrzw that passes
+[verification rule 9](verification.md#9-sound-tkrzw-library).
+
+Three settings replace the libraries of the keystroke differential. With none set, it uses
+the prepared cell:
+
+| Setting | Replaces |
+| --- | --- |
+| `CG_PIN_SO` | the pin library |
+| `CG_DATA` | the system data directory of every arm |
+| `CG_OX_SO` | both subject arms, profiled and shipping |
 
 ## Shipping measurement inputs
 
@@ -400,6 +429,87 @@ A profiling build may stand in for the shipped artifact here: block
 counts are identical across the shipped recipe, `debug = 2` with LTO
 off, and forced frame pointers.
 
+## Comparing against a distribution's libpinyin package
+
+This procedure compares oxpinyin with a distribution's libpinyin package on a Linux host.
+Both arms use the distribution's build flags. The harness-built pin with the same flags
+shows that the flags, not the source, explain the result. The example is a Debian-family
+distribution with the tkrzw cell; the package must use the cell's backend.
+
+### Output-identity gate
+
+Costs are compared only when the outputs are identical. Run the `bisect` driver
+(`$OXPINYIN_CACHE/measure/tmp/bisect`) with `--perf-sentence` and `--perf-typing-sequence`
+on the input `nihaozhongguo` for each library: the package, the harness-built pin and oxpinyin.
+Run each library on the package's data and on the pin's data. Remove the fields that change
+from run to run (`pid`, `elapsed_ns` and the hardware fields), then compare the observations.
+Every result must equal the pin's result on the pin's data. A difference stops the comparison.
+
+### Find the distribution's flags
+
+1. Get the package source: `apt-get source libpinyin`. Read `debian/rules` for
+   `DEB_BUILD_MAINT_OPTIONS` (for example `hardening=+all`) and the configure options
+   (for example `--with-dbm=Tkrzw`).
+2. Get the C and C++ flags with the same options:
+
+   ```sh
+   export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+   eval "$(dpkg-buildflags --export=sh)"
+   ```
+
+3. Read the distribution's cargo wrapper (`/usr/share/cargo/bin/cargo` in Debian's `cargo`
+   package). It sets `RUSTFLAGS` (debug information, `--cap-lints warn`, the linker and one
+   `-C link-arg` for each `LDFLAGS` entry) and `[profile.release] debug = true`. It keeps the
+   manifest's `lto` and `panic` settings.
+
+### Build the pin with the flags
+
+Use a separate cache root, so that the flagged pin does not replace the default one.
+Export the flags, then prepare the pin:
+
+```sh
+export OXPINYIN_CACHE=$HOME/cache-debflags
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+eval "$(dpkg-buildflags --export=sh)"
+just measure-prepare oracle --cells tkrzw
+```
+
+### Build oxpinyin with the flags
+
+`prepare.py` sets its own `RUSTFLAGS`, so it cannot build this arm. Build it by hand with the
+shipping `cargo cinstall` command of `prepare.py`, the wrapper's `RUSTFLAGS` and the
+`dpkg-buildflags` C flags:
+
+```sh
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+eval "$(dpkg-buildflags --export=sh)"
+export RUSTFLAGS="-C debuginfo=2 -C strip=none --cap-lints warn -C linker=x86_64-linux-gnu-gcc -C link-arg=-Wl,-z,relro -C link-arg=-Wl,-z,now"
+export CARGO_PROFILE_RELEASE_DEBUG=true
+export CARGO_TARGET_DIR=$HOME/cache-debflags/target/ox-deb
+cargo cinstall --locked --release -p oxpinyin-capi --no-default-features --features tkrzw \
+  --destdir=$HOME/cache-debflags/oxpinyin-deb/stage --prefix=/usr
+```
+
+The `cc` crate does not read `CPPFLAGS`. `-D_FORTIFY_SOURCE` therefore does not reach the
+C++ bridge.
+
+### Run the comparison
+
+Run the keystroke differential, the
+[sentence and typing-sequence campaign](#sentence-and-typing-sequence-callgrind-campaign) and
+`system-import-profile --cold-open` twice: once with the package as the pin arm and once with
+the flagged pin. The keystroke differential
+takes the libraries from `CG_PIN_SO`, `CG_OX_SO` and `CG_DATA` ([cells and settings](#cells-and-settings)).
+The campaigns take `--pin`, `--pr`, `--pr-shipping` and `--system-dir`.
+`system-import-profile` takes the paths as its arguments.
+
+### Reproduction check
+
+The flagged pin must reproduce the package. For each hardware count (typing, sentence,
+keystroke cycle and cold open), the flagged pin divided by the package must be within
+1/1.02 and 1.02. Outside that band, the flags are not the package's, and the comparison
+against the package is not reported.
+
 ## Writing it up
 
 A write-up follows the [verification reporting rules](verification.md#7-proportionate-verification) and the
@@ -613,11 +723,11 @@ The 180-second budget excludes preparation. Local JSON reports remain after the 
 `just measure compare` runs on Linux x86_64 and arm64 with the existing Linux
 tooling: the dlopen `bisect --perf` driver, its `PERF_HW` counter, the
 Callgrind anchor and the `smaps_rollup` reader. It adds no second measurement
-system. Every arm is the Linux local cell, Kyoto Cabinet from the distribution
+system. Every arm is the host cell, the Cargo default, from the distribution's backend library
 ([Linux setup](setup.md#linux)); `tools/tkrzw/runtime.py` still checks each launch.
 Each distinct SHA builds once through the packaging install procedure: locked
-release, `--no-default-features --features kyotocabinet` and no other flags.
-Without `--data`, the arms read the Kyoto Cabinet pin data that `just measure-prepare oracle` wrote
+release, `--no-default-features --features <host cell's backend>` and no other flags.
+Without `--data`, the arms read the host cell's pin data that `just measure-prepare oracle` wrote
 under the cache root (`host_cell` in `tools/dev/cell.py`); Debian's `libpinyin-data`
 package, the macOS and Windows default, is tkrzw data.
 This is the plain shipping library, the arm that Linux times. A′ is staged as

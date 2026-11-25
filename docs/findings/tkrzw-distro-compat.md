@@ -6,10 +6,12 @@ tkrzw is oxpinyin's default backend and reference cell. Windows development
 builds and CI build the pinned tkrzw from source as a static library (tkrzw
 1.0.34, `9ee8416`; the revision is in `tools/tkrzw/pin.json`) with
 `just tkrzw` ([native Windows](../runbooks/setup.md#native-windows)). macOS
-uses [Homebrew](../runbooks/setup.md#macos). Linux
-runs no tkrzw code because of the defects below: every Linux build, CI
-included, uses Kyoto Cabinet ([Linux setup](../runbooks/setup.md#linux),
-[verification rule 10.2](../runbooks/verification.md#10-ci-merge-conditions)).
+uses [Homebrew](../runbooks/setup.md#macos). Linux CI selects Kyoto Cabinet,
+because GitHub's Ubuntu runners ship a library with the defects below
+([verification rule 10.2](../runbooks/verification.md#10-ci-merge-conditions)).
+Locally, Linux runs tkrzw against a library that passes the probes of
+[verification rule 9](../runbooks/verification.md#9-sound-tkrzw-library); the table
+below lists the distributions whose library passes ([Linux setup](../runbooks/setup.md#linux)).
 Debian release packaging (`release-packages.yml` installs `libtkrzw-dev`) and
 oracle/reference images use Debian's library, in their own containers. The
 [verification runbook §9](../runbooks/verification.md#9-sound-tkrzw-library)
@@ -19,6 +21,8 @@ Ubuntu's packaged libtkrzw breaks tkrzw's pointer-identity protocol.
 `./configure && make` on the same sources is correct. tkrzw 1.0.34 fixes
 defect 1 upstream and leaves defect 2; everything below about defect 1
 describes 1.0.33 and earlier.
+
+Only defect 1 reaches oxpinyin and libpinyin. Neither installs a key comparator, and tkrzw records a null comparator as type 1, so defect 2 affects only `tkrzw_dbm_util` and clients that name a built-in comparator.
 
 **There are two independent defects, with two different causes.** Both
 come from build flags that Ubuntu applies to every package and Debian
@@ -179,6 +183,9 @@ Arch packages no tkrzw):
 | `.rpm` | Fedora Rawhide | `1.0.32-5.fc45` | ok | ok (type 1, 18 relocs) | healthy |
 | `.rpm` | RHEL 10.2 + EPEL | `1.0.32-2.el10_1` | ok | ok (type 1, 18 relocs) | healthy |
 | Arch | Arch, from source | none packaged | **broken** | ok (type 1, 18 relocs) | **broken (defect 1)** |
+| `.deb` | Debian 13 (trixie) | `1.0.32-1+b1` | ok (sentinel test passed) | ok (18 relocs) | healthy |
+| `.rpm` | Fedora 45 | `1.0.34-1.fc45` | ok (sentinel test passed) | ok (18 relocs) | healthy |
+| `.deb` | Kali Rolling | `1.0.34-1` | ok (sentinel test passed) | ok (18 relocs) | healthy |
 
 Fedora enables LTO by default, but `tkrzw.spec` sets
 `%global _lto_cflags %{nil}` ("Disabled LTO, since it causes test failures

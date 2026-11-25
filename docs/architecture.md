@@ -135,7 +135,8 @@ Runtime dispatch and fallback are not added.
 
 The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
 macOS and Windows development and CI use the platform's tkrzw source described in [setup](runbooks/setup.md).
-Linux runs no tkrzw code: every Linux build, CI included, uses Kyoto Cabinet from Ubuntu's packages ([Linux setup](runbooks/setup.md#linux), [verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions)).
+Linux CI selects Kyoto Cabinet from Ubuntu's packages, because GitHub's Ubuntu runners ship a defective libtkrzw ([verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions)).
+Local Linux follows the Cargo default, tkrzw, with a libtkrzw that passes [verification rule 9](runbooks/verification.md#9-sound-tkrzw-library), and supports all three backends ([Linux setup](runbooks/setup.md#linux)).
 Debian release packages and oracle/reference images retain Debian's library.
 The peer matrix remains on Linux.
 
