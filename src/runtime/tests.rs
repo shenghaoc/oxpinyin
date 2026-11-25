@@ -2578,17 +2578,30 @@ mod step_item {
             .dict()
             .path_pricing(&[SyllableKey::from_text(spelling).unwrap()], &[])
     }
-    /// The step's read and the full resolution price `token` alike; the
-    /// step's read answers the unigram it found the item with.
-    fn price(runtime: &Runtime, path: &PathPricing, token: u32) -> Option<u32> {
-        let old = runtime.dict().priced_on_path(path, token, true);
-        let new = runtime.dict().priced(path, token, true);
+    /// The step's read and the full resolution price `token` alike on the
+    /// path `spelling`; the step's read answers the unigram it found the
+    /// item with. The trellis step's own read, through a path memo, answers
+    /// the item the text read does.
+    fn price(runtime: &Runtime, spelling: &str, token: u32) -> Option<u32> {
+        let path = path(runtime, spelling);
+        let old = runtime.dict().priced_on_path(&path, token, true);
+        let new = runtime.dict().priced(&path, token, true);
         assert_eq!(
             old.as_ref()
                 .map(|p| (p.item.chars, p.item.pronunciation, p.text.clone())),
             new.as_ref()
                 .map(|p| (p.item.chars, p.item.pronunciation, p.text.clone()))
         );
+        let step = runtime
+            .dict()
+            .trellis_step_item(
+                &[SyllableKey::from_text(spelling).unwrap()],
+                &[],
+                token,
+                &crate::model::TrellisPathMemo::default(),
+            )
+            .unwrap();
+        assert_eq!(step, new.as_ref().map(|p| p.item));
         new.and_then(|p| p.item.unigram)
     }
     fn score(runtime: &Runtime, token: u32, unigram: Option<u32>) {
@@ -2640,7 +2653,7 @@ mod step_item {
         let runtime = opened();
         let token = token(&runtime);
         for spelling in ["ni", "hao"] {
-            let unigram = price(&runtime, &path(&runtime, spelling), token);
+            let unigram = price(&runtime, spelling, token);
             assert!(unigram.is_some(), "the ordinary live item is read in place");
             score(&runtime, token, unigram);
         }
@@ -2660,12 +2673,12 @@ mod step_item {
     fn next_guess_reads_committed_training() {
         let mut runtime = opened();
         let token = token(&runtime);
-        let before = price(&runtime, &path(&runtime, "ni"), token).unwrap();
+        let before = price(&runtime, "ni", token).unwrap();
         runtime
             .user_store_mut()
             .observe_selection(1, token)
             .unwrap();
-        let after = price(&runtime, &path(&runtime, "ni"), token).unwrap();
+        let after = price(&runtime, "ni", token).unwrap();
         assert!(after > before);
         score(&runtime, token, Some(after));
     }
@@ -2674,12 +2687,11 @@ mod step_item {
         assert!(
             runtime
                 .dict()
-                .live_items()
-                .read_ordinary(token, |_| ())
+                .read_in_place(&path(runtime, "ni"), token, |_| ())
                 .is_none(),
             "the full resolution answers"
         );
-        let unigram = price(runtime, &path(runtime, "ni"), token);
+        let unigram = price(runtime, "ni", token);
         assert!(unigram.is_none());
         score(runtime, token, unigram);
     }
@@ -2723,17 +2735,28 @@ mod step_item {
         Missing,
         Removed,
         Unreadable,
+        Unloaded,
     }
 
-    // Basis: the step reads ordinary live items in place; a user item comes first, and other origins and failed reads keep the full resolution (Rust contract).
+    // Basis: the step reads ordinary live items in place; a user item comes first, and other origins, failed reads and an unloaded library keep the full resolution (Rust contract; phrase_index.h:646-650 at 074a2219).
     #[rstest::rstest]
     #[case::user(Fallback::User)]
     #[case::imported(Fallback::Imported)]
     #[case::missing(Fallback::Missing)]
     #[case::removed(Fallback::Removed)]
     #[case::unreadable(Fallback::Unreadable)]
+    #[case::unloaded(Fallback::Unloaded)]
     fn other_origins_keep_the_full_resolution(#[case] case: Fallback) {
         match case {
+            Fallback::Unloaded => {
+                let mut runtime = opened();
+                let token = token(&runtime);
+                assert!(
+                    runtime
+                        .unload_library(u32::from(crate::vocab::phrase_index_library_index(token)))
+                );
+                fallback(&runtime, token);
+            }
             Fallback::User | Fallback::Imported => {
                 let mut runtime = opened();
                 let ni = SyllableKey::from_text("ni").unwrap();

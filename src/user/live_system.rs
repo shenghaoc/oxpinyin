@@ -183,6 +183,29 @@ impl<R> Lookup<R> {
     }
 }
 
+/// What a trellis step's in-place read knows of each library, read once
+/// per key path ([`LiveSystemItems::step_libraries`]) and fixed while a
+/// guess runs. Bit `n` is library `n`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct StepLibraries {
+    /// The loaded system libraries, not unloaded by the mask, whose chunk is
+    /// detached into its live buffer while the session holds system items.
+    in_place: u16,
+    /// The libraries the session arena holds: a read asks the arena for the
+    /// token first.
+    arena: u16,
+}
+
+impl StepLibraries {
+    /// `token`'s library bit. A library index is below 16
+    /// (`PHRASE_INDEX_LIBRARY_INDEX`, 074a2219 `novel_types.h:44`).
+    fn bit(token: PhraseToken) -> u16 {
+        1_u16
+            .checked_shl(u32::from(crate::vocab::phrase_index_library_index(token)))
+            .unwrap_or(0)
+    }
+}
+
 /// One operation's access to the effective system items.
 ///
 /// Built from the shipped libraries, the session store and the unloaded-
@@ -310,22 +333,45 @@ impl<'a> LiveSystemItems<'a> {
         }
     }
 
+    /// The libraries a trellis step reads in place, read once per key path
+    /// ([`StepLibraries`]): those [`UserStore::step_libraries`] names
+    /// detached, less the ones the mask unloaded. The mask does not change
+    /// while a guess runs: its two writers, `RuntimeDict::unload_library`
+    /// and `RuntimeDict::load_library`, are reached only from
+    /// `Runtime::unload_library` and `Runtime::load_library`, which take
+    /// `&mut self`, and a guess holds the runtime through `&self`.
+    #[must_use]
+    pub(crate) fn step_libraries(&self) -> StepLibraries {
+        let (detached, arena) = self.user.step_libraries();
+        // Masks of the sixteen library bits; a mask bit past them names no
+        // library.
+        let unloaded = (self.unloaded_mask() & u32::from(u16::MAX)) as u16;
+        StepLibraries {
+            in_place: detached & !unloaded,
+            arena,
+        }
+    }
+
     /// [`Self::read`] for a trellis step: the live-buffer item behind
-    /// `token`, where it is the effective item and no user item comes
-    /// before it ([`UserStore::read_ordinary_live_item`]), read in place.
+    /// `token`, read in place, where `libraries` names its library and no
+    /// user item comes before it ([`UserStore::read_live_item_in_place`]).
     /// `None` sends the caller to its full resolution, which keeps the
     /// order a user item, the live item, the shipped item. Consumer:
-    /// `RuntimeDict::priced`.
-    pub(crate) fn read_ordinary<R>(
+    /// `RuntimeDict::read_in_place`.
+    pub(crate) fn read_in_place<R>(
         &self,
+        libraries: StepLibraries,
         token: PhraseToken,
         read: impl FnOnce(SystemItem<'_>) -> R,
     ) -> Option<R> {
-        if self.gate::<R>(token).is_some() {
+        let bit = StepLibraries::bit(token);
+        if libraries.in_place & bit == 0 {
             return None;
         }
         self.user
-            .read_ordinary_live_item(token, |view| read(SystemItem::Replayed(view)))
+            .read_live_item_in_place(token, libraries.arena & bit != 0, |view| {
+                read(SystemItem::Replayed(view))
+            })
     }
 
     /// [`Self::read`] for the token getters. `get_phrase_item` checks only
