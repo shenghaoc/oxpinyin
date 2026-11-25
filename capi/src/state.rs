@@ -129,18 +129,12 @@ impl CapiContext {
         self.core.runtime.unload_system_addon(index)
     }
 
-    /// The pin's bigram export iterator over this context, shared:
-    /// [`ContextCore::bigram_export_walk`].
-    pub(crate) fn bigram_export_walk(&self) -> Option<oxpinyin::facade::BigramExportWalk> {
-        self.core.bigram_export_walk()
-    }
-
-    /// Whether `user_bigram.db` carried a key that is not a four-byte
-    /// `phrase_token_t`, shared: [`ContextCore::has_non_token_bigram_key`].
-    /// The pin's `get_all_items` assert dies on it (`ngram_bdb.cpp:199`),
-    /// reached by `pinyin_begin_get_bigram_phrases`.
-    pub(crate) fn has_non_token_bigram_key(&self) -> bool {
-        self.core.has_non_token_bigram_key()
+    /// The pin's bigram export iterator over this context from its one
+    /// `get_all_items` walk, shared: [`ContextCore::bigram_export_begin`].
+    /// `None` where the pin's walk asserts on a key that is not a four-byte
+    /// `phrase_token_t` (`ngram_bdb.cpp:199`).
+    pub(crate) fn bigram_export_begin(&self) -> Option<oxpinyin::facade::BigramExportWalk> {
+        self.core.bigram_export_begin()
     }
 }
 

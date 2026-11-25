@@ -508,6 +508,25 @@ impl ContextCore {
             ..BigramExportWalk::default()
         })
     }
+
+    /// `pinyin_begin_get_bigram_phrases` (`pinyin.cpp:775-787`): one
+    /// `get_all_items` walk of the user bigram container (`:779`) gives
+    /// [`Self::bigram_export_walk`]'s walk. `None` when the walk meets a key
+    /// that is not a four-byte `phrase_token_t`: the pin's walk asserts
+    /// (`ngram_bdb.cpp:199`; Kyoto Cabinet `:173`, tkrzw `:150`) before the
+    /// begin returns. A container whose keys cannot be read gives an empty
+    /// walk.
+    #[must_use]
+    pub fn bigram_export_begin(&self) -> Option<BigramExportWalk> {
+        match self.user_store().bigram_export_predecessors() {
+            Ok(Some(items)) => Some(BigramExportWalk {
+                items: items.into(),
+                ..BigramExportWalk::default()
+            }),
+            Ok(None) => None,
+            Err(_) => Some(BigramExportWalk::default()),
+        }
+    }
 }
 
 /// One token's item as the bigram export reads it. A token the phrase

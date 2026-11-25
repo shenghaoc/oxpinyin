@@ -522,14 +522,14 @@ pub unsafe extern "C" fn pinyin_begin_get_bigram_phrases(
     let ctx = borrow_or_return!(context, context_ref, ptr::null_mut());
     // Register row 86, `ngram_bdb.cpp:199` (kc `:173`, tkrzw `:150`): the
     // user bigram carries a key that is not a phrase_token_t and the pin's
-    // `get_all_items` assert dies.
-    if ctx.has_non_token_bigram_key() {
-        std::process::abort();
-    }
+    // `get_all_items` assert dies inside the one walk that also collects
+    // the predecessors (`pinyin.cpp:779`).
     // Rows 85 and 98 are not decided here: the pin's begin reads no gram
     // (`pinyin.cpp:775-787`); `has_next` loads each predecessor in walk
     // order (`:888-889`), where the walk meets a short or partial value.
-    let walk = ctx.bigram_export_walk().unwrap_or_default();
+    let Some(walk) = ctx.bigram_export_begin() else {
+        std::process::abort();
+    };
     // SAFETY: the public context is live for this serialized constructor call.
     let owner = unsafe { context_owner(context) };
     Box::into_raw(Box::new(BigramHandle {

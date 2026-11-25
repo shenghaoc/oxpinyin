@@ -757,14 +757,19 @@ impl UserStore {
             .is_some_and(|value| value.len() < single_gram::TOTAL_LEN)
     }
 
-    /// Whether a `user_bigram.db` key is not a four-byte `phrase_token_t`.
-    /// The pin's `mask_out` and `pinyin_begin_get_bigram_phrases` both walk
-    /// the whole container through `get_all_items`, so any such key aborts
-    /// them (`ngram_bdb.cpp:199`). Read from the live container's keys.
-    #[must_use]
-    pub fn has_non_token_bigram_key(&self) -> bool {
-        self.gram_keys()
-            .is_ok_and(|keys| keys.iter().any(Option::is_none))
+    /// `pinyin_begin_get_bigram_phrases`'s one `Bigram::get_all_items`
+    /// walk (`pinyin.cpp:779`): the predecessors in the container's walk
+    /// order, or `None` when a key is not a four-byte `phrase_token_t`,
+    /// where the walk's assert dies (`ngram_bdb.cpp:199`; Kyoto Cabinet
+    /// `:173`, tkrzw `:150`). Read from the live container's keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the keys cannot be read.
+    pub(crate) fn bigram_export_predecessors(
+        &self,
+    ) -> Result<Option<Vec<PhraseToken>>, UserStoreError> {
+        Ok(self.gram_keys()?.into_iter().collect())
     }
 
     /// Whether `token`'s stored user-bigram value has a partial item
