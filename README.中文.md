@@ -35,6 +35,12 @@ oxpinyin，即 #2278 的库代码（在 7e66a2e 上测得，该提交的库代�
 
 测试主机：Intel Core i7-9750H，WSL 2，Linux 6.18.58.1，amd64；Kali GNU/Linux Rolling 2026.2；GCC 16.2.0（Debian 16.2.0-4）；tkrzw 1.0.34；libpinyin pin 为 074a2219（2.11.92）。
 
+### 其他平台，仅 oxpinyin（无 libpinyin 参照）
+
+macOS 27.2.1，Apple M5，tkrzw 1.0.34，于 a42636b：每次操作 738,889 条指令（20 个周期 × 6 对，每次运行 2,460 次操作，指纹 `0ba4b3fa4a82f39f`；同字节对照 1.0001）。循环结束时内存占用 7,586,308 B，进程峰值 15,974,880 B。剥离后（`strip -x`）的 `libpinyin.15.0.0.dylib` 为 1,021,416 B。`leaks --atExit`：0 处泄漏。每次操作耗时 27.9 µs，各次运行之间波动最多 37%。
+
+Windows 10.0.26300，MSVC，Intel Core i7-9750H，于 a42636b：峰值工作集 18,020,352 B，峰值私有提交 17,874,944 B（波动约 1%）；每次运行 2,460 次操作，指纹 `0ba4b3fa4a82f39f`。`oxpinyin_capi.dll` 为 1,484,800 B。不提供 CPU 数据：Windows 在没有提升权限时不提供指令计数器，而本机上的周期计数在各次运行之间波动 24–32%。
+
 方法见 [docs/runbooks/benches.md](docs/runbooks/benches.md)。
 
 ## 快速开始
