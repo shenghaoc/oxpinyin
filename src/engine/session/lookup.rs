@@ -745,11 +745,11 @@ where
         Ok(())
     }
 
-    /// The parse seams' and sentence guesses' refresh: [`Self::refresh`],
-    /// unless the session defers list builds
-    /// (`Session::set_defer_list_builds`). Deferred, the scan matrix is
-    /// still built, so its errors surface here as before, and the list is
-    /// left stale for [`Session::refresh_candidates`].
+    /// The parse seams', sentence guesses' and selections' refresh:
+    /// [`Self::refresh`], unless the session defers list builds
+    /// (`Session::set_defer_list_builds`). Deferred, the parse seams and the
+    /// guesses still build the scan matrix, so its errors surface there as
+    /// before, and the list is left stale for [`Session::refresh_candidates`].
     pub(super) fn refresh_after_parse(&mut self) -> Result<(), EngineError> {
         if !self.defer_list_builds {
             return self.refresh();

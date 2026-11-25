@@ -484,7 +484,7 @@ where
             let best = state.sentence.rows.first().map(|row| row.spans.as_slice());
             let Some(chosen) = state.sentence.rows.get(usize::from(rank)) else {
                 state.record.set_consumed(constraint_end);
-                self.refresh()?;
+                self.refresh_after_parse()?;
                 return Ok(self.selection_outcome());
             };
             if let Some(best) = best {
@@ -497,7 +497,7 @@ where
             }
         }
         state.record.set_consumed(constraint_end);
-        self.refresh()?;
+        self.refresh_after_parse()?;
 
         Ok(self.selection_outcome())
     }
@@ -691,11 +691,13 @@ where
     /// `validate_constraint` (074a2219 `pinyin.cpp:2585`, `zhuyin.cpp:1662`;
     /// `phonetic_lookup.cpp:120-168`) drops a forcing whose token does not
     /// spell its span, and the selection record is rebuilt from the
-    /// forcings that survive.
+    /// forcings that survive. The pin's choose writes no candidate list
+    /// (`pinyin.cpp:2578-2590`; its getters read `m_candidates`, `:2845-2864`),
+    /// so a deferring session leaves its list stale here too.
     fn settle_written_forcing(&mut self) -> Result<Selection, EngineError> {
         self.validate_selection_constraints()?;
         self.rebuild_selection_from_constraints();
-        self.refresh()?;
+        self.refresh_after_parse()?;
         Ok(self.selection_outcome())
     }
 

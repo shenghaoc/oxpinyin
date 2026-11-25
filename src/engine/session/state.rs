@@ -494,12 +494,13 @@ where
 
     /// Selects whether the parse seams ([`Session::replace_raw`] and its
     /// variants), the sentence guesses ([`Session::guess_sentence`],
-    /// [`Session::guess_sentence_with_prefix`]) and a sort-word change
-    /// ([`Session::set_sort_options`]) build the candidate list.
+    /// [`Session::guess_sentence_with_prefix`]), a sort-word change
+    /// ([`Session::set_sort_options`]) and a selection
+    /// ([`Session::select_target`]) build the candidate list.
     ///
     /// Off by default: each builds it, as the session API always has. On,
     /// the parse seams and the guesses still build the scan matrix, so its
-    /// errors surface where they did, and all three leave the list stale.
+    /// errors surface where they did, and all four leave the list stale.
     /// A reader of [`Session::candidates`] or [`Session::full_parsed_len`] calls
     /// `Session::refresh_candidates` first. A failure of the deferred build then surfaces from that call
     /// rather than from the parse or the guess. This is the C facades'
