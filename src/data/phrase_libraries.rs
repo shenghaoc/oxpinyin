@@ -254,6 +254,17 @@ impl PhraseLibraries {
             .take_live_content()
     }
 
+    /// The loaded libraries as a bit set, bit `n` for library `n`
+    /// ([`Self::is_loaded`] of each).
+    #[must_use]
+    pub(crate) fn loaded_set(&self) -> u16 {
+        self.by_nibble
+            .iter()
+            .zip(0_u32..)
+            .filter(|(loaded, _)| loaded.is_some())
+            .fold(0, |set, (_, nibble)| set | (1 << nibble))
+    }
+
     /// Whether library `nibble` is loaded.
     #[must_use]
     pub fn is_loaded(&self, nibble: u8) -> bool {

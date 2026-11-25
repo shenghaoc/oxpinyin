@@ -310,6 +310,9 @@ mod system_dictionary {
         let mut scratch = Vec::new();
         for (path, tones) in [
             ("ni", &[3][..]),
+            // Three runs, split by the tone filter, past the unloaded
+            // library's token (chewing_large_table2.h:107-125 at 074a2219).
+            ("ni", &[]),
             ("ni,ni", &[]),
             ("ni,hao", &[]),
             ("n", &[]),

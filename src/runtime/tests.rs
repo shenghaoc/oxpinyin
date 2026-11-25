@@ -739,19 +739,25 @@ mod backend_files {
         let mut runtime = Runtime::open(&system_dir(), None).unwrap();
         let zuo = SyllableKey::from_text("zuo").unwrap();
         let key = crate::user::toned_key(zuo.index(), 3).unwrap();
-        runtime
+        let user_token = runtime
             .user_store_mut()
             .add_phrase(&"坐坐坐".into(), &[key; 3], Some(5))
             .unwrap();
+        let user_library = u32::from(crate::vocab::phrase_index_library_index(user_token));
+        let zuo3 = &["zuo", "zuo", "zuo"][..];
         let mut scratch = Vec::new();
-        for (spellings, tones, masked, expected_continuation) in [
-            (&["ni"][..], &[][..], false, true),
-            (&["zuo", "zuo"][..], &[][..], false, true),
-            (&["ni", "hao", "ma"][..], &[0, 3, 0][..], false, false),
-            (&["ni"][..], &[3][..], true, true),
+        // Each unload stays for the later cases.
+        for (spellings, tones, unload, user_ranged, expected_continuation) in [
+            (&["ni"][..], &[][..], None, false, true),
+            (&["zuo", "zuo"][..], &[][..], None, false, true),
+            (&["ni", "hao", "ma"][..], &[0, 3, 0][..], None, false, false),
+            (zuo3, &[][..], None, true, true),
+            (&["ni"][..], &[3][..], Some(2), false, true),
+            // An unloaded user library leaves the user table's convert call.
+            (zuo3, &[][..], Some(user_library), false, true),
         ] {
-            if masked {
-                assert!(runtime.unload_library(2));
+            if let Some(library) = unload {
+                assert!(runtime.unload_library(library));
             }
             let keys: Vec<_> = spellings
                 .iter()
@@ -765,6 +771,13 @@ mod backend_files {
                 .trellis_ranges_continued(&keys, tones, &mut fused, &mut scratch)
                 .unwrap();
             assert!(pair.iter().eq(fused.iter()));
+            assert_eq!(
+                fused
+                    .iter()
+                    .any(|range| (range.first()..=range.last()).contains(&user_token)),
+                user_ranged,
+                "{spellings:?}"
+            );
             assert_eq!(continued, expected_continuation, "{spellings:?}");
             assert_eq!(continued, dict.phrase_prefix_exists(&keys));
         }

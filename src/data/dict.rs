@@ -84,6 +84,35 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
+/// Whether the library set `set` (bit `n` for library `n`) holds `token`'s
+/// library. A library index is below 16 (`PHRASE_INDEX_LIBRARY_INDEX`,
+/// 074a2219 `novel_types.h:44`).
+pub(crate) fn library_in(set: u16, token: u32) -> bool {
+    1_u16
+        .checked_shl(u32::from(phrase_index_library_index(token)))
+        .is_some_and(|bit| set & bit != 0)
+}
+
+/// A path's toned query keys: each syllable's key with the tone at its
+/// index, `0` past the end of `tones`. A table search collects them on the
+/// stack; a search never takes more than `MAX_PHRASE_LENGTH` keys.
+pub(crate) fn toned_query<C: FromIterator<ChewingKey>>(
+    syllables: &[SyllableKey],
+    tones: &[u8],
+) -> C {
+    syllables
+        .iter()
+        .enumerate()
+        .map(|(index, key)| {
+            key.chewing_key()
+                .with_tone(tones.get(index).copied().unwrap_or(0))
+        })
+        .collect()
+}
+
+/// The query keys of one table search, on the stack.
+pub(crate) type SearchQuery = smallvec::SmallVec<[ChewingKey; crate::vocab::MAX_PHRASE_LENGTH]>;
+
 // ── the default facade ───────────────────────────────────────────
 
 /// The default dictionary's pinyin index, phrase index and phrase libraries selected by
@@ -423,34 +452,46 @@ impl SystemDictionary<'_> {
     /// (`SEARCH_CONTINUED`, set from the same get that serves the search).
     /// The get reads into `scratch`, the caller's buffer.
     ///
+    /// `query` is the path's toned keys ([`toned_query`]). The row is read
+    /// in one pass, as `ChewingTableEntry::search` converts it in place
+    /// (074a2219 `chewing_large_table2.h:136-153`, `:91-133`): each matching
+    /// record's token goes straight to `convert` when `ranged` holds its
+    /// library, the pin's one test of `ranges[PHRASE_INDEX_LIBRARY_INDEX(token)]`
+    /// (`:107-109`). Other tokens are skipped without closing the open range.
+    ///
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or a value decode fails.
     pub(crate) fn trellis_ranges_continued_with(
         &self,
-        syllables: &[SyllableKey],
-        tones: &[u8],
+        query: &[ChewingKey],
         ranges: &mut PhraseIndexRanges<()>,
-        visible: impl Fn(u32) -> bool,
+        ranged: u16,
         scratch: &mut Vec<u8>,
     ) -> Result<bool, DictError> {
-        if syllables.is_empty() {
+        if query.is_empty() {
             return Ok(true);
         }
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
-        let query: Vec<_> = keys
-            .iter()
-            .enumerate()
-            .map(|(index, key)| key.with_tone(tones.get(index).copied().unwrap_or(0)))
-            .collect();
-        let (continued, tokens) = self.pinyin().search_continued(&query, scratch)?;
-        ranges.convert(
-            tokens
-                .into_iter()
-                .filter(|&token| self.library_loaded(token) && visible(token))
-                .map(|token| (token, Some(()))),
-        );
+        let continued = self.pinyin().read_row(query, scratch)?;
+        if continued {
+            ranges.convert(
+                crate::data::chewing_table::matching_items(query, scratch)?
+                    .filter(|&token| library_in(ranged, token))
+                    .map(|token| (token, Some(()))),
+            );
+        }
         Ok(continued)
+    }
+
+    /// The libraries whose tokens a table search files: a loaded system
+    /// chunk or a `USER_FILE` sub-index ([`Self::library_loaded`]), as a bit
+    /// set, bit `n` for library `n`. The pin prepares one range array for
+    /// each loaded sub-index (074a2219 `phrase_index.h:703-711`,
+    /// `phonetic_lookup.h:757`).
+    #[must_use]
+    pub(crate) fn loaded_libraries(&self) -> u16 {
+        let user = (self.user_nibbles & u32::from(u16::MAX)) as u16;
+        self.libraries.loaded_set() | user
     }
 
     /// What a step prices of `token` over `syllables`: its character count
@@ -583,7 +624,8 @@ impl Dictionary for SystemDictionary<'_> {
         ranges: &mut PhraseIndexRanges<()>,
         scratch: &mut Vec<u8>,
     ) -> Result<bool, DictError> {
-        self.trellis_ranges_continued_with(syllables, tones, ranges, |_| true, scratch)
+        let query: SearchQuery = toned_query(syllables, tones);
+        self.trellis_ranges_continued_with(&query, ranges, self.loaded_libraries(), scratch)
     }
 
     /// [`Self::trellis_item`]; the tones and the memo are not used.

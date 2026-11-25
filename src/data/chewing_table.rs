@@ -324,14 +324,26 @@ impl ChewingTable {
         value: &mut Vec<u8>,
         visit: impl FnMut(u32),
     ) -> Result<bool, DictError> {
-        if keys.is_empty() {
-            return Ok(false);
-        }
-        let present = with_index_key(keys, |key| self.dbm.get_pinyin_row(key, value))?;
+        let present = self.read_row(keys, value)?;
         if present {
             visit_matching_items(keys, value, visit)?;
         }
         Ok(present)
+    }
+
+    /// [`Self::search_into`]'s one DBM get: the query's row read into
+    /// `value`, and whether its index key exists, an empty marker included
+    /// (`SEARCH_CONTINUED`). The caller reads the row's matching records with
+    /// [`matching_items`]. An empty query reads nothing and answers `false`.
+    pub(crate) fn read_row(
+        &self,
+        keys: &[ChewingKey],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
+        if keys.is_empty() {
+            return Ok(false);
+        }
+        with_index_key(keys, |key| self.dbm.get_pinyin_row(key, value))
     }
 
     /// [`Self::search`] and [`Self::key_exists`] from one DBM get: whether
@@ -477,21 +489,36 @@ pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
 pub fn visit_matching_items(
     keys: &[ChewingKey],
     value: &[u8],
-    mut visit: impl FnMut(u32),
+    visit: impl FnMut(u32),
 ) -> Result<(), DictError> {
-    if value.is_empty() {
-        return Ok(());
-    }
-    for item in crate::data::row_format::pinyin_index::item_views(value, keys.len())? {
-        if keys
-            .iter()
+    matching_items(keys, value)?.for_each(visit);
+    Ok(())
+}
+
+/// The tokens of the records of `value` that match `keys`, in stored order:
+/// the pass `ChewingTableEntry::convert` makes over a row (074a2219
+/// `chewing_large_table2.h:101-105`). An empty value has no records.
+///
+/// # Errors
+/// Returns a row-decoding error.
+pub fn matching_items<'v>(
+    keys: &'v [ChewingKey],
+    value: &'v [u8],
+) -> Result<impl Iterator<Item = u32> + 'v, DictError> {
+    let items = if value.is_empty() {
+        None
+    } else {
+        Some(crate::data::row_format::pinyin_index::item_views(
+            value,
+            keys.len(),
+        )?)
+    };
+    Ok(items.into_iter().flatten().filter_map(move |item| {
+        keys.iter()
             .zip(item.keys())
             .all(|(query, stored)| query.matches_with_tones(stored))
-        {
-            visit(item.token);
-        }
-    }
-    Ok(())
+            .then_some(item.token)
+    }))
 }
 
 #[cfg(test)]

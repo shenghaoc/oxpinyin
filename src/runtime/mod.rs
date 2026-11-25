@@ -308,42 +308,44 @@ impl<'a> RuntimeDict<'a> {
     /// The query's toned keys: each syllable's key with the tone at its
     /// index, `0` past the end of `tones`.
     fn trellis_query(syllables: &[SyllableKey], tones: &[u8]) -> Vec<crate::parser::ChewingKey> {
-        syllables
-            .iter()
-            .enumerate()
-            .map(|(index, key)| {
-                key.chewing_key()
-                    .with_tone(tones.get(index).copied().unwrap_or(0))
-            })
-            .collect()
+        crate::data::toned_query(syllables, tones)
     }
 
-    /// Whether the trellis table search files a ranged `token`: its library
-    /// is loaded and the mask has not unloaded it, the pin's non-`NULL`
-    /// range array (074a2219 `chewing_large_table2.h:107-109`). The item is
-    /// not read here. A removed or unreadable item stays ranged, and the
-    /// step's item read fails for it, as `get_phrase_item` fails in the
-    /// pin's step (`phonetic_lookup.h:646,674`).
+    /// The libraries whose tokens the trellis table search files, as a bit
+    /// set: loaded and not unloaded by the mask, the pin's non-`NULL` range
+    /// arrays (074a2219 `phrase_index.h:703-711`,
+    /// `chewing_large_table2.h:107-109`). No item is read here. A removed or
+    /// unreadable item stays ranged, and the step's item read fails for it,
+    /// as `get_phrase_item` fails in the pin's step
+    /// (`phonetic_lookup.h:646,674`).
+    fn ranged_libraries(&self) -> u16 {
+        // The mask's bits past the sixteen libraries name no library.
+        let unloaded = (self.library_mask.get() & u32::from(u16::MAX)) as u16;
+        self.system.loaded_libraries() & !unloaded
+    }
+
+    /// Whether the trellis table search files `token`, tested token by
+    /// token: the independent form of [`Self::ranged_libraries`] that the
+    /// test-only [`Self::trellis_ranges`] keeps.
+    #[cfg(test)]
     fn token_ranged(&self, token: u32) -> bool {
-        self.system.library_loaded(token) && self.library_mask_visible(token)
+        self.system.library_loaded(token)
+            && self.library_visible(u32::from(phrase_index_library_index(token)))
     }
 
-    /// Whether the mask leaves `token`'s library visible.
-    fn library_mask_visible(&self, token: u32) -> bool {
-        self.library_visible(u32::from(phrase_index_library_index(token)))
-    }
-
-    /// The user table's `convert` call of [`Self::trellis_ranges`].
+    /// The user table's `convert` call of the trellis table search: the
+    /// tokens whose library `ranged` holds.
     fn user_trellis_ranges(
         &self,
         query: &[crate::parser::ChewingKey],
+        ranged: u16,
         ranges: &mut PhraseIndexRanges<()>,
     ) {
         let tokens = self.user_lookup().search_toned(query);
         ranges.convert(
             tokens
                 .into_iter()
-                .filter(|token| self.token_ranged(*token))
+                .filter(|&token| crate::data::library_in(ranged, token))
                 .map(|token| (token, Some(()))),
         );
     }
@@ -942,10 +944,17 @@ impl RuntimeDict<'_> {
         // The user table's search of this path (#785); the pin makes one
         // per `FacadeChewingTable2::search`, and a repeat is idempotent.
         self.note_user_search(syllables);
-        let visible = |token: u32| self.library_mask_visible(token);
+        let visible =
+            |token: u32| self.library_visible(u32::from(phrase_index_library_index(token)));
         self.system
             .trellis_ranges_with(syllables, tones, ranges, visible)?;
-        self.user_trellis_ranges(&query, ranges);
+        let tokens = self.user_lookup().search_toned(&query);
+        ranges.convert(
+            tokens
+                .into_iter()
+                .filter(|&token| self.token_ranged(token))
+                .map(|token| (token, Some(()))),
+        );
         Ok(())
     }
 
@@ -1054,7 +1063,10 @@ impl Dictionary for RuntimeDict<'_> {
     type PathMemo = TrellisPathMemo<PathPricing>;
 
     /// `Self::trellis_ranges` and `Self::phrase_prefix_exists` with one
-    /// system DBM get.
+    /// system DBM get. The path's toned keys are built once, on the stack,
+    /// for both tables, as the pin's search keeps its index in a stack array
+    /// (074a2219 `chewing_large_table2.cpp:161-176`), and the ranged
+    /// libraries are read once for both `convert` calls.
     fn trellis_ranges_continued(
         &self,
         syllables: &[Self::Syllable],
@@ -1062,12 +1074,12 @@ impl Dictionary for RuntimeDict<'_> {
         ranges: &mut PhraseIndexRanges<()>,
         scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
-        let query = Self::trellis_query(syllables, tones);
-        let visible = |token: u32| self.library_mask_visible(token);
+        let query: crate::data::SearchQuery = crate::data::toned_query(syllables, tones);
+        let ranged = self.ranged_libraries();
         let system_extends = self
             .system
-            .trellis_ranges_continued_with(syllables, tones, ranges, visible, scratch)?;
-        self.user_trellis_ranges(&query, ranges);
+            .trellis_ranges_continued_with(&query, ranges, ranged, scratch)?;
+        self.user_trellis_ranges(&query, ranged, ranges);
         let user = self.user_lookup();
         self.note_user_search(syllables);
         if system_extends {
