@@ -318,9 +318,19 @@ impl<'a> RuntimeDict<'a> {
             .collect()
     }
 
-    /// Whether a ranged `token` is loaded and visible to the library mask.
+    /// Whether the trellis table search files a ranged `token`: its library
+    /// is loaded and the mask has not unloaded it, the pin's non-`NULL`
+    /// range array (074a2219 `chewing_large_table2.h:107-109`). The item is
+    /// not read here. A removed or unreadable item stays ranged, and the
+    /// step's item read fails for it, as `get_phrase_item` fails in the
+    /// pin's step (`phonetic_lookup.h:646,674`).
     fn token_ranged(&self, token: u32) -> bool {
-        self.system.library_loaded(token) && self.library_visible_token(token)
+        self.system.library_loaded(token) && self.library_mask_visible(token)
+    }
+
+    /// Whether the mask leaves `token`'s library visible.
+    fn library_mask_visible(&self, token: u32) -> bool {
+        self.library_visible(u32::from(phrase_index_library_index(token)))
     }
 
     /// The user table's `convert` call of [`Self::trellis_ranges`].
@@ -907,9 +917,9 @@ impl RuntimeDict<'_> {
         // The user table's search of this path (#785); the pin makes one
         // per `FacadeChewingTable2::search`, and a repeat is idempotent.
         self.note_user_search(syllables);
-        let loaded = |token: u32| self.token_ranged(token);
+        let visible = |token: u32| self.library_mask_visible(token);
         self.system
-            .trellis_ranges_with(syllables, tones, ranges, loaded)?;
+            .trellis_ranges_with(syllables, tones, ranges, visible)?;
         self.user_trellis_ranges(&query, ranges);
         Ok(())
     }
@@ -1028,10 +1038,10 @@ impl Dictionary for RuntimeDict<'_> {
         scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
         let query = Self::trellis_query(syllables, tones);
-        let loaded = |token: u32| self.token_ranged(token);
+        let visible = |token: u32| self.library_mask_visible(token);
         let system_extends = self
             .system
-            .trellis_ranges_continued_with(syllables, tones, ranges, loaded, scratch)?;
+            .trellis_ranges_continued_with(syllables, tones, ranges, visible, scratch)?;
         self.user_trellis_ranges(&query, ranges);
         let user = self.user_lookup();
         self.note_user_search(syllables);
