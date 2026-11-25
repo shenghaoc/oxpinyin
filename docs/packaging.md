@@ -230,6 +230,13 @@ Each backend splits into its own `lib*-dev` / `lib*` pair (`libdb5.3` / `libdb5.
 `libm.so.6` in `DT_NEEDED`, as the Kyoto Cabinet build of libpinyin does. Both
 are already dependencies of libkyotocabinet.
 
+On Linux GNU targets, the cargo cdylib links and the [versioned relink](#export-gate) pass
+`-Wl,-z,pack-relative-relocs`, which packs the relative relocations into `DT_RELR`.
+The packed library needs glibc 2.36 or later at run time: it requires the `GLIBC_ABI_DT_RELR` version of `libc.so.6`.
+GNU ld packs them from binutils 2.38 on x86_64.
+An older GNU ld, and GNU ld 2.42 for arm64, ignore the option with a warning and link without `DT_RELR`.
+macOS and Windows links do not change.
+
 ## Kyoto Cabinet: build headers must match the installed library
 
 The Kyoto Cabinet backend compiles Kyoto Cabinet's header code into the facade, as libpinyin's Kyoto Cabinet build does.
@@ -334,10 +341,10 @@ For plain Cargo builds of the Linux cdylibs, both capi build scripts set the SON
 With the `tkrzw` or `kyotocabinet` feature enabled, they also pass `-Wl,--exclude-libs,ALL`.
 GNU ld then gives hidden visibility to every symbol defined in an archive: the rlibs and the static library of the bridge.
 rustc's anonymous version script cannot override that visibility, and the capi crates' own symbols are not affected.
-When cargo-c enables `capi`, the build scripts emit no cdylib link arguments.
+When cargo-c enables `capi`, the build scripts emit only the `DT_RELR` link argument ([build and runtime dependencies](#build-and-runtime-dependencies)).
 
 On Linux, `just packaging install` requests only the staticlib from cargo-c.
-It relinks the shared object from that archive with the crate's `.ver` script and `-Wl,-z,defs` (`just packaging relink-versioned`).
+It relinks the shared object from that archive with the crate's `.ver` script, `-Wl,-z,defs` and, on Linux GNU targets, `-Wl,-z,pack-relative-relocs` (`just packaging relink-versioned`).
 The shipped library therefore carries the pin's symbol versioning, and the script's `local: *` excludes every other symbol.
 The relink verifies the exact export set and each export's version tag against the `.ver` list before installing the shared object.
 The wrapper then creates `lib<name>.so` and `lib<name>.so.15` as symlinks to `lib<name>.so.15.0.0`.
