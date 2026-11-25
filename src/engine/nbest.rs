@@ -545,6 +545,9 @@ struct SpanEntry {
     /// first step: they hold for the whole guess, so every predecessor's
     /// step reuses them.
     costs: OnceCell<NbestTokenCosts>,
+    /// Set at the entry's first step, when the trellis has named a text
+    /// path for `token`.
+    texted: std::cell::Cell<bool>,
 }
 
 impl SpanEntry {
@@ -556,6 +559,7 @@ impl SpanEntry {
             chars,
             pronunciation,
             costs: OnceCell::new(),
+            texted: std::cell::Cell::new(false),
         }
     }
 }
@@ -1655,7 +1659,11 @@ fn expand_one<L: LanguageModel>(
         return Ok(());
     };
     let poss = (f64::from(predecessor.value.poss) + probability.ln()) as f32;
-    if let Entry::Vacant(slot) = trellis.texts.entry(entry.token) {
+    // After the entry's first step the trellis names a path for its token,
+    // and nothing removes one, so later steps from the entry skip the probe.
+    if !entry.texted.replace(true)
+        && let Entry::Vacant(slot) = trellis.texts.entry(entry.token)
+    {
         // The first step to price the token names the path whose text
         // a result reads.
         let (keys, tones) = paths.path(entry.path);
