@@ -397,7 +397,7 @@ policy rows 63 and 66).
 | Beam | `get_top_results` (`:143`), `nbeam = 32` (`:37`), libstdc++ `make_heap` / `pop_heap` | `select_top` (`nbest.rs`): `select_nth_unstable_by`, then a sort of the kept prefix, on `selection_compare`; pinyin orders the adjusted `f32` possibility (`adjusted_poss`), then the earlier preselection batch position, independently of physical backtracking slots | different / S1/S2 comparator repair under the same ruling; std selection replaces the heap transcription ([inventory](glib-libc-inventory.md), item B) |
 | Expansion | `get_nbest_match` (`:736`): bigram over every beam value (`search_bigram2`, `:578`), unigram over the beam head only (`search_unigram2`, `:540`) | `nbest_sentences_with_seeds_generation`, `widen_free_span`, `expand_entries` | same / follows |
 | Tails and extraction | heap top-n, `g_ptr_array_sort` with `trellis_value_compare` (`:174`), which truncates the cost difference to `gint`; `extract_result` backtracks (`:370`) | `Trellis::tails` selects with `select_top`, then `tail_merge` stably sorts by raw `f32` possibility (`ordered_poss_compare`); `Trellis::extract` backtracks | different / S3 of the [algorithm-precondition ruling](compatibility-policy.md#algorithm-precondition-violations); raw possibility descending, equal possibilities stable, NaN last |
-| Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | `f32` running sum of natural logs: `(f64::from(poss) + probability.ln()) as f32` (`expand_one`, `nbest.rs`); pre-log pieces from the token's `NbestTokenCosts` (`nbest_token_costs_with_facts`, `src/runtime/mod.rs`), read once per span entry and applied to each row item by `NbestTokenCosts::blended` and `::unigram` (`src/model.rs`) | same / class (a) — Rust std `ln` (`compatibility-policy.md`, row 11); see [sentence scoring types](#sentence-scoring-types) |
+| Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | `f32` running sum of natural logs: `(f64::from(poss) + probability.ln()) as f32` (`expand_one`, `nbest.rs`); pre-log pieces from the token's `NbestTokenCosts` (`nbest_token_costs_with_facts`, `src/runtime/mod.rs`), read at each step and applied to each row item by `NbestTokenCosts::blended` and `::unigram` (`src/model.rs`) | same / class (a) — Rust std `ln` (`compatibility-policy.md`, row 11); see [sentence scoring types](#sentence-scoring-types) |
 | Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`src/engine/constraint.rs`) | same / argued — revalidation follows the pin's `validate_constraint` ([constraint revalidation](#constraint-revalidation)); its recursive f32 path sum clears only below f32::EPSILON (`phonetic_lookup.cpp:159-163`) |
 | Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`src/engine/phrase.rs`) | same / class (a) — `f32` scores with Rust std `ln` |
 | Per-keystroke work | Trellis rebuilt. The decoder loads and merges both bigram rows for each beam value and successful span (`lookup/phonetic_lookup.h:588-599,750-753,785-810`). | Trellis rebuilt. `expand_entries` loads and merges both grams for each beam value and span, one `NbestStepRow` per load (`src/engine/nbest.rs`), as the [native-read ruling](compatibility-policy.md#sentence-start-bigram-caching) requires. | same / follows |
@@ -433,21 +433,21 @@ are not rebuilt.
 
 For U eligible distinct tokens, item resolution is O(U) with expected O(1)
 probes; pronunciation matching stays per path and scoring per occurrence.
-Each priced range occurrence now sums all P paths of its span before the
-epsilon check (`phonetic_key_matrix.cpp:534-600`,
-`phonetic_lookup.h:643-697`). For R priced occurrences, the sum requires
-O(R(V + PC)) work, instead of O(RC), for V visited matrix prefixes
-and path-price cost C (including dictionary pronunciation matching).
-The pin also walks the span for each transition. The existing path memos
-remain span-local; more of them can now be populated. Recursive summation
-adds O(d) stack space for matrix-walk depth d, including separator hops,
-with d bounded by the span byte length and at most 16 nonzero keys.
-No additional path collection is retained.
-Actual time and peak-memory effects are unknown. The
-memo adds O(T + B) temporary space for T distinct tokens entered (including
-`None` fallbacks) and B copied item-body bytes, and survives no sentence
-invocation. The facade total adjustment is computed lazily once per stable
-guess.
+Each slot sums all P paths of its span before the epsilon check
+(`phonetic_key_matrix.cpp:534-600`, `phonetic_lookup.h:643-697`).
+`Pricing::price` prices a `LazySlot` once and keeps its entry in the slot's
+`OnceCell` for the span's steps (`src/engine/nbest.rs`). Slots do not share
+sums: for k slots that range a token over P paths, pricing reads up to O(kP)
+items. For R priced slots, the sums take O(R(V + PC)) work for V visited
+matrix prefixes and path-price cost C (including dictionary pronunciation
+matching). The pin walks the span again for each transition. Recursive
+summation uses O(d) stack space for matrix-walk depth d, including separator
+hops, with d bounded by the span byte length and at most 16 nonzero keys.
+No path collection is kept beyond the span's paths.
+The memo adds O(T + B) temporary space for T distinct tokens entered
+(including `None` fallbacks) and B copied item-body bytes, and survives no
+sentence invocation. The facade total adjustment is computed lazily once per
+stable guess.
 
 ## 5. Candidate list
 
@@ -802,14 +802,13 @@ on every reachable input.
 Cost: per span the pin recomputes `compute_pronunciation_possibility` for
 each of up to 32 predecessors and each yielded token, O(B·K·P·R·L) for B
 predecessors, K tokens, P paths, R readings and L keys; its heap selection
-is O(n + k log n) and its space O(steps × tokens × nstore). Rust caches
-each token's pronunciation sum and phrase length for the span
-(`Pricing::price` in `src/engine/nbest.rs`). Each slot keeps
-its path and key count. For P paths and k slots that range a token at
-the same phrase length, pricing takes O(P + k) item reads and one map
-entry per priced token. A different phrase length recomputes the sum.
-Rust selects in O(m + k log k) and adds O(P·L) span paths per span and
-a text map of O(tokens·L) key copies.
+is O(n + k log n) and its space O(steps × tokens × nstore). Rust prices
+each range slot once and keeps its entry in the slot's `OnceCell`
+(`Pricing::price` in `src/engine/nbest.rs`). Each slot keeps its path and
+key count and sums the span's paths itself. No sum is shared between
+slots, so k slots over P paths take up to O(kP) item reads. Rust selects
+in O(m + k log k) and adds O(P·L) span paths per span and a text-path list
+of O(E·L) key copies for the E span entries that step.
 
 ### Constraint revalidation
 

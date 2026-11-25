@@ -1247,8 +1247,9 @@ pub trait LanguageModel {
     /// unigram possibility and the two weights. A step from a predecessor's
     /// merged row applies [`NbestTokenCosts::costs`] to the row's item
     /// (`phonetic_lookup.h:646-697`, `phrase_lookup.cpp:310-336` at
-    /// 074a2219). The answer holds for the whole guess, so the n-best
-    /// search asks once per span entry. The default prices nothing.
+    /// 074a2219). The n-best search asks at each step, as the pin's step
+    /// reads the unigram and the facade total (`phonetic_lookup.h:650-651`,
+    /// `:678-679`). The default prices nothing.
     ///
     /// # Errors
     /// Returns [`Self::Error`] when the model backend cannot read the token's

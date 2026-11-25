@@ -39,13 +39,12 @@ fn pricing(
             zeros: &[],
         })),
         span: 0..0,
-        sums: Box::leak(Box::default()),
     }
 }
 
-// Basis: Rust span pricing contract and phonetic_key_matrix.cpp:534–600 at 074a2219.
+// Basis: phonetic_lookup.h:655,683 and phonetic_key_matrix.cpp:534–600 at 074a2219.
 #[test]
-fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
+fn span_pricing_sums_each_slots_paths_and_preserves_its_path_and_key_count() {
     use std::cell::Cell;
 
     struct SpanDictionary {
@@ -108,7 +107,6 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
         ranges: &found.ranges,
         paths: &found.paths,
         memos: &found.memos,
-        sums: &found.sums,
         facts: &RefCell::default(),
         dictionary: &dictionary,
         generation: &generation,
@@ -129,7 +127,9 @@ fn span_pricing_reuses_the_sum_and_preserves_each_slots_path_and_key_count() {
         assert_eq!((entry.path, entry.keys, entry.chars), (path, keys, chars));
         assert_eq!(entry.pronunciation.to_bits(), sum.to_bits(), "path {path}");
         if path == 1 {
-            assert_eq!(dictionary.reads.get(), 1);
+            // The pin sums the paths again at each step: both two-key
+            // paths are read for the second slot too.
+            assert_eq!(dictionary.reads.get(), 2);
         }
     }
     assert!(slots.next().is_none());
