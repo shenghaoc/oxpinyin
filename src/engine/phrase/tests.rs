@@ -2,7 +2,7 @@ use super::{phrase_segment, phrase_segment_ucs4};
 use crate::vocab::PhraseEntry;
 
 use crate::{
-    model::{LanguageModel, NbestStepCosts, PhraseList},
+    model::{LanguageModel, PhraseList},
     vocab::{PhraseToken, SyllableKey},
 };
 
@@ -107,7 +107,7 @@ fn a_raw_surrogate_key_segments_to_its_token() {
 // Basis: Rust raw UCS-4 lookup contract and phrase_lookup.cpp:119–157 at 074a2219.
 #[test]
 fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
-    use crate::model::{NbestStepCosts, NbestStepRow, NbestSuccessors};
+    use crate::model::{NbestStepRow, NbestSuccessors, NbestTokenCosts};
     use crate::vocab::SENTENCE_START;
 
     struct Recording(std::cell::RefCell<Vec<u32>>);
@@ -127,17 +127,10 @@ fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
             Ok(Some(NbestSuccessors::Miss))
         }
 
-        fn nbest_item_costs_in_row(
-            &self,
-            _: &PhraseToken,
-            _: &PhraseToken,
-            _: Option<(u32, u32)>,
-            _: &mut NbestStepRow,
-        ) -> Result<NbestStepCosts, Self::Error> {
-            Ok(NbestStepCosts {
-                blended: None,
-                unigram: Some(2.0_f64.powf(-0.001)),
-
+        fn nbest_token_costs(&self, _: &PhraseToken) -> Result<NbestTokenCosts, Self::Error> {
+            Ok(NbestTokenCosts {
+                elem: Some(2.0_f64.powf(-0.001)),
+                lambda: 0.0,
                 unigram_lambda: 1.0,
             })
         }
@@ -167,7 +160,15 @@ fn a_checked_read_failure_is_the_predecessors_read_after_check_fault() {
 // Basis: phrase_lookup.cpp:119–157,255–305 at 074a2219.
 #[test]
 fn prefix_faults_follow_spans_before_predecessors() {
-    struct Ordered(std::cell::RefCell<Vec<(u32, u32)>>);
+    use crate::model::{NbestStepRow, NbestSuccessors, NbestTokenCosts};
+    use std::cell::{Cell, RefCell};
+
+    /// Each step reads its predecessor's row, then its token's costs, so
+    /// the row read names the predecessor of the costs that follow.
+    struct Ordered {
+        prev: Cell<u32>,
+        steps: RefCell<Vec<(u32, u32)>>,
+    }
     impl LanguageModel for Ordered {
         fn amplification_lambda(&self) -> f32 {
             0.312_699
@@ -175,32 +176,37 @@ fn prefix_faults_follow_spans_before_predecessors() {
 
         type Error = &'static str;
 
-        fn nbest_item_costs_in_row(
+        fn nbest_successors_in_row<'a>(
             &self,
             prev: &PhraseToken,
-            token: &PhraseToken,
-            _: Option<(u32, u32)>,
-            _: &mut crate::model::NbestStepRow,
-        ) -> Result<NbestStepCosts, Self::Error> {
-            let pair = (*prev, *token);
-            self.0.borrow_mut().push(pair);
+            _: &'a mut NbestStepRow,
+        ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
+            self.prev.set(*prev);
+            Ok(None)
+        }
+
+        fn nbest_token_costs(&self, token: &PhraseToken) -> Result<NbestTokenCosts, Self::Error> {
+            let pair = (self.prev.get(), *token);
+            self.steps.borrow_mut().push(pair);
             match pair {
                 (4, 5) => Err("first span's second predecessor"),
                 (3, 6) => Err("later span's first predecessor"),
-                _ => Ok(NbestStepCosts {
-                    blended: Some(0.5),
-                    unigram: Some(0.5),
-
+                _ => Ok(NbestTokenCosts {
+                    elem: Some(0.5),
+                    lambda: 0.0,
                     unigram_lambda: 1.0,
                 }),
             }
         }
     }
     let dictionary = Dict::parse(&[("a", 3), ("a", 4), ("b", 5), ("bc", 6)]);
-    let model = Ordered(std::cell::RefCell::default());
+    let model = Ordered {
+        prev: Cell::new(0),
+        steps: RefCell::default(),
+    };
     let error = phrase_segment(&dictionary, &model, "abc").unwrap_err();
     assert_eq!(error, crate::engine::EngineError::Failure);
-    assert_eq!(*model.0.borrow(), [(1, 3), (1, 4), (3, 5), (4, 5)]);
+    assert_eq!(*model.steps.borrow(), [(1, 3), (1, 4), (3, 5), (4, 5)]);
 }
 
 // Basis: phrase_lookup.cpp:119–157,255–305 at 074a2219.
@@ -228,16 +234,13 @@ fn a_missing_row_is_read_once_per_span_and_the_unigram_branch_goes_on() {
             Ok(Some(NbestSuccessors::Miss))
         }
 
-        fn nbest_item_costs_in_row(
+        fn nbest_token_costs(
             &self,
             _: &PhraseToken,
-            _: &PhraseToken,
-            _: Option<(u32, u32)>,
-            _: &mut NbestStepRow,
-        ) -> Result<NbestStepCosts, Self::Error> {
-            Ok(NbestStepCosts {
-                blended: None,
-                unigram: Some(0.25),
+        ) -> Result<crate::model::NbestTokenCosts, Self::Error> {
+            Ok(crate::model::NbestTokenCosts {
+                elem: Some(0.25),
+                lambda: 0.0,
                 unigram_lambda: 1.0,
             })
         }
@@ -278,17 +281,15 @@ impl LanguageModel for Rows {
         ))
     }
 
-    fn nbest_item_costs_in_row(
+    /// The bigram branch is the item's `freq / total` in f32; the unigram
+    /// branch never steps.
+    fn nbest_token_costs(
         &self,
         _: &PhraseToken,
-        _: &PhraseToken,
-        item: Option<(u32, u32)>,
-        _: &mut crate::model::NbestStepRow,
-    ) -> Result<NbestStepCosts, Self::Error> {
-        Ok(NbestStepCosts {
-            blended: item.map(|(freq, total)| f64::from(freq) / f64::from(total)),
-            unigram: None,
-
+    ) -> Result<crate::model::NbestTokenCosts, Self::Error> {
+        Ok(crate::model::NbestTokenCosts {
+            elem: Some(0.0),
+            lambda: 1.0,
             unigram_lambda: 1.0,
         })
     }

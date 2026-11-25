@@ -28,24 +28,41 @@ fn price(runtime: &Runtime, path: &PathPricing, token: u32, facts: &mut Sentence
 }
 fn score(runtime: &Runtime, token: u32, facts: &mut SentenceFacts) {
     let lm = runtime.lm();
-    for item in [None, Some((3, 7)), Some((5, 7))] {
-        let old = lm
-            .nbest_item_costs_in_row(&1, &token, item, &mut Default::default())
-            .unwrap();
-        let new = lm
-            .nbest_item_costs_with_facts(&1, &token, item, &mut Default::default(), facts)
-            .unwrap();
+    let old = lm.nbest_token_costs(&token).unwrap();
+    let new = lm.nbest_token_costs_with_facts(&token, facts).unwrap();
+    let bits = |costs: crate::model::NbestTokenCosts| {
+        (
+            costs.elem.map(f64::to_bits),
+            costs.lambda.to_bits(),
+            costs.unigram_lambda.to_bits(),
+        )
+    };
+    assert_eq!(bits(old), bits(new));
+    for item in [None, Some((3_u32, 7_u32)), Some((5, 7))] {
+        let transition = item.map(|(freq, total)| (u64::from(freq), u64::from(total), true));
+        let old_step = old.costs(transition);
+        let new_step = new.costs(transition);
         assert_eq!(
             (
-                old.blended.map(f64::to_bits),
-                old.unigram.map(f64::to_bits),
-                old.unigram_lambda.to_bits()
+                old_step.blended.map(f64::to_bits),
+                old_step.unigram.map(f64::to_bits),
+                old_step.unigram_lambda.to_bits()
             ),
             (
-                new.blended.map(f64::to_bits),
-                new.unigram.map(f64::to_bits),
-                new.unigram_lambda.to_bits()
+                new_step.blended.map(f64::to_bits),
+                new_step.unigram.map(f64::to_bits),
+                new_step.unigram_lambda.to_bits()
             )
+        );
+        // The n-best step reads each branch from the memoised token costs.
+        assert_eq!(
+            item.and_then(|(freq, total)| new.blended(u64::from(freq), u64::from(total)))
+                .map(f64::to_bits),
+            new_step.blended.map(f64::to_bits)
+        );
+        assert_eq!(
+            new.unigram().map(f64::to_bits),
+            new_step.unigram.map(f64::to_bits)
         );
     }
 }

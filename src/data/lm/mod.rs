@@ -372,30 +372,15 @@ impl BigramLanguageModel<'_> {
         self.nbest_step_costs_using(token, user, || self.merged_transition(*prev, *token, user))
     }
 
-    /// The unchanged n-best cost law for one item the caller read from the
-    /// predecessor's merged row: `item` is its `(freq, total)`, and `None`
-    /// leaves only the unigram branch. Unigram and item visibility stay
-    /// live; only the row belongs to the caller's current step.
-    ///
-    /// # Errors
-    /// None today; the signature keeps the cost law's error type.
-    pub(crate) fn nbest_item_costs(
+    /// The part of the n-best cost law that no predecessor's row changes:
+    /// the token's unigram possibility and the two weights. Unigram and
+    /// item visibility stay live; [`crate::model::NbestTokenCosts::costs`]
+    /// applies one row item.
+    pub(crate) fn nbest_token_costs_with(
         &self,
         token: &PhraseToken,
         user: UserCountDelta,
-        item: Option<(u32, u32)>,
-    ) -> Result<crate::model::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, || {
-            Ok(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
-        })
-    }
-
-    fn nbest_step_costs_using(
-        &self,
-        token: &PhraseToken,
-        user: UserCountDelta,
-        transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
-    ) -> Result<crate::model::NbestStepCosts, LmError> {
+    ) -> crate::model::NbestTokenCosts {
         // The pin's presence gate is `get_phrase_item` over the token's
         // loaded sub-index, and every transition reads it first
         // (`phrase_lookup.cpp:310,329`, `phonetic_lookup.h:646,674`).
@@ -412,7 +397,7 @@ impl BigramLanguageModel<'_> {
             Some(live) => u64::from(live),
             None => {
                 let Some(count) = self.unigram_count(*token) else {
-                    return Ok(crate::model::NbestStepCosts::default());
+                    return crate::model::NbestTokenCosts::ABSENT;
                 };
                 merge_unigram_counts(count, user.unigram_delta)
             }
@@ -421,32 +406,26 @@ impl BigramLanguageModel<'_> {
         // Pre-log pieces, with the pin's epsilon gates before weighting.
         // IEEE division deliberately carries zero totals and NaN through.
         let elem = count as f64 / unigram_total as f64;
-        let unigram_lambda = (1.0_f64 - f64::from(self.lambda_f32)) as f32;
-        let unigram = if elem < f64::EPSILON {
-            None
-        } else {
-            Some(elem)
-        };
-        let blended = match transition()? {
-            Some((freq, total, true)) => {
-                let bigram = freq as f32 / total as f32;
-                if bigram < f32::EPSILON && elem < f64::EPSILON {
-                    None
-                } else {
-                    let weighted = self.lambda_f32 * bigram;
-                    Some(f64::from(weighted) + f64::from(unigram_lambda) * elem)
-                }
-            }
-            _ => None,
-        };
-        if blended.is_none() && unigram.is_none() {
+        crate::model::NbestTokenCosts {
+            elem: Some(elem),
+            lambda: self.lambda_f32,
+            unigram_lambda: (1.0_f64 - f64::from(self.lambda_f32)) as f32,
+        }
+    }
+
+    /// The token's part of the law, then one transition: a token without
+    /// an item reads no transition.
+    fn nbest_step_costs_using(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
+    ) -> Result<crate::model::NbestStepCosts, LmError> {
+        let costs = self.nbest_token_costs_with(token, user);
+        if costs.elem.is_none() {
             return Ok(crate::model::NbestStepCosts::default());
         }
-        Ok(crate::model::NbestStepCosts {
-            blended,
-            unigram,
-            unigram_lambda,
-        })
+        Ok(costs.costs(transition()?))
     }
 }
 
@@ -475,14 +454,11 @@ impl LanguageModel for BigramLanguageModel<'_> {
         self.nbest_step_costs_with_user_delta(prev, token, UserCountDelta::ZERO)
     }
 
-    fn nbest_item_costs_in_row(
+    fn nbest_token_costs(
         &self,
-        _prev: &PhraseToken,
         token: &PhraseToken,
-        item: Option<(u32, u32)>,
-        _row: &mut crate::model::NbestStepRow,
-    ) -> Result<crate::model::NbestStepCosts, Self::Error> {
-        self.nbest_item_costs(token, UserCountDelta::ZERO, item)
+    ) -> Result<crate::model::NbestTokenCosts, Self::Error> {
+        Ok(self.nbest_token_costs_with(token, UserCountDelta::ZERO))
     }
 
     fn release_row(&self, row: &mut crate::model::NbestStepRow) {

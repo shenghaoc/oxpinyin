@@ -100,9 +100,8 @@ impl RuntimeLm<'_> {
     pub(super) fn costs_with_facts(
         &self,
         token: &PhraseToken,
-        item: Option<(u32, u32)>,
         facts: &mut SentenceFacts,
-    ) -> Option<Result<NbestStepCosts, LmError>> {
+    ) -> Option<NbestTokenCosts> {
         let user = self.user;
         if !facts.validate(user.generation()) {
             return None;
@@ -111,14 +110,15 @@ impl RuntimeLm<'_> {
         let total = *facts
             .total
             .get_or_insert_with(|| user.unigram_total_over(|nibble| self.inner.is_visible(nibble)));
-        // The unchanged live-visible branch ignores unigram_delta. No score is cached: each row occurrence supplies its
-        // own freq/total, and expand_one applies path pronunciation and log.
+        // The unchanged live-visible branch ignores unigram_delta. Each row
+        // item supplies its own freq/total to `NbestTokenCosts::costs`, and
+        // expand_one applies path pronunciation and log.
         let extra = UserCountDelta {
             unigram_live: Some(saved.unigram),
             unigram_total_delta: total,
             ..UserCountDelta::ZERO
         };
-        Some(self.inner.nbest_item_costs(token, extra, item))
+        Some(self.inner.nbest_token_costs_with(token, extra))
     }
 }
 
