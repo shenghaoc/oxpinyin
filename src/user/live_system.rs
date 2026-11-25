@@ -280,23 +280,24 @@ impl<'a> LiveSystemItems<'a> {
         }
         let mut read = Some(read);
         let store = self.user;
-        if store.system_item_removed(token) {
-            return Lookup::Absent;
-        }
         // The library's live buffer holds the session's item, or the
-        // shipped one it was made from.
-        if let Some(found) = store
-            .with_live_item(token, |bytes| {
-                let view = PhraseItemView::from_bytes(bytes)?;
-                let f = read.take()?;
-                Some(f(SystemItem::Replayed(view)))
-            })
-            .flatten()
-        {
-            return Lookup::Found(found);
-        }
-        if store.live_item_is_incomplete(token) {
-            return Lookup::Absent;
+        // shipped one it was made from. One slot read answers both whether
+        // a journal REMOVE took the item out and the item, as
+        // `get_phrase_item` reads one offset (074a2219
+        // `phrase_index.cpp:180-206`). The item is read only while the
+        // session holds system items; otherwise the shipped chunk answers.
+        let overlay = store.has_system_items();
+        match store.read_live_item(token, |bytes| {
+            if !overlay {
+                return None;
+            }
+            let view = PhraseItemView::from_bytes(bytes)?;
+            let f = read.take()?;
+            Some(f(SystemItem::Replayed(view)))
+        }) {
+            LiveItemFields::Read(Some(found)) => return Lookup::Found(found),
+            LiveItemFields::NoReadableItem => return Lookup::Absent,
+            LiveItemFields::Read(None) | LiveItemFields::NoLiveLibrary => {}
         }
         match (
             self.libraries
@@ -369,15 +370,12 @@ impl<'a> LiveSystemItems<'a> {
         if !self.library_loaded(u32::from(crate::vocab::phrase_index_library_index(token))) {
             return Lookup::Unloaded;
         }
-        let store = self.user;
-        if let Some(found) = store.live_pronunciation_count(token) {
-            return Lookup::Found(found);
-        }
-        if store.system_item_removed(token) {
-            return Lookup::Absent;
-        }
-        if store.live_item_is_incomplete(token) {
-            return Lookup::Absent;
+        // One read of the live buffer's item fields: a slot it holds no
+        // readable count at is a removed, unreadable or absent item.
+        match self.user.live_pronunciation_count_read(token) {
+            LiveItemFields::Read(Some(found)) => return Lookup::Found(found),
+            LiveItemFields::Read(None) | LiveItemFields::NoReadableItem => return Lookup::Absent,
+            LiveItemFields::NoLiveLibrary => {}
         }
         self.libraries
             .library(token)

@@ -152,7 +152,12 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
         store.with_user_item(LIBRARY | 4, |item| item.unigram()),
         Some(7)
     );
-    assert_eq!(store.live_pronunciation_count(LIBRARY | 5), Some(2));
+    assert_eq!(
+        crate::user::LiveSystemItems::unmasked(store.originals().phrase_libraries(), &store)
+            .pronunciation_count(LIBRARY | 5)
+            .found(),
+        Some(2)
+    );
     assert!(store.with_user_item(LIBRARY | 5, |_| ()).is_none());
     let keys = super::super::packed_to_pinyin_keys(&item(0x56db, 7).prons[0].0).unwrap();
     assert_eq!(
@@ -208,12 +213,22 @@ fn a_system_record_crossing_the_next_record_cannot_modify_it() {
     let mut store = profile.open();
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
     assert_eq!(store.system_unigram(LIBRARY | 2), Some(50));
-    assert_eq!(store.live_pronunciation_count(LIBRARY | 2), Some(0));
+    assert_eq!(
+        crate::user::LiveSystemItems::unmasked(store.originals().phrase_libraries(), &store)
+            .pronunciation_count(LIBRARY | 2)
+            .found(),
+        Some(0)
+    );
     store.mark_modified();
     store.save_reporting().expect("save");
     drop(store);
     let reopened = profile.open();
     assert_eq!(reopened.system_unigram(LIBRARY | 1), Some(100));
     assert_eq!(reopened.system_unigram(LIBRARY | 2), Some(50));
-    assert_eq!(reopened.live_pronunciation_count(LIBRARY | 2), Some(0));
+    assert_eq!(
+        crate::user::LiveSystemItems::unmasked(reopened.originals().phrase_libraries(), &reopened)
+            .pronunciation_count(LIBRARY | 2)
+            .found(),
+        Some(0)
+    );
 }
