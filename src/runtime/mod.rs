@@ -401,6 +401,7 @@ impl<'a> RuntimeDict<'a> {
         PathPricing {
             user: self.user_lookup().lookup(syllables),
             keys: Self::trellis_query(syllables, tones),
+            libraries: self.live_items().step_libraries(),
         }
     }
 
@@ -505,33 +506,53 @@ impl<'a> RuntimeDict<'a> {
         Some(priced)
     }
 
-    /// What a trellis step prices of `token` on `path`. The pin's step
-    /// reads one phrase item for the length, the unigram and the readings
-    /// (074a2219 `phonetic_lookup.h:646-656`, `:674-685`), as one offset
-    /// read (`phrase_index.cpp:180-206`). The ordinary live item is read
-    /// that way, in place. A token the path's user lookup lists, and every
-    /// other origin, keeps the full resolution of [`Self::priced_on_path`],
-    /// which answers the same for an ordinary live item.
+    /// What a trellis step prices of `token` on `path`, with its text when
+    /// `want_text`: [`Self::read_in_place`], else the full resolution of
+    /// [`Self::priced_on_path`], which answers the same for an ordinary live
+    /// item.
     fn priced(&self, path: &PathPricing, token: u32, want_text: bool) -> Option<PricedToken> {
-        if !path.user.iter().any(|entry| entry.token() == token)
-            && let Some(priced) = self.live_items().read_ordinary(token, |item| {
-                let (matched, total) = Self::item_possibility(item, &path.keys);
-                PricedToken {
-                    item: TrellisItem {
-                        chars: item.phrase_length() as u32,
-                        pronunciation: Some((u64::from(matched), u64::from(total))),
-                        unigram: Some(item.unigram()),
-                    },
-                    text: want_text.then(|| TokenPhrase {
-                        phrase_length: item.phrase_length(),
-                        text: item.phrase_text(),
-                    }),
-                }
-            })
-        {
-            return Some(priced);
+        self.read_in_place(path, token, |item| PricedToken {
+            item: Self::step_item(item, &path.keys),
+            text: want_text.then(|| TokenPhrase {
+                phrase_length: item.phrase_length(),
+                text: item.phrase_text(),
+            }),
+        })
+        .or_else(|| self.priced_on_path(path, token, want_text))
+    }
+
+    /// The ordinary live item behind `token`, read in place and handed to
+    /// `read`. The pin's step reads one phrase item for the length, the
+    /// unigram and the readings (074a2219 `phonetic_lookup.h:646-656`,
+    /// `:674-685`), as one array test and one offset read
+    /// (`phrase_index.h:646-652`, `phrase_index.cpp:180-206`). The path's
+    /// memo holds the per-library half ([`PathPricing::libraries`]). `None`
+    /// for a token the path's user lookup lists, and for every other origin:
+    /// the caller resolves those in full.
+    fn read_in_place<R>(
+        &self,
+        path: &PathPricing,
+        token: u32,
+        read: impl FnOnce(crate::user::SystemItem<'_>) -> R,
+    ) -> Option<R> {
+        if path.user.iter().any(|entry| entry.token() == token) {
+            return None;
         }
-        self.priced_on_path(path, token, want_text)
+        self.live_items().read_in_place(path.libraries, token, read)
+    }
+
+    /// The step's view of a read item: its length, its readings against
+    /// the path's `keys`, and its unigram.
+    fn step_item(
+        item: crate::user::SystemItem<'_>,
+        keys: &[crate::parser::ChewingKey],
+    ) -> TrellisItem {
+        let (matched, total) = Self::item_possibility(item, keys);
+        TrellisItem {
+            chars: item.phrase_length() as u32,
+            pronunciation: Some((u64::from(matched), u64::from(total))),
+            unigram: Some(item.unigram()),
+        }
     }
 
     fn user_lookup(&self) -> UserLookup<'_> {
@@ -846,6 +867,10 @@ pub struct PathPricing {
     user: Vec<PhraseEntry>,
     /// The path's toned keys ([`RuntimeDict::trellis_query`]).
     keys: Vec<crate::parser::ChewingKey>,
+    /// The libraries whose items the path's steps read in place. The memo
+    /// lives for one span search of one guess, and none of these facts
+    /// changes while a guess runs ([`crate::user::StepLibraries`]).
+    libraries: crate::user::StepLibraries,
 }
 
 /// One token as the ordinary lookup prices it.
@@ -1063,7 +1088,12 @@ impl Dictionary for RuntimeDict<'_> {
         }
         let path =
             memo.get_or_try_init(|| Ok::<_, DictError>(self.path_pricing(syllables, tones)))?;
-        Ok(self.priced(path, token, false).map(|priced| priced.item))
+        Ok(self
+            .read_in_place(path, token, |item| Self::step_item(item, &path.keys))
+            .or_else(|| {
+                self.priced_on_path(path, token, false)
+                    .map(|priced| priced.item)
+            }))
     }
 
     fn trellis_step_text(
