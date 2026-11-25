@@ -15,6 +15,7 @@
 
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
 
@@ -581,12 +582,26 @@ pub enum TrainingFault {
     PartialTail,
 }
 
-/// One training call's replay: the grams its checked steps left, and the
-/// fault a failing check met.
+/// One training call's replay: the grams its checked steps left, each
+/// passing step's outcome in step order, and the fault a failing check met.
 #[derive(Debug, Default)]
 pub struct TrainingCheck {
     grams: FxHashMap<PhraseToken, Vec<u8>>,
+    steps: VecDeque<CheckedStep>,
     fault: Option<TrainingFault>,
+}
+
+/// A passing step's [`trained_gram`] outcome, recorded by
+/// [`UserStore::check_training_step_with`] for
+/// [`UserStore::observe_checked_selection`]: the step's pair, its seed and
+/// the gram it stores, `None` where the overflow guard leaves the gram
+/// unchanged (`phonetic_lookup.h:876-904` at 074a2219).
+#[derive(Debug)]
+struct CheckedStep {
+    prev: PhraseToken,
+    cur: PhraseToken,
+    seed: u64,
+    gram: Option<Vec<u8>>,
 }
 
 impl TrainingCheck {
@@ -824,7 +839,15 @@ impl UserStore {
             return Err(UserStoreError::PartialUserBigramTail);
         }
         match trained_gram(gram, cur) {
-            Ok(_) => Ok(()),
+            Ok((seed, stored)) => {
+                check.steps.push_back(CheckedStep {
+                    prev,
+                    cur,
+                    seed,
+                    gram: stored.map(<[u8]>::to_vec),
+                });
+                Ok(())
+            }
             Err(UserStoreError::TrainingSetFreqMiss) => {
                 check.fault = Some(TrainingFault::Abort);
                 Err(UserStoreError::TrainingSetFreqMiss)
@@ -1222,6 +1245,40 @@ impl UserStore {
         Ok(seed)
     }
 
+    /// [`Self::observe_selection`] for a step that
+    /// [`Self::check_training_step_with`] passed in `check`: the check
+    /// already trained the step's gram on the same store, in the same step
+    /// order, so the step stores that gram and applies that seed without
+    /// reading or training the gram again. A step the check did not record
+    /// next takes the full [`Self::observe_selection`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::observe_selection`].
+    pub(crate) fn observe_checked_selection(
+        &mut self,
+        check: &mut TrainingCheck,
+        last: PhraseToken,
+        cur: PhraseToken,
+    ) -> Result<u64, UserStoreError> {
+        let step = check
+            .steps
+            .pop_front()
+            .filter(|step| step.prev == last && step.cur == cur);
+        let Some(step) = step else {
+            return self.observe_selection(last, cur);
+        };
+        let seed = self.commit_step(
+            last,
+            cur,
+            SeedPolicy::Training,
+            step.seed,
+            step.gram.as_deref(),
+        )?;
+        self.inner.dirty.set(true);
+        Ok(seed)
+    }
+
     /// Pronunciation half of train_result3 (074a2219 phonetic_lookup.h:925-927).
     pub(crate) fn train_pronunciations(
         &mut self,
@@ -1320,6 +1377,20 @@ impl UserStore {
                 (seed::predicted_seed(), row.as_deref())
             }
         };
+        self.commit_step(last, cur, policy, seed, gram)
+    }
+
+    /// The writes of one [`Self::update`] step after its gram is trained:
+    /// `cur`'s unigram by `seed * 7`, then `last`'s gram when there is one to
+    /// store.
+    fn commit_step(
+        &mut self,
+        last: PhraseToken,
+        cur: PhraseToken,
+        policy: SeedPolicy,
+        seed: u64,
+        gram: Option<&[u8]>,
+    ) -> Result<u64, UserStoreError> {
         // `seed * unigram_factor` in `guint32`; the seeds are small.
         let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
         let accepted = match policy {

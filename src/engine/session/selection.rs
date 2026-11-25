@@ -777,13 +777,17 @@ pub(crate) fn training_readings<'a>(
     end: usize,
     length: usize,
 ) -> TrainingReadings<'a> {
+    // The walk pushes one frame per key and stops at `length` keys, so the
+    // stacks never outgrow `length + 1` frames and `length` keys.
+    let mut frames = Vec::with_capacity(length + 1);
+    frames.push((start, 0));
     TrainingReadings {
         matrix,
         input,
         end,
         length,
-        frames: vec![(start, 0)],
-        keys: Vec::new(),
+        frames,
+        keys: Vec::with_capacity(length),
         yielded: false,
     }
 }

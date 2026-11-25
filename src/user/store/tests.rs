@@ -1609,3 +1609,50 @@ fn training_past_the_gram_total_limit_keeps_the_gram() {
     let store = crate::user::test_session::open_w3(user.path());
     assert_eq!(store.system_unigram(hao), Some(before + 154_560));
 }
+
+/// Basis: `phonetic_lookup.h:876-929` (one load, train and store of the
+/// predecessor's gram per step, then the unigram by seed * 7).
+#[test]
+fn a_checked_training_step_stores_the_gram_its_check_trained() {
+    let system = crate::user::native_fixture::system_dir();
+    let [ni, hao] =
+        ["你", "好"].map(|text| crate::user::test_session::native_tokens(&system, text)[0]);
+    // The predecessor `ni` repeats, so its second step trains the gram its
+    // first step stored.
+    let start = crate::vocab::SENTENCE_START;
+    let steps = [(start, ni), (ni, hao), (hao, ni), (ni, hao)];
+    let trained = |checked: bool| {
+        let user = tempfile::tempdir().unwrap();
+        crate::user::native_fixture::write_user_conf(user.path(), &system);
+        let mut store = crate::user::test_session::open_w3(user.path());
+        let mut check = TrainingCheck::default();
+        for (prev, cur) in steps {
+            store
+                .check_training_step_with(&mut check, prev, cur)
+                .unwrap();
+        }
+        let seeds: Vec<u64> = steps
+            .iter()
+            .map(|&(prev, cur)| {
+                if checked {
+                    store.observe_checked_selection(&mut check, prev, cur)
+                } else {
+                    store.observe_selection(prev, cur)
+                }
+                .unwrap()
+            })
+            .collect();
+        let grams: Vec<_> = [start, ni, hao]
+            .map(|prev| store.bigram_row(prev).unwrap())
+            .to_vec();
+        (
+            seeds,
+            grams,
+            store.system_unigram(ni),
+            store.system_unigram(hao),
+        )
+    };
+    let checked = trained(true);
+    assert_eq!(checked, trained(false));
+    assert_eq!(checked.0, [69, 69, 69, 138]);
+}
