@@ -68,10 +68,10 @@ it must install.
 
 ## Setup command
 
-Workspace tests in a cloud session run on the Linux local cell, Kyoto Cabinet from
-the distribution ([Linux setup](setup.md#linux)): `cargo nextest run --workspace
---no-default-features --features kyotocabinet`. `just provision` checks its
-development package ([step 3b](#what-it-does)). The Debian packages
+A cloud session selects kc, Kyoto Cabinet from the distribution, explicitly, as Linux CI does
+([Linux setup](setup.md#linux)): export `PINYIN_ORACLE_DBM=kc` before `just provision`, and run
+`cargo nextest run --workspace --no-default-features --features kyotocabinet`. `just provision`
+then checks its development package ([step 3b](#what-it-does)). The Debian packages
 `build-essential curl tar gzip ca-certificates git pkg-config libkyotocabinet-dev
 kyotocabinet-utils` must be installed first. GLib stays on the system.
 
@@ -119,7 +119,7 @@ bdb prefix=<dir> libpinyin=<sha256> libzhuyin=<sha256> data manifest OK
 ```
 
 The setup prints one such line for each requested cell. It also reports the
-environment file when the Linux selection includes the local cell.
+environment file when the Linux selection includes the host cell.
 
 ### Python-only tools.dev hosts
 
@@ -150,27 +150,28 @@ use `--dev-tools` in place of `--python-only`.
 ### The environment file
 
 On Linux, `just provision-oracle` writes `oracle.env` after its container steps succeed
-if the selection includes the local cell (kc). The default selection includes it.
-A selection that excludes kc leaves the file untouched, even if kc is cached.
+if the selection includes the host cell: `PINYIN_ORACLE_DBM`, else the Cargo default, tkrzw.
+The default selection includes it. A selection that excludes the host cell leaves the file
+untouched, even if that cell is cached.
 The file is in the [cache directory](setup.md#cache-directory) unless
 `OXPINYIN_ORACLE_ENV` overrides the path. `just cache-root` prints that directory.
 An earlier `~/.oxpinyin-oracle.env` is not read, moved or removed.
 `just provision` never writes the file. A runner sources it first:
 
 ```sh
-. "$(just cache-root)/oracle.env"   # the Linux cell, kc
+. "$(just cache-root)/oracle.env"   # the host cell
 ```
 
-Setup verifies the current cache’s Linux cell (kc), checks its library and data manifests, and publishes the file with an atomic rename.
+Setup verifies the current cache’s host cell, checks its library and data manifests, and publishes the file with an atomic rename.
 
 The file exports:
 
-- for the provisioned cell `<C>`, `KC`:
+- for the provisioned cell `<C>` (`TKRZW`, `KC` or `BDB`):
   `OXPINYIN_ORACLE_PREFIX_<C>` (the oracle prefix) and
   `OXPINYIN_ORACLE_DATA_<C>` (its `lib/libpinyin/data`);
 - `PINYIN_MODEL_DIR` (the extracted model20 cache);
 - for the cell that
-  `PINYIN_ORACLE_DBM` names (the value of the caller, else `kc`, the Linux cell):
+  `PINYIN_ORACLE_DBM` names (the value of the caller, else the provisioned cell):
   `PINYIN_ORACLE_PREFIX` and `OXPINYIN_LIBPINYIN_DATA_DIR`.
   These two are computed again each time the file is sourced.
 
@@ -210,9 +211,9 @@ also when `PINYIN_ORACLE_DBM` is unset, `bdb` or `kc`.
 native gates and compatibility recipes share it. The reference images
 keep their environment-only shell check and do not receive `tools.dev`.
 
-On Linux no object resolves `libtkrzw`: the host runs Kyoto Cabinet only
-([Linux setup](setup.md#linux)), the environment file names no tkrzw runtime, and the
-check refuses any arm that resolves one. The runtimes it certifies are the macOS Homebrew
+On Linux an object resolves `libtkrzw` only in the tkrzw cell ([Linux setup](setup.md#linux)).
+The environment file of the tkrzw cell names the host libtkrzw in `OXPINYIN_TKRZW_LIBRARY`;
+without it the check refuses such an arm. The runtimes it accepts are the macOS Homebrew
 install (`OXPINYIN_TKRZW_PREFIX`, set by the host probe) and the library the Debian containers
 name in `OXPINYIN_TKRZW_LIBRARY` (release staging and the pin capture image). Windows links
 tkrzw statically ([native Windows](setup.md#native-windows)) and resolves no libtkrzw at run
@@ -244,8 +245,9 @@ These rules apply:
 - Any other launched file is
   checked as itself, so a file that the resolver cannot read is refused.
 
-A pin comparison runs on the Linux cell, Kyoto Cabinet: neither arm resolves a libtkrzw,
-and the same check still runs on every launch and refuses an arm that does
+A pin comparison on the kc or bdb cell resolves no libtkrzw. On the tkrzw cell, both arms
+must resolve the library that `OXPINYIN_TKRZW_LIBRARY` names. The same check runs on every
+launch and refuses an arm that resolves another library
 ([where measurements run](benches.md#where-measurements-run)).
 Installing uv does not establish trust in a runtime.
 
@@ -298,9 +300,11 @@ steps 1 to 5 in `provision oracle`.
    uncached local fallback build needs it. Published artifacts and cached stages
    avoid that pull. Registry retries back off for 2, 4, 8 and 16 s.
 3. Gets the libraries of the requested cells for the host platform, linux/amd64 or linux/arm64:
-   on Linux the one Linux cell, kc, by default; a [pin capture](pin-captures.md) names the
-   others with `--cells`, and their prefixes are built and checked in the Debian deps image.
-   Each prefix records their built hashes and installed versions.
+   on Linux the host cell by default; a [pin capture](pin-captures.md) names the
+   others with `--cells`. On Linux the tkrzw prefix is built natively with `build.py` against the
+   host libtkrzw; the other prefixes are built and checked in the Debian deps image.
+   Each prefix records their built hashes and installed versions. A cached tkrzw prefix is
+   reused only when its `versions.txt` equals the host's inventory; otherwise it is rebuilt.
    - If `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists for amd64, or
      `<tag>-arm64` for arm64, setup pulls it and copies the cells out of it.
      `uv run --managed-python python -X utf8 -m tools.oracle.image image-tag` prints `<tag>`
@@ -337,8 +341,9 @@ steps 1 to 5 in `provision oracle`.
    `oracle/<cell>`, `build/<cell>` and `data-<cell>`. On rootful Docker they run as the invoking
    user, so the cache stays theirs.
 
-   3b. Linux only, in `just provision`: requires Kyoto Cabinet's development package, the
-   Linux cell ([Linux setup](setup.md#linux)). `pkg-config --modversion kyotocabinet`
+   3b. Linux only, in `just provision`: checks the host cell ([Linux setup](setup.md#linux)).
+   For tkrzw it finds the distribution's `libtkrzw.so.1` in the `ldconfig` cache, with no defect
+   probe; when there is none, the refusal names `PINYIN_ORACLE_DBM=kc` and `bdb`. For kc, `pkg-config --modversion kyotocabinet`
    must answer; as root the step installs `libkyotocabinet-dev` with apt, and an ordinary
    account is told the command. macOS certifies Homebrew's tkrzw instead ([macOS setup](setup.md#macos));
    Windows loads the oracle only in containers and skips this step.
@@ -349,9 +354,10 @@ steps 1 to 5 in `provision oracle`.
    staging area and published with its own manifest hashes. Reuse checks these
    recorded hashes and every listed file. The repository pin freezes no generated output.
    `provision oracle` then prints the per-cell lines.
-5. If the Linux selection includes the local cell, `provision oracle` checks its cached
+5. If the Linux selection includes the host cell, `provision oracle` checks its cached
    prefix with the [data verification](#data-verification), rewrites that prefix's `.pc`
-   files to the host location and writes the environment file above. If that prefix
+   files to the host location and writes the environment file above. For tkrzw the file also
+exports `OXPINYIN_TKRZW_LIBRARY`, the host libtkrzw on the default loader path. If that prefix
    fails verification, the step fails before the rewrites. Other selections and
    non-Linux hosts perform neither write.
 

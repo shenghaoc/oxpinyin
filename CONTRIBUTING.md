@@ -33,3 +33,12 @@ No document is frozen: a SPEC states the pin's behaviour. A SPEC or a contract t
 `README.md` and `README.中文.md` stay consistent: a change to the content of one changes both in the same PR. A Chinese wording correction that does not change content needs no English change.
 
 Task procedures: [backends](docs/runbooks/backends.md), [oracle](docs/runbooks/oracle.md), [remote Linux host](docs/runbooks/cloud.md), [measurement](docs/runbooks/benches.md), [goldens and pins](docs/runbooks/goldens-and-pins.md), [packaging](docs/packaging.md) and [release](docs/runbooks/release.md).
+
+## tkrzw on Linux distributions
+
+oxpinyin defaults to tkrzw: the one backend that is still maintained and has no licensing restrictions. Few distribution packages use tkrzw, so distribution builds of it are not widely tested. Ubuntu's archive has no user outside tkrzw's own packages, and Debian's package has no maintainer.
+
+- **Ubuntu** ships tkrzw 1.0.32, built with LTO. LTO breaks tkrzw's record sentinels in every version before 1.0.34 ([estraier/tkrzw#71](https://github.com/estraier/tkrzw/issues/71)): a removal leaves the record in place, and the next save fails.
+- **Arch** packages no tkrzw. A tkrzw before 1.0.34 built with Arch's default flags has the same defect.
+
+This is a distribution packaging problem, not an oxpinyin defect: do not investigate it. On these distributions, build with `--no-default-features --features kyotocabinet`, or `--no-default-features --features bdb`.

@@ -66,9 +66,11 @@ jobs:
       FUZZ_SECONDS: 180
       FUZZ_GUARD_SECONDS: 420
       AFL_NO_UI: 1
+      # The cell that CI selects on Linux (CI_LINUX_CELL in tools/dev/cell.py).
+      PINYIN_ORACLE_DBM: kc
     steps:
-      # tools/dev/fuzz.py builds each target with the host's cell: Kyoto
-      # Cabinet on Linux (tools/dev/cell.py), whose cxx bridge compiles with
+      # tools/dev/fuzz.py builds each target with the cell that PINYIN_ORACLE_DBM
+      # names: Kyoto Cabinet (tools/dev/cell.py), whose cxx bridge compiles with
       # the image's g++: libkyotocabinet-dev from apt, no libclang.
       - name: Install build dependencies (apt)
         run: |

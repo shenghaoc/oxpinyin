@@ -22,7 +22,7 @@ import sys
 from collections.abc import Mapping, Sequence
 
 from .. import host, pool, slot
-from ..cell import CELLS, LOCAL_CELL
+from ..cell import CELLS, host_cell
 from ..runners import Finished, emit, write
 from . import bench, identity, instructions, prepare, reports
 from .bench import Arm, Bench, fail, setting
@@ -50,19 +50,20 @@ def lines_of(path: Path, pattern: str, *, ignore_case: bool = False) -> list[str
     return [line for line in text.split('\n') if line and expression.search(line)]
 
 
-def roots(env: Mapping[str, str], cell_name: str = LOCAL_CELL) -> dict:
+def roots(env: Mapping[str, str], cell_name: str | None = None) -> dict:
     """Where `prepare callgrind` stages the three libraries the differential of CELL_NAME uses."""
+    cell_name = cell_name or host_cell()
     return dict(lp=prepare.pin_prefix(env, cell_name),
                 ox=prepare.subject_stage(env, prepare.stage_name(cell_name, debug=True)),
                 nodebug=prepare.subject_stage(env, prepare.stage_name(cell_name, debug=False)))
 
 
-def data_dir(env: Mapping[str, str], cell_name: str = LOCAL_CELL) -> Path:
+def data_dir(env: Mapping[str, str], cell_name: str | None = None) -> Path:
     """The prepared pin's data directory of CELL_NAME, which every arm of the differential reads."""
-    return prepare.pin_prefix(env, cell_name) / prepare.DATA_SUBDIRECTORY
+    return prepare.pin_prefix(env, cell_name or host_cell()) / prepare.DATA_SUBDIRECTORY
 
 
-def libraries(env: Mapping[str, str], cell_name: str = LOCAL_CELL, *,
+def libraries(env: Mapping[str, str], cell_name: str | None = None, *,
               keys: frozenset[str] = frozenset(('lp', 'ox', 'nodebug')), data: bool = True) -> dict:
     """The prepared libraries named by KEYS, and with DATA the prepared data directory, checked
     to exist before anything runs."""
@@ -238,10 +239,10 @@ def callgrind_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
 def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
     """Instruction-level differential for the steady keystroke cycle: stages 0 through 6.
 
-    `--cell CELL` alone selects the cell (default: the local one) that `measure-prepare callgrind
+    `--cell CELL` alone selects the cell (default: the host cell) that `measure-prepare callgrind
     --cells CELL` prepared.
     """
-    cell_name = LOCAL_CELL
+    cell_name = host_cell()
     if len(argv) == 2 and argv[0] == '--cell':
         cell_name, argv = argv[1], []
         if cell_name not in CELLS:

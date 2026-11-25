@@ -8,8 +8,8 @@ A cell uses one DBM backend on both sides of a comparison.
 
 The reference cell is tkrzw (`PINYIN_ORACLE_DBM=tkrzw`), because upstream maintains tkrzw.
 By default, baselines, differentials, revert-and-check and the gate run on this cell.
-A Linux host has one cell, kc: its oracle environment file holds that cell alone ([Linux setup](setup.md#linux)).
-The tkrzw cell runs in the pin capture image and on macOS and Windows.
+A Linux host provisions its host cell, tkrzw unless `PINYIN_ORACLE_DBM` names another; its oracle environment file holds that cell alone ([Linux setup](setup.md#linux)).
+The tkrzw cell runs in the pin capture image, on macOS and Windows, and on a Linux host with a sound libtkrzw ([rule 9](#9-sound-tkrzw-library)).
 
 ## 2. Backend selection
 
@@ -42,11 +42,11 @@ During iteration, run these checks for each changed crate:
 - `cargo clippy --locked -p <crate> --all-targets -- -D warnings`
 - fail-fast `cargo nextest run -p <crate>`
 
-On Linux the backend is Kyoto Cabinet: `just clippy` and `just test` pass `--no-default-features --features kyotocabinet`, so do not repeat the flags with them. With plain `cargo`, pass the flags yourself, as in the commands below.
+`just clippy` and `just test` use Cargo's default backend, tkrzw, unless the arguments name another. With plain `cargo`, pass the flags yourself, as in the commands below.
 
 Diagnostics are fixed when they appear.
 
-Before a push for review or merge and after each rebase, one `cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings` (on Linux; elsewhere without the backend flags) runs on the final tree. These also run, only when the change calls for them:
+Before a push for review or merge and after each rebase, one `cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings` runs on the final tree on Linux, as CI runs it; elsewhere it runs without the backend flags. These also run, only when the change calls for them:
 
 - `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --workspace` when doc comments or public items changed.
 - `just deny` when a `Cargo.toml`, `Cargo.lock` or `deny.toml` changed. The recipe runs the cargo-deny checks of CI's `deny` job.
@@ -219,11 +219,17 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 
 The tkrzw cell, the reference cell, runs only against a sound libtkrzw.
 macOS uses Homebrew's tkrzw and Windows the repository's static build, `just tkrzw` ([setup](setup.md)).
-Linux runs no tkrzw code: every Linux build uses Kyoto Cabinet
-([section 10](#10-ci-merge-conditions), [Linux setup](setup.md#linux)), and a Linux host
-provisions no tkrzw oracle cell. Debian release packaging and oracle/reference images retain
-Debian's library in their containers. Ubuntu's packaged library is not a development route.
-See the [Ubuntu library finding](../findings/tkrzw-distro-compat.md).
+Linux CI selects Kyoto Cabinet ([section 10](#10-ci-merge-conditions)), because GitHub's Ubuntu
+runners ship a defective libtkrzw. Local Linux follows the Cargo default, tkrzw
+([Linux setup](setup.md#linux)), against the distribution's libtkrzw.
+A distribution libtkrzw built with LTO is defective before tkrzw 1.0.34 ([upstream issue 71](https://github.com/estraier/tkrzw/issues/71)).
+The manual probe is the sentinel test, `tkrzw_library_honours_its_sentinel_protocol`: it fails on a
+defective library ([finding](../findings/tkrzw-distro-compat.md)).
+
+A Linux host provisions its host cell, tkrzw unless `PINYIN_ORACLE_DBM`
+names another; a [pin capture](pin-captures.md) names the other cells with `--cells`.
+Debian release packaging and oracle/reference images retain Debian's library in their containers.
+See the [distribution library finding](../findings/tkrzw-distro-compat.md).
 
 A result against a defective libtkrzw is invalid.
 Its DIFFERs are not reported or triaged.
@@ -247,7 +253,6 @@ Check the build of the library, not its version:
      cargo nextest run -p oxpinyin -E 'test(tkrzw_library_honours_its_sentinel_protocol)'
    ```
 
-   `readelf -rW $P/lib/libtkrzw.so.1 | grep -c KeyComparator` prints 0 for defect 2.
 3. Then read the version.
    1.0.34 is healthy under every flag set measured.
    1.0.33 and earlier are healthy from `./configure && make` and from Debian, Fedora and EPEL, and broken from Ubuntu and under Arch's default flags.
@@ -277,10 +282,10 @@ These rules govern the CI gates. This section is the only place that states them
    macOS and Windows are best-effort: they run nightly on main and before a release, never as a PR merge condition.
    The nightly runs their Rust checks. Dispatch it on the release commit before tagging.
    A lane never dispatches a workflow.
-2. **Linux CI runs the one Linux cell: Kyoto Cabinet, from Ubuntu's packages.**
-   tkrzw stays the Cargo default, and every Linux job selects Kyoto Cabinet with the backend flag instead: the `rust` lane (clippy, rustdoc, nextest, the archive build and the fuzz check), the cell gates, `shipping-sizes`, whose size table is therefore the Kyoto Cabinet libraries', and the nightly fuzz soak.
-   `LOCAL_CELL` in `tools/dev/cell.py` names the cell once for CI and the local tooling; [Linux setup](setup.md#linux) states the companion rule for the local tooling.
-   Decided 2026-11-21: Ubuntu's libtkrzw is defective at run time ([finding](../findings/tkrzw-distro-compat.md)), so Linux runs no tkrzw code; Kyoto Cabinet is reproducible, which the exact-count measurement controls need.
+2. **Linux CI selects Kyoto Cabinet, from Ubuntu's packages.**
+   tkrzw stays the Cargo default on every platform, and every Linux CI job selects Kyoto Cabinet with the backend flag instead: the `rust` lane (clippy, rustdoc, nextest, the archive build and the fuzz check), the cell gates, `shipping-sizes`, whose size table is therefore the Kyoto Cabinet libraries', and the nightly fuzz soak.
+   `CI_LINUX_CELL` in `tools/dev/cell.py` names that cell. Every job that builds a backend names it explicitly; the local tooling follows the Cargo default ([Linux setup](setup.md#linux)).
+   The reason is a CI one: GitHub's Ubuntu runners ship a libtkrzw that is defective at run time ([finding](../findings/tkrzw-distro-compat.md)), and Kyoto Cabinet is reproducible there, which the exact-count measurement controls need. It is not a Linux rule: locally, Linux supports kc, bdb and tkrzw, and tkrzw needs a library that passes [rule 9](#9-sound-tkrzw-library).
    The `store` job tests Berkeley DB and runs the Berkeley DB and Kyoto Cabinet sanitizers.
    It runs on every pull request.
    tkrzw's tests, including the full-data contract tests, which are tkrzw-only, run on the nightly macOS and Windows jobs and never in Linux CI; tkrzw's sanitizer run has no CI job.

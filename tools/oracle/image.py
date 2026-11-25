@@ -821,8 +821,8 @@ def check_reproducible(argv):
     from tools.dev.measure.recipes import require_local_measurement
     require_local_measurement(os.environ)
     parser = argparse.ArgumentParser(prog='check-reproducible')
-    # The one Linux cell (tools/dev/cell.py): the check runs on a Linux host.
-    parser.add_argument('--cells', nargs='+', choices=(cell.LOCAL_CELL,), default=[cell.LOCAL_CELL])
+    # The check runs on a Linux host; the default is the host cell (tools/dev/cell.py).
+    parser.add_argument('--cells', nargs='+', choices=cell.CELLS, default=[cell.host_cell()])
     parser.add_argument('--work-dir', type=Path, required=True)
     parser.add_argument('--jobs', default='2')
     args = parser.parse_args(argv)

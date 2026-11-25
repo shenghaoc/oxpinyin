@@ -4,9 +4,9 @@
 callgrind-differential and system-import-profile read: oracle builds only the
 selected pin cells with tools/oracle/build.py; callgrind also builds the profiling
 and shipping arms over the pin's data. Every input is working data under the
-`measure` entry of the cache root. On Linux every build uses the local cell,
-Kyoto Cabinet from the distribution (LOCAL_CELL in tools/dev/cell.py;
-docs/runbooks/setup.md#linux).
+`measure` entry of the cache root. With no --cells, the builds use the host cell, the
+crates' Cargo default backend (host_cell in tools/dev/cell.py); --cells selects any of
+kc, bdb and tkrzw (docs/runbooks/setup.md#linux).
 """
 import argparse
 import contextlib
@@ -18,7 +18,7 @@ import shutil
 import sys
 
 from .. import cell
-from ..cell import LOCAL_CELL
+from ..cell import CI_LINUX_CELL, host_cell
 from ..runners import Finished, emit
 from . import bench
 from .bench import fail
@@ -39,14 +39,14 @@ def pin_prefix(env, backend):
 
 
 def stage_name(cell_name, *, debug):
-    """The stage name of the subject arm of CELL_NAME: the local cell keeps its historical names."""
-    if cell_name == LOCAL_CELL:
-        return LOCAL_CELL if debug else 'nodebug'
+    """The stage name of the subject arm of CELL_NAME: kc keeps its historical names."""
+    if cell_name == CI_LINUX_CELL:
+        return CI_LINUX_CELL if debug else 'nodebug'
     return cell_name if debug else f'nodebug-{cell_name}'
 
 
 def subject_stage(env, name):
-    """The staged cargo-c install of the subject arm NAME (the local cell: profiled, nodebug: shipping)."""
+    """The staged cargo-c install of the subject arm NAME (kc: profiled, nodebug: shipping)."""
     return measure_root(env) / f'oxpinyin-{name}' / 'stage'
 
 
@@ -133,10 +133,10 @@ def prepare(argv, env):
     require_local_measurement(env)
     parser = argparse.ArgumentParser(prog='python -m tools.dev.measure.prepare')
     parser.add_argument('mode', choices=('oracle', 'callgrind'))
-    # The default Linux measurement cell is the local one; bdb and tkrzw are built on request.
+    # The default cell is the host cell, the Cargo default; --cells names any of the three.
     parser.add_argument('--cells', nargs='+', choices=cell.CELLS, default=None)
     args = parser.parse_args(argv)
-    cells = args.cells or [LOCAL_CELL]
+    cells = args.cells or [host_cell()]
     extracted = model.fetch(env=env)
     for backend in cells:
         prefix = pin_prefix(env, backend)
@@ -188,8 +188,8 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
     """One native release build in a private invocation worktree.
 
     macOS and Windows build Cargo's default backend: tkrzw from Homebrew, or the repository's
-    static build (`just tkrzw`). Linux builds the local cell, Kyoto Cabinet from the distribution,
-    and packages the shipping library as macOS does. SYMBOLS adds the profiled arm's debug
+    static build (`just tkrzw`). Linux builds the host cell from the distribution's
+    backend library and packages the shipping library as macOS does. SYMBOLS adds the profiled arm's debug
     information; a Linux comparison builds without it.
     """
     import time
@@ -197,9 +197,11 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
     from .. import packaging
     features = []
     if linux:
-        features = ['--no-default-features', '--features', cell.CELL_TO_BACKEND[LOCAL_CELL]]
-        if bench.capture(['pkg-config', '--exists', 'kyotocabinet'], env=env).status:
-            raise ValueError('install libkyotocabinet-dev before measuring: pkg-config finds no kyotocabinet')
+        backend = cell.CELL_TO_BACKEND[host_cell()]
+        features = ['--no-default-features', '--features', backend]
+        if backend != 'bdb' and bench.capture(['pkg-config', '--exists', backend], env=env).status:
+            raise ValueError(f'install the {backend} development package before measuring: '
+                             f'pkg-config finds no {backend}')
     elif windows:
         env = windows_environment(env, bench.VCPKG_INSTALLED)
     else:
@@ -233,7 +235,7 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
             dylib = target / f'release/{library}.dll'
             uuid = identity.sha256(dylib)
         else:
-            # Use this tooling revision with each product source revision. Linux selects the local
+            # Use this tooling revision with each product source revision. Linux selects the host
             # cell; macOS builds the revision's default.
             packaging.install_library(['libpinyin', '--prefix=' + str(prefix), '--',
                                        '--locked', '--release', *features],
@@ -241,10 +243,10 @@ def native_build(revision, destination, env, *, symbols=True, windows=False, lin
             if linux:
                 dylib = prefix / 'lib/libpinyin.so.15.0.0'
                 uuid = identity.sha256(dylib)
-                # The linked object names the backend; it must be the local cell.
+                # The linked object names the backend; it must be the host cell.
                 backend = identity.library_backend(dylib)
-                if backend != LOCAL_CELL:
-                    fail('packaged library does not link the local backend: ' + backend)
+                if backend != host_cell():
+                    fail('packaged library does not link the host backend: ' + backend)
             else:
                 dylib = prefix / 'lib/libpinyin.15.0.0.dylib'
                 uuid = identity.macho_uuid(dylib)

@@ -372,7 +372,7 @@ def native(argv, env):
             bench.fail('Linux profiles with --template Callgrind or Massif and no --instrument', 2)
         if args.cycles < 2:
             bench.fail('Linux measures the steady cycles after the first; --cycles must be at least 2', 2)
-        # Every arm is the local cell's build; tools/tkrzw/runtime.py still certifies each launch.
+        # Every arm is the host cell's build; tools/tkrzw/runtime.py still certifies each launch.
         run_env = dict(env)
     elif args.template in VALGRIND_TEMPLATES:
         bench.fail('Callgrind and Massif profiles run on Linux', 2)

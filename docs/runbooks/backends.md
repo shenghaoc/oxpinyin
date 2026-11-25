@@ -14,14 +14,16 @@ cargo nextest run --locked --workspace --no-default-features --features bdb
 Disable default features when selecting a peer to avoid also enabling `tkrzw`.
 The store build script finds tkrzw through `pkg-config tkrzw` and, on macOS,
 the compression libraries through their pkg-config modules.
-The platform's tkrzw installation is described in [setup](setup.md). Linux
-installs none: its one cell is Kyoto Cabinet ([Linux setup](setup.md#linux)).
+The platform's tkrzw installation is described in [setup](setup.md). On Linux, the
+distribution's tkrzw is the default and must be sound
+([verification rule 9](verification.md#9-sound-tkrzw-library)); Linux CI selects Kyoto Cabinet
+([Linux setup](setup.md#linux)).
 
 ## System libraries
 
 | backend | Debian/Ubuntu packages | macOS (Homebrew) |
 | --- | --- | --- |
-| tkrzw | none: Linux runs no tkrzw code ([Linux setup](setup.md#linux)); Ubuntu's `libtkrzw` is defective ([finding](../findings/tkrzw-distro-compat.md)) | `tkrzw` (see [macOS setup](setup.md#macos); `cargo check`/`clippy` never link and are not evidence) |
+| tkrzw | `libtkrzw-dev pkg-config g++` on Debian and Kali; Fedora: `tkrzw-devel`. Ubuntu's `libtkrzw` is defective ([finding](../findings/tkrzw-distro-compat.md)); a library must pass [verification rule 9](verification.md#9-sound-tkrzw-library) | `tkrzw` (see [macOS setup](setup.md#macos); `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev pkg-config g++` (the cxx bridge is C++) | `kyoto-cabinet`; the keg ships `kyotocabinet.pc` and pkg-config resolves it. The backend links at link time, so bare-name dylib lookup does not apply |
 | bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5`: 5.3.28 under the Sleepycat license, the surveyed version. The default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg is keg-only and ships no `.pc`, so the [overrides](#discovery-and-overrides) point at it |
 

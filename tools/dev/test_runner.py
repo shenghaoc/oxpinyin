@@ -23,9 +23,11 @@ SANITIZER_NAMES = ('address', 'thread', 'leak', 'memory')
 SANITIZER_BACKENDS = cell.CELLS
 SANITIZE_USAGE = ('usage: just sanitize [--check] <bdb|kc|tkrzw|all> '
                   '[address|thread|leak|memory]\n')
-# Linux runs no tkrzw code (tools/dev/cell.py): `all` means the Linux cell there; the CI store
-# job names its Berkeley DB gate explicitly.
-TKRZW_NOT_LINUX = 'tkrzw is no Linux cell: Linux uses Kyoto Cabinet (docs/runbooks/setup.md#linux)'
+# `all` runs every gate on every host. The CI store job names its Berkeley DB and Kyoto Cabinet
+# gates explicitly. The tkrzw gate runs on the host libtkrzw: Homebrew's on macOS, and on Linux
+# the distribution's library on the default loader path (docs/runbooks/setup.md#linux).
+TKRZW_MISSING = ('no libtkrzw on this host; install the distribution\'s libtkrzw, or select '
+                 'another backend: just sanitize kc, or just sanitize bdb')
 
 
 @dataclass(frozen=True)
@@ -221,14 +223,11 @@ def _run_system_backend(backend, sanitizer, *, environment, out, err, tools, hos
 
 def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nightly, target):
     display = backend.display[sanitizer]
-    if host_os != 'Darwin':
-        # tkrzw is no Linux cell (tools/dev/cell.py): Linux runs no tkrzw code.
-        print(f'ERROR: {TKRZW_NOT_LINUX}; the sanitizer gate did NOT run.', file=err, flush=True)
-        return 1
     child = _sanitizer_options(backend, sanitizer, host_os, environment)
     # The just recipe's search paths serve Berkeley DB and Kyoto Cabinet. tkrzw
     # and its compression libraries are found through pkg-config, and the gate
-    # certifies Homebrew's library by the loader of its utility.
+    # takes the host's library: on macOS the one Homebrew's utility loads, on
+    # Linux the distribution's library on the default loader path.
     for name in ('LIBRARY_PATH', 'CPATH', 'PKG_CONFIG_PATH', 'PKG_CONFIG_LIBDIR',
                  'OXPINYIN_TKRZW_LIBRARY', 'OXPINYIN_TKRZW_PREFIX', 'OXPINYIN_TKRZW_PREFIXES'):
         child.pop(name, None)
@@ -237,7 +236,10 @@ def _run_tkrzw(backend, sanitizer, *, environment, out, err, tools, host_os, nig
         host_library = tools.tkrzw_host(environment=child)
     except native.NativeRefused:
         print('ERROR: no verified libtkrzw; the sanitizer gate did NOT run.', file=err, flush=True)
-        print('  Install tkrzw with Homebrew.', file=err, flush=True)
+        if host_os == 'Darwin':
+            print('  Install tkrzw with Homebrew.', file=err, flush=True)
+        else:
+            print(f'  {TKRZW_MISSING}', file=err, flush=True)
         return 1
     child['OXPINYIN_TKRZW_LIBRARY'] = str(host_library)
     command = _cargo_test(backend, nightly, target)
@@ -362,10 +364,7 @@ def sanitize(argv):
             print('sanitize: MemorySanitizer has no in-tree wrapper; use address, thread '
                   'or leak.', file=err, flush=True)
         return 1
-    gates = SANITIZER_BACKENDS if host_os == 'Darwin' else (cell.LOCAL_CELL,)
-    if backend_name == 'tkrzw' and host_os != 'Darwin':
-        print(f'sanitize: {TKRZW_NOT_LINUX}', file=err, flush=True)
-        return 1
+    gates = SANITIZER_BACKENDS
     if sanitizer == 'leak':
         if backend_name == 'tkrzw' or (backend_name == 'all' and 'tkrzw' in gates):
             print('sanitize: tkrzw LeakSanitizer is unsupported: the Rust harness keeps '

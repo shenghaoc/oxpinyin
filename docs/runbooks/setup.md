@@ -16,8 +16,8 @@ Pin-comparison measurements run natively on a Linux host, with no container
 See the [backend selection rule](../architecture.md#backend-selection).
 tkrzw is the pin oracle's reference cell. The build finds tkrzw through pkg-config,
 and the macOS and Windows sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
-are non-default backends ([backends](backends.md)). Linux has one cell,
-Kyoto Cabinet: see [Linux](#linux).
+are non-default backends ([backends](backends.md)). Linux CI selects Kyoto Cabinet;
+locally, Linux follows the default and supports all three cells: see [Linux](#linux).
 
 Native Windows recipes use pwsh with `-CommandWithArgs`; doctor checks its
 declared minimum.
@@ -28,28 +28,40 @@ The **linker** joins compiled code into executables and native libraries.
 
 ## Linux
 
-**The Linux rule.** Linux runs no tkrzw code: Ubuntu packages no sound libtkrzw
-([finding](../findings/tkrzw-distro-compat.md)). Decided 2026-11-21. Every Linux build that runs a backend
-uses Kyoto Cabinet from the distribution's packages, `LOCAL_CELL` in
-`tools/dev/cell.py`: Linux CI ([verification rule 10.2](verification.md#10-ci-merge-conditions)),
-`just provision`, the measurement recipes and their pin builds, the pin
-comparisons, `just sanitize` and the oracle reproducibility check. Kyoto Cabinet
-is reproducible, which the exact-count measurement controls need; Berkeley DB is
-not. A Linux host provisions the kc oracle cell by default and its oracle
-environment file holds that cell alone; a [pin capture](pin-captures.md) names
-the other cells with `--cells`, which the Debian deps image builds and checks.
-`just sanitize tkrzw` is refused on Linux; Berkeley DB stays a CI peer, tested
-by the `store` job. A plain Linux
-`cargo test` or `cargo build` selects the
-Cargo default, tkrzw, so on Linux pass the backend:
-`--no-default-features --features kyotocabinet` (or `bdb` for the peer). `just test` and
-`just clippy` pass the Kyoto Cabinet flags on Linux, so do not repeat them there.
+**Backends on Linux.** The crates' Cargo default backend is tkrzw on every platform, and local
+Linux follows it, as macOS and Windows do. Linux CI selects Kyoto Cabinet explicitly
+([verification rule 10.2](verification.md#10-ci-merge-conditions)): GitHub's Ubuntu runners ship a
+defective libtkrzw ([finding](../findings/tkrzw-distro-compat.md)), and Kyoto Cabinet is
+reproducible there. That is a CI choice, not a Linux rule.
+
+Locally, Linux supports kc, bdb and tkrzw. tkrzw uses the distribution's libtkrzw
+([verification rule 9](verification.md#9-sound-tkrzw-library)).
+A distribution libtkrzw built with LTO is defective before tkrzw 1.0.34
+([upstream issue 71](https://github.com/estraier/tkrzw/issues/71)).
+
+With no backend named, the local recipes use tkrzw:
+
+- `just test` and `just clippy` build the tkrzw backend. On a defective library,
+  `tkrzw_library_honours_its_sentinel_protocol` fails and names the kc and bdb selections.
+- `just sanitize` runs the tkrzw gate on the host libtkrzw; `just sanitize all` runs the kc,
+  bdb and tkrzw gates.
+- `just provision` finds the host libtkrzw, and `just provision-oracle` builds the tkrzw oracle
+  prefix natively against it. `PINYIN_ORACLE_DBM=kc` (or `bdb`) selects another cell for both,
+  and the oracle environment file then holds that cell.
+- The measurement recipes and the oracle reproducibility check use the tkrzw cell; `--cells` and
+  `--cell` select the others ([benches](benches.md#cells-and-settings)).
+
+To select another backend, pass `--no-default-features --features kyotocabinet` (or `bdb`) to
+`just test`, `just clippy` or Cargo. A [pin capture](pin-captures.md) names its cells with
+`--cells`, which the Debian deps image builds and checks. Berkeley DB stays a CI peer, tested
+by the `store` job.
 
 Linux setup needs:
 
 - Git, curl and CA certificates;
 - a C/C++ compiler and linker, Make and pkg-config;
-- Kyoto Cabinet development files and utilities (the Linux cell above);
+- tkrzw development files, for the tkrzw cell;
+- Kyoto Cabinet development files and utilities, for the kc cell;
 - GLib development files.
 
 Berkeley DB **5.3** is needed only to build the `bdb` backend, and libclang
@@ -68,20 +80,20 @@ distribution targets:
 # Systems using apt:
 sudo apt-get update
 sudo apt-get install -y build-essential git curl ca-certificates pkg-config libglib2.0-dev \
-  libkyotocabinet-dev kyotocabinet-utils
+  libtkrzw-dev libkyotocabinet-dev kyotocabinet-utils
 ```
 
 ```bash
 # Systems using dnf:
 sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config glib2-devel \
-  kyotocabinet-devel kyotocabinet
+  tkrzw-devel kyotocabinet-devel kyotocabinet
 ```
 
-The build discovers Kyoto Cabinet through `pkg-config kyotocabinet`; the
-distribution's library is on the default loader path, so no path export is
-needed. GLib stays on the system package manager; the [macOS](#macos) and
+The build discovers tkrzw and Kyoto Cabinet through `pkg-config tkrzw` and
+`pkg-config kyotocabinet`; the distribution's libraries are on the default loader path, so
+no path export is needed. GLib stays on the system package manager; the [macOS](#macos) and
 [Windows](#windows) sections name those platforms' tkrzw installation, and
-Windows alone uses vcpkg. Check the backend with `just test`, which runs Kyoto Cabinet on Linux:
+Windows alone uses vcpkg. Check the backend with `just test`, which runs tkrzw on Linux:
 
 ```bash
 just test
@@ -264,8 +276,7 @@ Two alternatives are rejected:
 `just build`, `just clippy` and `just fmt` pass Cargo arguments to
 Cargo unchanged ([limit parallel builds](verification.md#8-builds) with
 `CARGO_BUILD_JOBS`). The selection of native packages and backend is the same as for the Cargo
-command that the recipe replaces. The exception is `just clippy` (and `just test`) on Linux: it adds
-`--no-default-features --features kyotocabinet`, the one Linux cell, so do not repeat those flags there:
+command that the recipe replaces:
 
 ```bash
 just build --locked -p oxpinyin
@@ -289,8 +300,8 @@ The native Rust test entry point uses cargo-nextest at or above the
 needs it); `just doctor` reports it. `cargo install
 cargo-nextest --locked` (or the prebuilt release) installs it. `just test` runs `cargo nextest run --profile local`
 with the given arguments, which take the same crate and
-feature selection as other Cargo commands (see [backend selection](backends.md)); on Linux it first
-passes `--no-default-features --features kyotocabinet`. `--profile ci` selects the CI limits.
+feature selection as other Cargo commands (see [backend selection](backends.md)). `--profile ci`
+selects the CI limits.
 
 `just packaging install` and `just measure compare` build the shipping library
 with cargo-c, on Linux as on macOS. `just doctor` states its minimum and
@@ -336,12 +347,12 @@ installation, run:
 ```bash
 . "$HOME/.cargo/env"
 rustup show
-cargo nextest run --locked -p oxpinyin --no-default-features --features kyotocabinet
+cargo nextest run --locked -p oxpinyin
 just test
 ```
 
 The `cargo nextest run` command tests native Rust packages. `just test` runs the nextest
-suite with the host's backend (Kyoto Cabinet on Linux, tkrzw by default elsewhere); it also links
+suite with Cargo's default backend, tkrzw, unless the arguments name another; it also links
 and runs storage and C-library tests. Headers
 are the native library declarations that the compiler uses. For `bdb`, bindgen
 also reads `db.h` with libclang. pkg-config locates native library installations.

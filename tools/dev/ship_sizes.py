@@ -47,8 +47,8 @@ def git(*arguments: str | Path, root: Path = ROOT) -> str:
 
 
 def reference_cell(root: Path = ROOT):
-    """The cell of the size build: the one Linux cell (LOCAL_CELL in tools/dev/cell.py)."""
-    return cell.Settings.read({'PINYIN_ORACLE_DBM': cell.LOCAL_CELL}, root)
+    """The cell of the size build: kc, which the shipping-sizes job measures (CI_LINUX_CELL in tools/dev/cell.py)."""
+    return cell.Settings.read({'PINYIN_ORACLE_DBM': cell.CI_LINUX_CELL}, root)
 
 
 def version_script(source: Path, library: str) -> Path:

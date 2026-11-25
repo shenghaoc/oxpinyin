@@ -86,9 +86,9 @@ version = "0"
 # See docs/architecture.md#backend-selection. Optional build dependencies
 # such as bindgen are enabled only by the features that use them.
 # tkrzw is maintained upstream (maintainer decision 2026-10-30 UTC).
-# Linux runs no tkrzw code (decision 2026-11-21): every Linux build, CI included,
-# selects kyotocabinet (LOCAL_CELL in tools/dev/cell.py;
-# docs/runbooks/setup.md#linux).
+# tkrzw is the default on every platform. Linux CI selects kyotocabinet, because
+# GitHub's Ubuntu runners ship a defective libtkrzw (CI_LINUX_CELL in
+# tools/dev/cell.py; docs/runbooks/setup.md#linux).
 default = ["tkrzw"]
 # Test-only operations and fault points for the C crates and fuzz workspace.
 # Normal and shipped builds leave this feature off.

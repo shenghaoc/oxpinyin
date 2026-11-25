@@ -4,7 +4,7 @@ Run from the repository root after `uv python install`:
 `uv run --managed-python python -X utf8 -m tools.dev.provision` provisions the host natively
 and never starts a container. `just provision-oracle` runs that first, then `provision oracle`.
 The oracle command provisions the requested cells in containers and writes the environment file
-on Linux if the selection includes the local cell. uv enforces its own floor (uv.toml
+on Linux if the selection includes the host cell. uv enforces its own floor (uv.toml
 required-version). Compatibility identity,
 loader, cancellable process and bounded pool services remain their sole owners.
 Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
@@ -107,17 +107,34 @@ def homebrew_tkrzw_prefix(environment):
     return prefix
 
 
-def probe_host(*, env=None, root=ROOT, out=None):
-    """Certify Homebrew's tkrzw on macOS by its utility's actual loader.
+def linux_tkrzw_library(environment):
+    """Return the real path of the libtkrzw.so.1 that the default loader resolves on Linux."""
+    done = subprocess.run(['ldconfig', '-p'], env=environment, stdin=subprocess.DEVNULL,
+                          capture_output=True, check=False)
+    if done.returncode:
+        raise ValueError(f'ldconfig -p failed: {done.stderr.decode(errors="replace").strip()}')
+    for line in done.stdout.decode(errors='replace').splitlines():
+        name, _, path = line.strip().partition(' => ')
+        if name.split(' ', 1)[0] == 'libtkrzw.so.1' and Path(path).is_file():
+            return Path(path).resolve()
+    raise ValueError('no libtkrzw.so.1 in the ldconfig cache; install the distribution\'s libtkrzw')
 
-    Answer the certified library path, or '' when the host has no tkrzw to certify: a refused
-    loader, a missing utility, or a Linux host, which runs no tkrzw code
-    (docs/runbooks/setup.md#linux)."""
+
+def probe_host(*, env=None, root=ROOT, out=None):
+    """Answer the host's libtkrzw path, or '' when the host has none.
+
+    macOS certifies Homebrew's tkrzw by its utility's actual loader. Linux names the distribution's
+    library that the default loader resolves, with no defect probe."""
     environment = dict(os.environ if env is None else env)
     try:
         host = platform.system()
+        if host == 'Linux':
+            library = linux_tkrzw_library(environment)
+            print(f'host check: the default loader resolves libtkrzw to {library}', file=out or sys.stdout)
+            return str(library)
         if host != 'Darwin':
-            raise ValueError(f'no host tkrzw on {host}: macOS certifies Homebrew tkrzw, Linux uses Kyoto Cabinet')
+            raise ValueError(f'no host tkrzw on {host}: macOS certifies Homebrew tkrzw, '
+                             'Linux names the distribution\'s')
         installed = homebrew_tkrzw_prefix(environment)
         child = dict(environment, OXPINYIN_TKRZW_PREFIX=str(installed))
         child.pop('OXPINYIN_TKRZW_LIBRARY', None)
@@ -131,7 +148,7 @@ def probe_host(*, env=None, root=ROOT, out=None):
         print(f'host check: {utility} resolves libtkrzw to {library}', file=out or sys.stdout)
         return str(library)
     except (ValueError, runtime.RuntimeRefused) as error:
-        print(f'host check: {error}; no healthy host libtkrzw was certified', file=sys.stderr)
+        print(f'host check: {error}; no host libtkrzw was found', file=sys.stderr)
         return ''
 
 
@@ -146,10 +163,13 @@ class Provision:
         # needs no cache does not need OXPINYIN_CACHE.
         self._cache = None
         self.host = platform.system()
-        # A Linux host provisions the one Linux cell by default (tools/dev/cell.py). `--cells` names
-        # others for a pin capture: their prefixes are built and checked in the Debian deps image,
-        # and only a selection that includes the Linux cell writes its environment file.
-        self.cells = [backend_cell.LOCAL_CELL] if self.host == 'Linux' else list(CELLS)
+        # A Linux host provisions its host cell by default: PINYIN_ORACLE_DBM, else the Cargo
+        # default (tools/dev/cell.py). `--cells` names others for a pin capture. The tkrzw prefix is
+        # built natively against the host libtkrzw; the others are built in the Debian
+        # deps image. Only a selection that includes the host cell writes its environment file.
+        self.host_cell = self.env.get('PINYIN_ORACLE_DBM') or backend_cell.host_cell(self.root)
+        self.tkrzw_library = ''
+        self.cells = [self.host_cell] if self.host == 'Linux' else list(CELLS)
         if self.host == 'Linux':
             try:
                 self.jobs = text(['nproc'], env=self.env, check=False, stderr=False) or '2'
@@ -246,6 +266,8 @@ class Provision:
                          'arm64': 'linux/arm64', 'ARM64': 'linux/arm64'}.get(arch, '')
         if not self.platform:
             fail(f'Unsupported oracle architecture {arch}; supported platforms are linux/amd64 and linux/arm64. See docs/runbooks/setup.md.', 2)
+        if self.host_cell not in CELLS:
+            fail(f'PINYIN_ORACLE_DBM={self.host_cell} is not one of: bdb kc tkrzw', 2)
         if not self.cells:
             fail('at least one cell is required', 2)
         for cell in self.cells:
@@ -502,6 +524,7 @@ class Provision:
                  'export PATH=' + quote(self.uv_dir) + ':"$PATH"',
                  f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}={prefix}',
                  f'export OXPINYIN_ORACLE_DATA_{cell.upper()}={data}',
+                 *(['export OXPINYIN_TKRZW_LIBRARY=' + quote(self.linux_tkrzw())] if cell == 'tkrzw' else []),
                  'export PINYIN_ORACLE_DBM="${PINYIN_ORACLE_DBM:-' + cell + '}"',
                  'case "$PINYIN_ORACLE_DBM" in',
                  f'{cell}) export PINYIN_ORACLE_PREFIX={prefix} OXPINYIN_LIBPINYIN_DATA_DIR={data} ;;',
@@ -696,8 +719,11 @@ class Provision:
     def libraries(self):
         need = []
         for cell in self.cells:
-            if self.libs_ok(cell):
+            if self.libs_ok(cell) and self.host_inventory_ok(cell):
                 self.log(f'{cell}: libraries already match current pin/recipe and recorded bytes')
+            elif self.native(cell):
+                self.remove_prefix(cell)
+                self.native_prefix(cell, data=False)
             else:
                 need.append(cell)
         if need and self.pull and images.is_apple(self.ctr):
@@ -762,8 +788,68 @@ class Provision:
         finally:
             archive.unlink(missing_ok=True)
 
+    def native(self, cell):
+        """Whether CELL's prefix is built on the host: tkrzw on Linux, against the host library."""
+        return self.linux and cell == 'tkrzw'
+
+    def host_inventory_ok(self, cell):
+        """Whether a native CELL's prefix was built on this host's installed versions.
+
+        A prefix built in the Debian image passes libs_ok but links the image's libraries, so a
+        native cell is reused only when its versions.txt equals this host's inventory, as
+        measure-prepare requires. Other cells always pass."""
+        if not self.native(cell):
+            return True
+        from .measure.prepare import running_inventory
+        try:
+            recorded = (self.oracle_root / cell / 'versions.txt').read_text()
+        except OSError:
+            return False
+        if recorded == running_inventory():
+            return True
+        self.log(f"{cell}: versions.txt differs from this host's inventory; rebuilding natively")
+        return False
+
+    def linux_tkrzw(self):
+        """Linux: require the distribution's libtkrzw on the default loader path; answer its path."""
+        if not self.tkrzw_library:
+            self.tkrzw_library = probe_host(env=self.env, root=self.root)
+        if not self.tkrzw_library:
+            self.die('tkrzw: no host libtkrzw; install the distribution\'s libtkrzw development package, or set PINYIN_ORACLE_DBM=kc (or bdb) to provision Kyoto Cabinet (or Berkeley DB) instead, or name the cells with just provision-oracle --cells')
+        return self.tkrzw_library
+
+    def native_backend(self):
+        """Linux: check the native backend of the host cell."""
+        if self.host_cell == 'kc':
+            self.kyotocabinet_ready()
+        elif self.host_cell == 'tkrzw':
+            self.log(f'tkrzw: the distribution library is {self.linux_tkrzw()}')
+        else:
+            self.log(f'{self.host_cell}: no native backend step')
+
+    def native_prefix(self, cell, *, data):
+        """Build CELL's libraries, or with DATA its data, natively with tools/oracle/build.py.
+
+        The prefix links the distribution's backend library on the default loader path, as
+        `measure-prepare oracle` builds it."""
+        env = dict(self.env, OXPINYIN_TKRZW_LIBRARY=self.linux_tkrzw())
+        common = [sys.executable, str(self.root / 'tools/oracle/build.py'), '--dbm', cell,
+                  '--enable-libzhuyin', '--prefix', str(self.oracle_root / cell)]
+        if data:
+            args = ['--regen-data', '--model-dir', str(self.model_cache / 'extracted'),
+                    '--work-dir', str(self.cache / f'data-{cell}')]
+            log = self.cache / f'data-{cell}.log'
+        else:
+            args = ['--libs-only', '--work-dir', str(self.cache / 'build' / cell), '--jobs', str(self.jobs)]
+            log = self.cache / f'build-{cell}.log'
+        self.log(f'{cell}: building the {"data" if data else "libraries"} natively (log: {log})')
+        with log.open('wb') as stream:
+            status = run([*common, *args], cwd=self.root, env=env, stdout=stream, stderr=subprocess.STDOUT, check=False)
+        if status:
+            self.die(f'{cell}: the native build failed (log: {log})')
+
     def kyotocabinet_ready(self):
-        """Require Kyoto Cabinet's development package, the Linux local cell (docs/runbooks/setup.md#linux)."""
+        """Require Kyoto Cabinet's development package, for the kc cell (docs/runbooks/setup.md#linux)."""
         def found():
             return text(['pkg-config', '--modversion', 'kyotocabinet'], env=self.env, check=False, stderr=False)
         version = found()
@@ -811,7 +897,7 @@ class Provision:
         print('Verified managed CPython', identity['version'], 'GIL build:', identity['executable'], flush=True)
         if not self.minimal:
             if self.linux:
-                self.kyotocabinet_ready()
+                self.native_backend()
             elif self.host == 'Darwin':
                 self.certify_homebrew_tkrzw()
             else:
@@ -846,7 +932,8 @@ class Provision:
             self.published = published + ('-arm64' if self.platform == 'linux/arm64' else '')
             self.published_deps = self.published + '-deps'
             self.deps_image = images.deps_tag(self.root)
-            self.ctr = images.select_runtime(env=self.env)
+            if any(not self.native(cell) for cell in self.cells):
+                self.ctr = images.select_runtime(env=self.env)
             self.backend_tools()
             for cell in self.cells:
                 if not self.libs_ok(cell) or not self.data_ok(cell):
@@ -855,12 +942,18 @@ class Provision:
                     except Finished:
                         self.die('model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)')
                     break
-            self.runtime_ready()
+            if any(not self.native(cell) for cell in self.cells):
+                self.runtime_ready()
             self.libraries()
             need = []
             for cell in self.cells:
                 if self.data_ok(cell):
                     self.log(f'{cell}: data already matches the recorded manifest')
+                elif self.native(cell):
+                    model.fetch(self.model_cache, root=self.root, env=self.env)
+                    self.native_prefix(cell, data=True)
+                    if not self.data_ok(cell):
+                        self.die(f'{cell}: the regenerated data does not match the recorded manifest')
                 else:
                     need.append(cell)
             if need:
@@ -884,14 +977,14 @@ class Provision:
         return 0
 
     def oracle_env(self):
-        """Write the environment file from the verified local cell on Linux."""
+        """Write the environment file from the verified host cell on Linux."""
         self.refuse_overrides()
         self.options([], oracle=True)
         if not self.linux:
             self.log(f'{self.env_file}: not written; host runners load the oracle only on Linux')
             return 0
         self.model_cache = images.model_cache(self.env).resolve()
-        cell = backend_cell.LOCAL_CELL
+        cell = self.host_cell
         prefix = self.oracle_root / cell
         if not prefix.is_dir() or not self.data_ok(cell):
             if prefix.is_dir():
@@ -912,7 +1005,7 @@ def main(argv=None):
             if args[:1] == ['oracle']:
                 service = Provision()
                 status = service.oracle_setup(args[1:])
-                if status or (service.linux and backend_cell.LOCAL_CELL not in service.cells):
+                if status or (service.linux and service.host_cell not in service.cells):
                     return status
                 service = Provision()
                 return service.oracle_env()

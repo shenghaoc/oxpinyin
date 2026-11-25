@@ -442,9 +442,14 @@ def setup(environ):
 
 
 def backend_flags():
-    """The Cargo feature flags of the host's cell (tools/dev/cell.py)."""
-    from .cell import CELL_TO_BACKEND, feature_flags, host_cell
-    return feature_flags(CELL_TO_BACKEND[host_cell()])
+    """The Cargo feature flags of the fuzz build's cell (tools/dev/cell.py)."""
+    from .cell import CELL_TO_BACKEND, CELLS, feature_flags, host_cell
+    # PINYIN_ORACLE_DBM names the cell, as tools/dev/cell.py Settings reads it; the nightly
+    # fuzz job sets kc. Without it, the build uses the host cell.
+    name = os.environ.get('PINYIN_ORACLE_DBM') or host_cell()
+    if name not in CELLS:
+        raise SystemExit(f'fatal: PINYIN_ORACLE_DBM={name} is not one of: {" ".join(CELLS)}')
+    return feature_flags(CELL_TO_BACKEND[name])
 
 
 def _signal_group(process, sig):

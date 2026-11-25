@@ -3,7 +3,8 @@
 
 Standard library only, and no tools.dev import: Dockerfile.oracle's build stage runs this
 file with Debian's python3 before any managed interpreter is used. Host tooling on Windows,
-macOS and Linux starts it in a container (tools/dev/provision.py, tools/oracle/image.py);
+macOS and Linux starts it in a container (tools/dev/provision.py, tools/oracle/image.py); on
+Linux the tkrzw cell and the measurement and reproducibility builds run it on the host;
 upstream's own git, autoreconf, configure, make and patch do the fetching and compiling.
 
 tools/oracle/oracle-pin.txt, beside this file, is the only record of the pinned commits,
