@@ -30,9 +30,17 @@ pub const CHUNK_HEADER_SIZE: usize = 8;
 /// stamps, and what the reader recomputes.
 #[must_use]
 pub fn chunk_checksum(payload: &[u8]) -> u32 {
-    let mut checksum: u32 = 0;
     let aligned = payload.len() & !0x3;
-    for word in payload[..aligned].as_chunks::<4>().0.iter() {
+    // XOR is associative and commutative. A 16-byte block holds four words in
+    // four 32-bit lanes, so the lanes of the folded blocks XOR to the words'
+    // checksum. The whole words after the last block follow one at a time.
+    let (blocks, words) = payload[..aligned].as_chunks::<16>();
+    let lanes = blocks
+        .iter()
+        .fold(0_u128, |lanes, block| lanes ^ u128::from_le_bytes(*block));
+    let mut checksum =
+        (lanes as u32) ^ ((lanes >> 32) as u32) ^ ((lanes >> 64) as u32) ^ ((lanes >> 96) as u32);
+    for word in words.as_chunks::<4>().0 {
         checksum ^= u32::from_le_bytes(*word);
     }
     let mut shift = 0_u32;

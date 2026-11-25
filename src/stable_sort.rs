@@ -2,9 +2,10 @@
 //!
 //! A stable sort by key gives the same order as an unstable sort of
 //! `(key, original index)` rows: the index makes every row unique, so no tie
-//! is left to the algorithm. Every caller sorts this one row type, so the
-//! library holds one instance of the sort, not one per element type and
-//! comparator.
+//! is left to the algorithm. Every caller of this module sorts this one row
+//! type, so these callers share one instance of the sort, not one per element
+//! type and comparator. Sorts that call the standard library directly keep
+//! their own instances.
 
 /// A sort key and the position the element had before the sort.
 pub(crate) type Row = (u128, usize);
