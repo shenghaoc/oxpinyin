@@ -507,7 +507,9 @@ A Windows report leads with the `loop_cpu_cycles` B/A ratio and wall time; its
 memory figure is the `peak_private_commit_bytes` B minus A difference.
 
 `lifetime_max_phys_footprint_bytes`, read after teardown, is the memory headline. It is a
-process-lifetime peak, not live memory at a checkpoint. `peak_rss_bytes` is the direct child's own
+process-lifetime peak, not live memory at a checkpoint, and teardown can set it.
+`loop_end_phys_footprint_bytes` is a single `ri_phys_footprint` reading taken at loop exit,
+before teardown; it is not a peak over the loop. `peak_rss_bytes` is the direct child's own
 `wait4` diagnostic; a profile launch reports none. Neither field is a Linux residency category.
 No loop-scoped peak footprint is reported: the macOS SDK declares neither
 `proc_reset_footprint_interval` nor `proc_rlimit_control`, the calls that restart the interval peak.

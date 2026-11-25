@@ -62,13 +62,15 @@ def hardware_instructions(path) -> str:
 # Report order: the instruction count and wall time lead. peak_rss_bytes stays last;
 # a profile launch has no direct-child reading of it.
 MEASURES = ('loop_instructions', 'wall_seconds', 'loop_cpu_cycles', 'cpu_seconds',
-            'loop_runnable_seconds', 'lifetime_max_phys_footprint_bytes', 'peak_rss_bytes')
+            'loop_runnable_seconds', 'loop_end_phys_footprint_bytes',
+            'lifetime_max_phys_footprint_bytes', 'peak_rss_bytes')
 UNITS = {'loop_instructions': 'instructions retired in the measured loop (ri_instructions delta)',
          'wall_seconds': 'seconds, measured loop',
          'loop_cpu_cycles': 'CPU cycles in the measured loop (ri_cycles delta)',
          'cpu_seconds': 'seconds, measured loop',
          'loop_runnable_seconds': 'seconds on a core or waiting for one in the measured loop'
                                   ' (ri_runnable_time delta, advanced at scheduling events)',
+         'loop_end_phys_footprint_bytes': 'bytes, at the end of the measured loop, before teardown',
          'lifetime_max_phys_footprint_bytes': 'bytes, process lifetime peak',
          'peak_rss_bytes': 'bytes, process lifetime peak'}
 COUNTS = ('loop_instructions', 'loop_cpu_cycles')
