@@ -1,6 +1,6 @@
 //! Live system items: each loaded system library's private buffer.
 
-use crate::data::phrase_library::ChunkItem;
+use crate::data::phrase_library::{ChunkItem, PhraseItemView};
 
 use crate::user::SystemLibraryRef;
 use crate::user::replay::{ReplayedLibrary, UnigramAdd};
@@ -269,6 +269,20 @@ impl SystemItems {
             Some(bytes) => LiveItemFields::Read(read(&bytes)),
             None => LiveItemFields::NoReadableItem,
         }
+    }
+
+    /// [`ReplayedLibrary::ordinary_item`] of `token`'s library, handed to
+    /// `read`. `None` where the library has no live buffer, the slot is an
+    /// added one or the buffer holds no complete item there.
+    pub(crate) fn read_ordinary<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        self.replayed
+            .get(&crate::vocab::phrase_index_library_index(token))?
+            .ordinary_item(token & 0x00ff_ffff)
+            .map(read)
     }
 
     /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`].

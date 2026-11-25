@@ -586,26 +586,23 @@ impl Dictionary for SystemDictionary<'_> {
         self.trellis_ranges_continued_with(syllables, tones, ranges, |_| true, scratch)
     }
 
-    /// [`Self::trellis_item`]; the tones, the memo and the facts are not
-    /// used.
-    fn trellis_item_with_facts(
+    /// [`Self::trellis_item`]; the tones and the memo are not used.
+    fn trellis_step_item(
         &self,
         syllables: &[SyllableKey],
         _tones: &[u8],
         token: u32,
         _memo: &(),
-        _facts: &mut crate::sentence_facts::SentenceFacts,
     ) -> Result<Option<TrellisItem>, DictError> {
         Ok(self.trellis_item(syllables, token))
     }
 
     /// The stored length and text of the token in its loaded library.
-    fn trellis_text_with_facts(
+    fn trellis_step_text(
         &self,
         _syllables: &[SyllableKey],
         _tones: &[u8],
         token: u32,
-        _facts: &mut crate::sentence_facts::SentenceFacts,
     ) -> Result<Option<TokenPhrase>, DictError> {
         Ok(self.libraries().token_phrase(token))
     }

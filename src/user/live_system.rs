@@ -310,6 +310,24 @@ impl<'a> LiveSystemItems<'a> {
         }
     }
 
+    /// [`Self::read`] for a trellis step: the live-buffer item behind
+    /// `token`, where it is the effective item and no user item comes
+    /// before it ([`UserStore::read_ordinary_live_item`]), read in place.
+    /// `None` sends the caller to its full resolution, which keeps the
+    /// order a user item, the live item, the shipped item. Consumer:
+    /// `RuntimeDict::priced`.
+    pub(crate) fn read_ordinary<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(SystemItem<'_>) -> R,
+    ) -> Option<R> {
+        if self.gate::<R>(token).is_some() {
+            return None;
+        }
+        self.user
+            .read_ordinary_live_item(token, |view| read(SystemItem::Replayed(view)))
+    }
+
     /// [`Self::read`] for the token getters. `get_phrase_item` checks only
     /// the offset and the two header bytes (074a2219 `phrase_index.cpp:180-205`)
     /// and each getter reads its own field, so the item is read field by

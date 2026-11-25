@@ -1,10 +1,10 @@
 //! Dictionary and language-model contracts used by the session engine.
 use crate::parser::ChewingKey;
+use crate::single_gram;
 use crate::single_gram::GramFault;
 use crate::vocab::{
     PHRASE_INDEX_LIBRARY_COUNT, PhraseEntry, PhraseText, PhraseToken, phrase_index_library_index,
 };
-use crate::{sentence_facts, single_gram};
 
 /// User-side count overlay for the decode-time additive merge
 /// (`docs/findings/user-store.md` §5).
@@ -71,7 +71,7 @@ pub trait Dictionary {
 
     /// What this dictionary keeps about one trellis key path while one
     /// n-best call prices the tokens ranged on it
-    /// ([`Self::trellis_item_with_facts`]). A dictionary with nothing to
+    /// ([`Self::trellis_step_item`]). A dictionary with nothing to
     /// keep uses `()`.
     type PathMemo: Default;
 
@@ -88,10 +88,9 @@ pub trait Dictionary {
     /// tones; missing tones are zero.
     ///
     /// The ranges carry tokens only, as the pin's `convert` does: a step
-    /// prices the tokens it meets through [`Self::trellis_item_with_facts`],
-    /// and the text of a result is read through
-    /// [`Self::trellis_text_with_facts`] when it is emitted. Every ranged
-    /// token holds a `Some(())` slot.
+    /// prices the tokens it meets through [`Self::trellis_step_item`], and
+    /// the text of a result is read through [`Self::trellis_step_text`] when
+    /// it is emitted. Every ranged token holds a `Some(())` slot.
     ///
     /// `scratch` is the caller's buffer for the read's value bytes, which
     /// the decode loop passes to every search of a guess, as the pin's
@@ -112,8 +111,7 @@ pub trait Dictionary {
     /// [`Self::trellis_ranges_continued`] or explicitly forced over
     /// `syllables` and `tones` (`get_phrase_item` and
     /// `compute_pronunciation_possibility`, `phonetic_lookup.h:646-684`);
-    /// `None` when the token has no readable item there. It also records
-    /// the sentence facts of the read in `facts`.
+    /// `None` when the token has no readable item there.
     ///
     /// `memo` is what the caller keeps for this key path while one n-best
     /// call prices the tokens ranged on it. A dictionary may keep there
@@ -125,30 +123,27 @@ pub trait Dictionary {
     /// # Errors
     ///
     /// Preserves the dictionary's pricing errors.
-    fn trellis_item_with_facts(
+    fn trellis_step_item(
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
         memo: &Self::PathMemo,
-        facts: &mut sentence_facts::SentenceFacts,
     ) -> Result<Option<TrellisItem>, Self::Error>;
 
-    /// The phrase [`Self::trellis_item_with_facts`] priced, read when a result is
-    /// emitted (`convert_to_utf8`, `lookup/lookup.cpp:39-68`), recording the
-    /// sentence facts of the read in `facts`: its stored length and its
-    /// text, which is `None` where GLib's conversion answers NULL. `None`
-    /// where that item is `None`. It takes no path memo.
+    /// The phrase [`Self::trellis_step_item`] priced, read when a result is
+    /// emitted (`convert_to_utf8`, `lookup/lookup.cpp:39-68`): its stored
+    /// length and its text, which is `None` where GLib's conversion answers
+    /// NULL. `None` where that item is `None`. It takes no path memo.
     ///
     /// # Errors
     ///
     /// Preserves the dictionary's text errors.
-    fn trellis_text_with_facts(
+    fn trellis_step_text(
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-        facts: &mut sentence_facts::SentenceFacts,
     ) -> Result<Option<TokenPhrase>, Self::Error>;
 
     /// The candidate search of one key path: the entries, the first
@@ -324,7 +319,7 @@ pub trait PhraseList {
     }
 
     /// What one trellis step prices of `token`
-    /// ([`Dictionary::trellis_item_with_facts`]): the last of
+    /// ([`Dictionary::trellis_step_item`]): the last of
     /// [`Self::trellis_records`]' entries for the token, `None` when there is
     /// none.
     ///
@@ -345,6 +340,7 @@ pub trait PhraseList {
             .map(|entry| TrellisItem {
                 chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
                 pronunciation: entry.pronunciation_possibility(),
+                unigram: None,
             }))
     }
 
@@ -512,26 +508,24 @@ impl<T: PhraseList> Dictionary for T {
         self.phrase_prefix_exists(syllables)
     }
 
-    /// [`PhraseList::trellis_item`]; the memo and the facts are not used.
-    fn trellis_item_with_facts(
+    /// [`PhraseList::trellis_item`]; the memo is not used.
+    fn trellis_step_item(
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
         memo: &Self::PathMemo,
-        _facts: &mut sentence_facts::SentenceFacts,
     ) -> Result<Option<TrellisItem>, Self::Error> {
         trellis_item_on_path(self, syllables, tones, token, memo)
     }
 
     /// The text of the last of [`PhraseList::trellis_records`]' entries for
-    /// the token; the facts are not used.
-    fn trellis_text_with_facts(
+    /// the token.
+    fn trellis_step_text(
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-        _facts: &mut sentence_facts::SentenceFacts,
     ) -> Result<Option<TokenPhrase>, Self::Error> {
         trellis_text(self, syllables, tones, token)
     }
@@ -717,13 +711,20 @@ pub(crate) fn sort_tokens_by_library(tokens: &mut [u32]) {
 }
 
 /// What one trellis step prices of a ranged token: the phrase's length in
-/// characters and its pronunciation possibility `(matched, total)`.
+/// characters, its pronunciation possibility `(matched, total)` and, where
+/// the step read the token's ordinary live item, that item's unigram field.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrellisItem {
     /// The phrase's length in characters.
     pub chars: u32,
     /// The pronunciation possibility, where the item counts one.
     pub pronunciation: Option<(u64, u64)>,
+    /// The live unigram field of the item the step read, where that item is
+    /// the token's ordinary live item: the step reads its unigram from the
+    /// same item as its length and pronunciation (`phonetic_lookup.h:646-651`,
+    /// `:674-679`). `None` leaves the token's costs to
+    /// [`LanguageModel::nbest_token_costs`].
+    pub unigram: Option<u32>,
 }
 
 /// A value a dictionary works out once per trellis key path and keeps for
@@ -1230,15 +1231,19 @@ pub trait LanguageModel {
         Ok(NbestStepCosts::default())
     }
 
-    /// [`Self::nbest_token_costs`] with the facts sentence pricing already
-    /// read for this guess.
+    /// [`Self::nbest_token_costs`] of a token whose step read its item:
+    /// `unigram` is that item's [`TrellisItem::unigram`]. `total` holds what
+    /// the model reads of the facade unigram total for one guess: a guess
+    /// makes no write, so the model reads it at most once and keeps it
+    /// there. The default ignores both.
     ///
     /// # Errors
     /// Returns the same errors as [`Self::nbest_token_costs`].
-    fn nbest_token_costs_with_facts(
+    fn nbest_token_costs_read(
         &self,
         token: &PhraseToken,
-        _facts: &mut sentence_facts::SentenceFacts,
+        _unigram: Option<u32>,
+        _total: &std::cell::Cell<Option<u64>>,
     ) -> Result<NbestTokenCosts, Self::Error> {
         self.nbest_token_costs(token)
     }
