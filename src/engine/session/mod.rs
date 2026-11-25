@@ -105,8 +105,8 @@ pub struct SessionState {
     /// ([`Session::set_nbest_shape`]). Surface config, like
     /// [`Self::collapse_sentence_rows_to_best`].
     nbest_shape: crate::engine::nbest::NbestShape,
-    /// Whether the parse and sentence-guess paths leave the candidate list
-    /// to its next reader instead of building it — the C facades' mode,
+    /// Whether the parse, sentence-guess and selection paths leave the
+    /// candidate list to its next reader instead of building it — the C facades' mode,
     /// set via [`Session::set_defer_list_builds`]; off (the session API's
     /// eager list) by default. Upstream builds candidates only in
     /// `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219), whose

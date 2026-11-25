@@ -222,7 +222,7 @@ fn longer_session(defer: bool) -> Session<FixtureDictionary, FrequencyFixtureMod
     session
 }
 
-// Basis: Rust session API contract and pinyin.cpp:2184–2203 at 074a2219.
+// Basis: Rust session API contract and pinyin.cpp:2184–2203,2578–2590 at 074a2219.
 #[test]
 fn a_deferred_list_is_the_eager_list_at_every_read() {
     let mut eager = longer_session(false);
@@ -242,6 +242,10 @@ fn a_deferred_list_is_the_eager_list_at_every_read() {
         select_row(&mut eager, 0).expect("the row is live")
     );
     assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
+    // The pin's choose writes no list (pinyin.cpp:2578-2590): the deferred
+    // session keeps the list it built before the selection until a reader.
+    assert_ne!(deferred.candidates(), eager.candidates());
+    deferred.refresh_candidates().expect("deferred build");
     assert_eq!(deferred.candidates(), eager.candidates());
 
     eager.reset();
