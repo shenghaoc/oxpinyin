@@ -163,6 +163,7 @@ fn complete(
         && measured.cpu > 0.0
         && measured.left.ri_instructions > measured.entered.ri_instructions
         && measured.left.ri_cycles > measured.entered.ri_cycles
+        && measured.left.ri_phys_footprint != 0
         && memory.ri_lifetime_max_phys_footprint != 0
         && !cycle.failed
         && cycle.operations == expected
@@ -186,12 +187,13 @@ fn emit(
     let mut out = std::io::stdout().lock();
     writeln!(
         out,
-        "{{\"pid\":{},\"operations\":{operations},\"cycles\":{cycles},\"fingerprint\":\"{fingerprint:016x}\",\"wall_seconds\":{:.9},\"cpu_seconds\":{cpu:.9},\"loop_instructions\":{},\"loop_cpu_cycles\":{},\"loop_runnable_seconds\":{:.9},\"lifetime_max_phys_footprint_bytes\":{}}}",
+        "{{\"pid\":{},\"operations\":{operations},\"cycles\":{cycles},\"fingerprint\":\"{fingerprint:016x}\",\"wall_seconds\":{:.9},\"cpu_seconds\":{cpu:.9},\"loop_instructions\":{},\"loop_cpu_cycles\":{},\"loop_runnable_seconds\":{:.9},\"loop_end_phys_footprint_bytes\":{},\"lifetime_max_phys_footprint_bytes\":{}}}",
         std::process::id(),
         (stop - start) as f64 / 1e9,
         left.ri_instructions - entered.ri_instructions,
         left.ri_cycles - entered.ri_cycles,
         left.ri_runnable_time.wrapping_sub(entered.ri_runnable_time) as f64 * scale,
+        left.ri_phys_footprint,
         memory.ri_lifetime_max_phys_footprint
     )?;
     Ok(())
