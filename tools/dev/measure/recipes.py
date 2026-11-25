@@ -76,7 +76,7 @@ CONTROL = "A'"
 # Staged prefix names have one length. A longer path for the same bytes changes
 # heap sizes and instruction counts, which an exact same-bytes control would see.
 PREFIXES = {'A': 'A', 'B': 'B', CONTROL: 'C'}
-XCTRACE_TEMPLATES = ('CPU Profiler', 'Allocations', 'System Trace', 'Processor Trace')
+XCTRACE_TEMPLATES = ('CPU Profiler', 'Allocations', 'System Trace', 'Processor Trace', 'CPU Counters')
 VALGRIND_TEMPLATES = ('Callgrind', 'Massif')
 
 
@@ -198,7 +198,9 @@ def finish_profile(args, arm, output):
         if toc.status:
             raise ValueError('required trace TOC failed')
         path = reports.allocation_path(toc.stdout, pid=row['pid'], driver=arm['driver'])
-    export = bench.capture(['xcrun', 'xctrace', 'export', '--input', trace, '--xpath', path])
+    elif args.template == 'CPU Counters':
+        path += '[@schema="MetricAggregationForProcess"]'
+    export =bench.capture(['xcrun', 'xctrace', 'export', '--input', trace, '--xpath', path])
     if export.status:
         raise ValueError('required trace export failed')
     if args.template == 'Allocations':
@@ -211,6 +213,8 @@ def finish_profile(args, arm, output):
             raise ValueError('required allocation statistics export failed')
         validation['statistics'] = reports.allocation_statistics(statistics.stdout)
         (output / 'statistics.xml').write_bytes(statistics.stdout)
+    elif args.template == 'CPU Counters':
+        validation = reports.bandwidth_shares(export.stdout, pid=row['pid'], wall_seconds=row['wall_seconds'])
     else:
         validation = reports.capture_rows(export.stdout, pid=row['pid'], uuid=arm['uuid'], allocations=False)
     (output / 'export.xml').write_bytes(export.stdout)
