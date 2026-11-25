@@ -1769,7 +1769,9 @@ impl Runtime {
             });
         let user = &mut self.user;
         let result = match prepared {
-            Ok(Some(plan)) => plan.observe(user),
+            Ok(Some(plan)) => {
+                plan.observe(&mut crate::user::CheckedTraining::new(user, &mut check))
+            }
             Ok(None) => Ok(false),
             Err(crate::engine::TrainingPrepFault::PinAbort) => std::process::abort(),
             Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel)) => {

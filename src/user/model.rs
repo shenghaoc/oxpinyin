@@ -17,7 +17,7 @@
 use crate::model::UserModel;
 use crate::vocab::PhraseToken;
 
-use crate::user::store::{UserStore, UserStoreError};
+use crate::user::store::{TrainingCheck, UserStore, UserStoreError};
 use crate::vocab::SENTENCE_START;
 
 impl UserModel for UserStore {
@@ -41,6 +41,46 @@ impl UserModel for UserStore {
         let last = history.last().map_or(SENTENCE_START, |t| *t);
         let seed = self.observe_selection(last, *token)?;
         self.train_pronunciations(*token, readings, seed);
+        Ok(())
+    }
+}
+
+/// The store observing the steps a [`TrainingCheck`] passed, in step order:
+/// each step stores the gram the check trained and applies its seed
+/// (`UserStore::observe_checked_selection`), so a step reads and trains its
+/// predecessor's gram once (`phonetic_lookup.h:876-904` at 074a2219).
+pub(crate) struct CheckedTraining<'a> {
+    user: &'a mut UserStore,
+    check: &'a mut TrainingCheck,
+}
+
+impl<'a> CheckedTraining<'a> {
+    pub(crate) const fn new(user: &'a mut UserStore, check: &'a mut TrainingCheck) -> Self {
+        Self { user, check }
+    }
+}
+
+impl UserModel for CheckedTraining<'_> {
+    type Error = UserStoreError;
+
+    fn observe(&mut self, history: &[PhraseToken], token: &PhraseToken) -> Result<(), Self::Error> {
+        let last = history.last().map_or(SENTENCE_START, |t| *t);
+        self.user
+            .observe_checked_selection(self.check, last, *token)?;
+        Ok(())
+    }
+
+    fn observe_with_keys(
+        &mut self,
+        history: &[PhraseToken],
+        token: &PhraseToken,
+        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+    ) -> Result<(), Self::Error> {
+        let last = history.last().map_or(SENTENCE_START, |t| *t);
+        let seed = self
+            .user
+            .observe_checked_selection(self.check, last, *token)?;
+        self.user.train_pronunciations(*token, readings, seed);
         Ok(())
     }
 }

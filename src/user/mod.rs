@@ -48,6 +48,7 @@ pub use library_loop::{LibraryLoopRows, LibraryLoopStop};
 pub use library_table::{LibrarySet, LibraryTable};
 pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys, SystemItem};
 pub use lookup::UserLookup;
+pub(crate) use model::CheckedTraining;
 
 pub use persistence::{
     MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals, UserConfLaw,
