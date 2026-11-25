@@ -19,8 +19,8 @@ use std::collections::hash_map::Entry;
 
 use crate::{
     model::{
-        Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
-        TokenPhrase, TrellisItem,
+        Dictionary, LanguageModel, MergedGram, NbestSuccessors, NbestTokenCosts, PhraseIndexRanges,
+        PhraseItemRead, TokenPhrase, TrellisItem,
     },
     parser::ChewingKey,
     vocab::{PhraseText, PhraseToken, SyllableKey},
@@ -541,6 +541,23 @@ struct SpanEntry {
     keys: u32,
     chars: u32,
     pronunciation: f32,
+    /// The model's [`NbestTokenCosts`] for `token`, read at the entry's
+    /// first step: they hold for the whole guess, so every predecessor's
+    /// step reuses them.
+    costs: OnceCell<NbestTokenCosts>,
+}
+
+impl SpanEntry {
+    fn new(token: u32, path: u32, keys: u32, chars: u32, pronunciation: f32) -> Self {
+        Self {
+            token,
+            path,
+            keys,
+            chars,
+            pronunciation,
+            costs: OnceCell::new(),
+        }
+    }
 }
 
 /// A ranged token, priced on first use (`phonetic_lookup.h:646-684`: the
@@ -708,13 +725,13 @@ where
                 .map(|sum| sum.pronunciation)
         });
         let entry = if let (Some(item), Some(pronunciation)) = (item, cached) {
-            Some(SpanEntry {
+            Some(SpanEntry::new(
                 token,
-                path: slot.path,
-                keys: keys.len().try_into().unwrap_or(u32::MAX),
-                chars: item.chars,
+                slot.path,
+                keys.len().try_into().unwrap_or(u32::MAX),
+                item.chars,
                 pronunciation,
-            })
+            ))
         } else if let Some(item) = item {
             let mut path = 0_u32;
             let pronunciation = self.generation.sum_paths(
@@ -752,13 +769,13 @@ where
                     pronunciation,
                 },
             );
-            Some(SpanEntry {
+            Some(SpanEntry::new(
                 token,
-                path: slot.path,
-                keys: keys.len().try_into().unwrap_or(u32::MAX),
-                chars: item.chars,
+                slot.path,
+                keys.len().try_into().unwrap_or(u32::MAX),
+                item.chars,
                 pronunciation,
-            })
+            ))
         } else {
             None
         };
@@ -1420,84 +1437,59 @@ where
     // item's own frequency, duplicates included.
     let mut items: Vec<(u32, u32)> = Vec::new();
     let mut selected: Vec<Selected<'_>> = Vec::new();
-    // The best predecessor's row, which the unigram pass below hands to the
-    // model again.
-    let mut head_row = crate::model::NbestStepRow::default();
-    for (index, predecessor) in beam.iter().enumerate() {
+    for predecessor in beam {
         selected.clear();
         let prev = predecessor.value.token;
         // One load per predecessor and span: the pin loads both grams for
         // every beam value in every `search_bigram2` call, `sentence_start`
         // included (`phonetic_lookup.h:588-599` at 074a2219). No row is
-        // kept for the step's next span.
-        let mut loaded = crate::model::NbestStepRow::default();
-        let row = &mut loaded;
-        let traversal = match model
-            .nbest_successors_in_row(&prev, row)
+        // kept for the step's next span. A model that reads no rows takes
+        // no bigram step, as a loaded miss takes none.
+        let mut row = crate::model::NbestStepRow::default();
+        if let Some(NbestSuccessors::Row(gram)) = model
+            .nbest_successors_in_row(&prev, &mut row)
             .map_err(|error| EngineError::row_read(model, &error))?
         {
-            None => false,
-            Some(NbestSuccessors::Miss) => true,
-            Some(NbestSuccessors::Row(gram)) => {
-                if let Some(fault) = gram.fault() {
-                    return Err(EngineError::lookup_gram(fault));
-                }
-                match one_step {
-                    Some(token) => select_forced(pricing, gram, token, &mut selected)?,
-                    None => select_ranged(pricing, gram, &mut items, &mut selected)?,
-                }
-                true
+            if let Some(fault) = gram.fault() {
+                return Err(EngineError::lookup_gram(fault));
             }
-        };
-        if traversal {
-            for &(entry, item) in &selected {
-                let branch = Branch::Bigram(Some(item));
-                expand_one(
-                    entry,
-                    StepCtx {
-                        paths: pricing.paths,
-                        span: span.clone(),
-                        model,
-                        facts: pricing.facts,
-                    },
-                    predecessor,
-                    row,
-                    trellis,
-                    branch,
-                )?;
+            match one_step {
+                Some(token) => select_forced(pricing, gram, token, &mut selected)?,
+                None => select_ranged(pricing, gram, &mut items, &mut selected)?,
             }
-        } else {
-            // Models without row traversal retain their existing scalar path.
-            let branch = Branch::Bigram(None);
-            expand_span_entries(pricing, &span, model, predecessor, row, trellis, branch)?;
         }
-        if index == 0 {
-            head_row = loaded;
-        } else {
-            model.release_row(&mut loaded);
+        for &(entry, item) in &selected {
+            expand_one(
+                entry,
+                StepCtx {
+                    paths: pricing.paths,
+                    span: span.clone(),
+                    model,
+                    facts: pricing.facts,
+                },
+                predecessor,
+                trellis,
+                Branch::Bigram(item),
+            )?;
         }
+        model.release_row(&mut row);
     }
     // The pin's independent unigram pass uses only the best predecessor
     // (search_unigram2, phonetic_lookup.h:560-572).
     if let Some(predecessor) = beam.first() {
-        let row = &mut head_row;
-        let branch = Branch::Unigram;
-        expand_span_entries(pricing, &span, model, predecessor, row, trellis, branch)?;
+        expand_unigram_entries(pricing, &span, model, predecessor, trellis)?;
     }
-    model.release_row(&mut head_row);
     Ok(())
 }
 
-/// One trellis step on `branch` from `predecessor` for each eligible entry
-/// of the span, in library and range order.
-fn expand_span_entries<D, L>(
+/// One unigram step from `predecessor` for each eligible entry of the span,
+/// in library and range order.
+fn expand_unigram_entries<D, L>(
     pricing: &Pricing<'_, D>,
     span: &std::ops::Range<usize>,
     model: &L,
     predecessor: &BeamEntry,
-    row: &mut crate::model::NbestStepRow,
     trellis: &mut Trellis,
-    branch: Branch,
 ) -> Result<(), EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
@@ -1516,9 +1508,8 @@ where
                 facts: pricing.facts,
             },
             predecessor,
-            row,
             trellis,
-            branch,
+            Branch::Unigram,
         )?;
     }
     Ok(())
@@ -1613,9 +1604,8 @@ where
 /// Which of the pin's two step costs one trellis step takes.
 #[derive(Clone, Copy)]
 enum Branch {
-    /// `bigram_gen_next_step` for one merged-row item, its `(freq, total)`;
-    /// `None` on the scalar path of a model without row traversal.
-    Bigram(Option<(u32, u32)>),
+    /// `bigram_gen_next_step` for one merged-row item, its `(freq, total)`.
+    Bigram((u32, u32)),
     /// `unigram_gen_next_step`.
     Unigram,
 }
@@ -1633,7 +1623,6 @@ fn expand_one<L: LanguageModel>(
     entry: &SpanEntry,
     ctx: StepCtx<'_, L>,
     predecessor: &BeamEntry,
-    row: &mut crate::model::NbestStepRow,
     trellis: &mut Trellis,
     branch: Branch,
 ) -> Result<(), EngineError> {
@@ -1644,24 +1633,23 @@ fn expand_one<L: LanguageModel>(
         facts,
     } = ctx;
     let prev = predecessor.value.token;
-    let step = model
-        .nbest_item_costs_with_facts(
-            &prev,
-            &entry.token,
-            match branch {
-                Branch::Bigram(item) => item,
-                Branch::Unigram => None,
-            },
-            row,
-            &mut facts.borrow_mut(),
-        )
-        .map_err(|error| EngineError::row_read(model, &error))?;
+    let costs = match entry.costs.get() {
+        Some(costs) => *costs,
+        None => {
+            let costs = model
+                .nbest_token_costs_with_facts(&entry.token, &mut facts.borrow_mut())
+                .map_err(|error| EngineError::row_read(model, &error))?;
+            *entry.costs.get_or_init(|| costs)
+        }
+    };
     let pronunciation = entry.pronunciation;
     let probability = match branch {
-        Branch::Bigram(_) => step.blended.map(|s| s * f64::from(pronunciation)),
-        Branch::Unigram => step
-            .unigram
-            .map(|elem| (elem * f64::from(pronunciation)) * f64::from(step.unigram_lambda)),
+        Branch::Bigram((freq, total)) => costs
+            .blended(u64::from(freq), u64::from(total))
+            .map(|s| s * f64::from(pronunciation)),
+        Branch::Unigram => costs
+            .unigram()
+            .map(|elem| (elem * f64::from(pronunciation)) * f64::from(costs.unigram_lambda)),
     };
     let Some(probability) = probability else {
         return Ok(());

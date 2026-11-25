@@ -28,8 +28,8 @@ use crate::user::{
 };
 use crate::{
     model::{
-        Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseIndexRanges, PhraseItemRead,
-        TrellisItem, TrellisPathMemo, UserCountDelta,
+        Dictionary, LanguageModel, MergedGram, NbestStepCosts, NbestTokenCosts, PhraseIndexRanges,
+        PhraseItemRead, TrellisItem, TrellisPathMemo, UserCountDelta,
     },
     vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey},
 };
@@ -1322,29 +1322,20 @@ impl LanguageModel for RuntimeLm<'_> {
             .nbest_step_costs_with_user_delta(prev, token, extra)
     }
 
-    fn nbest_item_costs_with_facts(
+    fn nbest_token_costs_with_facts(
         &self,
-        prev: &PhraseToken,
         token: &PhraseToken,
-        item: Option<(u32, u32)>,
-        row: &mut crate::model::NbestStepRow,
         facts: &mut crate::sentence_facts::SentenceFacts,
-    ) -> Result<NbestStepCosts, Self::Error> {
-        if let Some(costs) = self.costs_with_facts(token, item, facts) {
-            return costs;
+    ) -> Result<NbestTokenCosts, Self::Error> {
+        if let Some(costs) = self.costs_with_facts(token, facts) {
+            return Ok(costs);
         }
-        self.nbest_item_costs_in_row(prev, token, item, row)
+        self.nbest_token_costs(token)
     }
 
-    fn nbest_item_costs_in_row(
-        &self,
-        _prev: &PhraseToken,
-        token: &PhraseToken,
-        item: Option<(u32, u32)>,
-        _row: &mut crate::model::NbestStepRow,
-    ) -> Result<NbestStepCosts, Self::Error> {
+    fn nbest_token_costs(&self, token: &PhraseToken) -> Result<NbestTokenCosts, Self::Error> {
         let extra = self.delta(None, *token)?;
-        self.inner.nbest_item_costs(token, extra, item)
+        Ok(self.inner.nbest_token_costs_with(token, extra))
     }
 
     fn release_row(&self, row: &mut crate::model::NbestStepRow) {

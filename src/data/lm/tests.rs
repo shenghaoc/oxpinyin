@@ -34,6 +34,18 @@ mod language_model {
 
     use tempfile::TempDir;
 
+    /// The n-best cost law for one row item `(freq, total)`; `None` leaves
+    /// the unigram branch alone.
+    fn item_costs(
+        lm: &BigramLanguageModel<'_>,
+        token: u32,
+        user: UserCountDelta,
+        item: Option<(u32, u32)>,
+    ) -> crate::model::NbestStepCosts {
+        lm.nbest_token_costs_with(&token, user)
+            .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
+    }
+
     const NI: u32 = 0x0100_0010;
 
     const HAO: u32 = 0x0100_0011;
@@ -239,7 +251,7 @@ mod language_model {
             .get_freq(token)
             .unwrap()
             .map(|freq| (freq, gram.total().unwrap()));
-        lm.nbest_item_costs(&token, user, item).unwrap()
+        item_costs(lm, token, user, item)
     }
 
     // 074a2219 phonetic_lookup.h:605-608,692-693 preserves mixed precision above one.
@@ -456,7 +468,7 @@ mod language_model {
                 .get_freq(token)
                 .unwrap()
                 .map(|freq| (freq, gram.total().unwrap()));
-            let actual = lm.nbest_item_costs(&token, user, item).unwrap();
+            let actual = item_costs(&lm, token, user, item);
             if token == NIHAO {
                 assert_eq!(item.map(|(freq, _)| freq), Some(0), "the stored zero stays");
                 assert_eq!(actual.unigram, expected.unigram);
@@ -496,8 +508,9 @@ mod language_model {
         let prev = NI;
         model.mask.set(1 << 2);
         assert_eq!(
-            lm.nbest_item_costs_in_row(&prev, &GBK, Some((1, 1)), &mut row)
-                .unwrap(),
+            lm.nbest_token_costs(&GBK)
+                .unwrap()
+                .costs(Some((1, 1, true))),
             crate::model::NbestStepCosts::default()
         );
         let Some(crate::model::NbestSuccessors::Row(gram)) =
@@ -538,8 +551,9 @@ mod language_model {
         assert_eq!(freq, Some(99));
         let item = freq.map(|freq| (freq, gram.total().unwrap()));
         assert_eq!(
-            lm.nbest_item_costs_in_row(&prev, &HAO, item, &mut row)
-                .unwrap(),
+            lm.nbest_token_costs(&HAO)
+                .unwrap()
+                .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true))),
             lm.nbest_step_costs(&prev, &HAO).unwrap()
         );
     }
@@ -554,9 +568,19 @@ mod language_model {
             let lambda = conf.lambda_f32();
             model.tables.lambda_f32 = lambda;
             let lm = model.model();
-            let branches = lm
-                .nbest_item_costs(&HAO, UserCountDelta::ZERO, Some((7, 7)))
-                .unwrap();
+            let branches = item_costs(&lm, HAO, UserCountDelta::ZERO, Some((7, 7)));
+            // The engine steps each branch from the token's costs alone.
+            let token = lm.nbest_token_costs_with(&HAO, UserCountDelta::ZERO);
+            assert_eq!(
+                token.blended(7, 7).map(f64::to_bits),
+                branches.blended.map(f64::to_bits),
+                "{text}"
+            );
+            assert_eq!(token.unigram(), branches.unigram, "{text}");
+            assert_eq!(
+                token.unigram_lambda.to_bits(),
+                branches.unigram_lambda.to_bits()
+            );
             assert_eq!(branches.unigram, Some(5.0 / 19.0));
             let unilambda = (1.0_f64 - f64::from(lambda)) as f32;
             assert_eq!(branches.unigram_lambda.to_bits(), unilambda.to_bits());
@@ -576,18 +600,30 @@ mod language_model {
             ..UserCountDelta::ZERO
         };
         for (total, present) in [(1 << 24, false), (1 << 23, true)] {
-            let step = lm
-                .nbest_item_costs(&zero, zero_item, Some((1, total)))
-                .unwrap();
+            let step = item_costs(&lm, zero, zero_item, Some((1, total)));
             assert!(step.unigram.is_none());
             assert_eq!(step.blended.is_some(), present);
+            let token = lm.nbest_token_costs_with(&zero, zero_item);
+            assert!(token.unigram().is_none());
+            assert_eq!(token.blended(1, u64::from(total)), step.blended);
         }
         assert!(
-            lm.nbest_item_costs(&zero, zero_item, Some((0, 0)))
-                .unwrap()
+            item_costs(&lm, zero, zero_item, Some((0, 0)))
                 .blended
                 .unwrap()
                 .is_nan()
+        );
+        // A token without an item answers the default and reads no
+        // transition; neither branch steps from its costs.
+        let absent = lm.nbest_token_costs_with(&0x0300_0001, UserCountDelta::ZERO);
+        assert_eq!(absent, crate::model::NbestTokenCosts::ABSENT);
+        assert_eq!((absent.blended(1, 1), absent.unigram()), (None, None));
+        assert_eq!(
+            lm.nbest_step_costs_using(&0x0300_0001, UserCountDelta::ZERO, || {
+                panic!("no transition is read without an item")
+            })
+            .unwrap(),
+            crate::model::NbestStepCosts::default()
         );
     }
 }

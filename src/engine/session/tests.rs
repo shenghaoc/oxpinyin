@@ -33,7 +33,7 @@ fn full_parsed_len_reflects_the_exact_chain() {
 }
 
 use crate::{
-    model::{Dictionary, LanguageModel, NbestStepCosts, PhraseList, UserModel},
+    model::{Dictionary, LanguageModel, PhraseList, UserModel},
     vocab::{PhraseEntry, PhraseToken, SyllableKey},
 };
 
@@ -1610,6 +1610,9 @@ struct TrellisModel {
     unigram: f64,
 }
 
+/// Every predecessor's row holds every fixture token at `freq / total`
+/// of 1, so each ranged token takes a bigram step at `blended`: the f32
+/// weight `blended - unigram` plus the unigram branch, both exact here.
 impl LanguageModel for TrellisModel {
     fn amplification_lambda(&self) -> f32 {
         0.312_699
@@ -1617,15 +1620,36 @@ impl LanguageModel for TrellisModel {
 
     type Error = EngineError;
 
-    fn nbest_step_costs(
+    fn nbest_successors_in_row<'a>(
         &self,
         _prev: &PhraseToken,
-        _token: &PhraseToken,
-    ) -> Result<NbestStepCosts, EngineError> {
-        Ok(NbestStepCosts {
-            blended: Some(self.blended),
-            unigram: Some(self.unigram),
+        row: &'a mut crate::model::NbestStepRow,
+    ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
+        let every = || {
+            crate::model::MergedGram::new(
+                1,
+                (1..=16)
+                    .chain(0x0100_0001..=0x0100_0010)
+                    .map(|token| (token, 1))
+                    .collect(),
+            )
+        };
+        Ok(Some(
+            row.get_or_try_init::<EngineError>(|| Ok(Some(every())))?
+                .map_or(
+                    crate::model::NbestSuccessors::Miss,
+                    crate::model::NbestSuccessors::Row,
+                ),
+        ))
+    }
 
+    fn nbest_token_costs(
+        &self,
+        _token: &PhraseToken,
+    ) -> Result<crate::model::NbestTokenCosts, EngineError> {
+        Ok(crate::model::NbestTokenCosts {
+            elem: Some(self.unigram),
+            lambda: (self.blended - self.unigram) as f32,
             unigram_lambda: 1.0,
         })
     }

@@ -1230,59 +1230,37 @@ pub trait LanguageModel {
         Ok(NbestStepCosts::default())
     }
 
-    /// Step costs with caller-owned reuse of this predecessor's row.
-    /// The default preserves existing models' pair-wise implementation.
-    /// Callers must use a fresh row for every predecessor and n-best step.
+    /// [`Self::nbest_token_costs`] with the facts sentence pricing already
+    /// read for this guess.
     ///
     /// # Errors
-    /// Returns the same backend errors as [`Self::nbest_step_costs`].
-    fn nbest_step_costs_in_row(
+    /// Returns the same errors as [`Self::nbest_token_costs`].
+    fn nbest_token_costs_with_facts(
         &self,
-        prev: &PhraseToken,
         token: &PhraseToken,
-        _row: &mut NbestStepRow,
-    ) -> Result<NbestStepCosts, Self::Error> {
-        self.nbest_step_costs(prev, token)
-    }
-
-    /// Score an occurrence with facts already read by sentence pricing.
-    /// # Errors
-    /// Preserves the model's occurrence-scoring errors.
-    fn nbest_item_costs_with_facts(
-        &self,
-        prev: &PhraseToken,
-        token: &PhraseToken,
-        item: Option<(u32, u32)>,
-        row: &mut NbestStepRow,
         _facts: &mut sentence_facts::SentenceFacts,
-    ) -> Result<NbestStepCosts, Self::Error> {
-        self.nbest_item_costs_in_row(prev, token, item, row)
+    ) -> Result<NbestTokenCosts, Self::Error> {
+        self.nbest_token_costs(token)
     }
 
-    /// Step costs for one item the caller read from this predecessor's
-    /// merged row: `item` is the item's `(freq, total)`, the pin's
-    /// `bigram_poss = freq / total` (`phonetic_lookup.h:606-608`, `:629`;
-    /// `phrase_lookup.cpp:288-292`), and `None` asks for the unigram
-    /// branch alone. Duplicated items each come here with their own
-    /// frequency. The default preserves existing models' pair-wise
-    /// implementation and ignores `item`.
+    /// The part of `token`'s step costs that no predecessor changes: its
+    /// unigram possibility and the two weights. A step from a predecessor's
+    /// merged row applies [`NbestTokenCosts::costs`] to the row's item
+    /// (`phonetic_lookup.h:646-697`, `phrase_lookup.cpp:310-336` at
+    /// 074a2219). The answer holds for the whole guess, so the n-best
+    /// search asks once per span entry. The default prices nothing.
     ///
     /// # Errors
-    /// Returns the same backend errors as [`Self::nbest_step_costs`].
-    fn nbest_item_costs_in_row(
-        &self,
-        prev: &PhraseToken,
-        token: &PhraseToken,
-        _item: Option<(u32, u32)>,
-        row: &mut NbestStepRow,
-    ) -> Result<NbestStepCosts, Self::Error> {
-        self.nbest_step_costs_in_row(prev, token, row)
+    /// Returns [`Self::Error`] when the model backend cannot read the token's
+    /// unigram or the facade total.
+    fn nbest_token_costs(&self, _token: &PhraseToken) -> Result<NbestTokenCosts, Self::Error> {
+        Ok(NbestTokenCosts::ABSENT)
     }
 
     /// The merged row of one n-best predecessor, owned by this step.
     /// [`NbestSuccessors::Miss`] is a loaded miss of both grams; `None`
-    /// asks callers to retain the ordinary per-candidate scoring path for
-    /// models without row traversal.
+    /// is a model that reads no rows. In both cases the predecessor takes
+    /// no bigram step.
     ///
     /// # Errors
     /// Propagates row-load and parse errors without caching a failed load.
@@ -1334,6 +1312,82 @@ impl Default for NbestStepCosts {
             blended: None,
             unigram: None,
             unigram_lambda: 1.0,
+        }
+    }
+}
+
+/// One token's step costs before any predecessor's row item: what
+/// [`LanguageModel::nbest_token_costs`] returns. [`Self::costs`] completes
+/// them for one item; [`Self::blended`] and [`Self::unigram`] are its two
+/// branches.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NbestTokenCosts {
+    /// Unweighted f64 `unigram_frequency / total`, IEEE division included.
+    /// `None` when the token has no visible phrase item: neither branch
+    /// steps (the pin's failing `get_phrase_item`).
+    pub elem: Option<f64>,
+    /// The f32 bigram weight λ.
+    pub lambda: f32,
+    /// `(1.0_f64 - lambda as f64) as f32`, the unigram weight.
+    pub unigram_lambda: f32,
+}
+
+impl NbestTokenCosts {
+    /// A token the model does not price.
+    pub const ABSENT: Self = Self {
+        elem: None,
+        lambda: 0.0,
+        unigram_lambda: 1.0,
+    };
+
+    /// The unigram branch: `elem`, absent below `DBL_EPSILON`
+    /// (`phonetic_lookup.h:652`). NaN passes the `<` gate.
+    #[must_use]
+    pub fn unigram(&self) -> Option<f64> {
+        let elem = self.elem?;
+        if elem < f64::EPSILON {
+            None
+        } else {
+            Some(elem)
+        }
+    }
+
+    /// The bigram branch for one row item: `f64::from(lambda * bigram) +
+    /// f64::from(unigram_lambda) * elem`, the first product in f32, absent
+    /// when both possibilities are below their epsilons
+    /// (`phonetic_lookup.h:680-693`).
+    #[must_use]
+    pub fn blended(&self, freq: u64, total: u64) -> Option<f64> {
+        let elem = self.elem?;
+        let bigram = freq as f32 / total as f32;
+        if bigram < f32::EPSILON && elem < f64::EPSILON {
+            None
+        } else {
+            let weighted = self.lambda * bigram;
+            Some(f64::from(weighted) + f64::from(self.unigram_lambda) * elem)
+        }
+    }
+
+    /// Both branches for one transition `(freq, total, present)`; a
+    /// transition that is absent or not present leaves the unigram branch
+    /// alone. No branch answers the default.
+    #[must_use]
+    pub fn costs(&self, transition: Option<(u64, u64, bool)>) -> NbestStepCosts {
+        if self.elem.is_none() {
+            return NbestStepCosts::default();
+        }
+        let unigram = self.unigram();
+        let blended = match transition {
+            Some((freq, total, true)) => self.blended(freq, total),
+            _ => None,
+        };
+        if blended.is_none() && unigram.is_none() {
+            return NbestStepCosts::default();
+        }
+        NbestStepCosts {
+            blended,
+            unigram,
+            unigram_lambda: self.unigram_lambda,
         }
     }
 }

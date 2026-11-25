@@ -699,7 +699,7 @@ unigram pass (`phonetic_lookup.h:578–639,787–788`; `nbest::expand_entries`).
 
 With facade total 51051831 and the stored f32 lambda 0.312699, the source
 expressions in `phonetic_lookup.h:649–663,677–693` and
-`BigramLanguageModel::nbest_step_costs_using` / `nbest::expand_one` give
+`nbest_token_costs_with_facts` / `NbestTokenCosts` / `nbest::expand_one` give
 the following approximate f32 scores. These are source/data calculations,
 not an execution trace of the pin. `色` includes its 51000/51040
 pronunciation fraction.

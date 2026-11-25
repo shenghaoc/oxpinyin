@@ -164,7 +164,7 @@ The methods are:
 
 - unigram reads: `unigram_freq`, `unigram_total`, `addon_unigram_freq`, `addon_unigram_total`;
 - the merged bigram row: `merged_successors(prev) -> Option<MergedGram>` ([`dynamic-adjust.md`](dynamic-adjust.md));
-- n-best step pricing: `nbest_step_costs`, `nbest_step_costs_in_row`, `nbest_item_costs_with_facts`, `nbest_item_costs_in_row`, `nbest_successors_in_row`, which return the pre-log `NbestStepCosts` pieces;
+- n-best step pricing: `nbest_successors_in_row` reads a predecessor's merged row; `nbest_token_costs` and `nbest_token_costs_with_facts` return a token's `NbestTokenCosts`, which hold for the whole guess and give the pre-log `NbestStepCosts` pieces for each row item; `nbest_step_costs` returns the pieces for one `prev → token` pair. A model that reads no rows takes no bigram step;
 - `is_read_after_check` identifies a read failure after a successful size check.
 - `amplification_lambda` supplies the interpolation weight. It has no default.
 

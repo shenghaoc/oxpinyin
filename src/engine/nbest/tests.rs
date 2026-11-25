@@ -5,7 +5,7 @@ use crate::graph::SegmentGraph;
 use crate::vocab::PhraseEntry;
 use crate::{
     OptionBits,
-    model::{LanguageModel, NbestStepCosts, PhraseList},
+    model::{LanguageModel, NbestTokenCosts, PhraseList},
     vocab::{PhraseText, PhraseToken, SyllableKey},
 };
 use std::cell::RefCell;
@@ -18,13 +18,7 @@ use crate::fixture_doubles::FixtureDictionary;
 fn priced_slot(token: u32) -> super::LazySlot {
     let slot = super::LazySlot::new(0);
     slot.priced
-        .set(Some(super::SpanEntry {
-            token,
-            path: 0,
-            keys: 1,
-            chars: 1,
-            pronunciation: 1.0,
-        }))
+        .set(Some(super::SpanEntry::new(token, 0, 1, 1, 1.0)))
         .ok();
     slot
 }
@@ -541,13 +535,7 @@ fn backtracking_uses_the_physical_slot_after_batch_selection() {
         unigram: Some(1.0),
     };
     super::expand_one(
-        &super::SpanEntry {
-            token: 22,
-            path: 0,
-            keys: 1,
-            chars: 1,
-            pronunciation: 1.0,
-        },
+        &super::SpanEntry::new(22, 0, 1, 1, 1.0),
         super::StepCtx {
             paths: &paths,
             span: 2..3,
@@ -555,7 +543,6 @@ fn backtracking_uses_the_physical_slot_after_batch_selection() {
             facts: &RefCell::default(),
         },
         predecessor,
-        &mut crate::model::NbestStepRow::default(),
         &mut trellis,
         super::Branch::Unigram,
     )
@@ -565,8 +552,35 @@ fn backtracking_uses_the_physical_slot_after_batch_selection() {
     assert_eq!(trellis.extract(&tails[0]), [(0, 8), (1, 11), (2, 22)]);
 }
 
+/// Every fixture token, each once, at `freq / total` of 1: a predecessor
+/// row through which every ranged token takes a bigram step.
+fn dense_row() -> crate::model::MergedGram {
+    crate::model::MergedGram::new(
+        1,
+        (1..=16)
+            .chain(0x0100_0001..=0x0100_0010)
+            .map(|token| (token, 1))
+            .collect(),
+    )
+}
+
+/// The predecessor's merged row `row`, loaded once into `slot`.
+fn row_in(
+    slot: &mut crate::model::NbestStepRow,
+    row: impl FnOnce() -> Option<crate::model::MergedGram>,
+) -> Result<Option<crate::model::NbestSuccessors<'_>>, EngineError> {
+    Ok(Some(
+        slot.get_or_try_init::<EngineError>(|| Ok(row()))?.map_or(
+            crate::model::NbestSuccessors::Miss,
+            crate::model::NbestSuccessors::Row,
+        ),
+    ))
+}
+
 /// A model answering fixed step probabilities, so the tests measure the trellis
-/// and not the blend.
+/// and not the blend. With `blended`, every predecessor's row holds every
+/// token at `freq / total` of 1, and the f32 weight `blended - unigram`
+/// gives the bigram branch `blended`; both are exact at the values used.
 struct Fixed {
     blended: Option<f64>,
     unigram: Option<f64>,
@@ -579,15 +593,22 @@ impl LanguageModel for Fixed {
 
     type Error = EngineError;
 
-    fn nbest_step_costs(
+    fn nbest_successors_in_row<'a>(
         &self,
-        _prev: &PhraseToken,
-        _token: &PhraseToken,
-    ) -> Result<NbestStepCosts, EngineError> {
-        Ok(NbestStepCosts {
-            blended: self.blended,
-            unigram: self.unigram,
+        _: &PhraseToken,
+        row: &'a mut crate::model::NbestStepRow,
+    ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
+        row_in(row, || self.blended.map(|_| dense_row()))
+    }
 
+    fn nbest_token_costs(&self, _: &PhraseToken) -> Result<NbestTokenCosts, EngineError> {
+        if self.blended.is_none() && self.unigram.is_none() {
+            return Ok(NbestTokenCosts::ABSENT);
+        }
+        let elem = self.unigram.unwrap_or(0.0);
+        Ok(NbestTokenCosts {
+            elem: Some(elem),
+            lambda: self.blended.map_or(0.0, |blended| (blended - elem) as f32),
             unigram_lambda: 1.0,
         })
     }
@@ -599,13 +620,13 @@ fn unigram_step_accumulates_log_possibility() {
     for (probability, expected) in [(0.5, 0xc02c_5c86), (13.0 / 32.0, 0xc039_a67d)] {
         let mut trellis = Trellis::with_seeds(1, &[], NbestShape::PINYIN);
         let mut paths = super::SpanPaths::default();
-        let entry = super::SpanEntry {
-            token: 2,
-            path: paths.push(&[SyllableKey::from_text("ni").expect("ni is a key")], &[0]),
-            keys: 1,
-            chars: 1,
-            pronunciation: 1.0,
-        };
+        let entry = super::SpanEntry::new(
+            2,
+            paths.push(&[SyllableKey::from_text("ni").expect("ni is a key")], &[0]),
+            1,
+            1,
+            1.0,
+        );
         super::expand_one(
             &entry,
             super::StepCtx {
@@ -622,7 +643,6 @@ fn unigram_step_accumulates_log_possibility() {
                 slot: 0,
                 batch_position: 0,
             },
-            &mut Default::default(),
             &mut trellis,
             super::Branch::Unigram,
         )
@@ -719,14 +739,10 @@ fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
         }
 
         type Error = EngineError;
-        fn nbest_step_costs(
-            &self,
-            _: &PhraseToken,
-            _: &PhraseToken,
-        ) -> Result<NbestStepCosts, EngineError> {
-            Ok(NbestStepCosts {
-                blended: None,
-                unigram: Some(0.5),
+        fn nbest_token_costs(&self, _: &PhraseToken) -> Result<NbestTokenCosts, EngineError> {
+            Ok(NbestTokenCosts {
+                elem: Some(0.5),
+                lambda: 1.0,
                 unigram_lambda: 0.0,
             })
         }
@@ -750,9 +766,9 @@ fn a_zero_unigram_weight_still_gives_a_final_step_sentence() {
     );
 }
 
-// Basis: Rust row cache contract and phonetic_lookup.h:595–596 at 074a2219.
+// Basis: phonetic_lookup.h:595–596,670–693 at 074a2219.
 #[test]
-fn row_cached_step_costs_decode_as_the_pairwise_path() {
+fn row_step_costs_follow_each_predecessors_row() {
     use crate::model::{MergedGram, NbestStepRow};
     use std::cell::Cell;
 
@@ -762,35 +778,8 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
             _ => vec![(1, 1), (2, 3)],
         }
     }
-    fn costs(freq: u64) -> NbestStepCosts {
-        NbestStepCosts {
-            blended: Some(freq as f64 / 4.0),
-            unigram: Some(0.25),
-            unigram_lambda: 0.5,
-        }
-    }
-    fn freq_of(records: &[(u32, u64)], token: u32) -> u64 {
-        records
-            .iter()
-            .find(|(next, _)| *next == token)
-            .map_or(0, |(_, freq)| *freq)
-    }
-    struct Pairwise<'a>(&'a Cell<bool>);
-    impl LanguageModel for Pairwise<'_> {
-        fn amplification_lambda(&self) -> f32 {
-            0.312_699
-        }
-
-        type Error = EngineError;
-        fn nbest_step_costs(
-            &self,
-            prev: &PhraseToken,
-            token: &PhraseToken,
-        ) -> Result<NbestStepCosts, EngineError> {
-            let records = records(*prev, self.0.get());
-            Ok(costs(freq_of(&records, *token)))
-        }
-    }
+    /// Each predecessor's row, read once per load: the bigram branch is
+    /// `freq / 4 + 0.125`, the unigram branch `0.125`.
     struct RowCached<'a>(&'a Cell<bool>);
     impl LanguageModel for RowCached<'_> {
         fn amplification_lambda(&self) -> f32 {
@@ -798,33 +787,22 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
         }
 
         type Error = EngineError;
-        fn nbest_step_costs_in_row(
+        fn nbest_successors_in_row<'a>(
             &self,
             prev: &PhraseToken,
-            token: &PhraseToken,
-            row: &mut NbestStepRow,
-        ) -> Result<NbestStepCosts, EngineError> {
-            let gram = row
-                .get_or_try_init::<EngineError>(|| {
-                    Ok(Some(MergedGram::new(4, records(*prev, self.0.get()))))
-                })?
-                .expect("loaded row");
-            let freq = gram.get_freq(*token).expect("whole gram");
-            Ok(costs(u64::from(freq.unwrap_or(0))))
-        }
-    }
-    fn decoded(rows: &[NbestRow]) -> Vec<(Option<String>, Vec<u32>)> {
-        rows.iter()
-            .map(|row| {
-                (
-                    row.text
-                        .as_ref()
-                        .and_then(PhraseText::as_str)
-                        .map(str::to_owned),
-                    row.spans.iter().map(|span| span.token).collect(),
-                )
+            row: &'a mut NbestStepRow,
+        ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
+            row_in(row, || {
+                Some(MergedGram::new(4, records(*prev, self.0.get())))
             })
-            .collect()
+        }
+        fn nbest_token_costs(&self, _: &PhraseToken) -> Result<NbestTokenCosts, EngineError> {
+            Ok(NbestTokenCosts {
+                elem: Some(0.25),
+                lambda: 1.0,
+                unigram_lambda: 0.5,
+            })
+        }
     }
     let dict = FixtureDictionary::parse(
         "token=1\tkeys=ni\ttext=你\tunigram=1000\ntoken=2\tkeys=ni\ttext=尼\tunigram=900\n",
@@ -832,44 +810,65 @@ fn row_cached_step_costs_decode_as_the_pairwise_path() {
     .expect("authored fixture");
     let (matrix, bound) = one_column_matrix("nini");
     let flipped = Cell::new(false);
-    let mut seen = Vec::new();
-    for flip in [false, true] {
+    // From the seed 1, the row that counts a successor 3 of 4 prices it at
+    // 0.875 and the other at 0.375. Unflipped: 1 → 1 → 1 at 0.875², then
+    // two rows at 0.875 × 0.375, through 1 (slot 0, earlier batch
+    // position) and through 2. Flipped, the same with the first token
+    // swapped.
+    let row = |text: &str, tokens: [u32; 2]| (Some(text.to_owned()), tokens.to_vec());
+    for (flip, expected) in [
+        (
+            false,
+            [
+                row("你你", [1, 1]),
+                row("你尼", [1, 2]),
+                row("尼尼", [2, 2]),
+            ],
+        ),
+        (
+            true,
+            [
+                row("尼你", [2, 1]),
+                row("尼尼", [2, 2]),
+                row("你尼", [1, 2]),
+            ],
+        ),
+    ] {
         flipped.set(flip);
-        let history = [1];
-        let cached = nbest_sentences(
+        let rows = nbest_sentences(
             &matrix,
             bound,
             &dict,
             &RowCached(&flipped),
-            &history,
+            &[1],
             None,
             NbestShape::PINYIN,
         )
         .unwrap();
-        let pairwise = nbest_sentences(
-            &matrix,
-            bound,
-            &dict,
-            &Pairwise(&flipped),
-            &history,
-            None,
-            NbestShape::PINYIN,
-        )
-        .unwrap();
-        assert!(!cached.is_empty());
-        assert_eq!(decoded(&cached), decoded(&pairwise), "flipped = {flip}");
-        seen.push(decoded(&cached));
+        let decoded = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.text
+                        .as_ref()
+                        .and_then(PhraseText::as_str)
+                        .map(str::to_owned),
+                    row.spans.iter().map(|span| span.token).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(decoded, expected, "flipped = {flip}");
     }
-    assert_ne!(seen[0], seen[1], "the gram change must move the rows");
 }
 
 // Basis: phonetic_lookup.h:594–632 and ngram.cpp:167–173 at 074a2219.
 #[test]
 fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
     use crate::model::{MergedGram, NbestStepRow};
-    use std::cell::RefCell;
 
-    struct Sparse(RefCell<Vec<u32>>);
+    /// The bigram branch is `freq / 4 + 0.25`, the unigram branch `0.25`.
+    /// Token 4 is stored with a zero count, a present successor.
+    struct Sparse;
     impl LanguageModel for Sparse {
         fn amplification_lambda(&self) -> f32 {
             0.312_699
@@ -882,40 +881,48 @@ fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
             _: &PhraseToken,
             row: &'a mut NbestStepRow,
         ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
-            Ok(Some(
-                row.get_or_try_init::<EngineError>(|| {
-                    Ok(Some(MergedGram::new(2, vec![(1, 2), (3, 0)])))
-                })?
-                .map_or(
-                    crate::model::NbestSuccessors::Miss,
-                    crate::model::NbestSuccessors::Row,
-                ),
-            ))
+            row_in(row, || {
+                Some(MergedGram::new(4, vec![(1, 2), (3, 1), (4, 0)]))
+            })
         }
 
-        fn nbest_step_costs_in_row(
-            &self,
-            _: &PhraseToken,
-            token: &PhraseToken,
-            _: &mut NbestStepRow,
-        ) -> Result<NbestStepCosts, EngineError> {
-            self.0.borrow_mut().push(*token);
-            Ok(NbestStepCosts {
-                blended: Some(0.5),
-                unigram: Some(0.25),
-
+        fn nbest_token_costs(&self, _: &PhraseToken) -> Result<NbestTokenCosts, EngineError> {
+            Ok(NbestTokenCosts {
+                elem: Some(0.25),
+                lambda: 1.0,
                 unigram_lambda: 1.0,
             })
         }
     }
 
     let mut entries = crate::model::PhraseIndexRanges::new();
-    entries.convert([3, 2, 1, 3].map(|token| (token, Some(priced_slot(token)))));
-    let model = Sparse(RefCell::new(Vec::new()));
+    entries.convert([3, 2, 1, 3, 4].map(|token| (token, Some(priced_slot(token)))));
     let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
     let beam = trellis.beam(0);
-    super::expand_entries(&pricing(&entries), &beam, 0..1, &model, &mut trellis, None).unwrap();
-    assert_eq!(*model.0.borrow(), [3, 1, 3, 3, 2, 1, 3]);
+    super::expand_entries(&pricing(&entries), &beam, 0..1, &Sparse, &mut trellis, None).unwrap();
+    // The ranges are [3], [2], [1], [3, 4]. Bigram steps 3, 1, 3, 4 in span
+    // order: 2 is absent from the row, and 4's stored zero is kept, at
+    // 0 / 4 + 0.25. Then unigram steps 3, 2, 1, 3, 4 from the head. Nodes
+    // appear in step order, so node 4 precedes node 2 and holds both of its
+    // steps; each node keeps its first two values, and a tie never evicts.
+    let ln = |probability: f64| probability.ln() as f32;
+    assert_eq!(
+        trellis
+            .candidates(1)
+            .iter()
+            .map(|entry| (entry.value.token, entry.value.poss.to_bits()))
+            .collect::<Vec<_>>(),
+        [
+            (3, ln(0.5)),
+            (3, ln(0.5)),
+            (1, ln(0.75)),
+            (1, ln(0.25)),
+            (4, ln(0.25)),
+            (4, ln(0.25)),
+            (2, ln(0.25)),
+        ]
+        .map(|(token, poss)| (token, poss.to_bits()))
+    );
 }
 
 /// A model whose every predecessor's merged row is the given gram
@@ -934,26 +941,13 @@ impl LanguageModel for FaultRows {
         _: &PhraseToken,
         row: &'a mut crate::model::NbestStepRow,
     ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
-        Ok(Some(
-            row.get_or_try_init::<EngineError>(|| Ok(self.0.clone()))?
-                .map_or(
-                    crate::model::NbestSuccessors::Miss,
-                    crate::model::NbestSuccessors::Row,
-                ),
-        ))
+        row_in(row, || self.0.clone())
     }
 
-    fn nbest_item_costs_in_row(
-        &self,
-        _: &PhraseToken,
-        _: &PhraseToken,
-        item: Option<(u32, u32)>,
-        _: &mut crate::model::NbestStepRow,
-    ) -> Result<NbestStepCosts, EngineError> {
-        Ok(NbestStepCosts {
-            blended: item.map(|(freq, total)| f64::from(freq) / f64::from(total)),
-            unigram: Some(0.25),
-
+    fn nbest_token_costs(&self, _: &PhraseToken) -> Result<NbestTokenCosts, EngineError> {
+        Ok(NbestTokenCosts {
+            elem: Some(0.25),
+            lambda: 1.0,
             unigram_lambda: 1.0,
         })
     }
@@ -1038,11 +1032,11 @@ fn a_short_lone_row_aborts_the_ranged_step() {
 // Basis: phonetic_lookup.h:594–632 and ngram.cpp:167–173 at 074a2219.
 #[test]
 fn a_token_the_walk_yields_below_its_range_still_steps() {
-    use crate::model::{MergedGram, NbestStepRow, NbestSuccessors};
-    use std::cell::RefCell;
+    use crate::model::{MergedGram, NbestStepRow};
 
-    type Steps = Vec<(u32, Option<(u32, u32)>)>;
-    struct Walked(RefCell<Steps>);
+    /// The bigram branch is the item's f32 `freq / total`; the unigram
+    /// branch never steps.
+    struct Walked;
     impl LanguageModel for Walked {
         fn amplification_lambda(&self) -> f32 {
             0.312_699
@@ -1054,29 +1048,16 @@ fn a_token_the_walk_yields_below_its_range_still_steps() {
             &self,
             _: &PhraseToken,
             row: &'a mut NbestStepRow,
-        ) -> Result<Option<NbestSuccessors<'a>>, EngineError> {
-            Ok(Some(
-                row.get_or_try_init::<EngineError>(|| {
-                    Ok(Some(MergedGram::new(15, vec![(1, 1), (3, 5), (2, 7)])))
-                })?
-                .map_or(NbestSuccessors::Miss, NbestSuccessors::Row),
-            ))
+        ) -> Result<Option<crate::model::NbestSuccessors<'a>>, EngineError> {
+            row_in(row, || {
+                Some(MergedGram::new(15, vec![(1, 1), (3, 5), (2, 7)]))
+            })
         }
 
-        fn nbest_item_costs_in_row(
-            &self,
-            _: &PhraseToken,
-            token: &PhraseToken,
-            item: Option<(u32, u32)>,
-            _: &mut NbestStepRow,
-        ) -> Result<NbestStepCosts, EngineError> {
-            if item.is_some() {
-                self.0.borrow_mut().push((*token, item));
-            }
-            Ok(NbestStepCosts {
-                blended: Some(0.5),
-                unigram: Some(0.25),
-
+        fn nbest_token_costs(&self, _: &PhraseToken) -> Result<NbestTokenCosts, EngineError> {
+            Ok(NbestTokenCosts {
+                elem: Some(0.0),
+                lambda: 1.0,
                 unigram_lambda: 1.0,
             })
         }
@@ -1084,13 +1065,19 @@ fn a_token_the_walk_yields_below_its_range_still_steps() {
 
     let mut entries = crate::model::PhraseIndexRanges::new();
     entries.convert([1, 3, 2].map(|token| (token, Some(priced_slot(token)))));
-    let model = Walked(RefCell::new(Vec::new()));
     let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
     let beam = trellis.beam(0);
-    super::expand_entries(&pricing(&entries), &beam, 0..1, &model, &mut trellis, None).unwrap();
+    super::expand_entries(&pricing(&entries), &beam, 0..1, &Walked, &mut trellis, None).unwrap();
+    // Range 3's walk yields 3 and then 2, below it; each steps with its own
+    // frequency, in walk order.
+    let ln = |freq: u32| f64::from(freq as f32 / 15.0_f32).ln() as f32;
     assert_eq!(
-        *model.0.borrow(),
-        [(1, Some((1, 15))), (3, Some((5, 15))), (2, Some((7, 15)))]
+        trellis
+            .candidates(1)
+            .iter()
+            .map(|entry| (entry.value.token, entry.value.poss.to_bits()))
+            .collect::<Vec<_>>(),
+        [(1, ln(1)), (3, ln(5)), (2, ln(7))].map(|(token, poss)| (token, poss.to_bits()))
     );
 }
 

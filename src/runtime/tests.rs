@@ -703,8 +703,9 @@ mod backend_files {
             };
             runtime
                 .lm()
-                .nbest_item_costs_in_row(&prev, &token, item, row)
+                .nbest_token_costs(&token)
                 .unwrap()
+                .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
         };
         let before = costs(&runtime, &mut row);
         assert_eq!(

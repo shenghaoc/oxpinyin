@@ -126,9 +126,8 @@ where
             }
         }
     };
-    model
-        .nbest_item_costs_in_row(&prev, &token, item, row)
-        .map_err(lm)
+    let costs = model.nbest_token_costs(&token).map_err(lm)?;
+    Ok(costs.costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true))))
 }
 
 /// Returns `(matched, result)` where `result` is the character-length
