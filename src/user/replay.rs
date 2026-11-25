@@ -509,10 +509,6 @@ impl ReplayedLibrary {
             || (self.fields(slot).is_some() && self.complete_item(slot).is_none())
     }
 
-    pub(crate) fn pronunciation_count(&self, slot: u32) -> Option<u32> {
-        self.fields(slot)?.get(1).copied().map(u32::from)
-    }
-
     pub(crate) fn total(&self) -> u32 {
         self.total
     }

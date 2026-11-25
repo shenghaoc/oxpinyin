@@ -1005,17 +1005,24 @@ impl UserStore {
     /// a library with no original or an item nothing holds.
     #[must_use]
     pub fn system_unigram(&self, token: PhraseToken) -> Option<u32> {
+        use crate::user::system_items::LiveItemFields;
         let original = self.originals.get(&phrase_index_library_index(token))?;
-        if self.system_item_removed(token) {
+        // One slot read answers both whether a journal REMOVE took the item
+        // out and its live unigram, as `get_phrase_item` reads it once
+        // (074a2219 `phrase_index.cpp:180-206`).
+        let live = self.read_live_item(token, crate::user::replay::raw_unigram);
+        if let LiveItemFields::NoReadableItem = live {
             return None;
         }
         if let Some(count) = self.with_user_item(token, |item| item.unigram()) {
             return Some(count);
         }
-        self.inner
-            .system_items
-            .borrow()
-            .unigram(token, Some(original))
+        match live {
+            LiveItemFields::Read(unigram) => Some(unigram),
+            LiveItemFields::NoLiveLibrary | LiveItemFields::NoReadableItem => {
+                original.unigram(token & PHRASE_MASK)
+            }
+        }
     }
 
     /// The unigram field of the item the pin's `get_phrase_item` reads for
@@ -2325,6 +2332,19 @@ impl UserStore {
         self.inner.system_items.borrow().with_live(token, read)
     }
 
+    /// Reads the complete item a system library's live buffer holds under
+    /// `token`, or says that the library has no live buffer or that the
+    /// buffer holds no item there ([`Self::system_item_removed`]). Unlike
+    /// [`Self::with_live_item`], the answer does not depend on
+    /// [`Self::has_system_items`].
+    pub(crate) fn read_live_item<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> crate::user::system_items::LiveItemFields<R> {
+        self.inner.system_items.borrow().read_live(token, read)
+    }
+
     pub(crate) fn with_live_item_fields<R>(
         &self,
         token: PhraseToken,
@@ -2339,18 +2359,17 @@ impl UserStore {
             .with_live_fields(token, read)
     }
 
-    pub(crate) fn live_pronunciation_count(&self, token: PhraseToken) -> Option<u32> {
+    /// The stored reading count of the item fields a system library's live
+    /// buffer holds under `token`, read once: the library has no live
+    /// buffer, the buffer holds no item fields there, or the header's count.
+    pub(crate) fn live_pronunciation_count_read(
+        &self,
+        token: PhraseToken,
+    ) -> crate::user::system_items::LiveItemFields<Option<u32>> {
         self.inner
             .system_items
             .borrow()
-            .live_pronunciation_count(token)
-    }
-
-    pub(crate) fn live_item_is_incomplete(&self, token: PhraseToken) -> bool {
-        self.inner
-            .system_items
-            .borrow()
-            .live_item_is_incomplete(token)
+            .with_live_fields(token, |bytes| bytes.get(1).copied().map(u32::from))
     }
 
     /// One past the highest token a `USER_FILE` library holds: the pin's

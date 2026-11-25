@@ -25,7 +25,9 @@ fn library_of<'a>(
     })
 }
 
-/// The result of reading fields from a live system library.
+/// The result of one read of a live system library's slot: the library has
+/// no live buffer, the buffer holds no readable item at the slot (a removed,
+/// unreadable or absent one), or the reader's result.
 pub(crate) enum LiveItemFields<R> {
     NoLiveLibrary,
     NoReadableItem,
@@ -163,24 +165,6 @@ impl SystemItems {
         }
     }
 
-    /// The live unigram of `token`'s system item: the library's live buffer's,
-    /// else the original's (no write has made a buffer). `None` when no
-    /// readable item is there.
-    pub(crate) fn unigram(
-        &self,
-        token: PhraseToken,
-        original: Option<SystemLibraryRef<'_>>,
-    ) -> Option<u32> {
-        let slot = token & 0x00ff_ffff;
-        match self
-            .replayed
-            .get(&crate::vocab::phrase_index_library_index(token))
-        {
-            Some(library) => library.unigram(slot),
-            None => original?.unigram(slot),
-        }
-    }
-
     /// `SubPhraseIndex::get_range`'s end of system library `nibble`: its live
     /// buffer's, else the original's.
     pub(crate) fn range_end(&self, nibble: u8, original: SystemLibraryRef<'_>) -> u32 {
@@ -266,6 +250,27 @@ impl SystemItems {
         Some(read(&bytes))
     }
 
+    /// [`Self::with_live`] that also tells a library without a live buffer
+    /// from a slot the buffer holds no complete item at. The second answer
+    /// is [`Self::is_removed`], from the same slot read: the one
+    /// `get_phrase_item` read (074a2219 `phrase_index.cpp:180-206`).
+    pub(crate) fn read_live<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> LiveItemFields<R> {
+        let Some(library) = self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))
+        else {
+            return LiveItemFields::NoLiveLibrary;
+        };
+        match library.item_bytes(token & 0x00ff_ffff) {
+            Some(bytes) => LiveItemFields::Read(read(&bytes)),
+            None => LiveItemFields::NoReadableItem,
+        }
+    }
+
     /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`].
     pub(crate) fn with_live_fields<R>(
         &self,
@@ -282,18 +287,6 @@ impl SystemItems {
             Some(bytes) => LiveItemFields::Read(read(&bytes)),
             None => LiveItemFields::NoReadableItem,
         }
-    }
-
-    pub(crate) fn live_pronunciation_count(&self, token: PhraseToken) -> Option<u32> {
-        self.replayed
-            .get(&crate::vocab::phrase_index_library_index(token))?
-            .pronunciation_count(token & 0x00ff_ffff)
-    }
-
-    pub(crate) fn live_item_is_incomplete(&self, token: PhraseToken) -> bool {
-        self.replayed
-            .get(&crate::vocab::phrase_index_library_index(token))
-            .is_some_and(|library| library.item_is_incomplete(token & 0x00ff_ffff))
     }
 
     /// Trains `token`'s readings in place in its library's live buffer, which
