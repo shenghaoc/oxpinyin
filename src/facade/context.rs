@@ -606,15 +606,6 @@ impl ContextCore {
         MaskOutOutcome::Done(true)
     }
 
-    /// Whether `user_bigram.db` carried a key that is not a four-byte
-    /// `phrase_token_t` ([`UserStoreError::NonTokenUserBigramKey`]). The
-    /// pin's `Bigram::get_all_items` assert dies (`ngram_bdb.cpp:199`),
-    /// reached by `pinyin_begin_get_bigram_phrases`.
-    #[must_use]
-    pub fn has_non_token_bigram_key(&self) -> bool {
-        self.user_store().has_non_token_bigram_key()
-    }
-
     /// `pinyin_load_phrase_library`'s body (074a2219 `pinyin.cpp:446-459`,
     /// `_load_phrase_library` `:234-322`; `zhuyin.cpp:361-375`, `:178-266`):
     /// an in-memory transition of the session, as the pin's. A library that

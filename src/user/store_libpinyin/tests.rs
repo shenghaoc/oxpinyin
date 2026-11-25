@@ -1449,7 +1449,8 @@ fn partial_tail_guard_tracks_an_in_session_mask_result() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// Basis: `074a2219 ngram_tkrzwdb.cpp:160-211` (`get_all_items` asserts on a non-token key before any gram).
+/// Basis: `074a2219 ngram_tkrzwdb.cpp:160-211` (`get_all_items` asserts on a non-token key before any gram;
+/// `pinyin.cpp:779`, the bigram export begin's one walk).
 #[test]
 fn a_non_token_bigram_key_is_the_masks_first_fault() {
     let dir = tempdir("non-token-key-before-gram-faults");
@@ -1482,6 +1483,9 @@ fn a_non_token_bigram_key_is_the_masks_first_fault() {
         Err(UserStoreError::NonTokenUserBigramKey)
     ));
     assert_eq!(store.bigram_count(1, 9).expect("unchanged item"), 7);
+    // The export begin's one walk meets the same key and asserts.
+    assert_eq!(store.bigram_export_predecessors().expect("keys"), None);
+    assert_eq!(store.bigram_predecessors().expect("keys"), [1]);
     drop(store);
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
