@@ -98,7 +98,6 @@ pub(super) mod ffi {
         fn rewrite(db: &DBM, rewriter: &mut Rewriter<'_, '_>) -> NativeStatus;
         fn synchronize(dbm: &DBM, hard: bool) -> NativeStatus;
         fn count(dbm: &DBM, count: &mut i64) -> NativeStatus;
-        fn is_healthy(dbm: &DBM) -> bool;
         fn collect_keys(dbm: &DBM, keys: &mut KeySink<'_>) -> NativeStatus;
 
         fn make_iterator(dbm: &DBM) -> UniquePtr<DbmIterator>;
