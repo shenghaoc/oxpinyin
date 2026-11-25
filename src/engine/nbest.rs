@@ -19,8 +19,8 @@ use std::collections::hash_map::Entry;
 
 use crate::{
     model::{
-        Dictionary, LanguageModel, MergedGram, NbestSuccessors, NbestTokenCosts, PhraseIndexRanges,
-        PhraseItemRead, TokenPhrase, TrellisItem,
+        Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
+        TokenPhrase, TrellisItem,
     },
     parser::ChewingKey,
     vocab::{PhraseText, PhraseToken, SyllableKey},
@@ -341,12 +341,21 @@ struct Trellis {
     shape: NbestShape,
     /// One [`Step`] per byte position of the remaining input.
     steps: Vec<Step>,
-    /// Token → the key path its first step priced it over, as an offset
-    /// and length into `text_keys`/`text_tones`; the phrase text is read
-    /// through the dictionary when a result is emitted.
-    texts: TokenMap<(u32, u32)>,
+    /// The key path of each span entry's first step, in step order, as an
+    /// offset and length into `text_keys`/`text_tones`. A token's first
+    /// record names the path its first step priced it over; the phrase
+    /// text is read through the dictionary when a result is emitted.
+    texts: Vec<TextPath>,
     text_keys: Vec<SyllableKey>,
     text_tones: Vec<u8>,
+}
+
+/// One record of [`Trellis::texts`].
+#[derive(Clone, Copy)]
+struct TextPath {
+    token: u32,
+    offset: u32,
+    len: u32,
 }
 
 impl Trellis {
@@ -375,7 +384,7 @@ impl Trellis {
         Self {
             shape,
             steps,
-            texts: TokenMap::default(),
+            texts: Vec::new(),
             text_keys: Vec::new(),
             text_tones: Vec::new(),
         }
@@ -478,8 +487,8 @@ impl Trellis {
             }
             std::collections::hash_map::Entry::Vacant(slot) => slot,
         };
-        let text = match self.texts.get(&token) {
-            Some(&(offset, len)) => {
+        let text = match self.texts.iter().find(|path| path.token == token) {
+            Some(&TextPath { offset, len, .. }) => {
                 let range = offset as usize..offset as usize + len as usize;
                 match (
                     self.text_keys.get(range.clone()),
@@ -541,10 +550,6 @@ struct SpanEntry {
     keys: u32,
     chars: u32,
     pronunciation: f32,
-    /// The model's [`NbestTokenCosts`] for `token`, read at the entry's
-    /// first step: they hold for the whole guess, so every predecessor's
-    /// step reuses them.
-    costs: OnceCell<NbestTokenCosts>,
     /// Set at the entry's first step, when the trellis has named a text
     /// path for `token`.
     texted: std::cell::Cell<bool>,
@@ -558,7 +563,6 @@ impl SpanEntry {
             keys,
             chars,
             pronunciation,
-            costs: OnceCell::new(),
             texted: std::cell::Cell::new(false),
         }
     }
@@ -628,9 +632,6 @@ struct SpanRanges<M> {
     ranges: PhraseIndexRanges<LazySlot>,
     paths: SpanPaths,
     memos: Vec<M>,
-    /// Each token's pronunciation sum over the span, from its first priced
-    /// slot (see [`Pricing::sums`]).
-    sums: RefCell<TokenMap<TokenSum>>,
 }
 
 impl<M> Default for SpanRanges<M> {
@@ -639,7 +640,6 @@ impl<M> Default for SpanRanges<M> {
             ranges: PhraseIndexRanges::default(),
             paths: SpanPaths::default(),
             memos: Vec::new(),
-            sums: RefCell::default(),
         }
     }
 }
@@ -649,7 +649,6 @@ impl<M: Default> SpanRanges<M> {
         self.ranges.clear();
         self.paths.clear();
         self.memos.clear();
-        self.sums.get_mut().clear();
     }
 
     /// Records a key path and files a fresh memo for it; the id indexes both.
@@ -657,14 +656,6 @@ impl<M: Default> SpanRanges<M> {
         self.memos.push(M::default());
         self.paths.push(keys, tones)
     }
-}
-
-/// A token's pronunciation sum over a span, kept with the phrase length the
-/// walk filtered paths by.
-#[derive(Clone, Copy)]
-struct TokenSum {
-    chars: u32,
-    pronunciation: f32,
 }
 
 /// Prices a [`LazySlot`] through the dictionary, once per slot.
@@ -678,11 +669,6 @@ struct Pricing<'a, D: Dictionary> {
     facts: &'a RefCell<SentenceFacts>,
     generation: &'a GenerationView<'a>,
     span: std::ops::Range<usize>,
-    /// The pin computes the pronunciation sum on each predecessor step
-    /// that reaches pricing (`lookup/phonetic_lookup.h:655,683`). The sum
-    /// depends only on the token's item and the span's paths. Slots for the
-    /// same token and phrase length in the span share the cached sum.
-    sums: &'a RefCell<TokenMap<TokenSum>>,
 }
 
 impl<'a, D> Pricing<'a, D>
@@ -711,6 +697,9 @@ where
 
     /// `slot`'s entry for `token`; `None` when the dictionary reads no
     /// item for it. The answer is kept in the slot for the span's steps.
+    /// The pronunciation sums every path of the item's length, as the pin's
+    /// step does (`lookup/phonetic_lookup.h:655,683`); another slot of the
+    /// token in the span sums them again.
     fn price<'s>(
         &self,
         slot: &'s LazySlot,
@@ -721,22 +710,7 @@ where
         }
         let (keys, tones) = self.paths.path(slot.path);
         let item = self.item_on_path(slot.path, keys, tones, token)?;
-        let cached = item.and_then(|item| {
-            self.sums
-                .borrow()
-                .get(&token)
-                .filter(|sum| sum.chars == item.chars)
-                .map(|sum| sum.pronunciation)
-        });
-        let entry = if let (Some(item), Some(pronunciation)) = (item, cached) {
-            Some(SpanEntry::new(
-                token,
-                slot.path,
-                keys.len().try_into().unwrap_or(u32::MAX),
-                item.chars,
-                pronunciation,
-            ))
-        } else if let Some(item) = item {
+        let entry = if let Some(item) = item {
             let mut path = 0_u32;
             let pronunciation = self.generation.sum_paths(
                 self.span.start,
@@ -766,13 +740,6 @@ where
                     }))
                 },
             )?;
-            self.sums.borrow_mut().insert(
-                token,
-                TokenSum {
-                    chars: item.chars,
-                    pronunciation,
-                },
-            );
             Some(SpanEntry::new(
                 token,
                 slot.path,
@@ -1003,7 +970,6 @@ where
         facts: env.facts,
         generation: env.generation,
         span: span.clone(),
-        sums: &found.sums,
     };
     if found.ranges.iter().next().is_some() {
         let mut forced = PhraseIndexRanges::new();
@@ -1283,7 +1249,6 @@ where
             facts: env.facts,
             generation: env.generation,
             span: position..end,
-            sums: &found.sums,
         };
         expand_entries(&pricing, beam, position..end, env.model, trellis, None)?;
         end += 1;
@@ -1637,15 +1602,9 @@ fn expand_one<L: LanguageModel>(
         facts,
     } = ctx;
     let prev = predecessor.value.token;
-    let costs = match entry.costs.get() {
-        Some(costs) => *costs,
-        None => {
-            let costs = model
-                .nbest_token_costs_with_facts(&entry.token, &mut facts.borrow_mut())
-                .map_err(|error| EngineError::row_read(model, &error))?;
-            *entry.costs.get_or_init(|| costs)
-        }
-    };
+    let costs = model
+        .nbest_token_costs_with_facts(&entry.token, &mut facts.borrow_mut())
+        .map_err(|error| EngineError::row_read(model, &error))?;
     let pronunciation = entry.pronunciation;
     let probability = match branch {
         Branch::Bigram((freq, total)) => costs
@@ -1659,18 +1618,17 @@ fn expand_one<L: LanguageModel>(
         return Ok(());
     };
     let poss = (f64::from(predecessor.value.poss) + probability.ln()) as f32;
-    // After the entry's first step the trellis names a path for its token,
-    // and nothing removes one, so later steps from the entry skip the probe.
-    if !entry.texted.replace(true)
-        && let Entry::Vacant(slot) = trellis.texts.entry(entry.token)
-    {
-        // The first step to price the token names the path whose text
-        // a result reads.
+    // The entry's first step records its path; the token's first record
+    // names the path whose text a result reads.
+    if !entry.texted.replace(true) {
         let (keys, tones) = paths.path(entry.path);
-        let offset = u32::try_from(trellis.text_keys.len()).unwrap_or(u32::MAX);
+        trellis.texts.push(TextPath {
+            token: entry.token,
+            offset: u32::try_from(trellis.text_keys.len()).unwrap_or(u32::MAX),
+            len: u32::try_from(keys.len()).unwrap_or(u32::MAX),
+        });
         trellis.text_keys.extend_from_slice(keys);
         trellis.text_tones.extend_from_slice(tones);
-        slot.insert((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
     }
     // Every priced span reaches a real key in the graph's matrix by
     // walking forward. Its start therefore fits below the reserved SEED_STEP.
