@@ -409,12 +409,6 @@ impl Db {
         Ok(u64::try_from(count).unwrap_or(0))
     }
 
-    /// `DBM::IsHealthy`: whether the open file was closed cleanly and its
-    /// size agrees with its metadata (`HashDBMImpl::OpenImpl`).
-    fn is_healthy(&self) -> bool {
-        ffi::is_healthy(&self.dbm)
-    }
-
     /// `m_db->MakeIterator()` (`tkrzwdb_utils.h:52`). The cursor borrows
     /// this database: the native iterator keeps a pointer
     /// back to it, which only the database's destruction clears
@@ -587,14 +581,6 @@ pub(crate) fn open_system(
 }
 
 // ── engine-level operations ───────────────────────────────────────
-
-/// Whether the opened hash file `db` holds no record by tkrzw's own
-/// account: it opened healthy (`DBM::IsHealthy`) and counts no record
-/// (`DBM::Count`). A failed count or an unhealthy file answers no, so the
-/// copy walks it.
-fn holds_no_record(db: &Db) -> bool {
-    db.is_healthy() && matches!(db.count(), Ok(0))
-}
 
 /// A row visitor as [`drive_scan`] drives it: one borrowed key and value
 /// per record, [`Flow::Break`] to stop early.
@@ -946,12 +932,10 @@ impl WriteTxn for TkrzwTxn<'_> {
 /// in-memory `TinyDBM` (`ngram_tkrzwdb.cpp:48-63`) at its default bucket
 /// count, filled from the `HashDBM` file by `copy_tkrzwdb`'s
 /// iterator walk (`tkrzwdb_utils.h`), so its bucket walk is the pin's.
-/// A known-empty container defers native construction until its first store.
+/// The `TinyDBM` exists from `empty` and `load_db` on, as the pin's
+/// `Bigram::load_db` makes it at `pinyin_init` (maintainer ruling, 2026-11-25).
 pub struct TkrzwUserBigramDb {
-    // Uninitialized means known-empty, not a failed native handle. Keep the
-    // default TinyDBM once a load or the first Set constructs it. Allocation
-    // failure moving from init to the first write is maintainer-accepted.
-    db: std::cell::OnceCell<Db>,
+    db: Db,
 }
 
 /// `copy_tkrzwdb(src, destdb)` (`tkrzwdb_utils.h:48-74` at 074a2219): the
@@ -994,10 +978,9 @@ fn copy_tkrzwdb(
 
 impl crate::store::UserBigramDb for TkrzwUserBigramDb {
     fn empty() -> Result<Self, StoreError> {
-        // Defer `new TinyDBM` (`ngram_tkrzwdb.cpp:52`): it opens no file.
-        // Empty reads and walks have no native state to preserve.
+        // `m_db = new TinyDBM` (`ngram_tkrzwdb.cpp:52`): it opens no file.
         Ok(Self {
-            db: std::cell::OnceCell::new(),
+            db: Db::new(Class::Tiny),
         })
     }
 
@@ -1012,42 +995,26 @@ impl crate::store::UserBigramDb for TkrzwUserBigramDb {
             .open(path, false, OPEN_NO_CREATE)
             .is_ok_and(|status| status.code == STATUS_SUCCESS)
         {
-            // `copy_tkrzwdb` copies nothing from a file with no live
-            // record, but its HashDBM iterator still reads every bucket
-            // slot, and `save_db` writes 1,048,583 of them whatever the
-            // rows: about 329M instructions per init. A file tkrzw opens
-            // healthy and counts empty leaves the container exactly as that
-            // copy would, so it is not walked; every other file is.
-            if holds_no_record(&file) {
-                return Ok(this);
-            }
-            let db = this.db.get_or_init(|| Db::new(Class::Tiny));
             // `copy_tkrzwdb` asserts on a failed `Set` or source walk
             // (`tkrzwdb_utils.h:65`, `:72`): the init stops there. An
             // iterator that is not made leaves the container as it is, and
             // `load_db` ignores the copy's answer (`ngram_tkrzwdb.cpp:58`).
-            let _ = copy_tkrzwdb(&file, |key, value| db.set(key, value));
+            let _ = copy_tkrzwdb(&file, |key, value| this.db.set(key, value));
         }
         Ok(this)
     }
 
     fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        if let Some(db) = self.db.get() {
-            return db.get(key, value);
-        }
-        value.clear();
-        Ok(false)
+        self.db.get(key, value)
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.db.get_or_init(|| Db::new(Class::Tiny)).set(key, value)
+        self.db.set(key, value)
     }
 
     fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
         // The trait's removal of an absent record is a no-op.
-        if let Some(db) = self.db.get() {
-            db.remove(key)?;
-        }
+        self.db.remove(key)?;
         Ok(())
     }
 
@@ -1055,24 +1022,21 @@ impl crate::store::UserBigramDb for TkrzwUserBigramDb {
         // `get_all_items`: one read-only `ProcessEach` whose processor
         // appends each key as a token (`ngram_tkrzwdb.cpp:143-172` at
         // 074a2219); a key of another length is `None` for the upper gate.
-        let Some(db) = self.db.get() else {
-            return Ok(Vec::new());
-        };
         let mut keys = Vec::new();
-        db.keys(KeySink::Tokens(&mut keys))?;
+        self.db.keys(KeySink::Tokens(&mut keys))?;
         Ok(keys)
     }
 
     fn is_empty(&self) -> Result<bool, StoreError> {
-        self.db.get().map_or(Ok(true), |db| Ok(db.count()? == 0))
+        Ok(self.db.count()? == 0)
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
-        save_bigram_db(self.db.get(), path)
+        save_bigram_db(&self.db, path)
     }
 }
 
-fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
+fn save_bigram_db(db: &Db, path: &Path) -> Result<(), StoreError> {
     // `Bigram::save_db` (`ngram_tkrzwdb.cpp:66-87`): remove the file,
     // open a fresh `HashDBM` at its default tuning, copy this
     // container into it in iterator order, synchronize, close.
@@ -1083,16 +1047,14 @@ fn save_bigram_db(db: Option<&Db>, path: &Path) -> Result<(), StoreError> {
     // the native destination sequence, including its empty file and timestamp.
     // `save_db` ignores the copy's answer (`ngram_tkrzwdb.cpp:78`), so an
     // iterator that is not made goes on to the synchronize.
-    if let Some(db) = db {
-        let _ = copy_tkrzwdb(db, |key, value| file.db.set(key, value));
-    }
+    let _ = copy_tkrzwdb(db, |key, value| file.db.set(key, value));
     file.db.synchronize(false)
 }
 
 #[cfg(test)]
 impl TkrzwStore {
     pub(crate) fn save_bigram_db(&self, path: &Path) -> Result<(), StoreError> {
-        save_bigram_db(Some(&self.db), path)
+        save_bigram_db(&self.db, path)
     }
 }
 

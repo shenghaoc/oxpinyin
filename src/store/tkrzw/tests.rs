@@ -21,7 +21,7 @@ fn sorted_keys(db: &TkrzwUserBigramDb) -> Vec<Option<[u8; 4]>> {
 
 fn eager() -> TkrzwUserBigramDb {
     TkrzwUserBigramDb {
-        db: std::cell::OnceCell::from(Db::new(Class::Tiny)),
+        db: Db::new(Class::Tiny),
     }
 }
 
@@ -32,8 +32,7 @@ fn eager_load(path: &std::path::Path) -> TkrzwUserBigramDb {
         .open(path, false, OPEN_NO_CREATE)
         .is_ok_and(|status| status.code == STATUS_SUCCESS)
     {
-        let db = this.db.get().unwrap();
-        copy_tkrzwdb(&file, |key, value| db.set(key, value)).unwrap();
+        copy_tkrzwdb(&file, |key, value| this.db.set(key, value)).unwrap();
     }
     this
 }
@@ -63,7 +62,7 @@ fn saved(db: &TkrzwUserBigramDb, path: &std::path::Path) -> Vec<u8> {
 
 // 074a2219 ngram_tkrzwdb.cpp:48-62,65-83 constructs and saves an empty TinyDBM.
 #[test]
-fn known_empty_containers_answer_as_an_eager_tiny_dbm() {
+fn empty_and_missing_file_containers_answer_as_a_tiny_dbm() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing.db");
     let probes: [&[u8]; 1] = [b"miss"];
@@ -79,15 +78,15 @@ fn known_empty_containers_answer_as_an_eager_tiny_dbm() {
         native.remove(b"miss").unwrap();
         assert_eq!(answers(&db, &probes), answers(&native, &probes));
 
-        let lazy_path = dir.path().join("lazy.db");
+        let saved_path = dir.path().join("saved.db");
         assert_eq!(
-            saved(&db, &lazy_path),
+            saved(&db, &saved_path),
             saved(&native, &dir.path().join("native.db")),
             "only the timestamp may differ"
         );
         assert_eq!(
-            answers(&TkrzwUserBigramDb::load_db(&lazy_path).unwrap(), &probes),
-            answers(&eager_load(&lazy_path), &probes)
+            answers(&TkrzwUserBigramDb::load_db(&saved_path).unwrap(), &probes),
+            answers(&eager_load(&saved_path), &probes)
         );
     }
     assert!(
@@ -98,7 +97,7 @@ fn known_empty_containers_answer_as_an_eager_tiny_dbm() {
 
 // 074a2219 ngram_tkrzwdb.cpp:125-140 applies Set and Remove to one live TinyDBM.
 #[test]
-fn a_lazy_container_answers_as_an_eager_tiny_dbm_through_its_first_sets() {
+fn a_container_answers_as_a_tiny_dbm_through_its_first_sets() {
     let probes: [&[u8]; 3] = [b"init", b"next", b"miss"];
     let db = TkrzwUserBigramDb::empty().unwrap();
     let native = eager();
@@ -147,7 +146,6 @@ fn loading_answers_as_the_full_copy_walk_for_empty_unhealthy_and_filled_files() 
     drop(writer);
     let file = open_hash(&unhealthy).unwrap();
     assert_eq!(file.db.count().unwrap(), 0);
-    assert!(!file.db.is_healthy());
     drop(file);
 
     let rows = dir.path().join("rows.db");
@@ -205,7 +203,7 @@ fn loading_preserves_the_pins_colliding_bucket_chain_and_values() {
     let loaded = TkrzwUserBigramDb::load_db(&path).unwrap();
     let expected = vec![rows[2].clone(), rows[0].clone(), rows[1].clone()];
     let mut actual = Vec::new();
-    copy_tkrzwdb(loaded.db.get().unwrap(), |key, value| {
+    copy_tkrzwdb(&loaded.db, |key, value| {
         actual.push((key.to_vec(), value.to_vec()));
         Ok(())
     })

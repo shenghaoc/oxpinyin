@@ -136,10 +136,6 @@ NativeStatus count(const ::tkrzw::DBM& dbm, std::int64_t& count) {
   return wrap(mutable_dbm(dbm).Count(&count));
 }
 
-bool is_healthy(const ::tkrzw::DBM& dbm) {
-  return dbm.IsHealthy();
-}
-
 NativeStatus collect_keys(const ::tkrzw::DBM& dbm, KeySink& keys) {
   KeyCollector collector(keys);
   return wrap(mutable_dbm(dbm).ProcessEach(&collector, false));
