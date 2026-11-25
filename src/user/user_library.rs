@@ -1,6 +1,6 @@
 //! Owned session sub-index: packed item bodies and independent index membership.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use crate::data::chunk_format::CHUNK_HEADER_SIZE;
@@ -59,7 +59,8 @@ pub(crate) struct UserLibrary {
     total: u32,
     slots: BTreeMap<u32, Range<usize>>,
     content: Vec<u8>,
-    shared_starts: BTreeSet<usize>,
+    /// The starts that more than one slot shares, ascending and without repeats.
+    shared_starts: Vec<usize>,
 }
 
 /// `MemoryChunk::ensure_has_space` narrows a growth to `int`
@@ -420,10 +421,12 @@ impl UserLibrary {
             .collect();
         let mut starts: Vec<_> = offsets.iter().map(|&(_, start)| start).collect();
         crate::stable_sort::sort_values(&mut starts);
-        let shared_starts = starts
+        // `starts` is sorted, so the shared starts come out ascending.
+        let mut shared_starts: Vec<usize> = starts
             .windows(2)
             .filter_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
             .collect();
+        shared_starts.dedup();
         starts.dedup();
 
         let content_len = content.len();
@@ -491,7 +494,9 @@ impl UserLibrary {
     fn editable_start(&mut self, slot: u32) -> Option<usize> {
         let range = self.slots.get(&slot)?.clone();
         let length = self.item(slot)?.as_bytes().len();
-        if !self.shared_starts.contains(&range.start) && range.start + length <= range.end {
+        if self.shared_starts.binary_search(&range.start).is_err()
+            && range.start + length <= range.end
+        {
             return Some(range.start);
         }
         let copy = self.content.len();

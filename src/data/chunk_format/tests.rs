@@ -36,3 +36,34 @@ fn build_memory_chunk_frames_the_pin_layout() {
     let framed = finish_memory_chunk(owned).expect("finish frame");
     assert_eq!(framed, file);
 }
+
+// The 16-byte block fold gives the word-by-word XOR of memory_chunk.h:137-163
+// for every length and start, so every block, word and tail path is reached.
+#[test]
+fn checksum_blocks_equal_the_word_by_word_xor() {
+    fn word_by_word(payload: &[u8]) -> u32 {
+        let aligned = payload.len() & !0x3;
+        let mut checksum = payload[..aligned]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .fold(0, |checksum, word| checksum ^ u32::from_le_bytes(*word));
+        for (index, &byte) in payload[aligned..].iter().enumerate() {
+            checksum ^= u32::from(byte) << (8 * index);
+        }
+        checksum
+    }
+    let bytes: Vec<u8> = (0_u32..300)
+        .map(|n| (n.wrapping_mul(97) ^ (n >> 3)) as u8)
+        .collect();
+    for start in 0..4 {
+        for end in start..bytes.len() {
+            let payload = &bytes[start..end];
+            assert_eq!(
+                chunk_checksum(payload),
+                word_by_word(payload),
+                "{start}..{end}"
+            );
+        }
+    }
+}

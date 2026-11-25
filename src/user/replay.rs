@@ -454,7 +454,8 @@ impl ReplayedLibrary {
     /// Builds a fresh mutable index from a library baseline.
     #[must_use]
     pub fn pristine(original: SystemLibraryRef<'_>) -> Self {
-        let items: BTreeMap<_, _> = match original.mapped {
+        // Both arms collect rows, so one `BTreeMap::from_iter` builds the map.
+        let rows: Vec<(u32, Vec<u8>)> = match original.mapped {
             Some(mapped) => mapped
                 .offset_array()
                 .as_chunks::<4>()
@@ -475,6 +476,7 @@ impl ReplayedLibrary {
                 .map(|(&slot, item)| (slot, journal_item_bytes(item)))
                 .collect(),
         };
+        let items: BTreeMap<_, _> = rows.into_iter().collect();
         let end = items
             .last_key_value()
             .map_or(1, |(&slot, _)| slot.saturating_add(1));

@@ -224,8 +224,8 @@ debug = 2
 # do not make bodies panic-free or exclude other panic sources. Since
 # Rust 1.81 a panic reaching a non-unwinding ABI boundary aborts (Rust
 # Reference, "Unwinding"), so the C boundary needs no catch site under
-# either strategy. The 116 KiB gimli/addr2line symbolizer is held by
-# std's default panic hook and is unaffected by either strategy.
+# either strategy. The gimli/addr2line symbolizer is held by std's
+# default panic hook and is unaffected by either strategy.
 # [profile.profiling] keeps its explicit `lto = "thin"` and `panic =
 # "unwind"` overrides and inherits codegen-units from here.
 [profile.release]

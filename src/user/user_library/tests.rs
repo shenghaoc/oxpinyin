@@ -293,3 +293,37 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
     assert!(library.item(2).is_none());
     assert_eq!(library.pronunciation_count(2), None);
 }
+
+/// Basis: `074a2219 phrase_index.cpp:150-236` and policy rows 107, 111 and 130
+/// (slots that alias one offset read one body; each write changes only its own slot).
+#[test]
+fn a_write_to_an_aliased_offset_changes_only_its_own_slot() {
+    let items = [1_u32, 2, 3].map(|slot| {
+        (
+            slot,
+            ChunkItem {
+                phrase: vec![0x4e00 + slot],
+                unigram: 10 * slot,
+                prons: vec![(vec![0x1234], 5)],
+            },
+        )
+    });
+    let chunk = build_chunk(&borrowed_items(&items)).expect("three-item user chunk");
+    let mut payload = chunk[8..].to_vec();
+    let offsets_start =
+        u32::from_le_bytes(payload[4..8].try_into().expect("offset header")) as usize;
+    let word = |slot: usize| offsets_start + 4 * slot;
+    let first: [u8; 4] = payload[word(1)..word(1) + 4]
+        .try_into()
+        .expect("slot one offset");
+    payload[word(3)..word(3) + 4].copy_from_slice(&first);
+    let mut library = UserLibrary::load(&build_memory_chunk(&payload).expect("frame")).unwrap();
+    assert_eq!(library.item(3).unwrap().unigram(), 10);
+    assert!(library.increment_unigram(3, 5));
+    assert_eq!(library.item(1).unwrap().unigram(), 10);
+    assert_eq!(library.item(3).unwrap().unigram(), 15);
+    assert!(library.increment_unigram(1, 1));
+    assert_eq!(library.item(1).unwrap().unigram(), 11);
+    assert_eq!(library.item(3).unwrap().unigram(), 15);
+    assert_eq!(library.item(2).unwrap().unigram(), 20);
+}
