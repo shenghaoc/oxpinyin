@@ -346,6 +346,34 @@ impl UserStore {
         }
     }
 
+    /// Reads the item the live buffer of `token`'s system library holds,
+    /// where no user item comes before it: [`Self::with_user_item`] would
+    /// answer none, because the session arena holds no item under the token
+    /// and the slot is one the library's mapped chunk holds. One slot read
+    /// answers both and the item, as `get_phrase_item` reads one offset
+    /// (074a2219 `phrase_index.cpp:180-206`).
+    ///
+    /// `None` where the arena or an added slot holds the token, where the
+    /// library's chunk is not detached into its live buffer, where the
+    /// session holds no system items, or where the buffer has no complete
+    /// item. The caller then resolves the token in the order a user item,
+    /// the live item, the shipped item.
+    pub(crate) fn read_ordinary_live_item<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        if self.inner.libpinyin.phrases().item(token).is_some() {
+            return None;
+        }
+        let original = self.originals.get(&phrase_index_library_index(token))?;
+        if !original.mapped.is_some_and(|library| library.is_detached()) || !self.has_system_items()
+        {
+            return None;
+        }
+        self.inner.system_items.borrow().read_ordinary(token, read)
+    }
+
     /// Reads the item a system library's live buffer holds under `token` and
     /// its shipped chunk lacks: an import or a replayed ADD. The buffer is the
     /// only copy; no arena holds it.

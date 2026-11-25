@@ -37,7 +37,7 @@ Its methods are exactly the 12 methods the engine calls:
 
 | Group | Methods | Engine callers |
 |---|---|---|
-| Sentence trellis | `trellis_ranges_continued`, `trellis_item_with_facts`, `trellis_text_with_facts` | `src/engine/nbest.rs` |
+| Sentence trellis | `trellis_ranges_continued`, `trellis_step_item`, `trellis_step_text` | `src/engine/nbest.rs` |
 | Candidate window | `candidate_search_into`, `search_addon_into`, `checked_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` | `src/engine/session/lookup.rs`, `src/engine/session/selection.rs` |
 | Phrase segmentation | `tokens_for_ucs4`, `phrase_span_searches_are_observable`, `phrase_span_continues` | `src/engine/phrase.rs`, `src/engine/char_offset.rs` |
 | Forcing | `phrase_item_pronunciations` | `src/engine/nbest.rs`, `src/engine/char_offset.rs` |
@@ -58,17 +58,17 @@ The engine does not call them.
 ### Sentence trellis
 
 - `trellis_ranges_continued(syllables, tones, ranges, scratch)` fills token-only ranges, `PhraseIndexRanges<()>`, as the pin's `convert` does, and returns the `SEARCH_CONTINUED` bit from the same read.
-- Every step prices a ranged or forced token through `trellis_item_with_facts(syllables, tones, token, memo, facts) -> Option<TrellisItem>`, with the memo of the path the token was found on.
-  `TrellisItem { chars, pronunciation }` carries the item, and the call also records sentence facts.
+- Every step prices a ranged or forced token through `trellis_step_item(syllables, tones, token, memo) -> Option<TrellisItem>`, with the memo of the path the token was found on.
+  `TrellisItem { chars, pronunciation, unigram }` carries the item. `unigram` is the live unigram field where the step read the token's ordinary live item, and the language model's token costs read it.
   This is the n-best search's only pricing path (`src/engine/nbest.rs`, `Pricing::item_on_path`).
   `SpanRanges::push_path` files a memo with every path, so every path has one.
-- `trellis_text_with_facts(syllables, tones, token, facts)` reads a result's stored length and text when the result is emitted.
+- `trellis_step_text(syllables, tones, token)` reads a result's stored length and text when the result is emitted.
   It takes no path memo.
 
 ### Path memo
 
 The n-best caller makes a fresh `PathMemo` for each key path and drops it with the span search that found the path, so nothing in it outlives one guess.
-The item `trellis_item_with_facts` answers does not depend on what the memo holds; the memo only keeps what the dictionary would otherwise compute again for each token of the path.
+The item `trellis_step_item` answers does not depend on what the memo holds; the memo only keeps what the dictionary would otherwise compute again for each token of the path.
 A dictionary with nothing to keep uses `()`.
 `TrellisPathMemo<T>` is a fill-once slot for a dictionary that does keep a value.
 `RuntimeDict` keeps the path's user lookup and toned keys there (`PathPricing`, `src/runtime/mod.rs`) instead of recomputing them for each token.
@@ -116,8 +116,8 @@ A dictionary that overrides no hook gets these answers, which are weaker than th
 | `Dictionary` method | Derived answer |
 |---|---|
 | `trellis_ranges_continued` | The ranges of `trellis_records`' tokens (default: `lookup`), then `phrase_prefix_exists`. |
-| `trellis_item_with_facts` | `trellis_item` (default: the last `trellis_records` entry for the token); the memo and the facts are not used. |
-| `trellis_text_with_facts` | The text of that entry. |
+| `trellis_step_item` | `trellis_item` (default: the last `trellis_records` entry for the token); the memo is not used. |
+| `trellis_step_text` | The text of that entry. |
 | `candidate_search_into` | `lookup_into_flagged` (default: `lookup`, no unreadable row), then `phrase_prefix_exists`. The query tones are ignored, so no row is tone-filtered. |
 | `search_addon_into` | `lookup_addon` (default: empty), with no continuation bit. |
 | `checked_extension_tokens` | `Some(suggest_extension_tokens)` (default: empty, so no LONGER candidate); the over-long-key gate is always open. |
@@ -164,7 +164,7 @@ The methods are:
 
 - unigram reads: `unigram_freq`, `unigram_total`, `addon_unigram_freq`, `addon_unigram_total`;
 - the merged bigram row: `merged_successors(prev) -> Option<MergedGram>` ([`dynamic-adjust.md`](dynamic-adjust.md));
-- n-best step pricing: `nbest_successors_in_row` reads a predecessor's merged row; `nbest_token_costs` and `nbest_token_costs_with_facts` return a token's `NbestTokenCosts`, which hold for the whole guess and give the pre-log `NbestStepCosts` pieces for each row item; `nbest_step_costs` returns the pieces for one `prev → token` pair. A model that reads no rows takes no bigram step;
+- n-best step pricing: `nbest_successors_in_row` reads a predecessor's merged row; `nbest_token_costs` and `nbest_token_costs_read` return a token's `NbestTokenCosts`, which hold for the whole guess and give the pre-log `NbestStepCosts` pieces for each row item; `nbest_step_costs` returns the pieces for one `prev → token` pair. A model that reads no rows takes no bigram step;
 - `is_read_after_check` identifies a read failure after a successful size check.
 - `amplification_lambda` supplies the interpolation weight. It has no default.
 
