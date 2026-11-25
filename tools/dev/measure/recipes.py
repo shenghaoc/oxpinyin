@@ -419,7 +419,9 @@ def native(argv, env):
                  for sha in dict.fromkeys(revisions.values())}
         arms = {label: built[sha] for label, sha in revisions.items()}
         if args.mode == 'neutrality':
-            plain = prepare.native_build(revisions['A'], Path(build_directory) / 'plain', env, symbols=False)
+            # The directory name reaches LC_ID_DYLIB; equal lengths keep the two layouts equal.
+            name = 'plain-' + revisions['A'][len('plain-'):]
+            plain = prepare.native_build(revisions['A'], Path(build_directory) / name, env, symbols=False)
             print(neutrality.compare_macho(arms['A']['dylib'], plain['dylib']))
             return 0
         artifacts = Path(build_directory) / 'arms' if windows or linux else output
