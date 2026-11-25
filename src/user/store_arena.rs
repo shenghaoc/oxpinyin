@@ -4,6 +4,7 @@ use super::*;
 use crate::data::phrase_library::ITEM_HEADER_SIZE;
 use crate::data::phrase_library::PhraseItemView;
 use crate::data::phrase_library::{ChunkItem, decode_phrase_item, encode_phrase_item};
+use crate::user::live_system::{ArenaProbe, StepLibraries};
 use crate::user::replay::UnigramAdd;
 use crate::user::user_library::{SessionPhrases, UserLibrary};
 
@@ -346,29 +347,65 @@ impl UserStore {
         }
     }
 
-    /// Reads the item the live buffer of `token`'s system library holds,
-    /// where no user item comes before it: [`Self::with_user_item`] would
-    /// answer none, because the session arena holds no item under the token
-    /// and the slot is one the library's mapped chunk holds. One slot read
-    /// answers both and the item, as `get_phrase_item` reads one offset
-    /// (074a2219 `phrase_index.cpp:180-206`).
+    /// The two sets of library bits (bit `n` for library `n`) of a trellis
+    /// step's in-place read, the per-library half of the pin's
+    /// `m_sub_phrase_indices[index]` test (074a2219 `phrase_index.h:646-650`):
     ///
-    /// `None` where the arena or an added slot holds the token, where the
-    /// library's chunk is not detached into its live buffer, where the
-    /// session holds no system items, or where the buffer has no complete
-    /// item. The caller then resolves the token in the order a user item,
-    /// the live item, the shipped item.
-    pub(crate) fn read_ordinary_live_item<R>(
+    /// - `in_place`: the system libraries whose chunk is detached into its
+    ///   live buffer, while the session holds system items. The mask is not
+    ///   applied here ([`crate::user::LiveSystemItems::step_libraries`] applies it);
+    /// - `arena`: the libraries the session arena holds, where a user item
+    ///   can come before the live one.
+    ///
+    /// Neither set changes while a guess runs. A guess holds the store
+    /// through `&self` (`RuntimeDict::user`), and every write to a fact
+    /// they read takes `&mut self` at its root: the chunk's detach
+    /// (`PhraseLibrary::take_live_content`), the system-items flag (the
+    /// arena and buffer writes, `add_system_phrase_in`, and the unigram
+    /// adds that reach `arena_add_unigram_outcome`), and the arena's
+    /// library slots (`replace_user_arena`, `arena_promote`,
+    /// `arena_add_phrase`). The guess's own arena write, the user-search
+    /// note, writes the index only ([`Self::note_pinyin_search_keys`]).
+    pub(crate) fn step_libraries(&self) -> StepLibraries {
+        let bit = |nibble: &u8| 1_u16.checked_shl(u32::from(*nibble)).unwrap_or(0);
+        let in_place = if self.has_system_items() {
+            self.originals
+                .iter()
+                .filter(|(_, original)| {
+                    original.mapped.is_some_and(|library| library.is_detached())
+                })
+                .fold(0, |set, (nibble, _)| set | bit(nibble))
+        } else {
+            0
+        };
+        let arena = self
+            .inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .keys()
+            .fold(0, |set, nibble| set | bit(nibble));
+        StepLibraries { in_place, arena }
+    }
+
+    /// Reads the item the live buffer of `token`'s system library holds,
+    /// in place, where the library is one [`Self::step_libraries`] names
+    /// in place. One slot read answers both whether the slot is one the
+    /// library's mapped chunk holds and the item, as `get_phrase_item` reads
+    /// one offset (074a2219 `phrase_index.cpp:180-206`). With
+    /// [`ArenaProbe::First`], the session arena is asked first, and an item
+    /// there comes first.
+    ///
+    /// `None` where the arena or an added slot holds the token, or where the
+    /// buffer has no complete item. The caller then resolves the token in
+    /// the order a user item, the live item, the shipped item.
+    pub(crate) fn read_live_item_in_place<R>(
         &self,
         token: PhraseToken,
+        arena: ArenaProbe,
         read: impl FnOnce(PhraseItemView<'_>) -> R,
     ) -> Option<R> {
-        if self.inner.libpinyin.phrases().item(token).is_some() {
-            return None;
-        }
-        let original = self.originals.get(&phrase_index_library_index(token))?;
-        if !original.mapped.is_some_and(|library| library.is_detached()) || !self.has_system_items()
-        {
+        if arena == ArenaProbe::First && self.inner.libpinyin.phrases().item(token).is_some() {
             return None;
         }
         self.inner.system_items.borrow().read_ordinary(token, read)

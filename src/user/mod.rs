@@ -46,6 +46,7 @@ mod user_phrase_table;
 
 pub use library_loop::{LibraryLoopRows, LibraryLoopStop};
 pub use library_table::{LibrarySet, LibraryTable};
+pub(crate) use live_system::StepLibraries;
 pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys, SystemItem};
 pub use lookup::UserLookup;
 pub(crate) use model::CheckedTraining;
