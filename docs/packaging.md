@@ -192,7 +192,7 @@ BuildRequires: cargo-c
 
 `cargo cinstall` derives `--libdir=/usr/lib64` from the target environment.
 
-Both recipes have the shape that the distributions document.
+This recipe has the shape that Fedora documents.
 A real package build must run `just packaging install <libpinyin|libzhuyin> --prefix=/usr …` instead of the bare `cargo cinstall`, or run it again afterwards.
 The reason is that cargo-c's own `.pc` lacks the variables that consumers read ([Locating the model data](#locating-the-model-data-pkgdatadir)).
 The release packages that `release-packages.yml` builds go through exactly that wrapper ([Release artifacts](#release-artifacts-release-packagesyml)).
@@ -201,18 +201,28 @@ The release packages that `release-packages.yml` builds go through exactly that 
 
 ```makefile
 # debian/control
-Build-Depends: cargo-c:native
+Build-Depends: cargo-c:native, just:native
 ```
 
 ```makefile
 # debian/rules
 override_dh_auto_build:
-	cargo cbuild
 
 override_dh_auto_install:
-	cargo cinstall --destdir=$(CURDIR)/debian/tmp --prefix=/usr \
-	  --libdir=/usr/lib/$(DEB_HOST_MULTIARCH)
+	for library in libpinyin libzhuyin; do \
+	  just packaging install $$library --prefix=/usr \
+	    --libdir=/usr/lib/$(DEB_HOST_MULTIARCH) --destdir=$(CURDIR)/debian/tmp \
+	    -- --release --locked --no-default-features --features tkrzw || exit 1; \
+	done
 ```
+
+The recipe runs `just packaging install` once for each library, as `just packaging release-stage` does, on the Debian lane's backend, tkrzw ([lane table](#release-artifacts-release-packagesyml)).
+The install step builds the libraries: the build step has nothing to do.
+`just packaging install` builds the cargo-c staticlib and links `libpinyin.so.15` and `libzhuyin.so.15` from it with their `.ver` scripts ([export gate](#export-gate)).
+`libpinyin.so.15` then exports the 79 `pinyin_*` symbols under the `LIBPINYIN` version node, and no `cxxbridge1$*` symbol.
+The step also writes the complete `.pc` files.
+A plain `cargo cinstall` shared library has no symbol versions and exports the cxx runtime, so the recipe does not install it.
+`just packaging install` needs uv beside `just` and cargo-c ([installing uv and cargo-c](runbooks/setup.md#installing-uv-and-cargo-c)).
 
 ## Build and runtime dependencies
 
