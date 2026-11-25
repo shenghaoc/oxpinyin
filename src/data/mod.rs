@@ -45,6 +45,7 @@ pub use bigram_table::BigramTable;
 pub use c_stderr::{path_bytes, table_conf_load_failed};
 
 pub use dict::{AddonDictionary, DictError, SystemDictionary, SystemTables};
+pub(crate) use dict::{SearchQuery, library_in, toned_query};
 
 pub use lm::{BigramLanguageModel, BigramTables, LmError, merge_bigram};
 
