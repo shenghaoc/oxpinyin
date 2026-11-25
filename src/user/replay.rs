@@ -184,6 +184,16 @@ impl Baseline {
             Self::Inline(items) => items.contains_key(&slot),
         }
     }
+
+    /// The complete item under an unchanged `slot`: the view
+    /// [`ReplayedLibrary::complete_item`] makes of [`Self::fields`], read
+    /// in place.
+    fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
+        match self {
+            Self::Mapped(mapping) => mapping.item(slot),
+            Self::Inline(_) => PhraseItemView::from_bytes(self.fields(slot)?),
+        }
+    }
 }
 
 enum Slot {
@@ -605,6 +615,20 @@ impl ReplayedLibrary {
 
     pub(crate) fn item_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
         self.complete_item(slot).map(Cow::Borrowed)
+    }
+
+    /// The complete item under `slot`, read in place, unless the baseline
+    /// lacks the slot ([`Self::is_added_slot`]: an import's or a replayed
+    /// ADD's item). Every other slot answers the item [`Self::item_bytes`]
+    /// answers.
+    pub(crate) fn ordinary_item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
+        match self.changes.get(&slot) {
+            None => self.baseline.item(slot),
+            Some(Slot::Item(bytes)) if self.baseline.contains(slot) => {
+                PhraseItemView::from_bytes(bytes)
+            }
+            Some(Slot::Item(_) | Slot::Unreadable | Slot::Removed) => None,
+        }
     }
 
     pub(crate) fn item_field_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {

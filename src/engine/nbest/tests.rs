@@ -8,7 +8,6 @@ use crate::{
     model::{LanguageModel, NbestTokenCosts, PhraseList},
     vocab::{PhraseText, PhraseToken, SyllableKey},
 };
-use std::cell::RefCell;
 
 use crate::engine::error::EngineError;
 use crate::engine::session::build_scan_matrix;
@@ -18,7 +17,7 @@ use crate::fixture_doubles::FixtureDictionary;
 fn priced_slot(token: u32) -> super::LazySlot {
     let slot = super::LazySlot::new(0);
     slot.priced
-        .set(Some(super::SpanEntry::new(token, 0, 1, 1, 1.0)))
+        .set(Some(super::SpanEntry::new(token, 0, 1, 1, 1.0, None)))
         .ok();
     slot
 }
@@ -29,7 +28,7 @@ fn pricing(
     static DICTIONARY: std::sync::OnceLock<FixtureDictionary> = std::sync::OnceLock::new();
     // The paths are leaked rather than held in a static.
     super::Pricing {
-        facts: Box::leak(Box::default()),
+        total: Box::leak(Box::default()),
         ranges,
         dictionary: DICTIONARY.get_or_init(FixtureDictionary::default),
         paths: Box::leak(Box::default()),
@@ -107,7 +106,7 @@ fn span_pricing_sums_each_slots_paths_and_preserves_its_path_and_key_count() {
         ranges: &found.ranges,
         paths: &found.paths,
         memos: &found.memos,
-        facts: &RefCell::default(),
+        total: &std::cell::Cell::default(),
         dictionary: &dictionary,
         generation: &generation,
         span: 0..4,
@@ -535,12 +534,12 @@ fn backtracking_uses_the_physical_slot_after_batch_selection() {
         unigram: Some(1.0),
     };
     super::expand_one(
-        &super::SpanEntry::new(22, 0, 1, 1, 1.0),
+        &super::SpanEntry::new(22, 0, 1, 1, 1.0, None),
         super::StepCtx {
             paths: &paths,
             span: 2..3,
             model: &model,
-            facts: &RefCell::default(),
+            total: &std::cell::Cell::default(),
         },
         predecessor,
         &mut trellis,
@@ -626,11 +625,12 @@ fn unigram_step_accumulates_log_possibility() {
             1,
             1,
             1.0,
+            None,
         );
         super::expand_one(
             &entry,
             super::StepCtx {
-                facts: &RefCell::default(),
+                total: &std::cell::Cell::default(),
                 paths: &paths,
                 span: 0..1,
                 model: &Fixed {

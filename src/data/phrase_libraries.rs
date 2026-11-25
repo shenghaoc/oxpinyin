@@ -413,6 +413,7 @@ impl PhraseLibraries {
         Some(TrellisItem {
             chars,
             pronunciation: Some(item_possibility(&item, query)),
+            unigram: None,
         })
     }
 

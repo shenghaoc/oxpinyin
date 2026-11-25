@@ -12,8 +12,7 @@
 // phonetic_lookup.h:643–697). The compatibility-policy selection rules apply to pinyin
 // adjusted scores and Zhuyin length, raw possibility and batch position.
 
-use crate::sentence_facts::{SentenceFacts, TokenMap};
-use std::cell::{OnceCell, RefCell};
+use std::cell::OnceCell;
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
 
@@ -32,6 +31,9 @@ use crate::engine::error::EngineError;
 use crate::engine::session::matrix::{ParsedMatrix, ScanMatrix};
 use crate::engine::session::{ScanKey, column_is_empty};
 use crate::vocab::{MAX_PHRASE_LENGTH, SENTENCE_START};
+
+/// Token map for keyed lookup only; it does not decide output order.
+type TokenMap<V> = rustc_hash::FxHashMap<u32, V>;
 
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
 /// larger of the two shapes, so neither allocates per node. The live cap
@@ -476,7 +478,6 @@ impl Trellis {
         dictionary: &D,
         cache: &'cache mut TokenMap<Option<TokenPhrase>>,
         token: u32,
-        facts: &RefCell<SentenceFacts>,
     ) -> Result<Option<&'cache TokenPhrase>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
@@ -495,7 +496,7 @@ impl Trellis {
                     self.text_tones.get(range),
                 ) {
                     (Some(keys), Some(tones)) => dictionary
-                        .trellis_text_with_facts(keys, tones, token, &mut facts.borrow_mut())
+                        .trellis_step_text(keys, tones, token)
                         .map_err(|_| EngineError::Failure)?,
                     _ => None,
                 }
@@ -519,7 +520,6 @@ impl Trellis {
         dictionary: &D,
         cache: &mut TokenMap<Option<TokenPhrase>>,
         spans: &[(usize, u32)],
-        facts: &RefCell<SentenceFacts>,
     ) -> Result<Option<PhraseText>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey>,
@@ -527,7 +527,7 @@ impl Trellis {
         let mut text = crate::ucs4::PhraseTextConcat::new();
         let mut converted = false;
         for (_, token) in spans {
-            let Some(part) = self.token_text(dictionary, cache, *token, facts)? else {
+            let Some(part) = self.token_text(dictionary, cache, *token)? else {
                 return Ok(None);
             };
             if let Some(part) = &part.text {
@@ -550,19 +550,30 @@ struct SpanEntry {
     keys: u32,
     chars: u32,
     pronunciation: f32,
+    /// The item's [`crate::model::TrellisItem::unigram`], which the
+    /// model's token costs read.
+    unigram: Option<u32>,
     /// Set at the entry's first step, when the trellis has named a text
     /// path for `token`.
     texted: std::cell::Cell<bool>,
 }
 
 impl SpanEntry {
-    fn new(token: u32, path: u32, keys: u32, chars: u32, pronunciation: f32) -> Self {
+    fn new(
+        token: u32,
+        path: u32,
+        keys: u32,
+        chars: u32,
+        pronunciation: f32,
+        unigram: Option<u32>,
+    ) -> Self {
         Self {
             token,
             path,
             keys,
             chars,
             pronunciation,
+            unigram,
             texted: std::cell::Cell::new(false),
         }
     }
@@ -666,7 +677,9 @@ struct Pricing<'a, D: Dictionary> {
     paths: &'a SpanPaths,
     /// The dictionary's memo of each path, indexed like `paths`.
     memos: &'a [D::PathMemo],
-    facts: &'a RefCell<SentenceFacts>,
+    /// The model's one read of the facade unigram total for this guess
+    /// ([`LanguageModel::nbest_token_costs_read`]).
+    total: &'a std::cell::Cell<Option<u64>>,
     generation: &'a GenerationView<'a>,
     span: std::ops::Range<usize>,
 }
@@ -691,7 +704,7 @@ where
             return Ok(None);
         };
         self.dictionary
-            .trellis_item_with_facts(keys, tones, token, memo, &mut self.facts.borrow_mut())
+            .trellis_step_item(keys, tones, token, memo)
             .map_err(|_| EngineError::Failure)
     }
 
@@ -746,6 +759,7 @@ where
                 keys.len().try_into().unwrap_or(u32::MAX),
                 item.chars,
                 pronunciation,
+                item.unigram,
             ))
         } else {
             None
@@ -893,12 +907,12 @@ where
     let mut trellis = Trellis::with_seeds(bound, seeds, shape);
     // One path scratch for every span search of the call.
     let mut scratch = GenerationPath::default();
-    let facts = RefCell::new(SentenceFacts::default());
+    let total = std::cell::Cell::new(None);
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
 
     let env = NbestEnv {
         generation: &generation,
-        facts: &facts,
+        total: &total,
         bound,
         dictionary,
         model,
@@ -940,7 +954,7 @@ where
         position += 1;
     }
 
-    nbest_rows(&mut trellis, dictionary, &facts, bound)
+    nbest_rows(&mut trellis, dictionary, bound)
 }
 
 /// One span search to a forced step's fixed end, for the forced token only:
@@ -967,7 +981,7 @@ where
         dictionary: env.dictionary,
         paths: &found.paths,
         memos: &found.memos,
-        facts: env.facts,
+        total: env.total,
         generation: env.generation,
         span: span.clone(),
     };
@@ -988,7 +1002,6 @@ where
 fn nbest_rows<D>(
     trellis: &mut Trellis,
     dictionary: &D,
-    facts: &RefCell<SentenceFacts>,
     bound: usize,
 ) -> Result<Vec<NbestRow>, EngineError>
 where
@@ -999,7 +1012,7 @@ where
     let mut texts = TokenMap::default();
     for tail in trellis.tails() {
         let spans = trellis.extract(&tail);
-        let text = trellis.text(dictionary, &mut texts, &spans, facts)?;
+        let text = trellis.text(dictionary, &mut texts, &spans)?;
         // Each span needs a present item. It keeps the stored length for
         // constraint writes and training even if its text does not convert.
         let Some(phrase_spans) = spans
@@ -1201,7 +1214,8 @@ impl GenerationView<'_> {
 struct NbestEnv<'a, D, L> {
     /// The scan matrix columns.
     generation: &'a GenerationView<'a>,
-    facts: &'a RefCell<SentenceFacts>,
+    /// The guess's read of the facade unigram total.
+    total: &'a std::cell::Cell<Option<u64>>,
     /// The walk's one-past-end column.
     bound: usize,
     /// The lexicon dictionary.
@@ -1246,7 +1260,7 @@ where
             dictionary: env.dictionary,
             paths: &found.paths,
             memos: &found.memos,
-            facts: env.facts,
+            total: env.total,
             generation: env.generation,
             span: position..end,
         };
@@ -1434,7 +1448,7 @@ where
                     paths: pricing.paths,
                     span: span.clone(),
                     model,
-                    facts: pricing.facts,
+                    total: pricing.total,
                 },
                 predecessor,
                 trellis,
@@ -1474,7 +1488,7 @@ where
                 paths: pricing.paths,
                 span: span.clone(),
                 model,
-                facts: pricing.facts,
+                total: pricing.total,
             },
             predecessor,
             trellis,
@@ -1581,7 +1595,7 @@ enum Branch {
 
 /// What a trellis step reads besides its entry and predecessor.
 struct StepCtx<'a, L> {
-    facts: &'a RefCell<SentenceFacts>,
+    total: &'a std::cell::Cell<Option<u64>>,
     paths: &'a SpanPaths,
     span: std::ops::Range<usize>,
     model: &'a L,
@@ -1599,11 +1613,11 @@ fn expand_one<L: LanguageModel>(
         paths,
         span,
         model,
-        facts,
+        total,
     } = ctx;
     let prev = predecessor.value.token;
     let costs = model
-        .nbest_token_costs_with_facts(&entry.token, &mut facts.borrow_mut())
+        .nbest_token_costs_read(&entry.token, entry.unigram, total)
         .map_err(|error| EngineError::row_read(model, &error))?;
     let pronunciation = entry.pronunciation;
     let probability = match branch {

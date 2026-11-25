@@ -500,6 +500,17 @@ impl PhraseContent {
         let offset = self.slot_offset(slot)?;
         item_record(self.as_slice(), offset).filter(|record| record.len() >= 2)
     }
+
+    /// The complete item under `slot`, borrowed in place: one offset read
+    /// and the header-declared extent, as `get_phrase_item` reads it
+    /// (074a2219 `phrase_index.cpp:180-206`). The same view as
+    /// [`PhraseItemView::from_bytes`] over [`Self::item_fields`]; `None`
+    /// for an empty slot, an offset at or past the content end, or a record
+    /// that the content does not hold whole.
+    pub(crate) fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
+        let offset = self.slot_offset(slot)?;
+        PhraseItemView::from_bytes(self.as_slice().get(offset as usize..)?)
+    }
 }
 
 /// `SubPhraseIndex::get_phrase_item`'s item view (074a2219

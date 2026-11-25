@@ -530,7 +530,7 @@ pub struct StoreInner {
     /// The user libraries' stored-total differences ([`Offsets`]).
     pub(crate) offsets: RefCell<Offsets>,
     pub(crate) dirty: Cell<bool>,
-    /// Revision observed by runtime sentence facts and n-best step rows.
+    /// Revision observed by the phrase export iterator.
     pub(crate) write_generation: Cell<u64>,
     /// First gate on the decode read path: `false` answers `count_delta` and
     /// `unigram_delta` with zero from this one flag.

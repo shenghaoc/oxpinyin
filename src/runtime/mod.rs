@@ -7,7 +7,6 @@
 //! connects them to the engine.
 
 // pinyin_init, pinyin.cpp:331–396 and zhuyin_init, zhuyin.cpp:279–334.
-mod sentence_facts;
 
 use crate::vocab::{PHRASE_INDEX_LIBRARY_COUNT, phrase_index_library_index};
 use std::cell::{Cell, RefCell};
@@ -435,6 +434,7 @@ impl<'a> RuntimeDict<'a> {
                 item: TrellisItem {
                     chars: entry.phrase_length().try_into().unwrap_or(u32::MAX),
                     pronunciation,
+                    unigram: None,
                 },
                 text: want_text.then(|| TokenPhrase::from(entry.text().clone())),
             }
@@ -448,6 +448,7 @@ impl<'a> RuntimeDict<'a> {
                 item: TrellisItem {
                     chars: view.phrase_length() as u32,
                     pronunciation,
+                    unigram: None,
                 },
                 text: want_text.then(|| TokenPhrase {
                     phrase_length: view.phrase_length(),
@@ -476,6 +477,7 @@ impl<'a> RuntimeDict<'a> {
                 item: TrellisItem {
                     chars,
                     pronunciation: None,
+                    unigram: None,
                 },
                 text,
             }
@@ -491,6 +493,35 @@ impl<'a> RuntimeDict<'a> {
             return None;
         }
         Some(priced)
+    }
+
+    /// What a trellis step prices of `token` on `path`. The pin's step
+    /// reads one phrase item for the length, the unigram and the readings
+    /// (074a2219 `phonetic_lookup.h:646-656`, `:674-685`), as one offset
+    /// read (`phrase_index.cpp:180-206`). The ordinary live item is read
+    /// that way, in place. A token the path's user lookup lists, and every
+    /// other origin, keeps the full resolution of [`Self::priced_on_path`],
+    /// which answers the same for an ordinary live item.
+    fn priced(&self, path: &PathPricing, token: u32, want_text: bool) -> Option<PricedToken> {
+        if !path.user.iter().any(|entry| entry.token() == token)
+            && let Some(priced) = self.live_items().read_ordinary(token, |item| {
+                let (matched, total) = Self::item_possibility(item, &path.keys);
+                PricedToken {
+                    item: TrellisItem {
+                        chars: item.phrase_length() as u32,
+                        pronunciation: Some((u64::from(matched), u64::from(total))),
+                        unigram: Some(item.unigram()),
+                    },
+                    text: want_text.then(|| TokenPhrase {
+                        phrase_length: item.phrase_length(),
+                        text: item.phrase_text(),
+                    }),
+                }
+            })
+        {
+            return Some(priced);
+        }
+        self.priced_on_path(path, token, want_text)
     }
 
     fn user_lookup(&self) -> UserLookup<'_> {
@@ -1010,36 +1041,32 @@ impl Dictionary for RuntimeDict<'_> {
         Ok(user.phrase_prefix_exists(syllables))
     }
 
-    fn trellis_item_with_facts(
+    fn trellis_step_item(
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
         memo: &Self::PathMemo,
-        facts: &mut crate::sentence_facts::SentenceFacts,
     ) -> Result<Option<TrellisItem>, Self::Error> {
         if syllables.is_empty() {
             return Ok(None);
         }
         let path =
             memo.get_or_try_init(|| Ok::<_, DictError>(self.path_pricing(syllables, tones)))?;
-        Ok(self
-            .priced_with_facts(path, token, false, facts)
-            .map(|priced| priced.item))
+        Ok(self.priced(path, token, false).map(|priced| priced.item))
     }
 
-    fn trellis_text_with_facts(
+    fn trellis_step_text(
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-        facts: &mut crate::sentence_facts::SentenceFacts,
     ) -> Result<Option<TokenPhrase>, Self::Error> {
         if syllables.is_empty() {
             return Ok(None);
         }
         Ok(self
-            .priced_with_facts(&self.path_pricing(syllables, tones), token, true, facts)
+            .priced(&self.path_pricing(syllables, tones), token, true)
             .and_then(|priced| priced.text))
     }
 
@@ -1322,15 +1349,34 @@ impl LanguageModel for RuntimeLm<'_> {
             .nbest_step_costs_with_user_delta(prev, token, extra)
     }
 
-    fn nbest_token_costs_with_facts(
+    /// A step that read the token's ordinary live item has its unigram
+    /// field, as the live-visible branch of [`Self::nbest_token_costs`]
+    /// reads it (that branch ignores `unigram_delta`). The facade total's
+    /// user side is read once per guess into `total`.
+    fn nbest_token_costs_read(
         &self,
         token: &PhraseToken,
-        facts: &mut crate::sentence_facts::SentenceFacts,
+        unigram: Option<u32>,
+        total: &std::cell::Cell<Option<u64>>,
     ) -> Result<NbestTokenCosts, Self::Error> {
-        if let Some(costs) = self.costs_with_facts(token, facts) {
-            return Ok(costs);
-        }
-        self.nbest_token_costs(token)
+        let Some(unigram) = unigram else {
+            return self.nbest_token_costs(token);
+        };
+        let user_total = total.get().unwrap_or_else(|| {
+            let user_total = self
+                .user
+                .unigram_total_over(|nibble| self.inner.is_visible(nibble));
+            total.set(Some(user_total));
+            user_total
+        });
+        Ok(self.inner.nbest_token_costs_with(
+            token,
+            UserCountDelta {
+                unigram_live: Some(unigram),
+                unigram_total_delta: user_total,
+                ..UserCountDelta::ZERO
+            },
+        ))
     }
 
     fn nbest_token_costs(&self, token: &PhraseToken) -> Result<NbestTokenCosts, Self::Error> {
