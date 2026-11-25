@@ -40,6 +40,12 @@ Compiler: with libpinyin built by GCC 14 instead of GCC 16 on the same host, typ
 
 Host: Intel Core i7-9750H, WSL 2, Linux 6.18.58.1, amd64; Kali GNU/Linux Rolling 2026.2; GCC 16.2.0 (Debian 16.2.0-4); tkrzw 1.0.34; libpinyin pin 074a2219 (2.11.92).
 
+### Other platforms, oxpinyin only (no libpinyin reference)
+
+macOS 27.2.1, Apple M5, tkrzw 1.0.34, at a42636b: 738,889 instructions per operation (20 cycles × 6 pairs, 2,460 operations per run, fingerprint `0ba4b3fa4a82f39f`; same-bytes control 1.0001). Footprint at the end of the loop 7,586,308 B; process peak 15,974,880 B. Stripped (`strip -x`) `libpinyin.15.0.0.dylib` 1,021,416 B. `leaks --atExit`: 0 leaks. Time per operation 27.9 µs, varying by up to 37% across runs.
+
+Windows 10.0.26300, MSVC, Intel Core i7-9750H, at a42636b: peak working set 18,020,352 B and peak private commit 17,874,944 B (spread about 1%); 2,460 operations per run, fingerprint `0ba4b3fa4a82f39f`. `oxpinyin_capi.dll` 1,484,800 B. No CPU figure: Windows offers no instruction counter without elevated privileges, and the cycle counts on this host vary by 24–32% across runs.
+
 Method: [docs/runbooks/benches.md](docs/runbooks/benches.md).
 
 ## Quickstart
