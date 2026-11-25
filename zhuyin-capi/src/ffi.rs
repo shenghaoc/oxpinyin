@@ -2,6 +2,7 @@
 //! Input conversion is shared by `oxpinyin::marshal`.
 
 use std::ffi::{CStr, CString};
+use std::mem::MaybeUninit;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 
@@ -184,10 +185,7 @@ pub(crate) fn sentence_text(
         // A phrase whose words GLib does not convert is NULL here.
         let converted = phrase.map_or(ptr::null_mut(), |phrase| {
             let bytes = oxpinyin::marshal::phrase_text_bytes(phrase.borrow());
-            malloc_cstr_with(bytes.len(), |out| {
-                out.copy_from_slice(&bytes);
-                bytes.len()
-            })
+            malloc_cstr(&bytes)
         });
         let previous = result;
         result = if previous.is_null() {
@@ -224,34 +222,43 @@ pub(crate) fn sentence_text(
 /// conversions (`pinyin.cpp:716`, `:822`, `:828`, `:1644`, `lookup.cpp:54`,
 /// `:58`). Like that function it answers NULL when its allocation fails,
 /// with no warning and no abort; it also answers NULL when `fill` wrote
-/// another length or the bytes carry a NUL. The buffer is zeroed before
-/// `fill` sees it, so the slice it writes through is initialized memory.
+/// another length. `fill` writes each of the `len` bytes into the
+/// uninitialized buffer, none of them NUL: every caller writes phrase text,
+/// whose bytes hold no NUL (`oxpinyin::marshal::phrase_text_bytes`,
+/// `write_stored_words_utf8`). The buffer is neither zeroed nor scanned.
 /// The caller frees the result with `g_free`.
-pub(crate) fn malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
+pub(crate) fn malloc_cstr_with(
+    len: usize,
+    fill: impl FnOnce(&mut [MaybeUninit<u8>]) -> usize,
+) -> *mut c_char {
     let Some(size) = len.checked_add(1) else {
         return ptr::null_mut();
     };
     // SAFETY: `malloc` returns `size` writable bytes or null.
-    let dst = unsafe { malloc(size) }.cast::<u8>();
+    let dst = unsafe { malloc(size) }.cast::<MaybeUninit<u8>>();
     if dst.is_null() {
         return ptr::null_mut();
     }
-    // SAFETY: `dst` points to `size` writable bytes that nothing else
-    // references; zeroing them makes every byte an initialized `u8`.
-    unsafe {
-        ptr::write_bytes(dst, 0, size);
-    }
-    // SAFETY: `dst` points to `size` initialized bytes this function alone
-    // owns until it returns, so the exclusive slice is valid for its scope.
+    // SAFETY: `dst` points to `size` writable bytes that this function alone
+    // owns until it returns; a `MaybeUninit` slice may cover uninitialized
+    // memory, so the exclusive slice is valid for its scope.
     let buffer = unsafe { std::slice::from_raw_parts_mut(dst, size) };
-    let written = fill(&mut buffer[..len]);
-    if written != len || buffer[..len].contains(&0) {
+    if fill(&mut buffer[..len]) != len {
         // SAFETY: `dst` came from `malloc` above and was handed out nowhere.
         unsafe { free(dst.cast()) };
         return ptr::null_mut();
     }
-    buffer[len] = 0;
+    buffer[len].write(0);
     dst.cast::<c_char>()
+}
+
+/// [`malloc_cstr_with`] over a copy of `bytes`, phrase text that holds no
+/// NUL.
+pub(crate) fn malloc_cstr(bytes: &[u8]) -> *mut c_char {
+    malloc_cstr_with(bytes.len(), |out| {
+        out.write_copy_of_slice(bytes);
+        bytes.len()
+    })
 }
 
 /// Logs `message` through `GLib` at warning level under the facade's
