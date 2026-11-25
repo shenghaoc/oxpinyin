@@ -8,7 +8,10 @@
 //! Plain Cargo builds set the SONAME on the Linux cdylib and hide CXX
 //! archive symbols for the tkrzw and Kyoto Cabinet backends.
 //! cargo-c enables `capi` and sets the SONAME for its own Linux cdylib.
-//! With `capi` enabled, this script emits no cdylib link arguments.
+//! On Linux GNU targets every cdylib link, cargo-c's included, also packs its
+//! relative relocations into `DT_RELR` (`-z pack-relative-relocs`;
+//! docs/packaging.md#build-and-runtime-dependencies states the requirement).
+//! With `capi` enabled, this script emits no other cdylib link argument.
 //!
 //! # Why there is no version script here
 //!
@@ -25,9 +28,13 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // Keep the Linux link setup in sync with capi/build.rs.
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux")
-        || env::var_os("CARGO_FEATURE_CAPI").is_some()
-    {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        return;
+    }
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu") {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-z,pack-relative-relocs");
+    }
+    if env::var_os("CARGO_FEATURE_CAPI").is_some() {
         return;
     }
     println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libzhuyin.so.15");

@@ -623,6 +623,10 @@ def relink(argv, tools, *, require_destination=True):
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
     flags += backend_flags(backend, tools, '-lstdc++', 'linux')
+    # Linux GNU targets pack their relative relocations, as the cargo cdylibs do
+    # (capi/build.rs; docs/packaging.md#build-and-runtime-dependencies).
+    if '-linux-gnu' in tools.text([cc, '-dumpmachine']):
+        flags.append('-Wl,-z,pack-relative-relocs')
     destination = Path(dest)
     # As mktemp ${DEST%.so*}.relink.XXXXXX: scratch stays beside the object,
     # so the verified replacement is atomic and its symlinks keep resolving.
@@ -874,6 +878,10 @@ def release_deb(argv, tools):
         _, package = resolve_deb_library(soname, tools)
         packages.add(package)
     floors = re.findall(r'GLIBC_([0-9.]*)', tools.text(['objdump', '-T', *libraries]))
+    # A DT_RELR library needs GLIBC_ABI_DT_RELR, which glibc 2.36 introduced. The
+    # version names no symbol, so objdump -T does not show it.
+    if 'GLIBC_ABI_DT_RELR' in tools.text(['objdump', '-p', *libraries]):
+        floors.append('2.36')
     # GNU version ordering, including an absent GLIBC floor, is the old sort -V.
     with tempfile.NamedTemporaryFile() as source:
         source.write(''.join(value + '\n' for value in floors).encode())
