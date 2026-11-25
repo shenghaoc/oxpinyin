@@ -453,6 +453,8 @@ just measure profile --revision origin/main --template 'CPU Profiler'
 just measure profile --revision origin/main --template Allocations
 ```
 
+`just measure profile --template 'CPU Counters'` records the default CPU Bottlenecks mode and prints the Useful, Instruction Delivery, Instruction Processing and Discarded shares of CPU bandwidth over the process lifetime, with the measured loop's share of that span. Pass enough `--cycles` for the printed loop share to be at least 0.9; 200 cycles gave 0.88 on a quiet Apple M5.
+
 `just measure` builds the source of each revision with the tooling of the
 checkout, so a comparison needs only the interpreter of the checkout.
 `just packaging sizes` is different: it runs each revision's own `packaging`

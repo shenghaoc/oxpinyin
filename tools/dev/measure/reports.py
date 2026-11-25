@@ -355,6 +355,54 @@ def capture_rows(xml, *, pid, uuid, allocations):
     return {'usable_rows': count, 'product_frames': product}
 
 
+BANDWIDTH = ('useful', 'delivery', 'processing', 'discarded')
+
+
+def bandwidth_shares(xml, *, pid, wall_seconds):
+    """CPU Counters (CPU Bottlenecks mode) bandwidth shares for the driver over its process lifetime.
+
+    Reads only the named rows of MetricAggregationForProcess for PID. Each bucket's
+    value for a name is a sum of 1 ms sample fractions, and a bucket's four values sum
+    to its sample count, so a share is the mean of the per-millisecond fractions.
+    """
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml)
+    ids = {node.attrib['id']: node for node in root.iter() if 'id' in node.attrib}
+    columns = [col.findtext('mnemonic') for col in root.iter('col')]
+    needed = ('timestamp', 'duration', 'process', 'metric-value-double', 'metric-name')
+    if any(name not in columns for name in needed):
+        raise ValueError('MetricAggregationForProcess export lacks its named columns')
+    buckets = {}
+    for row in root.iter('row'):
+        cells = [ids.get(cell.get('ref'), cell) if cell.get('ref') else cell for cell in row]
+        if len(cells) != len(columns):
+            raise ValueError('MetricAggregationForProcess row does not match its schema')
+        cell = dict(zip(columns, cells, strict=True))
+        process = cell['process']
+        if not (process.get('fmt', '').endswith(f'({pid})')
+                or any(child.tag == 'pid' and child.text == str(pid) for child in process)):
+            continue
+        name = cell['metric-name'].text
+        if name not in BANDWIDTH:
+            continue
+        start, duration = int(cell['timestamp'].text), int(cell['duration'].text)
+        values = buckets.setdefault((start, duration), {})
+        if name in values:
+            raise ValueError('duplicate bandwidth metric in one bucket')
+        values[name] = float(cell['metric-value-double'].text)
+    if not buckets or any(set(values) != set(BANDWIDTH) for values in buckets.values()):
+        raise ValueError('CPU Counters export lacks the four bandwidth metrics for the driver')
+    totals = {name: sum(values[name] for values in buckets.values()) for name in BANDWIDTH}
+    samples = sum(totals.values())
+    if samples <= 0:
+        raise ValueError('CPU Counters export has no driver samples')
+    span = (max(start + duration for start, duration in buckets) - min(start for start, _ in buckets)) / 1e9
+    return dict(scope='process lifetime; each share is the mean of the per-millisecond fractions',
+                shares={name: totals[name] / samples for name in BANDWIDTH},
+                samples=round(samples), process_span_seconds=span,
+                loop_share_of_span=wall_seconds / span)
+
+
 def driver_result(text):
     """xctrace can merge an unterminated product diagnostic before the final JSON."""
     import re
