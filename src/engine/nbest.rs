@@ -1022,9 +1022,7 @@ where
                 Some(PhraseSpan {
                     start: *start,
                     token: *token,
-                    text: phrase.text.clone().unwrap_or_else(|| {
-                        PhraseText::from_stored_parts(Vec::new(), phrase.phrase_length)
-                    }),
+                    phrase_length: phrase.phrase_length,
                 })
             })
             .collect::<Option<Vec<PhraseSpan>>>()

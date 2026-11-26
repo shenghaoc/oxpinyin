@@ -122,7 +122,7 @@ impl TrainingPlan<'_> {
                         self.state.input.as_bytes(),
                         span.start,
                         end,
-                        span.text.phrase_length(),
+                        span.phrase_length,
                         &mut stacks,
                     );
                     user.observe_with_keys(&context, &span.token, readings)
