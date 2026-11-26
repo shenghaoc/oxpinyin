@@ -185,7 +185,7 @@ fn trained(name: &str, law: UserConfLaw) -> (PathBuf, UserStore) {
     let (dir, mut store) = open_law(name, law);
     store.train_pronunciations(
         crate::vocab::phrase_index_make_token(1, 1),
-        std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
+        &mut crate::model::lent(std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)])),
         5,
     );
     store.mark_modified();
@@ -437,7 +437,7 @@ fn session_phrases_have_one_arena_owner_through_writes_and_reload() {
     let token = store
         .add_phrase_in(crate::vocab::USER_DICTIONARY, &"你".into(), &keys, Some(5))
         .unwrap();
-    store.train_pronunciations(token, std::iter::once(vec![ni]), 7);
+    store.train_pronunciations(token, &mut crate::model::lent(std::iter::once(vec![ni])), 7);
     assert_eq!(store.phrase(token).unwrap().pronunciations()[0].count(), 12);
     store.mark_modified();
     store.save_reporting().unwrap();
@@ -550,7 +550,9 @@ fn unloaded_training_keeps_bigram_but_never_materializes_an_item() {
         assert_eq!(store.observe_selection(1, token).unwrap(), 69);
         store.train_pronunciations(
             token,
-            std::iter::from_fn(|| panic!("unloaded pronunciation step consumed a reading")),
+            &mut crate::model::lent(std::iter::from_fn(|| {
+                panic!("unloaded pronunciation step consumed a reading")
+            })),
             69,
         );
         assert_eq!(store.unigram_total(), before);
@@ -1764,7 +1766,8 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
         )
         .expect("open");
         let mut paths = vec![vec![key.with_tone(2)]].into_iter();
-        UserModel::observe_with_keys(&mut store, &[], &token, &mut paths).expect("train");
+        UserModel::observe_with_keys(&mut store, &[], &token, &mut crate::model::lent(&mut paths))
+            .expect("train");
         let state = export_state(&store, &base).expect("state");
         assert_eq!(
             state.system_overrides[&1][&1]
@@ -1795,7 +1798,8 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
         )
         .expect("reopen");
         let mut paths = vec![vec![key.with_tone(0)], vec![key.with_tone(0)]].into_iter();
-        UserModel::observe_with_keys(&mut store, &[], &token, &mut paths).expect("retrain");
+        UserModel::observe_with_keys(&mut store, &[], &token, &mut crate::model::lent(&mut paths))
+            .expect("retrain");
         let state = export_state(&store, &base).expect("state");
         assert_eq!(
             state.system_overrides[&1][&1]
@@ -1860,7 +1864,7 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
             &mut store,
             &[],
             &token,
-            &mut [vec![ni.with_tone(2)]].into_iter(),
+            &mut crate::model::lent([vec![ni.with_tone(2)]]),
         )
         .expect("train extra");
         assert_eq!(counts(&store), [100, 89]);
@@ -1879,7 +1883,7 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
             &mut store,
             &[],
             &token,
-            &mut [vec![ni.with_tone(2)]].into_iter(),
+            &mut crate::model::lent([vec![ni.with_tone(2)]]),
         )
         .expect("train replay");
         assert_eq!(counts(&store), [100, 234]);
@@ -2469,7 +2473,7 @@ fn appended_system_readings_keep_absolute_training_counts() {
         token = store
             .add_system_phrase_in(1, None, &"拟".into(), &keys, Some(5))
             .expect("append");
-        UserModel::observe_with_keys(&mut store, &[], &token, &mut [vec![ni]].into_iter())
+        UserModel::observe_with_keys(&mut store, &[], &token, &mut crate::model::lent([vec![ni]]))
             .expect("train appended");
         assert_eq!(
             store.with_effective_system_item(token, |item| item.prons[0].1),

@@ -1296,7 +1296,7 @@ impl UserStore {
     pub(crate) fn train_pronunciations(
         &mut self,
         token: PhraseToken,
-        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+        readings: &mut impl crate::model::ReadingWalk,
         seed: u64,
     ) {
         self.arena_train(token, readings, seed as u32);

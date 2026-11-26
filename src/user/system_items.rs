@@ -307,7 +307,7 @@ impl SystemItems {
         &mut self,
         original: Option<SystemLibraryRef<'_>>,
         token: PhraseToken,
-        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+        readings: &mut impl crate::model::ReadingWalk,
         delta: u32,
     ) -> bool {
         // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).

@@ -654,9 +654,11 @@ fn a_stored_phrase_trains_with_its_stored_length() {
             &mut self,
             _history: &[PhraseToken],
             _token: &PhraseToken,
-            readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+            readings: &mut impl crate::model::ReadingWalk,
         ) -> Result<(), Self::Error> {
-            self.0.extend(readings);
+            while let Some(reading) = readings.next_reading() {
+                self.0.push(reading.to_vec());
+            }
             Ok(())
         }
     }
@@ -3185,7 +3187,7 @@ fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
             1,
             &mut super::selection::ReadingStacks::default()
         )
-        .collect::<Vec<_>>(),
+        .collect_all(),
         [vec![shun.chewing_key().with_tone(3)], vec![alternate]]
     );
 }

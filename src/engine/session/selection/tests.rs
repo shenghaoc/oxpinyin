@@ -24,14 +24,14 @@ fn readings_preserve_span_tones_order_and_multiplicity() {
         false,
     );
     let mut stacks = ReadingStacks::default();
-    let readings: Vec<_> = training_readings(&matrix, b"xx", 0, 1, 1, &mut stacks).collect();
+    let readings: Vec<_> = training_readings(&matrix, b"xx", 0, 1, 1, &mut stacks).collect_all();
     assert_eq!(
         readings.iter().map(|r| r[0].tone).collect::<Vec<_>>(),
         [2, 3]
     );
     for (start, end, keys, count) in [(0, 2, 2, 2), (0, 2, 1, 1), (2, 1, 1, 0)] {
         assert_eq!(
-            training_readings(&matrix, b"xx", start, end, keys, &mut stacks).count(),
+            training_readings(&matrix, b"xx", start, end, keys, &mut stacks).count_all(),
             count
         );
     }
@@ -47,7 +47,7 @@ fn readings_preserve_span_tones_order_and_multiplicity() {
     );
     for (input, count) in [(b"x''", 1), (b"xxx", 0)] {
         assert_eq!(
-            training_readings(&trailing, input, 0, 3, 1, &mut stacks).count(),
+            training_readings(&trailing, input, 0, 3, 1, &mut stacks).count_all(),
             count
         );
     }
@@ -72,10 +72,10 @@ fn readings_preserve_span_tones_order_and_multiplicity() {
     );
     let input = vec![b'x'; n];
     let mut long_readings = training_readings(&long, &input, 0, n, n, &mut stacks);
-    let first = long_readings.next().expect("a reading");
+    let first = crate::model::ReadingWalk::next_reading(&mut long_readings).expect("a reading");
     assert_eq!(first.len(), n);
     assert!(first.iter().all(|key| key.tone == 1));
-    assert_eq!(long_readings.count() + 1, 1 << n);
+    assert_eq!(long_readings.count_all() + 1, 1 << n);
 }
 
 /// The lifecycle suite's selection tests (libchewing test-keyboardless.c).

@@ -954,9 +954,50 @@ pub trait UserModel {
         &mut self,
         history: &[PhraseToken],
         token: &PhraseToken,
-        _readings: impl Iterator<Item = Vec<ChewingKey>>,
+        _readings: &mut impl ReadingWalk,
     ) -> Result<(), Self::Error> {
         self.observe(history, token)
+    }
+}
+
+/// The readings of a trained span, each lent until the next call, as the
+/// pin hands its one `cached_keys` buffer to the item at each complete
+/// path (074a2219 `phonetic_key_matrix.cpp:603-621`).
+pub trait ReadingWalk {
+    /// The next reading, or `None` when the walk has ended.
+    fn next_reading(&mut self) -> Option<&[ChewingKey]>;
+}
+
+/// A test's fixed readings, walked in order.
+#[cfg(test)]
+impl ReadingWalk for std::slice::Iter<'_, Vec<ChewingKey>> {
+    fn next_reading(&mut self) -> Option<&[ChewingKey]> {
+        self.next().map(Vec::as_slice)
+    }
+}
+
+/// A test's owned readings, each lent in turn; the source is read only as
+/// the walk advances.
+#[cfg(test)]
+pub(crate) struct Lent<I> {
+    readings: I,
+    current: Option<Vec<ChewingKey>>,
+}
+
+/// Lends `readings` one at a time.
+#[cfg(test)]
+pub(crate) fn lent<I: IntoIterator<Item = Vec<ChewingKey>>>(readings: I) -> Lent<I::IntoIter> {
+    Lent {
+        readings: readings.into_iter(),
+        current: None,
+    }
+}
+
+#[cfg(test)]
+impl<I: Iterator<Item = Vec<ChewingKey>>> ReadingWalk for Lent<I> {
+    fn next_reading(&mut self) -> Option<&[ChewingKey]> {
+        self.current = self.readings.next();
+        self.current.as_deref()
     }
 }
 

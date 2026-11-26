@@ -622,7 +622,7 @@ fn a_loaded_item_keeps_reading_order_when_training_matches_the_first() {
     let baseline = SystemLibrary::from_library(library);
     let mut live = ReplayedLibrary::pristine(baseline.view());
     assert_eq!(live.item(1), Some(stored));
-    assert!(live.train(1, [vec![cheng]].into_iter(), 200));
+    assert!(live.train(1, &mut [vec![cheng]].iter(), 200));
     let trained = live.item(1).unwrap();
     assert_eq!(
         trained,
@@ -695,7 +695,7 @@ fn training_in_the_buffer_follows_the_running_total() {
             mapped: None,
         };
         let mut buffer = ReplayedLibrary::pristine(library.view());
-        assert!(buffer.train(1, readings.into_iter(), delta));
+        assert!(buffer.train(1, &mut readings.iter(), delta));
         assert_eq!(buffer.item(1), Some(item(&[0x4f60], 9, &trained)));
     }
 }
@@ -712,7 +712,7 @@ fn training_leaves_an_absent_slot_alone_and_does_not_consume_the_readings() {
         None::<Vec<ChewingKey>>
     });
     let end = buffer.range_end();
-    assert!(!buffer.train(9, readings, 5));
+    assert!(!buffer.train(9, &mut crate::model::lent(readings), 5));
     assert!(!consumed);
     assert!(buffer.item(9).is_none());
     assert_eq!(buffer.range_end(), end);

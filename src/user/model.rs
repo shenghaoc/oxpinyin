@@ -36,7 +36,7 @@ impl UserModel for UserStore {
         &mut self,
         history: &[PhraseToken],
         token: &PhraseToken,
-        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+        readings: &mut impl crate::model::ReadingWalk,
     ) -> Result<(), Self::Error> {
         let last = history.last().map_or(SENTENCE_START, |t| *t);
         let seed = self.observe_selection(last, *token)?;
@@ -74,7 +74,7 @@ impl UserModel for CheckedTraining<'_> {
         &mut self,
         history: &[PhraseToken],
         token: &PhraseToken,
-        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+        readings: &mut impl crate::model::ReadingWalk,
     ) -> Result<(), Self::Error> {
         let last = history.last().map_or(SENTENCE_START, |t| *t);
         let seed = self

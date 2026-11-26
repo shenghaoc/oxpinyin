@@ -144,7 +144,7 @@ pub trait UserModel {
 
 `observe` is the explicit learning boundary; callers omit it entirely in learning-off modes.
 The defaulted `observe_with_keys(history, token, readings)` delegates to `observe`.
-Its lazy tone-bearing readings keep the trained matrix span and the path multiplicity.
+Its readings walk (`model::ReadingWalk`) lends each tone-bearing reading in turn and keeps the trained matrix span and the path multiplicity.
 The model may not depend on hidden process-global state.
 
 ## `LanguageModel`
