@@ -227,16 +227,7 @@ pub(crate) fn sentence_text(
         // bytes go straight from the phrase's words into the string of
         // their exact length.
         let converted = phrase.utf8_len().map_or(ptr::null_mut(), |len| {
-            malloc_cstr_with(len, |out| {
-                let mut at = 0;
-                phrase.for_each_utf8(|bytes| {
-                    if let Some(slots) = out.get_mut(at..at + bytes.len()) {
-                        slots.write_copy_of_slice(bytes);
-                        at += bytes.len();
-                    }
-                });
-                at
-            })
+            malloc_cstr_chunks(len, |emit| phrase.for_each_utf8(emit))
         });
         let previous = result;
         result = if previous.is_null() {
@@ -301,6 +292,26 @@ pub(crate) fn malloc_cstr_with(
     }
     buffer[len].write(0);
     dst.cast::<c_char>()
+}
+
+/// [`malloc_cstr_with`] over a writer that emits its `len` bytes in
+/// chunks: each chunk is copied in order after the last, and a chunk that
+/// would pass `len` is dropped, so a writer that emits another total
+/// answers NULL.
+pub(crate) fn malloc_cstr_chunks(
+    len: usize,
+    emit: impl FnOnce(&mut dyn FnMut(&[u8])),
+) -> *mut c_char {
+    malloc_cstr_with(len, |out| {
+        let mut at = 0;
+        emit(&mut |bytes: &[u8]| {
+            if let Some(slots) = out.get_mut(at..at + bytes.len()) {
+                slots.write_copy_of_slice(bytes);
+                at += bytes.len();
+            }
+        });
+        at
+    })
 }
 
 /// [`malloc_cstr_with`] over a copy of `bytes`, phrase text that holds no

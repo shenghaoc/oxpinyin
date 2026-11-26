@@ -250,9 +250,9 @@ impl SharedMatrix {
             if key.begin < cursor && cursor < key.end {
                 let pinyin = key.key.pinyin_string();
                 let len = cursor - key.begin;
-                // `g_strndup(pinyin, len)` and `pinyin + len`.
-                let left: String = pinyin.chars().take(len).collect();
-                let right: String = pinyin.chars().skip(len).collect();
+                // `g_strndup(pinyin, len)` and `pinyin + len`: the pinyin
+                // spelling is ASCII, so the scalar cut is the byte cut.
+                let (left, right) = split_zhuyin(&pinyin, len);
                 middle = Some(format!("{left}|{right} "));
                 break;
             }

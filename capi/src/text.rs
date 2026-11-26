@@ -36,103 +36,26 @@ fn abort_on_full_walk(inst: &crate::state::CapiInstanceRead<'_>, cursor: usize) 
     }
 }
 
-/// Formats the parsed prefix of `raw` the way the pinned C++ backend does:
-/// space-separated syllable spellings with `|` at the byte cursor.
-///
-/// The selected keys come from [`SegmentGraph::fewest_keys`] with incomplete
-/// edges admitted, so `nih` renders `ni h` and the initial-only tail stays
-/// visible. Apostrophes are never rendered: a cursor on the apostrophe byte
-/// or on the following key start both land on that key's `syllable_start`
-/// (`ni'hao` cursor 2 and 3 both render `ni |hao `).
-/// Aux text for the full-pinyin index schemes: walks the stored parse's
-/// raw spans, rendering each key's canonical spelling plus its tone
-/// digit (upstream renders `ChewingKey::get_pinyin_string`, which
-/// appends `%d` for non-zero tones).
-fn full_index_aux_text(
-    input: &str,
-    parse: &oxpinyin::parser::FullPinyinIndexParse,
-    cursor: usize,
-) -> AuxText {
-    let parsed_len = parse.consumed().min(input.len());
-    let cursor = cursor.min(parsed_len);
-    let mut aux = AuxText::default();
-    let mut inserted = false;
-
-    for key in parse.keys() {
-        let display = if key.tone() == 0 {
-            key.canonical().to_owned()
-        } else {
-            format!("{}{}", key.canonical(), key.tone())
-        };
-        let start = key.start();
-        let end = key.end();
-
-        if !inserted && cursor <= start {
-            aux.middle.push('|');
-            inserted = true;
-            aux.postfix.push_str(&display);
-            aux.postfix.push(' ');
-        } else if !inserted && cursor < end {
-            let split = (cursor - start).min(display.len());
-            let chars: Vec<char> = display.chars().collect();
-            let left: String = chars[..split.min(chars.len())].iter().collect();
-            let right: String = chars[split.min(chars.len())..].iter().collect();
-            aux.middle.push_str(&left);
-            aux.middle.push('|');
-            aux.middle.push_str(&right);
-            aux.middle.push(' ');
-            inserted = true;
-        } else {
-            let part = if inserted {
-                &mut aux.postfix
-            } else {
-                &mut aux.prefix
-            };
-            part.push_str(&display);
-            part.push(' ');
-        }
+/// A key's spelling as `ChewingKey::get_pinyin_string` renders it
+/// (`chewing_key.cpp:47-58`): the canonical table spelling with the tone
+/// digit appended for a non-zero tone.
+fn toned(text: &str, tone: u8) -> String {
+    if tone == 0 {
+        text.to_owned()
+    } else {
+        format!("{text}{tone}")
     }
-
-    if !inserted {
-        aux.middle.push('|');
-    }
-    aux
 }
 
-fn full_aux_text(
-    raw: &str,
-    parsed_len: usize,
-    cursor: usize,
-    options: OptionBits,
-) -> Option<AuxText> {
-    let parsed = &raw[..parsed_len.min(raw.len())];
-    let cursor = cursor.min(parsed.len());
-    let graph = SegmentGraph::build_with_options(parsed.as_bytes(), options)?;
-    let keys = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
-    if keys.first()?.syllable_start() != 0 {
-        // A leading separator leaves the first column empty. The pin's
-        // prefix walk asserts there (074a2219 pinyin.cpp:3307-3311).
-        std::process::abort();
-    }
-
+/// Lays out `(display, start, end)` keys as space-separated spellings with
+/// `|` at `cursor`; a cursor inside a key cuts its spelling at the byte
+/// distance from the key start. Every full-pinyin spelling is ASCII, so the
+/// byte cut is the character cut.
+fn keys_aux_text(keys: impl IntoIterator<Item = (String, usize, usize)>, cursor: usize) -> AuxText {
     let mut aux = AuxText::default();
     let mut inserted = false;
 
-    for edge in keys {
-        let start = edge.syllable_start();
-        let end = edge.to();
-        // `ChewingKey::get_pinyin_string` (chewing_key.cpp:47-58): the
-        // canonical table spelling with the tone digit appended for
-        // non-zero tones. Carrying the digit keeps raw and canonical
-        // lengths equal on HANYU under USE_TONE, which is the invariant
-        // that holds the #130 aux over-read closed — the clamp below is
-        // the belt, not the excuse.
-        let display = if edge.tone() == 0 {
-            edge.key().text().to_owned()
-        } else {
-            format!("{}{}", edge.key().text(), edge.tone())
-        };
-
+    for (display, start, end) in keys {
         if !inserted && cursor <= start {
             aux.middle.push('|');
             inserted = true;
@@ -159,7 +82,62 @@ fn full_aux_text(
     if !inserted {
         aux.middle.push('|');
     }
-    Some(aux)
+    aux
+}
+
+/// Aux text for the full-pinyin index schemes: walks the stored parse's
+/// raw spans, rendering each key's canonical spelling plus its tone digit.
+fn full_index_aux_text(
+    input: &str,
+    parse: &oxpinyin::parser::FullPinyinIndexParse,
+    cursor: usize,
+) -> AuxText {
+    let parsed_len = parse.consumed().min(input.len());
+    keys_aux_text(
+        parse
+            .keys()
+            .iter()
+            .map(|key| (toned(key.canonical(), key.tone()), key.start(), key.end())),
+        cursor.min(parsed_len),
+    )
+}
+
+/// Formats the parsed prefix of `raw` the way the pinned C++ backend does:
+/// space-separated syllable spellings with `|` at the byte cursor.
+///
+/// The selected keys come from [`SegmentGraph::fewest_keys`] with incomplete
+/// edges admitted, so `nih` renders `ni h` and the initial-only tail stays
+/// visible. Apostrophes are never rendered: a cursor on the apostrophe byte
+/// or on the following key start both land on that key's `syllable_start`
+/// (`ni'hao` cursor 2 and 3 both render `ni |hao `).
+fn full_aux_text(
+    raw: &str,
+    parsed_len: usize,
+    cursor: usize,
+    options: OptionBits,
+) -> Option<AuxText> {
+    let parsed = &raw[..parsed_len.min(raw.len())];
+    let cursor = cursor.min(parsed.len());
+    let graph = SegmentGraph::build_with_options(parsed.as_bytes(), options)?;
+    let keys = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
+    if keys.first()?.syllable_start() != 0 {
+        // A leading separator leaves the first column empty. The pin's
+        // prefix walk asserts there (074a2219 pinyin.cpp:3307-3311).
+        std::process::abort();
+    }
+    // Carrying the tone digit keeps raw and canonical lengths equal on
+    // HANYU under USE_TONE, which is the invariant that holds the #130 aux
+    // over-read closed; the clamp in the cut is the belt, not the excuse.
+    Some(keys_aux_text(
+        keys.into_iter().map(|edge| {
+            (
+                toned(edge.key().text(), edge.tone()),
+                edge.syllable_start(),
+                edge.to(),
+            )
+        }),
+        cursor,
+    ))
 }
 
 fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor: usize) -> AuxText {
