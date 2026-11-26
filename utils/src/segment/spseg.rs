@@ -15,7 +15,7 @@ use oxpinyin_tool_support::input::{self as tool, OutputStream};
 use crate::segment::data;
 use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
-use crate::segment::{runs, text_of};
+use crate::segment::{segment_lines, text_of};
 use oxpinyin::vocab::NULL_TOKEN;
 
 /// One `SegmentStep` (`spseg.cpp:65-81`).
@@ -138,43 +138,9 @@ pub unsafe fn main(args: impl IntoIterator<Item = OsString>) {
             oxpinyin_tool_support::input::OptionValue::Flag(true)
         );
 
-        while input.getline() {
-            let line = input.c_str();
-            let num_of_chars = tool::utf8_strlen(line);
-            let (sentence, count) = tool::utf8_to_ucs4(line);
-            let Some(sentence) = sentence else {
-                tool::segmentation::report_non_ucs4(line);
-                tool::segmentation::print_null_line(&output);
-                continue;
-            };
-            if count != num_of_chars {
-                tool::segmentation::report_non_ucs4(line);
-                tool::segmentation::print_null_line(&output);
-                continue;
-            }
-            // `/* only new-line persists. */`
-            if num_of_chars == 0 {
-                tool::segmentation::print_null_line(&output);
-                continue;
-            }
-
-            for run in runs(&sentence, &search) {
-                if run.segmentable {
-                    deal_with_segmentable(&search, &sentence[run.range], &output);
-                } else {
-                    let text = text_of(&sentence[run.range]);
-                    tool::segmentation::print_token_line(
-                        &output,
-                        NULL_TOKEN as i32,
-                        text.as_deref(),
-                    );
-                }
-            }
-            if gen_extra_enter {
-                tool::segmentation::print_null_line(&output);
-            }
-        }
-        tool::segmentation::print_null_line(&output);
+        segment_lines(&mut input, &output, &search, gen_extra_enter, |run| {
+            deal_with_segmentable(&search, run, &output);
+        });
         #[allow(
             unsafe_code,
             reason = "the utility closes its output including C stdout as the pin does"
