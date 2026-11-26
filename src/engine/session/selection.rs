@@ -639,6 +639,12 @@ where
     /// Revalidate existing forcings on a refused choose, preserving the pin's
     /// resize and spelling checks without attempting sentence decoding.
     fn validate_selection_constraints(&mut self) -> Result<(), EngineError> {
+        self.revalidate_selection_constraints().map(|_| ())
+    }
+
+    /// [`Self::validate_selection_constraints`], answering whether it rebuilt
+    /// the selection record from the forcings.
+    fn revalidate_selection_constraints(&mut self) -> Result<bool, EngineError> {
         let size = self.selection_constraint_size();
         let mut store = core::mem::take(&mut self.constraints);
         let result = {
@@ -649,10 +655,11 @@ where
             })
         };
         self.constraints = store;
-        if result? || (self.constraints.is_active() && self.record.history().is_empty()) {
+        let rebuild = result? || (self.constraints.is_active() && self.record.history().is_empty());
+        if rebuild {
             self.rebuild_selection_from_constraints();
         }
-        Ok(())
+        Ok(rebuild)
     }
 
     /// `fill_matrix` clears the matrix and returns early for zero keys;
@@ -700,8 +707,11 @@ where
     /// (`pinyin.cpp:2578-2590`; its getters read `m_candidates`, `:2845-2864`),
     /// so a deferring session leaves its list stale here too.
     fn settle_written_forcing(&mut self) -> Result<Selection, EngineError> {
-        self.validate_selection_constraints()?;
-        self.rebuild_selection_from_constraints();
+        // The record is a function of the forcings, so a validation that
+        // rebuilt it already left the record the rebuild below would make.
+        if !self.revalidate_selection_constraints()? {
+            self.rebuild_selection_from_constraints();
+        }
         self.refresh_after_parse()?;
         Ok(self.selection_outcome())
     }
