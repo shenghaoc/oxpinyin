@@ -252,6 +252,12 @@ pub trait Dictionary {
     /// dictionary cannot back the row's text (the row is then not built).
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText>;
 
+    /// Whether [`Self::phrase_text_for_token`] answers a text, without
+    /// building it.
+    fn has_phrase_text_for_token(&self, token: u32) -> bool {
+        self.phrase_text_for_token(token).is_some()
+    }
+
     /// The current phrase item's stored length, or `None` for a missing or
     /// unloaded item. Offset-zero dynamic ranking chooses the longest retained
     /// prefix (`074a2219` pinyin.cpp:1711-1740; zhuyin.cpp:1146-1175).
