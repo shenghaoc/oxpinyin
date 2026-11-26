@@ -3182,7 +3182,8 @@ fn a_packed_fuzzy_final_without_a_syllable_row_stays_in_both_matrices() {
             b"shun",
             0,
             4,
-            1
+            1,
+            &mut super::selection::ReadingStacks::default()
         )
         .collect::<Vec<_>>(),
         [vec![shun.chewing_key().with_tone(3)], vec![alternate]]
