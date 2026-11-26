@@ -252,7 +252,9 @@ pub(crate) fn token_to_string(libraries: &Libraries, token: u32) -> Option<CStri
         phrase_index_library_index(token) == 0,
         |token| libraries.item(token),
         |item| Some(item.phrase.as_slice()),
-        |token| tool::storage::report_unknown_token(c_int::try_from(token).unwrap_or(c_int::MAX)),
+        // The pin prints the `guint32` through `%d`; the cast keeps the
+        // two's-complement value, as the sibling call sites do.
+        |token| tool::storage::report_unknown_token(token as i32),
     )?;
     crate::segment::c_string(&text)
 }

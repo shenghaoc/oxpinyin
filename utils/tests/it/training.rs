@@ -24,6 +24,7 @@ fn binary(name: &str) -> PathBuf {
         "gen_deleted_ngram" => env!("CARGO_BIN_EXE_gen_deleted_ngram").into(),
         "estimate_interpolation" => env!("CARGO_BIN_EXE_estimate_interpolation").into(),
         "eval_correction_rate" => env!("CARGO_BIN_EXE_eval_correction_rate").into(),
+        "import_interpolation" => env!("CARGO_BIN_EXE_import_interpolation").into(),
         other => panic!("no such utility: {other}"),
     }
 }
@@ -183,6 +184,26 @@ fn eval_correction_rate_refuses_an_unknown_token() {
     assert_eq!(
         outcome.stderr,
         expected_text("error: unknown token:999999.\n").as_bytes()
+    );
+}
+
+/// `taglib_token_to_string` prints the `guint32` token through `%d`
+/// (`tag_utility.cpp:384-405`): a token above `G_MAXINT` prints as its
+/// two's-complement value. `import_interpolation` reaches the helper for
+/// its `\item` token and aborts where the validation fails.
+#[test]
+fn import_interpolation_prints_a_negative_unknown_token() {
+    let dir = w3();
+    let outcome = run(
+        "import_interpolation",
+        dir.path(),
+        &[],
+        b"\\data model interpolation\n\\1-gram\n\\item -5 \xe7\x94\xb2 count 1\n\\end\n",
+    );
+    assert!(!outcome.status.success(), "the validation aborts");
+    assert_eq!(
+        outcome.stderr,
+        expected_text("error: unknown token:-5.\n").as_bytes()
     );
 }
 // Unix only: the frozen pin runs are Linux and macOS observations (signal statuses, Unix paths and line endings).

@@ -95,12 +95,14 @@ fn gen_bigram(output: &OutputStream, libraries: &Libraries, bigram: Option<&Hash
         return;
     };
     let keys = bigram.native_keys().unwrap_or_default();
-    for key in keys {
-        // `assert(key.size() == sizeof(phrase_token_t))`.
-        if key.len() != 4 {
-            tool::abort();
-        }
-        let token = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
+    let Some(tokens) = checked_tokens(&keys) else {
+        // `assert(key.size() == sizeof(phrase_token_t))` in
+        // `get_all_items` (`ngram_bdb.cpp:199`): every key is checked
+        // before the first `\item` line is printed.
+        tool::abort();
+    };
+    for token in tokens {
+        let key = token.to_le_bytes();
         // `bigram->load(token, single_gram)`: a key the walk just
         // returned without a loadable value is the pin's null gram.
         let Some(value) = bigram.get(&key) else {
@@ -127,6 +129,19 @@ fn gen_bigram(output: &OutputStream, libraries: &Libraries, bigram: Option<&Hash
             );
         }
     }
+}
+
+/// The tokens of `keys`, the pin's `m_keys` after `get_all_items`' size
+/// assert: every key is checked before a record is printed. `None` where a
+/// key is not one `phrase_token_t`; the caller aborts there.
+fn checked_tokens(keys: &[Vec<u8>]) -> Option<Vec<u32>> {
+    keys.iter()
+        .map(|key| {
+            Some(u32::from_le_bytes(
+                <[u8; 4]>::try_from(key.as_slice()).ok()?,
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]
