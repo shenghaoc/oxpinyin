@@ -41,13 +41,3 @@ pub(crate) fn sort_by_key<T>(items: &mut [T], key: impl FnMut(&T) -> u128) {
     let mut rows = sorted_rows(items.iter().map(key));
     apply_order(items, &mut rows);
 }
-
-/// Sorts plain values through the same sort. Equal values are identical, so
-/// a tie order cannot show.
-pub(crate) fn sort_values(values: &mut [usize]) {
-    let mut rows: Vec<Row> = values.iter().map(|&value| (value as u128, 0)).collect();
-    rows.sort_unstable();
-    for (slot, (value, _)) in values.iter_mut().zip(rows) {
-        *slot = value as usize;
-    }
-}

@@ -434,8 +434,11 @@ fn place_offset(length: usize) -> u32 {
 /// size as a `guint32` offset, wrapping as the pin's `table_offset_t`
 /// does, with 8 for an empty content; then `set_content` writes `bytes`
 /// there, over whatever an offset that wrapped finds, and grows the
-/// content as far as they reach.
-fn place(content: &mut Vec<u8>, bytes: &[u8]) -> u32 {
+/// content as far as they reach. A system sub-index and a `USER_FILE`
+/// library both place their items here. An offset that wrapped lies at
+/// least 4 GiB before the content end, so its write stays inside the
+/// content.
+pub(crate) fn place(content: &mut Vec<u8>, bytes: &[u8]) -> u32 {
     let offset = place_offset(content.len());
     let at = offset as usize;
     if at == content.len() {
