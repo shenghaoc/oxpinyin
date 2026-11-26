@@ -8,7 +8,7 @@
 
 use std::ffi::{CString, OsString};
 
-use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry, OptionValue};
+use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry};
 
 /// `main` (`:210-237`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
@@ -21,22 +21,8 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         description: Some(c"merged result file"),
         arg_description: None,
     }];
-    let parsed = match tool::parse_options(c"- merge k mixture model", &entries, args) {
-        Ok(parsed) => parsed,
-        Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
-    };
+    let parsed = tool::parse_options_or_exit(c"- merge k mixture model", &entries, args);
 
-    let result_filename = if let OptionValue::Filename(value) = &parsed.values[0] {
-        value.clone().and_then(|bytes| CString::new(bytes).ok())
-    } else {
-        None
-    };
-
-    let sources: Vec<CString> = parsed.args[1..]
-        .iter()
-        .filter_map(|arg| CString::new(arg.clone()).ok())
-        .collect();
-    let sources: Vec<&std::ffi::CStr> = sources.iter().map(CString::as_c_str).collect();
-
-    crate::k_mixture_model::merge::run(result_filename.as_deref(), &sources);
+    let sources: Vec<&std::ffi::CStr> = parsed.operands().iter().map(CString::as_c_str).collect();
+    crate::k_mixture_model::merge::run(parsed.filename(0), &sources);
 }

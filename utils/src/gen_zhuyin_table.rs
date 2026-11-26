@@ -6,7 +6,7 @@ use oxpinyin::OptionBits;
 use oxpinyin::parser::{ChewingKey, parse_zhuyin_direct};
 use oxpinyin_tool_support::input::gen_pinyin_table as common;
 use oxpinyin_tool_support::input::gen_zhuyin_table as edge;
-use oxpinyin_tool_support::input::{self as tool, LineReader, OptionValue, OutputStream};
+use oxpinyin_tool_support::input::{self as tool, LineReader, OutputStream};
 use std::ffi::{CString, OsString};
 
 /// `ZhuyinDirectParser2::parse` (:187-188; zhuyin_parser2.cpp:858-958).
@@ -57,27 +57,17 @@ fn feed_file(table: &mut Table, filename: &CString) {
 
 /// `main` (:101-138), with the pin's option strings (including "pinyin").
 pub fn main(args: impl IntoIterator<Item = OsString>) {
-    let Ok(parsed) = tool::parse_options(c"- generate pinyin table", &entries(), args) else {
-        tool::exit(tool::EINVAL);
-    };
-    let phrase_index = if let OptionValue::Int(value) = parsed.values[0] {
-        value
-    } else {
-        0
-    };
-    let outputfile = if let OptionValue::Filename(Some(name)) = &parsed.values[1] {
-        CString::new(name.clone()).unwrap_or_default()
-    } else {
-        CString::default()
-    };
+    let parsed = tool::parse_options_or_exit(c"- generate pinyin table", &entries(), args);
+    let phrase_index = parsed.int(0);
+    let outputfile = parsed.filename(1).unwrap_or_default();
     let mut table = Table::default();
-    for arg in parsed.args.iter().skip(1) {
-        feed_file(&mut table, &CString::new(arg.clone()).unwrap_or_default());
+    for arg in parsed.operands() {
+        feed_file(&mut table, arg);
     }
     common::print_nnodes(i32::try_from(table.nnodes()).unwrap_or(i32::MAX));
     let sorted = table.sorted();
-    let Some(output) = OutputStream::open_write(&outputfile) else {
-        common::report_write_failed(&outputfile);
+    let Some(output) = OutputStream::open_write(outputfile) else {
+        common::report_write_failed(outputfile);
         tool::exit(tool::ENOENT);
     };
     sorted.write_with(

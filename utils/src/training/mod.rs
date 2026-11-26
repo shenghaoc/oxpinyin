@@ -17,13 +17,10 @@
 use oxpinyin::vocab::NULL_TOKEN;
 use std::ffi::{CStr, CString};
 
-use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::data::{FileType, TableConf, TableConfError};
-use oxpinyin::single_gram::encode_single_gram;
-use oxpinyin_tool_support::data::decode_single_gram;
+use oxpinyin::data::FileType;
 
 use oxpinyin_tool_support::input as tool;
-use oxpinyin_tool_support::input::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
+use oxpinyin_tool_support::input::{OptionArg, OptionEntry};
 
 use crate::storage::Hash;
 
@@ -34,91 +31,7 @@ pub mod gen_deleted_ngram;
 pub mod gen_ngram;
 pub mod gen_unigram;
 
-/// One `SingleGram` row: the stored `total_freq` and its
-/// `{next_token, count}` records in stored (token-ascending) order
-/// (`src/storage/ngram.cpp:31-57`).
-pub(crate) struct Gram {
-    /// `SingleGram::m_chunk`'s first word.
-    pub total: u32,
-    /// The item array after it.
-    pub records: Vec<(u32, u32)>,
-}
-
-impl Gram {
-    /// `SingleGram::get_freq`: the count stored for `token`, `None` where
-    /// the pin's binary search finds no record.
-    pub(crate) fn get_freq(&self, token: u32) -> Option<u32> {
-        let index = self.lower_bound(token);
-        self.records
-            .get(index)
-            .filter(|(next, _)| *next == token)
-            .map(|(_, freq)| *freq)
-    }
-
-    /// `SingleGram::set_freq`: `false` where the record is absent
-    /// (`check_result` is `assert` in the reference build).
-    pub(crate) fn set_freq(&mut self, token: u32, freq: u32) -> bool {
-        let index = self.lower_bound(token);
-        match self.records.get_mut(index) {
-            Some((next, stored)) if *next == token => {
-                *stored = freq;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// `SingleGram::insert_freq`: `false` where the token is already
-    /// present; otherwise the record goes at its lower-bound position.
-    pub(crate) fn insert_freq(&mut self, token: u32, freq: u32) -> bool {
-        let index = self.lower_bound(token);
-        if self
-            .records
-            .get(index)
-            .is_some_and(|(next, _)| *next == token)
-        {
-            return false;
-        }
-        self.records.insert(index, (token, freq));
-        true
-    }
-
-    /// The pin's `SingleGram` lower bound: the first record whose token is
-    /// not less than `token` (`ngram.cpp:231-250`; the walk
-    /// `src/single_gram.rs`'s `get_freq` mirrors), not the unspecified
-    /// index a binary search gives among equal keys.
-    fn lower_bound(&self, token: u32) -> usize {
-        self.records.partition_point(|(next, _)| *next < token)
-    }
-
-    /// `SingleGram::m_chunk`'s bytes (`encode_single_gram`), the value
-    /// `Bigram::store` writes under the previous token's key.
-    pub(crate) fn encode(&self) -> Vec<u8> {
-        encode_single_gram(self.total, &self.records)
-    }
-}
-
-/// `Bigram::load` of `token` from `bigram`: `None` where the container is
-/// unopened (`m_db` NULL) or has no such key.
-///
-/// A stored value that is not a whole `SingleGram` would make the pin's
-/// `get_total_freq`/`get_freq` read past the value; oxpinyin
-/// refuses it by the abort it already uses for a corrupt chunk.
-pub(crate) fn load_gram(bigram: Option<&Hash>, token: u32) -> Option<Gram> {
-    let value = bigram?.get(&encode_token_key(token))?;
-    match decode_single_gram(&value) {
-        Some((total, records)) => Some(Gram { total, records }),
-        None => tool::abort(),
-    }
-}
-
-/// `Bigram::store` of `token`'s row. The pin's `m_db->put` answer is
-/// ignored by `gen_ngram`/`gen_deleted_ngram`.
-pub(crate) fn store_gram(bigram: Option<&Hash>, token: u32, gram: &Gram) {
-    if let Some(bigram) = bigram {
-        let _ = bigram.put(&encode_token_key(token), &gram.encode());
-    }
-}
+pub(crate) use crate::storage::{Gram, load_gram, store_gram};
 
 /// `Bigram::get_all_items` (`src/storage/ngram.cpp:180-215`): every
 /// stored previous token in the container's own walk order. A key that is
@@ -180,20 +93,11 @@ pub(crate) fn parse_segmented_line(
     token
 }
 
-/// `load table.conf failed.\n` and `exit(ENOENT)` after a refused
-/// `SystemTableInfo2::load` (`gen_unigram.cpp:96-101`,
-/// `gen_ngram.cpp:58-64`, `gen_deleted_ngram.cpp:59-65`,
-/// `estimate_interpolation.cpp:91-97`, `eval_correction_rate.cpp:135-141`).
-pub(crate) fn load_table_conf() -> TableConf {
-    match TableConf::load(c"table.conf") {
-        Ok(conf) => conf,
-        Err(TableConfError::Abort(_) | TableConfError::UninitialisedSourceFormat) => tool::abort(),
-        Err(TableConfError::Unopenable | TableConfError::Header) => {
-            tool::storage::report_table_conf_failed();
-            tool::exit(tool::ENOENT);
-        }
-    }
-}
+/// The trainers' refused `SystemTableInfo2::load` is the storage tools'
+/// (`gen_unigram.cpp:96-101`, `gen_ngram.cpp:58-64`,
+/// `gen_deleted_ngram.cpp:59-65`, `estimate_interpolation.cpp:91-97`,
+/// `eval_correction_rate.cpp:135-141`).
+pub(crate) use crate::storage::load_table_conf;
 
 /// The `SYSTEM_FILE`/`DICTIONARY` library types `gen_unigram` keeps
 /// (`gen_unigram.cpp:45-47`).
@@ -241,16 +145,6 @@ fn filename_entry(
         arg: OptionArg::Filename(Some(default)),
         description: Some(description),
         arg_description: None,
-    }
-}
-
-/// The `CString` a parsed `G_OPTION_ARG_FILENAME` holds, or `None` where
-/// the value holds a NUL or another kind.
-pub(crate) fn filename_value(parsed: &ParsedOptions, index: usize) -> Option<CString> {
-    if let Some(OptionValue::Filename(Some(bytes))) = parsed.values.get(index) {
-        CString::new(bytes.clone()).ok()
-    } else {
-        None
     }
 }
 

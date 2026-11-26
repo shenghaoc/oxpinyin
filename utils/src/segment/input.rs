@@ -25,12 +25,11 @@ pub(crate) enum Input {
 impl Input {
     /// The remaining arguments after option parsing: `argv[0]` plus an
     /// optional input file. The caller has already refused more than two.
-    pub(crate) fn open(args: &[Vec<u8>]) -> Self {
+    pub(crate) fn open(args: &[std::ffi::CString]) -> Self {
         let Some(name) = args.get(1) else {
             return Self::Stdin(LineReader::stdin());
         };
-        let name = crate::segment::c_string(name).unwrap_or_default();
-        let reader = LineReader::open(&name);
+        let reader = LineReader::open(name);
         if !reader.is_open() {
             // `perror("open file failed")` with the `errno` the failed open
             // left, then `exit(EINVAL)`.

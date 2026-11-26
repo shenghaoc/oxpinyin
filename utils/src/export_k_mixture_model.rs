@@ -6,11 +6,9 @@
 //! then the container is attached read-only; a refused attach is
 //! `open %s failed.` and `ENOENT` (`:126-146`).
 
-use std::ffi::{CString, OsString};
+use std::ffi::OsString;
 
-use oxpinyin_tool_support::input::{
-    self as tool, OptionArg, OptionEntry, OptionValue, OutputStream,
-};
+use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry, OutputStream};
 
 /// `main` (`:112-155`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
@@ -23,19 +21,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         description: Some(c"k mixture model file"),
         arg_description: None,
     }];
-    let parsed = match tool::parse_options(c"- export k mixture model", &entries, args) {
-        Ok(parsed) => parsed,
-        Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
-    };
-    let filename = if let OptionValue::Filename(value) = &parsed.values[0] {
-        value.clone().and_then(|bytes| CString::new(bytes).ok())
-    } else {
-        None
-    };
+    let parsed = tool::parse_options_or_exit(c"- export k mixture model", &entries, args);
 
     let phrases = crate::phrase_index::load_system_phrases();
     let Some(mut output) = OutputStream::stdout() else {
         tool::abort();
     };
-    crate::k_mixture_model::export::run(filename.as_deref(), &phrases, &mut output);
+    crate::k_mixture_model::export::run(parsed.filename(0), &phrases, &mut output);
 }

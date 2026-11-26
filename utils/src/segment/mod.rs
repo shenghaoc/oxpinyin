@@ -32,7 +32,7 @@ mod trellis;
 
 mod helpers;
 pub(crate) use helpers::{
-    abort_on_pin_assert, c_string, extra_enter_entry, open_output, outputfile_entry, parse_options,
+    abort_on_pin_assert, c_string, extra_enter_entry, open_output, outputfile_entry,
     refuse_extra_arguments, segment_lines, text_of,
 };
 

@@ -15,7 +15,6 @@ use std::ffi::OsString;
 
 use oxpinyin::data::FileType;
 use oxpinyin_tool_support::input as tool;
-use oxpinyin_tool_support::input::OptionValue;
 
 use crate::storage::Hash;
 use crate::storage::{Libraries, token_to_string};
@@ -46,9 +45,9 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
             vec![skip_pi_gram_entry(), crate::training::bigram_entry()],
         )
     };
-    let parsed = crate::storage::parse_options(parameter_string, &entries, args);
-    let train_pi_gram = matches!(parsed.values.first(), Some(OptionValue::Flag(true)));
-    let bigram_name = crate::training::filename_value(&parsed, 1);
+    let parsed = tool::parse_options_or_exit(parameter_string, &entries, args);
+    let train_pi_gram = parsed.flag(0);
+    let bigram_name = parsed.filename(1);
 
     let conf = load_table_conf();
     let mut libraries = Libraries::load_rows(
@@ -66,7 +65,7 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
 
     // `bigram.attach(name, ATTACH_CREATE|ATTACH_READWRITE)`: the answer is
     // ignored, and a failed attach leaves every load and store a no-op.
-    let bigram = bigram_name.as_deref().map(|name| {
+    let bigram = bigram_name.map(|name| {
         Hash::create_or_missing(&path_of(name))
             .unwrap_or_else(|error| oxpinyin_tool_support::input::exit_on_store_error(&error))
     });

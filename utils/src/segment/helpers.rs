@@ -1,11 +1,9 @@
 #![forbid(unsafe_code)]
 
-use std::ffi::{CStr, CString, OsString};
+use std::ffi::{CStr, CString};
 
 use oxpinyin_tool_support::input as tool;
-use oxpinyin_tool_support::input::{
-    OptionArg, OptionEntry, OptionValue, OutputStream, ParsedOptions,
-};
+use oxpinyin_tool_support::input::{OptionArg, OptionEntry, OutputStream};
 
 use super::phrase;
 use oxpinyin::vocab::NULL_TOKEN;
@@ -141,26 +139,12 @@ pub(crate) fn extra_enter_entry() -> OptionEntry {
     }
 }
 
-/// `g_option_context_parse` with the pin's failure line already written;
-/// a refused parse is `exit(EINVAL)` (`ngseg.cpp:118-121`).
-pub(crate) fn parse_options(
-    parameter_string: &'static CStr,
-    entries: &[OptionEntry],
-    args: impl IntoIterator<Item = OsString>,
-) -> ParsedOptions {
-    match tool::parse_options(parameter_string, entries, args) {
-        Ok(parsed) => parsed,
-        Err(_) => tool::exit(tool::EINVAL),
-    }
-}
-
 /// The `outputfile` option: `fopen(filename, "w")` or the C runtime's
 /// `stdout` (`ngseg.cpp:106-129`). A failed `fopen` is
 /// `perror("open file failed")` then `exit(EINVAL)`.
-pub(crate) fn open_output(value: &OptionValue) -> OutputStream {
-    if let OptionValue::Filename(Some(bytes)) = value {
-        let name = c_string(bytes).unwrap_or_default();
-        match OutputStream::open_write(&name) {
+pub(crate) fn open_output(name: Option<&CStr>) -> OutputStream {
+    if let Some(name) = name {
+        match OutputStream::open_write(name) {
             Some(stream) => stream,
             None => {
                 tool::perror(c"open file failed");
@@ -178,7 +162,7 @@ pub(crate) fn open_output(value: &OptionValue) -> OutputStream {
 
 /// `argc > 2` after option parsing: `too many arguments.` and
 /// `exit(EINVAL)` (`ngseg.cpp:131-134`).
-pub(crate) fn refuse_extra_arguments(args: &[Vec<u8>]) {
+pub(crate) fn refuse_extra_arguments(args: &[CString]) {
     if args.len() > 2 {
         tool::segmentation::report_too_many_arguments();
         tool::exit(tool::EINVAL);

@@ -9,14 +9,12 @@
 
 use std::ffi::{CStr, CString, OsString};
 
-use oxpinyin::single_gram::encode_single_gram;
-use oxpinyin_tool_support::data::decode_single_gram;
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::LineReader;
 
-use crate::storage::Hash;
 use crate::storage::Libraries;
-use crate::storage::{load_table_conf, parse_options, table_dir, table_dir_entry};
+use crate::storage::{Gram, Hash, load_gram, store_gram};
+use crate::storage::{load_table_conf, table_dir_entry};
 use crate::utils_helper::{
     BEGIN_LINE, END_LINE, GRAM_1_ITEM_LINE, GRAM_1_LINE, GRAM_2_ITEM_LINE, GRAM_2_LINE, TaggedModel,
 };
@@ -24,8 +22,9 @@ use crate::utils_helper::{
 /// `main` (`:234-307`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
     let _ = tool::set_locale_from_environment();
-    let parsed = parse_options(c"- import interpolation model", &[table_dir_entry()], args);
-    let _directory = table_dir(&parsed, 0);
+    // `table_dir` is only the entry's storage; the program never reads it.
+    let _parsed =
+        tool::parse_options_or_exit(c"- import interpolation model", &[table_dir_entry()], args);
 
     let conf = load_table_conf();
 
@@ -65,12 +64,6 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     }
 
     libraries.save(&conf);
-}
-
-/// A `SingleGram` under construction.
-struct SingleGram {
-    total: u32,
-    records: Vec<(u32, u32)>,
 }
 
 /// The pin's statics (`:52-56`) over `main`'s streams.
@@ -176,7 +169,7 @@ impl Converter<'_> {
             .tags
             .add_tag(GRAM_2_ITEM_LINE, c"\\item", 4, c"count", c"");
         let mut last_token = 0_u32;
-        let mut last_gram: Option<SingleGram> = None;
+        let mut last_gram: Option<Gram> = None;
         loop {
             self.model.check_read(self.input.c_str());
             match self.model.line_type {
@@ -197,18 +190,12 @@ impl Converter<'_> {
                         if last_token != 0
                             && let Some(gram) = last_gram.take()
                         {
-                            store_gram(&self.bigram, last_token, &gram);
+                            store_gram(Some(&self.bigram), last_token, &gram);
                         }
-                        let gram = match self.bigram.get(&token1.to_le_bytes()) {
-                            Some(value) => match decode_single_gram(&value) {
-                                Some((total, records)) => SingleGram { total, records },
-                                None => tool::abort(),
-                            },
-                            None => SingleGram {
-                                total: 0,
-                                records: Vec::new(),
-                            },
-                        };
+                        let gram = load_gram(Some(&self.bigram), token1).unwrap_or(Gram {
+                            total: 0,
+                            records: Vec::new(),
+                        });
                         last_token = token1;
                         last_gram = Some(gram);
                     }
@@ -216,22 +203,12 @@ impl Converter<'_> {
                         // `assert(NULL != last_single_gram)`.
                         tool::abort()
                     };
-                    let total = gram.total;
-                    if gram
-                        .records
-                        .binary_search_by_key(&token2, |(next, _)| *next)
-                        .is_ok()
-                    {
-                        // `check_result(insert_freq(...))` is false for a
-                        // duplicate pair.
+                    // `check_result(insert_freq(...))` is false for a
+                    // duplicate pair.
+                    if !gram.insert_freq(token2, count as u32) {
                         tool::abort();
                     }
-                    let position = gram
-                        .records
-                        .binary_search_by_key(&token2, |(next, _)| *next)
-                        .unwrap_or_else(|position| position);
-                    gram.records.insert(position, (token2, count as u32));
-                    gram.total = total.wrapping_add(count as u32);
+                    gram.total = gram.total.wrapping_add(count as u32);
                 }
                 END_LINE | GRAM_1_LINE | GRAM_2_LINE => break,
                 _ => tool::abort(),
@@ -243,14 +220,8 @@ impl Converter<'_> {
         if last_token != 0
             && let Some(gram) = last_gram.take()
         {
-            store_gram(&self.bigram, last_token, &gram);
+            store_gram(Some(&self.bigram), last_token, &gram);
         }
         self.model.tags.pop_state();
     }
-}
-
-/// `bigram->store(token, single_gram)` (`src/storage/ngram_tkrzwdb.cpp:124-133`).
-fn store_gram(bigram: &Hash, token: u32, gram: &SingleGram) {
-    let value = encode_single_gram(gram.total, &gram.records);
-    let _ = bigram.put(&token.to_le_bytes(), &value);
 }

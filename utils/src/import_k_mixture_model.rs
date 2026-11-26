@@ -5,9 +5,9 @@
 //! cwd-relative `table.conf` and its `SYSTEM_FILE` chunks are loaded before
 //! the container is attached.
 
-use std::ffi::{CString, OsString};
+use std::ffi::OsString;
 
-use oxpinyin_tool_support::input::{self as tool, LineReader, OptionArg, OptionEntry, OptionValue};
+use oxpinyin_tool_support::input::{self as tool, LineReader, OptionArg, OptionEntry};
 
 /// `main` (`:258-317`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
@@ -20,17 +20,9 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         description: Some(c"k mixture model file"),
         arg_description: None,
     }];
-    let parsed = match tool::parse_options(c"- import k mixture model", &entries, args) {
-        Ok(parsed) => parsed,
-        Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
-    };
-    let filename = if let OptionValue::Filename(value) = &parsed.values[0] {
-        value.clone().and_then(|bytes| CString::new(bytes).ok())
-    } else {
-        None
-    };
+    let parsed = tool::parse_options_or_exit(c"- import k mixture model", &entries, args);
 
     let phrases = crate::phrase_index::load_system_phrases();
     let mut input = LineReader::stdin();
-    crate::k_mixture_model::import::run(filename.as_deref(), &phrases, &mut input);
+    crate::k_mixture_model::import::run(parsed.filename(0), &phrases, &mut input);
 }

@@ -19,7 +19,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let _ = tool::set_locale_from_environment();
     let entries = [crate::storage::table_dir_entry()];
     // `table_dir` is only the entry's storage; the program never reads it.
-    let _parsed = crate::storage::parse_options(c"- increase uni-gram", &entries, args);
+    let _parsed = tool::parse_options_or_exit(c"- increase uni-gram", &entries, args);
 
     let conf = load_table_conf();
     generate_unigram(&conf, false);

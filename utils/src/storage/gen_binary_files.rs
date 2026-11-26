@@ -22,16 +22,13 @@ use oxpinyin::vocab::{PHRASE_MASK, phrase_index_library_index};
 use oxpinyin_tool_support::data::encode_tokens;
 use oxpinyin_tool_support::data::exact_compare2;
 use oxpinyin_tool_support::input as tool;
-use oxpinyin_tool_support::input::OptionValue;
 use oxpinyin_tool_support::input::storage::TableFile;
 
 use crate::storage::Tree;
 use crate::storage::items_of;
 use crate::storage::pinyin;
 use crate::storage::punctuation::append_punctuation;
-use crate::storage::{
-    gen_punct_entry, load_table_conf, name_c_string, parse_options, table_dir, table_dir_entry,
-};
+use crate::storage::{gen_punct_entry, load_table_conf, name_c_string, table_dir_entry};
 use crate::storage::{read_pinyin_record, read_punct_record};
 use crate::utils_helper::save_and_reload_library;
 
@@ -39,9 +36,9 @@ use crate::utils_helper::save_and_reload_library;
 pub fn main(args: impl IntoIterator<Item = OsString>) {
     let _ = tool::set_locale_from_environment();
     let entries = [table_dir_entry(), gen_punct_entry()];
-    let parsed = parse_options(c"- generate binary files", &entries, args);
-    let directory = table_dir(&parsed, 0);
-    let gen_punct = matches!(parsed.values[1], OptionValue::Flag(true));
+    let parsed = tool::parse_options_or_exit(c"- generate binary files", &entries, args);
+    let directory = parsed.filename(0);
+    let gen_punct = parsed.flag(1);
 
     let conf = load_table_conf();
     let phonetic = conf.phonetic_type();
@@ -52,7 +49,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         &conf,
         false,
         phonetic,
-        directory.as_deref(),
+        directory,
     );
     generate_binary_files(
         c"addon_pinyin_index.bin",
@@ -60,11 +57,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         &conf,
         true,
         phonetic,
-        directory.as_deref(),
+        directory,
     );
 
     if gen_punct {
-        generate_punct_table(c"punct.bin", directory.as_deref());
+        generate_punct_table(c"punct.bin", directory);
     }
 }
 
