@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::engine::constraint::PhraseSpan;
-use crate::engine::error::TrainingPrepFault;
+use crate::engine::error::{PinAbort, TrainingStop};
 use crate::vocab::MAX_PHRASE_LENGTH;
 
 /// The anchor of a **before-cursor** window — the buffer start, not the
@@ -91,101 +91,209 @@ impl SelectionTarget {
     }
 }
 
-/// A checked training walk. It borrows composition state only, so all
-/// dictionary/model readers can end before the user store is mutated.
-pub struct TrainingPlan<'a> {
-    state: &'a SessionState,
-    index: u8,
-    spans: Option<SpanPlan<'a>>,
-}
-
-impl TrainingPlan<'_> {
-    /// Observe the already checked steps in their original order.
+impl SessionState {
+    /// `pinyin_train(index)` (074a2219 `pinyin.cpp:2670-2690`) and the
+    /// `train_result3` loop it runs (`phonetic_lookup.h:844-932`): `false`
+    /// for no results, then each step is checked and trained in turn. A
+    /// step checks the pin's asserts first (the forced token, then the
+    /// span), then the user model loads, trains and stores the step's gram
+    /// and updates the item. The walk reads composition state only, so the
+    /// dictionary's borrow of the store has ended when it runs.
     ///
     /// # Errors
-    /// User-model errors retain the observations before the failure.
-    pub(crate) fn observe<U: UserModel>(self, user: &mut U) -> Result<bool, EngineError> {
-        let row = &self.state.sentence.rows[usize::from(self.index)];
+    ///
+    /// [`TrainingStop::PinAbort`] at the pin's own aborts, which production
+    /// terminates on, and [`TrainingStop::User`] where the user model
+    /// refuses a step. The steps before either stay recorded.
+    pub(crate) fn train<U: UserModel>(
+        &self,
+        index: u8,
+        user: &mut U,
+    ) -> Result<bool, TrainingStop<U::Error>> {
+        let Some(row) = self.training_row(index)? else {
+            return Ok(false);
+        };
         if row.spans.is_empty() {
-            let history = self.state.record.history();
+            let history = self.record.history();
             for (index, token) in history.iter().enumerate() {
                 user.observe(&history[..index], token)
-                    .map_err(|_| EngineError::UserModel)?;
+                    .map_err(TrainingStop::User)?;
             }
-        } else if let Some((parsed, ends)) = self.spans {
-            let mut last = None;
-            let mut stacks = ReadingStacks::default();
-            for (index, span) in row.spans.iter().enumerate() {
-                if let Some(&Some(end)) = ends.get(index) {
-                    let mut readings = training_readings(
-                        parsed,
-                        self.state.input.as_bytes(),
-                        span.start,
-                        end,
-                        span.phrase_length,
-                        &mut stacks,
-                    );
-                    user.observe_with_keys(last, &span.token, &mut readings)
-                        .map_err(|_| EngineError::UserModel)?;
-                }
-                last = Some(span.token);
-            }
+            return Ok(true);
+        }
+        // Only a OneStep span, or the span after one, trains
+        // (`phonetic_lookup.h:854-872`): with none, the walk trains nothing.
+        if !row
+            .spans
+            .iter()
+            .any(|span| self.constraints.is_one_step_at(span.start))
+        {
+            return Ok(true);
+        }
+        let matrix = &self.input.parsed.retained.matrix;
+        // Made at the first step that trains.
+        let mut stacks: Option<ReadingStacks> = None;
+        for step in self.training_steps(&row.spans) {
+            let step = step?;
+            let mut readings = training_readings(
+                matrix,
+                self.input.as_bytes(),
+                step.span.start,
+                step.end,
+                step.span.phrase_length,
+                stacks.get_or_insert_with(ReadingStacks::default),
+            );
+            user.observe_with_keys(step.last, &step.span.token, &mut readings)
+                .map_err(TrainingStop::User)?;
         }
         Ok(true)
     }
-}
 
-impl<'s, D, L> Session<D, L, &'s SessionState>
-where
-    D: Dictionary<Syllable = SyllableKey>,
-    L: LanguageModel,
-{
-    /// The retained matrix, borrowed for the composition state's own
-    /// lifetime so a plan can keep it.
-    fn plan_matrix(&self) -> &'s super::matrix::ParsedMatrix {
-        let state: &'s SessionState = self.state;
-        &state.input.parsed.retained.matrix
+    /// Whether `pinyin_train(index)` meets one of the pin's own aborts
+    /// ([`PinAbort`]): the checks [`Self::train`] makes, in its order,
+    /// without the user model. The prediction does not model the store's
+    /// refusals: where a partial-tail refusal comes before a stale span, it
+    /// predicts an abort that [`Self::train`] does not reach. That cannot
+    /// occur where the probe is used: a partial tail needs a planted user
+    /// bigram, the store's own aborts need one or a failed container, and
+    /// no C API call makes either. Reads only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn training_aborts(&self, index: u8) -> bool {
+        match self.training_row(index) {
+            Err(PinAbort) => true,
+            Ok(None) => false,
+            Ok(Some(row)) => self.training_steps(&row.spans).any(|step| step.is_err()),
+        }
     }
 
-    /// Check one n-best training operation without retaining a storage
-    /// reader: the one ordered, read-only preparation step production
-    /// training and the fuzz probe share. The order is the pin's: the row
-    /// lookup's index check, then per span its forced-token check, the
-    /// caller's `check` (the user model's per-step store checks) and the
-    /// span bounds.
-    ///
-    /// # Errors
-    ///
-    /// [`TrainingPrepFault::PinAbort`] where the pin's own training abort
-    /// fires — the index past nonempty results, a stale forced token or a
-    /// stale span — and [`TrainingPrepFault::Engine`] for `check`'s
-    /// failures. Production terminates on `PinAbort`
-    /// (`Runtime::train_session`) and classifies an `Engine` fault; the
-    /// probe (`InstanceView::train_aborts`) answers `true` for `PinAbort`
-    /// and for an `Engine` store fault whose classification terminates.
-    pub(crate) fn prepare_training(
-        &self,
-        index: u8,
-        check: &mut impl FnMut(Option<&PhraseToken>, &PhraseToken) -> Result<(), EngineError>,
-    ) -> Result<Option<TrainingPlan<'s>>, TrainingPrepFault> {
-        let Some(row) = self.nbest_training_row(index)? else {
+    /// The decoded row [`Self::train`] trains: `None` for no results (the
+    /// pin's quiet `false`), the pin's index assert past nonempty results
+    /// (`pinyin.cpp:2684` at 074a2219; the Zhuyin caller always trains row
+    /// 0, `zhuyin.cpp:1696-1715`).
+    fn training_row(&self, index: u8) -> Result<Option<&crate::engine::nbest::NbestRow>, PinAbort> {
+        if self.sentence.rows.is_empty() {
             return Ok(None);
-        };
-        let spans = if row.spans.is_empty() {
-            let history = self.record.history();
-            for (index, token) in history.iter().enumerate() {
-                check(history[..index].last(), token)?;
-            }
-            None
-        } else {
-            self.plan_spans(&row.spans, check)?
-                .map(|ends| (self.plan_matrix(), ends))
-        };
-        Ok(Some(TrainingPlan {
-            state: self.state,
-            index,
+        }
+        self.sentence
+            .rows
+            .get(usize::from(index))
+            .map(Some)
+            .ok_or(PinAbort)
+    }
+
+    /// The steps `train_result3` trains over `spans`, each after the pin's
+    /// asserts for it.
+    fn training_steps<'a>(&'a self, spans: &'a [PhraseSpan]) -> TrainingSteps<'a> {
+        // 074a2219 phonetic_lookup.h:921 tails the last span at
+        // `constraints->length() - 1`, NOT the CURRENT matrix's last
+        // column: the store survives a parse (`pinyin.cpp:1497-1525`,
+        // never validating), so a re-parse that shortened the input
+        // leaves it longer than the matrix the walk now indexes, and the
+        // span asserts fire.
+        let constraint_len = self.constraints.cell_count();
+        TrainingSteps {
             spans,
-        }))
+            next: 0,
+            constraints: &self.constraints,
+            matrix: &self.input.parsed.retained.matrix,
+            constraint_len,
+            tail: constraint_len.saturating_sub(1),
+            train_next: false,
+            last: None,
+        }
+    }
+}
+
+/// One step `train_result3` trains: the span, its predecessor (`None` at
+/// the sentence start) and the end its reading walk stops at.
+struct TrainingStep<'a> {
+    last: Option<PhraseToken>,
+    span: &'a PhraseSpan,
+    end: usize,
+}
+
+/// `train_result3`'s walk over a decoded row's spans (074a2219
+/// `phonetic_lookup.h:854-932`): only a OneStep span or the span after one
+/// trains, every span advances the predecessor, and each trained span is
+/// checked first. The walk ends after an abort.
+struct TrainingSteps<'a> {
+    spans: &'a [PhraseSpan],
+    next: usize,
+    constraints: &'a crate::engine::constraint::ConstraintStore,
+    /// The retained topology re-applies the physical separators
+    /// (`ParsedMatrix::from_scan`, the matrix the lookup indexes): the
+    /// pin's `fill_matrix` leaves a leading separator gap empty
+    /// (`phonetic_key_matrix.cpp:52-78`), which `:663` refuses.
+    matrix: &'a super::matrix::ParsedMatrix,
+    constraint_len: usize,
+    tail: usize,
+    train_next: bool,
+    last: Option<PhraseToken>,
+}
+
+impl<'a> Iterator for TrainingSteps<'a> {
+    type Item = Result<TrainingStep<'a>, PinAbort>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(span) = self.spans.get(self.next) {
+            let index = self.next;
+            self.next += 1;
+            // 074a2219 phonetic_lookup.h:858 walks the result positions
+            // below `constraints->length()`. A choose after a shortening
+            // re-parse shrinks the store (`pinyin.cpp:2579`) under a row
+            // decoded for the longer input: its later spans are never
+            // reached.
+            if span.start >= self.constraint_len {
+                break;
+            }
+            let last = self.last.replace(span.token);
+            let forced = self.constraints.is_one_step_at(span.start);
+            if !(self.train_next || forced) {
+                continue;
+            }
+            // `assert(token == constraint->m_token)` (`phonetic_lookup.h:868`).
+            if forced
+                && self
+                    .constraints
+                    .one_step_token_at(span.start)
+                    .is_some_and(|forced_token| forced_token != span.token)
+            {
+                return Some(self.abort());
+            }
+            self.train_next = forced;
+            // :911-920 scans to the next non-null result token, not the
+            // forced constraint end; :921 clamps the last span to
+            // `constraints->length() - 1`.
+            let next = self
+                .spans
+                .get(index + 1)
+                .map_or(self.tail, |next| next.start);
+            let end = next.min(self.tail);
+            // `increase_pronunciation_possibility`'s asserts
+            // (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`):
+            // `end < matrix->size()`, then a filled start column (an
+            // internal separator holds a zero key and is accepted), then a
+            // filled end column. The pin reaches them after the step's
+            // gram is stored; an abort leaves nothing it wrote observable,
+            // so they are checked before the step's writes.
+            let zeros = &self.matrix.zeros;
+            if end >= self.matrix.column_count()
+                || column_is_empty(self.matrix, zeros, span.start)
+                || column_is_empty(self.matrix, zeros, end)
+            {
+                return Some(self.abort());
+            }
+            return Some(Ok(TrainingStep { last, span, end }));
+        }
+        None
+    }
+}
+
+impl TrainingSteps<'_> {
+    /// Ends the walk at an abort.
+    fn abort<T>(&mut self) -> Result<T, PinAbort> {
+        self.next = self.spans.len();
+        Err(PinAbort)
     }
 }
 
@@ -221,142 +329,6 @@ where
         state
             .constraints
             .diff_result_refuses(&best.spans, &chosen.spans, chosen.span)
-    }
-
-    /// The decoded row [`Session::prepare_training`] trains: `None` for no
-    /// results (the pin's quiet `false`), the pin's index assert past
-    /// nonempty results (`pinyin.cpp:2684` at 074a2219; the Zhuyin caller
-    /// always trains row 0, `zhuyin.cpp:1696-1715`).
-    fn nbest_training_row(
-        &self,
-        index: u8,
-    ) -> Result<Option<&crate::engine::nbest::NbestRow>, TrainingPrepFault> {
-        if self.sentence.rows.is_empty() {
-            return Ok(None);
-        }
-        self.sentence
-            .rows
-            .get(usize::from(index))
-            .map(Some)
-            .ok_or(TrainingPrepFault::PinAbort)
-    }
-
-    /// Check `spans` before the engine observes them. The check order
-    /// matches the pin: each step's forced-phrase assert, then `check`
-    /// (the user model's store checks for the step), then the span asserts.
-    /// The pin records step by step (`phonetic_lookup.h:858-929`). Its user
-    /// bigram is loaded into memory at init (`pinyin.cpp:401`) and written
-    /// to disk only by `pinyin_save` (`:1018`). An abort discards the
-    /// in-memory training changes, so checks-first is equivalent at the
-    /// C API. Answers each observed span's end, or `None` when no span is
-    /// forced (nothing trains).
-    fn plan_spans<F>(
-        &self,
-        spans: &[PhraseSpan],
-        check: &mut F,
-    ) -> Result<Option<SpanEnds>, TrainingPrepFault>
-    where
-        F: FnMut(Option<&PhraseToken>, &PhraseToken) -> Result<(), EngineError>,
-    {
-        // 074a2219 phonetic_lookup.h:854-866,932: only OneStep or
-        // train_next observes a phrase; every phrase advances its predecessor.
-        // A no-op needs no matrix rebuild: train_next starts false
-        // and only a OneStep can start training (pin :854-872).
-        if !spans
-            .iter()
-            .any(|span| self.constraints.is_one_step_at(span.start))
-        {
-            return Ok(None);
-        }
-        // `assert(token == constraint->m_token)` at a forced position
-        // (`phonetic_lookup.h:868`): checked in the walk below, in span
-        // order. The pin's abort discards earlier in-memory training.
-        // The walk indexes raw-buffer positions, separators included. The
-        // pin's `fill_matrix` leaves a leading separator gap empty
-        // (`phonetic_key_matrix.cpp:52-78`), but the raw scan has already
-        // re-anchored a key that crosses a separator to its buffer start.
-        // The retained topology re-applies the physical separators
-        // (`ParsedMatrix::from_scan` — the matrix the lookup indexes), or a
-        // span over the gap would silently read a filled column `:663`
-        // refuses.
-        let parsed = &self.retained_parse().matrix;
-        let matrix = parsed;
-        let zeros = &parsed.zeros;
-        // 074a2219 phonetic_lookup.h:921 tails the last span at
-        // `constraints->length() - 1`, NOT the CURRENT matrix's last
-        // column: the store survives a parse (`pinyin.cpp:1497-1525`,
-        // never validating), so a re-parse that shortened the input
-        // leaves it longer than the matrix the walk now indexes. The
-        // pin's `increase_pronunciation_possibility` then asserts the
-        // walk stays inside and starts on a filled column
-        // (`storage/phonetic_key_matrix.cpp:661`, `:663`), which the
-        // engine answers as an error; the C facades abort there. The
-        // engine pre-computes the endpoints before recording anything.
-        // The pin records step by step, but its abort discards those
-        // in-memory changes, so the C API result is the same.
-        let constraint_len = self.constraints.cell_count();
-        let tail = constraint_len.saturating_sub(1);
-        let mut train_next = false;
-        // One end per span the walk reaches, in span order; a span past the
-        // walk has none, held inline up to `MAX_PHRASE_LENGTH` spans.
-        let mut ends = SpanEnds::new();
-        for (index, span) in spans.iter().enumerate() {
-            // 074a2219 phonetic_lookup.h:858 walks the result positions
-            // below `constraints->length()`, reloaded each step (the
-            // pin-built `pinyin_train` compares `i` with the `GArray`'s
-            // `len`). A choose after a shortening re-parse shrinks the store
-            // (`pinyin.cpp:2579`) under a row decoded for the longer input:
-            // its later spans are never reached, trained or checked.
-            if span.start >= constraint_len {
-                break;
-            }
-            let forced = self.constraints.is_one_step_at(span.start);
-            if !(train_next || forced) {
-                ends.push(None);
-                continue;
-            }
-            // 074a2219 train_result3 walks the spans in order: the forced
-            // position's `assert(token == constraint->m_token)`
-            // (`phonetic_lookup.h:868`) precedes
-            // `increase_pronunciation_possibility`'s three asserts
-            // (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`) for
-            // the same span, so an earlier span's bounds fault is reached
-            // before a later span's token fault. The engine checks both
-            // during preflight; the pin records each step as it goes.
-            if forced
-                && self
-                    .constraints
-                    .one_step_token_at(span.start)
-                    .is_some_and(|forced_token| forced_token != span.token)
-            {
-                return Err(TrainingPrepFault::PinAbort);
-            }
-            // The step's bigram half comes next (`phonetic_lookup.h:876-909`:
-            // `get_total_freq` :884, the `get_freq` walk :888, `set_freq`
-            // :903), before its pronunciation update's span asserts (:925).
-            check(spans[..index].last().map(|span| &span.token), &span.token)?;
-            train_next = forced;
-            // 074a2219 phonetic_lookup.h:911-920 scans to the next
-            // non-null result token, not the forced constraint end.
-            let next = spans.get(index + 1).map_or(tail, |next| next.start);
-            // :921 clamps the last span to constraints->length()-1.
-            let end = next.min(tail);
-            // The span asserts in the pin's order: `end < matrix->size()`
-            // (`storage/phonetic_key_matrix.cpp:661`), a filled start
-            // column (`:663` — an internal separator holds a zero key and
-            // is accepted; only a genuine gap, a leading separator run,
-            // trips it), then a filled end column (`:664` — the internal
-            // apostrophe can leave the start column non-empty while the
-            // stale end still lands on an empty column).
-            if end >= matrix.column_count()
-                || column_is_empty(matrix, zeros, span.start)
-                || column_is_empty(matrix, zeros, end)
-            {
-                return Err(TrainingPrepFault::PinAbort);
-            }
-            ends.push(Some(end));
-        }
-        Ok(Some(ends))
     }
 
     /// The sentence recorded so far: the token of every phrase the user
@@ -760,15 +732,6 @@ where
             .rebuild_from_constraints(state.input.len(), &runs);
     }
 }
-
-/// A training walk's plan ([`Session::plan_spans`]): the retained matrix it
-/// indexes, borrowed from the composition state the plan itself borrows, and
-/// the end of each span it observes (`None` for one it only passes).
-type SpanPlan<'a> = (&'a super::matrix::ParsedMatrix, SpanEnds);
-
-/// One end per span a training walk reaches, held inline for the phrase
-/// counts a sentence row usually has.
-type SpanEnds = smallvec::SmallVec<[Option<usize>; MAX_PHRASE_LENGTH]>;
 
 /// 074a2219 `get_column_size(offset) > 0` (`storage/phonetic_key_matrix.cpp`):
 /// a column is occupied by either a real key or a zero key. `from_scan`

@@ -1267,9 +1267,10 @@ fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
 
-/// Basis: Rust contract (preflight and apply agree and keep the stored gram order).
+/// Basis: `phonetic_lookup.h:888-903` (a step on an unsorted gram keeps the
+/// stored gram order or refuses before it writes).
 #[test]
-fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
+fn a_training_step_keeps_the_stored_gram_order() {
     let dir = tempdir("set-freq-miss");
     assert!(
         crate::data::user_files::UserTableInfo::conform_to(&versions())
@@ -1299,20 +1300,9 @@ fn training_preflight_and_apply_agree_without_reordering_stored_grams() {
         crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("open");
     let generation = store.generation();
-    let mut check = crate::user::TrainingCheck::default();
-    store
-        .check_training_step_with(&mut check, 3, token(1))
-        .expect("a clean step");
-    let preflight = store.check_training_step_with(&mut check, 2, token(5));
-    let refused = matches!(preflight, Err(UserStoreError::TrainingSetFreqMiss));
-    assert!(preflight.is_ok() || refused);
-    assert_eq!(store.generation(), generation, "preflight writes nothing");
-    assert_eq!(store.bigram_row(2).expect("row"), Some(gram.clone()));
-    assert_eq!(store.system_unigram(token(1)), Some(100));
-    assert_eq!(store.system_unigram(token(5)), None);
-    assert!(!store.is_modified());
     let applied = store.observe_selection(2, token(5));
-    assert_eq!(applied.is_ok(), preflight.is_ok());
+    let refused = matches!(applied, Err(UserStoreError::TrainingSetFreqMiss));
+    assert!(applied.is_ok() || refused);
     if refused {
         assert!(matches!(applied, Err(UserStoreError::TrainingSetFreqMiss)));
         assert_eq!(store.generation(), generation, "a refusal writes nothing");

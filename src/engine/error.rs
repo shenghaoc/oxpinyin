@@ -1,29 +1,28 @@
 //! Engine failures.
 
-/// Why the shared training preparation stopped
-/// ([`crate::engine::Session::prepare_training`]).
-///
-/// The preparation is read-only and shared by production training and the
-/// fuzz probe, so it answers the pin's own training aborts as a typed
-/// signal: production terminates on it, the probe answers `true`.
+/// The pin's own training abort (`check_result` and `assert` both abort in
+/// the reference build, 074a2219 `src/include/pinyin_utils.h:27-31`): the
+/// index past nonempty results (`pinyin.cpp:2684`), a forced phrase whose
+/// token differs from the decoded result's (`phonetic_lookup.h:868`), or a
+/// span outside the current matrix: past its end, or starting or ending on
+/// an empty column (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PinAbort;
+
+/// Why `pinyin_train`'s walk stopped before its end
+/// ([`crate::engine::SessionState::train`]). The steps before the stop
+/// stay recorded, as the pin's do.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum TrainingPrepFault {
-    /// The pin's own training abort: the index past nonempty results
-    /// (`pinyin.cpp:2684` at 074a2219), a forced phrase whose token
-    /// differs from the decoded result's (`phonetic_lookup.h:868`), or a
-    /// span outside the current matrix — past its end, or starting or
-    /// ending on an empty column (`storage/phonetic_key_matrix.cpp:661`,
-    /// `:663`, `:664`).
+pub(crate) enum TrainingStop<E> {
+    /// The pin's own training abort. Production terminates on it.
     PinAbort,
-    /// The per-step store check's or a backend's failure. Production
-    /// propagates it; the probe answers the C facade's classification of
-    /// it — `true` only for a store fault the facade terminates on.
-    Engine(EngineError),
+    /// The user model refused the step.
+    User(E),
 }
 
-impl From<EngineError> for TrainingPrepFault {
-    fn from(error: EngineError) -> Self {
-        Self::Engine(error)
+impl<E> From<PinAbort> for TrainingStop<E> {
+    fn from(_: PinAbort) -> Self {
+        Self::PinAbort
     }
 }
 

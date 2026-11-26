@@ -1295,50 +1295,28 @@ pub struct RuntimeLm<'a> {
     addons: &'a RefCell<AddonSet>,
 }
 
+/// The engine error a training step's store refusal stands for: the pin's
+/// own aborts at the step (a gram shorter than its total, `memory_chunk.h:390`;
+/// `set_freq` missing the item it inserted, `phonetic_lookup.h:903`; the
+/// failed container's `store`, `:904`), the partial item tail the pin reads
+/// past (register row 100), or another user-model failure.
+fn training_error(error: &crate::user::UserStoreError) -> EngineError {
+    use crate::user::UserStoreError;
+    match error {
+        UserStoreError::ShortUserBigramValue
+        | UserStoreError::TrainingSetFreqMiss
+        | UserStoreError::FailedUserBigramStore => EngineError::TrainingAbort,
+        UserStoreError::PartialUserBigramTail => EngineError::UnsafeTrainingPredecessor,
+        _ => EngineError::UserModel,
+    }
+}
+
 /// `m_user_bigram->load`'s answer to a failed read: no gram, which
 /// `search_bigram2` ignores (`phrase_lookup.cpp:269-270` at 074a2219), so
 /// the system gram then stands alone (`ngram.cpp:292-296`). The pin's user
 /// bigram is the in-memory copy `load_db` makes (`pinyin.cpp:399-401`), so
 /// its checked read cannot fail after the size check; no user container
 /// reports that failure either.
-/// The user store's per-step training check, as the shared preparation
-/// ([`crate::engine::Session::prepare_training`]) takes it: the step's
-/// predecessor token, sentence start when it has none.
-/// Read-only — [`UserStore::check_training_step_with`] replays earlier
-/// checked steps on copies of the grams without writing the store — so
-/// production training and the fuzz probe pass the same check.
-///
-/// # Errors
-///
-/// The store's read error or a short, partial or malformed gram failure,
-/// rendered at the engine seam; `check` keeps the typed fault.
-pub(crate) fn training_step_check(
-    user: &UserStore,
-    check: &mut crate::user::TrainingCheck,
-    last: Option<&PhraseToken>,
-    token: &PhraseToken,
-) -> Result<(), EngineError> {
-    user.check_training_step_with(
-        check,
-        last.map_or(crate::vocab::SENTENCE_START, |token| *token),
-        *token,
-    )
-    .map_err(|_| EngineError::UserModel)
-}
-
-/// The engine error a failed per-step store check stands for: the typed
-/// fault the [`crate::user::TrainingCheck`] recorded, or a user-model
-/// failure when it recorded none. `Runtime::train_session` and
-/// the fuzz probe classify the same way, so the probe answers `true`
-/// exactly where `training_answer` makes the C facade terminate.
-pub(crate) fn training_check_error(fault: Option<crate::user::TrainingFault>) -> EngineError {
-    match fault {
-        Some(crate::user::TrainingFault::Abort) => EngineError::TrainingAbort,
-        Some(crate::user::TrainingFault::PartialTail) => EngineError::UnsafeTrainingPredecessor,
-        None => EngineError::UserModel,
-    }
-}
-
 fn user_gram_or_none(read: Result<Option<Vec<u8>>, UserStoreError>) -> Option<Vec<u8>> {
     read.ok().flatten()
 }
@@ -1838,44 +1816,25 @@ impl Runtime {
         state: &crate::engine::SessionState,
         index: u8,
     ) -> Result<bool, EngineError> {
-        let user = &self.user;
+        let user = &mut self.user;
         if !user.has_user_directory() {
             return Ok(false);
         }
-        let mut check = crate::user::TrainingCheck::default();
-        let prepared = state
-            .read(self.dict(), self.lm())
-            .prepare_training(index, &mut |last, token| {
-                training_step_check(user, &mut check, last, token)
-            });
-        let user = &mut self.user;
-        let result = match prepared {
-            Ok(Some(plan)) => {
-                plan.observe(&mut crate::user::CheckedTraining::new(user, &mut check))
+        // The pin marks the context modified once results exist, before
+        // its walk (`pinyin.cpp:2679-2681`); the steps a refusal leaves
+        // recorded are saved with it.
+        match state.train(index, user) {
+            Ok(false) => Ok(false),
+            Ok(true) => {
+                user.mark_modified();
+                Ok(true)
             }
-            Ok(None) => Ok(false),
-            Err(crate::engine::TrainingPrepFault::PinAbort) => std::process::abort(),
-            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel)) => {
-                Err(training_check_error(check.fault()))
+            Err(crate::engine::TrainingStop::PinAbort) => std::process::abort(),
+            Err(crate::engine::TrainingStop::User(error)) => {
+                user.mark_modified();
+                Err(training_error(&error))
             }
-            Err(crate::engine::TrainingPrepFault::Engine(
-                error @ (EngineError::LookupOffsetOutOfRange { .. }
-                | EngineError::Failure
-                | EngineError::ZeroKeyOffsetCheck
-                | EngineError::PinAssert
-                | EngineError::UnsafeTrainingPredecessor
-                | EngineError::TrainingAbort
-                | EngineError::UnsafeLookupPredecessor
-                | EngineError::ReadAfterCheck),
-            )) => Err(error),
-        };
-        if !matches!(
-            &result,
-            Ok(false) | Err(EngineError::UnsafeTrainingPredecessor | EngineError::TrainingAbort)
-        ) {
-            user.mark_modified();
         }
-        result
     }
 
     /// Apply a unigram increment with exclusive access to the storage owner.

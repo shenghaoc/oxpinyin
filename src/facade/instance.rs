@@ -380,42 +380,21 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         self.phrase_result.get(index).copied()
     }
 
-    /// Whether training row `index` terminates `pinyin_train` — after the
-    /// same directory gate. The probe runs the one preparation production
-    /// training runs (`crate::engine::Session::prepare_training`), with
-    /// the same simulated store check, and classifies a store failure
-    /// exactly as production does: the pin's own aborts (the index past
-    /// nonempty results, a stale forced phrase, a stale span) and the
-    /// store faults [`training_answer`] classifies [`TrainingRefusal::Abort`]
-    /// answer `true`; a partial tail and
-    /// an ordinary backend failure answer `false`. The walk stops at the
-    /// first failure, so the probe answers for the fault production meets
-    /// first. Reads only: the probe never observes the plan and never
-    /// marks the store modified.
+    /// Whether training row `index` terminates `pinyin_train` at one of
+    /// the pin's own aborts, after the same directory gate
+    /// (`crate::engine::SessionState::training_aborts`): the index past
+    /// nonempty results, a stale forced phrase or a stale span, checked in
+    /// the training walk's order. The prediction does not model the store's
+    /// refusals: where a partial-tail refusal comes before a stale span, it
+    /// predicts an abort that the walk does not reach. That cannot occur
+    /// where the probe is used: a partial tail needs a planted user bigram,
+    /// the store's own aborts need one or a failed container, and no C API
+    /// call makes either. Reads only: the store is neither trained nor
+    /// marked modified.
     #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn train_aborts(&self, index: u8) -> bool {
-        if !self.user.has_user_directory() {
-            return false;
-        }
-        let user = self.user;
-        let mut check = crate::user::TrainingCheck::default();
-        let prepared = self
-            .read()
-            .session
-            .prepare_training(index, &mut |last, token| {
-                crate::runtime::training_step_check(user, &mut check, last, token)
-            });
-        match prepared {
-            Err(crate::engine::TrainingPrepFault::PinAbort) => true,
-            Err(crate::engine::TrainingPrepFault::Engine(EngineError::UserModel)) => {
-                matches!(
-                    training_answer(Err(crate::runtime::training_check_error(check.fault()))),
-                    Err(TrainingRefusal::Abort)
-                )
-            }
-            Err(crate::engine::TrainingPrepFault::Engine(_)) | Ok(_) => false,
-        }
+        self.user.has_user_directory() && self.read().session.training_aborts(index)
     }
 
     /// Whether the pin's NBEST choose of row `rank` asserts: a missing

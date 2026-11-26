@@ -563,60 +563,6 @@ pub struct UserStore {
     pub(crate) originals: crate::user::SystemOriginals,
 }
 
-/// Which pin abort or read-past a training step's store check met.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrainingFault {
-    /// The gram is too short for its total, `set_freq` misses an item, or
-    /// the failed container refuses a store (`memory_chunk.h:390`,
-    /// `phonetic_lookup.h:903-904`).
-    Abort,
-    /// The gram has a partial item tail.
-    PartialTail,
-}
-
-/// One training call's replay: each passing step's outcome in step order,
-/// the next step to observe, and the fault a failing check met.
-#[derive(Debug, Default)]
-pub struct TrainingCheck {
-    steps: Vec<CheckedStep>,
-    next: usize,
-    fault: Option<TrainingFault>,
-}
-
-/// A passing step's [`trained_gram`] outcome, recorded by
-/// [`UserStore::check_training_step_with`] for
-/// [`UserStore::observe_checked_selection`]: the step's pair, its seed, the
-/// gram the step left, and whether the step stores it. The overflow guard
-/// leaves the gram unchanged and skips its store (`phonetic_lookup.h:876-904`
-/// at 074a2219).
-#[derive(Debug)]
-struct CheckedStep {
-    prev: PhraseToken,
-    cur: PhraseToken,
-    seed: u64,
-    gram: Vec<u8>,
-    stores: bool,
-}
-
-impl TrainingCheck {
-    /// The failure reached by this operation's checked steps.
-    #[must_use]
-    pub const fn fault(&self) -> Option<TrainingFault> {
-        self.fault
-    }
-
-    /// The gram the latest checked step with predecessor `prev` left: the
-    /// gram a later step on `prev` trains, as the pin's later `load` reads
-    /// the earlier `store` (`phonetic_lookup.h:878`, `:904`).
-    fn latest_gram(&self, prev: PhraseToken) -> Option<&Vec<u8>> {
-        self.steps
-            .iter()
-            .rev()
-            .find(|step| step.prev == prev)
-            .map(|step| &step.gram)
-    }
-}
-
 /// What `UserStore::check_mask_out` found fit to mask: the user bigram's
 /// keys from the one `get_all_items` walk, for `UserStore::apply_mask_out`.
 pub struct MaskCheck {
@@ -737,6 +683,26 @@ impl UserStore {
         self.gram_in(prev)
     }
 
+    /// `train_result3`'s `m_user_bigram->load(last_token, user)` and the
+    /// fresh gram it falls back to (074a2219 `phonetic_lookup.h:876-881`):
+    /// a failed lookup is no gram ([`crate::store::UserBigramDb::load`]).
+    ///
+    /// # Errors
+    ///
+    /// None in practice: [`crate::store::UserBigramDb::load`] answers `Ok`.
+    fn training_gram(&self, prev: PhraseToken) -> Result<Option<Vec<u8>>, UserStoreError> {
+        if !self.has_user_data() {
+            return Ok(None);
+        }
+        let mut gram = Vec::new();
+        Ok(<DefaultUserBigramDb as crate::store::UserBigramDb>::load(
+            self.container(),
+            &prev.to_le_bytes(),
+            &mut gram,
+        )?
+        .then_some(gram))
+    }
+
     /// [`Self::bigram_row`] without the user-data gate.
     fn gram_in(&self, prev: PhraseToken) -> Result<Option<Vec<u8>>, UserStoreError> {
         Ok(container_gram(self.container(), prev)?)
@@ -812,77 +778,6 @@ impl UserStore {
             return None;
         };
         gram_mask_fault_over(&ContainerGrams(self.container()), keys, mask, value).unwrap_or(None)
-    }
-
-    /// Check a step using operation-owned bookkeeping while phrase storage is borrowed.
-    /// Replays earlier checked steps on copies of the grams without writing the store.
-    /// The check follows the pin's step order (`phonetic_lookup.h:876-909` at 074a2219).
-    ///
-    /// # Errors
-    /// Returns the store's read error or a short, partial, or malformed gram failure.
-    pub(crate) fn check_training_step_with(
-        &self,
-        check: &mut TrainingCheck,
-        prev: PhraseToken,
-        cur: PhraseToken,
-    ) -> Result<(), UserStoreError> {
-        // The failed container's `load` misses, so the step trains a fresh
-        // gram with no overflow, and its `store` answers false: the pin's
-        // `check_result` dies at this first trained step
-        // (`phonetic_lookup.h:876-904`).
-        if self.user_bigram_failed() {
-            check.fault = Some(TrainingFault::Abort);
-            return Err(UserStoreError::FailedUserBigramStore);
-        }
-        // A step owns its trained gram. A repeated predecessor trains a copy
-        // of the gram its latest checked step left; any other reads the store.
-        let mut gram = match check.latest_gram(prev) {
-            Some(gram) => gram.clone(),
-            None => self.bigram_row(prev)?.unwrap_or_else(single_gram::new_gram),
-        };
-        if gram.len() < single_gram::TOTAL_LEN {
-            check.fault = Some(TrainingFault::Abort);
-            return Err(UserStoreError::ShortUserBigramValue);
-        }
-        if single_gram::has_partial_tail(&gram) {
-            check.fault = Some(TrainingFault::PartialTail);
-            return Err(UserStoreError::PartialUserBigramTail);
-        }
-        match trained_gram(&mut gram, cur) {
-            Ok((seed, stored)) => {
-                let stores = stored.is_some();
-                check.steps.push(CheckedStep {
-                    prev,
-                    cur,
-                    seed,
-                    gram,
-                    stores,
-                });
-                Ok(())
-            }
-            Err(UserStoreError::TrainingSetFreqMiss) => {
-                check.fault = Some(TrainingFault::Abort);
-                Err(UserStoreError::TrainingSetFreqMiss)
-            }
-            Err(
-                error @ (UserStoreError::Io(_)
-                | UserStoreError::Store(_)
-                | UserStoreError::InvalidPhrase
-                | UserStoreError::Persistence
-                | UserStoreError::SaveRemapFailed
-                | UserStoreError::SaveTooLarge
-                | UserStoreError::UnigramTotalOverflow
-                | UserStoreError::OverlongIndexKey
-                | UserStoreError::NonTokenUserBigramKey
-                | UserStoreError::ShortUserBigramValue
-                | UserStoreError::PartialUserBigramTail
-                | UserStoreError::ResidualUserBigramGram
-                | UserStoreError::LibraryLoop(_)
-                | UserStoreError::UserReadingRemoval
-                | UserStoreError::SessionSeed
-                | UserStoreError::FailedUserBigramStore),
-            ) => Err(error),
-        }
     }
 
     /// The pin's user-table `search_suggestion` gate
@@ -1005,6 +900,14 @@ impl UserStore {
             .bigram_row(prev)?
             .and_then(|gram| single_gram::get_total_freq(&gram))
             .map_or(0, u64::from))
+    }
+
+    /// Stores `gram` under `prev` as it is, as a crafted container record
+    /// holds it, without marking the context modified.
+    #[cfg(test)]
+    pub(crate) fn plant_gram(&self, prev: PhraseToken, gram: &[u8]) {
+        self.store_gram(prev, gram).expect("store the gram");
+        self.mark_committed_write(true);
     }
 
     /// `Bigram::store(prev, gram)` on the pin's container.
@@ -1259,40 +1162,6 @@ impl UserStore {
         Ok(seed)
     }
 
-    /// [`Self::observe_selection`] for a step that
-    /// [`Self::check_training_step_with`] passed in `check`: the check
-    /// already trained the step's gram on the same store, in the same step
-    /// order, so the step stores that gram and applies that seed without
-    /// reading or training the gram again. A step the check did not record
-    /// next takes the full [`Self::observe_selection`].
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::observe_selection`].
-    pub(crate) fn observe_checked_selection(
-        &mut self,
-        check: &mut TrainingCheck,
-        last: PhraseToken,
-        cur: PhraseToken,
-    ) -> Result<u64, UserStoreError> {
-        // The step's gram moves out of the check: no later observation reads
-        // it, because the check already copied it for any later step.
-        let step = check.steps.get_mut(check.next).map(|step| {
-            (
-                step.prev == last && step.cur == cur,
-                step.seed,
-                step.stores.then(|| std::mem::take(&mut step.gram)),
-            )
-        });
-        check.next = check.next.saturating_add(1);
-        let Some((true, seed, gram)) = step else {
-            return self.observe_selection(last, cur);
-        };
-        let seed = self.commit_step(last, cur, SeedPolicy::Training, seed, gram.as_deref())?;
-        self.inner.dirty.set(true);
-        Ok(seed)
-    }
-
     /// Pronunciation half of train_result3 (074a2219 phonetic_lookup.h:925-927).
     pub(crate) fn train_pronunciations(
         &mut self,
@@ -1354,7 +1223,10 @@ impl UserStore {
         // predicted-selection policies meet at four shared steps with a
         // different failure sequence at each; a split by policy duplicates
         // the steps, and a split by step hides which policy fails where.
-        let mut row = self.gram_in(last)?;
+        let mut row = match policy {
+            SeedPolicy::Training => self.training_gram(last)?,
+            SeedPolicy::Predicted => self.gram_in(last)?,
+        };
         // Class (b), register row 100: the pin's `get_freq`/`insert_freq`/
         // `set_freq` walks read past a partial item (`ngram.cpp:190`,
         // `:241`, `:261`); refused before anything changes.
@@ -1434,7 +1306,7 @@ impl UserStore {
             // The failed container's `store` answers false.
             // `pinyin_choose_predicted_candidate` ignores that answer
             // (`pinyin.cpp:2638`); training's `check_result` dies on it
-            // (`phonetic_lookup.h:904`), which its step check reports first.
+            // (`phonetic_lookup.h:904`), and training aborts on that answer.
             Err(_) if self.user_bigram_failed() => {
                 if matches!(policy, SeedPolicy::Training) {
                     return Err(UserStoreError::FailedUserBigramStore);

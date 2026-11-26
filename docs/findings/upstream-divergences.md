@@ -215,9 +215,9 @@ An entry holds nothing else.
 ### Training on a malformed user-gram value reads past a partial item (policy row 100, class (b))
 
 - **Pin:** `SingleGram::insert_freq`, `get_freq` and `set_freq` walk with `cur_item != end` (`src/storage/ngram.cpp:178`, `:190`, `:231`, `:241`, `:252`, `:261`), reached from `train_result3` (`src/lookup/phonetic_lookup.h:889`) and `pinyin_choose_predicted_candidate` (`src/pinyin.cpp:2630-2633`); a partial tail is read past.
-- **oxpinyin:** `*_train` and `pinyin_choose_predicted_candidate` answer `false` with one facade-domain warning when the step would load such a predecessor; the raw value survives save and reopen byte for byte.
+- **oxpinyin:** `*_train` and `pinyin_choose_predicted_candidate` answer `false` with one facade-domain warning when the step would load such a predecessor; the raw value survives save and reopen byte for byte. Training stops at that step: the earlier steps stay trained and the context is marked modified.
 - **Decision:** accepted, class (b): the same out-of-bounds read as row 98, on the training path.
-- **Tests:** `training_over_a_partial_tail_refuses_and_keeps_the_raw_value`, `a_partial_tail_created_in_session_refuses_training` (`src/user/store_libpinyin.rs`).
+- **Tests:** `training_over_a_partial_tail_refuses_and_keeps_the_raw_value` (`src/user/store_libpinyin.rs`), `a_partial_tail_at_a_later_step_keeps_the_earlier_steps` (`src/runtime`).
 
 ### A partial phrase-table token tail cannot terminate the entry walk (policy row 101, class (b))
 
