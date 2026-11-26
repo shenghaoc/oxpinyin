@@ -199,7 +199,7 @@ fn train_second_word(
     seconds: &[DirectHashTable],
     token1: u32,
     params: GenerateParams,
-) -> bool {
+) {
     let mut single_gram = match bigram.load(token1) {
         Some(Loaded::Gram(gram)) => gram,
         None => KmmGram::new(),
@@ -226,7 +226,7 @@ fn train_second_word(
         .m_wc
         .wrapping_sub(saved_array_header_wc);
     if delta == 0 {
-        return false;
+        return;
     }
 
     bigram.store_checked(token1, &single_gram);
@@ -234,12 +234,10 @@ fn train_second_word(
     let mut magic_header = bigram.get_magic_header().unwrap_or_default();
     if magic_header.m_wc.wrapping_add(delta) < magic_header.m_wc {
         edge::report_magic_wc_overflow();
-        return false;
+        return;
     }
     magic_header.m_wc = magic_header.m_wc.wrapping_add(delta);
     bigram.set_magic_header_checked(&magic_header);
-
-    true
 }
 
 /// `train_word_pair` (`:137-210`).
@@ -297,10 +295,8 @@ fn subtract_from_unigram(hash_of_unigram: &mut DirectHashTable, token2: u32, cou
     let freq = freq.wrapping_sub(count);
     if freq > 0 {
         hash_of_unigram.insert(token2, freq);
-    } else if freq == 0 {
-        hash_of_unigram.steal(token2);
     } else {
-        std::process::abort();
+        hash_of_unigram.steal(token2);
     }
 }
 

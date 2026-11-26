@@ -170,7 +170,9 @@ struct Node {
     prev: u32,
     token: u32,
     poss: f32,
-    last_step: i32,
+    /// The step the node left from; `None` (the pin's `-1`) for the
+    /// sentence start.
+    last_step: Option<usize>,
 }
 
 /// One trellis step: insertion-ordered nodes plus a token → index map
@@ -235,7 +237,7 @@ where
         prev: NULL_TOKEN,
         token: SENTENCE_START,
         poss: 0.0,
-        last_step: -1,
+        last_step: None,
     });
 
     let bigram_lambda = model.lambda_f32();
@@ -299,11 +301,7 @@ fn extract_result(steps: &[Step]) -> Option<Vec<PhraseToken>> {
     let tail = *steps.last()?.top_results(1).first()?;
     let mut result = vec![NULL_TOKEN; nstep];
     let mut cursor = tail;
-    loop {
-        let index = cursor.last_step;
-        let Ok(index) = usize::try_from(index) else {
-            break;
-        };
+    while let Some(index) = cursor.last_step {
         result[index] = cursor.token;
         cursor = *steps.get(index)?.get(cursor.prev)?;
     }
@@ -404,7 +402,7 @@ fn unigram_gen_next_step(
             prev: cur.token,
             token,
             poss,
-            last_step: i32_from_step(start),
+            last_step: Some(start),
         },
     );
 }
@@ -445,7 +443,7 @@ fn bigram_gen_next_step(
             prev: cur.token,
             token,
             poss,
-            last_step: i32_from_step(start),
+            last_step: Some(start),
         },
     );
 }
@@ -466,10 +464,6 @@ fn save_next_step(steps: &mut [Step], index: usize, candidate: Node) {
         return;
     }
     step.insert(candidate);
-}
-
-fn i32_from_step(step: usize) -> i32 {
-    i32::try_from(step).unwrap_or(i32::MAX)
 }
 
 #[cfg(test)]

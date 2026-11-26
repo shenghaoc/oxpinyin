@@ -40,16 +40,17 @@ pub fn run(result_filename: Option<&CStr>, sources: &[&CStr]) {
 }
 
 /// `merge_two_k_mixture_model` (`:202-208`): array items first, then the
-/// magic header.
+/// magic header. The pin's `merge_array_items` always answers true.
 fn merge_two_k_mixture_model(target: &Database, new_one: &Database) -> bool {
-    merge_array_items(target, new_one) && merge_magic_header(target, new_one)
+    merge_array_items(target, new_one);
+    merge_magic_header(target, new_one)
 }
 
 /// `merge_array_items` (`:131-200`). The pin's `load` succeeds on a row
 /// shorter than its array header. A row the target lacks is copied unchanged, short or
 /// not (`:142-146`). Otherwise the two `check_result(get_array_header(…))`
 /// calls (`:155-156`) abort on a short row, as the pin's asserts do.
-fn merge_array_items(target: &Database, new_one: &Database) -> bool {
+fn merge_array_items(target: &Database, new_one: &Database) {
     for token in new_one.get_all_items() {
         // `check_result(new_one->load(…))` (`:142`).
         let Some(new_single_gram) = new_one.load(token) else {
@@ -87,7 +88,6 @@ fn merge_array_items(target: &Database, new_one: &Database) -> bool {
         let merged_single_gram = KmmGram::from_parts(merged_array_header, merged_array);
         target.store(token, &merged_single_gram);
     }
-    true
 }
 
 /// `merge_two_phrase_array` (`:38-94`): a merge-join of two token-ascending

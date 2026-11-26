@@ -27,10 +27,9 @@ struct Step {
     token: u32,
     /// Start of the phrase within the run (`m_phrase`).
     phrase_start: usize,
-    /// `size_t m_phrase_len`.
+    /// `size_t m_phrase_len`. The pin's `gint m_backward_nstep` is
+    /// `-m_phrase_len`, so the backtrace steps to `phrase_start`.
     phrase_len: usize,
-    /// `gint m_backward_nstep`, `i - k`.
-    backward_nstep: isize,
 }
 
 impl Step {
@@ -39,7 +38,6 @@ impl Step {
         token: NULL_TOKEN,
         phrase_start: 0,
         phrase_len: 0,
-        backward_nstep: 0,
     };
 }
 
@@ -73,7 +71,6 @@ fn segment_run(search: &PhraseSearch<'_>, run: &[u32]) -> Vec<(u32, usize, usize
                     token,
                     phrase_start: start,
                     phrase_len: span_len,
-                    backward_nstep: start as isize - end as isize,
                 };
             }
             if !found.continued {
@@ -87,14 +84,14 @@ fn segment_run(search: &PhraseSearch<'_>, run: &[u32]) -> Vec<(u32, usize, usize
     while cursor != 0 {
         let step = steps[cursor];
         phrases.push((step.token, step.phrase_start, step.phrase_len));
-        // A relaxed cell always has `i < k`, so its step is negative. A
-        // zero step is the default cell an unreachable tail would leave;
+        // A relaxed cell always has `i < k`, so its phrase is not empty. An
+        // empty phrase is the default cell an unreachable tail would leave;
         // the pin would loop there forever, and refusing to emit instead
         // is the only safe reading of that impossible state.
-        if step.backward_nstep >= 0 {
+        if step.phrase_len == 0 {
             break;
         }
-        cursor = cursor.wrapping_add(step.backward_nstep as usize);
+        cursor = step.phrase_start;
     }
     phrases.reverse();
     phrases

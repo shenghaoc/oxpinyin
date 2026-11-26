@@ -21,7 +21,9 @@ struct Node {
     prev: u32,
     token: u32,
     poss: f32,
-    last_step: i32,
+    /// The step the node left from; `None` (the pin's `-1`) for the
+    /// sentence start.
+    last_step: Option<usize>,
 }
 
 /// One column: `LookupStepContent` plus the `LookupStepIndex` map.
@@ -54,7 +56,7 @@ pub(crate) fn get_best_match(
         prev: NULL_TOKEN,
         token: SENTENCE_START,
         poss: 0.0,
-        last_step: -1,
+        last_step: None,
     });
     steps[0].index.insert(SENTENCE_START, 0);
 
@@ -171,7 +173,7 @@ fn unigram_gen_next_step(
         prev: current.token,
         token,
         poss,
-        last_step: i32::try_from(nstep).unwrap_or(i32::MAX),
+        last_step: Some(nstep),
     };
     save_next_step(steps, nstep + item.length, next);
 }
@@ -201,7 +203,7 @@ fn bigram_gen_next_step(
         prev: current.token,
         token,
         poss,
-        last_step: i32::try_from(nstep).unwrap_or(i32::MAX),
+        last_step: Some(nstep),
     };
     save_next_step(steps, nstep + item.length, next);
 }
@@ -231,13 +233,7 @@ fn final_step(steps: &[Step]) -> Vec<u32> {
     let Some(mut max) = max_node(last) else {
         return result;
     };
-    loop {
-        if max.last_step < 0 {
-            break;
-        }
-        let Some(step_pos) = usize::try_from(max.last_step).ok() else {
-            break;
-        };
+    while let Some(step_pos) = max.last_step {
         let Some(slot) = result.get_mut(step_pos) else {
             break;
         };

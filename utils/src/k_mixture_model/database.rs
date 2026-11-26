@@ -44,17 +44,17 @@ pub fn exit_on_short_single_gram() -> ! {
 
 /// One `KMixtureModelBigram` after its `attach`.
 pub struct Database {
-    inner: Option<KmmBigram>,
+    inner: KmmBigram,
 }
 
 impl Database {
-    /// `attach(filename, flags)`. A NULL or unrepresentable name leaves no
-    /// object, as the pin's `if (!dbfile) return false;` does.
+    /// `attach(filename, flags)`. A NULL or unrepresentable name opens
+    /// nothing, as the pin's `if (!dbfile) return false;` does.
     #[must_use]
     pub fn attach(filename: Option<&CStr>, mode: AttachMode) -> Self {
         let path = filename.and_then(open_path);
         Self {
-            inner: Some(attached(KmmBigram::attach(path.as_deref(), mode))),
+            inner: attached(KmmBigram::attach(path.as_deref(), mode)),
         }
     }
 
@@ -73,13 +73,13 @@ impl Database {
     /// `attach`'s answer.
     #[must_use]
     pub fn attached(&self) -> bool {
-        self.inner.as_ref().is_some_and(KmmBigram::attached)
+        self.inner.attached()
     }
 
     /// `get_magic_header`, preserving the backend's missing/size assertions.
     #[must_use]
     pub fn get_magic_header(&self) -> Option<KMixtureModelMagicHeader> {
-        self.inner.as_ref()?.get_magic_header().ok().flatten()
+        self.inner.get_magic_header().ok().flatten()
     }
 
     /// `check_result(get_magic_header(…))`.
@@ -93,33 +93,24 @@ impl Database {
 
     /// `set_magic_header`; the ignored-answer form.
     pub fn set_magic_header(&self, header: &KMixtureModelMagicHeader) {
-        if let Some(inner) = self.inner.as_ref() {
-            let _ = inner.set_magic_header(header);
-        }
+        let _ = self.inner.set_magic_header(header);
     }
 
     /// `check_result(set_magic_header(…))`.
     pub fn set_magic_header_checked(&self, header: &KMixtureModelMagicHeader) {
-        let stored = self
-            .inner
-            .as_ref()
-            .is_some_and(|inner| inner.set_magic_header(header).unwrap_or(false));
-        if !stored {
+        if !self.inner.set_magic_header(header).unwrap_or(false) {
             abort();
         }
     }
 
     /// `get_all_items`: every token key in the backend's native order. A
-    /// closed handle answers an empty array, as the pin's cleared `GArray`.
+    /// closed container answers an empty array, as the pin's cleared `GArray`.
     #[must_use]
     pub fn get_all_items(&self) -> Vec<u32> {
-        self.inner
-            .as_ref()
-            .and_then(KmmBigram::get_all_items)
-            .unwrap_or_default()
+        self.inner.get_all_items().unwrap_or_default()
     }
 
-    /// `load`; `None` where the pin's `load` answers false: no object, no
+    /// `load`; `None` where the pin's `load` answers false: nothing open, no
     /// row or a failed read (`flexible_ngram_bdb.h:169-181`,
     /// `flexible_ngram_kyotodb.h:196-205`, `flexible_ngram_tkrzwdb.h:
     /// 204-214`). A value shorter than the array header is
@@ -129,7 +120,7 @@ impl Database {
     /// pin's `check_result` does (`flexible_ngram_kyotodb.h:209-210`).
     #[must_use]
     pub fn load(&self, token: u32) -> Option<Loaded> {
-        match self.inner.as_ref()?.load(token) {
+        match self.inner.load(token) {
             Ok(gram) => gram.map(Loaded::Gram),
             Err(LoadError::ShortArrayHeader) => Some(Loaded::Short),
             // A failed record copy is a pin assert too (`tkrzwdb_utils.h:65`,
@@ -162,30 +153,22 @@ impl Database {
     /// writes the loaded bytes unchanged (`merge_k_mixture_model.cpp:
     /// 142-146`); the ignored-answer form.
     pub fn copy_single_gram(&self, token: u32, source: &Self) {
-        if let (Some(inner), Some(source)) = (self.inner.as_ref(), source.inner.as_ref()) {
-            let _ = inner.copy_single_gram(token, source);
-        }
+        let _ = self.inner.copy_single_gram(token, &source.inner);
     }
 
     /// `store`; the ignored-answer form.
     pub fn store(&self, token: u32, gram: &KmmGram) {
-        if let Some(inner) = self.inner.as_ref() {
-            let _ = inner.store(token, gram);
-        }
+        let _ = self.inner.store(token, gram);
     }
 
     /// `check_result(store(…))`.
     pub fn store_checked(&self, token: u32, gram: &KmmGram) {
-        let stored = self
-            .inner
-            .as_ref()
-            .is_some_and(|inner| inner.store(token, gram).unwrap_or(false));
-        if !stored {
+        if !self.inner.store(token, gram).unwrap_or(false) {
             abort();
         }
     }
 
-    /// `get_array_header`; `None` when there is no object, the token has no
+    /// `get_array_header`; `None` when nothing is open, the token has no
     /// row or the read fails. Those are the pin's `false` (`!m_db`, then
     /// `flexible_ngram_bdb.h:385`, `flexible_ngram_kyotodb.h:367` and
     /// `flexible_ngram_tkrzwdb.h:382`). A record shorter than the array
@@ -193,7 +176,7 @@ impl Database {
     /// `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`).
     #[must_use]
     pub fn get_array_header(&self, token: u32) -> Option<KMixtureModelArrayHeader> {
-        self.inner.as_ref()?.get_array_header(token).ok().flatten()
+        self.inner.get_array_header(token).ok().flatten()
     }
 
     /// `check_result(get_array_header(…))`.
@@ -207,29 +190,19 @@ impl Database {
 
     /// `set_array_header`; the ignored-answer form.
     pub fn set_array_header(&self, token: u32, header: &KMixtureModelArrayHeader) {
-        if let Some(inner) = self.inner.as_ref() {
-            let _ = inner.set_array_header(token, header);
-        }
+        let _ = self.inner.set_array_header(token, header);
     }
 
     /// `check_result(set_array_header(…))`.
     pub fn set_array_header_checked(&self, token: u32, header: &KMixtureModelArrayHeader) {
-        let stored = self
-            .inner
-            .as_ref()
-            .is_some_and(|inner| inner.set_array_header(token, header).unwrap_or(false));
-        if !stored {
+        if !self.inner.set_array_header(token, header).unwrap_or(false) {
             abort();
         }
     }
 
     /// `check_result(remove(…))`.
     pub fn remove_checked(&self, token: u32) {
-        let removed = self
-            .inner
-            .as_ref()
-            .is_some_and(|inner| inner.remove(token).unwrap_or(false));
-        if !removed {
+        if !self.inner.remove(token).unwrap_or(false) {
             abort();
         }
     }
