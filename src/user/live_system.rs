@@ -413,6 +413,33 @@ impl<'a> LiveSystemItems<'a> {
         }
     }
 
+    /// Copies the words of `token`'s effective system item onto the end of
+    /// `words`, as `convert_to_utf8` reads them: `get_phrase_item`, then
+    /// `get_phrase_string` into its buffer (074a2219 `lookup/lookup.cpp:45-47`,
+    /// `phrase_index.h:646-652`). One read: the live buffer's slot where the
+    /// library has one, else the shipped chunk's; [`Self::read_fields`]
+    /// answers the same item. `false` for a token outside a loaded system
+    /// library and for an item whose bytes end before a declared word. The
+    /// caller has checked that `token`'s library is a system library.
+    pub(crate) fn copy_phrase_words(
+        &self,
+        token: PhraseToken,
+        words: &mut smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>,
+    ) -> bool {
+        if !self.library_loaded(u32::from(crate::vocab::phrase_index_library_index(token))) {
+            return false;
+        }
+        match self.user.copy_live_words(token, words) {
+            LiveItemFields::Read(copied) => copied,
+            LiveItemFields::NoReadableItem => false,
+            LiveItemFields::NoLiveLibrary => self
+                .libraries
+                .library(token)
+                .and_then(|library| library.item_fields(token))
+                .is_some_and(|item| item.copy_phrase_words(words)),
+        }
+    }
+
     /// The answer for a token outside a loaded system library, or `None`.
     fn gate<R>(&self, token: PhraseToken) -> Option<Lookup<R>> {
         let library = crate::vocab::phrase_index_library_index(token);

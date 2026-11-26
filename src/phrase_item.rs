@@ -112,6 +112,23 @@ impl PhraseItemView<'_> {
         self.phrase_words().is_some()
     }
 
+    /// Copies the item's stored words onto the end of `words`, as
+    /// `get_phrase_string` copies them into the caller's buffer (074a2219
+    /// `phrase_index.h:105-110`). `false`, with nothing copied, where the
+    /// bytes end before a declared word.
+    pub(crate) fn copy_phrase_words(
+        &self,
+        words: &mut smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>,
+    ) -> bool {
+        let Some(stored) = self.phrase_words() else {
+            return false;
+        };
+        for word in stored {
+            words.push(u32::from_le_bytes(*word));
+        }
+        true
+    }
+
     /// The item's stored UCS-4 words, as `get_phrase_string` copies them
     /// (074a2219 `phrase_index.h:105-110`), where the bytes hold every
     /// declared word.

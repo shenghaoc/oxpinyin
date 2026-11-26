@@ -850,6 +850,20 @@ impl ReplayedLibrary {
         PhraseItemView::from_bytes(self.fields(slot)?)
     }
 
+    /// The item's fields under `slot`, as `get_phrase_item` reads them: one
+    /// offset load, then the two header bytes size the view
+    /// (`phrase_index.cpp:180-206`). `None` for an empty or out-of-content
+    /// offset and for a record too short for its header, where
+    /// [`Self::item_field_bytes`] answers no item with a header either.
+    pub(crate) fn field_view(&self, slot: u32) -> Option<PhraseItemView<'_>> {
+        let content = self.content();
+        let at = self.word(slot) as usize;
+        if at == 0 || at >= content.len() {
+            return None;
+        }
+        PhraseItemView::fields(content.get(at..)?)
+    }
+
     pub(crate) fn item_field_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
         self.fields(slot).map(Cow::Borrowed)
     }
