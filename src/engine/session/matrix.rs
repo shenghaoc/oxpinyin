@@ -102,6 +102,13 @@ impl ParsedMatrix {
         self.zeros.get(column).copied().unwrap_or(false)
     }
 
+    /// Whether the placed column holds no key, not even a zero key (no
+    /// column past the bound holds one).
+    #[must_use]
+    pub fn column_is_empty(&self, column: usize) -> bool {
+        self.get(column).is_none_or(<[ScanKey]>::is_empty) && !self.has_zero(column)
+    }
+
     /// Places the scan's keys without copying them. A key is placed at the
     /// column its edge starts from, or, where the separators are physical
     /// and the key rides over one, at the column its own text starts at.

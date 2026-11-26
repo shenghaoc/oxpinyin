@@ -35,7 +35,6 @@ fn pricing(
         memos: &[],
         generation: Box::leak(Box::new(super::GenerationView {
             columns: Box::leak(Box::default()),
-            zeros: &[],
         })),
         span: 0..0,
     }
@@ -84,10 +83,7 @@ fn span_pricing_sums_each_slots_paths_and_preserves_its_path_and_key_count() {
         vec![edge("n", 3, 4)],
     ]);
     let columns = super::ParsedMatrix::from_scan(&scan, 4, false);
-    let generation = super::GenerationView {
-        columns: &columns,
-        zeros: &columns.zeros,
-    };
+    let generation = super::GenerationView { columns: &columns };
     let dictionary = SpanDictionary {
         short_item_key: SyllableKey::from_text("xia").unwrap(),
         reads: Cell::new(0),
@@ -689,7 +685,7 @@ fn two_sub_epsilon_paths_admit_the_span_in_both_step_branches() {
     };
     for (blended, unigram) in [(Some(1.0), None), (None, Some(1.0))] {
         for count in [1, 2] {
-            let matrix = super::ScanMatrix::from_columns(vec![
+            let matrix = crate::engine::session::matrix::ScanMatrix::from_columns(vec![
                 vec![edge("ni"), edge("mi")][..count].to_vec(),
                 vec![],
             ]);

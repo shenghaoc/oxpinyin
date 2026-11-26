@@ -37,7 +37,6 @@ pub struct PreparedLookup {
     /// Consumed input-prefix length and keys captured when the lookup was prepared. Editing
     /// this field does not rebuild the stored lookup matrix.
     pub parsed: Parse,
-    scan: oxpinyin::__internal::ScanMatrix,
     matrix: oxpinyin::__internal::ParsedMatrix,
 }
 
@@ -87,11 +86,7 @@ pub fn prepare_lookup(
         oxpinyin::__internal::build_scan_matrix_over(&graph, &path, options, false),
     );
     let matrix = oxpinyin::__internal::ParsedMatrix::from_scan(&scan, parsed.consumed, true);
-    Ok(PreparedLookup {
-        parsed,
-        scan,
-        matrix,
-    })
+    Ok(PreparedLookup { parsed, matrix })
 }
 
 /// Run the existing PhoneticLookup<2,3> over an already-built matrix.
@@ -108,12 +103,7 @@ where
     L: oxpinyin::model::LanguageModel,
 {
     oxpinyin::__internal::nbest_sentences_generation(
-        oxpinyin::__internal::GenerationInput {
-            matrix: &prepared.scan,
-            bound: prepared.parsed.consumed,
-            physical_separators: true,
-            topology: Some(&prepared.matrix),
-        },
+        &prepared.matrix,
         dictionary,
         model,
         &[1],
