@@ -214,15 +214,15 @@ impl OptionArg {
                 // SAFETY: both option kinds initialise the string member;
                 // GLib writes a gchar pointer to it.
                 let string = unsafe { value.string };
-                let bytes = if string == self.default_string() {
-                    default.map(|text| text.to_bytes().to_vec())
+                let text = if string == self.default_string() {
+                    default.map(CStr::to_owned)
                 } else {
                     take_glib_string(string)
                 };
                 if matches!(self, Self::Filename(_)) {
-                    OptionValue::Filename(bytes)
+                    OptionValue::Filename(text)
                 } else {
-                    OptionValue::String(bytes)
+                    OptionValue::String(text)
                 }
             }
         }
@@ -255,11 +255,11 @@ pub enum OptionValue {
     Int(i32),
     /// A `gdouble`.
     Double(f64),
-    /// A filename's bytes: GLib's, or the default the entry started at;
-    /// `None` for a NULL default left unset.
-    Filename(Option<Vec<u8>>),
-    /// UTF-8 bytes from `G_OPTION_ARG_STRING`, or the original default.
-    String(Option<Vec<u8>>),
+    /// A filename: GLib's, or the default the entry started at; `None`
+    /// for a NULL default left unset.
+    Filename(Option<CString>),
+    /// UTF-8 text from `G_OPTION_ARG_STRING`, or the original default.
+    String(Option<CString>),
 }
 
 /// What the option sequence left: each entry's value, in entry order, and
@@ -270,7 +270,82 @@ pub struct ParsedOptions {
     /// The entries' values.
     pub values: Vec<OptionValue>,
     /// `argv[0..argc]` after parsing.
-    pub args: Vec<Vec<u8>>,
+    pub args: Vec<CString>,
+}
+
+impl ParsedOptions {
+    /// The flag entry `index` left.
+    ///
+    /// # Aborts
+    ///
+    /// Aborts when entry `index` is not a [`OptionArg::Flag`].
+    #[must_use]
+    pub fn flag(&self, index: usize) -> bool {
+        match self.values[index] {
+            OptionValue::Flag(value) => value,
+            _ => abort(),
+        }
+    }
+
+    /// The integer entry `index` left.
+    ///
+    /// # Aborts
+    ///
+    /// Aborts when entry `index` is not an [`OptionArg::Int`].
+    #[must_use]
+    pub fn int(&self, index: usize) -> i32 {
+        match self.values[index] {
+            OptionValue::Int(value) => value,
+            _ => abort(),
+        }
+    }
+
+    /// The double entry `index` left.
+    ///
+    /// # Aborts
+    ///
+    /// Aborts when entry `index` is not an [`OptionArg::Double`].
+    #[must_use]
+    pub fn double(&self, index: usize) -> f64 {
+        match self.values[index] {
+            OptionValue::Double(value) => value,
+            _ => abort(),
+        }
+    }
+
+    /// The filename entry `index` left, `None` for a NULL default left
+    /// unset.
+    ///
+    /// # Aborts
+    ///
+    /// Aborts when entry `index` is not an [`OptionArg::Filename`].
+    #[must_use]
+    pub fn filename(&self, index: usize) -> Option<&CStr> {
+        match &self.values[index] {
+            OptionValue::Filename(value) => value.as_deref(),
+            _ => abort(),
+        }
+    }
+
+    /// The string entry `index` left, `None` for a NULL default left
+    /// unset.
+    ///
+    /// # Aborts
+    ///
+    /// Aborts when entry `index` is not an [`OptionArg::String`].
+    #[must_use]
+    pub fn string(&self, index: usize) -> Option<&CStr> {
+        match &self.values[index] {
+            OptionValue::String(value) => value.as_deref(),
+            _ => abort(),
+        }
+    }
+
+    /// The arguments after `argv[0]`.
+    #[must_use]
+    pub fn operands(&self) -> &[CString] {
+        &self.args[1..]
+    }
 }
 
 /// `g_option_context_parse` failed and `option parsing failed:%s\n` has
@@ -374,7 +449,7 @@ pub fn parse_options(
         }
         // SAFETY: `arg` is one of those NUL-terminated strings, alive until
         // the context is freed.
-        args.push(unsafe { CStr::from_ptr(arg) }.to_bytes().to_vec());
+        args.push(unsafe { CStr::from_ptr(arg) }.to_owned());
     }
     let values = entries
         .iter()
@@ -388,17 +463,32 @@ pub fn parse_options(
     Ok(ParsedOptions { values, args })
 }
 
+/// [`parse_options`], with a refused parse as the pin's `exit(EINVAL)`
+/// after GLib's failure line (`ngseg.cpp:118-121`,
+/// `gen_binary_files.cpp:119-121`).
+///
+/// # Aborts
+///
+/// As [`parse_options`]; a refused parse exits the process.
+pub fn parse_options_or_exit(
+    parameter_string: &'static CStr,
+    entries: &[OptionEntry],
+    args: impl IntoIterator<Item = OsString>,
+) -> ParsedOptions {
+    parse_options(parameter_string, entries, args).unwrap_or_else(|OptionsFailed| exit(EINVAL))
+}
+
 /// Copies a GLib-allocated string and frees it with `g_free`.
-fn take_glib_string(string: *mut c_char) -> Option<Vec<u8>> {
+fn take_glib_string(string: *mut c_char) -> Option<CString> {
     if string.is_null() {
         return None;
     }
     // SAFETY: a non-NULL GLib string is NUL-terminated and only this call
     // reads and frees it.
-    let bytes = unsafe { CStr::from_ptr(string) }.to_bytes().to_vec();
+    let text = unsafe { CStr::from_ptr(string) }.to_owned();
     // SAFETY: as above; it is not used again.
     unsafe { glib_sys::g_free(string.cast()) };
-    Some(bytes)
+    Some(text)
 }
 
 /// `g_strsplit_set(string, delimiters, max_tokens)`
@@ -485,6 +575,7 @@ pub fn ucs4_to_utf8(str: &[u32]) -> Option<Vec<u8>> {
             core::ptr::null_mut(),
         )
     })
+    .map(CString::into_bytes)
 }
 
 /// `g_unichar_isspace(c)` (`src/storage/tag_utility.cpp:127`).

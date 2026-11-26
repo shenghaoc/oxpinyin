@@ -27,11 +27,11 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
-use std::ffi::{CStr, CString, OsString};
+use std::ffi::CString;
 
 use oxpinyin::data::{TableConf, TableConfError};
 use oxpinyin_tool_support::input as tool;
-use oxpinyin_tool_support::input::{OptionArg, OptionEntry, OptionValue, ParsedOptions};
+use oxpinyin_tool_support::input::{OptionArg, OptionEntry};
 
 mod dbm;
 pub mod export_interpolation;
@@ -69,28 +69,6 @@ pub(crate) fn gen_punct_entry() -> OptionEntry {
     }
 }
 
-/// The `--table-dir` value the entry started at (`.` when unset).
-pub(crate) fn table_dir(parsed: &ParsedOptions, index: usize) -> Option<CString> {
-    if let Some(OptionValue::Filename(Some(bytes))) = parsed.values.get(index) {
-        CString::new(bytes.clone()).ok()
-    } else {
-        None
-    }
-}
-
-/// `g_option_context_parse` with the pin's failure line already written; a
-/// refused parse is `exit(EINVAL)` (`gen_binary_files.cpp:119-121`).
-pub(crate) fn parse_options(
-    parameter_string: &'static CStr,
-    entries: &[OptionEntry],
-    args: impl IntoIterator<Item = OsString>,
-) -> ParsedOptions {
-    match tool::parse_options(parameter_string, entries, args) {
-        Ok(parsed) => parsed,
-        Err(_) => tool::exit(tool::EINVAL),
-    }
-}
-
 /// `SystemTableInfo2::load("table.conf")` followed by each utility's
 /// `load table.conf failed.` line and `exit(ENOENT)`; the pin's `abort()`
 /// sites are the same aborts.
@@ -115,8 +93,8 @@ pub(crate) fn name_c_string(name: &std::ffi::OsStr) -> Option<CString> {
     CString::new(os_bytes(name)).ok()
 }
 
-pub(crate) use dbm::Hash;
 pub use dbm::Tree;
+pub(crate) use dbm::{Gram, Hash, load_gram, store_gram};
 
 pub(crate) use libraries::{Libraries, Library, items_of, token_to_string};
 pub(crate) use table_text::{read_pinyin_record, read_punct_record};

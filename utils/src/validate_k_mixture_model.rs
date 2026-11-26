@@ -11,16 +11,12 @@ use oxpinyin_tool_support::input as tool;
 /// `main` (`:141-173`).
 pub fn main(args: impl IntoIterator<Item = std::ffi::OsString>) {
     let _ = tool::set_locale_from_environment();
-    let parsed = match tool::parse_options(c"- validate k mixture model", &[], args) {
-        Ok(parsed) => parsed,
-        Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
-    };
+    let parsed = tool::parse_options_or_exit(c"- validate k mixture model", &[], args);
     if parsed.args.len() != 2 {
         tool::k_mixture_model::report_wrong_arguments();
         tool::exit(tool::EINVAL);
     }
 
-    let filename = std::ffi::CString::new(parsed.args[1].clone()).unwrap_or_default();
-    let bigram = Database::open_read_only(Some(&filename));
+    let bigram = Database::open_read_only(Some(&parsed.args[1]));
     crate::k_mixture_model::validate::run(&bigram);
 }

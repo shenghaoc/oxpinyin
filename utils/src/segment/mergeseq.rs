@@ -18,6 +18,7 @@ use crate::segment::data;
 use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
 use crate::segment::{abort_on_pin_assert, c_string};
+use crate::training::parse_segmented_line;
 use crate::utils_helper::tag_token_text;
 use oxpinyin::vocab::{MAX_PHRASE_LENGTH, NULL_TOKEN, phrase_index_library_index};
 
@@ -48,22 +49,21 @@ impl Merger {
         self.queue.iter().map(|info| info.token_len).sum()
     }
 
-    /// `taglib_validate_token_with_string` (`tag_utility.cpp:407-417`)
-    /// then `check_result`'s `assert`. A token with no item, or an item
-    /// GLib cannot convert, is where the pin's `strcmp(NULL, …)` is
-    /// undefined: oxpinyin refuses instead of reproducing the fault.
-    fn validate(search: &PhraseSearch<'_>, token: u32, phrase: &CStr) -> bool {
-        let text = tag_token_text(
+    /// `taglib_token_to_string` (`tag_utility.cpp:384-405`), which
+    /// `taglib_validate_token_with_string` (`:407-417`) compares. A token
+    /// with no item, or an item GLib cannot convert, is where the pin's
+    /// `strcmp(NULL, …)` is undefined: [`parse_segmented_line`] refuses
+    /// instead of reproducing the fault.
+    fn token_text(search: &PhraseSearch<'_>, token: u32) -> Option<std::ffi::CString> {
+        tag_token_text(
             token,
             usize::from(phrase_index_library_index(token)) == 0,
             |token| search.item(token),
             |item| Some(item.words),
             |token| tool::segmentation::report_unknown_token(token as i32),
-        );
-        let Some(text) = text.as_deref().and_then(c_string) else {
-            tool::exit(1);
-        };
-        text.as_bytes() == phrase.to_bytes()
+        )
+        .as_deref()
+        .and_then(c_string)
     }
 
     /// `merge_sequence` (`mergeseq.cpp:78-126`).
@@ -109,18 +109,9 @@ impl Merger {
 
     /// `feed_line` (`mergeseq.cpp:150-197`).
     fn feed_line(&mut self, search: &PhraseSearch<'_>, line: &CStr, output: &OutputStream) {
-        let mut parts = Vec::new();
-        let token = if line.to_bytes().is_empty() {
-            // `if (0 == strlen(line)) break;`
-            NULL_TOKEN
-        } else {
-            parts = tool::strsplit_set(line, c" \t", 2);
-            if parts.len() != 2 {
-                // `if (2 != g_strv_length(strs)) abort();`
-                abort_on_pin_assert();
-            }
-            tool::atoi(&parts[0]) as u32
-        };
+        // An empty line is the NULL token; another splits into a token and
+        // the phrase it must spell (`check_result`'s `assert`).
+        let token = parse_segmented_line(line, |token| Self::token_text(search, token));
 
         if token == NULL_TOKEN {
             // Empty the queue, then echo the separator line verbatim.
@@ -134,12 +125,6 @@ impl Merger {
             }
             tool::segmentation::print_text_line(output, Some(line));
             return;
-        }
-
-        let phrase = &parts[1];
-        if !Self::validate(search, token, phrase) {
-            // `check_result(taglib_validate_token_with_string(...))`.
-            abort_on_pin_assert();
         }
 
         // `phrase_index->get_phrase_item(token, item)` (answer ignored):
@@ -174,8 +159,8 @@ pub unsafe fn main(args: impl IntoIterator<Item = OsString>) {
     {
         let _ = tool::set_locale_from_environment();
         let entries = [crate::segment::outputfile_entry()];
-        let parsed = crate::segment::parse_options(c"- merge word sequence", &entries, args);
-        let output = crate::segment::open_output(&parsed.values[0]);
+        let parsed = tool::parse_options_or_exit(c"- merge word sequence", &entries, args);
+        let output = crate::segment::open_output(parsed.filename(0));
         crate::segment::refuse_extra_arguments(&parsed.args);
         let mut input = Input::open(&parsed.args);
         let tables = data::load_or_exit(false);

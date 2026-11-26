@@ -5,9 +5,9 @@
 //! `--deleted-bigram-file` (default `k_mixture_model_deleted_ngram.db`);
 //! positional arguments are ignored (`:98-155`).
 
-use std::ffi::{CString, OsString};
+use std::ffi::OsString;
 
-use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry, OptionValue};
+use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry};
 
 /// `main` (`:98-155`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
@@ -30,18 +30,6 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             arg_description: None,
         },
     ];
-    let parsed = match tool::parse_options(c"- estimate k mixture model", &entries, args) {
-        Ok(parsed) => parsed,
-        Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
-    };
-    let filename = |value: &OptionValue| {
-        if let OptionValue::Filename(value) = value {
-            value.clone().and_then(|bytes| CString::new(bytes).ok())
-        } else {
-            None
-        }
-    };
-    let bigram_filename = filename(&parsed.values[0]);
-    let deleted_filename = filename(&parsed.values[1]);
-    crate::k_mixture_model::estimate::run(bigram_filename.as_deref(), deleted_filename.as_deref());
+    let parsed = tool::parse_options_or_exit(c"- estimate k mixture model", &entries, args);
+    crate::k_mixture_model::estimate::run(parsed.filename(0), parsed.filename(1));
 }

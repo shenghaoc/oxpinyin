@@ -163,12 +163,12 @@ fn the_option_sequence_fills_the_entries_and_keeps_the_rest() {
     assert_eq!(
         parsed.values,
         [
-            OptionValue::Filename(Some(b"out.txt".to_vec())),
+            OptionValue::Filename(Some(c"out.txt".to_owned())),
             OptionValue::Flag(true),
             OptionValue::Double(0.99),
         ]
     );
-    assert_eq!(parsed.args, [b"ngseg".to_vec(), b"in.txt".to_vec()]);
+    assert_eq!(parsed.args, [c"ngseg".to_owned(), c"in.txt".to_owned()]);
 }
 
 #[test]

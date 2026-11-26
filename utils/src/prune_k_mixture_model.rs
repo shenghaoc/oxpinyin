@@ -5,9 +5,9 @@
 //! positional file; `argc != 2` is `wrong arguments.` and `EINVAL`
 //! (`:120-123`).
 
-use std::ffi::{CString, OsString};
+use std::ffi::OsString;
 
-use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry, OptionValue};
+use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry};
 
 /// `main` (`:107-191`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
@@ -30,24 +30,10 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             arg_description: None,
         },
     ];
-    let parsed = match tool::parse_options(c"- prune k mixture model", &entries, args) {
-        Ok(parsed) => parsed,
-        Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
-    };
+    let parsed = tool::parse_options_or_exit(c"- prune k mixture model", &entries, args);
     if parsed.args.len() != 2 {
         tool::k_mixture_model::report_wrong_arguments();
         tool::exit(tool::EINVAL);
     }
-    let prune_k = if let OptionValue::Int(value) = parsed.values[0] {
-        value
-    } else {
-        0
-    };
-    let cdf = if let OptionValue::Double(value) = parsed.values[1] {
-        value
-    } else {
-        0.0
-    };
-    let filename = CString::new(parsed.args[1].clone()).unwrap_or_default();
-    crate::k_mixture_model::prune::run(Some(&filename), prune_k, cdf);
+    crate::k_mixture_model::prune::run(Some(&parsed.args[1]), parsed.int(0), parsed.double(1));
 }

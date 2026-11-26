@@ -49,26 +49,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             arg_description: None,
         },
     ];
-    let parsed = match tool::parse_options(c"- generate k mixture model", &entries, args) {
-        Ok(parsed) => parsed,
-        Err(tool::OptionsFailed) => tool::exit(tool::EINVAL),
-    };
+    let parsed = tool::parse_options_or_exit(c"- generate k mixture model", &entries, args);
     let params = crate::k_mixture_model::generate::GenerateParams {
-        max_occurs: if let OptionValue::Int(value) = parsed.values[1] {
-            value
-        } else {
-            crate::k_mixture_model::generate::DEFAULT_MAX_OCCURS
-        },
-        max_increase_rate: if let OptionValue::Double(value) = parsed.values[2] {
-            value
-        } else {
-            crate::k_mixture_model::generate::DEFAULT_MAX_INCREASE_RATE
-        },
-        train_pi_gram: if let OptionValue::Flag(value) = parsed.values[0] {
-            value
-        } else {
-            true
-        },
+        max_occurs: parsed.int(1),
+        max_increase_rate: parsed.double(2),
+        train_pi_gram: parsed.flag(0),
     };
     let filename = if let OptionValue::Filename(value) = &parsed.values[3] {
         value.clone().and_then(|bytes| CString::new(bytes).ok())

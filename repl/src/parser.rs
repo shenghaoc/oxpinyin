@@ -4,7 +4,7 @@ use std::ffi::{CString, OsString};
 
 use oxpinyin::OptionBits;
 use oxpinyin::parser::{DoublePinyinParser, ZhuyinParser, ZhuyinScheme};
-use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry, OptionValue};
+use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry};
 use oxpinyin_tool_support::parser::{Key, Parse, parse_direct};
 
 enum Parser {
@@ -77,14 +77,11 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             arg_description: Some(c"standard hsu dachen26"),
         },
     ];
-    let parsed = tool::parse_options(c"- test pinyin parser", &entries, args)
-        .unwrap_or_else(|_| tool::exit(tool::EINVAL));
+    let parsed = tool::parse_options_or_exit(c"- test pinyin parser", &entries, args);
     let string = |index| {
-        if let OptionValue::String(Some(value)) = &parsed.values[index] {
-            value.as_slice()
-        } else {
-            b""
-        }
+        parsed
+            .string(index)
+            .map_or(&b""[..], std::ffi::CStr::to_bytes)
     };
     let parser = match string(0) {
         b"doublepinyin" => Parser::Double,
@@ -100,7 +97,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     };
     let mut options =
         OptionBits::PINYIN_CORRECT_ALL | OptionBits::USE_TONE | OptionBits::USE_RESPLIT_TABLE;
-    if matches!(parsed.values[1], OptionValue::Flag(true)) {
+    if parsed.flag(1) {
         options |= OptionBits::PINYIN_INCOMPLETE | OptionBits::ZHUYIN_INCOMPLETE;
     }
     let mut input = tool::LineReader::stdin();

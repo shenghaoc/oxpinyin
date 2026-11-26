@@ -11,7 +11,7 @@
 use std::ffi::CString;
 use std::ffi::OsString;
 
-use oxpinyin_tool_support::input::{self as tool, OptionValue, OutputStream};
+use oxpinyin_tool_support::input::{self as tool, OutputStream};
 
 use crate::segment::data;
 use crate::segment::input::Input;
@@ -73,14 +73,14 @@ pub unsafe fn main(args: impl IntoIterator<Item = OsString>) {
             crate::segment::outputfile_entry(),
             crate::segment::extra_enter_entry(),
         ];
-        let parsed = crate::segment::parse_options(c"- n-gram segment", &entries, args);
-        let output = crate::segment::open_output(&parsed.values[0]);
+        let parsed = tool::parse_options_or_exit(c"- n-gram segment", &entries, args);
+        let output = crate::segment::open_output(parsed.filename(0));
         crate::segment::refuse_extra_arguments(&parsed.args);
         let mut input = Input::open(&parsed.args);
         let tables = data::load_or_exit(true);
         let search = PhraseSearch::new(tables.phrase.as_ref(), &tables.libraries);
         let lambda = tables.conf.lambda_f32();
-        let gen_extra_enter = matches!(parsed.values[1], OptionValue::Flag(true));
+        let gen_extra_enter = parsed.flag(1);
 
         segment_lines(&mut input, &output, &search, gen_extra_enter, |run| {
             deal_with_segmentable(&search, tables.bigram.as_ref(), lambda, run, &output);

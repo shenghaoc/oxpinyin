@@ -127,8 +127,8 @@ pub unsafe fn main(args: impl IntoIterator<Item = OsString>) {
             crate::segment::outputfile_entry(),
             crate::segment::extra_enter_entry(),
         ];
-        let parsed = crate::segment::parse_options(c"- shortest path segment", &entries, args);
-        let output = crate::segment::open_output(&parsed.values[0]);
+        let parsed = tool::parse_options_or_exit(c"- shortest path segment", &entries, args);
+        let output = crate::segment::open_output(parsed.filename(0));
         crate::segment::refuse_extra_arguments(&parsed.args);
         let mut input = Input::open(&parsed.args);
         let tables = data::load_or_exit(false);
