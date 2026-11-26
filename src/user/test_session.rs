@@ -328,7 +328,8 @@ pub(crate) fn seeded(
         .chain(layout.system_logs())
         .map(|(_, name)| name.display().into_owned())
         .chain(
-            [UserDbm::Bigram, UserDbm::PinyinIndex, UserDbm::PhraseIndex].map(UserDbm::file_name),
+            [UserDbm::Bigram, UserDbm::PinyinIndex, UserDbm::PhraseIndex]
+                .map(|dbm| dbm.file_name().to_owned()),
         );
     for name in stale {
         let _ = std::fs::remove_file(dir.join(name));

@@ -113,26 +113,11 @@ impl MaskOutOutcome {}
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
 /// behind NULL. Carried out of [`ContextCore::try_open`] so the facades
 /// can log it; the return value stays NULL either way.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OpenFailure {
     /// The runtime could not open the system directory.
-    Runtime(OpenError),
-}
-
-impl core::fmt::Display for OpenFailure {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Runtime(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for OpenFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Runtime(error) => Some(error),
-        }
-    }
+    #[error("{0}")]
+    Runtime(#[source] OpenError),
 }
 
 /// How the C facade reports a failed init. The ABI adapter performs the

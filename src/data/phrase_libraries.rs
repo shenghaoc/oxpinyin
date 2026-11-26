@@ -136,7 +136,7 @@ impl PhraseLibraries {
         unmapped: &mut dyn FnMut(&Path),
     ) -> Result<(), LibraryError> {
         // `g_build_filename`: a name never leaves the directory.
-        let path = crate::input::build_chunk_path(dir, file);
+        let path = crate::input::build_path(dir, file);
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its
             // reported size where the boundary says the loader opens

@@ -355,7 +355,7 @@ fn ieee_relax_and_best_keep_first_on_ties_and_nan() {
     let node = |token, poss| Node {
         token,
         prev: 1,
-        last_step: 0,
+        last_step: Some(0),
         poss,
     };
     let mut step = Step::default();

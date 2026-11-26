@@ -76,4 +76,4 @@ impl FileName for CString {
     }
 }
 
-pub(crate) use path::{build_bytes, build_chunk_path, build_path};
+pub(crate) use path::{build_bytes, build_path};

@@ -651,42 +651,27 @@ fn library_metadata(libraries: &PhraseLibraries, nibble: u8) -> Option<SystemLib
 
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PersistenceError {
     /// Filesystem failure.
+    #[error("user file io: {0}")]
     Io(std::io::Error),
     /// A store container failed to open, write or read.
+    #[error("user file store: {0}")]
     Store(StoreError),
     /// A byte stream did not parse under its frozen format.
+    #[error("user file codec error")]
     Codec,
     /// `MemoryChunk::mmap` refused a system library's file at the save's
     /// remap: the save stopped at that library.
+    #[error("a system library's file cannot be mapped again (upstream: mmap failed!)")]
     SystemRemapFailed,
     /// A bulk copy into a fresh chunk reaches the pin's unsafe threshold:
     /// the save stops there and answers `false`,
     /// keeping the earlier files as written, and the session stays dirty.
+    #[error("a save copy reaches the pin's unsafe size (memory_chunk.h:95-98)")]
     SaveTooLarge,
 }
-
-impl std::fmt::Display for PersistenceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(error) => write!(f, "user file io: {error}"),
-            Self::Store(error) => write!(f, "user file store: {error}"),
-            Self::Codec => f.write_str("user file codec error"),
-            Self::SystemRemapFailed => write!(
-                f,
-                "a system library's file cannot be mapped again (upstream: mmap failed!)"
-            ),
-            Self::SaveTooLarge => write!(
-                f,
-                "a save copy reaches the pin's unsafe size (memory_chunk.h:95-98)"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for PersistenceError {}
 
 impl PersistenceError {
     /// Whether a save carries on past this failure of one file, as the

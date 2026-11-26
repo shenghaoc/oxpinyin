@@ -240,22 +240,26 @@ impl TableConfSite {
 }
 
 /// Why a `table.conf` was refused.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum TableConfError {
     /// `fopen` answered NULL (`:199-202`): the pin has written `open %s
     /// failed.\n` and returns `false`, after which `pinyin_init` writes
     /// `load %s failed!` and answers NULL. A path holding a NUL, which no C
     /// caller can pass, is refused here without a call.
+    #[error("table.conf cannot be opened")]
     Unopenable,
     /// One of the first three directives did not match: the pin's ordinary
     /// `false` return (`:209-224`), after which `pinyin_init` writes
     /// `load %s failed!` and answers NULL. No warning.
+    #[error("table.conf header does not match")]
     Header,
     /// The `source table format:` directive did not match, so the pin
     /// compares a buffer it never wrote (`:228-229`): undefined behaviour.
+    #[error("table.conf has no source table format line")]
     UninitialisedSourceFormat,
     /// An invalid directive or slot, carrying its established boundary warning.
     /// Malformed addon fields can also reach this refusal under the native grammar.
+    #[error("{}", .0.warning())]
     Abort(TableConfSite),
 }
 
@@ -273,21 +277,6 @@ impl TableConfError {
         }
     }
 }
-
-impl core::fmt::Display for TableConfError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Unopenable => f.write_str("table.conf cannot be opened"),
-            Self::Header => f.write_str("table.conf header does not match"),
-            Self::UninitialisedSourceFormat => {
-                f.write_str("table.conf has no source table format line")
-            }
-            Self::Abort(site) => f.write_str(site.warning()),
-        }
-    }
-}
-
-impl std::error::Error for TableConfError {}
 
 /// A parsed system `table.conf`.
 #[derive(Clone, Debug, PartialEq)]

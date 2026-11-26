@@ -99,16 +99,19 @@ pub struct LayoutFault {
 }
 
 /// Why a phrase library could not be opened.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum LibraryError {
     /// The file could not be read or mapped.
-    Io(std::io::Error),
+    #[error("phrase library I/O error: {0}")]
+    Io(#[source] std::io::Error),
     /// The chunk header, checksum, or sub-index layout is not what the
     /// upstream reader would accept.
+    #[error("phrase library format error: {0}")]
     Format(String),
     /// The chunk header and checksum verified, but `SubPhraseIndex::load`
     /// refused the layout through a check whose `false` the pin ignores. The caller loads an empty sub-index and reports the
     /// success the pin reports.
+    #[error("phrase library layout error: separator check failed")]
     Layout(LayoutFault),
     /// Upstream's `MemoryChunk::mmap` answers `false` for `path`: the file
     /// cannot be opened or mapped, is shorter than the chunk header, its
@@ -120,14 +123,17 @@ pub enum LibraryError {
     /// the pin reaches through an out-of-bounds read is
     /// [`LibraryError::Format`]. `cause` is the [`LibraryError::Io`] or
     /// [`LibraryError::Format`] that says which.
+    #[error("{cause}")]
     Unmappable {
         /// The file, as the caller named it.
         path: PathBuf,
         /// Why the chunk did not map.
+        #[source]
         cause: Box<LibraryError>,
     },
     /// The library's `table.conf` row is one the pin `assert`s on at this
     /// call (`pinyin.cpp:491`, `memory_chunk.h:493`).
+    #[error("{0}")]
     Row(RowFault),
 }
 
@@ -148,6 +154,17 @@ pub enum RowFault {
     ChunkHeaderRead,
 }
 
+impl fmt::Display for RowFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NullChunkName => f.write_str("table.conf row names no chunk file"),
+            Self::ChunkHeaderRead => {
+                f.write_str("chunk path is a directory the header cannot be read from")
+            }
+        }
+    }
+}
+
 impl LibraryError {
     /// The file `MemoryChunk::mmap` refused, when this error is that
     /// refusal; `None` for any other fault.
@@ -156,31 +173,6 @@ impl LibraryError {
         match self {
             Self::Unmappable { path, .. } => Some(path),
             Self::Io(_) | Self::Format(_) | Self::Layout(_) | Self::Row(_) => None,
-        }
-    }
-}
-
-impl fmt::Display for LibraryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "phrase library I/O error: {e}"),
-            Self::Format(message) => write!(f, "phrase library format error: {message}"),
-            Self::Layout(_) => f.write_str("phrase library layout error: separator check failed"),
-            Self::Unmappable { cause, .. } => cause.fmt(f),
-            Self::Row(RowFault::NullChunkName) => f.write_str("table.conf row names no chunk file"),
-            Self::Row(RowFault::ChunkHeaderRead) => {
-                f.write_str("chunk path is a directory the header cannot be read from")
-            }
-        }
-    }
-}
-
-impl std::error::Error for LibraryError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(e) => Some(e),
-            Self::Format(_) | Self::Layout(_) | Self::Row(_) => None,
-            Self::Unmappable { cause, .. } => Some(cause.as_ref()),
         }
     }
 }

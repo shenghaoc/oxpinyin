@@ -85,9 +85,9 @@ pub enum CandidateKind {
 /// Sized to need (48 bytes): the three span counts are `u32`, the width of
 /// the segment graph's positions
 /// ([`MAX_GRAPH_POSITION`](crate::graph::MAX_GRAPH_POSITION)), since
-/// a key is at least one byte; and the n-best rank is a byte
-/// with `NO_ROW` for "not a row", the pin's own `gint8 m_nbest_index`
-/// width (`pinyin.cpp:102` at 074a2219). A window of a
+/// a key is at least one byte; and the n-best rank is an `Option<u8>`, the
+/// pin's own `gint8 m_nbest_index` width (`pinyin.cpp:102` at 074a2219)
+/// plus its absent state. A window of a
 /// hundred-odd rows is retained per instance, so each byte here is a
 /// hundred-odd bytes of instance heap.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,8 +100,7 @@ pub struct Candidate {
     /// `None` for a non-row candidate. The rank is the *original* tail
     /// order, so a row that survives the NBEST-wins dedup still knows
     /// which `NbestRow` is its own even when its list position shifted.
-    /// [`NO_ROW`] stands for `None`.
-    nbest_index: u8,
+    nbest_index: Option<u8>,
     /// Where the candidate's span starts, in the coordinates of the window
     /// it was built in — upstream's `lookup_candidate_t::m_begin`
     /// (`pinyin.h`/`zhuyin.h`; set beside `m_end` at `zhuyin.cpp:1509,1595`
@@ -113,9 +112,6 @@ pub struct Candidate {
     span_start: u32,
     kind: CandidateKind,
 }
-
-/// The `nbest_index` value of a candidate that is not an n-best row.
-const NO_ROW: u8 = u8::MAX;
 
 // The row width the doc above claims; a field that grows it shows up here.
 #[cfg(target_pointer_width = "64")]
@@ -144,10 +140,7 @@ impl Candidate {
             token,
             consumed_keys: narrow(consumed_keys),
             consumed_bytes: narrow(consumed_bytes),
-            nbest_index: match nbest_index {
-                Some(rank) if rank != NO_ROW => rank,
-                _ => NO_ROW,
-            },
+            nbest_index,
             span_start: 0,
             kind,
         }
@@ -228,10 +221,9 @@ impl Candidate {
     /// duplicate without renumbering.
     #[must_use]
     pub const fn nbest_index(&self) -> u8 {
-        if self.nbest_index == NO_ROW {
-            0
-        } else {
-            self.nbest_index
+        match self.nbest_index {
+            Some(rank) => rank,
+            None => 0,
         }
     }
 
@@ -242,11 +234,7 @@ impl Candidate {
     /// never by list position, which the NBEST-wins dedup can shift.
     #[must_use]
     pub const fn nbest_row(&self) -> Option<u8> {
-        if self.nbest_index == NO_ROW {
-            None
-        } else {
-            Some(self.nbest_index)
-        }
+        self.nbest_index
     }
 }
 

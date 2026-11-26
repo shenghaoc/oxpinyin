@@ -37,7 +37,6 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
 
-use std::fmt;
 use std::ops::{Bound, ControlFlow};
 use std::path::Path;
 
@@ -69,7 +68,8 @@ pub enum StoreError {
 }
 
 /// A non-I/O failure reported by the storage backend.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
 pub struct BackendError {
     message: String,
 }
@@ -85,14 +85,6 @@ impl From<String> for BackendError {
         Self { message }
     }
 }
-
-impl fmt::Display for BackendError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for BackendError {}
 
 /// What a scan visitor answers after each row: [`ControlFlow::Continue`]
 /// to go on, [`ControlFlow::Break`] to end the scan right there. A break

@@ -14,16 +14,9 @@ use std::ffi::CStr;
 use crate::vocab::PhraseText;
 
 /// A byte sequence outside the converter's accepted set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid historical UTF-8 sequence")]
 pub(crate) struct Ucs4Error;
-
-impl core::fmt::Display for Ucs4Error {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str("invalid historical UTF-8 sequence")
-    }
-}
-
-impl std::error::Error for Ucs4Error {}
 
 /// Decodes `bytes` to raw UCS-4 words.
 ///

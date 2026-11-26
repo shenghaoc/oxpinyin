@@ -889,7 +889,7 @@ impl AddonDictionary {
         let Some(file) = file else {
             return Err(LibraryError::Row(RowFault::NullChunkName));
         };
-        let path = crate::input::build_chunk_path(dir, file.as_ref());
+        let path = crate::input::build_path(dir, file.as_ref());
         match std::fs::metadata(&path) {
             // A directory is `MemoryChunk::mmap`'s to judge by its reported
             // size where the boundary says the loader opens directories; on

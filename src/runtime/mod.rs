@@ -70,11 +70,13 @@ pub(crate) fn merge_suggestion_rows(system: &[u32], user_rows: &[(Vec<u8>, Vec<u
 ///
 /// A missing or irregular system DBM file leaves an empty table.
 /// Initialization continues (`pinyin.cpp:357,369,396` at 074a2219).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     /// The dictionary tables failed to open or parse.
+    #[error("dictionary error: {0}")]
     Dict(DictError),
     /// The language model failed to open or parse.
+    #[error("language model error: {0}")]
     Lm(LmError),
     /// The system `table.conf` is one the pin refuses or dies on
     /// (`SystemTableInfo2::load`, `table_info.cpp:194-294`, and the init
@@ -84,16 +86,19 @@ pub enum OpenError {
     /// the C adapters answer with NULL and no warning. Every other kind
     /// aborts in the C adapters at the pin's abort sites, and is an undefined-read site the C ABI answers with NULL
     /// and one warning otherwise.
+    #[error("table.conf: {0}")]
     TableConf(TableConfError),
     /// A `SYSTEM_FILE` library's user `.dbin` replay reached a pin
     /// assertion while the library loop merged it
     /// ([`crate::user::JournalFault`], rows 91 and 108): the open stops at
     /// that library, after `check_format`'s writes, and the C adapters abort.
+    #[error("journal replay: {0}")]
     Journal(crate::user::JournalFault),
     /// The user session could not be built after the library loop handed
     /// it the system libraries ([`crate::user::UserStoreError::SessionSeed`],
     /// or another failure of the open past `check_format`). The pin's
     /// counterparts die, and the C adapters abort.
+    #[error("user session: {0}")]
     UserSession(crate::user::UserStoreError),
 }
 
@@ -131,20 +136,6 @@ pub(crate) enum RemapStep {
     /// row 96). The walk is over.
     Directory,
 }
-
-impl core::fmt::Display for OpenError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Dict(error) => write!(f, "dictionary error: {error}"),
-            Self::Lm(error) => write!(f, "language model error: {error}"),
-            Self::TableConf(error) => write!(f, "table.conf: {error}"),
-            Self::Journal(fault) => write!(f, "journal replay: {fault}"),
-            Self::UserSession(error) => write!(f, "user session: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for OpenError {}
 
 // ── Addon libraries ─────────────────────────────────────────────────────
 
@@ -1974,7 +1965,7 @@ impl Runtime {
             let Some(name) = row.system.as_ref() else {
                 continue;
             };
-            let path = crate::input::build_chunk_path(dir, name.as_ref());
+            let path = crate::input::build_path(dir, name.as_ref());
             let opened = if walk.reload {
                 crate::data::phrase_library::PhraseLibrary::open_retaining_layout(&path)
             } else {
