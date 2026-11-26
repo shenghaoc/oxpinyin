@@ -11,17 +11,6 @@ use crate::ffi::borrow_or_return;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, ZhuyinInstance};
 
-fn parse_chewing_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> usize {
-    // The pin preserves candidate rows and strings across parsing; only a
-    // candidate guess, reset or instance destruction invalidates them.
-    inst.core
-        .parse_chewing_more(text, oxpinyin::facade::ChewingCorrections::FromOptions)
-}
-
-fn parse_full_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> usize {
-    inst.core.parse_full_more_zhuyin(text)
-}
-
 /// Parse multiple full pinyins.
 /// # C signature
 /// ```c
@@ -42,19 +31,13 @@ pub unsafe extern "C" fn zhuyin_parse_more_full_pinyins(
     instance: *mut ZhuyinInstance,
     pinyins: *const c_char,
 ) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-
+    let mut inst = borrow_or_return!(instance, instance_mut, 0);
     let text = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyins) },
     );
-    // SAFETY: Handles guarantees a live instance; the NULL check precedes
-    // conversion. Serial calls and the absence of retained views permit this borrow.
-    let mut inst = unsafe { instance_mut(instance) };
-    parse_full_more(&mut inst, &text)
+    inst.core.parse_full_more_zhuyin(&text)
 }
 
 /// Parse multiple chewing (bopomofo) inputs.
@@ -78,19 +61,16 @@ pub unsafe extern "C" fn zhuyin_parse_more_chewings(
     instance: *mut ZhuyinInstance,
     chewings: *const c_char,
 ) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-
+    let mut inst = borrow_or_return!(instance, instance_mut, 0);
     let text = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(chewings) },
     );
-    // SAFETY: Handles guarantees a live instance; the NULL check precedes
-    // conversion. Serial calls and the absence of retained views permit this borrow.
-    let mut inst = unsafe { instance_mut(instance) };
-    parse_chewing_more(&mut inst, &text)
+    // The pin preserves candidate rows and strings across parsing; only a
+    // candidate guess, reset or instance destruction invalidates them.
+    inst.core
+        .parse_chewing_more(&text, oxpinyin::facade::ChewingCorrections::FromOptions)
 }
 
 /// Get the parsed length of the input.

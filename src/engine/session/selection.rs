@@ -506,14 +506,6 @@ where
         Ok(len)
     }
 
-    /// The matrix size a choose validates the store to, the pin's
-    /// `m_constraints->len` after `validate_constraint` (074a2219
-    /// `phonetic_lookup.cpp:64-65`): 0 for a parse without keys.
-    #[must_use]
-    pub(crate) fn selection_capacity(&self) -> usize {
-        self.selection_constraint_size()
-    }
-
     /// The pin's choose of an NBEST row: only the rank is read off the row;
     /// the results, their spans and their text are this session's own
     /// (074a2219 `pinyin.cpp:2515-2520`). The caller checks
@@ -638,7 +630,11 @@ where
     /// otherwise its size is parsed_len + 1, not the raw input length
     /// (074a2219 storage/phonetic_key_matrix.cpp:30-48). Read the retained
     /// key path and matrix rather than keeping another parse-length field.
-    fn selection_constraint_size(&self) -> usize {
+    /// It is the matrix size a choose validates the store to, the pin's
+    /// `m_constraints->len` after `validate_constraint` (074a2219
+    /// `phonetic_lookup.cpp:64-65`): 0 for a parse without keys.
+    #[must_use]
+    pub(crate) fn selection_constraint_size(&self) -> usize {
         if self.selected_path().edges.is_empty() {
             0
         } else {

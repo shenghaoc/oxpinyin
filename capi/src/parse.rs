@@ -13,37 +13,6 @@ use crate::ffi::borrow_or_return;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
 
-fn parse_more(inst: &mut crate::state::CapiInstanceMut<'_>, text: &str) -> usize {
-    // The pin preserves candidate rows and strings across parsing; only a
-    // candidate guess, reset or instance destruction invalidates them.
-    let parsed = inst.core.parse_full_more(text);
-    inst.state.full_aux_options = inst.core.session.options();
-    parsed
-}
-
-/// # Safety
-///
-/// Under the crate-level rules, Strings and Handles: text is NULL or a live
-/// unchanged NUL-terminated string; instance is NULL or live. Serial calls
-/// exclude overlapping access, including retained instance or runtime views.
-unsafe fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-
-    // The pin parses the raw bytes: what follows an invalid sequence is
-    // never reached (`input::parser_prefix`).
-    let text = oxpinyin::marshal::parser_prefix(
-        // SAFETY: Strings guarantees valid, unchanged storage.
-        // The borrow ends in this statement.
-        unsafe { crate::ffi::borrow_c_string(text) },
-    );
-    // SAFETY: Handles guarantees a live instance; the NULL check precedes
-    // conversion. Serial calls and the absence of retained views permit this borrow.
-    let mut inst = unsafe { instance_mut(instance) };
-    parse_more(&mut inst, &text)
-}
-
 /// Parse multiple full pinyins.
 ///
 /// # C signature
@@ -65,9 +34,19 @@ pub unsafe extern "C" fn pinyin_parse_more_full_pinyins(
     instance: *mut PinyinInstance,
     pinyins: *const c_char,
 ) -> usize {
-    // SAFETY: Strings guarantees valid, unchanged `pinyins`; Handles guarantees
-    // a NULL or live instance. Serial calls and no retained views permit access.
-    unsafe { parse_c_string(instance, pinyins) }
+    let mut inst = borrow_or_return!(instance, instance_mut, 0);
+    // The pin parses the raw bytes: what follows an invalid sequence is
+    // never reached (`input::parser_prefix`).
+    let text = oxpinyin::marshal::parser_prefix(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(pinyins) },
+    );
+    // The pin preserves candidate rows and strings across parsing; only a
+    // candidate guess, reset or instance destruction invalidates them.
+    let parsed = inst.core.parse_full_more(&text);
+    inst.state.full_aux_options = inst.core.session.options();
+    parsed
 }
 
 /// Parse multiple double pinyins.
@@ -91,17 +70,12 @@ pub unsafe extern "C" fn pinyin_parse_more_double_pinyins(
     instance: *mut PinyinInstance,
     pinyins: *const c_char,
 ) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-
+    let mut inst = borrow_or_return!(instance, instance_mut, 0);
     let text = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyins) },
     );
-    // SAFETY: `instance` is non-null (checked above).
-    let mut inst = unsafe { instance_mut(instance) };
     inst.core.parse_double_more(&text)
 }
 
@@ -126,17 +100,12 @@ pub unsafe extern "C" fn pinyin_parse_more_chewings(
     instance: *mut PinyinInstance,
     chewings: *const c_char,
 ) -> usize {
-    if instance.is_null() {
-        return 0;
-    }
-
+    let mut inst = borrow_or_return!(instance, instance_mut, 0);
     let text = oxpinyin::marshal::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(chewings) },
     );
-    // SAFETY: `instance` is non-null (checked above).
-    let mut inst = unsafe { instance_mut(instance) };
     inst.core
         .parse_chewing_more(&text, ChewingCorrections::Masked)
 }

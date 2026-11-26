@@ -2821,7 +2821,7 @@ fn an_option_change_reaches_the_matrix_at_the_next_parse() {
     let parsed = session.input.parsed.retained.matrix.bound;
     assert_eq!((keys.len(), parsed), (1, 2));
 
-    let options = session.settings.options - crate::OptionBits::PINYIN_INCOMPLETE;
+    let options = session.options - crate::OptionBits::PINYIN_INCOMPLETE;
     session.set_options(options).expect("options");
     assert_eq!(session.full_parsed_len(), 2, "no re-parse");
     assert_eq!(session.input.parsed.retained.matrix.bound, 2);

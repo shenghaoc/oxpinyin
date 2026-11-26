@@ -366,7 +366,9 @@ pub trait PhraseList {
         syllables: &[Self::Syllable],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<bool, Self::Error> {
-        lookup_into(self, syllables, out)?;
+        let entries = self.lookup(syllables)?;
+        out.clear();
+        out.extend(entries);
         Ok(false)
     }
 
@@ -515,7 +517,8 @@ impl<T: PhraseList> Dictionary for T {
         ranges: &mut PhraseIndexRanges<()>,
         _scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
-        trellis_ranges(self, syllables, tones, ranges)?;
+        let entries = self.trellis_records(syllables, tones)?;
+        ranges.convert(entries.iter().map(|entry| (entry.token(), Some(()))));
         self.phrase_prefix_exists(syllables)
     }
 
@@ -525,9 +528,9 @@ impl<T: PhraseList> Dictionary for T {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-        memo: &Self::PathMemo,
+        _memo: &Self::PathMemo,
     ) -> Result<Option<TrellisItem>, Self::Error> {
-        trellis_item_on_path(self, syllables, tones, token, memo)
+        self.trellis_item(syllables, tones, token)
     }
 
     /// The text of the last of [`PhraseList::trellis_records`]' entries for
@@ -538,7 +541,12 @@ impl<T: PhraseList> Dictionary for T {
         tones: &[u8],
         token: u32,
     ) -> Result<Option<TokenPhrase>, Self::Error> {
-        trellis_text(self, syllables, tones, token)
+        Ok(self
+            .trellis_records(syllables, tones)?
+            .iter()
+            .rev()
+            .find(|entry| entry.token() == token)
+            .map(|entry| TokenPhrase::from(entry.text().clone())))
     }
 
     fn candidate_search_into(
@@ -569,11 +577,7 @@ impl<T: PhraseList> Dictionary for T {
         &self,
         syllables: &[Self::Syllable],
     ) -> Result<Option<Vec<PhraseToken>>, Self::Error> {
-        if overlong_extension_gate(self, syllables) {
-            Ok(None)
-        } else {
-            self.suggest_extension_tokens(syllables).map(Some)
-        }
+        self.suggest_extension_tokens(syllables).map(Some)
     }
 
     fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
@@ -605,65 +609,6 @@ impl<T: PhraseList> Dictionary for T {
     ) -> Result<Option<R>, Self::Error> {
         PhraseList::read_phrase_item(self, token, read)
     }
-}
-
-/// Applies [`PhraseIndexRanges::convert`] to
-/// [`PhraseList::trellis_records`]' tokens as one call.
-fn trellis_ranges<L: PhraseList>(
-    list: &L,
-    syllables: &[L::Syllable],
-    tones: &[u8],
-    ranges: &mut PhraseIndexRanges<()>,
-) -> Result<(), L::Error> {
-    let entries = list.trellis_records(syllables, tones)?;
-    ranges.convert(entries.iter().map(|entry| (entry.token(), Some(()))));
-    Ok(())
-}
-
-/// [`PhraseList::trellis_item`]; a listed dictionary keeps no path memo.
-fn trellis_item_on_path<L: PhraseList>(
-    list: &L,
-    syllables: &[L::Syllable],
-    tones: &[u8],
-    token: u32,
-    memo: &(),
-) -> Result<Option<TrellisItem>, L::Error> {
-    let _ = memo;
-    list.trellis_item(syllables, tones, token)
-}
-
-/// The text of the last of [`PhraseList::trellis_records`]' entries for
-/// `token`.
-fn trellis_text<L: PhraseList>(
-    list: &L,
-    syllables: &[L::Syllable],
-    tones: &[u8],
-    token: u32,
-) -> Result<Option<TokenPhrase>, L::Error> {
-    Ok(list
-        .trellis_records(syllables, tones)?
-        .iter()
-        .rev()
-        .find(|entry| entry.token() == token)
-        .map(|entry| TokenPhrase::from(entry.text().clone())))
-}
-
-/// [`PhraseList::lookup`] into a caller-owned buffer.
-fn lookup_into<L: PhraseList + ?Sized>(
-    list: &L,
-    syllables: &[L::Syllable],
-    out: &mut Vec<PhraseEntry>,
-) -> Result<(), L::Error> {
-    let entries = list.lookup(syllables)?;
-    out.clear();
-    out.extend(entries);
-    Ok(())
-}
-
-/// A listed dictionary has no user index, so the over-long-key gate is
-/// always open.
-fn overlong_extension_gate<L: PhraseList>(_list: &L, _syllables: &[L::Syllable]) -> bool {
-    false
 }
 
 /// What `_token_get_phrase` and `convert_to_utf8` read from a present item

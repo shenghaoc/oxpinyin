@@ -403,33 +403,3 @@ fn a_partial_system_gram_tail_refuses_the_segment_with_one_warning() {
     unsafe { pinyin_free_instance(instance) };
     unsafe { pinyin_fini(context) };
 }
-
-#[test]
-fn sentence_null_out_param_answers_true() {
-    assert!(
-        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
-        unsafe {
-            write_owned_sentence(
-                [oxpinyin::marshal::SentencePhrase::Text(PhraseText::from(
-                    "你",
-                ))],
-                std::ptr::null_mut(),
-            )
-        }
-    );
-}
-
-#[test]
-fn sentence_phrases_write_through() {
-    let phrases = ["你", "好", "x"].map(|text| {
-        oxpinyin::marshal::SentencePhrase::Words(text.chars().map(u32::from).collect())
-    });
-    let mut out = std::ptr::null_mut();
-    assert!(
-        // SAFETY: Out-parameters is met by NULL or a writable local output slot.
-        unsafe { write_owned_sentence(&phrases, &mut out) }
-    );
-    assert!(!out.is_null());
-    // SAFETY: the writer returned a caller-owned GLib string.
-    assert_eq!(unsafe { crate::ffi::take_owned_cstr(out) }, "你好x");
-}
