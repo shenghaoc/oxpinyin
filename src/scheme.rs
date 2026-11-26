@@ -274,15 +274,9 @@ impl DoublePinyinParser {
     /// The returned spans and consumed length count bytes of the original input.
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: OptionBits) -> DoublePinyinParse {
-        let Some(mut tables) = self.scheme.tables() else {
+        let Some(tables) = self.tables() else {
             return DoublePinyinParse::default();
         };
-        if self.suppress_fallback {
-            tables.fallback = None;
-        }
-        let use_tone = options.contains(OptionBits::USE_TONE);
-        let force_tone = options.contains(OptionBits::FORCE_TONE);
-        let allow_incomplete = options.contains(OptionBits::PINYIN_INCOMPLETE);
 
         // The probe window is option-blind, exactly upstream: tone digits
         // extend it even without USE_TONE (`:538-545`).
@@ -296,21 +290,10 @@ impl DoublePinyinParser {
         while parsed_len < maximum_len {
             let remaining = &input[parsed_len..maximum_len];
             let try_len = remaining.len().min(3);
-            let mut matched = None;
-            for len in (1..=try_len).rev() {
-                if let Some((key, tone)) = probe_one_key(
-                    &input[parsed_len..parsed_len + len],
-                    use_tone,
-                    force_tone,
-                    allow_incomplete,
-                    tables,
-                ) {
-                    matched = Some((key, tone, len));
-                    break;
-                }
-            }
-
-            let Some((key, tone, len)) = matched else {
+            let Some((key, tone, len)) = (1..=try_len).rev().find_map(|len| {
+                let (key, tone) = probe_one_key(&remaining[..len], options, tables)?;
+                Some((key, tone, len))
+            }) else {
                 break;
             };
             keys.push(DoublePinyinKey {
@@ -340,38 +323,17 @@ impl DoublePinyinParser {
     #[must_use]
     pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         let options = options - (OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL);
-        if options.contains(OptionBits::FORCE_TONE) && input.len() != 3 {
-            return None;
-        }
+        let (syllable, tone) = probe_one_key(input, options, self.tables()?)?;
+        Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
+    }
+
+    /// The scheme's tables, without the fallback row when it is suppressed.
+    fn tables(&self) -> Option<SchemeTables> {
         let mut tables = self.scheme.tables()?;
         if self.suppress_fallback {
             tables.fallback = None;
         }
-        match input.len() {
-            1 => {
-                let syllable = parse_incomplete(
-                    input[0],
-                    options.contains(OptionBits::PINYIN_INCOMPLETE),
-                    tables,
-                )?;
-                ChewingKey::from_pinyin(syllable.text())
-            }
-            2 | 3 => {
-                let mut tone = 0;
-                if input.len() == 3 {
-                    if !options.contains(OptionBits::USE_TONE) {
-                        return None;
-                    }
-                    tone = match input[2] {
-                        byte @ b'1'..=b'5' => byte - b'0',
-                        _ => return None,
-                    };
-                }
-                let syllable = parse_two_keys(&input[..2], tables)?;
-                Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
-            }
-            _ => None,
-        }
+        Some(tables)
     }
 }
 
@@ -381,9 +343,9 @@ impl Default for DoublePinyinParser {
     }
 }
 
-/// One greedy-walk probe of `DoublePinyinParser2::parse_one_key`
-/// (`src/storage/pinyin_parser2.cpp:405-530`) under the batch law's three
-/// caller bits: the `FORCE_TONE` length-3 gate (`:412`), the one-byte
+/// One probe of `DoublePinyinParser2::parse_one_key`
+/// (`src/storage/pinyin_parser2.cpp:405-530`) under three of the caller's
+/// bits: the `FORCE_TONE` length-3 gate (`:412`), the one-byte
 /// incomplete probe under `PINYIN_INCOMPLETE` (`:415-432`), and the
 /// three-byte tone parse under `USE_TONE` (`:439-451`). The answer is the
 /// resolved key plus the tone the third byte carried (`0` for the
@@ -391,19 +353,22 @@ impl Default for DoublePinyinParser {
 /// the walk retries length 2 — the tone-less profile.
 fn probe_one_key(
     input: &[u8],
-    use_tone: bool,
-    force_tone: bool,
-    allow_incomplete: bool,
+    options: OptionBits,
     tables: SchemeTables,
 ) -> Option<(SyllableKey, u8)> {
-    if force_tone && input.len() != 3 {
+    if options.contains(OptionBits::FORCE_TONE) && input.len() != 3 {
         return None;
     }
     match input.len() {
-        1 => parse_incomplete(input[0], allow_incomplete, tables).map(|key| (key, 0)),
+        1 => parse_incomplete(
+            input[0],
+            options.contains(OptionBits::PINYIN_INCOMPLETE),
+            tables,
+        )
+        .map(|key| (key, 0)),
         2 => parse_two_keys(input, tables).map(|key| (key, 0)),
         3 => {
-            if !use_tone {
+            if !options.contains(OptionBits::USE_TONE) {
                 return None;
             }
             let tone = match input[2] {
@@ -588,19 +553,23 @@ struct SimpleTables {
 impl SimpleTables {
     /// The symbol string one key maps to, if it is a symbol key.
     fn symbol(&self, byte: u8) -> Option<&'static str> {
-        self.symbols
-            .iter()
-            .find(|(key, _)| *key == byte)
-            .map(|(_, symbol)| *symbol)
+        first_row(self.symbols, byte)
     }
 
     /// The tone one key spells, if it is a tone key.
     fn tone(&self, byte: u8) -> Option<u8> {
-        self.tones
-            .iter()
-            .find(|(key, _)| *key == byte)
-            .map(|(_, tone)| *tone)
+        first_row(self.tones, byte)
     }
+}
+
+/// The value of the first `(key, value)` row of `table` whose key is
+/// `byte` — upstream's first-hit `search_chewing_symbols` /
+/// `search_chewing_tones` linear scan ("we only have < 50 items").
+fn first_row<T: Copy>(table: &[(u8, T)], byte: u8) -> Option<T> {
+    table
+        .iter()
+        .find(|(key, _)| *key == byte)
+        .map(|&(_, value)| value)
 }
 
 /// One Discrete keyboard's source tables: separate initial/middle/final
@@ -629,15 +598,6 @@ struct DiscreteTables {
 }
 
 impl DiscreteTables {
-    /// The first-matching symbol for `byte` in `table`, matching
-    /// upstream's `search_chewing_symbols`.
-    fn first_symbol(table: &'static [(u8, &'static str)], byte: u8) -> Option<&'static str> {
-        table
-            .iter()
-            .find(|(key, _)| *key == byte)
-            .map(|(_, symbol)| *symbol)
-    }
-
     /// Every symbol `byte` maps to in `table`, matching upstream's
     /// `search_chewing_symbols2` (at most two rows per key).
     fn all_symbols(
@@ -652,10 +612,7 @@ impl DiscreteTables {
 
     /// The tone one key spells, if it is a tone key.
     fn tone(&self, byte: u8) -> Option<u8> {
-        self.tones
-            .iter()
-            .find(|(key, _)| *key == byte)
-            .map(|(_, tone)| *tone)
+        first_row(self.tones, byte)
     }
 }
 
@@ -681,10 +638,7 @@ struct Cp26Tables {
 impl Cp26Tables {
     /// The tone one key spells, if it is a tone key.
     fn tone(&self, byte: u8) -> Option<u8> {
-        self.tones
-            .iter()
-            .find(|(key, _)| *key == byte)
-            .map(|(_, tone)| *tone)
+        first_row(self.tones, byte)
     }
 }
 
@@ -784,6 +738,42 @@ enum Keyboard {
     Discrete(DiscreteTables),
     /// `DACHEN_CP26`.
     Cp26(Cp26Tables),
+}
+
+impl Keyboard {
+    /// Whether `key` maps to a symbol on this keyboard, or to a tone when
+    /// `use_tone`.
+    fn in_scheme(self, key: u8, use_tone: bool) -> bool {
+        match self {
+            Self::Simple(tables) => {
+                tables.symbol(key).is_some() || (use_tone && tables.tone(key).is_some())
+            }
+            Self::Discrete(tables) => {
+                [tables.initials, tables.middles, tables.finals]
+                    .into_iter()
+                    .any(|table| first_row(table, key).is_some())
+                    || (use_tone && tables.tone(key).is_some())
+            }
+            Self::Cp26(tables) => {
+                [tables.initials, tables.middles, tables.finals]
+                    .into_iter()
+                    .any(|table| first_row(table, key).is_some())
+                    || key == b'i'
+                    || (use_tone && tables.tone(key).is_some())
+            }
+        }
+    }
+
+    /// The correction bits the batch parse passes the index: Simple's
+    /// `ZHUYIN_CORRECT_SHUFFLE`, the Discrete keyboard's own bit, and none
+    /// for CP26, which owns no correction bit.
+    const fn correction(self) -> OptionBits {
+        match self {
+            Self::Simple(_) => OptionBits::ZHUYIN_CORRECT_SHUFFLE,
+            Self::Discrete(tables) => tables.correction,
+            Self::Cp26(_) => OptionBits::empty(),
+        }
+    }
 }
 
 // ZhuyinSimpleParser2, ZhuyinDiscreteParser2 and ZhuyinDaChenCP26Parser2,
@@ -926,25 +916,9 @@ impl ZhuyinParser {
     /// bytes that map only to a tone.
     #[must_use]
     pub fn in_scheme(&self, key: u8, use_tone: bool) -> bool {
-        match self.scheme.keyboard() {
-            Some(Keyboard::Simple(tables)) => {
-                tables.symbol(key).is_some() || (use_tone && tables.tone(key).is_some())
-            }
-            Some(Keyboard::Discrete(tables)) => {
-                [tables.initials, tables.middles, tables.finals]
-                    .into_iter()
-                    .any(|table| DiscreteTables::first_symbol(table, key).is_some())
-                    || (use_tone && tables.tone(key).is_some())
-            }
-            Some(Keyboard::Cp26(tables)) => {
-                [tables.initials, tables.middles, tables.finals]
-                    .into_iter()
-                    .any(|table| DiscreteTables::first_symbol(table, key).is_some())
-                    || key == b'i'
-                    || (use_tone && tables.tone(key).is_some())
-            }
-            None => false,
-        }
+        self.scheme
+            .keyboard()
+            .is_some_and(|keyboard| keyboard.in_scheme(key, use_tone))
     }
 
     /// The Zhuyin symbol(s) mapped by one keystroke.
@@ -1016,25 +990,23 @@ impl ZhuyinParser {
     /// tone handling. [`Self::parse_one_key`] describes forced tone for each keyboard family.
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: OptionBits) -> ZhuyinParse {
-        let use_tone = options.contains(OptionBits::USE_TONE);
-        let force_tone = options.contains(OptionBits::FORCE_TONE);
-        let allow_incomplete = options.contains(OptionBits::ZHUYIN_INCOMPLETE);
-        self.parse_detailed(input, use_tone, force_tone, allow_incomplete)
-    }
-
-    fn parse_detailed(
-        &self,
-        input: &[u8],
-        use_tone: bool,
-        force_tone: bool,
-        allow_incomplete: bool,
-    ) -> ZhuyinParse {
         let Some(keyboard) = self.scheme.keyboard() else {
             return ZhuyinParse::default();
         };
-
-        let (maximum_len, probe) =
-            self.batch_probe(keyboard, input, use_tone, force_tone, allow_incomplete);
+        let use_tone = options.contains(OptionBits::USE_TONE);
+        // The batch path's own option word: the keyboard's correction bits,
+        // plus the caller's `ZHUYIN_INCOMPLETE`. CP26's index gate sees only
+        // the latter.
+        let probe = KeyProbe {
+            keyboard,
+            use_tone,
+            force_tone: options.contains(OptionBits::FORCE_TONE),
+            options: keyboard.correction() | (options & OptionBits::ZHUYIN_INCOMPLETE),
+        };
+        let maximum_len = input
+            .iter()
+            .take_while(|&&byte| keyboard.in_scheme(byte, use_tone))
+            .count();
 
         // max_chewing_dachen26_length = 12 for CP26,
         // max_chewing_length = 4 for every other keyboard.
@@ -1071,92 +1043,6 @@ impl ZhuyinParser {
         }
     }
 
-    /// The batch parse's probe for `keyboard`, and the length of the prefix
-    /// of `input` whose bytes are in the keyboard's scheme. The probe takes
-    /// the batch path's own option word: the keyboard's correction bits,
-    /// plus `ZHUYIN_INCOMPLETE` when `allow_incomplete`.
-    fn batch_probe(
-        &self,
-        keyboard: Keyboard,
-        input: &[u8],
-        use_tone: bool,
-        force_tone: bool,
-        allow_incomplete: bool,
-    ) -> (usize, KeyProbe) {
-        match keyboard {
-            Keyboard::Simple(tables) => {
-                let options = if allow_incomplete {
-                    OptionBits::ZHUYIN_CORRECT_SHUFFLE | OptionBits::ZHUYIN_INCOMPLETE
-                } else {
-                    OptionBits::ZHUYIN_CORRECT_SHUFFLE
-                };
-                let maximum_len = input
-                    .iter()
-                    .take_while(|&&byte| {
-                        tables.symbol(byte).is_some() || (use_tone && tables.tone(byte).is_some())
-                    })
-                    .count();
-                (
-                    maximum_len,
-                    KeyProbe::Simple {
-                        tables,
-                        use_tone,
-                        options,
-                        force_tone,
-                    },
-                )
-            }
-            Keyboard::Discrete(tables) => {
-                let options = if allow_incomplete {
-                    tables.correction | OptionBits::ZHUYIN_INCOMPLETE
-                } else {
-                    tables.correction
-                };
-                let maximum_len = input
-                    .iter()
-                    .take_while(|&&byte| {
-                        [tables.initials, tables.middles, tables.finals]
-                            .iter()
-                            .any(|table| table.iter().any(|(key, _)| *key == byte))
-                            || (use_tone && tables.tone(byte).is_some())
-                    })
-                    .count();
-                (
-                    maximum_len,
-                    KeyProbe::Discrete {
-                        tables,
-                        use_tone,
-                        options,
-                        force_tone,
-                    },
-                )
-            }
-            Keyboard::Cp26(tables) => {
-                // CP26 owns no correction bit; only the caller's
-                // ZHUYIN_INCOMPLETE crosses into the global index's
-                // gate.
-                let options = if allow_incomplete {
-                    OptionBits::ZHUYIN_INCOMPLETE
-                } else {
-                    OptionBits::empty()
-                };
-                let maximum_len = input
-                    .iter()
-                    .take_while(|&&byte| self.in_scheme(byte, use_tone))
-                    .count();
-                (
-                    maximum_len,
-                    KeyProbe::Cp26 {
-                        tables,
-                        use_tone,
-                        options,
-                        force_tone,
-                    },
-                )
-            }
-        }
-    }
-
     // ZhuyinSimpleParser2::parse_one_key, ZhuyinDiscreteParser2::parse_one_key and
     // ZhuyinDaChenCP26Parser2::parse_one_key, zhuyin_parser2.cpp:162–210,335–405,573–716.
     /// Parses one complete keystroke sequence on the selected Zhuyin keyboard.
@@ -1167,51 +1053,35 @@ impl ZhuyinParser {
     /// tone is set.
     #[must_use]
     pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
-        zhuyin_parse_one_key(self.scheme, options, input)
+        // The probe takes this path's own option word, not the batch parse's.
+        let options = options - OptionBits::PINYIN_AMB_ALL;
+        let probe = KeyProbe {
+            keyboard: self.scheme.keyboard()?,
+            use_tone: options.contains(OptionBits::USE_TONE),
+            force_tone: options.contains(OptionBits::FORCE_TONE),
+            options,
+        };
+        let (syllable, tone) = probe.parse_one_key(input)?;
+        Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
     }
 }
 
-/// One greedy step of [`ZhuyinParser::parse_with_options`], specialised per keyboard
-/// family: Simple concatenates per-key symbols, Discrete probes the
-/// initial/middle/final/tone positions.
+/// One greedy step of [`ZhuyinParser::parse_with_options`], and the whole
+/// of [`ZhuyinParser::parse_one_key`]: a keyboard and the option word its
+/// path passes the index. Simple concatenates per-key symbols, Discrete
+/// probes the initial/middle/final/tone positions, CP26 counts repeats.
 #[derive(Clone, Copy)]
-enum KeyProbe {
-    /// The Simple per-byte concatenation path.
-    Simple {
-        /// The keyboard's symbol/tone tables.
-        tables: SimpleTables,
-        /// The `USE_TONE` option.
-        use_tone: bool,
-        /// The parser-owned option word.
-        options: OptionBits,
-        /// The `FORCE_TONE` option: a toneless match is rejected, nested
-        /// under `USE_TONE` (upstream `zhuyin_parser2.cpp:178`).
-        force_tone: bool,
-    },
-    /// The Discrete positional-probe path.
-    Discrete {
-        /// The keyboard's slot tables and index.
-        tables: DiscreteTables,
-        /// The `USE_TONE` option.
-        use_tone: bool,
-        /// The parser-owned option word.
-        options: OptionBits,
-        /// The `FORCE_TONE` option: a toneless match is rejected
-        /// unconditionally (upstream `zhuyin_parser2.cpp:373,387`).
-        force_tone: bool,
-    },
-    /// The CP26 repeat-count path.
-    Cp26 {
-        /// The keyboard's slot tables.
-        tables: Cp26Tables,
-        /// The `USE_TONE` option.
-        use_tone: bool,
-        /// The parser-owned option word.
-        options: OptionBits,
-        /// The `FORCE_TONE` option: a toneless match is rejected, nested
-        /// under `USE_TONE` (upstream `zhuyin_parser2.cpp:602`).
-        force_tone: bool,
-    },
+struct KeyProbe {
+    /// The keyboard's tables.
+    keyboard: Keyboard,
+    /// The `USE_TONE` option.
+    use_tone: bool,
+    /// The `FORCE_TONE` option: a toneless match is rejected. Simple and
+    /// CP26 nest it under `USE_TONE` (upstream `zhuyin_parser2.cpp:178`,
+    /// `:602`); Discrete applies it unconditionally (`:373,387`).
+    force_tone: bool,
+    /// The option word the path passes the index.
+    options: OptionBits,
 }
 
 impl KeyProbe {
@@ -1225,80 +1095,23 @@ impl KeyProbe {
     }
 
     fn parse_one_key(&self, input: &[u8]) -> Option<(SyllableKey, u8)> {
-        match *self {
-            Self::Simple {
-                tables,
-                use_tone,
-                options,
-                force_tone,
-            } => {
-                let (key, tone) = parse_one_zhuyin_key(input, use_tone, options, tables)?;
-                if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
-                    return None;
-                }
-                Some((key, tone))
+        let (key, tone, force_tone) = match self.keyboard {
+            Keyboard::Simple(tables) => {
+                let (key, tone) = parse_one_zhuyin_key(input, self.use_tone, self.options, tables)?;
+                (key, tone, self.use_tone && self.force_tone)
             }
-            Self::Discrete {
-                tables,
-                use_tone,
-                options,
-                force_tone,
-            } => {
-                let (key, tone) = parse_one_discrete_key(input, use_tone, options, tables)?;
-                if force_tone && tone == CHEWING_ZERO_TONE {
-                    return None;
-                }
-                Some((key, tone))
+            Keyboard::Discrete(tables) => {
+                let (key, tone) =
+                    parse_one_discrete_key(input, self.use_tone, self.options, tables)?;
+                (key, tone, self.force_tone)
             }
-            Self::Cp26 {
-                tables,
-                use_tone,
-                options,
-                force_tone,
-            } => {
-                let (key, tone) = parse_one_cp26_key(input, use_tone, options, tables)?;
-                if use_tone && force_tone && tone == CHEWING_ZERO_TONE {
-                    return None;
-                }
-                Some((key, tone))
+            Keyboard::Cp26(tables) => {
+                let (key, tone) = parse_one_cp26_key(input, self.use_tone, self.options, tables)?;
+                (key, tone, self.use_tone && self.force_tone)
             }
-        }
+        };
+        (!(force_tone && tone == CHEWING_ZERO_TONE)).then_some((key, tone))
     }
-}
-
-/// The `ZhuyinParser::parse_one_key` body, split out of the impl so the
-/// keyboard dispatch can borrow the [`Keyboard`] probe per family.
-fn zhuyin_parse_one_key(
-    scheme: ZhuyinScheme,
-    options: OptionBits,
-    input: &[u8],
-) -> Option<ChewingKey> {
-    let options = options - OptionBits::PINYIN_AMB_ALL;
-    let use_tone = options.contains(OptionBits::USE_TONE);
-    let force_tone = options.contains(OptionBits::FORCE_TONE);
-    // The probe takes this path's own option word, not the batch parse's.
-    let probe = match scheme.keyboard()? {
-        Keyboard::Simple(tables) => KeyProbe::Simple {
-            tables,
-            use_tone,
-            options,
-            force_tone,
-        },
-        Keyboard::Discrete(tables) => KeyProbe::Discrete {
-            tables,
-            use_tone,
-            options,
-            force_tone,
-        },
-        Keyboard::Cp26(tables) => KeyProbe::Cp26 {
-            tables,
-            use_tone,
-            options,
-            force_tone,
-        },
-    };
-    let (syllable, tone) = probe.parse_one_key(input)?;
-    Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
 }
 
 impl Default for ZhuyinParser {
@@ -1361,14 +1174,14 @@ fn parse_one_discrete_key(
     let mut tone = 0;
 
     // probe initial
-    if let Some(symbol) = DiscreteTables::first_symbol(tables.initials, input[index]) {
+    if let Some(symbol) = first_row(tables.initials, input[index]) {
         initial = symbol;
         index += 1;
     }
 
     if index != input.len() {
         // probe middle
-        if let Some(symbol) = DiscreteTables::first_symbol(tables.middles, input[index]) {
+        if let Some(symbol) = first_row(tables.middles, input[index]) {
             middle = symbol;
             index += 1;
         }
@@ -1376,7 +1189,7 @@ fn parse_one_discrete_key(
 
     if index != input.len() {
         // probe final
-        if let Some(symbol) = DiscreteTables::first_symbol(tables.finals, input[index]) {
+        if let Some(symbol) = first_row(tables.finals, input[index]) {
             final_ = symbol;
             index += 1;
         }
