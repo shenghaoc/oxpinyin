@@ -766,31 +766,29 @@ impl<'a> RuntimeDict<'a> {
     /// copies with `get_phrase_string` (074a2219 `lookup/lookup.cpp:45-47`).
     #[must_use]
     pub fn token_words(&self, token: u32) -> Option<crate::marshal::SentencePhrase> {
-        let mut words = smallvec::SmallVec::new();
-        self.copy_token_words(token, &mut words)
-            .then_some(crate::marshal::SentencePhrase::Words(words))
+        self.words_for_token(token)
+            .map(crate::marshal::SentencePhrase::Words)
     }
 
-    /// [`Self::token_words`] into the caller's buffer, as `get_phrase_string`
-    /// copies the words into `convert_to_utf8`'s stack buffer: the system
-    /// item a library mask leaves visible, else the user item. `false`, with
-    /// nothing copied, where the item is absent or its bytes end before a
-    /// declared word.
-    pub(crate) fn copy_token_words(
+    /// The stored words of `token`'s item, as `get_phrase_string` copies the
+    /// words into `convert_to_utf8`'s stack buffer: the system item a library
+    /// mask leaves visible, else the user item. `None` where the item is
+    /// absent or its bytes end before a declared word.
+    pub(crate) fn words_for_token(
         &self,
         token: u32,
-        words: &mut smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>,
-    ) -> bool {
+    ) -> Option<smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>> {
         let library = phrase_index_library_index(token);
         let items = self.live_items();
         if items.is_system_library(library) {
-            return items.copy_phrase_words(token, words);
+            return items.phrase_words(token);
         }
-        self.library_visible(u32::from(library))
-            && self
-                .user
-                .with_user_item(token, |item| item.copy_phrase_words(words))
-                .unwrap_or(false)
+        if !self.library_visible(u32::from(library)) {
+            return None;
+        }
+        self.user
+            .with_user_item(token, |item| item.stored_words())
+            .unwrap_or(None)
     }
 
     /// Reads `token`'s item where the facade resolves it: the system item

@@ -415,28 +415,28 @@ impl<'a> LiveSystemItems<'a> {
 
     /// Copies the words of `token`'s effective system item onto the end of
     /// `words`, as `convert_to_utf8` reads them: `get_phrase_item`, then
+    /// The words of `token`'s item, as the pin copies them with
     /// `get_phrase_string` into its buffer (074a2219 `lookup/lookup.cpp:45-47`,
     /// `phrase_index.h:646-652`). One read: the live buffer's slot where the
     /// library has one, else the shipped chunk's; [`Self::read_fields`]
-    /// answers the same item. `false` for a token outside a loaded system
+    /// answers the same item. `None` for a token outside a loaded system
     /// library and for an item whose bytes end before a declared word. The
     /// caller has checked that `token`'s library is a system library.
-    pub(crate) fn copy_phrase_words(
+    pub(crate) fn phrase_words(
         &self,
         token: PhraseToken,
-        words: &mut smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>,
-    ) -> bool {
+    ) -> Option<smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>> {
         if !self.library_loaded(u32::from(crate::vocab::phrase_index_library_index(token))) {
-            return false;
+            return None;
         }
-        match self.user.copy_live_words(token, words) {
-            LiveItemFields::Read(copied) => copied,
-            LiveItemFields::NoReadableItem => false,
+        match self.user.live_words(token) {
+            LiveItemFields::Read(words) => words,
+            LiveItemFields::NoReadableItem => None,
             LiveItemFields::NoLiveLibrary => self
                 .libraries
                 .library(token)
                 .and_then(|library| library.item_fields(token))
-                .is_some_and(|item| item.copy_phrase_words(words)),
+                .and_then(|item| item.stored_words()),
         }
     }
 
