@@ -34,11 +34,11 @@ impl UserModel for UserStore {
 
     fn observe_with_keys(
         &mut self,
-        history: &[PhraseToken],
+        last: Option<PhraseToken>,
         token: &PhraseToken,
         readings: &mut impl crate::model::ReadingWalk,
     ) -> Result<(), Self::Error> {
-        let last = history.last().map_or(SENTENCE_START, |t| *t);
+        let last = last.unwrap_or(SENTENCE_START);
         let seed = self.observe_selection(last, *token)?;
         self.train_pronunciations(*token, readings, seed);
         Ok(())
@@ -72,11 +72,11 @@ impl UserModel for CheckedTraining<'_> {
 
     fn observe_with_keys(
         &mut self,
-        history: &[PhraseToken],
+        last: Option<PhraseToken>,
         token: &PhraseToken,
         readings: &mut impl crate::model::ReadingWalk,
     ) -> Result<(), Self::Error> {
-        let last = history.last().map_or(SENTENCE_START, |t| *t);
+        let last = last.unwrap_or(SENTENCE_START);
         let seed = self
             .user
             .observe_checked_selection(self.check, last, *token)?;
