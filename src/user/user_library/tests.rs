@@ -191,24 +191,23 @@ fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
 
 /// Basis: `phrase_index.cpp:180-206` and policy rows 107, 111 and 130 (a read
 /// takes the header's extent, across records, and stops at the content end;
-/// a write to that extent changes only its addressed item).
+/// a write through that extent goes in place, into the next record).
 #[test]
 fn a_read_crossing_the_item_boundary_follows_the_header_extent() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2]);
-    let start = library.slots.get(&1).unwrap().start;
+    let start = *library.slots.get(&1).unwrap();
     library.content[start + 1] = 2;
     assert_eq!(library.item(1).unwrap().as_bytes().len(), 22);
     // The second reading of item 1 is the first bytes of item 2, key 0x0101 and count 2.
     let crossing = crate::parser::ChewingKey::from_packed(0x0101);
     library.train(1, std::iter::once(vec![crossing]), 5);
     assert_eq!(library.item(1).unwrap().pronunciation(1).unwrap().freq, 7);
-    assert_eq!(library.item(2).unwrap().unigram(), 2);
-    // The write moved item 1 to a copy at the end of the content.
-    let start = library.slots.get(&1).unwrap().start;
+    // That count is item 2's unigram: the write went in place.
+    assert_eq!(library.item(2).unwrap().unigram(), 7);
     library.content[start + 1] = 255;
     assert!(library.item(1).is_none());
-    assert_eq!(library.item(2).unwrap().unigram(), 2);
+    assert_eq!(library.item(2).unwrap().unigram(), 7);
 }
 
 /// Basis: policy row 112 (the compacted content copy is checked at the limit).
@@ -230,7 +229,7 @@ fn the_store_copy_threshold_follows_the_compacted_content() {
 fn removing_a_batch_collects_nothing_until_the_compaction() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2, 3, 4]);
-    let unreadable = library.slots[&3].start;
+    let unreadable = library.slots[&3];
     library.content[unreadable + 1] = 255;
     let size = library.content.len();
     let visited = std::cell::RefCell::new(Vec::new());
@@ -295,9 +294,9 @@ fn a_bad_user_item_offset_leaves_neighbouring_items_readable() {
 }
 
 /// Basis: `074a2219 phrase_index.cpp:150-236` and policy rows 107, 111 and 130
-/// (slots that alias one offset read one body; each write changes only its own slot).
+/// (slots that alias one offset read one body, and a write to it reaches both).
 #[test]
-fn a_write_to_an_aliased_offset_changes_only_its_own_slot() {
+fn a_write_to_an_aliased_offset_reaches_every_slot_that_shares_it() {
     let items = [1_u32, 2, 3].map(|slot| {
         (
             slot,
@@ -320,10 +319,10 @@ fn a_write_to_an_aliased_offset_changes_only_its_own_slot() {
     let mut library = UserLibrary::load(&build_memory_chunk(&payload).expect("frame")).unwrap();
     assert_eq!(library.item(3).unwrap().unigram(), 10);
     assert!(library.increment_unigram(3, 5));
-    assert_eq!(library.item(1).unwrap().unigram(), 10);
+    assert_eq!(library.item(1).unwrap().unigram(), 15);
     assert_eq!(library.item(3).unwrap().unigram(), 15);
     assert!(library.increment_unigram(1, 1));
-    assert_eq!(library.item(1).unwrap().unigram(), 11);
-    assert_eq!(library.item(3).unwrap().unigram(), 15);
+    assert_eq!(library.item(1).unwrap().unigram(), 16);
+    assert_eq!(library.item(3).unwrap().unigram(), 16);
     assert_eq!(library.item(2).unwrap().unigram(), 20);
 }

@@ -1,7 +1,6 @@
 //! Owned session sub-index: packed item bodies and independent index membership.
 
 use std::collections::BTreeMap;
-use std::ops::Range;
 
 use crate::data::chunk_format::CHUNK_HEADER_SIZE;
 use crate::data::phrase_library::PhraseItemView;
@@ -57,10 +56,11 @@ pub(super) fn train_readings(
 #[derive(Clone, Debug, Default)]
 pub(crate) struct UserLibrary {
     total: u32,
-    slots: BTreeMap<u32, Range<usize>>,
+    /// Each slot's item offset in `content`, as the pin's offset table
+    /// holds it. `usize::MAX` names a slot whose offset was past the
+    /// content end when the library loaded.
+    slots: BTreeMap<u32, usize>,
     content: Vec<u8>,
-    /// The starts that more than one slot shares, ascending and without repeats.
-    shared_starts: Vec<usize>,
 }
 
 /// `MemoryChunk::ensure_has_space` narrows a growth to `int`
@@ -234,7 +234,7 @@ impl UserLibrary {
         }
     }
 
-    /// Append the new body and assign that extent to the slot.
+    /// Place the new body as `add_phrase_item` places it and point the slot at it.
     fn apply_replacement(&mut self, change: Replacement, bytes: &[u8]) {
         let slot = change.slot;
         let bytes = &bytes[..change.length];
@@ -244,12 +244,10 @@ impl UserLibrary {
             self.slots.remove(&slot);
             self.total = self.total.wrapping_sub(unigram);
         }
-        if self.content.len() < FIRST_ITEM_OFFSET as usize {
-            self.content.resize(FIRST_ITEM_OFFSET as usize, 0);
-        }
-        let start = self.content.len();
-        self.content.extend_from_slice(bytes);
-        self.slots.insert(slot, start..self.content.len());
+        // `add_phrase_item`'s placement, as the system sub-index's: a
+        // `guint32` offset that wraps, written in place where it wrapped.
+        let start = crate::user::replay::place(&mut self.content, bytes) as usize;
+        self.slots.insert(slot, start);
         self.total = self.total.wrapping_add(change.unigram);
     }
 
@@ -269,11 +267,8 @@ impl UserLibrary {
 
     pub(crate) fn remove_matching(&mut self, selected: impl Fn(u32) -> bool) {
         let content = &self.content;
-        self.slots.retain(|&slot, range| {
-            let Some(item) = content
-                .get(range.start..)
-                .and_then(PhraseItemView::from_bytes)
-            else {
+        self.slots.retain(|&slot, start| {
+            let Some(item) = content.get(*start..).and_then(PhraseItemView::from_bytes) else {
                 return true;
             };
             if !selected(slot) {
@@ -299,9 +294,11 @@ impl UserLibrary {
             return false;
         };
         let unigram = item.unigram().wrapping_add(delta);
-        let Some(start) = self.editable_start(slot) else {
+        let Some(&start) = self.slots.get(&slot) else {
             return false;
         };
+        // In place, as `add_unigram_frequency` writes (`phrase_index.cpp:
+        // 150-178`): a slot that shares or overlaps these bytes sees them.
         self.content[start + 2..start + ITEM_HEADER_SIZE].copy_from_slice(&unigram.to_le_bytes());
         self.total = self.total.wrapping_add(delta);
         true
@@ -375,9 +372,10 @@ impl UserLibrary {
     ) {
         let Some(item) = self.item(slot) else { return };
         let length = item.as_bytes().len();
-        let Some(start) = self.editable_start(slot) else {
+        let Some(&start) = self.slots.get(&slot) else {
             return;
         };
+        // In place through the item's view, whatever shares or follows it.
         train_readings(&mut self.content[start..start + length], readings, delta);
     }
 
@@ -405,67 +403,52 @@ impl UserLibrary {
         Self::load_payload(crate::data::user_files::read_chunk_payload(file)?)
     }
 
-    /// Load each slot with a write bound at the next distinct offset. A read
-    /// takes the extent its header declares instead (`Self::view`).
+    /// Load each slot's offset. A read takes the extent its header declares
+    /// (`Self::view`).
     pub(crate) fn load_payload(payload: &[u8]) -> Option<Self> {
         let (total, offsets, content) = sub_phrase_index_sections(payload)?;
-        let offsets: Vec<_> = offsets
+        let content_len = content.len();
+        let slots = offsets
             .as_chunks::<4>()
             .0
             .iter()
             .enumerate()
             .filter_map(|(slot, bytes)| {
                 let start = u32::from_le_bytes(*bytes) as usize;
-                (start != 0).then_some((slot as u32, start))
-            })
-            .collect();
-        let mut starts: Vec<_> = offsets.iter().map(|&(_, start)| start).collect();
-        crate::stable_sort::sort_values(&mut starts);
-        // `starts` is sorted, so the shared starts come out ascending.
-        let mut shared_starts: Vec<usize> = starts
-            .windows(2)
-            .filter_map(|pair| (pair[0] == pair[1]).then_some(pair[0]))
-            .collect();
-        shared_starts.dedup();
-        starts.dedup();
-
-        let content_len = content.len();
-        let slots = offsets
-            .into_iter()
-            .filter_map(|(slot, start)| {
-                let index = starts.binary_search(&start).ok()?;
-                if start >= content_len {
-                    // Unreadable for the slot's whole life: a range that began at the content
-                    // end would read whatever a later append puts there.
-                    return Some((slot, usize::MAX..usize::MAX));
+                if start == 0 {
+                    return None;
                 }
-                let end = starts
-                    .get(index + 1)
-                    .copied()
-                    .unwrap_or(content_len)
-                    .min(content_len);
-                Some((slot, start..end))
+                // Unreadable for the slot's whole life: an offset that began
+                // past the content would read whatever a later append puts
+                // there (class (b)).
+                Some((
+                    slot as u32,
+                    if start >= content_len {
+                        usize::MAX
+                    } else {
+                        start
+                    },
+                ))
             })
             .collect();
         Some(Self {
             total,
             slots,
             content: content.to_vec(),
-            shared_starts,
         })
     }
 
     pub(crate) fn pronunciation_count(&self, slot: u32) -> Option<u32> {
-        let start = self.slots.get(&slot)?.start;
+        let start = *self.slots.get(&slot)?;
         self.content.get(start..)?.get(1).copied().map(u32::from)
     }
 
-    /// `SubPhraseIndex::get_phrase_item`'s view of the item at `range.start`:
-    /// the extent the header declares, which may cross into later records
+    /// `SubPhraseIndex::get_phrase_item`'s view of the item at `start`: the
+    /// extent the header declares, which may cross into later records
     /// (policy rows 107, 111 and 130). An item whose extent passes the content
-    /// end is not readable. Writes keep `range` as their bound.
-    fn view(&self, range: &Range<usize>) -> Option<PhraseItemView<'_>> {
-        PhraseItemView::from_bytes(self.content.get(range.start..)?)
+    /// end is not readable (class (b)).
+    fn view(&self, start: usize) -> Option<PhraseItemView<'_>> {
+        PhraseItemView::from_bytes(self.content.get(start..)?)
     }
 
     pub(crate) const fn total(&self) -> u32 {
@@ -483,33 +466,13 @@ impl UserLibrary {
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
-        self.view(self.slots.get(&slot)?)
-    }
-
-    /// The start of a body that only `slot` reads and writes. Slots with
-    /// duplicate on-disk offsets read the same original body, and a header
-    /// extent can run past the next record. Copy the full extent to the end
-    /// of the content in either case, so that every write (`train` and
-    /// `increment_unigram` are the writers) changes only its addressed slot.
-    fn editable_start(&mut self, slot: u32) -> Option<usize> {
-        let range = self.slots.get(&slot)?.clone();
-        let length = self.item(slot)?.as_bytes().len();
-        if self.shared_starts.binary_search(&range.start).is_err()
-            && range.start + length <= range.end
-        {
-            return Some(range.start);
-        }
-        let copy = self.content.len();
-        self.content
-            .extend_from_within(range.start..range.start + length);
-        self.slots.insert(slot, copy..self.content.len());
-        Some(copy)
+        self.view(*self.slots.get(&slot)?)
     }
 
     pub(crate) fn items(&self) -> impl Iterator<Item = (u32, PhraseItemView<'_>)> + '_ {
         self.slots
             .iter()
-            .filter_map(|(&slot, range)| Some((slot, self.view(range)?)))
+            .filter_map(|(&slot, &start)| Some((slot, self.view(start)?)))
     }
 
     /// The size of the content a compaction would leave: the first eight
