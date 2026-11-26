@@ -6,6 +6,7 @@ use crate::engine::{
     Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
     check_lookup_offset_range, normalize_lookup_offset,
 };
+use crate::marshal::SentencePhrase;
 use crate::parser::{DoublePinyinParse, FullPinyinIndexParse, ZhuyinParse};
 use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
 use crate::user::UserStore;
@@ -329,35 +330,40 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// The decoded phrases of n-best row `index`, while a lookup is active,
     /// each token resolved through the live phrase index now, as the pin's
     /// `convert_to_utf8` does when the caller reads the sentence
-    /// (`src/lookup/lookup.cpp:37-48` at 074a2219).
+    /// (`src/lookup/lookup.cpp:37-48` at 074a2219). A resolved token's part
+    /// is its item's stored words ([`crate::runtime::RuntimeDict::token_words`]).
     ///
     /// The pin ignores the result of `get_phrase_item` (`:45`), and a failed
     /// read leaves the item as it was (`SubPhraseIndex::get_phrase_item`,
     /// `storage/phrase_index.cpp:180-206`). A token that does not resolve
     /// thus repeats the last phrase that resolved in the same read, or adds
     /// "" when none has: the default item has length 0
-    /// (`storage/phrase_index.h:81-84`).
+    /// (`storage/phrase_index.h:81-84`). That item is a local of each
+    /// `convert_to_utf8` call (`lookup.cpp:37`), as `last` is of each call
+    /// here, so the repeat never reaches past one read.
     ///
-    /// Each part is `None` where `g_ucs4_to_utf8` answers NULL for the
-    /// item's words (`src/lookup/lookup.cpp:58`), which `convert_to_utf8` then leaves out.
-    pub fn sentence_phrases(
-        &self,
-        index: u8,
-    ) -> Option<impl Iterator<Item = Option<PhraseText>> + '_> {
-        let mut last = Some(PhraseText::default());
+    /// A part whose [`SentencePhrase::utf8_len`] is `None` is one where
+    /// `g_ucs4_to_utf8` answers NULL for the item's words
+    /// (`src/lookup/lookup.cpp:58`), which `convert_to_utf8` then leaves out.
+    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = SentencePhrase> + '_> {
+        // The last token that resolved in this read. No write can reach the
+        // index while `&self` is borrowed, so reading it again answers the
+        // phrase it answered.
+        let mut last = None;
         Some(
             self.session
                 .sentence_phrases(index)?
                 .map(move |part| match part {
                     SentencePart::Token(token) => {
-                        if let Some(phrase) = self.dict.token_phrase(token) {
-                            last.clone_from(&phrase.text);
-                            phrase.text
+                        if let Some(phrase) = self.dict.token_words(token) {
+                            last = Some(token);
+                            phrase
                         } else {
-                            last.clone()
+                            last.and_then(|last| self.dict.token_words(last))
+                                .unwrap_or_else(|| SentencePhrase::Text(PhraseText::default()))
                         }
                     }
-                    SentencePart::Raw(text) => Some(text),
+                    SentencePart::Raw(text) => SentencePhrase::Text(text),
                 }),
         )
     }

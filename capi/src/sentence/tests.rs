@@ -133,20 +133,26 @@ fn a_read_failure_after_the_size_check_aborts() {
 /// pin's NULL.
 #[test]
 fn the_chain_joins_each_phrase_and_no_phrase_is_null() {
+    use oxpinyin::marshal::SentencePhrase;
+    // Item words `g_ucs4_to_utf8` refuses: a word at or above 0x8000_0000
+    // before the first zero.
+    let null = || SentencePhrase::Words([0x4f60, 0x8000_0000].into_iter().collect());
+    let words = |text: &str| SentencePhrase::Words(text.chars().map(u32::from).collect());
     let phrases = [
-        None,
-        Some(PhraseText::from("你好")),
-        Some(PhraseText::from("")),
-        None,
-        Some(PhraseText::from("世界")),
+        null(),
+        words("你好"),
+        SentencePhrase::Text(PhraseText::from("")),
+        null(),
+        SentencePhrase::Text(PhraseText::from("世界")),
+        words("！"),
     ];
     assert_eq!(
         // SAFETY: `crate::ffi::sentence_text(phrases)` is the string the library just returned;
         // this code owns it and frees it only here.
         unsafe { crate::ffi::take_owned_cstr(crate::ffi::sentence_text(phrases)) },
-        "你好世界"
+        "你好世界！"
     );
-    assert!(crate::ffi::sentence_text([None::<PhraseText>]).is_null());
+    assert!(crate::ffi::sentence_text([null()]).is_null());
 }
 
 // 074a2219: pinyin.cpp:1711-1740,2200-2215 and
@@ -402,21 +408,26 @@ fn a_partial_system_gram_tail_refuses_the_segment_with_one_warning() {
 fn sentence_null_out_param_answers_true() {
     assert!(
         // SAFETY: Out-parameters is met by NULL or a writable local output slot.
-        unsafe { write_owned_sentence([Some(PhraseText::from("你"))], std::ptr::null_mut()) }
+        unsafe {
+            write_owned_sentence(
+                [oxpinyin::marshal::SentencePhrase::Text(PhraseText::from(
+                    "你",
+                ))],
+                std::ptr::null_mut(),
+            )
+        }
     );
 }
 
 #[test]
 fn sentence_phrases_write_through() {
-    let phrases = [
-        PhraseText::from("你"),
-        PhraseText::from("好"),
-        PhraseText::from("x"),
-    ];
+    let phrases = ["你", "好", "x"].map(|text| {
+        oxpinyin::marshal::SentencePhrase::Words(text.chars().map(u32::from).collect())
+    });
     let mut out = std::ptr::null_mut();
     assert!(
         // SAFETY: Out-parameters is met by NULL or a writable local output slot.
-        unsafe { write_owned_sentence(phrases.iter().map(Some), &mut out) }
+        unsafe { write_owned_sentence(&phrases, &mut out) }
     );
     assert!(!out.is_null());
     // SAFETY: the writer returned a caller-owned GLib string.

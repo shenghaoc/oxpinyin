@@ -24,7 +24,9 @@ fn ffi_output_helpers_preserve_ownership_and_bytes() {
     unsafe { glib_sys::g_strfreev(vector) };
     assert!(symbol_vector(&[] as &[&str]).is_null());
 
-    let sentence = sentence_text([Some(PhraseText::from("你")), Some(PhraseText::from("好"))]);
+    let sentence = sentence_text(
+        ["你", "好"].map(|text| oxpinyin::marshal::SentencePhrase::Text(PhraseText::from(text))),
+    );
     // SAFETY: The helper returned a NUL-terminated GLib string.
     let sentence_bytes = unsafe { CStr::from_ptr(sentence) }.to_bytes();
     assert_eq!(sentence_bytes, "你好".as_bytes());

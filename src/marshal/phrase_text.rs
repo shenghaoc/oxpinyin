@@ -81,6 +81,51 @@ pub fn for_each_stored_word_utf8(
     }
 }
 
+/// One phrase of a sentence row as the pin's `convert_to_utf8` converts it
+/// (074a2219 `lookup/lookup.cpp:37-58`).
+#[derive(Clone, Debug)]
+pub enum SentencePhrase {
+    /// An item's stored UCS-4 words, copied as `get_phrase_string` copies
+    /// them into a stack buffer (`:46-47`). Up to `MAX_PHRASE_LENGTH` words
+    /// stay inline; a crafted item's longer header count spills to the heap.
+    Words(smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>),
+    /// Text with no item behind it: a raw part, or the empty text an
+    /// unresolved first token repeats.
+    Text(PhraseText),
+}
+
+impl SentencePhrase {
+    /// The length of the phrase's `g_ucs4_to_utf8` bytes (`:58`), or `None`
+    /// where that conversion answers NULL: [`stored_words_utf8_len`] for
+    /// stored words, [`phrase_text_len`] for text.
+    #[must_use]
+    pub fn utf8_len(&self) -> Option<usize> {
+        match self {
+            Self::Words(words) => stored_words_utf8_len(words.iter().copied().map(Some)),
+            Self::Text(text) => Some(phrase_text_len(text)),
+        }
+    }
+
+    /// Hands the [`Self::utf8_len`] bytes to `emit`, with no intermediate
+    /// text: [`for_each_stored_word_utf8`] for stored words,
+    /// [`phrase_text_bytes`] for text.
+    pub fn for_each_utf8(&self, mut emit: impl FnMut(&[u8])) {
+        match self {
+            Self::Words(words) => for_each_stored_word_utf8(words.iter().copied().map(Some), emit),
+            Self::Text(text) => emit(&phrase_text_bytes(text)),
+        }
+    }
+
+    /// The phrase as text, `None` where its conversion answers NULL.
+    #[must_use]
+    pub fn text(&self) -> Option<PhraseText> {
+        match self {
+            Self::Words(words) => PhraseText::from_stored_words(words.iter().copied().map(Some)),
+            Self::Text(text) => Some(text.clone()),
+        }
+    }
+}
+
 #[cold]
 fn encode_words(words: &[u32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(words.len().saturating_mul(3));
