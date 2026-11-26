@@ -738,6 +738,23 @@ impl<'a> RuntimeDict<'a> {
             .flatten()
     }
 
+    /// Whether [`Self::token_text`] answers a text, without building it.
+    fn token_text_converts(&self, token: u32) -> bool {
+        if self.is_system_library(phrase_index_library_index(token)) {
+            return self
+                .live_items()
+                .read(token, |item| item.view().phrase_text_converts())
+                .found()
+                .unwrap_or(false);
+        }
+        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
+            return false;
+        }
+        self.user
+            .with_user_item(token, |item| item.phrase_text_converts())
+            .unwrap_or(false)
+    }
+
     /// The stored length and text of the token's item, as the C token
     /// getters read them (`_token_get_phrase`, 074a2219 `pinyin.cpp:1627-1646`,
     /// `zhuyin.cpp:1096-1114`). `None` only when `get_phrase_item` fails, or
@@ -1211,6 +1228,15 @@ impl Dictionary for RuntimeDict<'_> {
         }
         let store = self.user;
         store.phrase(token).and_then(|phrase| phrase.phrase_text())
+    }
+
+    /// The first source [`Self::phrase_text_for_token`] reads, checked
+    /// without building its text; any other answer takes the full read.
+    fn has_phrase_text_for_token(&self, token: u32) -> bool {
+        if !self.library_visible_token(token) {
+            return false;
+        }
+        self.token_text_converts(token) || self.phrase_text_for_token(token).is_some()
     }
 
     fn phrase_length_for_token(&self, token: u32) -> Option<usize> {

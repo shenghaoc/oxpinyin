@@ -33,6 +33,12 @@ fn stored_outward(buffer: &[u32]) -> &[u32] {
     words.split(|&word| word == 0).next().unwrap_or(words)
 }
 
+/// `g_ucs4_to_utf8` refuses a word at or above `0x80000000` before the
+/// first zero (074a2219 `src/lookup/lookup.cpp:58`).
+const fn refuses(word: u32, past_zero: bool) -> bool {
+    !past_zero && word >= 0x8000_0000
+}
+
 impl PhraseText {
     // convert_to_utf8 converts each phrase separately, lookup/lookup.cpp:39–68.
     /// Reads one phrase's UCS-4 words. A word at or above `0x8000_0000` before the first zero
@@ -55,7 +61,7 @@ impl PhraseText {
         for word in words {
             let word = word?;
             total = total.saturating_add(1);
-            if !past_zero && word >= 0x8000_0000 {
+            if refuses(word, past_zero) {
                 return None;
             }
             past_zero |= word == 0;
@@ -73,6 +79,23 @@ impl PhraseText {
             Some(words) => Self::stored(words, total),
             None => Self(TextStorage::Scalar(text)),
         })
+    }
+
+    /// Whether [`Self::from_stored_words`] answers a text for `words`,
+    /// without building it: every word is readable, and none before the
+    /// first zero is refused.
+    pub(crate) fn stored_words_convert(words: impl IntoIterator<Item = Option<u32>>) -> bool {
+        let mut past_zero = false;
+        for word in words {
+            let Some(word) = word else {
+                return false;
+            };
+            if refuses(word, past_zero) {
+                return false;
+            }
+            past_zero |= word == 0;
+        }
+        true
     }
 
     /// Builds stored words with a declared count for ranking. Counts above

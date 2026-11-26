@@ -578,7 +578,7 @@ where
         token: PhraseToken,
         text: RowText,
     ) -> Result<Selection, EngineError> {
-        if text == RowText::Resolve && self.dictionary.phrase_text_for_token(token).is_none() {
+        if text == RowText::Resolve && !self.dictionary.has_phrase_text_for_token(token) {
             let len = self.choose_unreadable_step(start, end, token)?;
             return Ok(if len == 0 {
                 Selection::Refused

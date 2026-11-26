@@ -194,3 +194,24 @@ fn a_sentence_cuts_each_ordinary_part_at_its_own_nul() {
     assert_eq!(sentence.phrase_length(), 4);
     assert_eq!(sentence, "甲丙");
 }
+
+// Basis: src/lookup/lookup.cpp:39-68 at 074a2219 and the Rust stored_words_convert contract.
+#[test]
+fn the_conversion_check_answers_where_the_text_converts() {
+    let cases: [&[Option<u32>]; 7] = [
+        &[],
+        &[Some(0x4F60), Some(0x597D)],
+        &[Some(0x4F60), None],
+        &[Some(0x8000_0000)],
+        &[Some(0), Some(0x8000_0000)],
+        &[Some(0x4F60), Some(0), Some(0xFFFF_FFFF)],
+        &[Some(0x7FFF_FFFF), Some(0x8000_0000)],
+    ];
+    for words in cases {
+        assert_eq!(
+            PhraseText::stored_words_convert(words.iter().copied()),
+            PhraseText::from_stored_words(words.iter().copied()).is_some(),
+            "{words:x?}"
+        );
+    }
+}

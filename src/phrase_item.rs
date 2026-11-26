@@ -100,6 +100,12 @@ impl PhraseItemView<'_> {
         PhraseText::from_stored_words(self.phrase_codes())
     }
 
+    /// Whether [`Self::phrase_text`] answers a text, without building it.
+    #[must_use]
+    pub(crate) fn phrase_text_converts(&self) -> bool {
+        PhraseText::stored_words_convert(self.phrase_codes())
+    }
+
     /// Whether every declared word of the text lies inside the item's bytes.
     #[must_use]
     pub(crate) fn phrase_words_present(&self) -> bool {
