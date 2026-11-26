@@ -33,28 +33,14 @@ fn put_word(gram: &mut [u8], offset: usize, value: u32) {
     }
 }
 
-/// The byte offset of item `index`; `None` when it overflows.
-const fn item_offset(index: usize) -> Option<usize> {
-    match index.checked_mul(ITEM_LEN) {
-        Some(bytes) => bytes.checked_add(TOTAL_LEN),
-        None => None,
-    }
-}
-
-/// The token of item `index`; `None` past the last whole item.
-fn item_token(gram: &[u8], index: usize) -> Option<u32> {
-    (index < get_length(gram)).then(|| item_offset(index).map(|offset| word(gram, offset)))?
-}
-
-/// The frequency of item `index`; `None` past the last whole item.
-fn item_freq(gram: &[u8], index: usize) -> Option<u32> {
-    let offset = item_offset(index)?.checked_add(4)?;
-    (index < get_length(gram)).then(|| word(gram, offset))
-}
-
 /// Borrow whole records without decoding the row or discarding a partial tail.
 fn records(gram: &[u8]) -> Option<(&[[u8; ITEM_LEN]], &[u8])> {
     Some(gram.get(TOTAL_LEN..)?.as_chunks())
+}
+
+/// The whole records, none for a value shorter than its total.
+fn whole_records(gram: &[u8]) -> &[[u8; ITEM_LEN]] {
+    records(gram).map_or(&[], |(records, _)| records)
 }
 
 fn record_token(record: &[u8; ITEM_LEN]) -> u32 {
@@ -100,23 +86,20 @@ fn lower_bound_records(records: &[[u8; ITEM_LEN]], token: u32) -> usize {
 /// [`lower_bound`], stop at the first item above `token` (a miss) or the
 /// first equal one (a hit).
 fn find(gram: &[u8], token: u32) -> Option<usize> {
-    for index in lower_bound(gram, token)..get_length(gram) {
-        let item = item_token(gram, index)?;
-        if item > token {
-            return None;
-        }
-        if item == token {
-            return Some(index);
-        }
-    }
-    None
+    let records = whole_records(gram);
+    let start = lower_bound_records(records, token);
+    let index = start
+        + records[start..]
+            .iter()
+            .position(|record| record_token(record) >= token)?;
+    (record_token(&records[index]) == token).then_some(index)
 }
 
 /// `SingleGram::get_freq` (`ngram.cpp:231-250`): the first match walking
 /// from [`lower_bound`].
 #[must_use]
 pub fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
-    find(gram, token).and_then(|index| item_freq(gram, index))
+    find(gram, token).map(|index| record_freq(&whole_records(gram)[index]))
 }
 
 /// Where the pin's own read of a malformed value stops being defined.
@@ -147,21 +130,19 @@ pub(crate) const fn has_partial_tail(gram: &[u8]) -> bool {
 /// # Errors
 /// [`GramFault::OverRead`] where the pin reads past the value.
 pub fn checked_get_freq(gram: &[u8], token: u32) -> Result<Option<u32>, GramFault> {
-    if gram.len() < TOTAL_LEN {
+    let Some((records, tail)) = records(gram) else {
         return Err(GramFault::OverRead);
-    }
-    for index in lower_bound(gram, token)..get_length(gram) {
-        let (Some(item), Some(freq)) = (item_token(gram, index), item_freq(gram, index)) else {
-            return Err(GramFault::OverRead);
-        };
+    };
+    for record in &records[lower_bound_records(records, token)..] {
+        let item = record_token(record);
         if item > token {
             return Ok(None);
         }
         if item == token {
-            return Ok(Some(freq));
+            return Ok(Some(record_freq(record)));
         }
     }
-    if has_partial_tail(gram) {
+    if !tail.is_empty() {
         return Err(GramFault::OverRead);
     }
     Ok(None)
@@ -206,13 +187,10 @@ pub fn checked_search(
 /// Replaces the first matching token's frequency and leaves the row total unchanged.
 /// Returns `false` when the sorted row has no such token.
 pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
-    let Some(offset) = find(gram, token)
-        .and_then(item_offset)
-        .and_then(|offset| offset.checked_add(4))
-    else {
+    let Some(index) = find(gram, token) else {
         return false;
     };
-    put_word(gram, offset, freq);
+    put_word(gram, TOTAL_LEN + index * ITEM_LEN + 4, freq);
     true
 }
 
@@ -223,24 +201,24 @@ pub fn insert_freq(gram: &mut Vec<u8>, token: u32, freq: u32) -> bool {
     let mut record = [0_u8; ITEM_LEN];
     record[..4].copy_from_slice(&token.to_le_bytes());
     record[4..].copy_from_slice(&freq.to_le_bytes());
-    for index in lower_bound(gram, token)..get_length(gram) {
-        let Some(item) = item_token(gram, index) else {
-            return false;
-        };
-        if item > token {
-            let Some(offset) = item_offset(index) else {
-                return false;
-            };
+    let records = whole_records(gram);
+    let start = lower_bound_records(records, token);
+    match records[start..]
+        .iter()
+        .position(|stored| record_token(stored) >= token)
+    {
+        Some(found) if record_token(&records[start + found]) == token => false,
+        Some(found) => {
+            let offset = TOTAL_LEN + (start + found) * ITEM_LEN;
             gram.splice(offset..offset, record);
-            return true;
+            true
         }
-        if item == token {
-            return false;
+        None => {
+            // `insert_content(m_chunk.size(), …)`, after any partial tail.
+            gram.extend_from_slice(&record);
+            true
         }
     }
-    // `insert_content(m_chunk.size(), …)`.
-    gram.extend_from_slice(&record);
-    true
 }
 
 // SingleGram::mask_out, ngram.cpp:76–103.
@@ -266,65 +244,9 @@ pub fn mask_out(gram: &mut Vec<u8>, mask: u32, value: u32) -> u32 {
 /// `SingleGram::retrieve_all` (`ngram.cpp:133-151`): every whole item in
 /// stored order, duplicates included, as `(token, freq)`.
 pub fn retrieve_all(gram: &[u8]) -> impl Iterator<Item = (u32, u32)> + '_ {
-    (0..get_length(gram))
-        .map_while(|index| Some((item_token(gram, index)?, item_freq(gram, index)?)))
-}
-
-/// `merge_single_gram` (`ngram.cpp:277-352`) into `merged`: `false` and
-/// `merged` untouched when both grams are absent; a copy of the present
-/// one when the other is absent; otherwise the wrapped sum of the totals
-/// and the two item arrays merged linearly, equal tokens summed.
-pub fn merge_single_gram(merged: &mut Vec<u8>, system: Option<&[u8]>, user: Option<&[u8]>) -> bool {
-    let (system, user) = match (system, user) {
-        (None, None) => return false,
-        (None, Some(only)) | (Some(only), None) => {
-            merged.clear();
-            merged.extend_from_slice(only);
-            return true;
-        }
-        (Some(system), Some(user)) => (system, user),
-    };
-    let total = get_total_freq(system)
-        .unwrap_or(0)
-        .wrapping_add(get_total_freq(user).unwrap_or(0));
-    merged.clear();
-    merged.extend_from_slice(&total.to_le_bytes());
-    let (system_len, user_len) = (get_length(system), get_length(user));
-    let (mut left, mut right) = (0, 0);
-    fn append(merged: &mut Vec<u8>, token: u32, freq: u32) {
-        merged.extend_from_slice(&token.to_le_bytes());
-        merged.extend_from_slice(&freq.to_le_bytes());
-    }
-    let item = |gram: &[u8], index: usize| -> (u32, u32) {
-        (
-            item_token(gram, index).unwrap_or(0),
-            item_freq(gram, index).unwrap_or(0),
-        )
-    };
-    while left < system_len && right < user_len {
-        let ((system_token, system_freq), (user_token, user_freq)) =
-            (item(system, left), item(user, right));
-        if system_token < user_token {
-            append(merged, system_token, system_freq);
-            left += 1;
-        } else if system_token > user_token {
-            append(merged, user_token, user_freq);
-            right += 1;
-        } else {
-            append(merged, system_token, system_freq.wrapping_add(user_freq));
-            left += 1;
-            right += 1;
-        }
-    }
-    for index in left..system_len {
-        let (token, freq) = item(system, index);
-        append(merged, token, freq);
-    }
-    for index in right..user_len {
-        let (token, freq) = item(user, index);
-        append(merged, token, freq);
-    }
-    true
+    whole_records(gram)
+        .iter()
+        .map(|record| (record_token(record), record_freq(record)))
 }
 
 /// A fresh `SingleGram`: the four zero bytes of an empty total
@@ -348,15 +270,43 @@ pub(crate) fn merge_fault(system: &[u8], user: &[u8]) -> Option<GramFault> {
     }
 }
 
-/// The chunk `merge_single_gram` builds from two present, readable grams.
+/// The chunk `merge_single_gram` (`ngram.cpp:277-352`) builds from two
+/// present, readable grams ([`merge_fault`] answered `None`): the wrapped
+/// sum of the totals, then the two item arrays merged linearly, equal
+/// tokens summed under the system token.
 pub(crate) fn merged_chunk(system: &[u8], user: &[u8]) -> Vec<u8> {
-    let mut chunk = Vec::with_capacity(
-        system
-            .len()
-            .saturating_add(user.len())
-            .saturating_sub(TOTAL_LEN),
-    );
-    merge_single_gram(&mut chunk, Some(system), Some(user));
+    let (system_records, user_records) = (whole_records(system), whole_records(user));
+    let total = get_total_freq(system)
+        .unwrap_or(0)
+        .wrapping_add(get_total_freq(user).unwrap_or(0));
+    let mut chunk =
+        Vec::with_capacity(TOTAL_LEN + ITEM_LEN * (system_records.len() + user_records.len()));
+    chunk.extend_from_slice(&total.to_le_bytes());
+    let (mut left, mut right) = (0, 0);
+    while let (Some(system_record), Some(user_record)) =
+        (system_records.get(left), user_records.get(right))
+    {
+        let (system_token, user_token) = (record_token(system_record), record_token(user_record));
+        match system_token.cmp(&user_token) {
+            std::cmp::Ordering::Less => {
+                chunk.extend_from_slice(system_record);
+                left += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                chunk.extend_from_slice(user_record);
+                right += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                let freq = record_freq(system_record).wrapping_add(record_freq(user_record));
+                chunk.extend_from_slice(&system_token.to_le_bytes());
+                chunk.extend_from_slice(&freq.to_le_bytes());
+                left += 1;
+                right += 1;
+            }
+        }
+    }
+    chunk.extend_from_slice(system_records[left..].as_flattened());
+    chunk.extend_from_slice(user_records[right..].as_flattened());
     chunk
 }
 
