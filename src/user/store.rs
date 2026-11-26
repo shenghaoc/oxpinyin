@@ -523,13 +523,13 @@ pub struct StoreInner {
     pub(crate) system_items: RefCell<crate::user::system_items::SystemItems>,
     /// The user libraries' stored-total differences ([`Offsets`]).
     pub(crate) offsets: RefCell<Offsets>,
-    pub(crate) dirty: Cell<bool>,
+    pub(crate) dirty: bool,
     /// Revision observed by the phrase export iterator.
-    pub(crate) write_generation: Cell<u64>,
+    pub(crate) write_generation: u64,
     /// The gate in front of the user-bigram read: `false` means the
     /// container holds no gram. Recomputed at `open` and maintained only by
     /// `UserStore::mark_committed_write`.
-    pub(crate) has_user_data: Cell<bool>,
+    pub(crate) has_user_data: bool,
     /// The libpinyin session metadata (optional directory, system originals).
     /// Transient sessions retain originals without a directory; others use the
     /// pin's own file shapes (`open_libpinyin_checked`): `save()` exports the
@@ -808,11 +808,11 @@ impl UserStore {
     }
 
     fn write_generation(&self) -> u64 {
-        self.inner.write_generation.get()
+        self.inner.write_generation
     }
 
     fn has_user_data(&self) -> bool {
-        self.inner.has_user_data.get()
+        self.inner.has_user_data
     }
 
     /// The gate in front of the count reads, as the session holds it.
@@ -823,23 +823,21 @@ impl UserStore {
 
     /// Sets the decode gate.
     #[cfg(test)]
-    pub(crate) fn force_gate_for_test(&self, open: bool) {
-        self.inner.has_user_data.set(open);
+    pub(crate) fn force_gate_for_test(&mut self, open: bool) {
+        self.inner.has_user_data = open;
     }
 
     /// Invalidate cached reads after a committed user-data write.
     ///
     /// Every caller's entry point takes `&mut self`, so no reader observes
     /// post-commit rows against a pre-commit generation, or the reverse.
-    fn mark_committed_write(&self, has_user_data: bool) {
-        self.inner.has_user_data.set(has_user_data);
+    fn mark_committed_write(&mut self, has_user_data: bool) {
+        self.inner.has_user_data = has_user_data;
         self.advance_write_generation();
     }
 
-    fn advance_write_generation(&self) {
-        self.inner
-            .write_generation
-            .set(self.inner.write_generation.get().wrapping_add(1));
+    fn advance_write_generation(&mut self) {
+        self.inner.write_generation = self.inner.write_generation.wrapping_add(1);
     }
 
     /// A search of the user pinyin table for the query `keys` makes
@@ -905,7 +903,7 @@ impl UserStore {
     /// Stores `gram` under `prev` as it is, as a crafted container record
     /// holds it, without marking the context modified.
     #[cfg(test)]
-    pub(crate) fn plant_gram(&self, prev: PhraseToken, gram: &[u8]) {
+    pub(crate) fn plant_gram(&mut self, prev: PhraseToken, gram: &[u8]) {
         self.store_gram(prev, gram).expect("store the gram");
         self.mark_committed_write(true);
     }
@@ -1158,7 +1156,7 @@ impl UserStore {
         cur: PhraseToken,
     ) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
-        self.inner.dirty.set(true);
+        self.inner.dirty = true;
         Ok(seed)
     }
 
@@ -1575,12 +1573,12 @@ impl UserStore {
     /// `m_modified` (§4).
     #[must_use]
     pub fn is_modified(&self) -> bool {
-        self.inner.dirty.get()
+        self.inner.dirty
     }
 
     /// Arm `m_modified` without a data write.
     pub fn mark_modified(&mut self) {
-        self.inner.dirty.set(true);
+        self.inner.dirty = true;
     }
 
     /// Every stored phrase (user and network) with pronunciations.
@@ -1712,7 +1710,7 @@ impl UserStore {
                 &mut reporting,
             )?;
         }
-        self.inner.dirty.set(false);
+        self.inner.dirty = false;
         Ok(())
     }
 
@@ -1916,7 +1914,8 @@ impl UserStore {
         replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
         library_totals: &crate::user::LibraryTable<u32>,
     ) {
-        self.apply_system_libraries(&originals, replayed, library_totals);
+        let has_user_data = self.apply_system_libraries(&originals, replayed, library_totals);
+        self.mark_committed_write(has_user_data);
         {
             let mut phrases = self.inner.libpinyin.phrases_mut();
             for nibble in originals.keys() {
@@ -1946,11 +1945,12 @@ impl UserStore {
         if nibble >= 16 {
             return;
         }
-        self.apply_system_libraries(
+        let has_user_data = self.apply_system_libraries(
             &self.originals.selected(1 << nibble),
             crate::user::LibraryTable::new(),
             &Default::default(),
         );
+        self.mark_committed_write(has_user_data);
         self.inner.libpinyin.phrases_mut().unloaded.insert(nibble);
     }
 
@@ -1959,7 +1959,7 @@ impl UserStore {
         originals: &impl crate::user::OriginalLibraries,
         mut replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
         library_totals: &crate::user::LibraryTable<u32>,
-    ) {
+    ) -> bool {
         let target = Rc::clone(&self.inner.libpinyin);
         let mut offsets = self.offsets_mut();
         // A reloaded library has no stored total difference any more: its
@@ -2011,7 +2011,7 @@ impl UserStore {
         };
         // A session's grams are user data too.
         let has_grams = self.container().is_empty().is_ok_and(|empty| !empty);
-        self.mark_committed_write(has_grams || arena_live);
+        has_grams || arena_live
     }
 
     /// The faults [`Self::mask_out`] reaches before it changes anything, in

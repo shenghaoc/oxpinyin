@@ -2141,7 +2141,7 @@ fn a_partial_tail_at_a_later_step_keeps_the_earlier_steps() {
     value.extend_from_slice(&9_u32.to_le_bytes());
     value.extend_from_slice(&7_u32.to_le_bytes());
     value.extend_from_slice(&[0xa5, 0x5a, 0x01]);
-    runtime.user_store().plant_gram(ni, &value);
+    runtime.user_store_mut().plant_gram(ni, &value);
     assert!(!runtime.user_store().is_modified());
     let result = runtime.train_session(&state, 0);
     assert!(

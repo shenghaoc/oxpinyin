@@ -455,7 +455,7 @@ fn reads(store: &UserStore, tokens: &[u32]) -> String {
     out
 }
 
-fn assert_the_gate_suppresses_nothing(store: &UserStore, tokens: &[u32], step: &str) {
+fn assert_the_gate_suppresses_nothing(store: &mut UserStore, tokens: &[u32], step: &str) {
     let natural = store.gate_for_test();
     let gated = reads(store, tokens);
     store.force_gate_for_test(true);
@@ -476,19 +476,19 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     let tokens = [LIBRARY | 1, LIBRARY | 2, 0x0200_0001, 0x0700_0001];
 
     let (dir, mut store) = open_over("gate", &base, &records);
-    assert_the_gate_suppresses_nothing(&store, &tokens, "open");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "open");
     store
         .observe_selection(LIBRARY | 1, LIBRARY | 2)
         .expect("gram");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a gram");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a gram");
     train(&mut store, 2, key("hao", 3), 1);
-    assert_the_gate_suppresses_nothing(&store, &tokens, "training");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "training");
     store.mask_out(0xff00_0000, 0x0200_0000).expect("mask 2");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a mask of another library");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a mask of another library");
     store
         .add_system_phrase_in(1, Some(LIBRARY | 1), &"你".into(), &dense("ni", 3), Some(3))
         .expect("import");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "an import");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "an import");
     let user = store
         .add_phrase_in(
             crate::vocab::USER_DICTIONARY,
@@ -497,20 +497,20 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
             Some(20),
         )
         .expect("user phrase");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a user phrase");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a user phrase");
     assert!(store.remove_user_phrase(user).expect("remove"));
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a removal");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a removal");
     store.mask_out(0xff00_0000, LIBRARY).expect("mask 1");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a mask of the replayed library");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a mask of the replayed library");
     store
         .load_system_libraries(base.fixture_copy())
         .expect("reload");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a reload");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a reload");
     store.unload_system_libraries(base.fixture_copy());
     store
         .load_system_libraries(base.fixture_copy())
         .expect("load");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "an unload and load");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "an unload and load");
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 
@@ -519,14 +519,14 @@ fn the_gate_never_hides_a_count_or_a_gram_after_a_mask_removal_reload_or_import(
     store
         .observe_selection(LIBRARY | 1, LIBRARY | 2)
         .expect("gram");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a gram");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a gram");
     store.load_system_libraries(base).expect("reload");
     assert!(
         store.bigram_row(LIBRARY | 1).expect("row").is_some(),
         "the gram outlives the reload of the library it points into"
     );
     assert!(store.gate_for_test(), "the gram keeps the gate open");
-    assert_the_gate_suppresses_nothing(&store, &tokens, "a reload that leaves only the gram");
+    assert_the_gate_suppresses_nothing(&mut store, &tokens, "a reload that leaves only the gram");
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
