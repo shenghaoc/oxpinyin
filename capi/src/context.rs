@@ -7,60 +7,6 @@ use crate::ffi::borrow_or_return;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::PinyinContext;
 
-/// # Safety
-///
-/// Under the crate-level rules, Strings: both pointers are NULL or live
-/// NUL-terminated strings, unchanged for this call.
-unsafe fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
-    // The pin keeps `g_strdup` of both arguments and opens them by those
-    // bytes, so the names are paths, not text (#587). g_build_filename
-    // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
-    // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
-    let Some(system_path) = oxpinyin::input::filename(
-        // SAFETY: Strings guarantees valid, unchanged storage.
-        // The borrow ends in this statement.
-        unsafe { crate::ffi::borrow_c_string(systemdir) },
-    ) else {
-        // `g_build_filename(NULL, "table.conf", NULL)` is `""`: the load's
-        // `setlocale` and failed `fopen("")` with its `open  failed.` line,
-        // then the init's `load  failed!` (`table_info.cpp:197-202`).
-        let _ = oxpinyin::data::TableConf::load(c"");
-        oxpinyin::data::table_conf_load_failed(None);
-        return ptr::null_mut();
-    };
-    // The pin's guards test the user pointer (`pinyin.cpp:1133`, `:2671`):
-    // NULL is no user dir, while "" is one — the working directory (#619) —
-    // so the two stay apart.
-    let user_path = oxpinyin::input::filename(
-        // SAFETY: Strings guarantees valid, unchanged storage.
-        // The borrow ends in this statement.
-        unsafe { crate::ffi::borrow_c_string(userdir) },
-    );
-    match CapiContext::try_new(&system_path, user_path.as_deref()) {
-        Ok(context) => {
-            let handle = box_context(context);
-            crate::live::register(handle);
-            handle
-        }
-        Err(error) => {
-            refuse_init(&error, &system_path);
-            ptr::null_mut()
-        }
-    }
-}
-
-/// `pinyin_init`'s answer for a failed open, before it returns NULL: the
-/// process aborts where the pin dies, and a refusal writes the pin's line or
-/// one warning.
-fn refuse_init(error: &oxpinyin::facade::OpenFailure, system_path: &std::path::Path) {
-    error.refuse_init(
-        system_path,
-        "pinyin_init",
-        |path| oxpinyin::data::table_conf_load_failed(Some(path)),
-        crate::ffi::log_warning,
-    );
-}
-
 /// Create a new pinyin context.
 ///
 /// # C signature
@@ -92,9 +38,48 @@ pub unsafe extern "C" fn pinyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut PinyinContext {
-    // SAFETY: The entry point guarantees Strings: both pointers are NULL or live NUL-terminated
-    // strings, unchanged for this call.
-    unsafe { init_context(systemdir, userdir) }
+    // The pin keeps `g_strdup` of both arguments and opens them by those
+    // bytes, so the names are paths, not text (#587). g_build_filename
+    // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
+    // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
+    let Some(system_path) = oxpinyin::input::filename(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(systemdir) },
+    ) else {
+        // `g_build_filename(NULL, "table.conf", NULL)` is `""`: the load's
+        // `setlocale` and failed `fopen("")` with its `open  failed.` line,
+        // then the init's `load  failed!` (`table_info.cpp:197-202`).
+        let _ = oxpinyin::data::TableConf::load(c"");
+        oxpinyin::data::table_conf_load_failed(None);
+        return ptr::null_mut();
+    };
+    // The pin's guards test the user pointer (`pinyin.cpp:1133`, `:2671`):
+    // NULL is no user dir, while "" is one — the working directory (#619) —
+    // so the two stay apart.
+    let user_path = oxpinyin::input::filename(
+        // SAFETY: Strings guarantees valid, unchanged storage.
+        // The borrow ends in this statement.
+        unsafe { crate::ffi::borrow_c_string(userdir) },
+    );
+    match CapiContext::try_new(&system_path, user_path.as_deref()) {
+        Ok(context) => {
+            let handle = box_context(context);
+            crate::live::register(handle);
+            handle
+        }
+        Err(error) => {
+            // The process aborts where the pin dies, and a refusal writes
+            // the pin's line or one warning.
+            error.refuse_init(
+                &system_path,
+                "pinyin_init",
+                |path| oxpinyin::data::table_conf_load_failed(Some(path)),
+                crate::ffi::log_warning,
+            );
+            ptr::null_mut()
+        }
+    }
 }
 
 /// Finalize and free a pinyin context.

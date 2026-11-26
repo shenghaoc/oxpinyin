@@ -97,6 +97,7 @@ pub trait KeySpans {
     }
 }
 
+#[cfg(test)]
 impl KeySpans for [(usize, usize)] {
     fn span_count(&self) -> usize {
         self.len()

@@ -48,25 +48,14 @@ impl Default for SessionSettings {
     }
 }
 
-/// Settings a session reads once, at construction.
-#[derive(Clone, Copy, Debug)]
-struct Settings {
-    options: OptionBits,
-}
-
-impl Settings {
-    fn read(settings: SessionSettings) -> Self {
-        // A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE |
-        // USE_RESPLIT_TABLE` unless told otherwise: the table bits are
-        // always on, and incomplete pinyin follows the settings.
+impl SessionSettings {
+    /// The option word a session opens under: `PINYIN_INCOMPLETE |
+    /// USE_DIVIDED_TABLE | USE_RESPLIT_TABLE` unless told otherwise. The
+    /// table bits are always on, and incomplete pinyin follows the settings.
+    fn options(self) -> OptionBits {
         let mut options = OptionBits::USE_DIVIDED_TABLE | OptionBits::USE_RESPLIT_TABLE;
-        options.set(OptionBits::PINYIN_INCOMPLETE, settings.incomplete_pinyin);
-        Self { options }
-    }
-
-    /// Whether the `PINYIN_INCOMPLETE` bit is set.
-    const fn incomplete(self) -> bool {
-        self.options.contains(OptionBits::PINYIN_INCOMPLETE)
+        options.set(OptionBits::PINYIN_INCOMPLETE, self.incomplete_pinyin);
+        options
     }
 }
 
@@ -88,7 +77,8 @@ pub struct Session<D, L, S = SessionState> {
 /// A facade retains this state and borrows its storage anew for each operation.
 #[derive(Clone, Debug)]
 pub struct SessionState {
-    settings: Settings,
+    /// The session's option word.
+    options: OptionBits,
     /// Whether the prepended sentence rows collapse onto the 1-best row —
     /// libzhuyin's display law, set per surface via
     /// [`Session::set_collapse_sentence_rows_to_best`]; off (the pinyin

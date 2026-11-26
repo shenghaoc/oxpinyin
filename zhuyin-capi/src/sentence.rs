@@ -154,31 +154,16 @@ pub unsafe extern "C" fn zhuyin_get_sentence(
     }
     match inst.core.sentence_phrases(0) {
         Some(phrases) => {
+            // The allocator's result, NULL where the pin's would be; the
+            // answer is `true` (`lookup.cpp:69`).
             // SAFETY: The entry point guarantees Out-parameters: a non-NULL sentence destination is aligned
             // and writable without conflicting with live borrows, including the phrase inputs. Its
             // contents need not be initialized.
-            unsafe { write_owned_sentence(phrases, sentence) }
+            write_if_nonnull!(sentence, crate::ffi::sentence_text(phrases));
+            true
         }
         None => false,
     }
-}
-
-/// Writes the allocator's result for `phrases` through the
-/// caller-owned out-param, NULL where the pin's would be, and
-/// answers `true` (`lookup.cpp:69`).
-///
-/// # Safety
-///
-/// Under the crate-level rules, Out-parameters: a non-NULL sentence
-/// destination is aligned and writable without conflicting with live
-/// borrows, including the phrase inputs. Its contents need not be
-/// initialized.
-unsafe fn write_owned_sentence(
-    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<oxpinyin::marshal::SentencePhrase>>,
-    sentence: *mut *mut c_char,
-) -> bool {
-    write_if_nonnull!(sentence, crate::ffi::sentence_text(phrases));
-    true
 }
 
 // zhuyin.cpp:2148-2196, zhuyin.cpp:2110.
@@ -325,13 +310,6 @@ fn candidate_guess_answer(result: Result<bool, CandidateGuessRefusal>) -> bool {
     }
 }
 
-/// Whether the facade's `guint32` unigram total is zero: the loaded
-/// libraries' sum, the user store's deltas and the accepted
-/// `zhuyin_token_add_unigram_frequency` deltas, wrapped.
-fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.lm.amplified_total() == 0
-}
-
 /// The shared candidate-build shell over the engine's `candidates_at` /
 /// `candidates_ending_at` / cached candidate list.
 fn guess_candidates(
@@ -456,7 +434,10 @@ fn guess_candidates_result(
             || inst.core.zhuyin_parse().is_none_or(|parse| {
                 oxpinyin::facade::zhuyin_original_offset(parse, session_offset) == normalized
             }));
-    let abort_on_rank = searched_here && facade_total_is_zero(&inst.read());
+    // The facade's `guint32` unigram total: the loaded libraries' sum, the
+    // user store's deltas and the accepted
+    // `zhuyin_token_add_unigram_frequency` deltas, wrapped.
+    let abort_on_rank = searched_here && inst.core.lm.amplified_total() == 0;
     let window_owned = lookup_window(inst, session_offset, before_cursor, abort_on_rank)?;
     // Every snapshot row below carries its own span in this window, which a
     // later `zhuyin_choose_candidate` selects; the window's storage then

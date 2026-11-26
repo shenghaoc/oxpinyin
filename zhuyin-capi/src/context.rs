@@ -73,22 +73,17 @@ pub unsafe extern "C" fn zhuyin_init(
             handle
         }
         Err(error) => {
-            refuse_init(&error, &system_path);
+            // The process aborts where the pin dies, and a refusal writes
+            // the pin's line or one warning.
+            error.refuse_init(
+                &system_path,
+                "zhuyin_init",
+                |path| oxpinyin::data::table_conf_load_failed(Some(path)),
+                crate::ffi::log_warning,
+            );
             ptr::null_mut()
         }
     }
-}
-
-/// `zhuyin_init`'s answer for a failed open, before it returns NULL: the
-/// process aborts where the pin dies, and a refusal writes the pin's line or
-/// one warning.
-fn refuse_init(error: &oxpinyin::facade::OpenFailure, system_path: &std::path::Path) {
-    error.refuse_init(
-        system_path,
-        "zhuyin_init",
-        |path| oxpinyin::data::table_conf_load_failed(Some(path)),
-        crate::ffi::log_warning,
-    );
 }
 
 /// Finalize and free a zhuyin context.

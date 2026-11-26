@@ -13,15 +13,11 @@ where
     /// environment and discovers no path. Construction cannot fail: it
     /// reads no dictionary or model record.
     pub fn new(settings: SessionSettings, dictionary: D, model: L) -> Self {
-        Self::init(Settings::read(settings), dictionary, model)
-    }
-
-    pub(super) fn init(settings: Settings, dictionary: D, model: L) -> Self {
         Self {
             dictionary,
             model,
             state: SessionState {
-                settings,
+                options: settings.options(),
                 collapse_sentence_rows_to_best: false,
                 candidate_ranking: CandidateRanking::SortWord,
                 nbest_shape: crate::engine::nbest::NbestShape::default(),
@@ -62,7 +58,7 @@ where
     /// The option word applied ([`Self::set_options`]).
     #[must_use]
     pub fn options(&self) -> OptionBits {
-        self.settings.options
+        self.options
     }
 
     /// The last sort-option word applied ([`Self::set_sort_options`]).
@@ -407,10 +403,10 @@ where
     ///
     /// A refresh error leaves the new option word in effect.
     pub fn set_options(&mut self, options: OptionBits) -> Result<(), EngineError> {
-        if self.settings.options == options {
+        if self.options == options {
             return Ok(());
         }
-        self.settings.options = options;
+        self.options = options;
         if self.input.is_empty() {
             return Ok(());
         }

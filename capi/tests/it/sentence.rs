@@ -120,6 +120,9 @@ fn keyless_sentence_guesses_keep_the_old_sentence() {
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
         let sentence = unsafe { sentence_out(instance, 0) };
         assert!(sentence.0);
+        // A NULL out-parameter writes nothing and answers true (`lookup.cpp:69`).
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert!(unsafe { pinyin_get_sentence(instance, 0, ptr::null_mut()) });
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
         assert_eq!(unsafe { parse(instance, keyless) }, consumed);
         assert!(!guess(instance));

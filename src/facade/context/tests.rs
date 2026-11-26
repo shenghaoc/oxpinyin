@@ -57,6 +57,16 @@ fn every_table_conf_abort_site_refuses_the_init_with_an_abort() {
         refusal(TableConfError::UninitialisedSourceFormat),
         InitRefusal::TableConfWarning(_)
     ));
+    // A session the library loop cannot build (`OpenError::UserSession`)
+    // is the pin's death at each counterpart too. No input reaches it
+    // through `pinyin_init`, so the classification is checked here.
+    assert_eq!(
+        OpenFailure::Runtime(OpenError::UserSession(
+            crate::user::UserStoreError::SessionSeed,
+        ))
+        .init_refusal(Path::new("system")),
+        InitRefusal::Abort,
+    );
 }
 
 // Rust contract: OpenFailure retains the underlying runtime error.

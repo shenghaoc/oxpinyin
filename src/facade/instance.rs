@@ -538,7 +538,7 @@ impl<
     ) -> Result<Selection, EngineError> {
         self.note_validation();
         let (begin, end) = (usize::from(row.begin), usize::from(row.end));
-        let size = if self.session.selection_capacity() == 0 {
+        let size = if self.session.selection_constraint_size() == 0 {
             0
         } else {
             self.parsed_len + 1

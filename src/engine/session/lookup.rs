@@ -397,7 +397,7 @@ where
         offset: usize,
         gate: bool,
     ) -> Result<Option<(u32, MergedGram)>, EngineError> {
-        if !self.settings.options.contains(OptionBits::DYNAMIC_ADJUST) {
+        if !self.options.contains(OptionBits::DYNAMIC_ADJUST) {
             return Ok(None);
         }
         let Some(prev) = self.previous_token(offset) else {
@@ -483,7 +483,7 @@ where
                 // truncation. The addon and predicted branches above return
                 // early in the pin too — they carry no bigram term at all.
                 let bigram = match dynamic_adjust_bigram_possibility(
-                    self.settings.options,
+                    self.options,
                     gram.map(|(_, row)| row),
                     token,
                 ) {
@@ -1134,8 +1134,7 @@ where
                 session.prepend_nbest_rows(items);
                 return Ok(());
             }
-            session.scan_window_ending(offset, items, abort_on_rank)?;
-            Ok(())
+            session.scan_window_ending(offset, items, abort_on_rank)
         })
     }
 
@@ -1146,15 +1145,12 @@ where
     /// in order, then one text dedup — the pin dedups once, after the
     /// prepend, and [`Session::prepend_nbest_rows`] re-runs it over the
     /// joined list.
-    ///
-    /// Returns the retained parse length bounded by the cursor, mirroring
-    /// [`Session::scan_window`]'s return.
     pub(super) fn scan_window_ending(
         &mut self,
         offset: usize,
         out: &mut Vec<Candidate>,
         abort_on_rank: bool,
-    ) -> Result<usize, EngineError> {
+    ) -> Result<(), EngineError> {
         out.clear();
         self.with_scan_scratch(|session, scratch| {
             session.scan_window_ending_with_scratch(offset, out, abort_on_rank, scratch)
@@ -1167,7 +1163,7 @@ where
         out: &mut Vec<Candidate>,
         abort_on_rank: bool,
         scratch: &mut Scratch,
-    ) -> Result<usize, EngineError> {
+    ) -> Result<(), EngineError> {
         let rank_word = self.rank_word();
         let Scratch {
             entries,
@@ -1278,7 +1274,7 @@ where
         self.scan_unreadable = unreadable;
         self.scan_ranked_phrase = ranked_phrase;
         self.prepend_nbest_rows(out);
-        Ok(bound)
+        Ok(())
     }
 
     /// Prepends the stored n-best rows onto `collected`, head first, then

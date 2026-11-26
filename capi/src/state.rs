@@ -115,27 +115,6 @@ impl CapiContext {
             }
         }
     }
-
-    /// Unload addon library `index`.
-    ///
-    /// The pin asserts `index < PHRASE_INDEX_LIBRARY_COUNT`
-    /// (`novel_types.h:43`, 1<<4), and the process aborts here too
-    /// (`pinyin.cpp:499`). In range, it mirrors the pin's
-    /// unconditional `true`.
-    pub(crate) fn unload_addon(&mut self, index: u8) -> bool {
-        if index >= PHRASE_INDEX_LIBRARY_COUNT {
-            std::process::abort();
-        }
-        self.core.runtime.unload_system_addon(index)
-    }
-
-    /// The pin's bigram export iterator over this context from its one
-    /// `get_all_items` walk, shared: [`ContextCore::bigram_export_begin`].
-    /// `None` where the pin's walk asserts on a key that is not a four-byte
-    /// `phrase_token_t` (`ngram_bdb.cpp:199`).
-    pub(crate) fn bigram_export_begin(&self) -> Option<oxpinyin::facade::BigramExportWalk> {
-        self.core.bigram_export_begin()
-    }
 }
 
 // ── Instance ────────────────────────────────────────────────────────────

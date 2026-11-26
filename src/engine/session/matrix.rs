@@ -212,7 +212,7 @@ where
     /// [`EngineError::Failure`] when the buffer cannot be built into a graph.
     pub(super) fn build_parse(&self) -> Result<Parsed, EngineError> {
         let graph = self.build_graph()?;
-        let edges = graph.fewest_keys(self.settings.incomplete());
+        let edges = graph.fewest_keys(self.options.contains(OptionBits::PINYIN_INCOMPLETE));
         let parsed_len =
             apostrophe_extended(self.input.as_bytes(), edges.last().map_or(0, Edge::to));
         // The two facades have different full-pinyin parse orders:
@@ -221,7 +221,7 @@ where
         let scan = ScanMatrix::from_columns(build_scan_matrix_over(
             &graph,
             &edges,
-            self.settings.options,
+            self.options,
             self.scan_divided(),
         ));
         let matrix =
@@ -237,7 +237,7 @@ where
     fn build_graph(&self) -> Result<SegmentGraph, EngineError> {
         let raw = self.input.as_bytes();
         if self.input.exact().is_empty() {
-            SegmentGraph::build_with_options(raw, self.settings.options)
+            SegmentGraph::build_with_options(raw, self.options)
         } else {
             SegmentGraph::build_exact(raw, self.input.exact())
         }

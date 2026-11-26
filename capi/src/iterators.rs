@@ -179,17 +179,17 @@ pub unsafe extern "C" fn pinyin_iterator_add_phrase(
     pinyin: *const c_char,
     count: c_int,
 ) -> bool {
-    if iter.is_null() || phrase.is_null() || pinyin.is_null() {
-        return false;
-    }
+    let handle = borrow_or_return!(
+        iter.cast::<ImportHandle>(),
+        backing_mut,
+        false,
+        phrase,
+        pinyin
+    );
 
     // `if (-1 == count) count = default_count;` (`pinyin.cpp:523-524`);
     // otherwise the `gint` is used as the `guint32` it becomes.
     let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
-
-    // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
-    let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
     // A NULL-context handle: `_add_phrase` would read the NULL context
     // (`pinyin.cpp:526`), and the early returns before it answer `false`.
     let Some(owner) = handle.owner.as_ref() else {
@@ -523,7 +523,7 @@ pub unsafe extern "C" fn pinyin_begin_get_bigram_phrases(
     // Rows 85 and 98 are not decided here: the pin's begin reads no gram
     // (`pinyin.cpp:775-787`); `has_next` loads each predecessor in walk
     // order (`:888-889`), where the walk meets a short or partial value.
-    let Some(walk) = ctx.bigram_export_begin() else {
+    let Some(walk) = ctx.core.bigram_export_begin() else {
         std::process::abort();
     };
     // SAFETY: the public context is live for this serialized constructor call.

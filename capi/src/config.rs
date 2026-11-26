@@ -227,7 +227,8 @@ pub unsafe extern "C" fn pinyin_unload_addon_phrase_library(
         std::process::abort();
     }
     let ctx = borrow_or_return!(context, context_mut, false);
-    ctx.unload_addon(index)
+    // In range, the pin answers an unconditional `true`.
+    ctx.core.runtime.unload_system_addon(index)
 }
 
 // pinyin.cpp:457.

@@ -193,10 +193,3 @@ where
         offset
     }
 }
-
-impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
-where
-    D: Dictionary<Syllable = SyllableKey>,
-    L: LanguageModel,
-{
-}

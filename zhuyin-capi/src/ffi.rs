@@ -91,19 +91,6 @@ fn strdup(text: &str) -> *mut c_char {
     unsafe { glib_sys::g_strdup(arg.as_ptr().cast()) }
 }
 
-/// `g_strdup(text)` for a C string that may be NULL: GLib answers NULL for
-/// NULL, the pin's `g_strdup` of a failed `g_ucs4_to_utf8` result
-/// (`lookup.cpp:63`, `pinyin.cpp:904`).
-///
-/// # Safety
-///
-/// `text` is NULL or a NUL-terminated string.
-unsafe fn strdup_raw(text: *const c_char) -> *mut c_char {
-    // SAFETY: The caller guarantees `text` is NULL or NUL-terminated;
-    // `g_strdup` accepts NULL.
-    unsafe { glib_sys::g_strdup(text) }
-}
-
 /// A key rendering made with the call `_ChewingKey::get_*_string` makes
 /// (`chewing_key.cpp:47-121`): `g_strdup` of the spelling, or
 /// `g_strdup_printf` with the pin's format and arguments. GLib formats and
@@ -200,9 +187,11 @@ pub(crate) fn sentence_text(
         });
         let previous = result;
         result = if previous.is_null() {
+            // The pin's `g_strdup` of a failed `g_ucs4_to_utf8` result is NULL
+            // (`lookup.cpp:63`, `pinyin.cpp:904`).
             // SAFETY: `converted` is NULL or this call's NUL-terminated
             // buffer; `g_strdup` answers NULL for NULL.
-            unsafe { strdup_raw(converted) }
+            unsafe { glib_sys::g_strdup(converted) }
         } else {
             // SAFETY: `previous` is the NUL-terminated GLib string this loop
             // made, `""` is a static C string, `converted` is NULL (which
