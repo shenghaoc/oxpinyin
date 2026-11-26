@@ -47,7 +47,7 @@ fn training_creates_a_live_buffer_with_the_saved_library_total() {
     assert!(items.train_live(
         Some(original),
         token,
-        std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)]),
+        &mut crate::model::lent(std::iter::once(vec![ChewingKey::new(23, 0, 1, 0)])),
         1
     ));
     assert_eq!(items.library_total(1, Some(original)), Some(saved_total));

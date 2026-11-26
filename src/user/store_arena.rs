@@ -294,7 +294,7 @@ impl UserStore {
     pub(super) fn arena_train(
         &mut self,
         token: PhraseToken,
-        readings: impl Iterator<Item = Vec<ChewingKey>>,
+        readings: &mut impl crate::model::ReadingWalk,
         delta: u32,
     ) {
         let mut phrases = self.inner.libpinyin.phrases_mut();

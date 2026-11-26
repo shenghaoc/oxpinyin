@@ -117,7 +117,7 @@ impl TrainingPlan<'_> {
             let mut stacks = ReadingStacks::default();
             for (index, span) in row.spans.iter().enumerate() {
                 if let Some(&Some(end)) = ends.get(index) {
-                    let readings = training_readings(
+                    let mut readings = training_readings(
                         parsed,
                         self.state.input.as_bytes(),
                         span.start,
@@ -125,7 +125,7 @@ impl TrainingPlan<'_> {
                         span.phrase_length,
                         &mut stacks,
                     );
-                    user.observe_with_keys(&context, &span.token, readings)
+                    user.observe_with_keys(&context, &span.token, &mut readings)
                         .map_err(|_| EngineError::UserModel)?;
                 }
                 context.push(span.token);
@@ -825,11 +825,34 @@ impl TrainingReadings<'_> {
             self.stacks.keys.pop();
         }
     }
+
+    /// Every reading of the walk, copied, for a test to compare.
+    #[cfg(test)]
+    pub(crate) fn collect_all(mut self) -> Vec<Vec<crate::parser::ChewingKey>> {
+        use crate::model::ReadingWalk;
+        let mut readings = Vec::new();
+        while let Some(reading) = self.next_reading() {
+            readings.push(reading.to_vec());
+        }
+        readings
+    }
+
+    /// How many readings the walk lends.
+    #[cfg(test)]
+    pub(crate) fn count_all(mut self) -> usize {
+        use crate::model::ReadingWalk;
+        let mut count = 0;
+        while self.next_reading().is_some() {
+            count += 1;
+        }
+        count
+    }
 }
 
-impl Iterator for TrainingReadings<'_> {
-    type Item = Vec<crate::parser::ChewingKey>;
-    fn next(&mut self) -> Option<Self::Item> {
+/// Each reading is the walk's key stack itself, lent until the next call,
+/// as the pin hands `cached_keys` to the item (`phonetic_key_matrix.cpp:614-621`).
+impl crate::model::ReadingWalk for TrainingReadings<'_> {
+    fn next_reading(&mut self) -> Option<&[crate::parser::ChewingKey]> {
         if self.yielded {
             self.yielded = false;
             self.backtrack();
@@ -838,7 +861,7 @@ impl Iterator for TrainingReadings<'_> {
             // :607-621: exact span and phrase length only.
             if position == self.end && self.stacks.keys.len() == self.length {
                 self.yielded = true;
-                return Some(self.stacks.keys.to_vec());
+                return Some(&self.stacks.keys);
             }
             // 074a2219 phonetic_key_matrix.cpp:635-642: a zero key
             // advances without adding a syllable, including a trailing

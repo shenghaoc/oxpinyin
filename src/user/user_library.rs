@@ -16,13 +16,13 @@ use crate::user::user_phrase_table::UserPhraseTable;
 /// at 074a2219). Earlier increments survive a later prefix-total refusal.
 pub(super) fn train_readings(
     bytes: &mut [u8],
-    readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+    readings: &mut impl crate::model::ReadingWalk,
     delta: u32,
 ) {
     let length = usize::from(bytes[0]);
     let first = ITEM_HEADER_SIZE + 4 * length;
     let keys_len = CHEWING_KEY_SIZE * length;
-    for reading in readings {
+    while let Some(reading) = readings.next_reading() {
         if reading.len() != length {
             continue;
         }
@@ -40,7 +40,7 @@ pub(super) fn train_readings(
                 .iter()
                 .copied()
                 .map(u16::from_le_bytes);
-            if !crate::user::store_libpinyin::pronunciation_matches(&reading, words) {
+            if !crate::user::store_libpinyin::pronunciation_matches(reading, words) {
                 continue;
             }
             let Some(next) = total.checked_add(delta) else {
@@ -367,7 +367,7 @@ impl UserLibrary {
     pub(crate) fn train(
         &mut self,
         slot: u32,
-        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+        readings: &mut impl crate::model::ReadingWalk,
         delta: u32,
     ) {
         let Some(item) = self.item(slot) else { return };

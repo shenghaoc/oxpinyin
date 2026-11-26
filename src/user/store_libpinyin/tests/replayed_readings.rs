@@ -182,8 +182,9 @@ fn exported(store: &UserStore, base: &SystemOriginals, slot: u32) -> Vec<u32> {
 }
 
 fn train(store: &mut UserStore, slot: u32, reading: ChewingKey, paths: usize) {
-    let mut readings = (0..paths).map(|_| vec![reading]);
-    UserModel::observe_with_keys(store, &[], &(LIBRARY | slot), &mut readings).expect("train");
+    let readings = vec![vec![reading]; paths];
+    UserModel::observe_with_keys(store, &[], &(LIBRARY | slot), &mut readings.iter())
+        .expect("train");
 }
 
 fn dense(syllable: &str, tone_: u8) -> Vec<crate::user::PinyinKey> {

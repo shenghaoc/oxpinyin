@@ -810,7 +810,7 @@ impl ReplayedLibrary {
     pub(crate) fn train(
         &mut self,
         slot: u32,
-        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+        readings: &mut impl crate::model::ReadingWalk,
         delta: u32,
     ) -> bool {
         // One offset read gives the item (`get_phrase_item`,

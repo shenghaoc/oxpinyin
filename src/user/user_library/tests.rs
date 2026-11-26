@@ -201,7 +201,11 @@ fn a_read_crossing_the_item_boundary_follows_the_header_extent() {
     assert_eq!(library.item(1).unwrap().as_bytes().len(), 22);
     // The second reading of item 1 is the first bytes of item 2, key 0x0101 and count 2.
     let crossing = crate::parser::ChewingKey::from_packed(0x0101);
-    library.train(1, std::iter::once(vec![crossing]), 5);
+    library.train(
+        1,
+        &mut crate::model::lent(std::iter::once(vec![crossing])),
+        5,
+    );
     assert_eq!(library.item(1).unwrap().pronunciation(1).unwrap().freq, 7);
     // That count is item 2's unigram: the write went in place.
     assert_eq!(library.item(2).unwrap().unigram(), 7);
