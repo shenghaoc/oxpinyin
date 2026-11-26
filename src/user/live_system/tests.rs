@@ -1,7 +1,9 @@
 use super::*;
 use crate::data::phrase_library::{ChunkItem, build_chunk};
 
-/// Basis: policy row 107 (`074a2219 phrase_index.cpp:180-206`: an over-long item answers no item).
+/// Basis: `074a2219 phrase_index.cpp:180-206`, `:486-500` (the over-long header is written in
+/// place; its item passes the content end and answers no item); policy row 130 (the count
+/// inside the content stays readable).
 #[test]
 fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
     use crate::data::{
@@ -53,7 +55,7 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
         crate::user::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
     let unloaded = Cell::new(0);
     let live = LiveSystemItems::new(&shipped, &store, &unloaded);
-    assert_eq!(live.pronunciation_count(0x0100_0001).found(), None);
+    assert_eq!(live.pronunciation_count(0x0100_0001).found(), Some(255));
     assert_eq!(
         live.read(0x0100_0001, |item| item.unigram()),
         Lookup::Absent

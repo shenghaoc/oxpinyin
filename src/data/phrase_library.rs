@@ -492,24 +492,17 @@ impl PhraseContent {
         &self.mapping.as_slice()[self.offsets.clone()]
     }
 
-    pub(crate) fn slot_offset(&self, slot: u32) -> Option<u32> {
-        u32_at(self.offsets(), (slot as usize).checked_mul(4)?).filter(|&offset| offset != 0)
+    /// Borrow the offset array for an in-place write. The mapping is
+    /// copy-on-write, so the write makes only its own page private.
+    pub(crate) fn offsets_mut(&mut self) -> &mut [u8] {
+        &mut self.mapping.as_mut_slice()[self.offsets.clone()]
     }
 
-    pub(crate) fn item_fields(&self, slot: u32) -> Option<&[u8]> {
-        let offset = self.slot_offset(slot)?;
-        item_record(self.as_slice(), offset).filter(|record| record.len() >= 2)
-    }
-
-    /// The complete item under `slot`, borrowed in place: one offset read
-    /// and the header-declared extent, as `get_phrase_item` reads it
-    /// (074a2219 `phrase_index.cpp:180-206`). The same view as
-    /// [`PhraseItemView::from_bytes`] over [`Self::item_fields`]; `None`
-    /// for an empty slot, an offset at or past the content end, or a record
-    /// that the content does not hold whole.
-    pub(crate) fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
-        let offset = self.slot_offset(slot)?;
-        PhraseItemView::from_bytes(self.as_slice().get(offset as usize..)?)
+    /// Borrow the content for an in-place write, as the pin writes through
+    /// an item's view. The mapping is copy-on-write, so the write makes only
+    /// its own pages private.
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.mapping.as_mut_slice()[self.area.clone()]
     }
 }
 
@@ -520,7 +513,7 @@ impl PhraseContent {
 /// does. Only a read that would pass the content end is cut there (the
 /// allocation-end outcome, policy row 130). `None` for a zero or
 /// out-of-content start.
-fn item_record(content: &[u8], start: u32) -> Option<&[u8]> {
+pub(crate) fn item_record(content: &[u8], start: u32) -> Option<&[u8]> {
     if start == 0 || start as usize >= content.len() {
         return None;
     }
