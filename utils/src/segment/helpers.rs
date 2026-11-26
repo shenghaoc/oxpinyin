@@ -8,6 +8,7 @@ use oxpinyin_tool_support::input::{
 };
 
 use super::phrase;
+use oxpinyin::vocab::NULL_TOKEN;
 
 /// The pin's `assert(cond)` failure: `abort()` without the macro's message
 /// (`docs/findings/upstream-divergences.md#utility-check-macros-write-no-message`).
@@ -39,6 +40,53 @@ pub(crate) struct Run {
     pub segmentable: bool,
     /// The run's character range in the line's UCS-4 sentence.
     pub range: std::ops::Range<usize>,
+}
+
+/// The line loop shared by `ngseg` and `spseg` (`ngseg.cpp:106-262`,
+/// `spseg.cpp:201-345`): one line in, its runs split, each segmentable run
+/// handed to `segmentable`, with the pin's diagnostics and blank lines.
+/// The final blank line before the caller closes the output is part of the
+/// loop.
+pub(crate) fn segment_lines(
+    input: &mut super::input::Input,
+    output: &OutputStream,
+    search: &phrase::PhraseSearch<'_>,
+    gen_extra_enter: bool,
+    mut segmentable: impl FnMut(&[u32]),
+) {
+    while input.getline() {
+        let line = input.c_str();
+        let num_of_chars = tool::utf8_strlen(line);
+        let (sentence, count) = tool::utf8_to_ucs4(line);
+        let Some(sentence) = sentence else {
+            tool::segmentation::report_non_ucs4(line);
+            tool::segmentation::print_null_line(output);
+            continue;
+        };
+        if count != num_of_chars {
+            tool::segmentation::report_non_ucs4(line);
+            tool::segmentation::print_null_line(output);
+            continue;
+        }
+        // `/* only new-line persists. */`
+        if num_of_chars == 0 {
+            tool::segmentation::print_null_line(output);
+            continue;
+        }
+
+        for run in runs(&sentence, search) {
+            if run.segmentable {
+                segmentable(&sentence[run.range]);
+            } else {
+                let text = text_of(&sentence[run.range]);
+                tool::segmentation::print_token_line(output, NULL_TOKEN as i32, text.as_deref());
+            }
+        }
+        if gen_extra_enter {
+            tool::segmentation::print_null_line(output);
+        }
+    }
+    tool::segmentation::print_null_line(output);
 }
 
 /// The pin's three-state run splitter (`ngseg.cpp:206-237`,
