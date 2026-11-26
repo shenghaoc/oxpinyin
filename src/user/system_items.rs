@@ -394,7 +394,7 @@ impl SystemItems {
     #[cfg(test)]
     pub(crate) fn changed_items(
         &self,
-        originals: &impl crate::user::OriginalLibraries,
+        originals: &crate::user::SystemOriginals,
     ) -> std::collections::BTreeMap<PhraseToken, Option<ChunkItem>> {
         let mut changes = std::collections::BTreeMap::new();
         for (&nibble, buffer) in &self.replayed {

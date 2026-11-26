@@ -1914,7 +1914,8 @@ impl UserStore {
         replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
         library_totals: &crate::user::LibraryTable<u32>,
     ) {
-        let has_user_data = self.apply_system_libraries(&originals, replayed, library_totals);
+        let libraries: Vec<u8> = originals.keys().copied().collect();
+        let has_user_data = self.apply_system_libraries(&libraries, replayed, library_totals);
         self.mark_committed_write(has_user_data);
         {
             let mut phrases = self.inner.libpinyin.phrases_mut();
@@ -1945,8 +1946,9 @@ impl UserStore {
         if nibble >= 16 {
             return;
         }
+        let loaded = self.originals.contains_key(&nibble).then_some(nibble);
         let has_user_data = self.apply_system_libraries(
-            &self.originals.selected(1 << nibble),
+            loaded.as_slice(),
             crate::user::LibraryTable::new(),
             &Default::default(),
         );
@@ -1954,9 +1956,11 @@ impl UserStore {
         self.inner.libpinyin.phrases_mut().unloaded.insert(nibble);
     }
 
+    /// Replaces the live state of each library in `libraries`, in nibble
+    /// order, with its replay or its total.
     fn apply_system_libraries(
         &self,
-        originals: &impl crate::user::OriginalLibraries,
+        libraries: &[u8],
         mut replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
         library_totals: &crate::user::LibraryTable<u32>,
     ) -> bool {
@@ -1964,7 +1968,7 @@ impl UserStore {
         let mut offsets = self.offsets_mut();
         // A reloaded library has no stored total difference any more: its
         // total is the one its replay left, held in the live scalar below.
-        for nibble in originals.keys() {
+        for nibble in libraries {
             offsets.remove(nibble);
         }
         {
@@ -1973,7 +1977,7 @@ impl UserStore {
             let mut phrases = target.phrases_mut();
             phrases
                 .libraries
-                .retain(|nibble, _| !originals.contains_key(nibble));
+                .retain(|nibble, _| !libraries.contains(nibble));
         }
         {
             let phrases = target.phrases();
@@ -1987,7 +1991,7 @@ impl UserStore {
             // `:301-332`): the library's live buffer and total go, and the
             // replay's buffer and total come in. The facade's total follows
             // the sub-index totals, and keeps what no sub-index took.
-            for &nibble in originals.keys() {
+            for &nibble in libraries {
                 items.forget_library(nibble);
                 match replayed.remove(&nibble) {
                     Some(library) => items.insert_library(nibble, library),
@@ -2118,7 +2122,7 @@ impl UserStore {
     #[cfg(test)]
     pub(crate) fn live_system_changes(
         &self,
-        originals: &impl crate::user::OriginalLibraries,
+        originals: &crate::user::SystemOriginals,
     ) -> std::collections::BTreeMap<PhraseToken, Option<crate::data::phrase_library::ChunkItem>>
     {
         self.inner.system_items.borrow().changed_items(originals)
