@@ -2258,6 +2258,23 @@ impl UserStore {
         self.inner.system_items.borrow().read_live(token, read)
     }
 
+    /// [`crate::user::system_items::SystemItems::copy_live_words`] while the
+    /// session holds system items; a store without them has no live
+    /// buffer to read.
+    pub(crate) fn copy_live_words(
+        &self,
+        token: PhraseToken,
+        words: &mut smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>,
+    ) -> crate::user::system_items::LiveItemFields<bool> {
+        if !self.has_system_items() {
+            return crate::user::system_items::LiveItemFields::NoLiveLibrary;
+        }
+        self.inner
+            .system_items
+            .borrow()
+            .copy_live_words(token, words)
+    }
+
     pub(crate) fn with_live_item_fields<R>(
         &self,
         token: PhraseToken,

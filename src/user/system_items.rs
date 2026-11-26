@@ -295,6 +295,27 @@ impl SystemItems {
         library.complete_item(token & 0x00ff_ffff).map(read)
     }
 
+    /// Copies the words of the item `token`'s live library holds under its
+    /// slot onto the end of `words` ([`ReplayedLibrary::field_view`]):
+    /// whether the library has a live buffer, and then whether the copy
+    /// was made.
+    pub(crate) fn copy_live_words(
+        &self,
+        token: PhraseToken,
+        words: &mut smallvec::SmallVec<[u32; crate::vocab::MAX_PHRASE_LENGTH]>,
+    ) -> LiveItemFields<bool> {
+        let Some(library) = self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))
+        else {
+            return LiveItemFields::NoLiveLibrary;
+        };
+        match library.field_view(token & 0x00ff_ffff) {
+            Some(item) => LiveItemFields::Read(item.copy_phrase_words(words)),
+            None => LiveItemFields::NoReadableItem,
+        }
+    }
+
     /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`].
     pub(crate) fn with_live_fields<R>(
         &self,

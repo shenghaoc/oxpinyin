@@ -355,9 +355,10 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
                 .sentence_phrases(index)?
                 .map(move |part| match part {
                     SentencePart::Token(token) => {
-                        if let Some(phrase) = self.dict.token_words(token) {
+                        let mut words = smallvec::SmallVec::new();
+                        if self.dict.copy_token_words(token, &mut words) {
                             last = Some(token);
-                            phrase
+                            SentencePhrase::Words(words)
                         } else {
                             last.and_then(|last| self.dict.token_words(last))
                                 .unwrap_or_else(|| SentencePhrase::Text(PhraseText::default()))
