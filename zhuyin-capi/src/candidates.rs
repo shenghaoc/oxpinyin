@@ -345,7 +345,7 @@ pub(crate) fn snapshot_candidates(
     };
     // A row's offsets are in the session's `'`-joined coordinates under a
     // zhuyin keyboard parse; the caller's are in the original input's.
-    let parse = inst.core.zhuyin_parse.as_ref();
+    let parse = inst.core.zhuyin_parse();
     let original_end = |offset| {
         parse.map_or(offset, |parse| {
             oxpinyin::facade::zhuyin_original_offset(parse, offset)

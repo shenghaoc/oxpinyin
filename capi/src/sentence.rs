@@ -324,9 +324,9 @@ impl GuessFrame {
         // the matrix column of the key it starts (`*_session_offset`: 0, or the
         // apostrophe in front of the key, the column a forcing there spells
         // under); plain and index-parsed full pinyin are the identity.
-        let session_offset = if let Some(parse) = inst.core.double_parse.as_ref() {
+        let session_offset = if let Some(parse) = inst.core.double_parse() {
             oxpinyin::facade::double_session_offset(parse, normalized)
-        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        } else if let Some(parse) = inst.core.zhuyin_parse() {
             oxpinyin::facade::zhuyin_session_offset(parse, normalized)
         } else {
             normalized
@@ -338,9 +338,9 @@ impl GuessFrame {
         // The rows keep their spans at the containing key for a later choose,
         // as in the zhuyin facade (issue #577); only its sentence rows are
         // snapshot.
-        let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
+        let sentence_rows_only = if let Some(parse) = inst.core.double_parse() {
             oxpinyin::facade::double_offset_is_mid_key(parse, normalized)
-        } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        } else if let Some(parse) = inst.core.zhuyin_parse() {
             oxpinyin::facade::zhuyin_offset_is_mid_key(parse, normalized)
         } else {
             false

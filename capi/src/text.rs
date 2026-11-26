@@ -276,15 +276,15 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
         // without conflicting with live borrows. Its contents need not be initialized.
         return unsafe { write_aux(aux_text, None) };
     }
-    let text = if let Some(parse) = inst.core.full_parse.as_ref() {
+    let text = if let Some(parse) = inst.core.full_parse() {
         if !inst.core.mode_has_keys() {
             // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
             // without conflicting with live borrows. Its contents need not be initialized.
             return unsafe { write_aux(aux_text, None) };
         }
         abort_on_full_walk(&inst.read(), cursor);
-        Some(full_index_aux_text(&inst.core.full_input, parse, cursor))
-    } else if inst.core.double_parse.is_some() || inst.core.zhuyin_parse.is_some() {
+        Some(full_index_aux_text(&inst.core.parse_input, parse, cursor))
+    } else if inst.core.double_parse().is_some() || inst.core.zhuyin_parse().is_some() {
         // A double or chewing parse filled the matrix; the pin renders it
         // all the same.
         render_shared(&inst.read(), |m| m.full(cursor))
@@ -384,9 +384,9 @@ pub unsafe extern "C" fn pinyin_get_chewing_auxiliary_text(
         // without conflicting with live borrows. Its contents need not be initialized.
         return unsafe { write_aux(aux_text, None) };
     }
-    let text = match inst.core.zhuyin_parse.as_ref() {
+    let text = match inst.core.zhuyin_parse() {
         Some(parse) => Some(chewing_aux_text(
-            &inst.core.zhuyin_input,
+            &inst.core.parse_input,
             parse,
             inst.core.parsed_len,
             cursor,

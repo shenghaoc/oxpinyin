@@ -15,9 +15,8 @@
 //! zero-key columns, so the law steps their parse's key spans only.
 
 use crate::engine::{EngineError, KeySpans, MatrixKey};
-use crate::parser::{DoublePinyinKey, FullPinyinIndexKey, ZhuyinKey};
 
-use crate::facade::instance::{InstanceState, InstanceView};
+use crate::facade::instance::{InstanceState, InstanceView, ModeParse};
 
 /// One original-coordinate ABI column's first item: the packed key and its
 /// raw begin and end. A packed `0` is a zero key (or a key with no
@@ -103,12 +102,6 @@ pub struct SpanSource<'a> {
 /// search instead of a copy of the key list.
 #[derive(Clone, Copy, Debug)]
 pub enum ModeKeys<'a> {
-    /// A zhuyin keyboard parse.
-    Zhuyin(&'a [ZhuyinKey]),
-    /// A double-pinyin parse.
-    Double(&'a [DoublePinyinKey]),
-    /// A LUOMA / `SECONDARY_ZHUYIN` full-pinyin index parse.
-    Full(&'a [FullPinyinIndexKey]),
     /// The parse-time matrix a scheme parse keeps (`parse_matrix`).
     Matrix(&'a [MatrixKey]),
     /// The matrix the plain full-pinyin session's last parse filled.
@@ -120,9 +113,6 @@ impl ModeKeys<'_> {
     #[must_use]
     pub const fn len(&self) -> usize {
         match self {
-            Self::Zhuyin(keys) => keys.len(),
-            Self::Double(keys) => keys.len(),
-            Self::Full(keys) => keys.len(),
             Self::Matrix(keys) => keys.len(),
             Self::Session(keys) => keys.len(),
         }
@@ -142,41 +132,6 @@ impl ModeKeys<'_> {
     #[must_use]
     pub fn get(&self, index: usize) -> KeyAt {
         match self {
-            Self::Zhuyin(keys) => {
-                let key = &keys[index];
-                KeyAt {
-                    text: key.key().text(),
-                    chewing: key.key().chewing_key().with_tone(key.tone()),
-                    key: Some(key.key()),
-                    tone: key.tone(),
-                    begin: key.start(),
-                    end: key.end(),
-                }
-            }
-            Self::Double(keys) => {
-                let key = keys[index];
-                KeyAt {
-                    text: key.key().text(),
-                    chewing: key.key().chewing_key().with_tone(key.tone()),
-                    key: Some(key.key()),
-                    tone: key.tone(),
-                    begin: key.start(),
-                    end: key.end(),
-                }
-            }
-            Self::Full(keys) => {
-                let key = &keys[index];
-                KeyAt {
-                    text: key.canonical(),
-                    chewing: crate::parser::ChewingKey::from_pinyin(key.canonical())
-                        .unwrap_or_default()
-                        .with_tone(key.tone()),
-                    key: None,
-                    tone: key.tone(),
-                    begin: key.start(),
-                    end: key.end(),
-                }
-            }
             Self::Matrix(keys) => matrix_key_at(keys[index]),
             Self::Session(keys) => matrix_key_at(keys.get(index)),
         }
@@ -196,9 +151,6 @@ impl KeySpans for ModeKeys<'_> {
     fn span(&self, index: usize) -> (usize, usize) {
         // The binary searches read spans only; skip the spelling lookup.
         match self {
-            Self::Zhuyin(keys) => (keys[index].start(), keys[index].end()),
-            Self::Double(keys) => (keys[index].start(), keys[index].end()),
-            Self::Full(keys) => (keys[index].start(), keys[index].end()),
             Self::Matrix(keys) => (keys[index].syllable_start(), keys[index].end()),
             Self::Session(keys) => keys.span(index),
         }
@@ -270,9 +222,6 @@ pub struct KeyAt {
     pub chewing: crate::parser::ChewingKey,
     /// The key's canonical full-pinyin spelling.
     pub text: &'static str,
-    /// The key's vocabulary key; `None` for the index parse, which carries
-    /// only canonical text.
-    pub key: Option<crate::vocab::SyllableKey>,
     /// The tone consumed with the key, `0` when toneless.
     pub tone: u8,
     /// Inclusive byte offset of the key's first byte.
@@ -294,27 +243,11 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// separator (`separators` true). Plain full pinyin answers `None`.
     #[must_use]
     pub fn span_source(&self) -> Option<SpanSource<'_>> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return Some(SpanSource {
-                input: self.zhuyin_input.as_bytes(),
-                parsed: parse.consumed(),
-                spans: ModeKeys::Matrix(&self.parse_matrix),
-                separators: false,
-            });
-        }
-        if let Some(parse) = self.double_parse.as_ref() {
-            return Some(SpanSource {
-                input: self.double_input.as_bytes(),
-                parsed: parse.consumed(),
-                spans: ModeKeys::Matrix(&self.parse_matrix),
-                separators: false,
-            });
-        }
-        self.full_parse.as_ref().map(|parse| SpanSource {
-            input: self.full_input.as_bytes(),
+        self.mode_parse.as_ref().map(|parse| SpanSource {
+            input: self.parse_input.as_bytes(),
             parsed: parse.consumed(),
             spans: ModeKeys::Matrix(&self.parse_matrix),
-            separators: true,
+            separators: matches!(parse, ModeParse::Full(_)),
         })
     }
 
@@ -394,14 +327,12 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// the session.
     #[must_use]
     pub fn mode_input(&self) -> (&[u8], bool) {
-        if self.zhuyin_parse.is_some() {
-            (self.zhuyin_input.as_bytes(), false)
-        } else if self.double_parse.is_some() {
-            (self.double_input.as_bytes(), false)
-        } else if self.full_parse.is_some() {
-            (self.full_input.as_bytes(), true)
-        } else {
-            (self.session.raw_input().as_bytes(), true)
+        match &self.mode_parse {
+            Some(parse) => (
+                self.parse_input.as_bytes(),
+                matches!(parse, ModeParse::Full(_)),
+            ),
+            None => (self.session.raw_input().as_bytes(), true),
         }
     }
 
@@ -444,21 +375,6 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         }
     }
 
-    /// The keys the active parser itself placed, before the pin's
-    /// post-fill steps: the input of `parse_matrix`'s construction.
-    /// Empty for plain full pinyin, which keeps no parser keys.
-    pub(crate) fn parser_key_list(&self) -> Vec<KeyAt> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            ModeKeys::Zhuyin(parse.keys()).iter().collect()
-        } else if let Some(parse) = self.double_parse.as_ref() {
-            ModeKeys::Double(parse.keys()).iter().collect()
-        } else if let Some(parse) = self.full_parse.as_ref() {
-            ModeKeys::Full(parse.keys()).iter().collect()
-        } else {
-            Vec::new()
-        }
-    }
-
     /// The active parse mode's matrix keys in place, in input order. Plain
     /// full pinyin reads the session's scan-matrix keys, which the session
     /// builds once per input and option word; the index-parsed full pinyin,
@@ -469,7 +385,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         // The three parsed modes keep the matrix the pin built at the parse,
         // with its fuzzy, resplit and divided additions, as plain full
         // pinyin's session does.
-        if self.zhuyin_parse.is_some() || self.double_parse.is_some() || self.full_parse.is_some() {
+        if self.mode_parse.is_some() {
             return ModeKeys::Matrix(&self.parse_matrix);
         }
         ModeKeys::Session(self.session.matrix_keys())
@@ -693,18 +609,10 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
             return None;
         }
         let keys = self.mode_key_source();
-        let found = (keys.first_at_or_after(begin)..keys.len())
+        (keys.first_at_or_after(begin)..keys.len())
             .map(|index| keys.get(index))
             .take_while(|key| key.begin == begin)
-            .find(|key| key.end == end)?;
-        Some(KeyAt {
-            text: found.text,
-            chewing: found.chewing,
-            key: found.key,
-            tone: found.tone,
-            begin,
-            end,
-        })
+            .find(|key| key.end == end)
     }
 }
 
@@ -720,18 +628,10 @@ fn matrix_key_at(key: MatrixKey) -> KeyAt {
     KeyAt {
         text: key.key().pinyin_spelling(),
         chewing: key.key(),
-        key: None,
         tone: key.tone(),
         begin: key.syllable_start(),
         end: key.end(),
     }
-}
-
-/// Retain every parser key, including keys without a pinyin vocabulary entry.
-pub(crate) fn matrix_keys_of(keys: &[KeyAt]) -> Vec<MatrixKey> {
-    keys.iter()
-        .map(|k| MatrixKey::from_chewing(k.chewing, k.begin, k.end))
-        .collect()
 }
 
 #[cfg(test)]
