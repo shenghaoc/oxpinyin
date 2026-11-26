@@ -193,6 +193,7 @@ impl UserStore {
             .values()
             .any(|library| !library.is_empty());
         drop(phrases);
+        drop(offsets);
         let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
         self.mark_committed_write(arena_live || grams_live);
     }
@@ -282,6 +283,7 @@ impl UserStore {
             phrases.index.add(&keys, token);
         }
         drop(phrases);
+        drop(offsets);
         self.mark_committed_write(true);
         Ok(())
     }
@@ -470,6 +472,7 @@ impl UserStore {
                 .add_reading(token & PHRASE_MASK, &packed, delta)
                 .ok_or(UserStoreError::Persistence)?;
             drop(phrases);
+            drop(offsets);
             self.mark_committed_write(true);
             return Ok(token);
         }
@@ -516,6 +519,7 @@ impl UserStore {
             phrases.index.add(&chewing, token);
         }
         drop(phrases);
+        drop(offsets);
         if (1..=4).contains(&library) {
             self.inner.has_system_items.set(true);
         }
