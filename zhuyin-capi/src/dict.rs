@@ -74,7 +74,7 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
         for _ in 0..count {
             // SAFETY: This branch has a NULL array. GLib 2.84.4 garray.c:762
             // logs a critical and returns before reading the data pointer.
-            unsafe { g_array_append_vals(tokenarray, std::ptr::null(), 0) };
+            unsafe { append_vals::<u32>(tokenarray, &[]) };
         }
         if reduce_asserts {
             std::process::abort();
@@ -85,13 +85,7 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
         return false;
     }
     // SAFETY: Null-checked above.
-    unsafe {
-        g_array_append_vals(
-            tokenarray,
-            tokens.as_ptr().cast::<c_void>(),
-            c_uint::try_from(tokens.len()).unwrap_or(0),
-        );
-    }
+    unsafe { append_vals(tokenarray, &tokens) };
     if reduce_asserts {
         std::process::abort();
     }
@@ -176,37 +170,40 @@ pub unsafe extern "C" fn zhuyin_token_get_n_pronunciation(
     true
 }
 
+/// Appends `len` elements of the array's own element size from `data`
+/// with `g_array_append_vals`, which also keeps GLib's private array
+/// metadata current.
+///
+/// # Safety
+/// `array` is NULL (GLib logs a critical and returns before it reads `data`)
+/// or a live `GArray` whose element size `data` holds `len` elements of.
+unsafe fn append_raw(array: *mut GArray, data: *const c_void, len: usize) {
+    // SAFETY: the caller's contract above.
+    unsafe { g_array_append_vals(array, data, c_uint::try_from(len).unwrap_or(0)) };
+}
+
+/// Appends `vals` to a `GArray` whose element size is `size_of::<T>()`.
+///
+/// # Safety
+/// `array` is NULL or a live `GArray` with elements of `T`'s size.
+unsafe fn append_vals<T>(array: *mut GArray, vals: &[T]) {
+    // SAFETY: `vals` is live for the call and holds `vals.len()` elements.
+    unsafe { append_raw(array, vals.as_ptr().cast(), vals.len()) };
+}
+
 /// Append one reading's stored packed words to the caller's array, or the
 /// pin's zeroed past-the-end words when the item has no such reading.
 ///
 /// # Safety
-/// `keys` must be a non-NULL `GArray` whose element size is two bytes, as
-/// the caller of `zhuyin_token_get_nth_pronunciation` creates it.
+/// `keys` is NULL or a `GArray` whose element size is two bytes, as the
+/// caller of `zhuyin_token_get_nth_pronunciation` creates it.
 unsafe fn append_stored_words(keys: *mut GArray, length: usize, words: Option<&[u8]>) {
     match words {
-        None => {
-            let zeroed = vec![0_u16; length];
-            // SAFETY: `keys` has two-byte elements. The append copies from the live zeroed buffer.
-            unsafe {
-                g_array_append_vals(
-                    keys,
-                    zeroed.as_ptr().cast::<c_void>(),
-                    c_uint::try_from(zeroed.len()).unwrap_or(0),
-                );
-            }
-        }
-        Some(words) => {
-            // SAFETY: the caller guarantees a real GArray with element size
-            // two bytes; `words` holds `2 * phrase_length` stored bytes and
-            // outlives the append call, which copies from it.
-            unsafe {
-                g_array_append_vals(
-                    keys,
-                    words.as_ptr().cast::<c_void>(),
-                    c_uint::try_from(words.len() / 2).unwrap_or(0),
-                );
-            }
-        }
+        // SAFETY: `keys` has two-byte elements; the zeroed buffer is live.
+        None => unsafe { append_vals(keys, &vec![0_u16; length]) },
+        // SAFETY: `words` holds `2 * length` stored bytes, that is
+        // `words.len() / 2` two-byte elements, and outlives the copy.
+        Some(words) => unsafe { append_raw(keys, words.as_ptr().cast(), words.len() / 2) },
     }
 }
 
@@ -270,7 +267,7 @@ pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
         if keys.is_null() {
             // SAFETY: GLib diagnoses a NULL array before accessing any data.
             // The item was found, and the store has released its reading.
-            unsafe { g_array_append_vals(keys, std::ptr::null(), 0) };
+            unsafe { append_vals::<u16>(keys, &[]) };
         }
         return true;
     }
@@ -280,17 +277,9 @@ pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
     let Some(packed) = reading.keys.as_deref() else {
         // Past the last reading: `phrase_length` keys of indeterminate
         // content at the pin; zeroed here (class (b) for the content).
-        let zeroed = vec![0_u16; reading.phrase_length];
-        // SAFETY: GLib checks NULL and logs a critical before any access.
-        // the caller creates the keys array
-        // with element_size = sizeof(u16), as for the in-range path.
-        unsafe {
-            g_array_append_vals(
-                keys,
-                zeroed.as_ptr().cast::<c_void>(),
-                c_uint::try_from(zeroed.len()).unwrap_or(0),
-            );
-        }
+        // SAFETY: GLib checks NULL before any access; the caller creates
+        // the keys array with two-byte elements, as for the in-range path.
+        unsafe { append_stored_words(keys, reading.phrase_length, None) };
         return true;
     };
     // System and USER_FILE items alike hand out their stored words
@@ -299,13 +288,7 @@ pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
     // the pin appends zero words and answers true (074a2219 zhuyin.cpp:1807-1810).
     // SAFETY: GLib checks NULL before access; otherwise the caller owns
     // a real GArray and the source slice remains live for the call.
-    unsafe {
-        g_array_append_vals(
-            keys,
-            packed.as_ptr().cast::<c_void>(),
-            c_uint::try_from(packed.len()).unwrap_or(0),
-        );
-    }
+    unsafe { append_vals(keys, packed) };
     true
 }
 

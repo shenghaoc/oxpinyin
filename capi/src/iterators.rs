@@ -13,7 +13,7 @@ use oxpinyin::graph::SegmentGraph;
 use oxpinyin::user::{PinyinKey, toned_key};
 
 use crate::ffi::{
-    backing_mut, backing_ref, borrow_or_return, malloc_cstr, malloc_cstr_with, strconcat_pair,
+    backing_mut, backing_ref, borrow_or_return, malloc_cstr, malloc_cstr_chunks, strconcat_pair,
     strdup, strdup_raw, strjoinv, write_if_nonnull,
 };
 use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_ref};
@@ -413,16 +413,7 @@ pub unsafe extern "C" fn pinyin_iterator_get_next_phrase(
         // string of their exact length.
         let text = (!phrase.is_null()).then(|| {
             row.text_utf8_len().map_or(ptr::null_mut(), |len| {
-                malloc_cstr_with(len, |out| {
-                    let mut at = 0;
-                    row.for_each_text_utf8(|bytes| {
-                        if let Some(slots) = out.get_mut(at..at + bytes.len()) {
-                            slots.write_copy_of_slice(bytes);
-                            at += bytes.len();
-                        }
-                    });
-                    at
-                })
+                malloc_cstr_chunks(len, |emit| row.for_each_text_utf8(emit))
             })
         });
         // `:726-733`: the key strings joined by `g_strjoinv("'", …)`, which
