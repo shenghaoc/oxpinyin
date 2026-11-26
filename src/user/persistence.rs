@@ -1022,7 +1022,7 @@ impl SessionProfile<'_> {
                 self.user_dir,
                 originals.layout(),
                 &mut self.profile.loaded,
-                Some(index),
+                index,
                 &mut self.profile.user_libraries,
             );
         }
@@ -1209,17 +1209,17 @@ pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, Per
     ))?)
 }
 
-/// The `USER_FILE` chunk stores, or only library `only`'s.
+/// Library `only`'s `USER_FILE` chunk store.
 fn load_libraries(
     dir: &Path,
     layout: &UserFileLayout,
     loaded: &mut Loaded,
-    only: Option<u8>,
+    only: u8,
     libraries: &mut crate::user::LibraryTable<UserLibrary>,
 ) {
     for (nibble, file) in layout.user_libraries() {
         let nibble = *nibble;
-        if only.is_some_and(|only| only != nibble) {
+        if only != nibble {
             continue;
         }
         let name = file.display();
@@ -1304,7 +1304,7 @@ pub(crate) fn load_user_library(
 ) -> Option<UserLibrary> {
     let mut loaded = Loaded::default();
     let mut libraries = crate::user::LibraryTable::new();
-    load_libraries(dir, layout, &mut loaded, Some(nibble), &mut libraries);
+    load_libraries(dir, layout, &mut loaded, nibble, &mut libraries);
     libraries.remove(&nibble).or_else(|| {
         loaded
             .library_totals
@@ -2013,26 +2013,23 @@ struct Staged {
 }
 
 impl Staged {
-    /// libzhuyin attempts the rename even after a soft write failure
+    /// Answers `written` for the file staged at `tmp`. libpinyin renames in
+    /// its own pass; libzhuyin renames now, even after a soft write failure
     /// (074a2219 zhuyin.cpp:612-617, :645-650, :669-691). A header failure
     /// aborts before the rename; the reporting caller refuses it instead.
     fn finish(
-        &mut self,
-        paths: (PathBuf, PathBuf),
+        &self,
+        tmp: &Path,
+        final_path: &Path,
         written: Result<(), PersistenceError>,
     ) -> Result<(), PersistenceError> {
-        if written.is_ok()
-            || (self.immediate && written.as_ref().is_err_and(PersistenceError::is_soft_write))
-        {
-            self.push(paths);
+        let renames = written
+            .as_ref()
+            .map_or_else(PersistenceError::is_soft_write, |()| true);
+        if self.immediate && renames && rename(tmp, final_path).is_err() {
+            report_rename_failed(tmp, final_path);
         }
         written
-    }
-
-    fn push(&mut self, (tmp, final_path): (PathBuf, PathBuf)) {
-        if self.immediate && rename(&tmp, &final_path).is_err() {
-            report_rename_failed(&tmp, &final_path);
-        }
     }
 }
 
@@ -2050,20 +2047,12 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     // where a `table.conf` gives two roles one name, the last writer's
     // contents are what the first rename moves into place.
     stage_rest(dir, source, originals, reporting, staged)?;
-    let final_path = build_path(dir, OsStr::new(&UserDbm::Bigram.file_name()));
-    let tmp = build_path(
+    tolerate(stage_dbm(
         dir,
-        OsStr::new(&format!("{}.tmp", UserDbm::Bigram.file_name())),
-    );
-    // `unlink(tmpfilename)` before `save_db` (`pinyin.cpp:1017`); the
-    // pin ignores its result, and the backend's `save_db` then unlinks
-    // again as the pin's does.
-    unlink(&tmp);
-    let written = reporting
-        .bigram_db
-        .save_db(&tmp)
-        .map_err(PersistenceError::from);
-    tolerate(staged.finish((tmp, final_path), written))
+        UserDbm::Bigram,
+        |path| reporting.bigram_db.save_db(path),
+        staged,
+    ))
 }
 
 /// The save carries on past a file it could not write, as the pin's
@@ -2107,7 +2096,7 @@ fn log_chunk(
     compacted: &[u8],
     original: SystemLibraryRef<'_>,
     nibble: u8,
-    baseline: &SaveBaseline,
+    disk: SystemLibraryRef<'_>,
 ) -> Result<Vec<u8>, PersistenceError> {
     // A layout-failed library's save compact rebuilds its sub-index from the
     // items the session added (074a2219 `pinyin.cpp:1139`,
@@ -2116,11 +2105,6 @@ fn log_chunk(
     let new_total = compacted
         .contains(&nibble)
         .then(|| live.compacted_total(nibble, original));
-    // The pin's current on-disk chunk is the old side of the diff.
-    let disk = match baseline {
-        SaveBaseline::Changed(disk) => disk.view(),
-        SaveBaseline::Keep | SaveBaseline::Unloaded | SaveBaseline::Unmappable => original,
-    };
     let mut file = vec![0; CHUNK_HEADER_SIZE];
     encode_live_diff(
         live.live_library(nibble, original),
@@ -2163,28 +2147,32 @@ fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
                 staged.unloaded.push(nibble);
                 continue;
             }
-            // The pin maps the current chunk at this point in the loop
-            // (`pinyin.cpp:956`), after the earlier libraries' files are
-            // written. The hook maps it and, for a layout fault, emits the
-            // critical here.
-            let baseline = match kind {
-                LibraryFile::Log => (reporting.baseline)(nibble),
-                LibraryFile::User => SaveBaseline::Keep,
-            };
-            if matches!(baseline, SaveBaseline::Unloaded) {
-                staged.unloaded.push(nibble);
-                continue;
-            }
-            // Register row 76: `MemoryChunk::mmap` refused the file. The save
-            // stops at this library with every earlier file as written.
-            if matches!(baseline, SaveBaseline::Unmappable) {
-                return Err(PersistenceError::SystemRemapFailed);
-            }
             let bytes = match kind {
                 LibraryFile::User => user_library_chunk(libraries, nibble)?,
                 LibraryFile::Log => {
+                    // The pin maps the current chunk at this point in the
+                    // loop (`pinyin.cpp:956`), after the earlier libraries'
+                    // files are written. The hook maps it and, for a layout
+                    // fault, emits the critical here.
+                    let baseline = (reporting.baseline)(nibble);
                     let original = originals.get(&nibble).unwrap_or(empty_library.view());
-                    log_chunk(live, compacted, original, nibble, &baseline)?
+                    // The pin's current on-disk chunk is the old side of the
+                    // diff.
+                    let disk = match &baseline {
+                        SaveBaseline::Unloaded => {
+                            staged.unloaded.push(nibble);
+                            continue;
+                        }
+                        // Register row 76: `MemoryChunk::mmap` refused the
+                        // file. The save stops at this library with every
+                        // earlier file as written.
+                        SaveBaseline::Unmappable => {
+                            return Err(PersistenceError::SystemRemapFailed);
+                        }
+                        SaveBaseline::Changed(disk) => disk.view(),
+                        SaveBaseline::Keep => original,
+                    };
+                    log_chunk(live, compacted, original, nibble, disk)?
                 }
             };
             tolerate(stage_chunk(dir, name, &bytes, staged))?;
@@ -2290,11 +2278,14 @@ fn stage_dbm(
     save: impl FnOnce(&Path) -> Result<(), StoreError>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
-    let final_path = build_path(dir, OsStr::new(&dbm.file_name()));
+    let final_path = build_path(dir, OsStr::new(dbm.file_name()));
     let tmp = build_path(dir, OsStr::new(&format!("{}.tmp", dbm.file_name())));
+    // `unlink(tmpfilename)` before `save_db` (`pinyin.cpp:1017`); the pin
+    // ignores its result, and the backend's `save_db` then unlinks again as
+    // the pin's does.
     unlink(&tmp);
     let written = save(&tmp).map_err(PersistenceError::from);
-    staged.finish((tmp, final_path), written)
+    staged.finish(&tmp, &final_path, written)
 }
 
 /// Writes one chunk file to its `.tmp` sibling and registers the rename.
@@ -2307,7 +2298,7 @@ fn stage_chunk(
     let final_path = build_path(dir, name.as_ref());
     let tmp = build_path(dir, name.with_suffix(".tmp").as_ref());
     let written = write_chunk_file(&tmp, bytes);
-    staged.finish((tmp, final_path), written)
+    staged.finish(&tmp, &final_path, written)
 }
 
 /// `MemoryChunk::save` (`memory_chunk.h:536-557`), made by the boundary's

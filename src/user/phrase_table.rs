@@ -77,11 +77,10 @@ impl PhraseTableEntry {
     }
 
     /// Remove all matching tokens, preserving survivor order.
-    pub fn mask_out(&mut self, mask: u32, value: u32) -> bool {
+    pub fn mask_out(&mut self, mask: u32, value: u32) {
         crate::packed_records::retain_records(&mut self.bytes, 0, 4, |record| {
             decode(&record.as_chunks::<4>().0[0]) & mask != value
         });
-        true
     }
 
     #[cfg(not(feature = "bdb"))]

@@ -2006,13 +2006,7 @@ impl UserStore {
                 .has_system_items
                 .set(!items.is_empty() || arena_has_system_items);
         }
-        let arena_live = {
-            let phrases = target.phrases();
-            phrases
-                .libraries
-                .values()
-                .any(|library| !library.is_empty())
-        };
+        let arena_live = target.phrases().has_items();
         // A session's grams are user data too.
         let has_grams = self.container().is_empty().is_ok_and(|empty| !empty);
         has_grams || arena_live
@@ -2103,7 +2097,7 @@ impl UserStore {
         // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`,
         // `zhuyin.cpp:765`).
         let grams_left = self.mask_container_over(container_keys, mask, value)?;
-        self.mark_committed_write(grams_left || self.arena_has_items());
+        self.mark_committed_write(grams_left || self.inner.libpinyin.phrases().has_items());
         Ok(())
     }
 
@@ -2393,7 +2387,7 @@ impl UserStore {
         // nothing to remove, so its total is left as the removal left it.
         let bytes = crate::data::phrase_library::encode_phrase_item(&item)
             .ok_or(UserStoreError::Persistence)?;
-        let removed = items.remove_item(original, token).is_some();
+        let removed = items.remove_item(original, token);
         items.add_item(original, token, &bytes);
         if !removed {
             let library = phrase_index_library_index(token);

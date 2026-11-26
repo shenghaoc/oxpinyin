@@ -192,14 +192,15 @@ impl SystemItems {
         }
     }
 
-    /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.
+    /// `remove_phrase_item` over `token`'s library buffer: whether an item
+    /// was removed.
     pub(crate) fn remove_item(
         &mut self,
         original: SystemLibraryRef<'_>,
         token: PhraseToken,
-    ) -> Option<Vec<u8>> {
-        library_of(&mut self.replayed, &mut self.totals, token, original)?
-            .remove_item(token & 0x00ff_ffff)
+    ) -> bool {
+        library_of(&mut self.replayed, &mut self.totals, token, original)
+            .is_some_and(|library| library.remove_item(token & 0x00ff_ffff))
     }
 
     pub(crate) fn is_removed(&self, token: PhraseToken) -> bool {

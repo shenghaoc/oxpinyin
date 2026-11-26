@@ -196,7 +196,7 @@ fn an_add_over_a_live_slot_keeps_the_overwritten_unigram_in_the_total() {
 fn a_read_crossing_the_item_boundary_follows_the_header_extent() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2]);
-    let start = *library.slots.get(&1).unwrap();
+    let start = library.slots[&1].unwrap();
     library.content[start + 1] = 2;
     assert_eq!(library.item(1).unwrap().as_bytes().len(), 22);
     // The second reading of item 1 is the first bytes of item 2, key 0x0101 and count 2.
@@ -233,7 +233,7 @@ fn the_store_copy_threshold_follows_the_compacted_content() {
 fn removing_a_batch_collects_nothing_until_the_compaction() {
     let mut library = UserLibrary::default();
     fill(&mut library, &[1, 2, 3, 4]);
-    let unreadable = library.slots[&3];
+    let unreadable = library.slots[&3].unwrap();
     library.content[unreadable + 1] = 255;
     let size = library.content.len();
     let visited = std::cell::RefCell::new(Vec::new());

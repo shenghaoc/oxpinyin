@@ -729,9 +729,9 @@ fn range_end_gives_back_trailing_removals_and_keeps_incomplete_slots() {
     live.add_item(7, &one());
     assert_eq!(live.range_end(), 8);
     // A trailing removal gives its slot back, with the zero offsets below it.
-    assert!(live.remove_item(7).is_some());
+    assert!(live.remove_item(7));
     assert_eq!(live.range_end(), 3);
-    assert!(live.remove_item(2).is_some());
+    assert!(live.remove_item(2));
     assert_eq!(live.range_end(), 2);
     // A payload stored whole whose header passes the content end reads as
     // no item and still occupies its slot.
@@ -755,6 +755,6 @@ fn range_end_gives_back_trailing_removals_and_keeps_incomplete_slots() {
         .collect();
     assert_eq!(after, before);
     assert_eq!(live.range_end(), 6);
-    assert!(live.remove_item(1).is_some());
+    assert!(live.remove_item(1));
     assert_eq!(live.range_end(), 6);
 }

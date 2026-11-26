@@ -448,11 +448,8 @@ impl<'a> LiveSystemItems<'a> {
     /// payload. Consumers: `token_pronunciation_count`, `token_exists`.
     #[must_use]
     pub(crate) fn pronunciation_count(&self, token: PhraseToken) -> Lookup<u32> {
-        if !self.is_system_library(crate::vocab::phrase_index_library_index(token)) {
-            return Lookup::Absent;
-        }
-        if !self.library_loaded(u32::from(crate::vocab::phrase_index_library_index(token))) {
-            return Lookup::Unloaded;
+        if let Some(answer) = self.gate(token) {
+            return answer;
         }
         // One read of the live buffer's item fields: a slot it holds no
         // readable count at is a removed, unreadable or absent item.
