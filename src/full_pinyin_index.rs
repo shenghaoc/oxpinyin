@@ -112,30 +112,25 @@ impl FullPinyinIndexParse {
     }
 }
 
-/// One dynamic-programming step of the pinned full-pinyin parse.
+/// One reached dynamic-programming step of the pinned full-pinyin parse.
+/// Every path to a step covers each input byte before it, so the pin's
+/// `m_parsed_len` is the step's own position.
 #[derive(Clone, Copy, Debug)]
 struct Step {
-    /// Whether any path reaches this step.
-    reached: bool,
     /// Previous step of the best path (the DP's `m_last_step`).
     last: usize,
     /// Keys on the best path (apostrophes excluded, like upstream).
     num_keys: usize,
-    /// Input bytes covered by the best path.
-    parsed_len: usize,
     /// The last key the best path appended, `None` for apostrophe hops.
     key: Option<FullPinyinIndexKey>,
 }
 
-impl Step {
-    /// Whether this proposed step replaces `existing` at its destination:
-    /// the destination is not reached yet, or the proposal covers more
-    /// input, or it covers the same input with fewer keys. An equal
-    /// proposal does not replace, so the earlier path stays.
-    const fn replaces(&self, existing: &Self) -> bool {
-        !existing.reached
-            || self.parsed_len > existing.parsed_len
-            || (self.parsed_len == existing.parsed_len && self.num_keys < existing.num_keys)
+/// Stores `value` at `slot` when the slot is not reached yet or `value`
+/// has fewer keys. Both cover the same input, so an equal proposal does not
+/// replace, and the earlier path stays.
+fn propose(slot: &mut Option<Step>, value: Step) {
+    if slot.is_none_or(|existing| value.num_keys < existing.num_keys) {
+        *slot = Some(value);
     }
 }
 
@@ -143,9 +138,10 @@ impl Step {
 /// (`pinyin_parser2.cpp:155-205`): under `use_tone` a trailing digit
 /// 1..5 is the tone and is consumed with the match; the whole substring
 /// must resolve through the index (plain rows only — these indexes have
-/// no option-gated rows).
+/// no option-gated rows). The key spans `start..start + input.len()`.
 fn parse_one_index_key(
     input: &[u8],
+    start: usize,
     options: crate::OptionBits,
     index: FullPinyinIndex,
 ) -> Option<FullPinyinIndexKey> {
@@ -162,16 +158,10 @@ fn parse_one_index_key(
     }
 
     let spelling = core::str::from_utf8(input.get(..parsed_len)?).ok()?;
-    let canonical = index.canonical(spelling)?;
-
-    let mut end = parsed_len;
-    if use_tone && tone != 0 {
-        end += 1;
-    }
     Some(FullPinyinIndexKey {
-        canonical,
-        start: 0,
-        end,
+        canonical: index.canonical(spelling)?,
+        start,
+        end: start + input.len(),
         tone,
     })
 }
@@ -185,17 +175,12 @@ pub(crate) fn parse_full_pinyin_index_with_options(
     options: crate::OptionBits,
     index: FullPinyinIndex,
 ) -> FullPinyinIndexParse {
-    let mut steps = vec![
-        Step {
-            reached: false,
-            last: 0,
-            num_keys: 0,
-            parsed_len: 0,
-            key: None,
-        };
-        input.len() + 1
-    ];
-    steps[0].reached = true;
+    let mut steps: Vec<Option<Step>> = vec![None; input.len() + 1];
+    steps[0] = Some(Step {
+        last: 0,
+        num_keys: 0,
+        key: None,
+    });
 
     // The end of the separator-free run the walk is in: found once per run
     // and forgotten at each separator, as the pin's `next_sep`
@@ -205,19 +190,15 @@ pub(crate) fn parse_full_pinyin_index_with_options(
         if input[position] == b'\'' {
             run_end = None;
             // Propagate the current step past the separator.
-            let previous = steps[position];
-            if previous.reached {
-                let next = &mut steps[position + 1];
-                let value = Step {
-                    reached: true,
-                    last: position,
-                    num_keys: previous.num_keys,
-                    parsed_len: previous.parsed_len + 1,
-                    key: None,
-                };
-                if value.replaces(next) {
-                    *next = value;
-                }
+            if let Some(previous) = steps[position] {
+                propose(
+                    &mut steps[position + 1],
+                    Step {
+                        last: position,
+                        num_keys: previous.num_keys,
+                        key: None,
+                    },
+                );
             }
             continue;
         }
@@ -231,45 +212,31 @@ pub(crate) fn parse_full_pinyin_index_with_options(
         });
         let try_end = (position + MAX_LOOKAHEAD).min(next_sep);
         for end in (position + 1)..=try_end {
-            let Some(key) = parse_one_index_key(&input[position..end], options, index) else {
+            let Some(key) = parse_one_index_key(&input[position..end], position, options, index)
+            else {
                 continue;
             };
-            let previous = steps[position];
-            if !previous.reached {
+            let Some(previous) = steps[position] else {
                 continue;
-            }
-            let value = Step {
-                reached: true,
-                last: position,
-                num_keys: previous.num_keys + 1,
-                parsed_len: previous.parsed_len + (end - position),
-                key: Some(FullPinyinIndexKey {
-                    canonical: key.canonical,
-                    start: position,
-                    end,
-                    tone: key.tone,
-                }),
             };
-            let next = &mut steps[end];
-            if value.replaces(next) {
-                *next = value;
-            }
+            propose(
+                &mut steps[end],
+                Step {
+                    last: position,
+                    num_keys: previous.num_keys + 1,
+                    key: Some(key),
+                },
+            );
         }
     }
 
     // final_step: the longest covered prefix from the input's start.
-    let mut best = 0;
-    for position in (0..=input.len()).rev() {
-        if steps[position].reached && steps[position].parsed_len == position {
-            best = position;
-            break;
-        }
-    }
+    let best = steps.iter().rposition(Option::is_some).unwrap_or(0);
 
     let mut keys = Vec::new();
     let mut cursor = best;
-    while cursor != 0 {
-        let step = steps[cursor];
+    // Every step on the best path is reached.
+    while let (true, Some(step)) = (cursor != 0, steps[cursor]) {
         if let Some(key) = step.key {
             keys.push(key);
         }

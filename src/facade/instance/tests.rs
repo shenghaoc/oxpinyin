@@ -87,7 +87,7 @@ fn reparse_updates_the_active_composition(
     let mut view = instance.bind(&context.runtime);
     assert_eq!(view.parse_full_more(initial), initial.len());
     for &input in edits {
-        view.begin_parse(input.as_bytes());
+        view.begin_parse();
         assert_eq!(view.parse_full_more(input), input.len());
         assert_eq!(view.parsed_len, input.len());
         if restarted {

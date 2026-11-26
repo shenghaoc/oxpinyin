@@ -165,11 +165,10 @@ impl Edge {
 /// is acyclic by construction and needs no cycle check.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SegmentGraph {
-    input_len: usize,
     edges: Vec<Edge>,
-    /// `starts[node]..starts[node + 1]` indexes [`SegmentGraph::edges`].
+    /// `starts[node]..starts[node + 1]` indexes [`SegmentGraph::edges`],
+    /// one entry per node and one past the end.
     starts: Vec<usize>,
-    reachable: Vec<bool>,
     consumed: usize,
 }
 
@@ -230,10 +229,8 @@ impl SegmentGraph {
         }
 
         Some(Self {
-            input_len: input.len(),
             edges,
             starts,
-            reachable,
             consumed,
         })
     }
@@ -264,7 +261,7 @@ impl SegmentGraph {
 
         let mut edges: Vec<Edge> = Vec::with_capacity(segments.len());
         let mut previous_end = 0_usize;
-        for (index, segment) in segments.iter().enumerate() {
+        for segment in segments {
             if segment.end <= segment.start
                 || segment.start < previous_end
                 || segment.end > input.len()
@@ -274,7 +271,8 @@ impl SegmentGraph {
             {
                 return None;
             }
-            let from = if index == 0 { 0 } else { previous_end };
+            // The first segment starts at node 0: `previous_end` is 0 there.
+            let from = previous_end;
             let (Ok(from), Ok(to), Ok(start)) = (
                 u32::try_from(from),
                 u32::try_from(segment.end),
@@ -315,10 +313,8 @@ impl SegmentGraph {
         }
 
         Some(Self {
-            input_len: input.len(),
             edges,
             starts,
-            reachable,
             consumed,
         })
     }
@@ -327,7 +323,7 @@ impl SegmentGraph {
     #[cfg(test)]
     #[must_use]
     pub const fn node_count(&self) -> usize {
-        self.input_len + 1
+        self.starts.len() - 1
     }
 
     /// Every edge, ordered by source node ascending then key length

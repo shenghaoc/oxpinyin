@@ -6,8 +6,8 @@ use super::*;
 
 /// An unreadable item contributes no Rust row, but the pin still enters
 /// its scorer. Any short merged-gram header asserts before its zero total.
-fn abort_unreadable_ranking(gram: Option<&(u32, MergedGram)>) -> Result<(), EngineError> {
-    if let Some((_, row)) = gram {
+fn abort_unreadable_ranking(gram: Option<&MergedGram>) -> Result<(), EngineError> {
+    if let Some(row) = gram {
         row.total().map_err(EngineError::lookup_gram)?;
     }
     std::process::abort();
@@ -396,7 +396,7 @@ where
         &self,
         offset: usize,
         gate: bool,
-    ) -> Result<Option<(u32, MergedGram)>, EngineError> {
+    ) -> Result<Option<MergedGram>, EngineError> {
         if !self.options.contains(OptionBits::DYNAMIC_ADJUST) {
             return Ok(None);
         }
@@ -413,7 +413,7 @@ where
             }
             return Err(EngineError::lookup_gram(fault));
         }
-        Ok(gram.map(|gram| (prev, gram)))
+        Ok(gram)
     }
 
     /// Per-candidate sort frequencies on the pin's amplified scale, or
@@ -442,7 +442,7 @@ where
     pub(super) fn candidate_frequencies(
         &self,
         collected: &[Candidate],
-        gram: Option<(u32, &MergedGram)>,
+        gram: Option<&MergedGram>,
         gate: bool,
         abort_on_rank: bool,
         frequencies: &mut Vec<u32>,
@@ -482,11 +482,7 @@ where
                 // term INSIDE the pin's expression, before its single
                 // truncation. The addon and predicted branches above return
                 // early in the pin too — they carry no bigram term at all.
-                let bigram = match dynamic_adjust_bigram_possibility(
-                    self.options,
-                    gram.map(|(_, row)| row),
-                    token,
-                ) {
+                let bigram = match dynamic_adjust_bigram_possibility(self.options, gram, token) {
                     Ok(bigram) => bigram,
                     Err(_) if !gate => 0.0,
                     Err(fault) => {
@@ -889,13 +885,7 @@ where
 
         // The scan's result stands even when it found nothing. Tokens the
         // table lacks rank as zero rather than falling back.
-        self.candidate_frequencies(
-            collected,
-            gram.as_ref().map(|(prev, row)| (*prev, row)),
-            gate,
-            abort_on_rank,
-            frequencies,
-        )?;
+        self.candidate_frequencies(collected, gram.as_ref(), gate, abort_on_rank, frequencies)?;
         // `Session::rank_word`: the sort word, or libzhuyin's fixed
         // comparator (`zhuyin.cpp:1129-1144`) on a zhuyin facade.
         let rank_word = self.rank_word();
@@ -1018,12 +1008,7 @@ where
         offset: usize,
         abort_on_rank: bool,
     ) -> Result<CandidateList, EngineError> {
-        if offset > self.input.len() {
-            return Err(EngineError::LookupOffsetOutOfRange {
-                offset,
-                len: self.input.len(),
-            });
-        }
+        check_lookup_offset_range(self.input.len(), offset)?;
         if !self.input.is_char_boundary(offset) {
             return Err(EngineError::Failure);
         }
@@ -1119,12 +1104,7 @@ where
         offset: usize,
         abort_on_rank: bool,
     ) -> Result<CandidateList, EngineError> {
-        if offset > self.input.len() {
-            return Err(EngineError::LookupOffsetOutOfRange {
-                offset,
-                len: self.input.len(),
-            });
-        }
+        check_lookup_offset_range(self.input.len(), offset)?;
         if !self.input.is_char_boundary(offset) {
             return Err(EngineError::Failure);
         }
@@ -1238,13 +1218,7 @@ where
             for candidate in &mut group {
                 candidate.set_span_start(start);
             }
-            self.candidate_frequencies(
-                &group,
-                gram.as_ref().map(|(prev, row)| (*prev, row)),
-                true,
-                abort_on_rank,
-                frequencies,
-            )?;
+            self.candidate_frequencies(&group, gram.as_ref(), true, abort_on_rank, frequencies)?;
             let slice_start = rank_keys.len();
             rank_keys.extend(
                 group

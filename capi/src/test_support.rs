@@ -180,6 +180,7 @@ pub(crate) unsafe fn predicted_row(
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let inst = unsafe { instance_ref(instance) };
     let index = inst
+        .state
         .candidates
         .iter()
         .position(|c| c.candidate_type() == kind && c.token.get().is_some())

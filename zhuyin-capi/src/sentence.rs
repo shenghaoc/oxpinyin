@@ -104,9 +104,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     // each tail substring's search with the validating `reduce_tokens`
     // (`zhuyin.cpp:933`, `:953`), which asserts on more than four tokens
     // (`phrase_large_table3.h:95`).
-    let Ok(prefixes) =
-        oxpinyin::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
-    else {
+    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, prefix.as_ref()) else {
         std::process::abort();
     };
     let matrix_has_keys = matrix_has_keys(&inst.read());

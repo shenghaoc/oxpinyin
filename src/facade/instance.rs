@@ -3,8 +3,8 @@
 //! facades' C layers borrow against.
 
 use crate::engine::{
-    Candidate, CandidateList, EngineError, Selection, SelectionTarget, SentencePart,
-    check_lookup_offset_range, normalize_lookup_offset,
+    CandidateList, EngineError, Selection, SentencePart, check_lookup_offset_range,
+    normalize_lookup_offset,
 };
 use crate::marshal::SentencePhrase;
 use crate::parser::{DoublePinyinParse, FullPinyinIndexParse, ZhuyinParse};
@@ -14,40 +14,6 @@ use crate::vocab::{PhraseText, PhraseToken};
 use crate::{OptionBits, model::Dictionary};
 
 use crate::facade::context::LiveOptions;
-
-/// A window row's span in the session's store coordinates, as a guess
-/// places it. The pinyin facade maps its end back to the original
-/// coordinates to publish the pin's `m_end` (`lookup_candidate_t`,
-/// 074a2219 `pinyin.cpp:97-105`); a choose reads the published bounds
-/// ([`PublishedRow`]), not this span.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SelectionSpan {
-    begin: u32,
-    end: u32,
-}
-
-impl SelectionSpan {
-    /// The span of `candidate` in a window anchored at `anchor`, as
-    /// [`SelectionTarget::of_candidate`] places it.
-    ///
-    /// Both ends are positions in the raw buffer, which a segment-graph
-    /// position bounds ([`crate::graph::MAX_GRAPH_POSITION`]), so
-    /// the `u32` narrowing never saturates.
-    #[must_use]
-    pub fn of_candidate(candidate: &Candidate, anchor: usize) -> Self {
-        let target = SelectionTarget::of_candidate(candidate, anchor, None);
-        Self {
-            begin: u32::try_from(target.span_start).unwrap_or(u32::MAX),
-            end: u32::try_from(target.span_end).unwrap_or(u32::MAX),
-        }
-    }
-
-    /// Where the span ends.
-    #[must_use]
-    pub const fn end(self) -> usize {
-        self.end as usize
-    }
-}
 
 /// What a choose reads off one published row: the pin's `m_begin`,
 /// `m_end` and `m_token` (074a2219 `pinyin.cpp:97-105`, `:2577-2590`;
@@ -451,16 +417,14 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     pub fn token_unigram_frequency(&self, token: u32) -> Option<u64> {
         let token = token & (crate::vocab::PHRASE_INDEX_LIBRARY_MASK | crate::vocab::PHRASE_MASK);
         let nibble = crate::vocab::phrase_index_library_index(token);
-        match nibble {
-            _ if self.dict.is_system_library(nibble) => {
-                self.dict.live_items().effective_unigram(token)
-            }
+        if self.dict.is_system_library(nibble) {
+            self.dict.live_items().effective_unigram(token)
+        } else if self.dict.library_visible(u32::from(nibble)) {
             // Any other sub-index the pin holds is a `USER_FILE` row's
             // (`pinyin.cpp:303-321`); one it does not hold has no item.
-            _ if self.dict.library_visible(u32::from(nibble)) => {
-                self.user.user_unigram_frequency(token)
-            }
-            _ => None,
+            self.user.user_unigram_frequency(token)
+        } else {
+            None
         }
     }
 }
@@ -777,7 +741,7 @@ impl<
     /// still indexes the constraint columns of the last validation. The next validation,
     /// which a guess or a validating choose runs, checks the constraints against the
     /// replacement matrix.
-    pub fn begin_parse(&mut self, _original: &[u8]) {
+    pub fn begin_parse(&mut self) {
         self.reset_parse_state();
     }
 }

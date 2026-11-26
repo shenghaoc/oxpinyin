@@ -149,15 +149,16 @@ unsafe fn add_remembered_path(
     // SAFETY: Handles guarantees a live instance; the helper contract ends
     // every earlier reader, and Serial calls grants exclusive runtime access.
     let ctx = unsafe { crate::state::instance_context_mut(instance) };
-    let phrase = match ctx.core.plan_add(
-        oxpinyin::vocab::USER_DICTIONARY,
-        phrase.clone(),
-        keys.clone(),
-    ) {
-        ImportPlan::Abort => std::process::abort(),
-        ImportPlan::Refuse | ImportPlan::LookupFailed => return false,
-        ImportPlan::Add { phrase, .. } => phrase,
-    };
+    let (phrase, keys) =
+        match ctx
+            .core
+            .plan_add(oxpinyin::vocab::USER_DICTIONARY, phrase.clone(), keys)
+        {
+            ImportPlan::Abort => std::process::abort(),
+            ImportPlan::Refuse | ImportPlan::LookupFailed => return false,
+            // The plan hands the phrase and keys back unchanged.
+            ImportPlan::Add { phrase, keys, .. } => (phrase, keys),
+        };
     let user = ctx.core.user_store_mut();
     // `if (-1 == count) count = default_count;` otherwise the `gint` is
     // used as the `guint32` it becomes (`pinyin.cpp:520-524`, the same

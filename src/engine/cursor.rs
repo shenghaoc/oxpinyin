@@ -267,19 +267,6 @@ fn zero_start_walk<S: KeySpans + ?Sized>(columns: &Columns<'_, S>, mut offset: u
     offset
 }
 
-/// The range half shared with [`crate::engine::check_lookup_offset_range`]: the pin
-/// reads its matrix out of bounds past one-past-end, so no pinned behaviour
-/// exists there.
-const fn range_check(input_len: usize, offset: usize) -> Result<(), EngineError> {
-    if offset > input_len {
-        return Err(EngineError::LookupOffsetOutOfRange {
-            offset,
-            len: input_len,
-        });
-    }
-    Ok(())
-}
-
 /// Normalizes a user cursor position to a lookup offset — the
 /// `pinyin_get_pinyin_offset` law over one raw buffer and its parse.
 ///
@@ -326,7 +313,7 @@ pub fn left_word_offset_over_spans(
     offset: usize,
 ) -> Result<usize, EngineError> {
     let columns = Columns::new(input, parsed_len, spans, separators);
-    range_check(input.len(), offset)?;
+    crate::engine::check_lookup_offset_range(input.len(), offset)?;
     check(&columns, offset)?;
     let mut left = offset.saturating_sub(1);
     while left > 0 {
@@ -357,7 +344,7 @@ pub fn right_word_offset_over_spans(
     offset: usize,
 ) -> Result<Option<usize>, EngineError> {
     let columns = Columns::new(input, parsed_len, spans, separators);
-    range_check(input.len(), offset)?;
+    crate::engine::check_lookup_offset_range(input.len(), offset)?;
     check(&columns, offset)?;
     let mut right = offset;
     // Skip consecutive lone zero-key columns — the pin's loop runs below

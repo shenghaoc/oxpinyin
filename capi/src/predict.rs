@@ -97,8 +97,7 @@ fn guess_predicted_result(
     // `_compute_prefixes`' validating `reduce_tokens` (`pinyin.cpp:2424`,
     // `:1415`; `phrase_large_table3.h:95`) asserts on a tail substring with
     // more than four tokens, before the empty check.
-    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix)
-    else {
+    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, prefix) else {
         std::process::abort();
     };
     // `m_prefixes` is emptied and refilled before the empty check
@@ -179,6 +178,7 @@ pub(crate) fn clear_borrowed_prefix(
 ) -> bool {
     let borrowed = !prefix.is_null()
         && inst
+            .state
             .candidates
             .iter()
             .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix));

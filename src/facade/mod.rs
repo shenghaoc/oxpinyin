@@ -48,7 +48,7 @@ pub use export_rows::{
 pub use import::ImportPlan;
 pub use instance::{
     InstanceCore, InstanceMut, InstanceRead, InstanceState, InstanceView, PublishedRow,
-    SelectionSpan, TrainingRefusal, guess_result, refuse_lookup_gram, training_answer,
+    TrainingRefusal, guess_result, refuse_lookup_gram, training_answer,
 };
 pub use live::LiveContexts;
 pub use offsets::{

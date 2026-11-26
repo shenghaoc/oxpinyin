@@ -776,8 +776,8 @@ impl<E> PhraseIndexRanges<E> {
             match cursor.as_mut() {
                 Some(open)
                     if open.last.checked_add(1) == Some(token)
-                        && usize::from(phrase_index_library_index(open.first))
-                            == usize::from(phrase_index_library_index(token)) =>
+                        && phrase_index_library_index(open.first)
+                            == phrase_index_library_index(token) =>
                 {
                     open.last = token;
                 }

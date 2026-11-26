@@ -45,24 +45,15 @@ pub unsafe extern "C" fn zhuyin_begin_add_phrases(
     context: *mut ZhuyinContext,
     index: u8,
 ) -> *mut ImportIterator {
-    if context.is_null() {
-        // The pin allocates the iterator and stores the context unread
-        // (`zhuyin.cpp:392-398`). Every later use that reads the context is a
-        // NULL dereference (row 41): `add_phrase` answers `false` and
-        // `end_add_phrases` frees the handle.
-        let handle = ImportHandle { index, owner: None };
-        return Box::into_raw(Box::new(handle)).cast();
-    }
-
-    // The constructor only builds the iterator (`zhuyin.cpp:392-398`); the compact is
-    // `end_add_phrases`'s (`ContextCore::end_import`).
-    // SAFETY: the public context is live for this serialized constructor call.
-    let owner = unsafe { context_owner(context) };
-    let handle = ImportHandle {
-        index,
-        owner: Some(owner),
-    };
-    Box::into_raw(Box::new(handle)).cast()
+    // The constructor only builds the iterator (`zhuyin.cpp:392-398`); the
+    // compact is `end_add_phrases`'s (`ContextCore::end_import`). The pin
+    // stores a NULL context unread. Every later use that reads it is a NULL
+    // dereference (row 41): `add_phrase` answers `false` and
+    // `end_add_phrases` frees the handle.
+    // SAFETY: a non-NULL public context is live for this serialized
+    // constructor call.
+    let owner = (!context.is_null()).then(|| unsafe { context_owner(context) });
+    Box::into_raw(Box::new(ImportHandle { index, owner })).cast()
 }
 
 // zhuyin.cpp:500-534, zhuyin.cpp:440.
@@ -110,7 +101,8 @@ pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
     // A NULL-context handle: `_add_phrase` would read the NULL context
     // (`zhuyin.cpp:412`), and the early returns before it answer `false`.
-    let Some(owner) = handle.owner.as_ref() else {
+    let index = handle.index;
+    let Some(owner) = handle.owner.as_mut() else {
         return false;
     };
     let plan = {
@@ -119,7 +111,7 @@ pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
 
         // SAFETY: The entry point guarantees Strings: both pointers are NULL or live NUL-terminated
         // strings, unchanged for this call.
-        unsafe { plan_import(&context.core, handle.index, phrase, pinyin) }
+        unsafe { plan_import(&context.core, index, phrase, pinyin) }
     };
     let (phrase, keys, original) = match plan {
         ImportPlan::Refuse => return false,
@@ -137,14 +129,11 @@ pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
             original,
         } => (phrase, keys, original),
     };
-    let Some(owner) = handle.owner.as_mut() else {
-        return false;
-    };
     // SAFETY: the planning readers ended above; this call now owns the context mutation.
     let context = unsafe { owner_mut(owner) };
     context
         .core
-        .commit_import(handle.index, &phrase, &keys, original, count)
+        .commit_import(index, &phrase, &keys, original, count)
 }
 
 /// What [`zhuyin_iterator_add_phrase`] does with one pair before it writes.

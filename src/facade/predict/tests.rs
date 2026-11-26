@@ -36,12 +36,8 @@ mod native {
     use crate::user::UserConfLaw;
 
     fn prefix_guess(context: &ContextCore, instance: &mut InstanceCore, prefix: &str) -> bool {
-        let prefixes = crate::facade::compute_prefixes(
-            &context.runtime.dict(),
-            context.user_store(),
-            Some(&prefix.into()),
-        )
-        .unwrap();
+        let prefixes =
+            crate::facade::compute_prefixes(&context.runtime.dict(), Some(&prefix.into())).unwrap();
         let mut view = instance.bind(&context.runtime);
         let has_keys = view.mode_has_keys();
         view.guess_sentence_with_prefix_and_matrix(&prefixes, has_keys)

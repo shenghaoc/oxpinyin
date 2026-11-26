@@ -257,7 +257,7 @@ impl<
     }
 
     fn parse_full_more_with_splits(&mut self, text: &str, divided: bool) -> usize {
-        self.begin_parse(text.as_bytes());
+        self.begin_parse();
         if self.session.set_options(self.options()).is_err() {
             return 0;
         }
@@ -338,7 +338,7 @@ impl<
     /// input.
     #[must_use]
     pub fn parse_chewing_more(&mut self, text: &str, corrections: ChewingCorrections) -> usize {
-        self.begin_parse(text.as_bytes());
+        self.begin_parse();
         // The pin fills and fuzzes with the live context word before a
         // sentence guess (pinyin.cpp:1589-1604, zhuyin.cpp:1061-1076).
         if self.session.set_options(self.options()).is_err() {
@@ -380,7 +380,7 @@ impl<
     /// input.
     #[must_use]
     pub fn parse_double_more(&mut self, text: &str) -> usize {
-        self.begin_parse(text.as_bytes());
+        self.begin_parse();
         // Match fill-then-fuzzy under the whole context word, applied once
         // per parse (pinyin.cpp:1543-1559, pin 074a2219).
         if self.session.set_options(self.options()).is_err() {

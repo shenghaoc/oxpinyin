@@ -108,8 +108,6 @@ pub enum MaskOutOutcome {
     Journal(JournalFault),
 }
 
-impl MaskOutOutcome {}
-
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
 /// behind NULL. Carried out of [`ContextCore::try_open`] so the facades
 /// can log it; the return value stays NULL either way.
