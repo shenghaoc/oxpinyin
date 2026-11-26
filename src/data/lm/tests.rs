@@ -20,8 +20,6 @@ fn bigram_merge_wraps_each_field_at_the_stored_width() {
 }
 
 mod language_model {
-    use std::cell::Cell;
-
     use crate::model::{LanguageModel, UserCountDelta};
 
     use crate::data::{
@@ -57,12 +55,12 @@ mod language_model {
     struct ModelFixture {
         tables: BigramTables,
         libraries: PhraseLibraries,
-        mask: Cell<u32>,
+        mask: u32,
     }
 
     impl ModelFixture {
         fn model(&self) -> BigramLanguageModel<'_> {
-            self.tables.read(&self.libraries, &self.mask)
+            self.tables.read(&self.libraries, self.mask)
         }
     }
 
@@ -99,7 +97,7 @@ mod language_model {
             ModelFixture {
                 tables: BigramTables::attach(&path, 0.312_699).unwrap(),
                 libraries,
-                mask: Cell::new(0),
+                mask: 0,
             }
         }
     }
@@ -132,9 +130,9 @@ mod language_model {
     #[test]
     fn an_unloaded_library_leaves_the_model() {
         let fix = Fixture::new();
-        let model = fix.open();
+        let mut model = fix.open();
+        model.mask = 1 << 2;
         let lm = model.model();
-        model.mask.set(1 << 2);
         assert_eq!(lm.unigram_count(GBK), None);
         assert_eq!(lm.unigram_total(), 16, "gbk's total leaves");
         assert_eq!(lm.unigram_count(NI), Some(10));
@@ -312,7 +310,7 @@ mod language_model {
         gb.add(0x11, 5, "好", vec![(vec![0, 0], 1)]);
         gb.add(0x99, 1, "你好", vec![(vec![0, 0, 0, 0], 1)]);
         std::fs::write(fix.dir.path().join("gb_char.bin"), gb.build()).unwrap();
-        let model = fix.open();
+        let mut model = fix.open();
         let lm = model.model();
         assert_eq!(
             lm.unigram_total(),
@@ -320,8 +318,11 @@ mod language_model {
             "gb_char's total plus gbk_char's 3 wraps"
         );
         assert!(lm.has_unigrams());
-        model.mask.set((1 << 1) | (1 << 2));
-        assert!(!lm.has_unigrams(), "no visible library holds an item");
+        model.mask = (1 << 1) | (1 << 2);
+        assert!(
+            !model.model().has_unigrams(),
+            "no visible library holds an item"
+        );
     }
 
     // 074a2219 phrase_lookup.cpp:310,329 requires a readable phrase item before pricing.
@@ -386,9 +387,9 @@ mod language_model {
             .unwrap();
         assert_eq!(stale_with_bigram, crate::model::NbestStepCosts::default());
 
-        let masked_model = fix.open();
+        let mut masked_model = fix.open();
+        masked_model.mask = 1 << 7;
         let lm2 = masked_model.model();
-        masked_model.mask.set(1 << 7);
         let masked = lm2
             .nbest_step_costs_with_user_delta(&start, &0x0700_0002, item(27))
             .unwrap();
@@ -496,11 +497,11 @@ mod language_model {
             DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
         store.set_raw(&NI.to_le_bytes(), &[]).unwrap();
         drop(store);
-        let model = fix.open();
+        let mut model = fix.open();
+        model.mask = 1 << 2;
         let lm = model.model();
         let mut row = NbestStepRow::default();
         let prev = NI;
-        model.mask.set(1 << 2);
         assert_eq!(
             lm.nbest_token_costs(&GBK)
                 .unwrap()

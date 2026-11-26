@@ -9,7 +9,6 @@
 // pinyin_init, pinyin.cpp:331–396 and zhuyin_init, zhuyin.cpp:279–334.
 
 use crate::vocab::{PHRASE_INDEX_LIBRARY_COUNT, phrase_index_library_index};
-use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 pub(crate) use crate::data::phrase_library::{LibraryError, PhraseItemView, RowFault};
@@ -139,59 +138,6 @@ pub(crate) enum RemapStep {
 
 // ── Addon libraries ─────────────────────────────────────────────────────
 
-/// The addon facade shared by every session derived from one runtime:
-/// the addon DBM pair opened at init (upstream attaches
-/// `addon_pinyin_index.bin` / `addon_phrase_index.bin` in `pinyin_init`)
-/// and the chunk files `pinyin_load_addon_phrase_library` loads.
-struct AddonSet {
-    dict: AddonDictionary,
-}
-
-impl AddonSet {
-    /// Drops addon library `index`, if it is loaded.
-    ///
-    /// The pin's `unload` is unconditional and answers `true` whether or
-    /// not the library was loaded (`pinyin.cpp:124-131`,
-    /// `FacadePhraseIndex::unload`), so this reports success the same way
-    /// rather than distinguishing the two.
-    fn unload(&mut self, index: u8) -> bool {
-        self.dict.unload(index)
-    }
-
-    fn load_reporting(&mut self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
-        self.dict.load_reporting(index, system_dir)
-    }
-
-    fn search_into(
-        &self,
-        syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
-        row: &mut Vec<u8>,
-    ) -> Result<bool, DictError> {
-        self.dict.search_into(syllables, out, row)
-    }
-
-    fn unigram_freq(&self, token: u32) -> Option<u64> {
-        self.dict.unigram_freq(token)
-    }
-
-    fn unigram_total(&self) -> Option<u64> {
-        self.dict.unigram_total()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.dict.is_empty()
-    }
-
-    /// The addon phrase item behind `token` as stored bytes, the
-    /// `get_phrase_item` half of the promotion (`pinyin.cpp:2534-2549`).
-    ///
-    /// `None` when no loaded addon library owns `token`.
-    fn phrase_item(&self, token: u32) -> Option<Vec<u8>> {
-        self.dict.phrase_item(token)
-    }
-}
-
 pub(crate) use crate::model::TokenPhrase;
 
 /// One token reading, without the text or any other reading's keys.
@@ -219,7 +165,7 @@ fn chewing_query(syllables: &[SyllableKey]) -> Vec<crate::parser::ChewingKey> {
 pub struct RuntimeDict<'a> {
     system: SystemDictionary<'a>,
     user: &'a UserStore,
-    addons: &'a RefCell<AddonSet>,
+    addons: &'a AddonDictionary,
     punct: &'a PunctTable,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
@@ -227,7 +173,7 @@ pub struct RuntimeDict<'a> {
     /// `unload_library` setter — that all consult it).  The pinyin ABI only
     /// ever sets bit 2 (`GBK_DICTIONARY`, `pinyin.cpp:464-472`); the zhuyin
     /// ABI any bit but 1 (`zhuyin.cpp:378-388`).
-    library_mask: &'a Cell<u32>,
+    library_mask: u32,
 }
 
 impl<'a> RuntimeDict<'a> {
@@ -310,7 +256,7 @@ impl<'a> RuntimeDict<'a> {
     /// (`phonetic_lookup.h:646,674`).
     fn ranged_libraries(&self) -> u16 {
         // The mask's bits past the sixteen libraries name no library.
-        let unloaded = (self.library_mask.get() & u32::from(u16::MAX)) as u16;
+        let unloaded = (self.library_mask & u32::from(u16::MAX)) as u16;
         self.system.loaded_libraries() & !unloaded
     }
 
@@ -564,70 +510,6 @@ impl<'a> RuntimeDict<'a> {
         self.punct.punctuations(token).unwrap_or_default()
     }
 
-    /// Loads addon library `index` from `system_dir`: an error when
-    /// the library file is absent or does not verify, where
-    /// [`LibraryError::unmappable_path`] names the file the pin could not
-    /// map. `Ok(false)` for an index that names no addon library and for
-    /// one already loaded.
-    ///
-    /// # Errors
-    ///
-    /// [`LibraryError`] when the library file is absent or does not verify.
-    fn load_addon_reporting(&self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
-        let mut addons = self.addons.borrow_mut();
-        addons.load_reporting(index, system_dir)
-    }
-
-    /// Unloads addon library `index`.
-    ///
-    /// Answers `true` whether or not the library was loaded, mirroring the
-    /// pin's unconditional `unload`. The caller applies the pin's
-    /// `index < PHRASE_INDEX_LIBRARY_COUNT` bound: that assertion is an ABI
-    /// availability-class concern, not a runtime one.
-    #[must_use]
-    fn unload_addon(&self, index: u8) -> bool {
-        let mut addons = self.addons.borrow_mut();
-        addons.unload(index)
-    }
-
-    /// Unloads default library `index`: sets bit `n` of the visibility mask,
-    /// so library `n` stops answering. `false` only for an index outside the
-    /// sixteen sub-indices; the pin ignores what its `unload` returns
-    /// (`pinyin.cpp:473-474`, `zhuyin.cpp:386-387`), so a repeat unload
-    /// answers `true` too. Which indices a facade lets through is the C
-    /// ABI's rule. Within range, pinyin accepts only `GBK_DICTIONARY` (2)
-    /// (`pinyin.cpp:464-475`), and zhuyin refuses only `TSI_DICTIONARY`
-    /// (1) (`zhuyin.cpp:379-390`).
-    #[must_use]
-    fn unload_library(&self, index: u32) -> bool {
-        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
-            return false;
-        }
-        let mask = 1u32 << index;
-        self.library_mask.set(self.library_mask.get() | mask);
-        true
-    }
-
-    /// Re-loads library `index` after an unload — upstream re-attaches
-    /// the sub-index from disk and answers `true`; already-loaded (mask
-    /// clear) answers `false` (`pinyin.cpp:234-243`). A library that was
-    /// never unloaded is already loaded: the system tables load at init, so
-    /// upstream's already-loaded rule answers `false` there too.
-    #[must_use]
-    fn load_library(&self, index: u32) -> bool {
-        // The system tables (1, 2, 4) and the USER_FILE library (7) all load
-        // at init (the default-tables loop includes the USER_DICTIONARY row —
-        // measured `load(7)` = false on the pin), so the already-loaded rule
-        // answers `false` for every index an unload has not cleared.
-        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
-            return false;
-        }
-        let bit = 1u32 << index;
-        let mask = self.library_mask.get();
-        self.library_mask.set(mask & !bit);
-        mask & bit != 0
-    }
-
     /// Whether the configured default row is a system library.
     #[must_use]
     pub fn is_system_library(&self, index: u8) -> bool {
@@ -658,7 +540,7 @@ impl<'a> RuntimeDict<'a> {
     /// place.
     #[must_use]
     pub fn library_visible(&self, nibble: u32) -> bool {
-        let mask = self.library_mask.get();
+        let mask = self.library_mask;
         if mask == 0 || nibble >= 32 {
             return true;
         }
@@ -885,8 +767,7 @@ impl<'a> RuntimeDict<'a> {
     /// The addon phrase item behind `token`, for the choose-promotion path.
     #[must_use]
     pub fn addon_phrase_item(&self, token: u32) -> Option<Vec<u8>> {
-        let addons = self.addons.borrow();
-        addons.phrase_item(token)
+        self.addons.phrase_item(token)
     }
 }
 
@@ -1198,7 +1079,7 @@ impl Dictionary for RuntimeDict<'_> {
         out: &mut Vec<PhraseEntry>,
         row: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
-        self.addons.borrow().search_into(syllables, out, row)
+        self.addons.search_into(syllables, out, row)
     }
 
     fn checked_extension_tokens(
@@ -1215,7 +1096,7 @@ impl Dictionary for RuntimeDict<'_> {
         self.user
             .note_pinyin_suggestion(|| chewing_query(syllables));
         tokens.extend(user.suggest_extensions(syllables));
-        if self.library_mask.get() != 0 {
+        if self.library_mask != 0 {
             tokens.retain(|token| {
                 self.library_visible(u32::from(phrase_index_library_index(*token)))
             });
@@ -1296,7 +1177,7 @@ impl Dictionary for RuntimeDict<'_> {
 pub struct RuntimeLm<'a> {
     inner: BigramLanguageModel<'a>,
     user: &'a UserStore,
-    addons: &'a RefCell<AddonSet>,
+    addons: &'a AddonDictionary,
 }
 
 /// The engine error a training step's store refusal stands for: the pin's
@@ -1399,16 +1280,14 @@ impl LanguageModel for RuntimeLm<'_> {
     }
 
     fn addon_unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, Self::Error> {
-        let addons = self.addons.borrow();
-        if addons.is_empty() {
+        if self.addons.is_empty() {
             return Ok(None);
         }
-        Ok(Some(addons.unigram_freq(*token).unwrap_or(0)))
+        Ok(Some(self.addons.unigram_freq(*token).unwrap_or(0)))
     }
 
     fn addon_unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        let addons = self.addons.borrow();
-        Ok(addons.unigram_total())
+        Ok(self.addons.unigram_total())
     }
 
     /// The §5 overlay the n-best step costs take.
@@ -1497,9 +1376,9 @@ pub struct Runtime {
     model: crate::data::BigramTables,
     user: UserStore,
     conf: TableConf,
-    addons: RefCell<AddonSet>,
+    addons: AddonDictionary,
     punct: PunctTable,
-    library_mask: Cell<u32>,
+    library_mask: u32,
 }
 
 impl Runtime {
@@ -1514,7 +1393,7 @@ impl Runtime {
         // zhuyin.cpp:744-748). A second finish finds them closed.
         self.system.finish_attachments();
         self.model.finish_attachment();
-        self.addons.borrow_mut().dict.finish_attachments();
+        self.addons.finish_attachments();
         self.punct.finish_attachment();
     }
 
@@ -1524,7 +1403,7 @@ impl Runtime {
     pub fn attachments_finished(&self) -> bool {
         self.system.attachments_finished()
             && self.model.attachment_finished()
-            && self.addons.borrow().dict.attachments_finished()
+            && self.addons.attachments_finished()
             && self.punct.attachment_finished()
     }
 
@@ -1661,7 +1540,7 @@ impl Runtime {
         // The library mask is shared with the language model: an unloaded
         // library's items leave both the lookups and the unigram denominator,
         // as freeing the sub-index does upstream.
-        let library_mask = Cell::new(0);
+        let library_mask = 0;
         let mut originals = crate::user::system_originals(
             crate::data::PhraseLibraries::empty(),
             UserFileLayout::from_conf(&conf),
@@ -1707,14 +1586,12 @@ impl Runtime {
 
         // λ is the `gfloat` table.conf's scanner read.
 
-        let addons = RefCell::new(AddonSet {
-            dict: match law {
-                UserConfLaw::Pinyin => {
-                    AddonDictionary::attach_with(system_dir, &conf).map_err(OpenError::Dict)?
-                }
-                UserConfLaw::Zhuyin => AddonDictionary::without_indexes(&conf),
-            },
-        });
+        let addons = match law {
+            UserConfLaw::Pinyin => {
+                AddonDictionary::attach_with(system_dir, &conf).map_err(OpenError::Dict)?
+            }
+            UserConfLaw::Zhuyin => AddonDictionary::without_indexes(&conf),
+        };
         let punct = match law {
             UserConfLaw::Pinyin => {
                 PunctTable::attach(&system_dir.join(SystemDbm::Punct.file_name()))
@@ -1772,7 +1649,7 @@ impl Runtime {
             user: &self.user,
             addons: &self.addons,
             punct: &self.punct,
-            library_mask: &self.library_mask,
+            library_mask: self.library_mask,
         }
     }
 
@@ -1780,7 +1657,7 @@ impl Runtime {
     #[must_use]
     pub fn lm(&self) -> RuntimeLm<'_> {
         RuntimeLm {
-            inner: self.model.read(self.libraries(), &self.library_mask),
+            inner: self.model.read(self.libraries(), self.library_mask),
             user: &self.user,
             addons: &self.addons,
         }
@@ -1886,7 +1763,7 @@ impl Runtime {
     ///
     /// [`LibraryError`] when the library file is absent or does not verify.
     pub(crate) fn load_system_addon_reporting(&mut self, index: u8) -> Result<bool, LibraryError> {
-        self.dict().load_addon_reporting(index, &self.system_dir)
+        self.addons.load_reporting(index, &self.system_dir)
     }
 
     /// The system directory the libraries load from.
@@ -1908,7 +1785,7 @@ impl Runtime {
 
     /// The current loaded-library mask, snapshotted for an exclusive save.
     pub(crate) fn unloaded_libraries(&self) -> u32 {
-        self.library_mask.get()
+        self.library_mask
     }
 
     /// Starts the single map for an explicit load. The facade uses the same
@@ -1997,21 +1874,24 @@ impl Runtime {
     /// Unloads addon library `index` from this runtime's dictionary.
     ///
     /// The bound the pin asserts on `index` is the caller's to apply; see
-    /// `RuntimeDict::unload_addon`.
+    /// [`AddonDictionary::unload`].
     #[must_use]
     pub fn unload_system_addon(&mut self, index: u8) -> bool {
-        self.dict().unload_addon(index)
+        self.addons.unload(index)
     }
 
     /// Loads default library `index` — the GBK-reload path after an
     /// unload; `false` when already visible.
     #[must_use]
     pub(crate) fn load_library(&mut self, index: u32) -> bool {
-        let changed = self.dict().load_library(index);
-        if index < u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
-            self.user.set_library_loaded(index as u8, true);
+        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
+            return false;
         }
-        changed
+        let bit = 1u32 << index;
+        let was_set = self.library_mask & bit != 0;
+        self.library_mask &= !bit;
+        self.user.set_library_loaded(index as u8, true);
+        was_set
     }
 
     /// Unloads default library `index`; `false` only outside the sixteen
@@ -2020,11 +1900,12 @@ impl Runtime {
     /// through is the C ABI's rule.
     #[must_use]
     pub fn unload_library(&mut self, index: u32) -> bool {
-        let accepted = self.dict().unload_library(index);
-        if accepted {
-            self.user.set_library_loaded(index as u8, false);
+        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
+            return false;
         }
-        accepted
+        self.library_mask |= 1u32 << index;
+        self.user.set_library_loaded(index as u8, false);
+        true
     }
 }
 

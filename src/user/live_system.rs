@@ -12,8 +12,6 @@
 //! one implementation exists and the consumers differ in what they read, not
 //! in who answers.
 
-use std::cell::Cell;
-
 use crate::data::PhraseLibraries;
 use crate::data::phrase_library::CHEWING_KEY_SIZE;
 use crate::data::phrase_library::PhraseItemView;
@@ -222,23 +220,19 @@ pub(crate) enum ArenaProbe {
 pub struct LiveSystemItems<'a> {
     libraries: &'a PhraseLibraries,
     user: &'a UserStore,
-    /// `None` reads as no library unloaded.
-    unloaded: Option<&'a Cell<u32>>,
+    /// Bit `n` set: library `n` is unloaded. Zero reads as none.
+    unloaded: u32,
 }
 
 impl<'a> LiveSystemItems<'a> {
     /// Borrows the shipped `libraries`, the session `user` store and the
     /// `unloaded` mask (bit `n` set: library `n` is unloaded).
     #[must_use]
-    pub const fn new(
-        libraries: &'a PhraseLibraries,
-        user: &'a UserStore,
-        unloaded: &'a Cell<u32>,
-    ) -> Self {
+    pub const fn new(libraries: &'a PhraseLibraries, user: &'a UserStore, unloaded: u32) -> Self {
         Self {
             libraries,
             user,
-            unloaded: Some(unloaded),
+            unloaded,
         }
     }
 
@@ -251,16 +245,12 @@ impl<'a> LiveSystemItems<'a> {
         Self {
             libraries,
             user,
-            unloaded: None,
+            unloaded: 0,
         }
     }
 
-    fn unloaded_mask(&self) -> u32 {
-        self.unloaded.map_or(0, Cell::get)
-    }
-
     fn library_loaded(&self, nibble: u32) -> bool {
-        let mask = self.unloaded_mask();
+        let mask = self.unloaded;
         mask == 0 || nibble >= 32 || mask & (1 << nibble) == 0
     }
 
@@ -345,7 +335,7 @@ impl<'a> LiveSystemItems<'a> {
         let libraries = self.user.step_libraries();
         // Masks of the sixteen library bits; a mask bit past them names no
         // library.
-        let unloaded = (self.unloaded_mask() & u32::from(u16::MAX)) as u16;
+        let unloaded = (self.unloaded & u32::from(u16::MAX)) as u16;
         StepLibraries {
             in_place: libraries.in_place & !unloaded,
             arena: libraries.arena,
