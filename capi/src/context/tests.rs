@@ -1,0 +1,417 @@
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
+#[cfg(unix)]
+use crate::test_support::{directory_reads_as_a_chunk_here, init_private};
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+use crate::test_support::{files_of, train_once};
+
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+use crate::test_support::init_at;
+
+use crate::test_support::token_of;
+
+use crate::candidates::{pinyin_choose_candidate, pinyin_train};
+
+#[cfg(unix)]
+use crate::config::pinyin_mask_out;
+
+use crate::context::pinyin_save;
+
+use crate::test_support::with_store;
+
+use crate::instance::pinyin_reset;
+
+use crate::sentence::pinyin_guess_sentence;
+
+use crate::test_support::TempUserDir;
+use crate::test_support::candidate;
+use crate::test_support::open;
+
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+use crate::test_support::plant_bigram;
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+use crate::test_support::system_dir;
+
+use crate::types::PinyinInstance;
+
+use oxpinyin::vocab::SENTENCE_START;
+
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+use std::path::Path;
+
+/// Copies the regular files of `user` to `before`, next to it.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+fn keep_before(user: &Path) {
+    let before = user.parent().expect("the child's scratch").join("before");
+    std::fs::create_dir(&before).expect("the before directory");
+    for (name, bytes) in files_of(user) {
+        std::fs::write(before.join(name), bytes).expect("keep a file");
+    }
+}
+
+/// Two whole user-bigram rows: two predecessors, each with an empty gram.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+fn two_bigram_rows() -> Vec<(Vec<u8>, Vec<u8>)> {
+    vec![
+        (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
+        (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
+    ]
+}
+
+/// The pin's copies assert on a failed destination write
+/// (`tkrzwdb_utils.h:65`, `bdb_utils.h:61`): the save stops in
+/// `_write_files` after one record, before `_rename_files` and
+/// `mark_version` (`pinyin.cpp:1141-1143`), so no saved file is replaced.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn save_aborts_where_a_copy_fails_a_destination_write() {
+    let run = crate::test_support::assert_aborts_in_dir(
+        "context::tests::save_aborts_where_a_copy_fails_a_destination_write",
+        |user| {
+            plant_bigram(user, &two_bigram_rows());
+            let context = init_at(&system_dir(), user);
+            assert!(!context.is_null());
+            // `pinyin_save` saves a modified context only (`pinyin.cpp:1136`).
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { train_once(context) };
+            assert!(unsafe { pinyin_save(context) });
+            keep_before(user);
+            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { train_once(context) };
+            // The first copy writes one record and fails the next.
+            oxpinyin::store::fail_destination_write_after(1);
+            unsafe { pinyin_save(context) };
+        },
+    );
+    let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
+    let after = files_of(&run.user_dir);
+    for (name, bytes) in &before {
+        assert_eq!(after.get(name), Some(bytes), "{name} was replaced");
+    }
+    assert!(
+        after.keys().any(|name| name.ends_with(".tmp")),
+        "the copy left no staged file: {:?}",
+        after.keys()
+    );
+}
+
+/// The session could not be built once the library loop had handed it
+/// the system libraries (`OpenError::UserSession`): the pin dies at each
+/// counterpart. No input makes those steps fail, so the open's answer
+/// is handed to the init's refusal directly.
+#[test]
+fn a_user_session_fault_aborts_the_init() {
+    let stderr = crate::test_support::assert_aborts(
+        "context::tests::a_user_session_fault_aborts_the_init",
+        || {
+            let error =
+                oxpinyin::facade::OpenFailure::Runtime(oxpinyin::runtime::OpenError::UserSession(
+                    oxpinyin::user::UserStoreError::SessionSeed,
+                ));
+            super::refuse_init(&error, std::path::Path::new("system"));
+        },
+    );
+    // No Rust panic text or other line: the pin writes none here but
+    // glibc's assert line, the register's policy-accepted missing line.
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+}
+
+/// One call that maps a system library again over a private system
+/// directory whose library is a directory: the save and
+/// the mask-out map `merged.bin` (`pinyin.cpp:955`, `:1264`), the reload of
+/// the unloaded GBK library maps `gbk_char.bin` (`:256`).
+#[cfg(unix)]
+fn remap_a_directory_library(site: &str) -> bool {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let (system, context) = init_private(scratch.path());
+    assert!(!context.is_null());
+    match site {
+        "save" => {
+            // SAFETY: `context` is a live `pinyin_init` handle, borrowed
+            // uniquely for this statement.
+            let ctx = unsafe { crate::state::context_mut(context) };
+            ctx.core.user_store_mut().mark_modified();
+            crate::test_support::directory_library(&system, "merged.bin");
+            unsafe { pinyin_save(context) }
+        }
+        "mask" => {
+            crate::test_support::directory_library(&system, "merged.bin");
+            unsafe { pinyin_mask_out(context, 0xff00_0000, 0x0400_0000) }
+        }
+        "addon" => {
+            crate::test_support::directory_library(&system, "art.bin");
+            unsafe { crate::config::pinyin_load_addon_phrase_library(context, 4) }
+        }
+        _ => {
+            assert!(unsafe { crate::config::pinyin_unload_phrase_library(context, 2) });
+            crate::test_support::directory_library(&system, "gbk_char.bin");
+            unsafe { crate::config::pinyin_load_phrase_library(context, 2) }
+        }
+    }
+}
+
+/// The save aborts when the directory reads as a short chunk and completes
+/// where the directory does not read as a chunk.
+// Unix only: a directory opens as a file, so the pin's `MemoryChunk::mmap` judges it by its
+// size (`directory_reads_as_a_chunk`). Windows refuses the open, and oxpinyin skips the row
+// without a word there (`oxpinyin`, `phrase_libraries.rs`), which no pin observation
+// covers.
+#[cfg(unix)]
+#[test]
+fn save_aborts_on_a_directory_library() {
+    if directory_reads_as_a_chunk_here() {
+        crate::test_support::assert_aborts(
+            "context::tests::save_aborts_on_a_directory_library",
+            || {
+                let _ = remap_a_directory_library("save");
+            },
+        );
+    } else {
+        assert!(remap_a_directory_library("save"));
+    }
+}
+
+/// Snapshot of phrase candidates as `(token, text)`.
+///
+/// # Safety
+///
+/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+unsafe fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String)> {
+    use crate::candidates::{
+        pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
+    };
+    use std::{ffi::CStr, ptr};
+
+    let mut count = 0;
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
+    (0..count)
+        .filter_map(|index| {
+            let mut candidate = ptr::null_mut();
+            assert!(unsafe { pinyin_get_candidate(instance, index, &raw mut candidate) });
+            let token = unsafe { crate::state::candidate_ref(candidate) }
+                .token
+                .get()?;
+            let mut text = ptr::null();
+            assert!(unsafe { pinyin_get_candidate_string(instance, candidate, &raw mut text) });
+            let text = unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned();
+            Some((token, text))
+        })
+        .collect()
+}
+
+#[test]
+fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
+    let user_dir = TempUserDir::new("save");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // `pinyin_init` writes the profile marker (`check_format`'s
+    // user.conf, counter ratchet and all); the durable store is the
+    // pin's file set, written only at `pinyin_save`.
+    let marker = user_dir.path.join("user.conf");
+    assert!(marker.exists(), "init writes the user.conf marker");
+
+    // A clean context: pinyin_save is the §4 unmodified no-op (upstream
+    // returns false, pinyin.cpp:1136) and leaves every file untouched.
+    let before = std::fs::metadata(&marker)
+        .expect("marker exists")
+        .modified()
+        .expect("mtime");
+    assert!(!unsafe { pinyin_save(context) });
+    let after = std::fs::metadata(&marker)
+        .expect("marker exists")
+        .modified()
+        .expect("mtime");
+    assert_eq!(before, after, "a clean save must not touch the profile");
+    assert!(!unsafe { pinyin_save(context) });
+
+    // Train once: the save gate arms, a dirty save returns true, clears,
+    // and leaves the pin's own files behind — the bigram hash among them.
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let first = unsafe { candidate(instance, "nihao", 0) };
+    // SAFETY: `instance` was opened above and is not yet freed; `first` is a row of a live
+    // instance's current list, and no call since has rebuilt that list; only this thread calls into
+    // them.
+    let t1 = unsafe { token_of(instance, first) };
+    assert!(unsafe { pinyin_choose_candidate(instance, 0, first) } > 0);
+    assert!(unsafe { pinyin_guess_sentence(instance) });
+    assert!(unsafe { pinyin_train(instance, 0) });
+    assert!(unsafe { pinyin_save(context) });
+    assert!(
+        !unsafe { pinyin_save(context) },
+        "the save cleared m_modified"
+    );
+    assert!(
+        user_dir
+            .path
+            .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name())
+            .exists(),
+        "the dirty save wrote the user bigram"
+    );
+
+    // Decode against the populated store (T4's merge) — the state the
+    // reopened store must reproduce.
+    assert!(unsafe { pinyin_reset(instance) });
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let _ = unsafe { candidate(instance, "nihao", 0) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    let decode_before = unsafe { phrase_snapshot(instance) };
+    let counts = {
+        (
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)) }
+                .unwrap(),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.system_unigram(t1)) },
+            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
+            // it.
+            unsafe { with_store(instance, |store| store.unigram_total()) },
+        )
+    };
+
+    // Teardown does NOT save (the §6 shutdown decision: upstream has no
+    // flush) — the counts survive because the dirty save above already
+    // wrote the profile, exactly the pin's own durability shape.
+    unsafe { crate::instance::pinyin_free_instance(instance) };
+    unsafe { crate::context::pinyin_fini(context) };
+
+    // Reopen: counts, allocation state, and decode all resume.
+    let (context2, instance2) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls into it.
+    let _ = unsafe { candidate(instance2, "nihao", 0) };
+    assert_eq!(
+        // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls into
+        // it.
+        unsafe { phrase_snapshot(instance2) },
+        decode_before,
+        "decode-after-reopen must match the pre-save populated-store decode"
+    );
+    {
+        assert!(
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            !unsafe { with_store(instance2, |store| store.is_modified()) },
+            "a reopen starts clean"
+        );
+        assert_eq!(
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.bigram_count(SENTENCE_START, t1)) }
+                .unwrap(),
+            counts.0
+        );
+        assert_eq!(
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
+            counts.1
+        );
+        assert_eq!(
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.system_unigram(t1)) },
+            counts.2
+        );
+        assert_eq!(
+            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
+            // into it.
+            unsafe { with_store(instance2, |store| store.unigram_total()) },
+            counts.3
+        );
+    }
+    assert!(
+        !unsafe { pinyin_save(context2) },
+        "the reopened store saves as a no-op"
+    );
+
+    unsafe { crate::instance::pinyin_free_instance(instance2) };
+    unsafe { crate::context::pinyin_fini(context2) };
+}
+
+/// The C adapter keeps row-106 item misses and layout save failures silent.
+#[test]
+fn the_short_table_row_sequence_writes_no_glib_log() {
+    use crate::test_support::{LogCapture, cstr, short_row_system};
+    let scratch = tempfile::tempdir().unwrap();
+    let system = short_row_system(scratch.path());
+    let user = TempUserDir::new("short-row-log");
+    let logs = LogCapture::new();
+    let context = crate::test_support::init_at(&system, &user.path);
+    for text in ["nihao", "yishu"] {
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        let instance = unsafe { crate::test_support::alloc(context) };
+        let _ =
+            unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, cstr(text).as_ptr()) };
+        unsafe { crate::sentence::pinyin_guess_sentence(instance) };
+        let mut sentence = std::ptr::null_mut();
+        unsafe { crate::sentence::pinyin_get_sentence(instance, 0, &raw mut sentence) };
+        if !sentence.is_null() {
+            // SAFETY: `sentence` is the string the library just returned; this code owns it and
+            // frees it only here.
+            unsafe { crate::ffi::take_owned_cstr(sentence) };
+        }
+        assert!(unsafe { crate::sentence::pinyin_guess_candidates(instance, 0, 0) });
+        unsafe { crate::instance::pinyin_free_instance(instance) };
+    }
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { crate::test_support::alloc(context) };
+    let _ = unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, c"nihao".as_ptr()) };
+    unsafe { crate::sentence::pinyin_guess_sentence(instance) };
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
+    assert_eq!(
+        // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { crate::test_support::import_batch(context, 7, &[("测试词", "ce'shi'ci", 1)]) },
+        [true]
+    );
+    assert!(unsafe { crate::context::pinyin_save(context) });
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
+    assert!(logs.take().is_empty());
+}
+
+#[cfg(feature = "tkrzw")]
+#[test]
+fn saving_against_a_failed_layout_writes_no_glib_critical() {
+    use crate::test_support::{LogCapture, link_file, replace_with_failed_layout};
+    let scratch = tempfile::tempdir().unwrap();
+    let system = scratch.path().join("system");
+    std::fs::create_dir(&system).unwrap();
+    for entry in std::fs::read_dir(crate::test_support::contract_data::contract_data_dir()).unwrap()
+    {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            link_file(&entry.path(), &system.join(entry.file_name()));
+        }
+    }
+    let user = TempUserDir::new("failed-layout-log");
+    let logs = LogCapture::new();
+    let context = crate::test_support::init_at(&system, &user.path);
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { crate::test_support::alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { crate::test_support::parse(instance, "nihao") }, 5);
+    assert!(unsafe { crate::sentence::pinyin_guess_sentence(instance) });
+    assert!(unsafe { crate::candidates::pinyin_train(instance, 0) });
+    replace_with_failed_layout(&system.join("merged.bin"), 123);
+    assert!(unsafe { crate::context::pinyin_save(context) });
+    // SAFETY: `context` was opened above and is not yet freed; `instance` was opened above and is
+    // not yet freed; nothing uses either handle after this call; only this thread calls into them.
+    unsafe { crate::test_support::close(context, instance) };
+    assert!(logs.take().is_empty());
+}

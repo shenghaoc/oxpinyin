@@ -1,0 +1,18 @@
+prefix:pinyin:auxiliary text:|ni hao 
+auxiliary text:n|i hao 
+auxiliary text:ni |hao 
+auxiliary text:ni h|ao 
+auxiliary text:ni ha|o 
+auxiliary text:ni hao |
+你好	你号	拟好	你	尼	呢	泥	妮	拟	逆	倪	腻	溺	昵	匿	霓	祢	鲵	猊	铌	坭	睨	抳	怩	鹢	疒	暱	惄	慝	麑	蜺	儗	鷊	旎	縌	儞	伲	氼	籾	禰	妳	堄	輗	鉨	齯	鶂	貎	膩	薿	柅	臡	郳	衵	懝	兒	䮘	㧱	聻	㮞	檷	䀑	抐	誽	䍲	㮏	㲡	䘌	㠜	䘦	鈮	䰯	伱	愵	嬺	䘽	䵑	䵒	屔	婗	䝚	鹝	䁥	䕥	孨	㵫	屰	䭲	孴	㹸	譺	㥾	㦐	㪒	馜	隬	蚭	䦵	㲻	㞾	痆	㣇	䧇	狋	䛏	胒	鯓	狔	秜	跜	嫟	迡	鯢	淣	苨	擬	觬	埿	鑈	棿	腝	蛪	㘈	眤	㩘	晲	掜	聣	袮	
+prefix:pinyin:auxiliary text:|zhong guo 
+auxiliary text:z|hong guo 
+auxiliary text:zh|ong guo 
+auxiliary text:zho|ng guo 
+auxiliary text:zhon|g guo 
+auxiliary text:zhong |guo 
+auxiliary text:zhong g|uo 
+auxiliary text:zhong gu|o 
+auxiliary text:zhong guo |
+中国	中过	中	种	重	众	钟	忠	终	仲	冢	肿	衷	盅	锺	踵	柊	刣	潨	舯	螽	鐘	蔠	蹱	忪	穜	鈆	伀	尰	衆	湩	彸	狆	褈	祌	蝩	徸	塜	鼨	㼿	䳋	銿	螤	瘇	鈡	鴤	種	堹	㐺	茽	眾	終	煄	偅	乑	幒	筗	塚	籦	腫	䱰	歱	衳	衶	汷	鍾	炂	妐	媑	妕	蚛	喠	㲴	泈	緟	諥	㣫	夂	㲁	㳊	䈺	㹣	䝦	䇗	迚	
+prefix:pinyin:

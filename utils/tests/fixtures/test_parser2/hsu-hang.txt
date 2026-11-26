@@ -1,0 +1,24 @@
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 2 chars, 1 keys.
+hang 0 2	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 2 chars, 1 keys.
+na 0 2	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 1 chars, 1 keys.
+zhi 0 1	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 2 chars, 1 keys.
+na 0 2	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+

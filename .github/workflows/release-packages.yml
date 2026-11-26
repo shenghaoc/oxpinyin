@@ -1,0 +1,396 @@
+# Release packages — build drop-in packages for the three distro families on
+# every published release and attach them to that release.
+#
+# One matrix child per distro, each building oxpinyin-capi +
+# oxzhuyin-capi under exactly ONE store backend — the backend that
+# matches the model data the distro's own libpinyin ships, so the drop-in
+# reads the data already on the system (docs/findings/compatibility-policy.md):
+#
+#   distro   backend       because the distro's libpinyin/data is…
+#   Debian   tkrzw         2.11.91 switched BerkeleyDB → Tkrzw (libtkrzw1t64)
+#   Fedora   kyotocabinet  still KyotoCabinet (kyotocabinet-libs)
+#   Arch     kyotocabinet  still KyotoCabinet (kyotocabinet)
+#
+# The packages REPLACE the distro's libpinyin/libzhuyin in their entirety:
+# same sonames (libpinyin.so.15 / libzhuyin.so.15), same pkg-config names,
+# versioned Provides at the pinned pc version (the pin record's libpinyin_tag,
+# read by just packaging pc-version), Conflicts/Replaces
+# (deb) or Obsoletes (rpm) or conflicts= (pacman) on the originals. Data is
+# deliberately NOT replaced on Debian/Fedora (libpinyin-data is a separate
+# package there and stays); on Arch the data lives inside the libpinyin
+# package the takeover removes, so the Arch lane fetches that package and
+# ships its data directory inside ours — see just packaging release-arch.
+#
+# Image choice: each lane builds on the distro's rolling branch: Debian testing, Fedora Rawhide and
+# Arch. For Debian that is testing (forky): stable (trixie, what
+# debian:latest resolves to) still ships libpinyin 2.8.1 on BerkeleyDB,
+# whose bigram.db no oxpinyin backend can read, so a tkrzw build there could
+# not pass the init gate below and would be a package for a system whose
+# data it cannot open. Fedora uses fedora:rawhide, not fedora:latest, which
+# is the current stable release.
+#
+# The build is the distro-documented one: each distro's own cargo-c package
+# runs `cargo cinstall` through just packaging install (which completes
+# the .pc), with the backend chosen by cargo-c's ordinary
+# `--no-default-features --features <backend>`. See the header of
+# just packaging release-stage.
+#
+# Three jobs:
+#   package — 3-container matrix; each child stages the drop-in tree, builds
+#             the distro's package shape, INSTALLS the packages back into
+#             its own container and re-runs the consumer gates against /usr
+#   attach   — collects every artifact, writes SHA256SUMS and resolves the
+#             release repository through gh, as the upload does
+#   publish  — uploads the assets to the published release with the
+#             runner's gh CLI; release events only
+#
+# A pull request that changes a packaging path runs the same jobs up to
+# publish, as a dry run with the tag 0.0.0-dry-run.1+ci. publish does not run, so a
+# pull request never gets a write token.
+
+name: Release packages
+
+on:
+  release:
+    types: [published]
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-packages.yml
+      - .github/actions/bootstrap/**
+      - tools/dev/packaging.py
+      - tools/dev/packaging_templates.py
+      - tools/dev/cell.py
+      - tools/tkrzw/runtime.py
+      - capi/Cargo.toml
+      - capi/*.ver
+      - zhuyin-capi/Cargo.toml
+      - zhuyin-capi/*.ver
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# One run per release: a re-published or edited release must not race a
+# publish still uploading assets for the same tag. Queue, never cancel — the
+# run in flight is the one whose packages are already half-attached. A new
+# push to a pull request cancels that pull request's older dry run.
+concurrency:
+  group: release-packages-${{ github.event.release.id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  DEBIAN_FRONTEND: noninteractive
+  # gh resolves the repository from GH_REPO: the attach and publish jobs
+  # have no checkout and no git remote.
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  package:
+    name: ${{ matrix.distro }} (${{ matrix.backend }} store)
+    # Pinned, not ubuntu-latest, so a runner-image move
+    # (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: ubuntu-26.04
+    container:
+      image: ${{ matrix.image }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    strategy:
+      # One distro's failure must not cancel the other two.
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            image: debian:testing
+            backend: tkrzw
+            dbfmt: Tkrzw
+          - distro: fedora
+            image: fedora:rawhide
+            backend: kyotocabinet
+            dbfmt: KyotoCabinet
+          - distro: arch
+            image: archlinux:latest
+            backend: kyotocabinet
+            dbfmt: KyotoCabinet
+
+    steps:
+      # Essentials + every backend's build-time C dependencies in one
+      # distro-native step. The tkrzw and Kyoto Cabinet backends compile
+      # cxx bridges with the C++ compiler; only the bdb feature runs bindgen,
+      # and no matrix entry builds it, so no libclang; glib2 is a Tier-C
+      # requirement (the shipped .so NEEDs libglib-2.0); the compression -dev packages satisfy Debian's
+      # libtkrzw link demands; cargo-c is the distro's own package, the
+      # same one its libpinyin packaging would use (rustc/cargo still come
+      # from rust-toolchain.toml via the bootstrap below). The case is a
+      # closed set over repository-controlled matrix values — fail-closed
+      # default.
+      - name: Install build dependencies
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+          debian)
+            apt-get update -qq
+            apt-get install -y --no-install-recommends \
+              bash tar gzip zstd git ca-certificates curl \
+              gcc g++ make pkg-config \
+              libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev \
+              libglib2.0-dev cargo-c
+            ;;
+          fedora)
+            dnf -y --setopt=install_weak_deps=False install \
+              bash tar gzip zstd git curl ca-certificates \
+              gcc gcc-c++ make pkgconf \
+              kyotocabinet-devel glib2-devel rpm-build cargo-c
+            ;;
+          arch)
+            pacman -Sy --noconfirm \
+              git curl tar gzip zstd diffutils \
+              gcc make pkgconf binutils fakeroot debugedit \
+              kyotocabinet glib2 cargo-c
+            ;;
+          *)
+            echo "unknown distro '$DISTRO'" >&2
+            exit 2
+            ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+          rustup: 'true'
+          uv: 'true'
+      - run: rustup show active-toolchain
+
+      # The install libdir per distro. Debian's is the MULTIARCH dir —
+      # resolved with `gcc -print-multiarch`, not arch-name + "-linux-gnu":
+      # on arm64 the dir is aarch64-linux-gnu while dpkg's arch name is
+      # arm64 (they coincide on x86_64, hiding the difference).
+      - name: Resolve the install libdir
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            debian) echo "LIBDIR=/usr/lib/$(gcc -print-multiarch)" ;;
+            fedora) echo "LIBDIR=/usr/lib64" ;;
+            arch)   echo "LIBDIR=/usr/lib" ;;
+          esac >> "$GITHUB_ENV"
+
+      - name: Derive the package version from the release tag
+        env:
+          TAG: ${{ github.event_name == 'pull_request' && '0.0.0-dry-run.1+ci' || github.event.release.tag_name }}
+          DISTRO: ${{ matrix.distro }}
+        run: uv run --managed-python python -X utf8 -m tools.dev.packaging release-version "$DISTRO" "$TAG" >> "$GITHUB_ENV"
+
+      - name: Check that the pre-release sorts before the stable version
+        if: env.VERSION != env.BASE
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            debian) dpkg --compare-versions "$VERSION-1" lt "$BASE-1" ;;
+            fedora) test "$(rpm --eval '%{lua:print(rpm.vercmp(os.getenv("VERSION"), os.getenv("BASE")))}')" -lt 0 ;;
+            arch)   test "$(vercmp "$VERSION" "$BASE")" -lt 0 ;;
+          esac
+
+      # release-stage certifies the libtkrzw that its smoke binaries load
+      # against OXPINYIN_TKRZW_LIBRARY (tools/tkrzw/runtime.py), and refuses
+      # an unconfigured runtime. The package depends on the distro's own
+      # libtkrzw: the library that release-deb resolves, the first ldconfig
+      # entry for libtkrzw.so.1, owned by a dpkg package. Name that library.
+      - name: Select the distro tkrzw runtime
+        if: matrix.backend == 'tkrzw'
+        run: uv run --managed-python python -X utf8 -m tools.dev.packaging distro-tkrzw-library --github-env
+
+      - name: Build and stage the drop-in tree
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          uv run --managed-python python -X utf8 -m tools.dev.packaging release-stage "$BACKEND" \
+            --prefix=/usr --libdir="$LIBDIR" --dest="$PWD/stage"
+
+      - name: Package for this distro
+        env:
+          DISTRO: ${{ matrix.distro }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          case "$DISTRO" in
+            debian) uv run --managed-python python -X utf8 -m tools.dev.packaging release-deb "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
+            fedora) uv run --managed-python python -X utf8 -m tools.dev.packaging release-rpm "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
+            arch)
+              # Arch has no separate data package: the model lives inside
+              # the libpinyin package our takeover removes. Download (not
+              # install) that package and ship its data directory in ours,
+              # so pinyin_init/zhuyin_init still have a model afterwards.
+              # The file and version come from pacman's own resolution, not a
+              # cache glob, so a stale cache entry can never be picked up.
+              # -dd: print libpinyin alone, not its dependencies as well.
+              pacman -Sw --noconfirm libpinyin
+              read -r DATA_VER DATA_URL < <(pacman -Sp -dd --print-format '%v %l' libpinyin)
+              DATA_PKG="/var/cache/pacman/pkg/$(basename "$DATA_URL")"
+              [ -f "$DATA_PKG" ] || { echo "::error::downloaded Arch libpinyin package $DATA_PKG missing" >&2; exit 1; }
+              mkdir -p arch-data
+              tar -xf "$DATA_PKG" -C arch-data --strip-components=4 usr/lib/libpinyin/data
+              [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in $DATA_PKG" >&2; exit 1; }
+              uv run --managed-python python -X utf8 -m tools.dev.packaging release-arch "$BACKEND" "$VERSION" "$PWD/stage" dist \
+                --data="$PWD/arch-data" --data-version="$DATA_VER"
+              ;;
+          esac
+
+      # The takeover test: install OUR packages into this same container and
+      # re-run the gates against the system prefix. Proves the package
+      # installs clean under dpkg/dnf/pacman dependency checking and that
+      # what lands on /usr answers as libpinyin/libzhuyin.
+      - name: Install test and system gates
+        env:
+          DISTRO: ${{ matrix.distro }}
+          DBFMT: ${{ matrix.dbfmt }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # libpinyin-data is installed explicitly on Debian/Fedora (it is
+          # only a Recommends on ours) so the init gate below runs against
+          # the distro's real model, as it will on a user's system; the Arch
+          # package carries the data itself.
+          case "$DISTRO" in
+            debian)
+              # The md5sums manifest lists each payload file once and only
+              # payload files (lintian's md5sums check).
+              apt-get install -y --no-install-recommends lintian
+              lintian --tags md5sums-lists-nonexistent-file,md5sum-mismatch,file-missing-in-md5sums \
+                --fail-on error,warning "$PWD"/dist/*.deb
+              apt-get install -y libpinyin-data "$PWD"/dist/*.deb
+              ;;
+            fedora) dnf -y install libpinyin-data "$PWD"/dist/*.rpm ;;
+            arch)   pacman -U --noconfirm "$PWD"/dist/*.pkg.tar.zst ;;
+          esac
+          ldconfig
+          fail() { echo "::error::gate failed: $*" >&2; exit 1; }
+          # The pin installs its shared libraries with mode 0755.
+          uv run --managed-python python -X utf8 -m tools.dev.packaging check-library-mode "$LIBDIR"
+          PCVER="$(uv run --managed-python python -X utf8 -m tools.dev.packaging pc-version)"
+          [ "$(pkg-config --modversion libpinyin)" = "$PCVER" ] || fail "libpinyin modversion"
+          [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
+          [ "$(pkg-config --variable=database_format libzhuyin)" = "$DBFMT" ] || fail "libzhuyin database_format"
+          [ -n "$(pkg-config --variable=pkgdatadir libpinyin)" ] || fail "pkgdatadir"
+          pkg-config --libs libpinyin | grep -qw -- "-lpinyin" || fail "libpinyin --libs"
+          pkg-config --cflags libpinyin | grep -q -- "libpinyin-$PCVER" || fail "libpinyin --cflags"
+          [ "$(pkg-config --modversion libzhuyin)" = "$PCVER" ] || fail "libzhuyin modversion"
+          # Two programs, one public header + one library each — the real
+          # consumer pattern (no program links both headers: they
+          # re-declare the same enums and novel_types.h's tentative
+          # definitions duplicate at link time). <stdbool.h> first because
+          # upstream's headers use C99 bool without including it.
+          #
+          # Unlike the staged-tree smoke (no data there), this one opens the
+          # system model the way a consumer does — pkgdatadir/data, the
+          # one-level-up convention of docs/findings/installed-naming.md —
+          # and a NULL context is a failed gate, not a diagnostic: the
+          # whole point of the drop-in is reading the data already on the
+          # system, so a package whose init fails against it must not ship.
+          cat > smoke_pinyin.c <<'EOF'
+          #include <stdbool.h>
+          #include <pinyin.h>
+          #include <stdio.h>
+          int main(int argc, char **argv) {
+            if (argc != 3) return 2;
+            pinyin_context_t *c = pinyin_init(argv[1], argv[2]);
+            printf("pinyin=%p\n", (void *)c);
+            if (c == NULL) return 1;
+            pinyin_fini(c);
+            return 0;
+          }
+          EOF
+          cat > smoke_zhuyin.c <<'EOF'
+          #include <stdbool.h>
+          #include <zhuyin.h>
+          #include <stdio.h>
+          int main(int argc, char **argv) {
+            if (argc != 3) return 2;
+            zhuyin_context_t *c = zhuyin_init(argv[1], argv[2]);
+            printf("zhuyin=%p\n", (void *)c);
+            if (c == NULL) return 1;
+            zhuyin_fini(c);
+            return 0;
+          }
+          EOF
+          cc smoke_pinyin.c -o smoke_pinyin $(pkg-config --cflags --libs libpinyin) \
+            || fail "libpinyin smoke compile/link on /usr"
+          cc smoke_zhuyin.c -o smoke_zhuyin $(pkg-config --cflags --libs libzhuyin) \
+            || fail "libzhuyin smoke compile/link on /usr"
+          SYSDATA="$(pkg-config --variable=pkgdatadir libpinyin)/data"
+          [ -f "$SYSDATA/table.conf" ] || fail "no model at $SYSDATA (table.conf missing)"
+          USERDIR="$(mktemp -d)"
+          ./smoke_pinyin "$SYSDATA" "$USERDIR" || fail "pinyin_init on the system model at $SYSDATA"
+          ./smoke_zhuyin "$SYSDATA" "$USERDIR" || fail "zhuyin_init on the system model at $SYSDATA"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-${{ matrix.distro }}
+          path: dist/*
+          if-no-files-found: error
+
+  attach:
+    name: Collect the release assets
+    needs: package
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: packages-*
+          merge-multiple: true
+          path: dist
+      - name: Checksum
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -l
+          sha256sum -- * > SHA256SUMS
+      # gh ships on the hosted runner (this job is NOT containerized). The
+      # release list resolves the repository the way publish's upload does,
+      # with no checkout, so a pull request run proves the upload can find it.
+      - name: Resolve the release repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release list --limit 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Attach packages to the release
+    needs: attach
+    if: github.event_name == 'release'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: dist
+      # No third-party release-upload action is needed. --clobber makes
+      # re-running a failed publish replace partial assets.
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/* --clobber

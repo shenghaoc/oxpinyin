@@ -1,0 +1,67 @@
+{
+  "schema": "oracle-version-manifest-v1",
+  "reference": "debian:testing",
+  "note": "Unpinned Debian testing is the oracle and capture base. Record every installed component version in each image and capture identity; version changes do not fail the build. Debian testing libpinyin package updates trigger pin bumps.",
+  "components": [
+    {
+      "name": "glibc",
+      "package": "libc6",
+      "basis": "the pin's fscanf %d/%f/%255s grammar and strtod behaviour are this libc's."
+    },
+    {
+      "name": "glib",
+      "package": "libglib2.0-0t64",
+      "basis": "GLib owns the pin's GArray, g_free and string helpers."
+    },
+    {
+      "name": "Berkeley DB 5.3",
+      "package": "libdb5.3t64",
+      "basis": "the bdb cell's on-disk format and cursor semantics."
+    },
+    {
+      "name": "Kyoto Cabinet",
+      "package": "libkyotocabinet16v5",
+      "basis": "the kc cell's on-disk format and API."
+    },
+    {
+      "name": "tkrzw",
+      "package": "libtkrzw1t64",
+      "basis": "the tkrzw cell's on-disk format and API."
+    },
+    {
+      "name": "C compiler",
+      "package": "gcc",
+      "basis": "the compiler that builds the pin's shared objects."
+    },
+    {
+      "name": "C++ compiler",
+      "package": "g++",
+      "basis": "the compiler that builds the pin's shared objects."
+    },
+    {
+      "name": "binutils",
+      "package": "binutils",
+      "basis": "the assembler and linker that build the pin's shared objects."
+    },
+    {
+      "name": "autoconf",
+      "package": "autoconf",
+      "basis": "the autotools generation that builds the pin."
+    },
+    {
+      "name": "automake",
+      "package": "automake",
+      "basis": "the autotools generation that builds the pin."
+    },
+    {
+      "name": "libtool",
+      "package": "libtool",
+      "basis": "the autotools generation that builds the pin."
+    },
+    {
+      "name": "pkg-config",
+      "package": "pkg-config",
+      "basis": "resolves the pin's GLib and DBM build flags."
+    }
+  ]
+}

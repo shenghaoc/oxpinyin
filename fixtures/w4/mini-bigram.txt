@@ -1,0 +1,16 @@
+# pinyin-fixture-bigram-v1
+# Authored, not captured.  The pinned oracle exposes no bigram counts at its
+# public API, and model20's interpolation2.text is not redistributable
+# (docs/findings/model-provenance.md, Branch B).  These counts exist to
+# exercise the interpolation arithmetic and to make a two-phrase path score
+# differently from a one-phrase path; they carry no parity claim.
+#
+# Tokens refer to fixtures/w4/mini-vocab.txt.
+prev=11	next=33	count=800	# 你好 -> 中国
+prev=11	next=59	count=150	# 你好 -> 西安
+prev=33	next=80	count=400	# 中国 -> 方案
+prev=33	next=71	count=200	# 中国 -> 长安
+prev=59	next=71	count=300	# 西安 -> 长安
+prev=71	next=59	count=300	# 长安 -> 西安
+prev=90	next=33	count=120	# 反感 -> 中国
+prev=1	next=19	count=50	# 你 -> 中

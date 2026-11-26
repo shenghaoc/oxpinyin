@@ -1,0 +1,10 @@
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+range items number:2
+start:16777217	end:16777218
+你	ni3'	100	ni2'	50	
+start:16777221	end:16777222
+祢	ni3'	40	
+range items number:1
+start:33554433	end:33554434
+你	ni3'	200	

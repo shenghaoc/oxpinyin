@@ -1,0 +1,37 @@
+[package]
+name = "oxpinyin-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Libpinyin-compatible utilities for building, training, and inspecting model data."
+
+[lib]
+doctest = false
+
+[features]
+# The data layer's backend selection, forwarded to every backend-sensitive
+# edge the utilities use.
+default = ["tkrzw"]
+kyotocabinet = ["oxpinyin-tool-support/kyotocabinet", "oxpinyin/kyotocabinet"]
+bdb = ["oxpinyin-tool-support/bdb", "oxpinyin/bdb"]
+tkrzw = ["oxpinyin-tool-support/tkrzw", "oxpinyin/tkrzw"]
+
+[lints]
+workspace = true
+
+[dependencies]
+oxpinyin-tool-support = { path = "../tool-support", default-features = false }
+rustc-hash.workspace = true
+oxpinyin = { workspace = true }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+assert_fs.workspace = true
+libc.workspace = true
+regex.workspace = true
+rstest.workspace = true
+sha2.workspace = true
+tempfile.workspace = true

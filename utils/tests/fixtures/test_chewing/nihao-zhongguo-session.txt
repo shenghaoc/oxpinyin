@@ -1,0 +1,13 @@
+你好
+auxiliary text:|ㄋㄧˇ ㄏㄠˇ 
+auxiliary text:ㄋ|ㄧˇ ㄏㄠˇ 
+auxiliary text:ㄋㄧ|ˇ ㄏㄠˇ 
+auxiliary text:ㄋㄧˇ |ㄏㄠˇ 
+auxiliary text:ㄋㄧˇ ㄏ|ㄠˇ 
+auxiliary text:ㄋㄧˇ ㄏㄠ|ˇ 
+auxiliary text:ㄋㄧˇ ㄏㄠˇ |
+中
+auxiliary text:|ㄓㄨㄥ 
+auxiliary text:ㄓ|ㄨㄥ 
+auxiliary text:ㄓㄨ|ㄥ 
+auxiliary text:ㄓㄨㄥ |

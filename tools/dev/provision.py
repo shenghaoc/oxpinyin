@@ -1,0 +1,1048 @@
+"""Native provisioning, the container oracle setup and the shell-readable oracle environment.
+
+Run from the repository root after `uv python install`:
+`uv run --managed-python python -X utf8 -m tools.dev.provision` provisions the host natively
+and never starts a container. `just provision-oracle` runs that first, then `provision oracle`.
+The oracle command provisions the requested cells in containers and writes the environment file
+on Linux if the selection includes the host cell. uv enforces its own floor (uv.toml
+required-version). Compatibility identity,
+loader, cancellable process and bounded pool services remain their sole owners.
+Reference images receive tools/oracle/build.py and its recipe inputs, never tools.dev.
+"""
+
+if __name__ == '__main__':
+    from .entry import require_utf8_mode
+
+    require_utf8_mode()
+
+from . import cell as backend_cell
+from contextlib import ExitStack
+import os
+from pathlib import Path
+import platform
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+from . import doctor, model, slot
+from .process import ROOT, capture, fail, run, text
+from .runners import Finished
+from tools import cachedir
+from tools.oracle import image as images
+from tools.oracle.image import digest_file, runtime_command
+from tools.tkrzw import runtime
+
+CELLS = backend_cell.CELLS
+ENV_HEADER = '# Written by tools.dev.provision; source it from sh; do not edit it.'
+
+
+def quote(value):
+    """Single-quote VALUE as one POSIX shell word; refuse control characters.
+
+    The environment file holds paths and cell names, so no value needs ANSI-C quoting."""
+    value = str(value)
+    if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError(f'environment file value has a control character: {value!r}')
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def check_manifest(manifest, cwd):
+    """`sha256sum --check --quiet MANIFEST` in CWD, in Python: answer the status and the output.
+
+    Each line is `HEX  NAME` (or `HEX *NAME`). A matching file prints nothing; a mismatch prints
+    `NAME: FAILED`, and an unreadable file `sha256sum: NAME: REASON` then `NAME: FAILED open or
+    read`. The counts follow as sha256sum's WARNING lines. A manifest with no well-formed line
+    fails with sha256sum's message. Status 1 on any failure, as sha256sum."""
+    lines, failed, unread, improper, proper = [], 0, 0, 0, 0
+    try:
+        entries = (Path(cwd) / manifest).read_text().splitlines()
+    except OSError as error:
+        return 1, f'sha256sum: {manifest}: {error.strerror}\n'
+    for entry in entries:
+        match = re.fullmatch(r'([0-9a-fA-F]{64}) [ *](.+)', entry)
+        if not match:
+            improper += 1
+            continue
+        proper += 1
+        expected, name = match[1].lower(), match[2]
+        try:
+            actual = digest_file(Path(cwd) / name)
+        except OSError as error:
+            lines += [f'sha256sum: {name}: {error.strerror}', f'{name}: FAILED open or read']
+            unread += 1
+            continue
+        if actual != expected:
+            lines.append(f'{name}: FAILED')
+            failed += 1
+    if not proper:
+        return 1, f'sha256sum: {manifest}: no properly formatted checksum lines found\n'
+    for count, one, many in ((improper, 'line is improperly formatted', 'lines are improperly formatted'),
+                             (unread, 'listed file could not be read', 'listed files could not be read'),
+                             (failed, 'computed checksum did NOT match', 'computed checksums did NOT match')):
+        if count:
+            lines.append(f'sha256sum: WARNING: {count} {one if count == 1 else many}')
+    return int(bool(failed or unread)), ''.join(line + '\n' for line in lines)
+
+
+# `provision prefix-check`'s status for a check that ran and found the prefix invalid. Any other
+# failure (the interpreter, an import, the runtime) means the check did not run.
+PREFIX_INVALID = 10
+
+
+def homebrew_tkrzw_prefix(environment):
+    """Return the Homebrew tkrzw selected by pkg-config, refusing another .pc file."""
+    def selected(command):
+        done = capture(command, env=environment, check=False, stderr=False)
+        if done.status or not done.stdout.strip():
+            raise ValueError(f'cannot find Homebrew tkrzw: {" ".join(command)}')
+        return Path(done.stdout.decode().strip()).resolve()
+
+    prefix = selected(['pkg-config', '--variable=prefix', 'tkrzw'])
+    if prefix != selected(['brew', '--prefix', 'tkrzw']):
+        raise ValueError(f'pkg-config selects {prefix}, not Homebrew tkrzw')
+    return prefix
+
+
+def linux_tkrzw_library(environment):
+    """Return the real path of the libtkrzw.so.1 that the default loader resolves on Linux."""
+    done = subprocess.run(['ldconfig', '-p'], env=environment, stdin=subprocess.DEVNULL,
+                          capture_output=True, check=False)
+    if done.returncode:
+        raise ValueError(f'ldconfig -p failed: {done.stderr.decode(errors="replace").strip()}')
+    for line in done.stdout.decode(errors='replace').splitlines():
+        name, _, path = line.strip().partition(' => ')
+        if name.split(' ', 1)[0] == 'libtkrzw.so.1' and Path(path).is_file():
+            return Path(path).resolve()
+    raise ValueError('no libtkrzw.so.1 in the ldconfig cache; install the distribution\'s libtkrzw')
+
+
+def probe_host(*, env=None, root=ROOT, out=None):
+    """Answer the host's libtkrzw path, or '' when the host has none.
+
+    macOS certifies Homebrew's tkrzw by its utility's actual loader. Linux names the distribution's
+    library that the default loader resolves, with no defect probe."""
+    environment = dict(os.environ if env is None else env)
+    try:
+        host = platform.system()
+        if host == 'Linux':
+            library = linux_tkrzw_library(environment)
+            print(f'host check: the default loader resolves libtkrzw to {library}', file=out or sys.stdout)
+            return str(library)
+        if host != 'Darwin':
+            raise ValueError(f'no host tkrzw on {host}: macOS certifies Homebrew tkrzw, '
+                             'Linux names the distribution\'s')
+        installed = homebrew_tkrzw_prefix(environment)
+        child = dict(environment, OXPINYIN_TKRZW_PREFIX=str(installed))
+        child.pop('OXPINYIN_TKRZW_LIBRARY', None)
+        child.pop('OXPINYIN_TKRZW_PREFIXES', None)
+        utility = installed / 'bin/tkrzw_dbm_util'
+        if not utility.is_file():
+            raise ValueError(f'missing tkrzw utility: {utility}')
+        library = runtime.check('tkrzw', 'host check', 'subject', utility, env=child, cwd=root)
+        if library is None:
+            raise ValueError('the tkrzw utility does not load libtkrzw')
+        print(f'host check: {utility} resolves libtkrzw to {library}', file=out or sys.stdout)
+        return str(library)
+    except (ValueError, runtime.RuntimeRefused) as error:
+        print(f'host check: {error}; no host libtkrzw was found', file=sys.stderr)
+        return ''
+
+
+class Provision:
+    """One invocation's paths, qualification state, and provisioning phases."""
+
+    def __init__(self):
+        self.root = ROOT
+        self.env = dict(os.environ)
+        self.pin = self.root / 'tools/oracle/oracle-pin.txt'
+        # The provisioning cache; the property resolves it on first use, so a run that
+        # needs no cache does not need OXPINYIN_CACHE.
+        self._cache = None
+        self.host = platform.system()
+        # A Linux host provisions its host cell by default: PINYIN_ORACLE_DBM, else the Cargo
+        # default (tools/dev/cell.py). `--cells` names others for a pin capture. The tkrzw prefix is
+        # built natively against the host libtkrzw; the others are built in the Debian
+        # deps image. Only a selection that includes the host cell writes its environment file.
+        self.host_cell = self.env.get('PINYIN_ORACLE_DBM') or backend_cell.host_cell(self.root)
+        self.tkrzw_library = ''
+        self.cells = [self.host_cell] if self.host == 'Linux' else list(CELLS)
+        if self.host == 'Linux':
+            try:
+                self.jobs = text(['nproc'], env=self.env, check=False, stderr=False) or '2'
+            except OSError:
+                self.jobs = '2'
+        else:
+            self.jobs = str(os.cpu_count() or 2)
+        self.pull, self.python_only, self.dev_tools = True, False, False
+        self.platform = ''
+        self.started = time.monotonic()
+        self.ctr = ''
+        self.ready = False
+        self.custom_ca = False
+        self.net_flags, self.env_flags = ['--network', 'host'], []
+        self.uv_dir = str(Path(shutil.which('uv', path=self.env.get('PATH')) or 'uv').parent)
+
+    @property
+    def minimal(self):
+        """--python-only and --dev-tools both skip the Rust, Valgrind and backend checks."""
+        return self.python_only or self.dev_tools
+
+    @property
+    def linux(self):
+        return self.host == 'Linux'
+
+    @property
+    def windows(self):
+        """Host Python on Windows cannot read the symlinks a container makes on NTFS: every check
+        inside a provisioned prefix runs in the deps image there."""
+        return self.host == 'Windows'
+
+    @property
+    def cache(self):
+        if self._cache is None:
+            self._cache = images.provision_cache(self.env, self.root)
+        return self._cache
+
+    @cache.setter
+    def cache(self, value):
+        self._cache = Path(value)
+
+    @property
+    def oracle_root(self):
+        return self.cache / 'oracle'
+
+    @property
+    def env_file(self):
+        """OXPINYIN_ORACLE_ENV, else oracle.env in the cache root (tools/cachedir.py)."""
+        override = self.env.get('OXPINYIN_ORACLE_ENV')
+        return Path(override) if override else cachedir.root(self.env) / 'oracle.env'
+
+    def log(self, message):
+        print(f'[{int(time.monotonic() - self.started):4d}s] {message}', file=sys.stderr, flush=True)
+
+    def die(self, message):
+        fail('FAIL: ' + message)
+
+    def field(self, key):
+        return images.platform_field(self.pin, self.platform, key)
+
+    def options(self, argv, oracle=False):
+        """Read the native options, or with ORACLE the oracle options; check the platform and cells.
+
+        The oracle options belong to `provision oracle`, which `just provision-oracle` runs."""
+        args = list(argv)
+        while args:
+            option = args.pop(0)
+            if option in ('-h', '--help'):
+                raise Finished(0)  # The retired shell setup printed nothing for --help.
+            if option == '--python-only' and not oracle:
+                self.python_only = True
+            elif option == '--dev-tools' and not oracle:
+                self.dev_tools = True
+            elif option in ('--cells', '--jobs', '--no-pull') and not oracle:
+                fail(f'{option} is an option of just provision-oracle; just provision runs natively', 2)
+            elif option in ('--cells', '--jobs'):
+                if not args:
+                    fail(f'{option}: requires an argument', 1)
+                value = args.pop(0)
+                if option == '--cells':
+                    self.cells = re.findall(r'[^ \t]+', value.partition('\n')[0])
+                else:
+                    self.jobs = value
+            elif option == '--no-pull':
+                self.pull = False
+            else:
+                fail(f'unknown option: {option}', 2)
+        if not oracle:
+            return
+        if not str(self.jobs).isdecimal() or int(self.jobs) < 1:
+            fail(f'--jobs needs a positive number, not {self.jobs}', 2)
+        arch = platform.machine()
+        self.platform = {'x86_64': 'linux/amd64', 'AMD64': 'linux/amd64', 'aarch64': 'linux/arm64',
+                         'arm64': 'linux/arm64', 'ARM64': 'linux/arm64'}.get(arch, '')
+        if not self.platform:
+            fail(f'Unsupported oracle architecture {arch}; supported platforms are linux/amd64 and linux/arm64. See docs/runbooks/setup.md.', 2)
+        if self.host_cell not in CELLS:
+            fail(f'PINYIN_ORACLE_DBM={self.host_cell} is not one of: bdb kc tkrzw', 2)
+        if not self.cells:
+            fail('at least one cell is required', 2)
+        for cell in self.cells:
+            if cell not in CELLS:
+                fail(f'unknown cell: {cell} (one of bdb kc tkrzw)', 2)
+
+    def which(self, name):
+        return shutil.which(name, path=self.env.get('PATH'))
+
+    def apt(self, packages, sudo=()):
+        """Keep the install/update/install retry, including stream suppression."""
+        with open(os.devnull, 'wb') as null:
+            if not run([*sudo, 'apt-get', 'install', '-y', *packages], env=self.env,
+                       stdout=null, stderr=null, check=False):
+                return True
+            return (not run([*sudo, 'apt-get', 'update'], env=self.env, stdout=null, stderr=null, check=False)
+                    and not run([*sudo, 'apt-get', 'install', '-y', *packages], env=self.env, stdout=null, check=False))
+
+    def prerequisites(self):
+        """Require native tools only for full setup; share doctor's version formats."""
+        if self.minimal:
+            return
+        for name, diagnostic in (
+                ('cargo', 'cargo is missing; install the rustup-managed toolchain from rust-toolchain.toml (docs/runbooks/setup.md)'),
+                ('rustup', 'rustup is missing; install the repository toolchain via docs/runbooks/setup.md')):
+            if not self.which(name):
+                self.die(diagnostic)
+        match = re.search(r'^channel = "([^"]*)"', (self.root / 'rust-toolchain.toml').read_text(), re.M)
+        if not match:
+            self.die('no channel in rust-toolchain.toml')
+        channel = match[1]
+        with open(os.devnull, 'wb') as null:
+            for name in ('rustc', 'cargo', 'rustfmt', 'clippy-driver'):
+                if run(['rustup', 'run', channel, name, '--version'], env=self.env, stdout=null, stderr=null, check=False):
+                    self.die(f'Rust toolchain {channel} is not installed; run: rustup toolchain install {channel} --component clippy --component rustfmt')
+        if not self.linux:
+            # Valgrind, its apt install and the root check are Linux only; no container step needs it.
+            self.valgrind_version = 'not checked (Linux only)'
+            return
+        tool = next(tool for tool in doctor.TOOLS if tool.name == 'valgrind')
+        def found():
+            return text(['valgrind', '--version'], env=self.env, check=False, stderr=False) if self.which('valgrind') else ''
+        def acceptable(value):
+            parsed = tool.format.parse(value)
+            return parsed is not None and parsed.key >= tool.format.key(tool.minimum)
+        value = found()
+        if not acceptable(value):
+            state = f'{value} is older than {tool.minimum}' if value else 'valgrind is missing'
+            note = f'outdated: {value} (minimum {tool.minimum})' if value else 'missing: valgrind'
+            sudo = []
+            if os.geteuid() != 0:
+                if not self.which('sudo'):
+                    print(f'{note}\nrun as root: apt-get install -y valgrind', file=sys.stderr)
+                    self.die(f'{state} and neither root nor sudo is available')
+                sudo = ['sudo']
+            if not self.which('apt-get'):
+                self.die(f'{state} and apt-get is unavailable; ask the environment owner to install Valgrind {tool.minimum} or newer')
+            self.log('installing valgrind from the distribution archive')
+            if not self.apt(['valgrind'], sudo):
+                self.die('could not install valgrind with apt-get')
+            value = found()
+            if not acceptable(value):
+                self.die(f'valgrind {tool.minimum} or newer required; the distribution archive provides: {value or "none"}')
+        self.valgrind_version = value
+
+    def accepted(self, tool):
+        """The accepted tool's version report, or None if installation is needed."""
+        try:
+            return doctor.check_tool(tool, self.env)
+        except doctor.DoctorError:
+            return None
+
+    def cargo_tools(self):
+        """Keep tools at their floors or install their crates.io fallbacks: a pinned version, or the newest release."""
+        for crate, pin in doctor.cargo_tool_pins(self.root).items():
+            tool = doctor.cargo_tool(crate, self.root)
+            if self.accepted(tool):
+                continue
+            cargo = self.which('cargo')
+            if not cargo:
+                self.die(f'installing {crate} needs cargo; follow docs/runbooks/setup.md')
+            version = ['--version', pin] if pin else []
+            self.log(f'installing {" ".join([crate, *version[1:]])} with cargo (requires {doctor.requirement(tool)})')
+            if run([cargo, 'install', crate, *version, '--locked', '--quiet'], env=self.env, cwd=self.root, check=False):
+                self.die(f'cargo install {crate} failed; allow index.crates.io and static.crates.io '
+                         '(docs/runbooks/cloud.md)')
+            report = self.accepted(tool)
+            if report is None:
+                self.die(f'{crate} does not meet {doctor.requirement(tool)} after cargo install; '
+                         'put $CARGO_HOME/bin on PATH')
+            self.log('installed ' + report)
+        # The setup entry does not start from a just recipe, so it asks just for the cache root
+        # that the recipes export (docs/runbooks/setup.md#cache-directory). Without an answer the
+        # variable stays unset: a run that needs the cache refuses, and --python-only needs none.
+        if 'OXPINYIN_CACHE' not in self.env:
+            done = capture([self.which('just') or 'just', '--justfile', str(self.root / 'justfile'), 'cache-root'],
+                           env=self.env, check=False, stderr=False)
+            if not done.status:
+                # The Windows recipe ends its line with CRLF.
+                self.env['OXPINYIN_CACHE'] = done.stdout.decode().rstrip('\r\n')
+
+    def rust_analyzer(self):
+        """Keep the toolchain's rust-analyzer component, or add it with rustup.
+
+        Development hosts need it; CI does not, so rust-toolchain.toml does not list it. rustup
+        runs in the checkout, so the component belongs to the toolchain that file selects."""
+        # Each program runs at the path found on self.env's PATH: on Windows a bare name
+        # resolves against the PATH of this process instead.
+        rustup, analyzer = self.which('rustup'), self.which('rust-analyzer')
+        with open(os.devnull, 'wb') as null:
+            if not rustup:
+                # Without rustup no proxy answers for a missing component: a rust-analyzer
+                # that runs is a real one, and it is kept.
+                if analyzer and not run([analyzer, '--version'], env=self.env, cwd=self.root,
+                                        stdout=null, stderr=null, check=False):
+                    return
+                self.die('adding rust-analyzer needs rustup; follow docs/runbooks/setup.md')
+            if not run([rustup, 'which', 'rust-analyzer'], env=self.env, cwd=self.root,
+                       stdout=null, stderr=null, check=False):
+                return
+            self.log('adding the rust-analyzer component with rustup')
+            if run([rustup, 'component', 'add', 'rust-analyzer'], env=self.env, cwd=self.root,
+                   stdout=null, check=False):
+                self.die('rustup component add rust-analyzer failed')
+            if run([rustup, 'which', 'rust-analyzer'], env=self.env, cwd=self.root,
+                   stdout=null, stderr=null, check=False):
+                self.die('rust-analyzer is missing after rustup component add')
+        self.log('added ' + text([self.which('rust-analyzer') or 'rust-analyzer', '--version'], env=self.env, cwd=self.root))
+
+    def report_ext4(self):
+        """Report writable candidates without claiming measurement readiness."""
+        if not self.linux:
+            print('ext4 paths: not checked (findmnt and the measurement gates are Linux only).')
+            return
+        if not self.which('findmnt'):
+            print('ext4 paths: unknown (findmnt unavailable); measurement gates require a verified ext4 path.')
+            return
+        done = capture(['findmnt', '--raw', '--noheadings', '--output', 'TARGET,FSTYPE'], env=self.env, check=False, stderr=False)
+        unknown, found = bool(done.status), False
+        candidates = [str(self.root), self.env.get('HOME', str(Path.home())), self.env.get('TMPDIR') or '/tmp',
+                      *([str(self.cache)] if self._cache or self.env.get('OXPINYIN_CACHE') else [])]
+        for line in done.stdout.decode().splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1] == 'ext4':
+                candidates.append(re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: chr(int(m[1], 16)), parts[0]))
+        for path in dict.fromkeys(candidates):
+            if not Path(path).is_dir() or not os.access(path, os.R_OK | os.W_OK | os.X_OK):
+                continue
+            done = capture(['findmnt', '--noheadings', '--output', 'FSTYPE', '--target', path], env=self.env, check=False, stderr=False)
+            unknown |= bool(done.status)
+            if not done.status and done.stdout.decode().strip() == 'ext4':
+                print(f'ext4 path (readable, writable, searchable): {path}')
+                found = True
+        if found:
+            print('Measurement paths still need individual checks with findmnt -T <path>: libraries, data, profiles, work directory and TMPDIR.')
+        elif unknown:
+            print('ext4 paths: unknown (mount detection failed); measurement gates require a verified ext4 path.')
+        else:
+            print('ext4 paths: none accessible among mount targets, checkout, HOME, TMPDIR and cache; measurement gates cannot run without an ext4 path.')
+        print('This report does not verify all measured files are on ext4; non-measurement setup may continue.')
+
+    def libs_ok(self, cell, prefix=None):
+        prefix = Path(prefix) if prefix is not None else self.oracle_root / cell
+        if self.windows:
+            return self.contained_ok('libs', cell, prefix)
+        return images.prefix_ok(prefix, cell, self.root, self.pin, self.platform)
+
+    def contained(self, check, cell, prefix):
+        """Run one `prefix-check CHECK` of PREFIX in the deps image; answer its status."""
+        self.contained_ready()
+        prefix = Path(prefix)
+        return run(runtime_command([
+            self.ctr, 'run', '--rm', '--platform', self.platform, '--network', 'none',
+            '-e', 'PYTHONDONTWRITEBYTECODE=1', '-e', f'UV_PROJECT_ENVIRONMENT={images.CONTAINER_VENV}',
+            '-v', f'{self.root}:/repo:ro',
+            '-v', f'{prefix.parent}:/opt/pinyin-oracle:ro', '-v', f'{self.pin}:/run/oracle-pin.txt:ro',
+            '-w', '/repo', self.deps_image, 'uv', 'run', '--managed-python', 'python',
+            '-X', 'utf8', '-m', 'tools.dev.provision', 'prefix-check', check, cell,
+            f'/opt/pinyin-oracle/{prefix.name}', '/run/oracle-pin.txt', *([str(prefix)] if check == 'summary' else [])]),
+            env=self.env, check=False)
+
+    def contained_ok(self, check, cell, prefix):
+        """Whether the contained CHECK found PREFIX valid; a check that did not run stops provisioning.
+
+        Only a check that ran may lead to a removal: any status but 0 and PREFIX_INVALID dies
+        here, naming it, and the prefix is kept."""
+        status = self.contained(check, cell, prefix)
+        if status not in (0, PREFIX_INVALID):
+            self.die(f'{cell}: the {check} check of {prefix} did not run ({self.ctr} exited {status}); the prefix is kept')
+        return not status
+
+    def contained_ready(self):
+        """The runtime answers and the deps image is present, for the checks run inside it."""
+        self.runtime_ready()
+        if not getattr(self, 'deps_present', False):
+            self.build_deps_image()
+            self.deps_present = True
+
+    def in_deps_image(self, script, *args):
+        """Run a sh SCRIPT in the deps image with the cache at /cache (Windows prefix changes)."""
+        self.contained_ready()
+        run(runtime_command([self.ctr, 'run', '--rm', '--platform', self.platform, '--network', 'none',
+                             '-v', f'{self.cache}:/cache', self.deps_image, 'sh', '-c', script, 'sh', *args]),
+            env=self.env, stdout=subprocess.DEVNULL)
+
+    def remove_prefix(self, cell):
+        if self.windows:
+            self.in_deps_image('rm -rf "/cache/oracle/$1"', cell)
+        else:
+            shutil.rmtree(self.oracle_root / cell, ignore_errors=True)
+
+    def summary(self, cell, prefix, shown=None):
+        return (f'{cell} prefix={shown or prefix} libpinyin={digest_file(prefix / "lib/libpinyin.so")} '
+                f'libzhuyin={digest_file(prefix / "lib/libzhuyin.so")} data manifest OK')
+
+    def data_ok(self, cell, prefix=None):
+        """Check stable pin identity and prefix-local generated manifest provenance."""
+        prefix = Path(prefix) if prefix is not None else self.oracle_root / cell
+        if self.windows:
+            return self.contained_ok('data', cell, prefix)
+        if not self.libs_ok(cell, prefix):
+            return False
+        if not images.model_ok(prefix, self.root, self.pin):
+            return False
+        record = images.fields(prefix / 'oracle-pin.txt')
+        stable = prefix / 'oracle-data.sha256'
+        if not stable.is_file() or digest_file(stable) != record.get('data_manifest_sha256'):
+            return False
+        if check_manifest(stable.name, prefix)[0]:
+            return False
+        unstable = prefix / 'oracle-data-unstable.sha256'
+        provenance = prefix / 'oracle-pin.txt'
+        if not unstable.is_file():
+            print(f'data manifest missing: {unstable}', file=sys.stderr)
+            return False
+        if not provenance.is_file():
+            print(f'data manifest provenance missing: {provenance}', file=sys.stderr)
+            return False
+        expected = images.fields(provenance).get('data_unstable_manifest_sha256', '')
+        if not expected or digest_file(unstable) != expected:
+            print(f'data manifest SHA-256 differs from {provenance}: {unstable}', file=sys.stderr)
+            return False
+        status, output = check_manifest(unstable.name, prefix)
+        sys.stderr.write(output)
+        return not status
+
+    def write_oracle_env(self, cell, prefix):
+        """Publish the verified prefix of this Linux cache atomically."""
+        path = self.env_file
+        data = quote(prefix / 'lib/libpinyin/data')
+        prefix = quote(prefix)
+        lines = [ENV_HEADER,
+                 'export PINYIN_MODEL_DIR=' + quote(self.model_cache / 'extracted'),
+                 'export PATH=' + quote(self.uv_dir) + ':"$PATH"',
+                 f'export OXPINYIN_ORACLE_PREFIX_{cell.upper()}={prefix}',
+                 f'export OXPINYIN_ORACLE_DATA_{cell.upper()}={data}',
+                 *(['export OXPINYIN_TKRZW_LIBRARY=' + quote(self.linux_tkrzw())] if cell == 'tkrzw' else []),
+                 'export PINYIN_ORACLE_DBM="${PINYIN_ORACLE_DBM:-' + cell + '}"',
+                 'case "$PINYIN_ORACLE_DBM" in',
+                 f'{cell}) export PINYIN_ORACLE_PREFIX={prefix} OXPINYIN_LIBPINYIN_DATA_DIR={data} ;;',
+                 "*) printf '%s\\n' \"cell $PINYIN_ORACLE_DBM was not provisioned by this environment file\" >&2; return 1 ;;",
+                 'esac']
+        staging = Path(str(path) + '.new')
+        try:
+            staging.write_text('\n'.join(lines) + '\n')
+            # Preserve the external mv's launch/failure statuses and atomic rename.
+            run(['mv', str(staging), str(path)], env=self.env)
+        finally:
+            staging.unlink(missing_ok=True)
+        self.log(f'wrote {path}; source it before a runner')
+
+    def proxy_ca(self, stack):
+        """Choose existing supported trust and mount only a private 0600 copy."""
+        ccr = Path(self.env.get('OXPINYIN_CCR_DIR') or '/root/.ccr')
+        self.proxy = self.env.get('HTTPS_PROXY') or self.env.get('https_proxy', '')
+        self.ca = Path(self.env.get('OXPINYIN_PROXY_CA') or str(ccr / 'ca-bundle.crt'))
+        self.custom_ca = False
+        def present(path):
+            return path.is_file() and path.stat().st_size > 0
+        if self.env.get('OXPINYIN_PROXY_CA'):
+            if not present(self.ca):
+                self.die(f'OXPINYIN_PROXY_CA bundle is missing: {self.ca}')
+            self.custom_ca = True
+            self.log(f'proxy CA: {self.ca} (OXPINYIN_PROXY_CA)')
+        elif present(self.ca):
+            self.custom_ca = True
+            self.log(f'proxy CA: {self.ca} (session bundle)')
+        elif self.proxy:
+            candidates = [('SSL_CERT_FILE', self.env.get('SSL_CERT_FILE', '')), ('CURL_CA_BUNDLE', self.env.get('CURL_CA_BUNDLE', ''))]
+            candidates += [('system bundle', p) for p in self.env.get('OXPINYIN_SYSTEM_CA_BUNDLES', '/etc/ssl/certs/ca-certificates.crt:/etc/pki/tls/certs/ca-bundle.crt:/etc/ssl/cert.pem').split(':')]
+            for label, path in candidates:
+                if path and present(Path(path)):
+                    self.ca, self.custom_ca = Path(path), True
+                    self.log(f'proxy CA: HTTPS_PROXY is set and {ccr}/ca-bundle.crt is absent; using the host-trusted {label}: {self.ca}')
+                    self.log("proxy CA: a present, non-empty bundle does not show that the proxy's interception certificate is trusted; if TLS then fails, set OXPINYIN_PROXY_CA to the proxy's CA bundle")
+                    break
+            if not self.custom_ca:
+                self.die(f"HTTPS_PROXY is set but there is no proxy CA bundle: {ccr}/ca-bundle.crt is absent and the host trusts none (SSL_CERT_FILE, CURL_CA_BUNDLE, system bundle); set OXPINYIN_PROXY_CA to the proxy's CA bundle")
+        self.ca_mount = self.ca
+        if self.custom_ca:
+            temporary = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            self.ca_mount = temporary / 'ca.crt'
+            try:
+                with self.ca_mount.open('xb') as output:
+                    self.ca_mount.chmod(0o600)
+                    with self.ca.open('rb') as source:
+                        shutil.copyfileobj(source, output)
+            except OSError:
+                self.die(f'could not copy the proxy CA bundle: {self.ca}')
+            self.log(f'proxy CA: containers mount a private copy at {self.ca_mount} (mode 0600, removed on exit)')
+        if self.proxy:
+            no_proxy = self.env.get('NO_PROXY') or self.env.get('no_proxy', '')
+            self.env_flags = ['-e', f'https_proxy={self.proxy}', '-e', f'HTTPS_PROXY={self.proxy}',
+                              '-e', f'no_proxy={no_proxy}', '-e', f'NO_PROXY={no_proxy}']
+            if self.custom_ca:
+                self.env_flags += ['-e', 'GIT_SSL_CAINFO=/run/ca.crt', '-e', 'SSL_CERT_FILE=/run/ca.crt',
+                                   '-e', 'CURL_CA_BUNDLE=/run/ca.crt', '-v', f'{self.ca_mount}:/run/ca.crt:ro,z']
+
+    def retry(self, command):
+        for delay in (2, 4, 8, 16):
+            if not run(command, env=self.env, check=False):
+                return
+            self.log(f'retrying in {delay}s: {" ".join(map(str, command))}')
+            if self.linux:
+                run(['sleep', str(delay)], env=self.env)
+            else:
+                time.sleep(delay)
+        run(command, env=self.env)
+
+    def backend_tools(self):
+        missing = [(tool, package) for cell, tool, package in
+                   (('bdb', 'db5.3_dump', 'db5.3-util'), ('kc', 'kchashmgr', 'kyotocabinet-utils'))
+                   if cell in self.cells and not self.which(tool)]
+        if missing and not self.linux:
+            # Provisioning runs neither tool; off Linux every prefix check runs in the deps image.
+            self.log(f'{" ".join(tool for tool, _ in missing)}: not required on {self.host}; '
+                     'provisioning checks run in the deps image there')
+            return
+        if missing:
+            tools, packages = map(list, zip(*missing, strict=True))
+            if os.geteuid() == 0:
+                self.log(f'installing {" ".join(packages)} from the distribution archive')
+                if not self.apt(packages):
+                    self.die(f'could not install {" ".join(packages)} with apt-get')
+            else:
+                fail(f'missing: {" ".join(tools)}\nrun as root: apt-get install -y {" ".join(packages)}')
+
+    def runtime_ready(self):
+        if self.ready:
+            return
+        self.ready = True
+        def ready():
+            with open(os.devnull, 'wb') as null:
+                return not run(runtime_command([self.ctr, 'info']), env=self.env, stdout=null, stderr=null, check=False)
+        if ready():
+            self.log(f'{self.ctr} ready')
+        elif Path(self.ctr).name == 'docker' and not self.linux:
+            self.die('docker info failed; start Docker Desktop or the Docker daemon (dockerd is started only on Linux)')
+        elif Path(self.ctr).name == 'docker':
+            if not self.which('dockerd'):
+                self.die('dockerd is not installed')
+            single = Path(self.env.get('OXPINYIN_CCR_DIR') or '/root/.ccr') / 'agent-proxy-ca.crt'
+            destination = Path('/usr/local/share/ca-certificates/ccr-agent-proxy.crt')
+            if self.proxy and single.is_file() and single.stat().st_size and (not destination.is_file() or single.read_bytes() != destination.read_bytes()):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(single, destination)
+                with open(os.devnull, 'wb') as null:
+                    if run(['update-ca-certificates'], env=self.env, stdout=null, stderr=null, check=False):
+                        self.log('update-ca-certificates failed; the daemon may not trust the proxy')
+            self.log('starting dockerd')
+            with open('/var/log/dockerd.log', 'wb') as output, open(os.devnull, 'rb') as input_file:
+                subprocess.Popen(['dockerd'], env=self.env, stdin=input_file, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            for _ in range(60):
+                if ready():
+                    break
+                run(['sleep', '1'], env=self.env)
+            if not ready():
+                self.tail('/var/log/dockerd.log', 20)
+                self.die('dockerd did not become ready in 60 s')
+        else:
+            run(runtime_command([self.ctr, 'info']), env=self.env, stdout=sys.stderr, check=False)
+            self.die(f'{self.ctr} info failed; there is no daemon to start for it')
+
+    def tail(self, path, count=5, logged=False):
+        for line in Path(path).read_text(errors='replace').splitlines()[-count:]:
+            self.log('  ' + line) if logged else print(line, file=sys.stderr)
+
+    def build_deps_image(self):
+        with open(os.devnull, 'wb') as null:
+            if not run(runtime_command([self.ctr, 'image', 'inspect', self.deps_image]), env=self.env, stdout=null, stderr=null, check=False):
+                return
+            if self.pull:
+                with (self.cache / 'pull-deps.err').open('wb') as error:
+                    status = run(runtime_command([self.ctr, 'pull', '--quiet', '--platform', self.platform, self.published_deps]), env=self.env, stdout=null, stderr=error, check=False)
+                if not status:
+                    run(runtime_command([self.ctr, 'tag', self.published_deps, self.deps_image]), env=self.env)
+                    return
+                self.log(f'recorded deps image unavailable; building locally (details: {self.cache}/pull-deps.err)')
+                self.tail(self.cache / 'pull-deps.err')
+            if run(runtime_command([self.ctr, 'image', 'inspect', self.base_image]), env=self.env, stdout=null, stderr=null, check=False):
+                self.log(f'pulling {self.base_image} for the local fallback build')
+                self.retry(runtime_command([self.ctr, 'pull', '--quiet', '--platform', self.platform, self.base_image]))
+        self.log(f'building {self.deps_image} (the testing pin-reference toolchain)')
+        flags = list(self.net_flags)
+        if self.platform != 'linux/amd64':
+            flags += ['--build-arg', f'ORACLE_PLATFORM={self.platform}']
+        if self.proxy:
+            flags += ['--build-arg', 'https_proxy', '--build-arg', 'HTTPS_PROXY']
+            if self.custom_ca:
+                flags += ['--secret', f'id=cacert,src={self.ca}']
+        run(runtime_command([self.ctr, 'build', *images.container_resources(self.ctr), '--platform', self.platform, *flags, '--target', 'deps',
+                             '-f', self.root / 'tools/oracle/Dockerfile.oracle', '-t', self.deps_image, self.root]),
+            env=dict(self.env, DOCKER_BUILDKIT='1', https_proxy=self.proxy, HTTPS_PROXY=self.proxy), stdout=2)
+
+    def in_image_command(self, args, flags=()):
+        """The container command that runs the checkout's tools/oracle/build.py with ARGS.
+
+        The checkout is mounted over the image's /opt/oracle-recipe, so the builder, its pin
+        record and the recipe hash are the checkout's; Debian's python3 runs it."""
+        apple = images.is_apple(self.ctr)
+        # On rootful docker the build runs as the invoking user, so the cache it writes stays
+        # theirs; podman maps the user already and Apple's container keeps its verified run.
+        user = [] if Path(self.ctr).name.startswith('podman') or apple else images.run_user()
+        home = ['-e', 'HOME=/tmp'] if user else []
+        return runtime_command([
+            self.ctr, 'run', '--rm', '--platform', self.platform, *(['--memory', '6G'] if apple else []),
+            *user, *home, *self.net_flags, *self.env_flags, *flags,
+            '-v', f'{self.root}:/opt/oracle-recipe:ro,z',
+            '-v', f'{self.oracle_root}:/opt/pinyin-oracle:z', '-v', f'{self.model_cache}:/model-cache:ro,z',
+            '-v', f'{self.cache}:/build:z',
+            self.deps_image, 'python3', '/opt/oracle-recipe/tools/oracle/build.py', *args])
+
+    def pool_phase(self, label, cells, log, args):
+        """Reuse #1233's exact pool phase and owned-container cancellation."""
+        flags = ['--name', f'oxpinyin-setup-{{token}}-{label}-{{item}}', '--label', 'oxpinyin.setup={token}',
+                 '--cidfile', '{cidfile}', '--cpus', '{jobs}']
+        owner = ['--container-runtime', shlex.quote(self.ctr), '--container-label', 'oxpinyin.setup']
+        # wslc 3.0.5.0 fails a run ("Catastrophic failure", E_UNEXPECTED) when containers that
+        # bind the same host directories start at the same moment, and every cell binds the
+        # checkout and the caches. One cell runs at a time there, with the whole CPU budget.
+        serial = ['--workers', '1'] if images.is_wslc(self.ctr) else []
+        # A subprocess preserves the invocation's environment without mutating
+        # Python's process-global environ during pool scheduling.
+        return run([sys.executable, '-X', 'utf8', '-m', 'tools.dev.pool', 'run',
+                    '--label', label, '--items', ','.join(cells), '--cpus', str(self.jobs),
+                    '--log', str(log), *serial, *owner, '--', *self.in_image_command(args, flags)],
+                   cwd=self.root, env=self.env, check=False)
+
+    def libraries(self):
+        need = []
+        for cell in self.cells:
+            if self.libs_ok(cell) and self.host_inventory_ok(cell):
+                self.log(f'{cell}: libraries already match current pin/recipe and recorded bytes')
+            elif self.native(cell):
+                self.remove_prefix(cell)
+                self.native_prefix(cell, data=False)
+            else:
+                need.append(cell)
+        if need and self.pull and images.is_apple(self.ctr):
+            self.log('Apple container: building the libraries in the deps image (no published-image pull)')
+        elif need and self.pull:
+            self.log(f'trying {self.published}')
+            error_path = self.cache / 'pull-published.err'
+            with error_path.open('wb') as error, open(os.devnull, 'wb') as null:
+                status = run(runtime_command([self.ctr, 'pull', '--quiet', '--platform', self.platform, self.published]), env=self.env, stdout=null, stderr=error, check=False)
+            if not status:
+                cid = text(runtime_command([self.ctr, 'create', '--platform', self.platform, self.published, '/none']),
+                           env=self.env).rstrip('\r')  # wslc ends its lines with CRLF
+                try:
+                    self.copy_published(cid, need)
+                finally:
+                    run(runtime_command([self.ctr, 'rm', cid]), env=self.env, stdout=subprocess.DEVNULL, check=False)
+                still = []
+                for cell in need:
+                    if self.libs_ok(cell):
+                        self.log(f'{cell}: pulled libraries match current pin and recipe')
+                    else:
+                        self.log(f'{cell}: pulled libraries have stale or invalid build provenance; building instead')
+                        self.remove_prefix(cell)
+                        still.append(cell)
+                need = still
+            else:
+                if re.search(r'manifest unknown|manifest .*not found|name unknown|404 not found|: not found$', error_path.read_text(), re.I | re.M):
+                    self.log('published oracle image: manifest unknown / not found; building the libraries')
+                else:
+                    self.log('published oracle image: pull FAILED (network, auth or proxy, not "not found"); building the libraries')
+                self.log(f'pull error (last lines, full text in {error_path}):')
+                self.tail(error_path, logged=True)
+        if need:
+            self.build_deps_image()
+            for cell in need:
+                self.remove_prefix(cell)
+            if self.pool_phase('libraries', need, self.cache / 'build-{item}.log',
+                               ['--libs-only', '--enable-libzhuyin', '--dbm', '{item}', '--work-dir', '/build/build/{item}',
+                                '--prefix', '/opt/pinyin-oracle/{item}', '--jobs', '{jobs}']):
+                self.die(f'the library build failed or was cancelled (logs: {self.cache}/build-<cell>.log)')
+        for cell in self.cells:
+            if not self.libs_ok(cell):
+                self.die(f'{cell}: stale pin/recipe or damaged build provenance after provisioning')
+
+    def copy_published(self, cid, cells):
+        """Copy CELLS' prefixes out of the published image's container CID into the cache.
+
+        On Windows the filesystem is exported to a tar in the cache and unpacked by the deps image,
+        so the prefix's symlinks are made by Linux and never read by host Python."""
+        if not self.windows:
+            for cell in cells:
+                shutil.rmtree(self.oracle_root / cell, ignore_errors=True)
+                run(runtime_command([self.ctr, 'cp', f'{cid}:/opt/pinyin-oracle/{cell}', self.oracle_root / cell]),
+                    env=self.env, stdout=subprocess.DEVNULL)
+            return
+        archive = self.cache / 'published.tar'
+        try:
+            run(runtime_command([self.ctr, 'export', '-o', archive, cid]), env=self.env, stdout=subprocess.DEVNULL)
+            self.in_deps_image('set -eu; scratch=$(mktemp -d); tar -xf /cache/published.tar -C "$scratch"; '
+                               'for cell; do rm -rf "/cache/oracle/$cell"; '
+                               'cp -a "$scratch/opt/pinyin-oracle/$cell" "/cache/oracle/$cell"; done', *cells)
+        finally:
+            archive.unlink(missing_ok=True)
+
+    def native(self, cell):
+        """Whether CELL's prefix is built on the host: tkrzw on Linux, against the host library."""
+        return self.linux and cell == 'tkrzw'
+
+    def host_inventory_ok(self, cell):
+        """Whether a native CELL's prefix was built on this host's installed versions.
+
+        A prefix built in the Debian image passes libs_ok but links the image's libraries, so a
+        native cell is reused only when its versions.txt equals this host's inventory, as
+        measure-prepare requires. Other cells always pass."""
+        if not self.native(cell):
+            return True
+        from .measure.prepare import running_inventory
+        try:
+            recorded = (self.oracle_root / cell / 'versions.txt').read_text()
+        except OSError:
+            return False
+        if recorded == running_inventory():
+            return True
+        self.log(f"{cell}: versions.txt differs from this host's inventory; rebuilding natively")
+        return False
+
+    def linux_tkrzw(self):
+        """Linux: require the distribution's libtkrzw on the default loader path; answer its path."""
+        if not self.tkrzw_library:
+            self.tkrzw_library = probe_host(env=self.env, root=self.root)
+        if not self.tkrzw_library:
+            self.die('tkrzw: no host libtkrzw; install the distribution\'s libtkrzw development package, or set PINYIN_ORACLE_DBM=kc (or bdb) to provision Kyoto Cabinet (or Berkeley DB) instead, or name the cells with just provision-oracle --cells')
+        return self.tkrzw_library
+
+    def native_backend(self):
+        """Linux: check the native backend of the host cell."""
+        if self.host_cell == 'kc':
+            self.kyotocabinet_ready()
+        elif self.host_cell == 'tkrzw':
+            self.log(f'tkrzw: the distribution library is {self.linux_tkrzw()}')
+        else:
+            self.log(f'{self.host_cell}: no native backend step')
+
+    def native_prefix(self, cell, *, data):
+        """Build CELL's libraries, or with DATA its data, natively with tools/oracle/build.py.
+
+        The prefix links the distribution's backend library on the default loader path, as
+        `measure-prepare oracle` builds it."""
+        env = dict(self.env, OXPINYIN_TKRZW_LIBRARY=self.linux_tkrzw())
+        common = [sys.executable, str(self.root / 'tools/oracle/build.py'), '--dbm', cell,
+                  '--enable-libzhuyin', '--prefix', str(self.oracle_root / cell)]
+        if data:
+            args = ['--regen-data', '--model-dir', str(self.model_cache / 'extracted'),
+                    '--work-dir', str(self.cache / f'data-{cell}')]
+            log = self.cache / f'data-{cell}.log'
+        else:
+            args = ['--libs-only', '--work-dir', str(self.cache / 'build' / cell), '--jobs', str(self.jobs)]
+            log = self.cache / f'build-{cell}.log'
+        self.log(f'{cell}: building the {"data" if data else "libraries"} natively (log: {log})')
+        with log.open('wb') as stream:
+            status = run([*common, *args], cwd=self.root, env=env, stdout=stream, stderr=subprocess.STDOUT, check=False)
+        if status:
+            self.die(f'{cell}: the native build failed (log: {log})')
+
+    def kyotocabinet_ready(self):
+        """Require Kyoto Cabinet's development package, for the kc cell (docs/runbooks/setup.md#linux)."""
+        def found():
+            return text(['pkg-config', '--modversion', 'kyotocabinet'], env=self.env, check=False, stderr=False)
+        version = found()
+        if not version:
+            package = 'libkyotocabinet-dev'
+            if os.geteuid() != 0 or not self.which('apt-get'):
+                self.die(f'Kyoto Cabinet development files are missing (pkg-config kyotocabinet); '
+                         f'run as root: apt-get install -y {package}')
+            self.log(f'installing {package} from the distribution archive')
+            if not self.apt([package]) or not found():
+                self.die(f'could not install {package} with apt-get')
+            version = found()
+        self.log(f'kyotocabinet: {version} from the distribution')
+
+    def certify_homebrew_tkrzw(self):
+        """macOS: require Homebrew's tkrzw, certified by the library its utility loads."""
+        library = probe_host(env=self.env, root=self.root)
+        if not library:
+            self.die('Homebrew tkrzw did not pass the host check')
+        self.log(f'tkrzw: certified Homebrew install; its utility loads {library}')
+
+    def refuse_overrides(self):
+        """Refuse interpreter-selection settings before any other work.
+
+        uv has already read them for `uv python install` and `uv run`, so a run under one
+        stops here rather than provisioning with another interpreter."""
+        try:
+            doctor.reject_overrides(self.env, before='provisioning')
+        except doctor.DoctorError as error:
+            self.die(str(error))
+
+    def execute(self, argv):
+        """Provision the host natively: no step starts a container or reads the oracle."""
+        self.refuse_overrides()
+        self.options(argv)
+        self.prerequisites()
+        # --python-only alone needs no Cargo, rustup or just (docs/runbooks/cloud.md).
+        if self.dev_tools or not self.python_only:
+            self.cargo_tools()
+            self.rust_analyzer()
+        self.log('using ' + text(['uv', '--version'], env=self.env))
+        # uv selected the managed interpreter. Doctor owns its policy; provisioning
+        # keeps the successful verification line.
+        identity = doctor.identity(self.env)
+        print('Verified managed CPython', identity['version'], 'GIL build:', identity['executable'], flush=True)
+        if not self.minimal:
+            if self.linux:
+                self.native_backend()
+            elif self.host == 'Darwin':
+                self.certify_homebrew_tkrzw()
+            else:
+                self.log(f'{self.host}: no native backend step; the oracle runs only in containers here')
+        self.report_ext4()
+        if self.minimal:
+            self.log('stopping after the development tools (--dev-tools)' if self.dev_tools
+                     else 'stopping after Python provisioning (--python-only)')
+        else:
+            print(f'Valgrind: {self.valgrind_version}')
+            self.log('native provisioning done; just provision-oracle provisions the pin oracle')
+        return 0
+
+    def oracle_setup(self, argv):
+        """Provision the oracle cells through the container runtime (`just provision-oracle`)."""
+        self.refuse_overrides()
+        self.options(argv, oracle=True)
+        if self.env.get('GITHUB_ACTIONS') == 'true':
+            fail('provision-oracle is local-only; never run it on GitHub Actions', 2)
+        with ExitStack() as stack:
+            self.proxy_ca(stack)
+            self.cache.mkdir(parents=True, exist_ok=True)
+            self.cache = self.cache.resolve()
+            self.model_cache = images.model_cache(self.env)
+            self.model_cache.mkdir(parents=True, exist_ok=True)
+            self.model_cache = self.model_cache.resolve()
+            self.oracle_root.mkdir(parents=True, exist_ok=True)
+            self.base_image = images.fields(self.pin).get('base_image', '')
+            if not self.base_image:
+                self.die(f'no base_image in {self.pin}')
+            published = 'ghcr.io/shenghaoc/oxpinyin-oracle:' + images.image_tag(self.root)
+            self.published = published + ('-arm64' if self.platform == 'linux/arm64' else '')
+            self.published_deps = self.published + '-deps'
+            self.deps_image = images.deps_tag(self.root)
+            if any(not self.native(cell) for cell in self.cells):
+                self.ctr = images.select_runtime(env=self.env)
+            self.backend_tools()
+            for cell in self.cells:
+                if not self.libs_ok(cell) or not self.data_ok(cell):
+                    try:
+                        model.fetch(self.model_cache, root=self.root, env=self.env)
+                    except Finished:
+                        self.die('model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)')
+                    break
+            if any(not self.native(cell) for cell in self.cells):
+                self.runtime_ready()
+            self.libraries()
+            need = []
+            for cell in self.cells:
+                if self.data_ok(cell):
+                    self.log(f'{cell}: data already matches the recorded manifest')
+                elif self.native(cell):
+                    model.fetch(self.model_cache, root=self.root, env=self.env)
+                    self.native_prefix(cell, data=True)
+                    if not self.data_ok(cell):
+                        self.die(f'{cell}: the regenerated data does not match the recorded manifest')
+                else:
+                    need.append(cell)
+            if need:
+                self.log(f'fetching model20 for {" ".join(need)}')
+                model.fetch(self.model_cache, root=self.root, env=self.env)
+                self.build_deps_image()
+                if self.pool_phase('data', need, self.cache / 'data-{item}.log',
+                                   ['--regen-data', '--dbm', '{item}', '--prefix', '/opt/pinyin-oracle/{item}',
+                                    '--model-dir', '/model-cache/extracted', '--work-dir', '/build/data-{item}', '--jobs', '{jobs}']):
+                    self.die(f'--regen-data failed or was cancelled (logs: {self.cache}/data-<cell>.log)')
+                for cell in need:
+                    if not self.data_ok(cell):
+                        self.die(f'{cell}: the regenerated data does not match the recorded manifest')
+            for cell in self.cells:
+                prefix = self.oracle_root / cell
+                if self.windows:
+                    if self.contained('summary', cell, prefix):
+                        self.die(f'{cell}: the summary check in the deps image failed')
+                    continue
+                print(self.summary(cell, prefix), flush=True)
+        return 0
+
+    def oracle_env(self):
+        """Write the environment file from the verified host cell on Linux."""
+        self.refuse_overrides()
+        self.options([], oracle=True)
+        if not self.linux:
+            self.log(f'{self.env_file}: not written; host runners load the oracle only on Linux')
+            return 0
+        self.model_cache = images.model_cache(self.env).resolve()
+        cell = self.host_cell
+        prefix = self.oracle_root / cell
+        if not prefix.is_dir() or not self.data_ok(cell):
+            if prefix.is_dir():
+                self.log(f'{cell}: left out of the environment file; {prefix} failed validation')
+            self.die(f'no verified oracle cell in {self.oracle_root}; run just provision-oracle')
+        for pc in (prefix / 'lib/pkgconfig').glob('*.pc'):
+            pc.write_text(re.sub(r'^prefix=.*$', lambda _: 'prefix=' + str(prefix), pc.read_text(), flags=re.M))
+        self.write_oracle_env(cell, prefix)
+        return 0
+
+
+def main(argv=None):
+    """Dispatch cloud provisioning, including native host callers."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    service = None
+    try:
+        with slot.cancellation_handlers():
+            if args[:1] == ['oracle']:
+                service = Provision()
+                status = service.oracle_setup(args[1:])
+                if status or (service.linux and service.host_cell not in service.cells):
+                    return status
+                service = Provision()
+                return service.oracle_env()
+            if args[:1] == ['probe-host']:
+                library = probe_host()
+                if not library:
+                    return 1
+                print(library)
+                return 0
+            if args[:1] == ['prefix-check'] and len(args) in (5, 6) and args[1] in ('libs', 'data', 'summary'):
+                service = Provision()
+                service.options(['--cells', args[2]], oracle=True)
+                service.pin = Path(args[4])
+                prefix = Path(args[3])
+                if args[1] == 'libs':
+                    return 0 if service.libs_ok(args[2], prefix) else PREFIX_INVALID
+                if args[1] == 'data':
+                    return 0 if service.data_ok(args[2], prefix) else PREFIX_INVALID
+                print(service.summary(args[2], prefix, args[5] if len(args) == 6 else None), flush=True)
+                return 0
+            if args[:1] == ['data-check'] and len(args) == 3:
+                service = Provision()
+                service.options(['--cells', args[1]], oracle=True)
+                return 0 if service.data_ok(args[1], args[2]) else 1
+            service = Provision()
+            return service.execute(args)
+    except Finished as error:
+        return error.status
+    except slot.Cancelled:
+        return 1 if service is not None and service.custom_ca else slot.cancellation_status()
+    except OSError as error:
+        print(f'FAIL: {error.strerror}', file=sys.stderr)
+        return 1
+    except (ValueError, doctor.DoctorError) as error:
+        print(f'FAIL: {error}', file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

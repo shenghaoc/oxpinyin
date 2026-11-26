@@ -1,0 +1,426 @@
+"""Valgrind-based recipes behind `measure` (#1290): the callgrind differential and the system-import profiles.
+
+callgrind-differential answers one question: does oxpinyin execute more
+instructions than libpinyin on the keystroke path, or the same instructions more
+slowly? One harness binary runs under callgrind against each library in turn;
+because the Rust driver drives both through the same C ABI the totals are comparable,
+and because the collection anchors live in the harness the collected region is the
+same. Nothing here interprets the numbers; the decision rule lives in the
+findings document.
+
+system-import-profile prepares what system_import_profile.py needs (the arms'
+a fresh work directory and the compiled driver) and hands
+it the collections, which already run as units of one pool.
+"""
+import contextlib
+import io
+import os
+import platform
+from pathlib import Path
+import re
+import sys
+from collections.abc import Mapping, Sequence
+
+from .. import host, pool, slot
+from ..cell import CELLS, host_cell
+from ..runners import Finished, emit, write
+from . import bench, identity, instructions, prepare, reports
+from .bench import Arm, Bench, fail, setting
+
+CALLGRIND = 'just measure-callgrind-differential'
+SYSTEM_IMPORT = 'system-import-profile'
+ANCHOR = 'bisect_perf_steady_unit'
+# The tool options of every callgrind run; the output file is added per run.
+# The steady anchor switches collection on and off itself (the Rust collection guard).
+CALLGRIND_OPTIONS = ('valgrind', '--tool=callgrind', '--collect-atstart=no',
+                     '--cache-sim=yes', '--branch-sim=yes', '--separate-threads=no')
+
+
+def lines_of(path: Path, pattern: str, *, ignore_case: bool = False) -> list[str]:
+    """The lines of PATH matching the extended regex PATTERN, as `grep -E` selects them.
+
+    A file that cannot be read prints grep's complaint on stderr and selects nothing.
+    """
+    try:
+        text = path.read_text(errors='replace')
+    except OSError as error:
+        emit(f'grep: {path}: {error.strerror}', error=True)
+        return []
+    expression = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+    return [line for line in text.split('\n') if line and expression.search(line)]
+
+
+def roots(env: Mapping[str, str], cell_name: str | None = None) -> dict:
+    """Where `prepare callgrind` stages the three libraries the differential of CELL_NAME uses."""
+    cell_name = cell_name or host_cell()
+    return dict(lp=prepare.pin_prefix(env, cell_name),
+                ox=prepare.subject_stage(env, prepare.stage_name(cell_name, debug=True)),
+                nodebug=prepare.subject_stage(env, prepare.stage_name(cell_name, debug=False)))
+
+
+def data_dir(env: Mapping[str, str], cell_name: str | None = None) -> Path:
+    """The prepared pin's data directory of CELL_NAME, which every arm of the differential reads."""
+    return prepare.pin_prefix(env, cell_name or host_cell()) / prepare.DATA_SUBDIRECTORY
+
+
+def libraries(env: Mapping[str, str], cell_name: str | None = None, *,
+              keys: frozenset[str] = frozenset(('lp', 'ox', 'nodebug')), data: bool = True) -> dict:
+    """The prepared libraries named by KEYS, and with DATA the prepared data directory, checked
+    to exist before anything runs."""
+    found = {}
+    for key, root in roots(env, cell_name).items():
+        if key not in keys:
+            continue
+        # `find` on a root that is not there says so and ends the run; on one without the file it prints nothing.
+        if not root.is_dir():
+            fail(f"find: '{root}': No such file or directory")
+        found[key] = bench.find_named(root, 'libpinyin.so')
+    for artifact in found.values():
+        if artifact is None or not artifact.exists():
+            fail(f"fatal: missing artifact: '{'' if artifact is None else artifact}'")
+    if data and not data_dir(env, cell_name).is_dir():
+        fail(f'fatal: data dir {data_dir(env, cell_name)} missing')
+    return found
+
+
+def environment_table(artifacts: Sequence[Path], pin: Path, data: Path, env: Mapping[str, str]) -> str:
+    """Stage 0: what the numbers depend on, written before any is taken.
+
+    PIN is the pin's prefix and DATA the data directory every arm reads.
+    """
+    lines = ['=== environment ===', f'captured_utc: {bench.utc_now()}', f'arch: {platform.machine()}',
+             f'kernel: {identity.kernel()}', f'nproc: {host.processors()}', f'cpu: {identity.cpu_model()}',
+             f'memtotal: {identity.memory_total()}',
+             f'gcc: {identity.first_output_line(["gcc", "--version"], env=env)}',
+             f'rustc: {identity.first_output_line(["rustc", "--version"], env=env)}',
+             f'cargo: {identity.first_output_line(["cargo", "--version"], env=env)}',
+             f'valgrind: {identity.first_output_line(["valgrind", "--version"], env=env)}',
+             f'perf_event_paranoid: {identity.perf_event_paranoid()}',
+             f'libpinyin_pkgversion: {identity.pc_version(pin / "lib/pkgconfig/libpinyin.pc")}',
+             f'libkyotocabinet: {identity.package_version("kyotocabinet", env=env)}']
+    # `stat -c%s` on the path as found: for a symlink, the size of the link and not of its target.
+    lines += [f'artifact: {identity.sha256(path)}  {path} {os.lstat(path).st_size} bytes' for path in artifacts]
+    lines.append(f'data_dir: {data}')
+    return '\n'.join(lines) + '\n'
+
+
+def anchors_table(harness: Path) -> tuple[int, str]:
+    """Stage 1: the two collection anchors are distinct symbols, or the cold cycle would be collected.
+
+    Return the status and the collection-anchor table.
+    """
+    lines = ['=== collection anchors ===']
+    done = bench.capture(['nm', harness])
+    write(done.stderr, error=True)
+    if done.status:
+        lines.append(f'FAIL: nm exited with status {done.status}')
+        return done.status, '\n'.join(lines) + '\n'
+
+    anchors = {'bisect_perf_cold_unit': [], ANCHOR: []}
+    for line in done.stdout.decode(errors='replace').splitlines():
+        row = line.split()
+        if row and row[-1] in anchors:
+            anchors[row[-1]].append(row)
+            lines.append(line)
+
+    addresses = []
+    for name, rows in anchors.items():
+        if not rows:
+            lines.append(f'FAIL: missing anchor symbol {name}')
+            return 1, '\n'.join(lines) + '\n'
+        if len(rows) != 1:
+            lines.append(f'FAIL: duplicate anchor symbol {name}')
+            return 1, '\n'.join(lines) + '\n'
+        match rows[0]:
+            case [value, 'T' | 't', _] if re.fullmatch(r'[0-9a-fA-F]+', value):
+                addresses.append(int(value, 16))
+            case _:
+                lines.append(f'FAIL: anchor symbol {name} is not a function definition')
+                return 1, '\n'.join(lines) + '\n'
+
+    if addresses[0] == addresses[1]:
+        lines.append('FAIL: anchors folded to one address; the cold cycle would be collected')
+        return 1, '\n'.join(lines) + '\n'
+    lines += [f'PASS: distinct addresses, so the client requests in {ANCHOR}',
+              '      exclude process init and the cold cycle']
+    return 0, '\n'.join(lines) + '\n'
+
+
+def malloc_interception(worker: Bench, arm: Arm, out: Path, cycles: str = '2') -> str:
+    """Stage 3: is valgrind's malloc replacement in effect? Run one probe and read what it credited.
+
+    vg_replace_malloc.c is linked into every valgrind tool, so client malloc and
+    free are redirected and the Ir attributed to allocation is valgrind's
+    replacement allocator, not glibc's. Establish that before any Ir number is read.
+    The probe's own failure does not stop the capture; its diagnostics land in its files.
+    """
+    profile = out / 'callgrind.redir-probe.out'
+    prefix = ['valgrind', '--tool=callgrind', '--collect-atstart=no',
+              '--trace-redir=yes', f'--callgrind-out-file={profile}']
+    diagnostics = io.StringIO()
+    done = None
+    # A refusal inside the probe went to its stderr file and the run went on, and so did the shell's
+    # "command not found" for a host without taskset.
+    with contextlib.redirect_stderr(diagnostics):
+        with contextlib.suppress(Finished):
+            try:
+                done = worker.launch(Arm('probe', arm.so, arm.data, arm.libdir), 'speed', cycles, repeats=1,
+                                     prefix=prefix)
+            except FileNotFoundError as error:
+                emit(f'{error.filename}: command not found', error=True)
+    (out / 'redir-probe.stdout').write_bytes(b'' if done is None else done.stdout)
+    stderr = out / 'redir-probe.stderr'
+    stderr.write_bytes(diagnostics.getvalue().encode() if done is None else done.stderr)
+    lines = ['=== valgrind malloc interception ===',
+             '--- redirections naming malloc/free (from --trace-redir) ---']
+    lines += lines_of(stderr, 'REDIR|vgpreload|malloc|free')[:40]
+    lines.append('--- objects credited in the profile ---')
+    credited = lines_of(profile, '^(ob|fl|fn)=')
+    lines += sorted({line for line in credited if re.search('vgpreload|malloc', line, re.IGNORECASE)})[:20]
+    lines += ['', 'Reading: a malloc entry credited to a vgpreload object is proof the',
+              'replacement is active, so Ir attributed to allocation understates the',
+              'real glibc cost. Call counts are unaffected.']
+    return '\n'.join(lines) + '\n'
+
+
+def annotate(out: Path) -> None:
+    """Annotate each callgrind profile twice, self and inclusive; a failing annotate is not a failed run.
+
+    The annotations are independent post-processing of profiles already on disk, not
+    measurements, so they run as units of a pool (pool.run_leased) and not
+    one after another, at most one per allowed CPU.
+    """
+    def unit(profile: Path, suffix: str, extra: list):
+        def annotate_one(context):
+            command = ['callgrind_annotate', '--threshold=99.5', *extra, str(profile)]
+            try:
+                body = bench.capture(command, merge_stderr=True).stdout
+            except OSError as error:
+                body = f'callgrind_annotate: {error.strerror}\n'.encode()
+            Path(f'{profile}.{suffix}.txt').write_bytes(body)
+        return f'{profile.name}.{suffix}', annotate_one
+    profiles = [profile for profile in sorted(out.glob('callgrind*.out'), key=lambda path: os.fsencode(path.name))
+                if 'redir-probe' not in str(profile)]
+    units = [unit(profile, suffix, extra) for profile in profiles
+             for suffix, extra in (('annotated', []), ('inclusive', ['--inclusive=yes']))]
+    if units:
+        pool.run_leased(units, cancelled=slot.CANCELLED.is_set,
+                        cancel_error=slot.Cancelled, out=sys.stderr)
+
+
+def callgrind_control(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Verify DWARF and code neutrality against a plain shipping cargo-c stage.
+
+    Usage: PROFILE-STAGE SHIPPING-STAGE. Both use the shipping Cargo profile;
+    only the profiled build adds RUSTFLAGS="-Cdebuginfo=1 -Cstrip=none" (#1337).
+    """
+    if len(argv) != 2:
+        fail('usage: callgrind-control PROFILE-STAGE SHIPPING-STAGE', 2)
+    libraries = []
+    for stage in map(Path, argv):
+        library = bench.find_named(stage, 'libpinyin.so')
+        if library is None:
+            fail(f'callgrind-control: no libpinyin.so in {stage}')
+        libraries.append(library)
+    info = bench.capture(['readelf', '--debug-dump=info', libraries[0]], env=env)
+    write(info.stderr, error=True)
+    if info.status:
+        raise Finished(info.status)
+    units = info.stdout.count(b'Compilation Unit @')
+    if not units:
+        fail('callgrind-control: profiled library has no DWARF compilation units')
+    emit(f'profiled DWARF compilation units: {units}')
+    from . import neutrality
+    status, report = neutrality.compare(*libraries)
+    write(report.encode('utf-8'))
+    return status
+
+
+def callgrind_differential(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Instruction-level differential for the steady keystroke cycle: stages 0 through 6.
+
+    `--cell CELL` alone selects the cell (default: the host cell) that `measure-prepare callgrind
+    --cells CELL` prepared.
+    """
+    cell_name = host_cell()
+    if len(argv) == 2 and argv[0] == '--cell':
+        cell_name, argv = argv[1], []
+        if cell_name not in CELLS:
+            fail(f'--cell must be one of: {" ".join(CELLS)}', 2)
+    if argv:
+        from . import sentence
+        return sentence.run(argv, env)
+    label = CALLGRIND
+    env = dict(env)
+    out = Path(env['CG_OUT']) if env.get('CG_OUT') else prepare.results(env, 'callgrind-differential')
+    cpu = setting(env, 'PERF_CPU', '0')
+    # Stage 4 and 5 capture size. Callgrind is deterministic, so this is chosen for a workable runtime
+    # under a ~50x interpreter, not for noise.
+    cg_cycles, cg_repeats = setting(env, 'CG_CYCLES', '4'), setting(env, 'CG_REPEATS', '1')
+    # Stage 6 uses the cross-host record's own protocol, deliberately NOT the callgrind pass's cycle
+    # count: the timing ratio has to be comparable to every previous steady-cycle record.
+    t_cycles, t_repeats = setting(env, 'T_CYCLES', '8'), setting(env, 'T_REPEATS', '1')
+    cg_rounds = bench.count(label, env, 'CG_ROUNDS', '2')
+    t_runs = bench.count(label, env, 'T_RUNS', '20')
+    hw_runs = bench.count(label, env, 'HW_RUNS', '10')
+    try:
+        out.mkdir(parents=True)
+    except OSError as error:
+        fail(f"mkdir: cannot create directory '{out}': {error.strerror}")
+
+    # A CG_* setting replaces its prepared input, which then need not exist.
+    pin_so, ox_so, data_setting = (env.get(name) for name in ('CG_PIN_SO', 'CG_OX_SO', 'CG_DATA'))
+    needed = frozenset(key for key, setting in (('lp', pin_so), ('ox', ox_so), ('nodebug', ox_so))
+                       if not setting)
+    found = libraries(env, cell_name, keys=needed, data=not data_setting)
+    lp = Path(pin_so) if pin_so else found['lp']
+    if ox_so:
+        ox = nodebug = Path(ox_so)
+    else:
+        ox, nodebug = found['ox'], found['nodebug']
+    data = Path(data_setting) if data_setting else data_dir(env, cell_name)
+    pin_prefix = lp.parent.parent if pin_so else prepare.pin_prefix(env, cell_name)
+    harness = prepare.harness_path(env)
+    worker = Bench(label, env, harness, cpu, cell=cell_name)
+    arms = {'lp': Arm(f'libpinyin-{cell_name}', lp, data, lp.parent),
+            'ox': Arm(f'oxpinyin-{cell_name}', ox, data, ox.parent),
+            'nodebug': Arm('oxpinyin-nodebug', nodebug, data, nodebug.parent)}
+    for key, arm in arms.items():
+        worker.standalone('pin' if key == 'lp' else 'subject', arm)
+    pair = [(arms['lp'], 'speed'), (arms['ox'], 'speed')]
+
+    # 0. environment
+    bench.tee(out / 'environment.txt',
+              environment_table([lp, ox, nodebug], pin_prefix, data, env))
+
+    # 1. collection anchors
+    code, text = anchors_table(harness)
+    bench.tee(out / 'anchors.txt', text)
+    if code:
+        raise Finished(code)
+
+    # 2. Debug-info neutrality requires identical .text bytes in the profiled and timed libraries.
+    from . import neutrality
+    code, report = neutrality.compare(ox, nodebug)
+    bench.tee(out / 'debuginfo-neutrality.txt', '=== debug-info neutrality ===\n' + report)
+    if code:
+        raise Finished(code)
+
+    # 3. valgrind's malloc interception
+    bench.tee(out / 'malloc-interception.txt', malloc_interception(worker, arms['ox'], out))
+
+    # 4. the differential: both cells, two rounds each, allocator intercepted as in every valgrind run.
+    # Callgrind is deterministic; the second round exists to demonstrate that (a divergence over 0.1%
+    # between rounds is reported, not averaged). Serial: every run pins to the one PERF_CPU the caller
+    # chose, so concurrent runs would only share it.
+    for number in range(1, cg_rounds + 1):
+        for arm, mode in pair:
+            emit(f'--- callgrind: {arm.label} round {number} ---')
+            profile = out / f'callgrind.{arm.label}.r{number}.out'
+            stem = out / f'cg.{arm.label}.r{number}'
+            Path(f'{stem}.stdout').write_bytes(b'')
+            Path(f'{stem}.stderr').write_bytes(b'')
+            done = worker.launch(arm, mode, cg_cycles, repeats=cg_repeats, diagnostics=Path(f'{stem}.stderr'),
+                                 prefix=[*CALLGRIND_OPTIONS, f'--callgrind-out-file={profile}'])
+            Path(f'{stem}.stdout').write_bytes(done.stdout)
+            Path(f'{stem}.stderr').write_bytes(done.stderr)
+            if done.status:
+                raise Finished(done.status)
+            # A harness built without <valgrind/callgrind.h> never switches collection on.
+            try:
+                counted = instructions.callgrind_costs(profile.read_text(errors='replace'), arm.so)['totals']['Ir']
+            except (OSError, ValueError):
+                counted = 0
+            if counted <= 0:
+                fail(f'fatal: {profile.name} counts no instructions; the anchor client requests did not run')
+    annotate(out)
+
+    # 5. hardware instruction counters: the interception distortion. Callgrind's Ir counts allocation
+    # against valgrind's simplified allocator, an understatement whose size differs per engine and so
+    # biases the Ir ratio. The Rust driver brackets the same steady cycles with a PERF_COUNT_HW_INSTRUCTIONS
+    # counter (exclude_kernel) in native processes, real glibc malloc included; the ratio of the two
+    # engines' medians is the hardware counterpart of the Ir ratio, and the difference is the measured
+    # distortion. Needs a host whose perf_event_paranoid, SELinux and seccomp settings permit perf_event_open.
+    hardware = out / 'hw-instructions.jsonl'
+    hardware.write_bytes(b'')
+    bench.round_robin(hw_runs, pair, lambda arm, mode: worker.sample(
+        arm, mode, hardware, out / 'hw.err', t_cycles, repeats=t_repeats, extra={'PERF_HW': 'instructions'}))
+    bench.tee(out / 'hw-instructions.md', reports.hardware_instructions(hardware))
+
+    # 6. wall-clock timing, same host, same session. The record's protocol, so this ratio is comparable
+    # to every previous steady-cycle capture: 8 cycles, 20 runs per cell, cells interleaved round-robin,
+    # pinned. Serial: a timed sample is only the arm's if nothing runs beside it.
+    speed = out / 'speed.jsonl'
+    speed.write_bytes(b'')
+    emit(f'--- timing: {t_runs} alternating runs x {t_cycles} cycles x {t_repeats} passes ---')
+    bench.round_robin(t_runs, [(arms['lp'], 'speed'), (arms['nodebug'], 'speed')], lambda arm, mode: worker.sample(
+        arm, mode, speed, out / 'speed.err', t_cycles, repeats=t_repeats))
+    code, text = bench.report('tools/bisection/perf-ci.py',
+                              [str(speed), '--metric', 'steady', '--metric', 'cold', '--format', 'md'])
+    bench.tee(out / 'timing.md', text)
+    if code:
+        raise Finished(code)
+    emit()
+    emit(f'=== captures written to {out} ===')
+    for name in sorted(os.listdir(out)):
+        emit(name)
+    return 0
+
+
+def system_import_profile(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    """Instruction counts, peak heap and mapped pages for import/save or cold open, pin and subject.
+
+    Usage: PIN-SO OX-SO SYSTEM-DATA-DIR NEW-WORK-DIR [ITERATIONS|--cold-open]
+    [--jobs N]. The
+    collections (pin and ox, each under Callgrind, Massif heap and Massif pages) are
+    independent, so system_import_profile.py runs them in a pool and reports
+    in a fixed order; --jobs 1 runs them one after another.
+    """
+    label = SYSTEM_IMPORT
+    arguments = list(argv)
+    if '--cell' in arguments:
+        # `--cell CELL` replaces PIN-SO OX-SO SYSTEM-DATA-DIR with the arms `measure-prepare callgrind
+        # --cells CELL` staged: the pin, the profiled subject and the pin's data.
+        index = arguments.index('--cell')
+        cell_name = arguments[index + 1] if index + 1 < len(arguments) else ''
+        if cell_name not in CELLS or index != 0:
+            fail(f'--cell CELL must lead the arguments, CELL one of: {" ".join(CELLS)}', 2)
+        found = libraries(env, cell_name)
+        arguments = [str(found['lp']), str(found['ox']), str(data_dir(env, cell_name)), *arguments[2:]]
+    if len(arguments) == 3 or (len(arguments) > 3 and arguments[3] == '--jobs'):
+        arguments.insert(3, str(prepare.results(env, SYSTEM_IMPORT)))
+    for number, name in enumerate(('pin-so', 'ox-so', 'system-data-dir', 'new-output-dir'), 1):
+        if len(arguments) < number or not arguments[number - 1]:
+            fail(f'{label}: {number}: {name}')
+    pin, ox, data = (os.path.realpath(value) for value in arguments[:3])
+    out, rest = arguments[3], arguments[4:]
+    iterations = '1000'
+    if rest and rest[0] not in ('--jobs',):
+        iterations, rest = rest[0], rest[1:]
+    jobs, leftover = [], []
+    while rest:
+        if rest[0] == '--jobs':
+            if len(rest) < 2 or not rest[1]:
+                fail('--jobs needs a count', 2)
+            jobs = ['--jobs', rest[1]]
+            rest = rest[2:]
+        else:
+            leftover.append(rest.pop(0))
+    bench.no_arguments(leftover)
+    try:
+        Path(out).mkdir(parents=True)
+    except OSError as error:
+        fail(f"mkdir: cannot create directory '{out}': {error.strerror}")
+    out = os.path.realpath(out)
+    bench.build_harness(Path(out) / 'driver', binary='system-import-profile', env=env)
+    relative = 'tools/bisection/system_import_profile.py'
+    module = bench.script(relative)
+    try:
+        with bench.as_script(bench.ROOT / relative):
+            return module.main([*jobs, '--', pin, ox, data, out, iterations]) or 0
+    except SystemExit as stop:
+        # The collections' own cancellation message, then the status a signalled run has: the shell
+        # script died of the signal that stopped its children.
+        if not (slot.CANCELLED.is_set() and isinstance(stop.code, str)):
+            raise
+        fail(stop.code, slot.cancellation_status())

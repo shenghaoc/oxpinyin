@@ -1,0 +1,10 @@
+Usage:
+  gen_deleted_ngram [OPTION?] - generate deleted n-gram
+
+Help Options:
+  -h, --help                  Show help options
+
+Application Options:
+  --skip-pi-gram-training     skip pi-gram training
+  --deleted-bigram-file       deleted bi-gram file
+

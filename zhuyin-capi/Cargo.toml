@@ -1,0 +1,104 @@
+[package]
+name = "oxzhuyin-capi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+include = [
+    "/LICENSE",
+    "/src/**",
+    "/build.rs",
+    "/libzhuyin.alloc",
+    "/libzhuyin.pc.in",
+    "/libzhuyin.ver",
+    "/novel_types.h",
+    "/pinyin_custom2.h",
+    "/zhuyin.h",
+    "/zhuyin_custom2.h",
+]
+description = "The libzhuyin C ABI implementation, with libzhuyin.so.15 release packages on Linux. The Rust interface is unstable."
+keywords = ["libzhuyin", "zhuyin", "bopomofo", "input-method", "ffi"]
+
+# The ABI namespace mirrors upstream: libzhuyin is a SEPARATE shared object
+# from libpinyin (upstream builds it from `$(pinyin_SOURCES) zhuyin.cpp`
+# with its own version script, src/Makefile.am:108-125 at the pin
+# 0c5e80e1). The INSTALLED file is `libzhuyin.so.15` via
+# [package.metadata.capi.library].
+[lib]
+# Plain Cargo builds produce the C ABI cdylib and the rlib for in-tree Rust callers.
+# cargo-c selects its own crate types.
+crate-type = ["cdylib", "rlib"]
+doctest = false
+
+[features]
+# Declared so cargo-c identifies this crate as the workspace's zhuyin C-API
+# export target (the same mechanism oxpinyin-capi uses).
+capi = []
+# See docs/architecture.md#backend-selection. Each peer feature forwards to
+# oxpinyin. The peer features stay on this crate because build.rs reads
+# `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
+# because `cargo cinstall --features <peer>` names them. `just packaging
+# install` writes the matching `database_format` into libzhuyin.pc.
+default = ["tkrzw"]
+kyotocabinet = ["oxpinyin/kyotocabinet"]
+bdb = ["oxpinyin/bdb"]
+tkrzw = ["oxpinyin/tkrzw"]
+
+[lints]
+workspace = true
+
+[dependencies]
+oxpinyin.workspace = true
+glib-sys.workspace = true
+
+[dev-dependencies]
+# Dev-only: shared-shape cases in the crate tests.
+rstest.workspace = true
+# Dev-only: scratch dirs for the test fixtures. Never a dependency of the
+# C ABI itself.
+tempfile.workspace = true
+# Dev-only: the boundary test that cuts a save lowers RLIMIT_FSIZE.
+libc.workspace = true
+# Dev-only: fixture operations and copy faults for the C tests.
+oxpinyin = { workspace = true, features = ["test-hooks"] }
+
+
+# cargo-c packaging metadata. See docs/packaging.md for the rationale and the
+# upstream libzhuyin.pc.in this mirrors.
+[package.metadata.capi.header]
+# The checked-in zhuyin.h ships verbatim; do not regenerate it.
+generation = false
+# The real libzhuyin installs its header under the same version-stamped
+# subdirectory as libpinyin (/usr/include/libpinyin-2.11.92/zhuyin.h).
+# zhuyin.h includes novel_types.h and zhuyin_custom2.h; zhuyin_custom2.h
+# includes pinyin_custom2.h, so all three shipped companions close the set.
+subdirectory = "libpinyin-2.11.92"
+
+[package.metadata.capi.install.include]
+asset = [
+    { from = "zhuyin.h", to = "libpinyin-2.11.92" },
+    { from = "zhuyin_custom2.h", to = "libpinyin-2.11.92" },
+    # zhuyin.h -> novel_types.h; zhuyin_custom2.h -> pinyin_custom2.h. Both
+    # companions ship so the header resolves standalone (the drop-in installs
+    # the closed include set, matching upstream's libzhuyin install tree).
+    { from = "novel_types.h", to = "libpinyin-2.11.92" },
+    { from = "pinyin_custom2.h", to = "libpinyin-2.11.92" },
+]
+
+[package.metadata.capi.pkg_config]
+name = "libzhuyin"
+filename = "libzhuyin"
+description = "Library to deal with zhuyin"
+version = "2.11.92"
+requires = "glib-2.0"
+# `just packaging install` owns the complete .pc and overwrites cargo-c's file.
+# See docs/findings/installed-naming.md.
+
+[package.metadata.capi.library]
+# The INSTALLED artifact is libzhuyin.so.15, matching upstream's libtool
+# -version-info 15:0 (same ABI current as libpinyin — both read
+# @LT_VERSION_INFO@ in src/Makefile.am:118-121 at the pin).
+name = "zhuyin"
+version = "15.0.0"
+versioning = true

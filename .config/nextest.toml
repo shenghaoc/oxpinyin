@@ -1,0 +1,46 @@
+nextest-version = "0.9.115"
+
+# Native nextest configuration. Profiles are explicit; local and CI share
+# the base behaviour and differ only in the measured process budget.
+[profile.default]
+retries = 0
+fail-fast = false
+test-threads = "num-cpus"
+# Mark a test SLOW at 60 s and end it at 120 s. The slowest normal test
+# takes about 8 s (Windows). Nextest ends the test's whole process group on
+# Unix (SIGTERM, then SIGKILL after the grace period) and its job object on
+# Windows, so a re-executed child test ends with its parent. This is the
+# suite's only limit on a hung test; the test helpers set none.
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[profile.local]
+inherits = "default"
+
+[profile.ci]
+inherits = "default"
+# GitHub-hosted native jobs expose four vCPUs. Keep this explicit rather
+# than copying the local machine's CPU count into CI.
+test-threads = 4
+
+# Storage integration cases create, reopen and recover real backend files.
+# Serialize that subset; independent unit tests stay in the default pool.
+#
+# A test joins a set by the module it lives in. A test that creates,
+# reopens or recovers real backend files lives in a module named
+# `backend_files`; it runs in the store-backend group. A test that reads
+# real pin data (a libpinyin data tree or a pin-built user profile) lives
+# in a module named `pin_data`; it runs in the store-backend group and also
+# takes the whole invocation's test budget. The filters match those
+# complete module-name segments anywhere in a test's path.
+[test-groups.store-backend]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'test(/(^|::)(backend_files|pin_data)::/)'
+test-group = 'store-backend'
+
+[[profile.default.overrides]]
+filter = 'test(/(^|::)pin_data::/)'
+test-group = 'store-backend'
+threads-required = "num-test-threads"
+

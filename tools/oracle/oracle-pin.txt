@@ -1,0 +1,43 @@
+schema=oracle-provisioning-pin-v6
+# Exact on purpose (#1074): every pin below identifies the reference libpinyin and its inputs, not a tool version a newer one could replace.
+# Authoritative pin identity for the locally built oracle.
+# The builder and host model fetcher both read the model digest here.
+# This file is a recipe input. A change gives a new recipe_sha256 and
+# invalidates prefixes from the old recipe.
+#
+# v2 (2026-09-06 UTC): drops libpinyin_archive_sha256. libpinyin is now
+# verified by commit SHA (git fetch --depth=1); no release tag carries
+# the pinned version, so there is no archive to hash. The two upstreams
+# are therefore verified asymmetrically — libpinyin by commit identity,
+# ibus-libpinyin still by its tagged archive's SHA-256 — forced until
+# ibus moves to commit verification too (follow-up: #369).
+# v3 (2026-09-07 UTC): drops ibus_libpinyin_archive_sha256 (#369). Both
+# upstreams are now verified symmetrically by commit SHA (git fetch
+# --depth=1, checked by git rev-parse). The 1.16.5 tag is retained as
+# the release-line name only; the tree built is the commit.
+# libtkrzw comes from unpinned Debian testing. Installed versions and build
+# outputs are recorded per prefix, not frozen here. The component inventory
+# and health probe live in tools/oracle/version-manifest.json.
+libpinyin_tag=2.11.92
+libpinyin_commit=074a2219c90feaf962d0d24f034514033ece5f99
+# libpinyin: verified by commit SHA (git fetch --depth=1); no release tag
+# carries 2.11.92 yet, so there is no archive hash to mirror.
+ibus_libpinyin_tag=1.16.5
+ibus_libpinyin_commit=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
+# ibus-libpinyin: verified by commit SHA (git fetch --depth=1); the
+# lightweight tag 1.16.5 points at this commit upstream.
+model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
+# dbm is the builder's --dbm default, the reference cell; bdb and kc stay
+# selectable. Generated output digests are recorded per build.
+dbm=Tkrzw
+#
+# Build outputs are provenance, not pinned inputs. Each prefix records its
+# pin commits, recipe SHA-256, installed versions, library hashes and generated
+# data manifest hashes. check-reproducible compares two same-environment builds.
+# Frozen contract references and package-data hashes are unchanged.
+# source_date_epoch is the pinned libpinyin commit's time. The builder takes
+# SOURCE_DATE_EPOCH from git log of the verified checkout, not from this field.
+base_image=debian:testing
+source_date_epoch=1788427579
+platform=linux/amd64
+platform_linux_arm64=linux/arm64

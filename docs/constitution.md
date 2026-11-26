@@ -1,0 +1,78 @@
+# Constitution
+
+oxpinyin implements libpinyin and libzhuyin in native Rust.
+It preserves the pin's outward behaviour at the C API and in persistent data.
+The [roadmap](../ROADMAP.md) records the stages and their status.
+
+1. **Broad appeal.** A niche feature is not added at a cost to all users.
+2. **Binary size.** A change that affects the shipping libraries records their stripped file sizes.
+   The PR reports any increase over the base.
+   Minor decreases need no report.
+   Documentation-only changes need no size build or report.
+   There is no pin +10% cap.
+   CI reports the sizes for each pull request that can change them.
+   See [shipping-library sizes](packaging.md#shipping-library-sizes).
+3. **No local AI.** oxpinyin has no client neural inference or LLM inference.
+4. **Failure behaviour.** oxpinyin follows the pin's observable failure behaviour.
+   Where the pin asserts or aborts, oxpinyin calls `std::process::abort()` at the corresponding failure point, after the pin's preceding observable work.
+   This may occur in any crate when all affected call paths require termination.
+   Shared code may instead return a typed error when the caller must determine the abort point.
+   `abort()` does not unwind or run destructors.
+   Release builds abort on panic; tests and profiling unwind. `std::process::abort()` therefore ends the process with SIGABRT and runs no destructors in every profile.
+   An unhandled panic in a Rust tool ordinarily exits with status 101; a panic attempting to cross a non-unwinding C ABI boundary aborts.
+   A panic-producing assertion is permitted only where failure is proven unreachable under the applicable preconditions.
+   No abort or panic is introduced where the pin continues or returns an error.
+   Error handling is idiomatic Rust; internal Rust APIs do not all need to return `Result`.
+   Class (b) rulings stay authoritative.
+   The [failure-behaviour rule](findings/compatibility-policy.md#failure-behaviour) gives the details, and the [Rust conventions](rust-conventions.md#panics-and-errors) give the lint expectations.
+5. **Unsafe code.** The target allowlist is:
+   - The `oxpinyin` crate root denies unsafe code. Every top-level module except `input` and `store` forbids it at its declaration.
+   - In `oxpinyin::input`, `native` owns the library's libc, GLib and mapping operations. The test-only `config::tests::numeric_locale` module queries and restores the process locale.
+   - The store exceptions are scoped to `store::bdb::ffi`, `store::kyotocabinet::bridge`, `store::kyotocabinet::ffi` and `store::tkrzw::bridge`.
+   - Public C ABI marshalling stays in `oxpinyin-capi` and `oxzhuyin-capi`.
+   - The private `oxpinyin-tool-support` crate denies unsafe code and scopes its exceptions to native utility I/O and the two C-ABI drivers. The REPL forbids unsafe code. The utilities forbid it outside the three standalone segmentation entry points and their binary calls. Those scoped exceptions state and uphold the C stdout close contract.
+   - Each scoped unsafe exception states its reason. Every unsafe block has a `// SAFETY:` comment.
+
+   `undocumented_unsafe_blocks` requires a safety comment on every unsafe block.
+   `missing_safety_doc` requires a `# Safety` section on every public unsafe function or method.
+   CI enforces these lints.
+6. **Determinism.** On each host, output is a pure function of input, user state and configuration.
+   Results that depend on the host or its libc are recorded as platform-dependent native-host behaviour.
+   See the [compatibility policy](findings/compatibility-policy.md#native-rust-implementation).
+7. **Dependencies.** oxpinyin depends on no other pinyin or IME crate and uses no transpiler dumps.
+   Pin-built libpinyin is a test and migration subject; shipping code does not link to it.
+8. **Uncertainty.** A doubt goes to the maintainer; it is not settled by improvisation.
+9. **Pin-derived implementation.** oxpinyin reproduces libpinyin's defined product behaviour and external contracts, including observable defects, subject to explicit compatibility rulings.
+   It implements that behaviour in idiomatic, safe Rust, free to replace internal representations, algorithms, ownership and allocation strategies.
+   It adds no unrelated capability and no independently maintained parallel product model; divergence starts at Stage 3.
+   External libraries are used according to their documented contracts, never reimplemented or emulated; where the pin breaks a callee's contract, the compatibility policy's [API-misuse](findings/compatibility-policy.md#external-api-misuse) and [algorithm-precondition](findings/compatibility-policy.md#algorithm-precondition-violations) rulings govern, not the resulting undefined behaviour.
+   The boundaries are the database backends, file I/O and the C API that clients such as ibus-libpinyin call; there, compatibility is maximal and unsafe code is confined (§5).
+   Details: [source policy, "Internal implementation and performance"](source-policy.md#internal-implementation-and-performance).
+
+## External interfaces
+
+Rust interfaces are not a compatibility boundary.
+The tools are also drop-in replacements for the pin's utilities within the [platform scope](source-policy.md#platform-scope-of-pinned-behaviour).
+They preserve the pin's binary names, options, help, messages, inputs and outputs.
+Their K-mixture working model uses the pin's backend DBM through `oxpinyin`.
+The `scripts2/` Python build generators are outside this tool scope.
+
+> The only supported external library interfaces are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
+>
+> All native Rust interfaces are implementation details. No external Rust consumers are expected or supported, and there is currently no intention to stabilize a native Rust API.
+>
+> Rust interfaces may be changed incompatibly as required by the implementation. Such changes require no deprecation period, backwards-compatible adapter, preservation of object safety, or accommodation of hypothetical downstream Rust implementations. All affected in-tree callers must be updated in the same change.
+>
+> The C APIs and ABIs, their observable behavior, ownership and lifetime rules, required diagnostics, and compatible persistent data are governed by the pinned-compatibility policy. Safety, determinism, portability, and performance requirements apply.
+
+A Rust interface change updates all affected in-tree callers in the same change: crates, tools, tests, benches, examples and fuzz targets.
+A change to a Rust public item is ordinary internal work and needs no interface-change approval.
+This includes changes to traits, associated types, generic parameters, object safety, error types, visibility and module layout.
+
+Rust public visibility, published crate names and doc comments create no stability obligation.
+No wrapper, old constructor, defaulted trait method, object-safe shape or `dyn` boundary is retained solely for Rust signature compatibility.
+A stable native Rust API requires a separate explicit maintainer ruling.
+
+Oracle inputs, goldens, coefficients, data formats and the C compatibility contract follow the pin; a change to them goes through the [goldens and pins](runbooks/goldens-and-pins.md) procedure.
+The SPECs and fixtures bind supported external behaviour and approved compatibility decisions, not Rust signatures, implementation designs or authored test scenarios.
+The Rust surface does not justify a divergence from the pin, and it does not excuse skipping verification that the C-facing contract requires.

@@ -1,0 +1,24 @@
+name: 'contract-data'
+description: |-
+  Provide the pinned libpinyin-data package at target/contract-data and set the cache root
+  OXPINYIN_CACHE to target for the rest of the job. The tkrzw-only package tests of
+  oxpinyin and the two C API crates read the package there
+  (just fetch-contract-data). Restores it from the cache first, so a run needs
+  snapshot.debian.org only when the pin changes. Call this after checkout and the bootstrap
+  action with `uv: 'true'`.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the pinned data
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/contract-data
+        key: contract-data-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/oracle/libpinyin-data.json') }}
+    - name: Fetch and verify the pinned data
+      shell: bash
+      # GITHUB_WORKSPACE is the checkout as this job sees it.
+      run: |
+        export OXPINYIN_CACHE="$GITHUB_WORKSPACE/target"
+        echo "OXPINYIN_CACHE=$OXPINYIN_CACHE" >> "$GITHUB_ENV"
+        uv run --managed-python python -X utf8 -m tools.dev.contract_data

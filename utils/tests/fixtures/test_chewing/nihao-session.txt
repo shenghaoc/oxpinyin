@@ -1,0 +1,8 @@
+你好
+auxiliary text:|ㄋㄧˇ ㄏㄠˇ 
+auxiliary text:ㄋ|ㄧˇ ㄏㄠˇ 
+auxiliary text:ㄋㄧ|ˇ ㄏㄠˇ 
+auxiliary text:ㄋㄧˇ |ㄏㄠˇ 
+auxiliary text:ㄋㄧˇ ㄏ|ㄠˇ 
+auxiliary text:ㄋㄧˇ ㄏㄠ|ˇ 
+auxiliary text:ㄋㄧˇ ㄏㄠˇ |

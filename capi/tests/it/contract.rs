@@ -1,0 +1,157 @@
+//! Scheme-setter contract tests for the pinned oracle's abort, no-op and
+//! partial-update cases.
+//!
+//! The pin-built `.so` SIGABRTs on double 30, zhuyin 7 and out-of-enum,
+//! and full-pinyin out-of-enum, and so does this facade (the contract-diff cases hold the comparison); the death
+//! tests below check the facade side. An out-of-enum double-pinyin scheme
+//! value clears the active scheme's fallback table and returns `true`.
+
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
+use crate::support::{TempUserDir, assert_aborts, cstr, open};
+
+use oxpinyin_capi::config::{
+    pinyin_set_double_pinyin_scheme, pinyin_set_full_pinyin_scheme, pinyin_set_zhuyin_scheme,
+};
+use oxpinyin_capi::parse::pinyin_parse_more_double_pinyins;
+use oxpinyin_capi::types::GChar;
+
+use std::os::raw::c_int;
+
+/// `DOUBLE_PINYIN_CUSTOMIZED`: upstream aborts inside
+/// `DoublePinyinParser2::set_scheme` (`pinyin_parser2.cpp:611`), and the
+/// facade aborts the process too.
+#[test]
+fn double_customized_aborts() {
+    assert_aborts("contract::double_customized_aborts", || {
+        let user_dir = TempUserDir::new("contract-double-30");
+        let (context, _instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        unsafe { pinyin_set_double_pinyin_scheme(context, 30) };
+    });
+}
+
+/// Out-of-enum double values (negatives, 0, 7–29, 31+): upstream clears
+/// `m_fallback_table` unconditionally (`pinyin_parser2.cpp:580`),
+/// returns `false` from the parser (`pinyin_parser2.cpp:614`), and the
+/// API wrapper answers `true` regardless (`pinyin.cpp:1155–1159`).
+/// oxpinyin reproduces the half-mutation: `true`, fallback cleared,
+/// shengmu/yunmu tables unchanged.
+#[test]
+fn double_out_of_enum_reproduces_the_half_mutation() {
+    let user_dir = TempUserDir::new("contract-double-enum");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // ZRM is the fallback-bearing scheme: "aa" resolves through its
+    // fallback table ("aa" -> a, parsed_len 2).
+    assert!(unsafe { pinyin_set_double_pinyin_scheme(context, 1) });
+    let aa = cstr("aa");
+    assert_eq!(
+        unsafe { pinyin_parse_more_double_pinyins(instance, aa.as_ptr()) },
+        2
+    );
+
+    // A non-fallback input still works after the fallback is cleared:
+    // "ni" (n+i) uses the shengmu/yunmu tables, not the fallback.
+    let ni = cstr("ni");
+
+    for bad in [0, 7, 29, 31, 100, -1] {
+        // Re-set ZRM so the fallback is live again before each probe.
+        assert!(unsafe { pinyin_set_double_pinyin_scheme(context, 1) });
+        assert_eq!(
+            unsafe { pinyin_parse_more_double_pinyins(instance, aa.as_ptr()) },
+            2,
+            "ZRM fallback must be live before the out-of-enum call ({bad})"
+        );
+
+        // The half-mutation: returns `true` (the upstream wrapper's lie).
+        assert!(
+            unsafe { pinyin_set_double_pinyin_scheme(context, c_int::from(bad)) },
+            "double scheme {bad} must answer true (upstream's wrapper lie)"
+        );
+
+        // The fallback is now cleared — "aa" no longer resolves.
+        assert_eq!(
+            unsafe { pinyin_parse_more_double_pinyins(instance, aa.as_ptr()) },
+            0,
+            "fallback must be cleared after out-of-enum {bad}"
+        );
+
+        // The shengmu/yunmu tables are intact — "ni" still parses.
+        assert_eq!(
+            unsafe { pinyin_parse_more_double_pinyins(instance, ni.as_ptr()) },
+            2,
+            "shengmu/yunmu must survive the out-of-enum {bad}"
+        );
+    }
+
+    // A later valid set restores the fallback.
+    assert!(unsafe { pinyin_set_double_pinyin_scheme(context, 1) });
+    assert_eq!(
+        unsafe { pinyin_parse_more_double_pinyins(instance, aa.as_ptr()) },
+        2,
+        "ZRM fallback must be restored after a valid set"
+    );
+
+    unsafe { oxpinyin_capi::instance::pinyin_free_instance(instance) };
+    unsafe { oxpinyin_capi::context::pinyin_fini(context) };
+}
+
+/// `ZHUYIN_STANDARD_DVORAK`: upstream routes 7 into
+/// `ZhuyinSimpleParser2::set_scheme`, which assigns the dvorak tables
+/// and falls through into `default: abort()`
+/// (`zhuyin_parser2.cpp:291-295`); the facade aborts the process too.
+#[test]
+fn zhuyin_standard_dvorak_aborts() {
+    assert_aborts("contract::zhuyin_standard_dvorak_aborts", || {
+        let user_dir = TempUserDir::new("contract-zhuyin-7");
+        let (context, _instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        unsafe { pinyin_set_zhuyin_scheme(context, 7) };
+    });
+}
+
+/// Out-of-enum zhuyin values: upstream aborts at the API layer's
+/// `default:` (`pinyin.cpp:1189`), and so does the facade.
+#[test]
+fn zhuyin_out_of_enum_aborts() {
+    assert_aborts("contract::zhuyin_out_of_enum_aborts", || {
+        let user_dir = TempUserDir::new("contract-zhuyin-enum");
+        let (context, _instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        unsafe { pinyin_set_zhuyin_scheme(context, 10) };
+    });
+}
+
+/// Out-of-enum full-pinyin values: upstream aborts inside
+/// `FullPinyinParser2::set_scheme` (`pinyin_parser2.cpp:398`), and so does
+/// the facade.
+#[test]
+fn full_pinyin_out_of_enum_aborts() {
+    assert_aborts("contract::full_pinyin_out_of_enum_aborts", || {
+        let user_dir = TempUserDir::new("contract-full-enum");
+        let (context, _instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        unsafe { pinyin_set_full_pinyin_scheme(context, 0) };
+    });
+}
+
+/// The full setter contract for every implemented scheme value: 1/2/3
+/// succeed and stick on both parsers of the pinned oracle's surface.
+#[test]
+fn implemented_scheme_values_stick() {
+    let user_dir = TempUserDir::new("contract-stick");
+    let (context, _instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    for scheme in 1..=3 {
+        assert!(unsafe { pinyin_set_full_pinyin_scheme(context, scheme) });
+    }
+    for scheme in 1..=6 {
+        assert!(unsafe { pinyin_set_double_pinyin_scheme(context, scheme) });
+    }
+    for scheme in [1, 2, 3, 4, 5, 6, 8, 9] {
+        assert!(unsafe { pinyin_set_zhuyin_scheme(context, scheme) });
+    }
+
+    let _: *const GChar = std::ptr::null();
+    unsafe { oxpinyin_capi::context::pinyin_fini(context) };
+}

@@ -1,0 +1,9 @@
+Usage:
+  import_k_mixture_model [OPTION?] - import k mixture model
+
+Help Options:
+  -h, --help                 Show help options
+
+Application Options:
+  --k-mixture-model-file     k mixture model file
+

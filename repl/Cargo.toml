@@ -1,0 +1,31 @@
+[package]
+name = "oxpinyin-repl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Nonshipping interactive access to oxpinyin's parser, lookup and C facades"
+
+[lints]
+workspace = true
+
+[features]
+default = ["tkrzw"]
+tkrzw = ["oxpinyin-tool-support/tkrzw", "oxpinyin-utils/tkrzw", "oxpinyin/tkrzw"]
+bdb = ["oxpinyin-tool-support/bdb", "oxpinyin-utils/bdb", "oxpinyin/bdb"]
+kyotocabinet = ["oxpinyin-tool-support/kyotocabinet", "oxpinyin-utils/kyotocabinet", "oxpinyin/kyotocabinet"]
+
+[dependencies]
+oxpinyin-tool-support = { path = "../tool-support", default-features = false }
+oxpinyin-utils = { path = "../utils", version = "=0.1.0-alpha.2", default-features = false }
+oxpinyin = { workspace = true }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+assert_fs.workspace = true
+regex.workspace = true
+rstest.workspace = true
+sha2.workspace = true
+tempfile.workspace = true

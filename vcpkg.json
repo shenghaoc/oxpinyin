@@ -1,0 +1,8 @@
+{
+  "name": "oxpinyin",
+  "version-string": "0",
+  "dependencies": [
+    "glib",
+    "pkgconf"
+  ]
+}

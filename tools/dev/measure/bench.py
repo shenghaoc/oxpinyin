@@ -1,0 +1,440 @@
+"""Shared services for the measurement and profile runners (#1290).
+
+The shell runners each repeated the same machinery around the `bisect --perf`
+harness. It lives here once: refusing a count that is not a plain decimal, the
+libtkrzw runtime
+check on every object a worker opens, building the harness, launching a measured
+worker pinned to a CPU with the object's directory first on the loader path.
+Recipes (recipes.py) compose these.
+
+Measured launches are serial. `round_robin` runs one process at a time and
+interleaves the arms, spreading host drift over all of them. The measurement
+rules in docs/runbooks/benches.md define the host conditions. Standard
+library only.
+"""
+import contextlib
+import dataclasses
+import functools
+import importlib.util
+import io
+import os
+from pathlib import Path
+import re
+import shutil
+import sys
+import time
+import traceback
+import types
+from collections.abc import Callable, Iterator, Mapping, Sequence
+
+from .. import pool, process, slot
+from ..runners import Finished, emit, status as shell_status
+from tools.tkrzw.runtime import RuntimeRefused, check
+
+ROOT = Path(__file__).resolve().parents[3]
+# vcpkg manifest mode (vcpkg.json at the repository root) installs GLib and pkgconf here.
+VCPKG_INSTALLED = ROOT / 'vcpkg_installed/x64-windows'
+BISECT = ROOT / 'tools/bisection'
+DRIVER_PACKAGE = ROOT / 'tools/measurement'
+HARNESS_SOURCE = DRIVER_PACKAGE / 'src/workload.rs'
+MACH_O_MAGIC = (b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xfe\xed\xfa\xce')
+
+
+def fail(message: str = '', code: int = 1):
+    """Stop the run: MESSAGE on stderr when there is one, CODE as the exit status."""
+    if message:
+        emit(message, error=True)
+    raise Finished(code)
+
+
+def setting(env: Mapping[str, str], name: str, default: str) -> str:
+    """The variable's value, or DEFAULT when it is unset or empty (the shell's ${NAME:-DEFAULT})."""
+    return env.get(name) or default
+
+
+class Count(int):
+    """A validated decimal count that prints as it was written.
+
+    Loops see the number; the banners the runners print show the text they were
+    given, so a leading zero (`08`) stays in the line as it always did.
+    """
+
+    def __new__(cls, text: str):
+        count = super().__new__(cls, int(text, 10))
+        count.text = text
+        return count
+
+    def __str__(self) -> str:
+        return self.text
+
+    __repr__ = __str__
+
+
+def decimal_count(label: str, name: str, value: str) -> Count:
+    """Return VALUE as a count; refuse anything but plain decimal digits with status 2.
+
+    A leading zero is decimal (`08` is 8, as `seq` reads it), never octal, and no
+    text is evaluated as an expression, which is what a shell arithmetic loop
+    did with the same value.
+    """
+    if not re.fullmatch('[0-9]+', value):
+        fail(f"{label}: {name} must be a decimal count (got '{value}')", 2)
+    return Count(value)
+
+
+def count(label: str, env: Mapping[str, str], name: str, default: str) -> Count:
+    """The decimal count in env[NAME], or DEFAULT when unset or empty."""
+    return decimal_count(label, name, setting(env, name, default))
+
+
+def no_arguments(argv: Sequence[str]) -> None:
+    """Refuse unexpected options before a worker or output starts."""
+    if argv:
+        fail(f'unknown argument: {argv[0]}', 2)
+
+
+@functools.cache
+def script(relative: str):
+    """Load a repository script by its path below the checkout.
+
+    Scripts with a hyphen in their name cannot be imported; this is how the
+    report tools are reused without a second copy of their logic.
+    """
+    path = ROOT / relative
+    spec = importlib.util.spec_from_file_location(re.sub(r'\W', '_', path.stem), path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def runtime_check(label: str, cell: str, side: str, obj, *, env: Mapping[str, str],
+                  cwd: Path | None = None) -> None:
+    """Refuse OBJ unless every libtkrzw it resolves is the runtime setup verified.
+
+    The check is tools/tkrzw/runtime.py's, run in the
+    environment and directory the worker will have. CELL is advisory; SIDE
+    decides only the diagnostic's wording. A refusal is a failed run.
+    """
+    try:
+        check(cell, label, side, obj, env=dict(env), cwd=cwd)
+    except RuntimeRefused as error:
+        fail('REFUSED: ' + str(error))
+
+
+def native(path: Path) -> bool:
+    """True for an ELF or Mach-O file: only a native executable carries its own libtkrzw dependencies."""
+    try:
+        with open(path, 'rb') as stream:
+            magic = stream.read(4)
+    except OSError:
+        return False
+    return magic == b'\x7fELF' or magic in MACH_O_MAGIC
+
+
+def guard(label: str, cell: str, side: str, obj, command: Sequence, *, env: Mapping[str, str],
+          cwd: Path | None = None) -> None:
+    """Check OBJ and, when it is native, the executable that will open it.
+
+    A dlopen subject and a directly linked worker can each bring libtkrzw. A
+    profiler or shell wrapper in front of the worker is the executable checked
+    here; the subject it profiles is OBJ.
+    """
+    runtime_check(label, cell, side, obj, env=env, cwd=cwd)
+    executable = shutil.which(str(command[0]), path=env.get('PATH')) if command else None
+    if executable and executable != str(obj) and native(Path(executable)):
+        runtime_check(label, cell, side, executable, env=env, cwd=cwd)
+
+
+def loader_path(directory, inherited: str | None) -> str:
+    """The object's directory first, then the inherited LD_LIBRARY_PATH when it has one."""
+    return str(directory) + (':' + inherited if inherited else '')
+
+
+def pinned(command: Sequence, cpu) -> list[str]:
+    """Launch COMMAND on the selected CPU."""
+    return ['taskset', '-c', str(cpu), *map(str, command)]
+
+
+def find_named(root, name: str) -> Path | None:
+    """The first entry named NAME below ROOT that is a file or a symlink, else None.
+
+    The equivalent of `find ROOT -name NAME ( -type f -o -type l ) -print -quit`,
+    visiting entries in sorted order so the answer
+    does not depend on the filesystem. A missing ROOT has none.
+    """
+    try:
+        entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    except OSError:
+        return None
+    for entry in entries:
+        directory = entry.is_dir(follow_symlinks=False)
+        if entry.name == name and (entry.is_symlink() or entry.is_file(follow_symlinks=False)):
+            return Path(entry.path)
+        if directory:
+            found = find_named(entry.path, name)
+            if found is not None:
+                return found
+    return None
+
+
+def utc_now() -> str:
+    """The time as `date -u +%Y-%m-%dT%H:%M:%SZ` prints it."""
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def append(path, data: bytes) -> None:
+    """Append DATA to PATH, creating it: the `>>` redirection of a worker's output."""
+    with open(path, 'ab') as stream:
+        stream.write(data)
+
+
+def tee(path, text: str) -> None:
+    """Print TEXT and keep it in PATH: the `{ …; } | tee PATH` of a runner's identity tables."""
+    sys.stdout.write(text)
+    sys.stdout.flush()
+    Path(path).write_text(text)
+
+
+def capture(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None,
+            merge_stderr: bool = False) -> pool.Completed:
+    """Run COMMAND with its output captured; return Completed(status, stdout, stderr).
+
+    The status is the shell's (128 plus the signal). The command runs in its own
+    process group (a Job Object on Windows) through pool.py's unit launcher: it is polled for cancellation
+    and reaped, with its descendants, before any error propagates. A command that
+    does not exist raises FileNotFoundError, which the shared failure ladder
+    (runners.guarded) reports with status 127.
+    """
+    return process.capture(command, env=env, cwd=cwd, check=False, stderr=False,
+                           merge_stderr=merge_stderr)
+
+
+def run(command: Sequence, *, env: Mapping[str, str] | None = None, cwd=None, stdout=None,
+        stdin=None, stderr=None, check_status: bool = True, timeout=None) -> int:
+    """Run COMMAND on the console (STDOUT may redirect it) and return the shell status.
+
+    A nonzero status ends the run with that status unless CHECK_STATUS is false.
+    Cancellation terminates and reaps the command's process group (its Job Object on Windows) first.
+    """
+    command = [str(part) for part in command]
+    sys.stdout.flush()
+    sys.stderr.flush()
+    code = shell_status(slot.run_command(command, env=env, cwd=cwd, stdout=stdout,
+                                         stdin=stdin, stderr=stderr, timeout=timeout))
+    if check_status and code:
+        raise Finished(code)
+    return code
+
+
+def harness_build(*, binary='bisect') -> list[str]:
+    """Build the nonshipping Rust driver; build_harness reads its path from the JSON messages."""
+    return ['cargo', 'build', '--locked', '--release', '-p', 'oxpinyin-measurement', '--bin', binary,
+            '--message-format=json-render-diagnostics']
+
+
+def built_executable(messages: str, binary: str) -> Path:
+    """The executable that Cargo's JSON compiler-artifact messages report for the bin target BINARY.
+
+    A build with `CARGO_BUILD_TARGET` or another target directory layout puts it elsewhere than
+    `target/release`, so the path is read, not assumed. No report, or two different paths, fails.
+    """
+    import json
+    found = set()
+    for line in messages.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        target = message.get('target') or {}
+        if (message.get('reason') == 'compiler-artifact' and target.get('name') == binary
+                and 'bin' in target.get('kind', ()) and message.get('executable')):
+            found.add(message['executable'])
+    if not found:
+        fail(f'cargo reported no executable for the {binary} binary')
+    if len(found) > 1:
+        fail(f'cargo reported several executables for the {binary} binary: ' + ', '.join(sorted(found)))
+    return Path(found.pop())
+
+
+def build_harness(output, *, binary='bisect', env=None):
+    """Build once and copy the executable that Cargo reports to OUTPUT."""
+    import shutil
+    import tempfile
+    with tempfile.TemporaryFile() as messages:
+        # Cargo's JSON messages go to the file; its rendered diagnostics stay on the console.
+        run(harness_build(binary=binary), env=env, stdout=messages)
+        messages.seek(0)
+        source = built_executable(messages.read().decode(errors='replace'), binary)
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, output)
+
+
+@dataclasses.dataclass(frozen=True)
+class Arm:
+    """One measured cell: PERF_BACKEND's label, what the harness opens, and where its loader looks first.
+
+    LIBDIR None leaves LD_LIBRARY_PATH as the caller had it.
+    """
+    label: str
+    so: Path
+    data: Path
+    libdir: Path | None = None
+
+
+@dataclasses.dataclass
+class Bench:
+    """How a runner launches the `bisect --perf` harness (one per recipe run).
+
+    LABEL is the legacy script name that still names the runner in every refusal;
+    CELL is the runtime check's advisory backend. Every launch is checked in the
+    environment and directory it will have, and runs alone.
+    """
+    label: str
+    env: Mapping[str, str]
+    harness: Path
+    cpu: str
+    cell: str = 'auto'
+
+    def environment(self, arm: Arm, mode: str, cycles, repeats=None, extra: Mapping[str, str] | None = None) -> dict:
+        """The worker's environment: the caller's plus the loader path and the PERF_* settings."""
+        env = dict(self.env)
+        if arm.libdir is not None:
+            env['LD_LIBRARY_PATH'] = loader_path(arm.libdir, self.env.get('LD_LIBRARY_PATH'))
+        env.update(PERF_BACKEND=arm.label, PERF_MODE=mode, PERF_CYCLES=str(cycles))
+        if repeats is not None:
+            env['PERF_REPEATS'] = str(repeats)
+        env.update(extra or {})
+        return env
+
+    def standalone(self, side: str, arm: Arm, cell: str | None = None) -> None:
+        """Check ARM's object once as SIDE (`pin` or `subject`) with its loader path, before any launch."""
+        env = dict(self.env)
+        if arm.libdir is not None:
+            env['LD_LIBRARY_PATH'] = loader_path(arm.libdir, self.env.get('LD_LIBRARY_PATH'))
+        runtime_check(self.label, cell or self.cell, side, arm.so, env=env)
+
+    def launch(self, arm: Arm, mode: str, cycles, *, repeats=None, extra: Mapping[str, str] | None = None,
+               prefix: Sequence = (), diagnostics=None, timeout=None, deadline=None) -> pool.Completed:
+        """Check ARM, then run the harness on it pinned to the CPU and return what it printed.
+
+        PREFIX is a profiler in front of the harness (valgrind and its options). The shell
+        sent a worker's whole chain, its libtkrzw check included, to the worker's stderr
+        file; DIAGNOSTICS names that file, and a refusal is appended there and not printed.
+        TIMEOUT bounds the worker in seconds: expiry raises subprocess.TimeoutExpired
+        and a failed worker ends the run. DEADLINE is a time.monotonic() instant that
+        replaces TIMEOUT with the time left after the check; with none left the
+        worker is not launched and subprocess.TimeoutExpired is raised.
+        """
+        env = self.environment(arm, mode, cycles, repeats, extra)
+        command = [*map(str, prefix), str(self.harness), '--perf', str(arm.so), str(arm.data)]
+        if diagnostics is None:
+            guard(self.label, self.cell, arm.label, arm.so, command, env=env)
+        else:
+            refusal = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(refusal):
+                    guard(self.label, self.cell, arm.label, arm.so, command, env=env)
+            except Finished:
+                append(diagnostics, refusal.getvalue().encode())
+                raise
+        command = pinned(command, self.cpu)
+        if deadline is not None:
+            import subprocess
+            # The check above took time: the worker gets what the campaign has left, not more.
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                raise subprocess.TimeoutExpired(command, 0)
+        if timeout is None:
+            return capture(command, env=env)
+        return pool.Completed(0, measured_process(command, env=env, timeout=timeout, usage=False)[0], b'')
+
+    def sample(self, arm: Arm, mode: str, out, err, cycles, *, repeats=None, extra: Mapping[str, str] | None = None) -> None:
+        """Launch one worker, appending its stdout to OUT and its stderr to ERR; its failure ends the run.
+
+        Both files exist before the check runs, as the redirections created them.
+        """
+        append(out, b'')
+        append(err, b'')
+        done = self.launch(arm, mode, cycles, repeats=repeats, extra=extra, diagnostics=err)
+        append(out, done.stdout)
+        append(err, done.stderr)
+        if done.status:
+            raise Finished(done.status)
+
+
+def round_robin(rounds: int, order: Sequence[tuple[Arm, str]], step: Callable[[Arm, str], None]) -> None:
+    """Take ROUNDS rounds; each runs STEP(arm, mode) for every entry of ORDER, in order.
+
+    Serial on purpose: every step is a timed or resident-set sample.
+    Interleaving the arms spreads host drift across them.
+    """
+    for _ in range(rounds):
+        for arm, mode in order:
+            step(arm, mode)
+
+
+@contextlib.contextmanager
+def as_script(path) -> Iterator[None]:
+    """Run the body as the process the interpreter would have started for the script at PATH.
+
+    argparse names its program from sys.argv[0], and from `python -m` when __main__
+    has a module spec; a report script run in-process still calls itself by its file name.
+    """
+    argv, main = sys.argv, sys.modules.get('__main__')
+    sys.argv = [str(path)]
+    sys.modules['__main__'] = types.ModuleType('__main__')
+    try:
+        yield
+    finally:
+        sys.argv = argv
+        if main is None:
+            del sys.modules['__main__']
+        else:
+            sys.modules['__main__'] = main
+
+
+def report(relative: str, argv: Sequence[str]) -> tuple[int, str]:
+    """Run a report script's main(ARGV) and return (status, what it printed).
+
+    The failures are the interpreter's own. A script it cannot open is named on
+    stderr and is status 2; a SystemExit message goes to stderr and is status 1;
+    an exception prints its traceback and is status 1. The output stays whole so a
+    caller can write it where the shell redirected it, whatever the status.
+    """
+    path = ROOT / relative
+    try:
+        path.open('rb').close()
+    except OSError as error:
+        emit(f"{sys.executable}: can't open file {str(path)!r}: [Errno {error.errno}] {error.strerror}", error=True)
+        return 2, ''
+    buffer = io.StringIO()
+    code = 0
+    with contextlib.redirect_stdout(buffer), as_script(path):
+        try:
+            code = script(relative).main(list(argv)) or 0
+        except SystemExit as error:
+            code = error.code
+            if isinstance(code, str):
+                emit(code, error=True)
+                code = 1
+            code = code or 0
+        except (Finished, slot.Cancelled, pool.UnitStopped, pool.UnitsCancelled):
+            raise
+        except Exception:
+            traceback.print_exc()
+            code = 1
+    return code, buffer.getvalue()
+
+
+def measured_process(command, *, env, timeout, usage=True):
+    """Capture a serial native child; optionally collect its POSIX wait4 rusage."""
+    import tempfile
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        with slot.supervised(list(map(str, command)), env=dict(env), stdout=output, stderr=errors) as child:
+            code = slot.wait_child(child, timeout=timeout, usage=usage)
+            output.seek(0)
+            errors.seek(0)
+            if code:
+                fail('measurement child failed: ' + errors.read().decode(errors='replace'))
+            return output.read(), getattr(child, 'rusage', None)

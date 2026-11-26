@@ -1,0 +1,19 @@
+//! The shared backend mini fixture.
+use assert_fs::{TempDir, prelude::*};
+use rstest::fixture;
+use std::path::Path;
+
+/// Copy the compiled backend's mini data into a private temporary directory.
+#[fixture]
+pub fn w3() -> TempDir {
+    let directory = TempDir::new().expect("scratch directory");
+    directory
+        .copy_from(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/w3")
+                .join(oxpinyin::__internal::DEFAULT_STORE_EXT),
+            &["**"],
+        )
+        .expect("backend w3 fixture");
+    directory
+}

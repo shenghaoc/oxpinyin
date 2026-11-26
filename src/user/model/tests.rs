@@ -1,0 +1,33 @@
+use crate::vocab::PhraseToken;
+
+use super::*;
+
+fn token(value: u32) -> PhraseToken {
+    value
+}
+
+/// A NULL-user-directory session over the stock layout.
+fn transient() -> UserStore {
+    UserStore::open_transient(
+        crate::user::SystemOriginals::new(
+            Default::default(),
+            crate::data::user_files::UserFileLayout::stock(),
+        ),
+        crate::data::user_files::SystemVersions::for_this_build(7, 14),
+        crate::user::UserConfLaw::Pinyin,
+    )
+    .unwrap()
+}
+
+/// Basis: Rust contract of `UserModel::observe` (the predecessor is the last token, else `SENTENCE_START`).
+#[test]
+fn observe_uses_last_of_history_as_predecessor() {
+    let mut store = transient();
+
+    UserModel::observe(&mut store, &[token(5), token(7)], &token(42)).unwrap();
+    assert_eq!(store.bigram_count(7, 42).unwrap(), 69);
+    assert_eq!(store.bigram_count(5, 42).unwrap(), 0);
+
+    UserModel::observe(&mut store, &[], &token(9)).unwrap();
+    assert_eq!(store.bigram_count(SENTENCE_START, 9).unwrap(), 69);
+}

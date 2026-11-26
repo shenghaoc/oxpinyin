@@ -1,0 +1,20 @@
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+return continued information with length:1
+token:16777218	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+token:16777217	token:33554433	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+return continued information with length:1
+return continued information with length:2
+token:16777219	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+token:33554434	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+token:16777221	

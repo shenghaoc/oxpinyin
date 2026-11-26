@@ -1,0 +1,48 @@
+# `just capture-pin` uses this container with unpinned Debian testing, the pin's
+# libraries from the published oracle image, and the managed Python. It holds no source,
+# no pin build and no model data. The interpreter is linked as python<major.minor>, the name a managed
+# interpreter has: the pin's assertion messages begin with the process name, and the recorded
+# observations hold `python3.14:`. (g++, pkg-config and the GLib headers build the OOM-injection
+# helper of the glib-924 cases; db5.3_dump reads the BDB rows of tools/oracle/pin_capture.py's utility
+# runs). `tools.oracle.image.run_in_capture_image` mounts the checkout and system data
+# (libpinyin-data) read-only at /work and /data, with a writable mount for capture output.
+#
+#   docker build -f tools/oracle/Dockerfile.capture \
+#     --build-arg REFERENCE_IMAGE=ghcr.io/shenghaoc/oxpinyin-oracle:<tag> -t oxpinyin-capture:<tag> .
+ARG REFERENCE_IMAGE
+FROM ${REFERENCE_IMAGE} AS reference
+FROM debian:testing
+COPY tools/oracle/version-manifest.json /usr/local/share/oxpinyin/version-manifest.json
+COPY tools/oracle/versions.py /usr/local/bin/versions.py
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; set --; \
+    if [ -s /run/secrets/cacert ]; then \
+      set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
+    fi; \
+    apt-get "$@" update; \
+    apt-get "$@" install -y --no-install-recommends \
+      ca-certificates curl python3 g++ libc6-dev pkg-config libglib2.0-dev libglib2.0-0t64 libdb5.3t64 db5.3-util libkyotocabinet16v5 libtkrzw1t64; \
+    rm -rf /var/lib/apt/lists/*; \
+    python3 /usr/local/bin/versions.py --print \
+      --manifest /usr/local/share/oxpinyin/version-manifest.json \
+      > /opt/oxpinyin-capture-versions.txt
+# uv and the managed interpreter that .python-version names, as Dockerfile.oracle's deps
+# stage installs them (uv's Docker guide, https://docs.astral.sh/uv/guides/integration/docker/:
+# the uv image pinned to its multi-architecture index digest).
+COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /uvx /bin/
+COPY .python-version /opt/python-pin/.python-version
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; \
+    if [ -s /run/secrets/cacert ]; then \
+      cp /run/secrets/cacert /usr/local/share/ca-certificates/capture-proxy.crt; \
+      update-ca-certificates; \
+      export UV_SYSTEM_CERTS=true; \
+    fi; \
+    uv python install --directory /opt/python-pin; \
+    version=$(sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' /opt/python-pin/.python-version); \
+    test -n "$version"; \
+    ln -s "$(uv python find --managed-python --directory /opt/python-pin)" "/usr/local/bin/python$version"; \
+    rm -rf /opt/uv/cache; \
+    chmod -R a+rX /opt/uv/python
+COPY --from=reference /opt/pinyin-oracle /opt/reference

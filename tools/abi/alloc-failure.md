@@ -1,0 +1,77 @@
+# Allocation-failure audit harness
+
+2026-10-25 UTC. Refs #924; follow-up to merged #1222. Subject baseline
+`27c785c07d30ae4332647d76b106c1bafaf71958`; pin
+`074a2219c90feaf962d0d24f034514033ece5f99`; GLib tag `2.89.4`, commit
+`fa41d356ee4936264c45cf11fa6c2640a89fbdda`. Pin citations below start at
+`src/`. GLib citations start at the root of its repository. These expectations
+were derived from source before the fault-injected pin runs.
+
+This harness injects allocation failures into one public C ABI call at a time.
+Run it against the debug
+libraries that the cell builds. The harness reads no symbols, so a stripped
+library also works:
+
+```sh
+cargo build --locked -p oxpinyin-capi -p oxzhuyin-capi
+just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
+  "$CARGO_TARGET_DIR/debug/liboxpinyin_capi.so" \
+  "$CARGO_TARGET_DIR/debug/liboxzhuyin_capi.so"
+```
+
+Both sides allocate the returned strings and the keyboard vector with the GLib calls of the pin
+([record](../../docs/findings/abi-allocator-pairing.md#5-caller-owned-strings)). The subject
+is therefore judged by the rule of the pin. #1227 (2026-10-31 UTC) retired class (c),
+and with it the calibration, warning, tracked and outputs-unchanged checks of the retired refusal.
+
+The test-only Linux/glibc malloc/realloc interposer is armed only around one
+public API call in a forked child. It fails these allocations:
+
+| Operation | Call | Failed allocation |
+| --- | --- | --- |
+| 1 | `*_get_zhuyin_string`, tone 1 | 1st `malloc` from `g_malloc` (`g_strdup`) |
+| 2, 3, 4 | `*_in_chewing_keyboard`, HSU `c` | 1st, 2nd, 3rd `malloc` from `g_malloc`: the array, `ㄒ`, `ㄕ` |
+| 5 | `*_token_get_nth_pronunciation` | 1st `realloc` from `g_realloc` (GArray growth) |
+| 6 | `pinyin_iterator_get_next_phrase` | 1st `malloc` from `g_malloc` (`g_strjoinv`) |
+| 7 | `pinyin_bigram_iterator_get_next_phrase` (subject only: the seeded user bigram) | 1st `malloc` from `g_malloc` (`g_strdup`) |
+| 8 | `pinyin_get_pinyin_strings` | 1st `malloc` from `g_malloc` (`g_strdup`) |
+| 9 | `*_get_zhuyin_string`, tone 3 | 1st `malloc` made inside libc (`vasprintf` under `g_strdup_printf`) |
+
+A failed allocation sets `ENOMEM`, as the glibc allocator does. The expected results are:
+
+- Operations 1-8 must log
+  the GLib `g_error` and die of SIGTRAP or SIGABRT.
+- Operation 9 must write
+  `gprintf.c:<line>: failed to allocate memory` to stderr and die of SIGABRT,
+  with no `g_log`. `g_vasprintf` tests `errno == ENOMEM` after
+  `__vasprintf_chk`, writes `G_STRLOC` and the message with `fwrite`, and calls
+  `abort()`. This was read from the disassembly of the host `libglib-2.0.so.0` 2.90.0; its
+  `.rodata` holds `../../../glib/gprintf.c:351`.
+
+The g_ucs4_to_utf8
+conversions allocate through `g_try_malloc_n` (pin) or the fallible encoder of the subject
+(libc `malloc` from Rust). Neither allocation is counted, so the harness
+does not inject them. A pipe proves that injection fired. Parent
+initialization, backend loading and the normal controls (`ㄏㄠˇ`, `ㄋㄧ`,
+the HSU `c` mapping, a token lookup) come before arming. A build with injection
+disabled must fail the audit on both facades.
+
+## Source matrix and results
+
+The [allocation-failure partitions](../../docs/findings/glib-libc-inventory.md#allocation-failure-partitions)
+record the per-exported-caller allocation matrix, the classification and the remaining
+partitions.
+
+A failed `GArray` growth has no contract case. Both facades grow the
+array of a caller only through `g_array_set_size` and
+`g_array_append_vals` of GLib, so the failure happens inside the `g_realloc` of GLib
+on both sides. These tests cover the part of oxpinyin, and return a real GLib-owned `GArray`:
+
+- `token_getters::lookup_tokens_resets_the_callers_array` in `oxpinyin-capi`;
+- `token_getters::caller_arrays_keep_their_metadata_and_clear_through_the_callback` in
+  `oxzhuyin-capi`.
+
+The full ABI
+harness is a source-derived
+defect audit, not a blanket parity gate. It labels silent NULL returns as
+confirmed defects. It weakens no policy exception or expected contract result.

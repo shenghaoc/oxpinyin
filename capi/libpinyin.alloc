@@ -1,0 +1,156 @@
+# libpinyin.alloc — the allocator-pairing register for the pinyin C ABI.
+#
+# Every pointer-shaped slot the frozen `pinyin.h` declares — a pointer
+# return, or a `T **` out-parameter — is classified here exactly once, and
+# `just abi` checks the header's slot set and each slot's C type against
+# this register. The Rust consumer calls the shared library under
+# AddressSanitizer with leak detection enabled and checks the release
+# operation it uses against the registered class.
+#
+# Sibling of `libpinyin.ver`, and read the same way: the .ver file freezes
+# WHICH symbols cross the boundary, this one freezes WHAT CROSSES WITH
+# THEM. A new entry point with an out-pointer fails the gate until it is
+# classified here.
+#
+# Format — five whitespace-separated fields, `#` comments, blank lines
+# ignored:
+#
+#   <symbol>  <slot>  <class>  <notes>  <verified>
+#
+#   <slot>   `return`, or the parameter's name as `pinyin.h` spells it.
+#   <class>  one of:
+#     handle:<fn>  an opaque handle; <fn> is the ONLY function that may
+#                  release it, and must itself be an exported symbol.
+#     g_free       a `gchar *` / `char *` the caller owns and releases
+#                  with `g_free`. Allocated, since 2026-10-31 UTC (#1227),
+#                  by the GLib call the pin makes (`g_strdup`,
+#                  `g_strdup_printf`, `g_strconcat`, `g_strjoinv`), or at
+#                  the `g_ucs4_to_utf8` sites by `ffi::malloc_cstr_with`
+#                  (libc `malloc`): g_free has been a thin `free` wrapper
+#                  since GLib 2.46 removed the memory vtable, so the two
+#                  allocators are the same one. This is the pairing
+#                  assumption the dynamic half of the gate exercises.
+#     g_strfreev   a NULL-terminated `gchar **` the caller owns, built by
+#                  `ffi::symbol_vector` with the pin's `g_ptr_array_*` and
+#                  `g_strdup` calls; `g_strfreev` g_free's each string and
+#                  the array.
+#     borrowed     owned by the context or instance and released with it.
+#                  The caller must never free it.
+#   <notes>  What the slot holds when the call answers `false` — the part
+#            of the contract a consumer gets wrong silently. Each value is
+#            EXECUTABLE: the Rust ABI test drives the failure path and
+#            checks the output pointer. The gate rejects a
+#            register entry whose contract was never probed. "Reachable"
+#            means reachable by a CONFORMING consumer — valid handles and
+#            in-contract arguments, an empty parse or an exhausted
+#            iterator — never a NULL-argument refusal, which is caller
+#            misuse and where the pin would simply crash.
+#     false-allocates    the call can return `false` HAVING ALLOCATED, so a
+#                        consumer that frees only on `true` leaks. Upstream
+#                        parity, not an oxpinyin choice (`pinyin.cpp:3382-
+#                        3386, 3442-3445, 904-910`).
+#     false-nulls        the out-param is NULL on the reachable `false`.
+#     false-untouched    the out-param is left as the caller set it, so the
+#                        caller must initialize it.
+#     false-unreachable  the call has failure paths, but none a conforming
+#                        consumer can reach, so no out-param state is
+#                        claimed. An explicit claim about reachability, not
+#                        a skip: challenge it in review like any other.
+#     n/a                the slot is a return value.
+#   <verified>  How <notes> was established. The gate checks that every
+#            line carries one of these kinds, never the evidence it names:
+#     pin-probe:<case>       measured at the pin and on oxpinyin, identical,
+#                            on the reference cell (tkrzw) by <case>: a
+#                            recorded contract case or a runner in
+#                            `tools/bisection/`.
+#     source:<file>:<lines>  argued from the pin's `src/<file>` at 074a2219.
+#     unverified             executed against oxpinyin only, never compared
+#                            with the pin.
+#     unexecuted             declared, never executed on either side: the
+#                            driver does not probe the note and no pin
+#                            probe has run it.
+#     n/a                    <notes> is n/a.
+#
+# Corrected 2026-09-10 when the notes became executable: six slots were
+# described from a reading of the code rather than from running it, and
+# three of those were wrong — pinyin_get_candidate, pinyin_get_pinyin_key
+# and pinyin_get_pinyin_key_rest all NULL their out-param on the reachable
+# refusal, where this file said they left it untouched.
+#
+# Corrected 2026-10-08 (#681): the bigram iterator's two slots said
+# `false-untouched`, but its terminal row answers `false` having written
+# both strings, so they are `false-allocates`. <verified> was added the
+# same day.
+#
+# Corrected 2026-10-14 (#681): the eight key-string getter slots (six
+# here, two in libzhuyin.alloc) said `false-unreachable`. The relabel to
+# `false-nulls` / `false-untouched` landed 2026-10-09 (#708), and a pin
+# probe on bdb confirms each line's <notes>.
+#
+# Corrected 2026-10-31 UTC (class (c) retired): oxpinyin now aborts where
+# the pin aborts, so no `pin-aborts` path is probed here any more. The key
+# getters' reachable `false` is an offset past the last column of a matrix
+# that holds keys, where the pin NULLs the out-param first (an empty matrix
+# is row 63's abort). `pinyin_iterator_get_next_phrase` never answers
+# `false` at the pin: exhaustion is row 62's `pinyin.cpp:709` assert, so its
+# two slots are `false-unreachable`.
+
+# ── Handles: allocated by Box::into_raw, released by their destructor ──
+pinyin_init                              return      handle:pinyin_fini            n/a                n/a
+pinyin_alloc_instance                    return      handle:pinyin_free_instance   n/a                n/a
+pinyin_begin_add_phrases                 return      handle:pinyin_end_add_phrases n/a                n/a
+pinyin_begin_get_phrases                 return      handle:pinyin_end_get_phrases n/a                n/a
+pinyin_begin_get_bigram_phrases          return      handle:pinyin_end_get_bigram_phrases n/a                n/a
+
+# ── Borrowed pointers: never freed by the caller ──────────────────────
+# The context the instance was allocated from — the same pointer
+# `pinyin_init` returned, not a second handle.
+pinyin_get_context                       return      borrowed                      n/a                n/a
+pinyin_get_candidate                     candidate   borrowed                      false-nulls        source:pinyin.cpp:2851-2864
+# The candidate string has no `false` at the pin: it stores the pointer and
+# answers `true` (pinyin.cpp:2873-2878).
+pinyin_get_candidate_string              utf8_str    borrowed                      false-unreachable  source:pinyin.cpp:2873-2878
+pinyin_get_pinyin_key                    key         borrowed                      false-nulls        source:pinyin.cpp:2921-2928
+pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-nulls        source:pinyin.cpp:2944-2951
+
+# ── Caller-owned strings (g_free) ─────────────────────────────────────
+pinyin_get_sentence                      sentence    g_free                        false-untouched    pin-probe:sentence-before-guess
+pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
+pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
+pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
+pinyin_get_pinyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_pinyin-zero-key
+pinyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_zhuyin-zero-key
+pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_luoma_pinyin-zero-key
+pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_secondary_zhuyin-zero-key
+# The refusal is `0 == key->get_table_index()` (pinyin.cpp:2711, :2722,
+# :2733, :2744, :2755). `pinyin_get_pinyin_key` skips separator columns
+# forward (:2903-2919) but stops at the end column, which fill_matrix
+# fills with a zero key (storage/phonetic_key_matrix.cpp:58-63), so only a
+# trailing separator answers it (`xi'` at offset 2; `ni'hao` at 2 skips to
+# `hao`). The four single-string getters NULL their out-param before the
+# test; `pinyin_get_pinyin_strings` returns before it writes either.
+pinyin_get_pinyin_strings                shengmu     g_free                        false-untouched    pin-probe:alloc-register-pinyin_get_strings-zero-key
+pinyin_get_pinyin_strings                yunmu       g_free                        false-untouched    pin-probe:alloc-register-pinyin_get_strings-zero-key
+pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:token-get-phrase-out
+# The unigram iterator answers `true` on every row it hands out
+# (pinyin.cpp:698-769). Called with no next row, the pin asserts (:709)
+# and oxpinyin aborts there too (`ExportStep::Assert`), so neither returns
+# `false`: the slot is `false-unreachable`.
+pinyin_iterator_get_next_phrase          phrase      g_free                        false-unreachable  source:pinyin.cpp:698-769
+pinyin_iterator_get_next_phrase          pinyin      g_free                        false-unreachable  source:pinyin.cpp:698-769
+# The bigram iterator answers has_next after taking a row
+# (pinyin.cpp:904-910), so the row after which has_next is false comes back
+# `false` having written both strings, and a loop that frees only on `true`
+# leaks it. Called with no row pending, the pin asserts (:902) and
+# oxpinyin aborts there too (`BigramStep::Aborts`). Where the pin instead
+# reads NULL (:905), oxpinyin answers `false` without writing.
+pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-allocates    source:pinyin.cpp:896-909
+pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-allocates    source:pinyin.cpp:896-909
+
+# ── Caller-owned string vectors (g_strfreev) ──────────────────────────
+# The facade passes `*symbols` by reference to `in_chewing_scheme`
+# (pinyin.cpp:1623-1624). Each of the three parsers NULLs it first
+# (storage/zhuyin_parser2.cpp:304, :499, :801) and writes it again only
+# before `return true`, so an unmapped key answers `false` with NULL
+# (:320, :332, :544, :851).
+pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        source:pinyin.cpp:1615-1625

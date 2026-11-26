@@ -1,0 +1,411 @@
+# Every pull request runs the Rust, store, and shipping-size lanes. The
+# lightweight repository checks remain separate so their result is visible on
+# its own. `ci-aggregate` is the required check and uses ordinary GitHub
+# Actions job results; there is no repository-maintained path selector.
+#
+# The platform and backend merge conditions, and the rule that every Linux job
+# runs natively on the runner, are docs/runbooks/verification.md, section 10.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+# A new push to a pull request cancels that pull request's older run. Runs
+# on main never cancel each other: each push gets its own group.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Jobs after the gate:
+#   rust — rustfmt, cargo-deny, cargo-shear, Clippy, fuzz-target Clippy, the Lizard
+#          complexity limit and the workspace tests on Linux under Kyoto
+#          Cabinet, the cell that Linux CI selects; the default tkrzw backend runs on
+#          macOS and Windows in verify-nightly.yml
+#   shipping-sizes — the stripped shipping-library sizes
+#   store — Clippy, rustdoc and the workspace tests under bdb; then the bdb
+#           and kyotocabinet store suites and the C ABI tests under the sanitizers
+# Fuzz execution stays nightly.
+#
+# See docs/architecture.md#backend-selection. To check cross-peer equivalence,
+# run the same test suite in a separate build for each backend. Linux CI
+# selects Kyoto Cabinet because GitHub's Ubuntu runners ship a defective
+# libtkrzw (docs/findings/tkrzw-distro-compat.md): every Linux CI job selects
+# Kyoto Cabinet from Ubuntu's packages with the
+# backend flag (CI_LINUX_CELL in tools/dev/cell.py; docs/runbooks/verification.md,
+# section 10). tkrzw is the one maintained backend and the only default.
+# Kyoto Cabinet and Berkeley DB stay until distributions ship a sound
+# libtkrzw, and are then removed.
+# The tkrzw suite runs on macOS and Windows in verify-nightly.yml. Each
+# sanitizer run goes through the sanitizer service in tools/dev/test_runner.py,
+# which `just sanitize` also uses, on the date-pinned nightly that
+# fuzz/rust-toolchain.toml names: Berkeley DB under ASan, Kyoto Cabinet under
+# ASan + LeakSanitizer. On a BerkeleyDB distro the system bigram.db is BDB and
+# every session opens it through that FFI, so the instrumentation is
+# load-bearing, not precautionary.
+#
+# Every backend package comes from Ubuntu's apt: libkyotocabinet-dev, and
+# libdb-dev for the store job. bindgen (the bdb feature) loads the runner
+# image's libclang.
+#
+# The pin-built oracle and the model20 archive are deliberately NOT CI
+# concerns: provisioning them (just fetch-model, tools/oracle/build.py) is a
+# LOCAL workflow, and no CI job may download model20.text.tar.gz or anything
+# like it. The oracle-gated differentials and the model cache live on
+# developer machines only.
+
+jobs:
+  checks:
+    # This names a release, not ubuntu-latest, so a runner image change happens
+    # here under review.
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # Every Python step in CI runs on the managed CPython, never the
+      # runner's own Python.
+      - uses: ./.github/actions/bootstrap
+        with:
+          uv: 'true'
+          just: 'true'
+      - name: Python version request is written once
+        run: uv run --managed-python python -X utf8 -c 'from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_python_request; raise SystemExit(lint_python_request())'
+      - run: just ruff
+      - run: just rust-tables --check
+
+  # The Linux Rust lane: every check that reads the workspace, under Kyoto Cabinet.
+  rust:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-toolchain: 'true'
+          rust-cache: 'true'
+          rust-cache-key: rust-job
+          uv: 'true'
+          just: 'true'
+          cargo-nextest: 'true'
+          cargo-deny: 'true'
+          cargo-shear: 'true'
+      - run: rustup show active-toolchain
+      - name: Install build dependencies (apt)
+        # libkyotocabinet-dev: the library the kyotocabinet backend links and
+        # the headers its cxx bridge compiles against with g++. The runner
+        # image ships gcc, g++, make and pkg-config, so apt adds only GLib and
+        # Kyoto Cabinet. Only the bdb feature runs bindgen; this lane needs
+        # no libclang.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libglib2.0-dev libkyotocabinet-dev
+      - run: cargo fmt --all --check
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
+      # Supply-chain gate. cargo-deny reads the RustSec database, and deny.toml
+      # holds the policy. The justfile's deny recipe holds the checks and their
+      # order.
+      - run: just deny
+      - run: just shear
+      # Placement gate for crate-level `#![cfg(...)]`. A gate that evaluates
+      # false discards the crate attributes after it, so one above a `//!`
+      # block removes the docs and `missing_docs` fires on the excluded
+      # platform only. The checker reads the placement on Linux.
+      - name: Crate cfg-placement gate
+        run: uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.check import lint_crate_cfg_placement; raise SystemExit(lint_crate_cfg_placement(sys.argv[1:]))'
+      # Drop-in version agreement: the capi manifests' header subdirectory
+      # and pkg_config version against the pin record. The full
+      # installed-tree diff (just packaging check-pc-metadata) needs the
+      # pin-built libpinyin, which CI does not have.
+      - run: uv run --managed-python python -X utf8 -m tools.dev.packaging check-pc-version
+      # `--features kyotocabinet` at `--workspace` scope enables the peer on
+      # every member that declares it (the store job's comment gives the mechanism).
+      - run: cargo clippy --locked --workspace --all-targets --no-default-features --features kyotocabinet -- -D warnings
+      # The directory selects the nightly in fuzz/rust-toolchain.toml.
+      # No AFL++, corpus, sanitizer run or model data is needed. The fuzz
+      # crate forwards the backend features; the soak selects the same one.
+      - name: Install the fuzz toolchain
+        working-directory: fuzz
+        run: rustup toolchain install
+      - name: Lint all fuzz targets
+        working-directory: fuzz
+        run: cargo clippy --locked --bins --no-default-features --features kyotocabinet -- -D warnings
+      # Also lint the persistent entry point. This reuses the dependencies
+      # and type-checks the afl feature without linking the AFL++ runtime.
+      - name: Lint all fuzz targets with AFL
+        working-directory: fuzz
+        run: cargo clippy --locked --bins --no-default-features --features kyotocabinet,afl -- -D warnings
+      # Complexity limit: the recipe states it; pyproject.toml and uv.lock
+      # name the Lizard release.
+      - name: Lizard complexity limit
+        run: just complexity
+      # Kyoto Cabinet rustdoc, warnings denied; Berkeley DB's runs in the
+      # `store` job and tkrzw's on the nightly macOS and Windows jobs.
+      - name: Rustdoc (kyotocabinet)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --workspace --no-default-features --features kyotocabinet
+      # The full-data contract tests (the `pin_data` modules, which read the
+      # pinned libpinyin-data package) are tkrzw-only, so this lane fetches no
+      # contract data; the nightly macOS job runs them.
+      - run: cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features kyotocabinet
+      - name: Build Cargo packages from their archives
+        run: |
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf -- "$scratch"' EXIT
+          metadata=$(cargo metadata --format-version 1 --locked --no-deps)
+          packages=$(jq -er '.packages[] | select(.publish != []) | [.name, .version] | @tsv' <<< "$metadata")
+          # Only a package that another published package depends on by path
+          # gets a patch entry; Cargo warns about a patch that no build uses.
+          patched=$(jq -r '[.packages[] | select(.publish != []) | .dependencies[] | select(.path != null) | .name] | unique | .[]' <<< "$metadata")
+          target=$(jq -er '.target_directory' <<< "$metadata")
+          toolchain=$(rustup show active-toolchain)
+          toolchain=${toolchain%% *}
+
+          package_args=()
+          while read -r name version; do
+            package_args+=(-p "$name")
+          done <<< "$packages"
+
+          cargo package --locked "${package_args[@]}" --list
+          # The pinned Cargo verifier can fail to find a checksum for a workspace
+          # dependency in its temporary registry. Build the extracted archives
+          # against one another instead.
+          cargo package --locked "${package_args[@]}" --no-verify --target-dir "$scratch/target"
+          printf '[patch.crates-io]\n' > "$scratch/archives.toml"
+          while read -r name version; do
+            tar -xzf "$scratch/target/package/$name-$version.crate" -C "$scratch"
+            if grep -qxF -- "$name" <<< "$patched"; then
+              printf '%s = { path = "%s" }\n' "$name" "$scratch/$name-$version" >> "$scratch/archives.toml"
+            fi
+          done <<< "$packages"
+
+          cd "$scratch"
+          # Every published package declares the kyotocabinet feature, the cell that Linux CI selects.
+          while read -r name version; do
+            cargo "+$toolchain" --config "$scratch/archives.toml" build --offline \
+              --no-default-features --features kyotocabinet \
+              --target-dir "$target" --manifest-path "$name-$version/Cargo.toml"
+          done <<< "$packages"
+
+  # Stripped shipping-library sizes (constitution section 2). Builds both
+  # facades with the release recipe (`just packaging install`) on the
+  # Kyoto Cabinet cell, strips them, checks their exports and writes the
+  # base / PR table to the job summary. A failed build, install or export
+  # check fails the job; a size increase does not.
+  #
+  # The PR head is built against its base on every run. Rebuilding both
+  # revisions keeps the constitution's report independent of a cache key or a
+  # previously published artifact.
+  shipping-sizes:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Warnings change no byte. The size build adds its own path remapping.
+      RUSTFLAGS: ''
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-toolchain: 'true'
+          uv: 'true'
+          just: 'true'
+      - run: rustup show active-toolchain
+      # cargo-c is the distribution's own package, as in release-packages.yml.
+      # The size recipe names Kyoto Cabinet's package. Only the bdb feature
+      # runs bindgen, so the build needs no libclang.
+      - name: Install build dependencies (apt)
+        run: |
+          set -euo pipefail
+          backend=$(just packaging sizes apt)
+          read -r -a backend_pkgs <<< "$backend"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libglib2.0-dev cargo-c "${backend_pkgs[@]}"
+      - name: Build base and head, report the table
+        run: >
+          just packaging sizes run --base "$BASE_SHA"
+          --work "$RUNNER_TEMP/ship-sizes" --target target
+
+  # This job runs Clippy, rustdoc and the workspace tests under Berkeley DB.
+  # It then runs the Berkeley DB and Kyoto Cabinet store suites under the
+  # sanitizers and checks both C facades with `just abi`. `rust` runs the Kyoto Cabinet
+  # workspace tests on every pull request, so they are not
+  # repeated here. No Linux job runs tkrzw code
+  # (docs/runbooks/verification.md, section 10), so tkrzw has no sanitizer
+  # run; the nightly macOS and Windows jobs run its tests uninstrumented.
+  #
+  # The backend is exercised through the whole workspace: a backend that
+  # "passes" only in the store's own unit tests and never reaches the decode
+  # path does not count. Every pass decodes real queries through the fixture
+  # tables.
+  #
+  # `--features <peer>` at `--workspace` scope enables that feature on every
+  # workspace member that declares it, so the peer selection cascades through
+  # each consumer's own `<peer> = ["oxpinyin/<peer>", ...]` forwarder. A bare
+  # passthrough (`--features oxpinyin/<peer>`) does NOT — cargo features do
+  # not back-propagate — and would leave each consumer's own
+  # `#[cfg(feature = "<peer>")]` code (e.g. the per-backend mask walks in
+  # oxpinyin's `user_index.rs` and `user_phrase_table.rs`) skipped even while
+  # `DefaultStore` resolves to the peer. The bare-name form is the documented
+  # public interface (docs/architecture.md#backend-selection).
+  #
+  # The KMM crate depends on the backend: its operations run on the selected
+  # store backend and its integration tests spawn the seven utilities against
+  # `fixtures/w3/<backend>`. The training package stays too: its eval decode
+  # compiles against the selected store backend. What runs is everything a
+  # backend choice can change: the store itself, the user store, data readers,
+  # runtime, engine, facade, both C ABIs, the training package and KMM.
+  # nextest runs the suite with the `ci` profile of .config/nextest.toml, so
+  # the store-backend test group applies.
+  #
+  # The stable peer build shares the job's target directory and its Rust
+  # cache. The sanitizer builds use the nightly from fuzz/rust-toolchain.toml
+  # and their own target directory under the runner's temporary directory, so
+  # no sanitizer-flavoured artifact enters the cache.
+  store:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-toolchain: 'true'
+          rust-cache: 'true'
+          rust-cache-key: store-job
+          uv: 'true'
+          just: 'true'
+          cargo-nextest: 'true'
+      - name: Install build dependencies (apt)
+        # Both backends' packages, once. libdb-dev resolves to libdb5.3-dev, the
+        # system libdb the bdb backend links and whose db.h bindgen reads.
+        # bindgen loads libclang at run time (its `runtime` feature): the
+        # runner image's Clang packages ship /usr/lib/llvm-*/lib/libclang-*.so.1
+        # and their builtin headers, so no libclang-dev. libkyotocabinet-dev:
+        # the library the kyotocabinet backend links and the headers its cxx
+        # bridge compiles against with g++. util-linux serves the sanitizer
+        # service; libasan ships with gcc.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends util-linux libdb-dev libkyotocabinet-dev zlib1g-dev libglib2.0-dev
+
+      - name: Clippy (bdb)
+        run: cargo clippy --locked --workspace --all-targets --no-default-features --features bdb -- -D warnings
+      - name: Rustdoc (bdb)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --workspace --no-default-features --features bdb
+      - name: Test the workspace (bdb)
+        id: test-bdb
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features bdb
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      # The sanitizer runs go through the sanitizer service in
+      # tools/dev/test_runner.py, which `just sanitize` also uses.
+      - name: Install the sanitizer nightly
+        working-directory: fuzz
+        run: rustup toolchain install
+      # The Berkeley DB feature's own suite under ASan. The hazards are the DBT
+      # plumbing and cursor buffers (Rust, ASan). libdb's own internals are not
+      # instrumented. On a BerkeleyDB distro the system bigram.db is BDB and
+      # every session opens it through this FFI.
+      - name: Sanitizers (bdb)
+        id: sanitize-bdb
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' bdb
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+      # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer. The
+      # backend crosses into C++ through a cxx bridge
+      # (src/store/kyotocabinet/adapter.cc): visitor regions are borrowed for
+      # one callback, cursors borrow their database, and an empty region must
+      # not reach Kyoto Cabinet as address 1. The store's build script
+      # instruments the adapter and cxx's generated glue under address.
+      - name: Sanitizers (kyotocabinet store and C ABI)
+        id: sanitize-kyotocabinet
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/sanitizer-target
+          # `just abi` builds the cell that PINYIN_ORACLE_DBM names (tools/dev/cell.py Settings).
+          PINYIN_ORACLE_DBM: kc
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          uv run --managed-python python -X utf8 -c 'import sys; from tools.dev.entry import require_utf8_mode; require_utf8_mode(); from tools.dev.test_runner import sanitize; raise SystemExit(sanitize(sys.argv[1:]))' kc
+          just abi
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+      - name: Report
+        if: ${{ !cancelled() }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+          TEST_BDB: ${{ steps.test-bdb.outcome }} ${{ steps.test-bdb.outputs.elapsed }}
+          SANITIZE_BDB: ${{ steps.sanitize-bdb.outcome }} ${{ steps.sanitize-bdb.outputs.elapsed }}
+          SANITIZE_KYOTOCABINET: ${{ steps.sanitize-kyotocabinet.outcome }} ${{ steps.sanitize-kyotocabinet.outputs.elapsed }}
+        run: |
+          row() {
+            read -r outcome elapsed <<< "$2"
+            echo "| $1 | ${outcome:-not run} | ${elapsed:-—}s |"
+          }
+          {
+            echo "## store"
+            echo ""
+            echo "Result: **$([ "$JOB_STATUS" = 'success' ] && echo 'passed' || echo 'FAILED')**"
+            echo ""
+            echo "| Phase | Outcome | Wall clock |"
+            echo "|---|---|---:|"
+            row 'bdb workspace tests' "$TEST_BDB"
+            row 'bdb sanitizers (address)' "$SANITIZE_BDB"
+            row 'kyotocabinet store and ABI sanitizers (address, leak)' "$SANITIZE_KYOTOCABINET"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The required aggregate runs after failures and requires every ordinary
+  # lane to succeed.
+  ci-aggregate:
+    needs: [checks, rust, shipping-sizes, store]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Require every lane to succeed
+        env:
+          CHECKS: ${{ needs.checks.result }}
+          RUST: ${{ needs.rust.result }}
+          SHIPPING_SIZES: ${{ needs.shipping-sizes.result }}
+          STORE: ${{ needs.store.result }}
+        run: |
+          set -euo pipefail
+          test "$CHECKS" = success
+          test "$RUST" = success
+          test "$SHIPPING_SIZES" = success
+          test "$STORE" = success

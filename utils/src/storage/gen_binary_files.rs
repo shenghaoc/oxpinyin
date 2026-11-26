@@ -1,0 +1,425 @@
+//! `gen_binary_files` (`utils/storage/gen_binary_files.cpp` at libpinyin
+//! 074a2219).
+//!
+//! Reads `table.conf` from the current directory and, for the default and
+//! addon table sets, loads each `SYSTEM_FILE`/`DICTIONARY` `.table` file
+//! three times from one rewind: into the pinyin index (`ChewingLargeTable2`),
+//! the phrase index (`PhraseLargeTable3`) and the phrase-library chunk
+//! (`FacadePhraseIndex`). It compacts the chunks, saves the system chunks
+//! (`save_phrase_index`) and the dictionary chunks (`save_dictionary`), and
+//! optionally loads `punct.table` into `punct.bin`.
+
+use std::collections::BTreeMap;
+use std::ffi::{CStr, OsString};
+use std::path::PathBuf;
+
+use oxpinyin::data::phrase_library::ChunkItem;
+use oxpinyin::data::row_format::pinyin_index::{
+    PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key, encode_item,
+};
+use oxpinyin::data::{FileType, PhoneticType, TableConf, TableRow};
+use oxpinyin::vocab::{PHRASE_MASK, phrase_index_library_index};
+use oxpinyin_tool_support::data::encode_tokens;
+use oxpinyin_tool_support::data::exact_compare2;
+use oxpinyin_tool_support::input as tool;
+use oxpinyin_tool_support::input::OptionValue;
+use oxpinyin_tool_support::input::storage::TableFile;
+
+use crate::storage::Tree;
+use crate::storage::items_of;
+use crate::storage::pinyin;
+use crate::storage::punctuation::append_punctuation;
+use crate::storage::{
+    gen_punct_entry, load_table_conf, name_c_string, parse_options, table_dir, table_dir_entry,
+};
+use crate::storage::{read_pinyin_record, read_punct_record};
+use crate::utils_helper::save_and_reload_library;
+
+/// `main` (`gen_binary_files.cpp:111-152`).
+pub fn main(args: impl IntoIterator<Item = OsString>) {
+    let _ = tool::set_locale_from_environment();
+    let entries = [table_dir_entry(), gen_punct_entry()];
+    let parsed = parse_options(c"- generate binary files", &entries, args);
+    let directory = table_dir(&parsed, 0);
+    let gen_punct = matches!(parsed.values[1], OptionValue::Flag(true));
+
+    let conf = load_table_conf();
+    let phonetic = conf.phonetic_type();
+
+    generate_binary_files(
+        c"pinyin_index.bin",
+        c"phrase_index.bin",
+        &conf,
+        false,
+        phonetic,
+        directory.as_deref(),
+    );
+    generate_binary_files(
+        c"addon_pinyin_index.bin",
+        c"addon_phrase_index.bin",
+        &conf,
+        true,
+        phonetic,
+        directory.as_deref(),
+    );
+
+    if gen_punct {
+        generate_punct_table(c"punct.bin", directory.as_deref());
+    }
+}
+
+/// One index file's path as the store opens it.
+fn path_of(name: &CStr) -> PathBuf {
+    oxpinyin::input::path_from_bytes(name.to_bytes())
+}
+
+/// The rows one `generate_binary_files` call walks (default or addon).
+fn rows(conf: &TableConf, addon: bool) -> Vec<&TableRow> {
+    (0..16_u8)
+        .filter_map(|index| {
+            if addon {
+                conf.addon_row(index)
+            } else {
+                conf.default_row(index)
+            }
+        })
+        .collect()
+}
+
+/// The per-library chunk items while the table file is read.
+type ChunkMap = BTreeMap<u32, ChunkItem>;
+
+/// `generate_binary_files` (`:36-86`).
+fn generate_binary_files(
+    pinyin_name: &CStr,
+    phrase_name: &CStr,
+    conf: &TableConf,
+    addon: bool,
+    phonetic: PhoneticType,
+    directory: Option<&CStr>,
+) {
+    // `attach` ignores its answer; a failed open leaves `m_db` NULL, which
+    // the first `add_index` asserts against. Modelled as `None`.
+    let pinyin_table = Tree::create(&path_of(pinyin_name)).ok();
+    let phrase_table = Tree::create(&path_of(phrase_name)).ok();
+
+    let mut libraries: [Option<ChunkMap>; 16] = Default::default();
+    for (index, row) in rows(conf, addon).into_iter().enumerate() {
+        if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary) {
+            continue;
+        }
+        let Some(tablename) = row.table.as_ref() else {
+            // `g_build_filename(table_dir, NULL, NULL)` and `fopen` on the
+            // directory; no C caller passes a NULL name upstream.
+            tool::abort();
+        };
+        let name = name_c_string(tablename.as_ref()).unwrap_or_else(|| tool::abort());
+        let joined =
+            tool::storage::build_filename(directory, &name).unwrap_or_else(|| tool::abort());
+        let Some(mut file) = TableFile::open(&joined) else {
+            tool::storage::report_open_failed(&name);
+            tool::exit(tool::ENOENT);
+        };
+        load_chewing(pinyin_table.as_ref(), &mut file, phonetic);
+        file.rewind();
+        load_phrase_table(phrase_table.as_ref(), &mut file, false);
+        file.rewind();
+        load_phrase_index(index as u8, &mut file, &mut libraries, phonetic);
+    }
+
+    compact(&mut libraries);
+    save_chunks(conf, addon, false, &mut libraries);
+    save_chunks(conf, addon, true, &mut libraries);
+}
+
+/// `ChewingLargeTable2::load_text` (`src/storage/chewing_large_table2.cpp:112-158`).
+pub fn load_chewing(table: Option<&Tree>, file: &mut TableFile, phonetic: PhoneticType) {
+    while let Some(record) = read_pinyin_record(file) {
+        let len = tool::utf8_strlen(&record.phrase);
+        let keys = match phonetic {
+            PhoneticType::Pinyin => pinyin::parse(&record.pinyin),
+            PhoneticType::Zhuyin => pinyin::parse_zhuyin(&record.pinyin),
+        };
+        if usize::try_from(len).ok() != Some(keys.len()) {
+            tool::storage::report_chewing_skip(
+                &record.pinyin,
+                &record.phrase,
+                record.token,
+                record.freq,
+            );
+            continue;
+        }
+        add_index(table, &keys, record.token);
+    }
+}
+
+/// `ChewingLargeTable2::add_index` (`:179-198`): both key spaces, then
+/// `add_index_internal`'s prefix fill.
+fn add_index(table: Option<&Tree>, keys: &[oxpinyin::parser::ChewingKey], token: u32) {
+    let incomplete = encode_incomplete_key(keys);
+    add_index_space(table, &incomplete, keys, token);
+    let complete = encode_complete_key(keys);
+    add_index_space(table, &complete, keys, token);
+}
+
+/// `ChewingLargeTable2::add_index_internal` (`chewing_large_table2_bdb.cpp:290-358`,
+/// `chewing_large_table2_tkrzwdb.cpp:260-313`).
+fn add_index_space(
+    table: Option<&Tree>,
+    key: &[u8],
+    keys: &[oxpinyin::parser::ChewingKey],
+    token: u32,
+) {
+    let Some(table) = table else {
+        // `assert(NULL != m_db)`.
+        tool::abort();
+    };
+    // `add_index_internal(phrase_length, ...)`'s switch has cases 1..=16
+    // and `abort()` elsewhere.
+    if keys.is_empty() || keys.len() > oxpinyin::vocab::MAX_PHRASE_LENGTH {
+        tool::abort();
+    }
+    let phrase_length = key.len() / 2;
+    match table.get(key) {
+        None => {
+            let insert = encode_item(token, keys);
+            let _ = table.put(key, &insert);
+            // recursively add keys for continued information.
+            for length in (1..phrase_length).rev() {
+                let prefix = &key[..2 * length];
+                if table.get(prefix).is_some() {
+                    return;
+                }
+                let _ = table.put(prefix, &[]);
+            }
+        }
+        Some(value) => {
+            let mut records = decode_items(&value, phrase_length).unwrap_or_else(|_| tool::abort());
+            let mut insert_at = records.len();
+            for (index, record) in records.iter().enumerate() {
+                match exact_compare2(&record.keys, keys) {
+                    std::cmp::Ordering::Less => continue,
+                    std::cmp::Ordering::Equal => {
+                        if record.token == token {
+                            return;
+                        }
+                        if record.token > token {
+                            insert_at = index;
+                            break;
+                        }
+                    }
+                    std::cmp::Ordering::Greater => {
+                        insert_at = index;
+                        break;
+                    }
+                }
+            }
+            records.insert(
+                insert_at,
+                PinyinIndexItem {
+                    token,
+                    keys: keys.to_vec(),
+                },
+            );
+            let mut encoded = Vec::with_capacity(value.len() + 4 + 2 * keys.len());
+            for record in &records {
+                encoded.extend_from_slice(&encode_item(record.token, &record.keys));
+            }
+            let _ = table.put(key, &encoded);
+        }
+    }
+}
+
+/// `PhraseLargeTable3::load_text` (`src/storage/phrase_large_table3.cpp:125-140`).
+pub fn load_phrase_table(table: Option<&Tree>, file: &mut TableFile, refuse_invalid: bool) {
+    while let Some(record) = read_pinyin_record(file) {
+        let (phrase, _written) = tool::utf8_to_ucs4(&record.phrase);
+        let Some(phrase) = phrase else {
+            if refuse_invalid {
+                tool::exit(tool::EINVAL);
+            }
+            // gen_binary_files passes a nonempty NULL key to the backend
+            // (phrase_large_table3.cpp:131-135, phrase_large_table3_tkrzwdb.cpp:199-202).
+            tool::abort();
+        };
+        add_phrase_index(table, &phrase, record.token);
+    }
+}
+
+/// `PhraseLargeTable3::add_index` (`phrase_large_table3_bdb.cpp:268-334`).
+fn add_phrase_index(table: Option<&Tree>, phrase: &[u32], token: u32) {
+    let Some(table) = table else {
+        // `assert(NULL != m_db)`.
+        tool::abort();
+    };
+    let key = oxpinyin::data::row_format::phrase_index::encode_ucs4_key_scalars(phrase);
+    match table.get(&key) {
+        None => {
+            let _ = table.put(&key, &token.to_le_bytes());
+            for length in (1..phrase.len()).rev() {
+                let prefix = &key[..4 * length];
+                if table.get(prefix).is_some() {
+                    return;
+                }
+                let _ = table.put(prefix, &[]);
+            }
+        }
+        Some(value) => {
+            let mut tokens = oxpinyin::data::row_format::phrase_index::decode_tokens(&value)
+                .unwrap_or_else(|_| tool::abort());
+            if let Err(position) = tokens.binary_search(&token) {
+                tokens.insert(position, token);
+            }
+            let _ = table.put(&key, &encode_tokens(&tokens));
+        }
+    }
+}
+
+/// `FacadePhraseIndex::load_text` (`src/storage/phrase_index.cpp:522-596`).
+fn load_phrase_index(
+    index: u8,
+    file: &mut TableFile,
+    libraries: &mut [Option<ChunkMap>; 16],
+    phonetic: PhoneticType,
+) {
+    libraries[usize::from(index)] = Some(read_phrase_items(index, file, phonetic, false));
+}
+
+/// The shared phrase-index text walk. Test programs select their source phonetic
+/// type and refuse an invalid conversion under the input contract.
+pub fn read_phrase_items(
+    index: u8,
+    file: &mut TableFile,
+    phonetic: PhoneticType,
+    refuse_invalid: bool,
+) -> BTreeMap<u32, ChunkItem> {
+    let mut items: ChunkMap = BTreeMap::new();
+    let mut cur_token = 0_u32;
+    let mut item = fresh_item();
+    while let Some(record) = read_pinyin_record(file) {
+        // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) == phrase_index)`.
+        if usize::from(phrase_index_library_index(record.token)) != usize::from(index) {
+            tool::abort();
+        }
+        let (phrase, written) = tool::utf8_to_ucs4(&record.phrase);
+        if refuse_invalid && phrase.is_none() && (cur_token == 0 || cur_token != record.token) {
+            tool::exit(tool::EINVAL);
+        }
+        let phrase = phrase.unwrap_or_default();
+        // `set_phrase_string(written, phrase)`: the guint8 `written` field
+        // and that many words.
+        let length = usize::try_from(written).unwrap_or(0) % 256;
+        let phrase: Vec<u32> = phrase.into_iter().take(length).collect();
+        if cur_token == 0 {
+            cur_token = record.token;
+            item.phrase = phrase.clone();
+        }
+        if cur_token != record.token {
+            items.insert(cur_token & PHRASE_MASK, item);
+            item = fresh_item();
+            cur_token = record.token;
+            item.phrase = phrase;
+        }
+        let keys = match phonetic {
+            PhoneticType::Pinyin => pinyin::parse(&record.pinyin),
+            PhoneticType::Zhuyin => pinyin::parse_zhuyin(&record.pinyin),
+        };
+        if item.phrase.len() == keys.len() {
+            add_pronunciation(&mut item, &keys, record.token, record.freq);
+        } else {
+            tool::storage::report_phrase_index_skip(&record.pinyin, &record.phrase);
+        }
+    }
+    items.insert(cur_token & PHRASE_MASK, item);
+    items
+}
+
+/// `FacadePhraseIndex::add_phrase_item`'s `PhraseItem`.
+fn fresh_item() -> ChunkItem {
+    ChunkItem {
+        phrase: Vec::new(),
+        unigram: 0,
+        prons: Vec::new(),
+    }
+}
+
+/// `PhraseItem::add_pronunciation` (`src/storage/phrase_index.cpp:56-93`);
+/// `freq` is `input.freq` narrowed to the `guint32` delta.
+fn add_pronunciation(
+    item: &mut ChunkItem,
+    keys: &[oxpinyin::parser::ChewingKey],
+    token: u32,
+    freq: usize,
+) {
+    let _ = token;
+    // The pin parses `size_t freq` and passes it to
+    // `PhraseItem::add_pronunciation(..., guint32 delta)`
+    // (`phrase_index.cpp:556`, `:524-583`): the narrowing is unsigned
+    // modulo 2^32, not saturation. The stored-item update, including the
+    // `guint8` pronunciation-count wrap, is the user store's.
+    oxpinyin::user::add_system_reading(item, &pinyin::packed(keys), freq as u32);
+}
+
+/// `FacadePhraseIndex::compact` (`src/storage/phrase_index.cpp:648-675`):
+/// the token walk starts at 1, so slot zero is dropped.
+fn compact(libraries: &mut [Option<ChunkMap>; 16]) {
+    for library in libraries.iter_mut().flatten() {
+        library.retain(|slot, _| *slot >= 1);
+    }
+}
+
+/// `save_phrase_index` (`utils/utils_helper.h:97-120`) for `DICTIONARY`
+/// rows, or `save_dictionary` (`:122-145`) for `SYSTEM_FILE` rows.
+fn save_chunks(
+    conf: &TableConf,
+    addon: bool,
+    dictionary: bool,
+    libraries: &mut [Option<ChunkMap>; 16],
+) {
+    let wanted = if dictionary {
+        FileType::Dictionary
+    } else {
+        FileType::SystemFile
+    };
+    for (index, row) in rows(conf, addon).into_iter().enumerate() {
+        if row.file_type != wanted {
+            continue;
+        }
+        let Some(name) = row.system.as_ref() else {
+            // `MemoryChunk::save(NULL)`.
+            tool::abort();
+        };
+        let name = name_c_string(name.as_ref()).unwrap_or_else(|| tool::abort());
+        let file = match &libraries[index] {
+            Some(items) => {
+                let items: Vec<_> = items.iter().map(|(&slot, item)| (slot, item)).collect();
+                oxpinyin::data::phrase_library::build_chunk(&items).unwrap_or_else(|| tool::abort())
+            }
+            // The pin stores an empty `MemoryChunk` when the library never
+            // loaded: the eight-byte zero header.
+            None => vec![0; 8],
+        };
+        let reloaded = save_and_reload_library(&name, &file);
+        libraries[index] = Some(items_of(&reloaded).unwrap_or_else(|| tool::abort()));
+    }
+}
+
+/// `generate_punct_table` (`gen_binary_files.cpp:88-109`).
+fn generate_punct_table(table_name: &CStr, directory: Option<&CStr>) {
+    let Ok(table) = Tree::create(&path_of(table_name)) else {
+        tool::storage::report_open_failed(table_name);
+        tool::exit(tool::ENOENT);
+    };
+    let joined =
+        tool::storage::build_filename(directory, c"punct.table").unwrap_or_else(|| tool::abort());
+    let Some(mut file) = TableFile::open(&joined) else {
+        tool::storage::report_open_failed(&joined);
+        tool::exit(tool::ENOENT);
+    };
+    while let Some(record) = read_punct_record(&mut file) {
+        append_punctuation(&table, record.token, &record.punctuation);
+    }
+}
+
+#[cfg(test)]
+mod tests;

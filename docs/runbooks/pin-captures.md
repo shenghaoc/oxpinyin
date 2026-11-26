@@ -1,0 +1,174 @@
+# Pin captures
+
+This procedure stages proposed pin observations for review.
+`tools/oracle/pin_capture.py` does the staging. One capture session
+takes every observation in its `OBSERVATIONS`. The first segment of an observation ID is its family.
+
+| families | what they hold | frozen in |
+| --- | --- | --- |
+| `key-abort`, `key-walk` | the apostrophe inputs `'`, `''`, `'''`, `ni'`, `ni'!` and `ni'i` (below) | C-API tests in the two capi crates |
+| `export`, `import`, `import-count`, `deep-choose`, `last-choose`, `past-end`, `option-row`, `option-distance`, `zhuyin-noguess-before`, `zhuyin-guess-before`, `scheme-key`, `word-moves`, `assembly`, `dynamic`, `nbest-train`, `nbest-choose`, `train-index`, `two-context`, `file-modes`, `locale`, `segment`, `tie`, `zhuyin-import`, `zhuyin-separator`, `constraint-revalidation` | surfaces S1–S7 and rows D1, D3–D5, D8–D16, the IDs that `pin_capture.py` cites | C-API tests with literal expectations in the existing suites of the two capi crates |
+| `utility` | `utility/<cell>/kmm-import-unigram`, `utility/<cell>/gen-ngram` and `utility/<cell>/gen-deleted-ngram` on the bdb, kc and tkrzw cells; `utility/tkrzw/pinyin-phrase-index-131` and `utility/tkrzw/zhuyin-phrase-index-131`, the generators at `-t 131`; and C1, `utility/bdb/data-sequence`, the pin's data sequence on the bdb cell | the frozen case `kmm_import_unigram_only` in `kmm_tools.rs` and the row assertions in `training.rs` of `oxpinyin-utils`; the frozen cases `pinyin-phrase-index-131` and `zhuyin-phrase-index-131` in `gen_pinyin_table.rs` and `gen_zhuyin_table.rs`; for C1, the two pin-written Berkeley DB tests in the `pin_data` module of `src/store/bdb/tests.rs` (`the_real_system_bigram_carries_libpinyins_key_and_value_shapes`, `the_real_index_tree_walks_in_byte_order`) |
+
+The `zhuyin-separator` observations parse `ni'hao` through libzhuyin's full-pinyin export.
+They record the default tone refusal, the guess-at-3 abort, and the guess-at-2 choose and clears.
+
+The `constraint-revalidation` observations force 整个 over its abbreviation `zhg`, on the pinyin facade
+and through libzhuyin's full-pinyin parse. They record the keys of the columns, the forcing, the guesses
+that keep it and the guess on `zh` that clears it. `instance/tests.rs` of `oxpinyin` holds both.
+
+The crates that own the behaviour test the apostrophe inputs natively.
+`capi/src/parse.rs` and `zhuyin-capi/src/parse.rs` hold the
+parse and parsed length of `'`, `''` and `'''`:
+
+- the values are Rust literals;
+- each case cites the frozen observation of the pin and the pin source line behind it;
+- the tests need no pin, no container, no Python and no environment variable, and read no file;
+- they read no database, so they run on every cell.
+
+Two groups of those tests hold observations of the capture: the abort of a key query on an apostrophe-only
+parse, and the key walk of `ni'`, `ni'!` and `ni'i`.
+
+`fixtures/w4/oracle-paths.txt` excludes all six inputs. The graph tests of
+`oxpinyin` (`src/graph/tests.rs`) hold native regressions for them:
+
+- apostrophe-only inputs consume every byte without key edges;
+- the other three inputs consume three bytes and admit `ni@0:2:complete` (the pin segments are
+  `ni@0:2:complete,<missing-pinyin>@2`).
+
+## Observation kinds
+
+A **C API observation** (`Api`) is a sequence of calls on one facade, pinyin or zhuyin. It runs in a
+fresh worker process with a fresh user directory, on the tkrzw cell of the image and the pinned
+libpinyin-data. The observation records each call with its arguments and result. Besides the C functions, a
+few named steps record what is not one call:
+
+- `reopen`;
+- `open_context` and `use_context` (a second context on the same user directory);
+- `user_conf`;
+- `user_files` (names, modes and sizes);
+- `chmod_user_files`;
+- `numeric_locale` and `set_numeric_locale`.
+
+An observation that ends in the abort of the pin keeps the results of the calls before it.
+
+A **utility run** (`Utility`) runs one pin utility in a private copy of `fixtures/w3/<cell>/`
+with a given stdin. It stages what the frozen utility cases in `utils/tests/`
+record:
+
+- the end (exit status or signal), stdout and stderr: text when they are UTF-8, else hex;
+- every path of the tree after the run: its kind and mode; the size of a file and whether its bytes are
+  the pre-run bytes; the clock-masked SHA-256 of a tkrzw file; a removed input as removed;
+- the SHA-256 of an unchanged or non-DBM file;
+- for each new or changed DBM file, instead of a SHA-256, its sorted `[key hex, value hex]` rows
+  and their `rows_digest`, unmasked, as `common::rows` reads them (a tree first, then a hash; BDB
+  through `db5.3_dump`). The container bytes are not the same on two runs: tkrzw keeps a clock in
+  bytes 48–56, and Berkeley DB containers are not byte-stable. No frozen case that this capture
+  feeds records a DBM file by its bytes;
+- for the bigram runs, the `SingleGram` row of each named token decoded as its total and successor
+  counts, or `null` when the file has no row for it.
+
+The **data sequence** (`DataSequence`, C1) runs the pin's `gen_binary_files --gen-punct-table`,
+`import_interpolation` and `gen_unigram`, in that order (`data/Makefile.am:60-62` at 074a2219).
+It runs from the verified build tree of the bdb cell, in a private work directory. Its input is the mini subset
+that `tools/dev/w3_fixtures.py` builds:
+
+- `subset` writes the subset tables and interpolation text;
+- `table_conf('BerkeleyDB', build=True)` writes the art-only build `table.conf`;
+- `sequence` writes the arguments of the three programs, which `produce` also runs.
+
+The data sequence stages the end, stdout and stderr of each program,
+with the temporary directory of the subset written as `<table-dir>`. It also stages the rows and `rows_digest`
+of `bigram.db`, `phrase_index.bin` and `pinyin_index.bin`, never their container bytes.
+`fixtures/w3/db/` holds what the ports of `oxpinyin-utils` wrote (`fixtures/w3/README.md`), so these
+rows are the pin-written evidence for it. The two `pin_data` tests in `src/bdb/tests.rs` hold them as
+literals and compare them with `fixtures/w3/db/` through the same reader.
+If a recapture gives other rows, the work stops and the report gives the first rows that differ.
+
+## Capture
+
+The capture runs on the pin only. It needs the maintainer's approval under the
+[approval conditions](../../CONTRIBUTING.md#approval-conditions): it runs only when the maintainer
+asks for it.
+
+1. Provision the three cells with their build trees under a fresh cache root `ROOT` with
+   [`just provision-oracle`](oracle.md#from-any-host). The cache root must be fresh because
+   `just provision-oracle` builds a tree only when it regenerates the data. `CACHE` below is the
+   `pin-<commit>` entry of `ROOT`; the cells are `oracle/<cell>` there, and model20 is `model20`.
+   On Linux the tkrzw cell builds on the host, against the distribution's libtkrzw. Install its
+   development package first (`libtkrzw-dev` on Debian):
+
+   ```bash
+   OXPINYIN_CACHE=ROOT just provision-oracle --cells 'bdb kc tkrzw'
+   ```
+
+   On Linux the default is the host cell alone ([Linux setup](setup.md#linux)); the capture needs
+   all three. The Debian deps image builds and checks the kc and bdb cells, and the host builds the
+   tkrzw cell. The Linux `oracle.env` holds the host cell only; the capture runs every cell in the
+   image.
+
+   The data sequence needs a model20 extraction. `just provision-oracle` fetches it into
+   the `model20-<digest>` entry of `ROOT`, as `extracted/` beside the `verified` marker
+   that records the pinned archive digest. The capture refuses an extraction without that marker
+   (`w3_fixtures.model_dir`). The extraction and the subset text are not redistributable. They are
+   mounted read-only for the run, and nothing commits them.
+
+   The utility runs need these two trees:
+
+   - `CACHE/oracle/<cell>`, which `prefix_ok` accepts;
+   - `CACHE/data-<cell>/src/libpinyin-<commit>`, the tree that `build.py --regen-data` built.
+
+   `gen_ngram`, `gen_deleted_ngram` and `import_k_mixture_model` are `noinst_PROGRAMS`
+   (`utils/training/Makefile.am:35` at 074a2219), so no prefix installs them. They link the
+   static archives of the pin, not the library of the prefix. The tree that built the verified library is
+   what ties them to it.
+
+2. On a native host, capture two runs in the capture image:
+
+   ```bash
+   OXPINYIN_CACHE=ROOT just capture-pin 1
+   ```
+
+   ```bash
+   OXPINYIN_CACHE=ROOT just capture-pin 2
+   ```
+
+   [Container runtimes](setup.md#container-runtimes) gives the runtime choice and
+   `OXPINYIN_CAPTURE_RUNTIME`. On Windows, run the commands from Developer PowerShell and set
+   the variables first (`$env:OXPINYIN_CACHE = 'ROOT'`, then `just capture-pin 1`);
+   the [WSL container limits](setup.md#native-windows-and-wsl-containers) apply.
+
+   Each run refuses the capture unless all these conditions hold:
+
+   - `tools.oracle.image.prefix_ok` accepts the tkrzw prefix of the image;
+   - the SHA-256 of the `libpinyin.so` and `libzhuyin.so` that it loads equal the recorded
+     `shared_object_sha256` and `zhuyin_shared_object_sha256` of the prefix;
+   - the digest of the data equals `content_sha256` in `tools/oracle/libpinyin-data.json`;
+   - `MODEL/extracted` is a complete model20 extraction with the verified marker;
+   - for each cell that a utility run or the data sequence uses: `prefix_ok` accepts `CACHE/oracle/<cell>`, its build tree
+     is the pin commit, the `src/.libs/libpinyin.so.*` that the tree built has the recorded
+     `shared_object_sha256` of the prefix, and each utility is a built executable in the tree.
+
+   Only then does the run take the observations. The run writes
+   `target/pin-observations/<run>/capture.json` and `observations.json`, and nothing else. The run refuses
+   a run directory that already exists.
+
+   `capture.json` is provenance, not frozen values. It holds the families, the source commit, the recipe
+   hash, the SHA-256 of each loaded library, `versions_sha256`, the capture image, the data identity,
+   the model20 extraction, and, for each utility cell, its prefix, its build tree and the
+   SHA-256 of each utility.
+
+3. Make sure that the `observations.json` files of the two runs are equal:
+
+   ```bash
+   diff target/pin-observations/1/observations.json target/pin-observations/2/observations.json
+   ```
+
+4. These are proposed observations. Before any test uses them, show them next to the pin source lines for the maintainer's approval
+   ([goldens and pins](goldens-and-pins.md)). The approved values then go
+   into the Rust tests as literals, and each value cites its run and source line. No test reads the
+   staging directory.
+
+The capture is done when the approved values are in the Rust tests.
+
+A new observation goes in `OBSERVATIONS` in `pin_capture.py`.

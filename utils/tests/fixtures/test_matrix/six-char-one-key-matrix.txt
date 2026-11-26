@@ -1,0 +1,22 @@
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 6 chars, 1 keys.
+Column:0:
+ChewingKey:ni
+ChewingKeyRest:0	6
+ChewingKey:li
+ChewingKeyRest:0	6
+Column:6:
+ChewingKey:
+ChewingKeyRest:6	7
+search index: start 0	 end 1
+search index: start 0	 end 2
+search index: start 0	 end 3
+search index: start 0	 end 4
+search index: start 0	 end 5
+search index: start 0	 end 6
+search index: start 1	 end 2
+search index: start 2	 end 3
+search index: start 3	 end 4
+search index: start 4	 end 5
+search index: start 5	 end 6

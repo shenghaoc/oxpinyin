@@ -1,0 +1,889 @@
+# Reference — the exported libpinyin ABI
+
+Status: **register**
+
+## Scope
+
+This reference covers every symbol that the drop-in library exports:
+
+- the **79 `pinyin_*` symbols of `libpinyin.ver`**;
+- for the libzhuyin drop-in, the 52 `zhuyin_*` symbols of `libzhuyin.ver`.
+
+Each set is the same set that the pinned libpinyin exports (pin
+`074a2219`, `src/libpinyin.ver` blob `964d96e0`). Which consumer calls what does not scope, count or bound
+anything here. Named consumers' call sites appear only as reachability
+evidence for specific behaviours. The [E2E I/O compatibility rule](compatibility-policy.md#the-e2e-io-compatibility-rule) applies to this entire set.
+
+## Source identity
+
+- Backend API: **libpinyin** tag `2.11.92`, commit
+  `074a2219c90feaf962d0d24f034514033ece5f99` (the pin;
+  `tools/oracle/oracle-pin.txt`).
+- Header: `libpinyin/src/pinyin.h` — mirrored at
+  `capi/pinyin.h`; the export lists are
+  `capi/libpinyin.ver` and
+  `zhuyin-capi/libzhuyin.ver`.
+
+## 1. Per-symbol signatures and ownership/lifetime semantics
+
+The signatures come from `libpinyin/src/pinyin.h`. This section is the
+prose form. The machine-readable form is
+`capi/libpinyin.alloc` (and
+`zhuyin-capi/libzhuyin.alloc`). `just abi` checks the registers against the
+headers on all supported platforms. On Linux it also exercises the shared
+libraries under AddressSanitizer with leak detection enabled.
+See the [allocator-pairing register](abi-allocator-pairing.md). The
+vocabulary below is the register's, one class per line there. The
+ownership classes are:
+
+- **Handle (caller-managed)**: the caller receives an opaque handle and
+  must pass it to the matching `free`/`end`/`fini` function.
+- **Caller-owned (g_free)**: the caller receives a `gchar*` / `char*` that
+  must be freed with `g_free()`.
+- **Caller-owned (g_strfreev)**: the caller receives a `gchar**` array
+  that must be freed with `g_strfreev()`.
+- **Instance-borrowed**: the instance owns the returned pointer. It is
+  valid until the next mutating call on that instance. The caller never
+  frees it.
+- **Out-param (scalar)**: value written to a caller-supplied `guint*`,
+  `guint8*`, `guint16*`, `size_t*`, or `gboolean*` pointer.
+- **N/A**: void return, or boolean success indicator only.
+
+### Context lifecycle
+
+```
+pinyin_context_t * pinyin_init(const char * systemdir, const char * userdir);
+```
+Returns: **Handle (caller-managed)** — freed by `pinyin_fini`.
+
+```
+void pinyin_fini(pinyin_context_t * context);
+```
+Returns: **N/A** — releases the context handle.
+
+```
+pinyin_instance_t * pinyin_alloc_instance(pinyin_context_t * context);
+```
+Returns: **Handle (caller-managed)** — freed by `pinyin_free_instance`.
+
+```
+void pinyin_free_instance(pinyin_instance_t * instance);
+```
+Returns: **N/A** — releases the instance handle.
+
+### Configuration
+
+```
+bool pinyin_set_options(pinyin_context_t * context, pinyin_option_t options);
+```
+Returns: **N/A** (bool success). Applies to all instances sharing this context.
+
+```
+bool pinyin_set_double_pinyin_scheme(pinyin_context_t * context,
+                                     DoublePinyinScheme scheme);
+```
+Returns: **N/A** (bool success).
+
+```
+bool pinyin_set_zhuyin_scheme(pinyin_context_t * context,
+                               ZhuyinScheme scheme);
+```
+Returns: **N/A** (bool success).
+
+```
+bool pinyin_load_addon_phrase_library(pinyin_context_t * context,
+                                      guint8 index);
+```
+Returns: **N/A** (bool success).
+
+```
+bool pinyin_save(pinyin_context_t * context);
+```
+Returns: **N/A** (bool success).
+
+### Parsing
+
+```
+size_t pinyin_parse_more_full_pinyins(pinyin_instance_t * instance,
+                                      const char * pinyins);
+```
+Returns: `size_t` — number of bytes consumed from `pinyins`.
+
+```
+size_t pinyin_parse_more_double_pinyins(pinyin_instance_t * instance,
+                                        const char * pinyins);
+```
+Returns: `size_t` — bytes consumed.
+
+```
+size_t pinyin_parse_more_chewings(pinyin_instance_t * instance,
+                                   const char * chewings);
+```
+Returns: `size_t` — bytes consumed.
+
+```
+bool pinyin_in_chewing_keyboard(pinyin_instance_t * instance,
+                                 const char key,
+                                 gchar *** symbols);
+```
+Returns: **N/A** (bool). Out-param `symbols`: **Caller-owned (g_strfreev)**.
+
+### Sentence / guess
+
+```
+bool pinyin_guess_sentence(pinyin_instance_t * instance);
+```
+Returns: **N/A** (bool success). Fills the instance's internal sentence
+buffer. The consumer calls it after parsing and, for partial selection,
+after `pinyin_choose_candidate`. The n-best path (§4) calls
+`pinyin_get_sentence` directly, with no fresh `pinyin_guess_sentence`.
+
+```
+bool pinyin_guess_candidates(pinyin_instance_t * instance,
+                              size_t offset,
+                              sort_option_t sort_option);
+```
+Returns: **N/A** (bool success). Fills the instance's candidate list.
+
+```
+bool pinyin_guess_predicted_candidates_with_punctuations
+    (pinyin_instance_t * instance, const char * prefix);
+```
+Returns: **N/A** (bool success). Fills predicted candidates for the
+suggestion editor (post-commit next-word prediction).
+
+```
+bool pinyin_reset(pinyin_instance_t * instance);
+```
+Returns: **N/A** (bool success). Clears parsing + sentence state.
+
+### Candidate access
+
+```
+bool pinyin_get_n_candidate(pinyin_instance_t * instance, guint * num);
+```
+Returns: **N/A** (bool success). Out-param `num`: **Out-param (scalar)**.
+
+```
+bool pinyin_get_candidate(pinyin_instance_t * instance,
+                           guint index,
+                           lookup_candidate_t ** candidate);
+```
+Returns: **N/A** (bool success). Out-param `candidate`:
+**Instance-borrowed**: a pointer into the instance's candidate array. It
+is valid until the next `pinyin_guess_candidates`/parse/reset/free.
+`pinyin_choose_candidate` mutates sentence/cursor state but does **not**
+invalidate the candidate passed as its argument. The n-best path calls
+`pinyin_get_candidate_nbest_index` after it (see §4).
+
+```
+bool pinyin_get_candidate_type(pinyin_instance_t * instance,
+                                lookup_candidate_t * candidate,
+                                lookup_candidate_type_t * type);
+```
+Returns: **N/A** (bool). Out-param `type`: **Out-param (scalar)**.
+Values: `NBEST_MATCH_CANDIDATE`, `NORMAL_CANDIDATE`,
+`PREDICTED_BIGRAM_CANDIDATE`, `PREDICTED_PREFIX_CANDIDATE`,
+`PREDICTED_PUNCTUATION_CANDIDATE`, and others.
+
+```
+bool pinyin_get_candidate_string(pinyin_instance_t * instance,
+                                  lookup_candidate_t * candidate,
+                                  const gchar ** utf8_str);
+```
+Returns: **N/A** (bool). Out-param `utf8_str`: **Instance-borrowed**. The
+candidate object inside the instance owns the string. It is valid until the
+candidate array is invalidated. The consumer must copy it before reuse.
+ibus-libpinyin copies it into `EnhancedCandidate.m_display_string` by
+`std::string` assignment.
+
+```
+bool pinyin_get_candidate_nbest_index(pinyin_instance_t * instance,
+                                       lookup_candidate_t * candidate,
+                                       guint8 * index);
+```
+Returns: **N/A** (bool). Out-param `index`: **Out-param (scalar)**.
+It has meaning only for the `NBEST_MATCH_CANDIDATE` type.
+
+```
+bool pinyin_is_user_candidate(pinyin_instance_t * instance,
+                               lookup_candidate_t * candidate);
+```
+Returns: **N/A** (bool success).
+
+```
+bool pinyin_remove_user_candidate(pinyin_instance_t * instance,
+                                   lookup_candidate_t * candidate);
+```
+Returns: **N/A** (bool success).
+
+### Candidate selection and training
+
+```
+int pinyin_choose_candidate(pinyin_instance_t * instance,
+                             size_t offset,
+                             lookup_candidate_t * candidate);
+```
+Returns: `int`: the new lookup cursor position, as a byte offset into the
+input after the chosen candidate's pinyin span. The call mutates the
+instance's internal state: it commits the candidate at the given offset.
+
+```
+bool pinyin_choose_predicted_candidate(pinyin_instance_t * instance,
+                                        lookup_candidate_t * candidate);
+```
+Returns: **N/A** (bool success). Used only in the suggestion editor path.
+
+```
+bool pinyin_train(pinyin_instance_t * instance, guint8 index);
+```
+Returns: **N/A** (bool success). Trains the n-gram model with the
+committed sentence at the given n-best index. The index comes from
+`pinyin_get_candidate_nbest_index`.
+
+### Sentence retrieval
+
+```
+bool pinyin_get_sentence(pinyin_instance_t * instance,
+                          guint8 index,
+                          char ** sentence);
+```
+Returns: **N/A** (bool). Out-param `sentence`: **Caller-owned (g_free)**.
+The index parameter selects the n-best sentence variant. It is usually 0,
+for the best match.
+
+```
+bool pinyin_get_character_offset(pinyin_instance_t * instance,
+                                  const char * sentence,
+                                  size_t offset,
+                                  size_t * character_offset);
+```
+Returns: **N/A** (bool). Out-param `character_offset`: **Out-param (scalar)**.
+Converts a pinyin byte offset to a character offset within the sentence
+(for cursor positioning in preedit text).
+
+### Pinyin key / cursor positioning
+
+```
+bool pinyin_get_pinyin_key_rest(pinyin_instance_t * instance,
+                                 size_t offset,
+                                 ChewingKeyRest ** key_rest);
+```
+Returns: **N/A** (bool). Out-param `key_rest`: **Instance-borrowed** —
+pointer into the instance's key-rest array.
+
+```
+bool pinyin_get_pinyin_key_rest_positions(pinyin_instance_t * instance,
+                                           ChewingKeyRest * key_rest,
+                                           guint16 * begin,
+                                           guint16 * end);
+```
+Returns: **N/A** (bool). Out-params `begin`, `end`:
+**Out-param (scalar)** — byte positions of this pinyin key's span.
+Either pointer may be NULL to skip.
+
+```
+bool pinyin_get_pinyin_offset(pinyin_instance_t * instance,
+                               size_t cursor,
+                               size_t * offset);
+```
+Returns: **N/A** (bool). Out-param `offset`: **Out-param (scalar)**.
+
+```
+bool pinyin_get_left_pinyin_offset(pinyin_instance_t * instance,
+                                    size_t offset,
+                                    size_t * left);
+```
+Returns: **N/A** (bool). Out-param `left`: **Out-param (scalar)**.
+
+```
+bool pinyin_get_right_pinyin_offset(pinyin_instance_t * instance,
+                                     size_t offset,
+                                     size_t * right);
+```
+Returns: **N/A** (bool). Out-param `right`: **Out-param (scalar)**.
+
+### Auxiliary text
+
+```
+bool pinyin_get_full_pinyin_auxiliary_text(pinyin_instance_t * instance,
+                                            guint cursor,
+                                            gchar ** aux_text);
+```
+Returns: **N/A** (bool). Out-param `aux_text`: **Caller-owned (g_free)**.
+
+```
+bool pinyin_get_double_pinyin_auxiliary_text(pinyin_instance_t * instance,
+                                              guint cursor,
+                                              gchar ** aux_text);
+```
+Returns: **N/A** (bool). Out-param `aux_text`: **Caller-owned (g_free)**.
+
+```
+bool pinyin_get_chewing_auxiliary_text(pinyin_instance_t * instance,
+                                        guint cursor,
+                                        gchar ** aux_text);
+```
+Returns: **N/A** (bool). Out-param `aux_text`: **Caller-owned (g_free)**.
+
+### User data / persistence
+
+```
+bool pinyin_mask_out(pinyin_context_t * context,
+                      phrase_token_t mask,
+                      phrase_token_t value);
+```
+Returns: **N/A** (bool success). Masks out the phrase tokens that match
+the pattern, before re-import.
+
+```
+bool pinyin_remember_user_input(pinyin_instance_t * instance,
+                                 const char * phrase,
+                                 gint count);
+```
+Returns: **N/A** (bool success). Records a user-provided phrase (with `count`
+occurrences, typically 1).
+
+```
+import_iterator_t * pinyin_begin_add_phrases(pinyin_context_t * context,
+                                              guint8 index);
+```
+Returns: **Handle (caller-managed)** — freed by `pinyin_end_add_phrases`.
+
+```
+bool pinyin_iterator_add_phrase(import_iterator_t * iter,
+                                 const char * phrase,
+                                 const char * pinyin,
+                                 gint count);
+```
+Returns: **N/A** (bool success).
+
+```
+void pinyin_end_add_phrases(import_iterator_t * iter);
+```
+Returns: **N/A** — releases the import iterator handle.
+
+### Phrase export
+
+```
+export_iterator_t * pinyin_begin_get_phrases(pinyin_context_t * context,
+                                              guint index);
+```
+Returns: **Handle (caller-managed)** — freed by `pinyin_end_get_phrases`.
+
+```
+bool pinyin_iterator_has_next_phrase(export_iterator_t * iter);
+```
+Returns: bool — whether more phrases remain.
+
+```
+bool pinyin_iterator_get_next_phrase(export_iterator_t * iter,
+                                      gchar ** phrase,
+                                      gchar ** pinyin,
+                                      gint * count);
+```
+Returns: **N/A** (bool). Out-params `phrase`, `pinyin`:
+**Caller-owned (g_free)** each. Out-param `count`:
+**Out-param (scalar)**.
+
+```
+void pinyin_end_get_phrases(export_iterator_t * iter);
+```
+Returns: **N/A** — releases the export iterator handle.
+
+### Bigram export
+
+```
+bigram_export_iterator_t * pinyin_begin_get_bigram_phrases
+    (pinyin_context_t * context);
+```
+Returns: **Handle (caller-managed)** — freed by
+`pinyin_end_get_bigram_phrases`.
+
+```
+bool pinyin_bigram_iterator_has_next_phrase
+    (bigram_export_iterator_t * iter);
+```
+Returns: bool — whether more bigram entries remain.
+
+```
+bool pinyin_bigram_iterator_get_next_phrase
+    (bigram_export_iterator_t * iter,
+     gchar ** phrase, gchar ** pinyin, gint * count);
+```
+Returns: **N/A** (bool). Out-params `phrase`, `pinyin`:
+**Caller-owned (g_free)** each. Out-param `count`:
+**Out-param (scalar)**.
+
+```
+void pinyin_end_get_bigram_phrases(bigram_export_iterator_t * iter);
+```
+Returns: **N/A** — releases the bigram export iterator handle.
+
+---
+
+## 2. Call ordering and state model
+
+### Opaque types
+
+| Type | Created by | Destroyed by | Multiplicity |
+|------|-----------|-------------|-------------|
+| `pinyin_context_t` | `pinyin_init` | `pinyin_fini` | One per input mode (pinyin, bopomofo) |
+| `pinyin_instance_t` | `pinyin_alloc_instance` | `pinyin_free_instance` | One per active editor |
+| `lookup_candidate_t` | `pinyin_get_candidate` (borrow) | Invalidated by next guess/parse/reset/free; not freed by caller | Transient |
+| `ChewingKeyRest` | `pinyin_get_pinyin_key_rest` (borrow) | Invalidated by next guess/parse/reset/free | Transient |
+| `import_iterator_t` | `pinyin_begin_add_phrases` | `pinyin_end_add_phrases` | One at a time per context |
+| `export_iterator_t` | `pinyin_begin_get_phrases` | `pinyin_end_get_phrases` | One at a time per context |
+| `bigram_export_iterator_t` | `pinyin_begin_get_bigram_phrases` | `pinyin_end_get_bigram_phrases` | One at a time per context |
+
+### Lifecycle phases
+
+**Phase 1 — Initialization (once at startup)**
+
+```
+context = pinyin_init(systemdir, userdir)
+pinyin_set_options(context, options)
+pinyin_set_double_pinyin_scheme(context, scheme)    // if double-pinyin mode
+pinyin_set_zhuyin_scheme(context, scheme)            // if bopomofo mode
+pinyin_load_addon_phrase_library(context, index)     // for each addon library
+instance = pinyin_alloc_instance(context)
+```
+
+Context-level configuration calls (`set_options`, `set_*_scheme`,
+`load_addon_phrase_library`) can come at any time. They apply to all
+instances that share the context. ibus-libpinyin calls them from
+`PYLibPinyin.cc` when GSettings values change.
+
+**Phase 2 — Input loop (per keystroke)**
+
+```
+// Parse input
+pinyin_len = pinyin_parse_more_full_pinyins(instance, text)
+// or:       pinyin_parse_more_double_pinyins(instance, text)
+// or:       pinyin_parse_more_chewings(instance, text)
+
+// Generate sentence hypothesis
+pinyin_guess_sentence(instance)
+
+// Get candidates at cursor position
+pinyin_guess_candidates(instance, offset, sort_option)
+pinyin_get_n_candidate(instance, &num)
+
+// Access each candidate
+pinyin_get_candidate(instance, i, &candidate)
+pinyin_get_candidate_type(instance, candidate, &type)
+pinyin_get_candidate_string(instance, candidate, &str)
+```
+
+**Phase 3 — Candidate selection**
+
+The path depends on the candidate type:
+
+**Path A — NBEST_MATCH_CANDIDATE (sentence-level selection at offset 0):**
+
+```
+pinyin_choose_candidate(instance, 0, candidate)
+pinyin_get_candidate_nbest_index(instance, candidate, &index)
+if (index != 0)
+    pinyin_train(instance, index)
+pinyin_get_sentence(instance, index, &sentence)
+g_free(sentence)
+// → commit the sentence text
+```
+
+**Path B — Normal candidate (word-level iterative selection):**
+
+```
+lookup_cursor = pinyin_choose_candidate(instance, lookup_cursor, candidate)
+pinyin_guess_sentence(instance)
+
+if (lookup_cursor == text.length()) {
+    // All input consumed → commit
+    pinyin_get_sentence(instance, 0, &sentence)
+    pinyin_train(instance, 0)
+    g_free(sentence)
+} else {
+    // Partial selection → update cursor and continue
+    pinyin_get_pinyin_key_rest(instance, lookup_cursor, &pos)
+    pinyin_get_pinyin_key_rest_positions(instance, pos, &begin, NULL)
+    // set cursor to begin, continue input loop
+}
+```
+
+**Phase 4 — Prediction (after commit)**
+
+```
+pinyin_guess_predicted_candidates_with_punctuations(instance, prefix)
+// access candidates the same way as Phase 2
+pinyin_choose_predicted_candidate(instance, candidate)
+// → commit predicted text
+```
+
+**Phase 5 — Auxiliary text (for display)**
+
+```
+pinyin_get_full_pinyin_auxiliary_text(instance, cursor, &aux_text)
+// or: pinyin_get_double_pinyin_auxiliary_text(instance, cursor, &aux_text)
+// or: pinyin_get_chewing_auxiliary_text(instance, cursor, &aux_text)
+g_free(aux_text)
+```
+
+**Phase 6 — Cursor navigation helpers**
+
+```
+pinyin_get_pinyin_offset(instance, cursor, &offset)
+pinyin_get_left_pinyin_offset(instance, offset, &left)
+pinyin_get_right_pinyin_offset(instance, offset, &right)
+pinyin_get_character_offset(instance, sentence, cursor, &char_offset)
+```
+
+**Phase 7 — Reset (on Escape/cancel)**
+
+```
+pinyin_reset(instance)
+```
+
+**Phase 8 — Periodic save (5-minute GLib timer)**
+
+```
+pinyin_save(context)
+```
+
+The consumer runs this on a `LIBPINYIN_SAVE_TIMEOUT = 5 * 60` (300s)
+GLib timer in `PYLibPinyin.cc`, and on the import path (Phase 9). The
+shutdown destructor does **not** call it.
+
+**Phase 9 — User data import/export (settings UI)**
+
+```
+// Import
+pinyin_mask_out(context, mask, value)
+iter = pinyin_begin_add_phrases(context, index)
+pinyin_iterator_add_phrase(iter, phrase, pinyin, count)
+pinyin_end_add_phrases(iter)
+pinyin_save(context)
+
+// Export phrases
+iter = pinyin_begin_get_phrases(context, index)
+while (pinyin_iterator_has_next_phrase(iter)) {
+    pinyin_iterator_get_next_phrase(iter, &phrase, &pinyin, &count)
+    g_free(phrase); g_free(pinyin);
+}
+pinyin_end_get_phrases(iter)
+
+// Export bigrams
+iter = pinyin_begin_get_bigram_phrases(context)
+while (pinyin_bigram_iterator_has_next_phrase(iter)) {
+    pinyin_bigram_iterator_get_next_phrase(iter, &phrase, &pinyin, &count)
+    g_free(phrase); g_free(pinyin);
+}
+pinyin_end_get_bigram_phrases(iter)
+```
+
+**Phase 10 — Shutdown**
+
+```
+pinyin_free_instance(instance)   // for each instance
+pinyin_fini(context)
+```
+
+Note: the destructor does **not** call `pinyin_save`. Only the 300s timer
+(Phase 8) or the import path (Phase 9) flushes unsaved user data.
+
+### Cloud input special case
+
+`PYLibPinyin.cc:rememberCloudInput()` also calls
+`pinyin_remember_user_input` and `pinyin_parse_more_full_pinyins`. It
+records a cloud-sourced phrase into the user dictionary. It uses a
+dedicated instance (`allocPinyinInstance`) for the parse, then calls
+`pinyin_remember_user_input` on that instance.
+
+---
+
+## 3. Config surface
+
+All configuration goes through `pinyin_set_options` as bitmask flags. The
+consumer builds the flags from GSettings keys in `PYPConfig.cc`.
+
+### pinyin_option_t flags
+
+**Incomplete pinyin (consumer default: ON):**
+- `PINYIN_INCOMPLETE` (`1 << 3` = 0x8)
+- `ZHUYIN_INCOMPLETE` (`1 << 4` = 0x10)
+
+Note: `0x01000000` is `PINYIN_CORRECT_UEI_UI` (a correction bit), not an
+incomplete-pinyin flag.
+
+**Correction flags (consumer default: all ON via `PINYIN_CORRECT_ALL`):**
+- `PINYIN_CORRECT_GN_NG`, `PINYIN_CORRECT_MG_NG`, `PINYIN_CORRECT_IOU_IU`,
+  `PINYIN_CORRECT_UEI_UI`, `PINYIN_CORRECT_UEN_UN`, `PINYIN_CORRECT_UE_VE`,
+  `PINYIN_CORRECT_V_U`, `PINYIN_CORRECT_ON_ONG`
+
+**Ambiguity flags (consumer default: all OFF):**
+- `PINYIN_AMB_C_CH`, `PINYIN_AMB_S_SH`, `PINYIN_AMB_Z_ZH`,
+  `PINYIN_AMB_F_H`, `PINYIN_AMB_G_K`, `PINYIN_AMB_L_N`,
+  `PINYIN_AMB_L_R`, `PINYIN_AMB_AN_ANG`, `PINYIN_AMB_EN_ENG`,
+  `PINYIN_AMB_IN_ING`
+
+**Hard-coded consumer additions (per input mode):**
+- Pinyin path (`setPinyinOptions`): `USE_RESPLIT_TABLE`, `USE_DIVIDED_TABLE`
+- Bopomofo path (`setChewingOptions`): `USE_TONE` (the resplit/divided-table
+  flags are pinyin-only)
+
+**Dynamic adjustment (masked out):**
+- `DYNAMIC_ADJUST`: the GSettings key `dynamic-adjust` defaults to true, and
+  `readDefaultValues` sets the bit in `m_option` (`src/PYPConfig.cc:346-353`).
+  `option()` returns `m_option & m_option_mask` (`src/PYConfig.h:56`), and the mask
+  holds only `PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE | PINYIN_CORRECT_ALL` plus the
+  fuzzy and correction bits (`src/PYPConfig.cc:145`), so the bit never reaches
+  libpinyin ([dynamic-adjust](dynamic-adjust.md)).
+
+Consumer default formula (pinyin), at ibus-libpinyin `2d2cdac0`:
+```
+PINYIN_DEFAULT_OPTION =
+    PINYIN_INCOMPLETE | ZHUYIN_INCOMPLETE | PINYIN_CORRECT_ALL
+final_options = (m_option & m_option_mask) | USE_RESPLIT_TABLE | USE_DIVIDED_TABLE
+```
+
+(Bopomofo substitutes `USE_TONE` for the resplit/divided-table flags and
+omits `PINYIN_INCOMPLETE`.)
+
+### sort_option_t
+
+Header `sort_option_t` values (`pinyin.h`):
+
+| Constant | Value |
+|----------|-------|
+| `SORT_WITHOUT_SENTENCE_CANDIDATE` | 0x1 |
+| `SORT_WITHOUT_LONGER_CANDIDATE` | 0x2 |
+| `SORT_BY_PHRASE_LENGTH` | 0x4 |
+| `SORT_BY_PINYIN_LENGTH` | 0x8 |
+| `SORT_BY_FREQUENCY` | 0x10 |
+| `SORT_BY_PHRASE_LENGTH_AND_FREQUENCY` | `SORT_WITHOUT_LONGER_CANDIDATE \| SORT_BY_PHRASE_LENGTH \| SORT_BY_FREQUENCY` (0x16) |
+| `SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY` | `SORT_WITHOUT_LONGER_CANDIDATE \| SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY` (0x1e) |
+
+Consumer presets via GSettings `sort-candidate-option` (default `1`):
+
+| GSettings | Flags actually passed to `pinyin_guess_candidates` |
+|-----------|----------------------------------------------------|
+| 0 | `SORT_BY_PHRASE_LENGTH \| SORT_BY_FREQUENCY` (0x14) |
+| 1 (default) | `SORT_BY_PHRASE_LENGTH \| SORT_BY_PINYIN_LENGTH \| SORT_BY_FREQUENCY` (0x1c) |
+| 2 | preset 1 plus `SORT_WITHOUT_SENTENCE_CANDIDATE \| SORT_WITHOUT_LONGER_CANDIDATE` (0x1f) |
+
+The consumer preset 1 (`0x1c`) and the header composite
+`SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY` (`0x1e`) are
+different words. The composite includes `SORT_WITHOUT_LONGER_CANDIDATE`.
+
+Consumer reachability of the sort word, in the pinned consumers:
+
+- ibus-libpinyin 1.16.5's presets are 0x14, 0x1c and 0x1f
+  (`PYPConfig.cc:225-230`), with 0x1c the default (`:151`). Presets 0 and
+  1 both leave `0x2` clear, so default-settings ibus users see LONGER rows,
+  and ibus maps them (`CANDIDATE_LONGER`/`CANDIDATE_LONGER_USER`,
+  `PYPLibPinyinCandidates.cc:56-62`).
+- fcitx-libpinyin 0.5.4 passes 0x16/0x1e (`enummap.cpp:159-166`). Both
+  words suppress longer rows.
+- fcitx5-oxpinyin passes literal 0 (`src/oxpinyin.cpp:1282`, separate
+  repository). Against libpinyin that word yields an unsorted list with
+  sentence and longer rows.
+
+### Double-pinyin schemes
+
+Header `DoublePinyinScheme` values (`pinyin_custom2.h`):
+`DOUBLE_PINYIN_ZRM` (1), `DOUBLE_PINYIN_MS` (2), `DOUBLE_PINYIN_ZIGUANG` (3),
+`DOUBLE_PINYIN_ABC` (4), `DOUBLE_PINYIN_PYJJ` (5), `DOUBLE_PINYIN_XHE` (6),
+`DOUBLE_PINYIN_CUSTOMIZED` (30). `DOUBLE_PINYIN_DEFAULT = DOUBLE_PINYIN_MS`.
+
+The value passed to `pinyin_set_double_pinyin_scheme` is the header
+discriminant, **not** the GSettings `double-pinyin-scheme` index. That
+index is a different 0-based map in `PYPConfig.cc`.
+
+### Zhuyin/Bopomofo schemes
+
+Header `ZhuyinScheme` values (`pinyin_custom2.h`):
+`ZHUYIN_STANDARD` (1), `ZHUYIN_HSU` (2), `ZHUYIN_IBM` (3), `ZHUYIN_GINYIEH` (4),
+`ZHUYIN_ETEN` (5), `ZHUYIN_ETEN26` (6), `ZHUYIN_STANDARD_DVORAK` (7),
+`ZHUYIN_HSU_DVORAK` (8), `ZHUYIN_DACHEN_CP26` (9).
+`ZHUYIN_DEFAULT = ZHUYIN_STANDARD`.
+
+The value passed to `pinyin_set_zhuyin_scheme` is the header
+discriminant, **not** the GSettings bopomofo-schema index. That index is a
+different 0-based map in `PYPConfig.cc`.
+
+### Display styles
+
+`display_style_t` enum (consumer-side only, not passed to libpinyin):
+`DISPLAY_STYLE_TRADITIONAL` (0), `DISPLAY_STYLE_COMPACT` (1),
+`DISPLAY_STYLE_COMPATIBILITY` (2).
+
+These change how ibus-libpinyin renders preedit/auxiliary text. They do
+not change which libpinyin symbols are called.
+
+---
+
+## 4. Sentence / n-best path
+
+ibus-libpinyin exercises the whole sentence/n-best path. The live n-best path is `PYPLibPinyinCandidates.cc:108–125`
+(`selectCandidate`). The `PYPPhoneticEditor.cc:467–514`
+`selectCandidate`/`selectCandidateInPage` block is inside `#if 0` and is
+not a live caller.
+
+Order:
+```c
+if (NBEST_MATCH_CANDIDATE == type) {
+    pinyin_choose_candidate (instance, 0, candidate);
+    guint8 index = 0;
+    pinyin_get_candidate_nbest_index (instance, candidate, &index);
+
+    if (index != 0)
+        pinyin_train (instance, index);   // train only on a non-zero index
+
+    pinyin_get_sentence (instance, index, &sentence);
+    // ... commit sentence
+}
+```
+
+The `lookup_candidate_t` from `pinyin_get_candidate` stays valid through
+`pinyin_choose_candidate` for the following `pinyin_get_candidate_nbest_index`
+call (see §1 ownership).
+
+### Implication for oxpinyin-capi
+
+The `pinyin_get_sentence` and `pinyin_train` functions must support a
+non-zero n-best index parameter. The consumer gets the n-best index from
+`pinyin_get_candidate_nbest_index` and passes it to both sentence retrieval
+and training. It calls `pinyin_train` only when that index is non-zero. An
+`oxpinyin-capi` implementation cannot reduce these to index 0 only.
+
+---
+
+## 5. Error and abort behaviour
+
+### libpinyin error model
+
+libpinyin functions use a simple error convention:
+- Functions returning `bool` return `false` on failure.
+- Functions returning pointers return `NULL` on failure.
+- Functions returning `size_t` return 0 on empty/failed parse.
+- There are no error codes, error strings, or `errno`-style state.
+
+### Consumer error handling
+
+ibus-libpinyin usually does **not** check the return values of libpinyin
+calls. The consumer assumes:
+- `pinyin_init` succeeds (no NULL check; failure would crash).
+- `pinyin_alloc_instance` succeeds (no NULL check).
+- `pinyin_get_candidate` succeeds for indices < `pinyin_get_n_candidate`.
+- `pinyin_get_sentence` succeeds when a sentence has been guessed.
+
+The consumer uses `assert()` in a few places:
+- `PYPSuggestionCandidates.cc:54` — asserts candidate type is one of the
+  three predicted types.
+- `PYPSuggestionEditor.cc:377` — `assert(FALSE)` in default case of
+  candidate type switch (unreachable in normal operation).
+- `PYPLibPinyinCandidates.cc:348` — asserts `lookup_cursor <=
+  m_text.length()` after `pinyin_choose_candidate`.
+
+### Implications for oxpinyin-capi
+
+A Rust implementation is expected to follow four rules:
+1. It uses idiomatic Rust error handling. Internal APIs need not all return
+   `Result` (constitution §4).
+2. It follows the pin's observable failure behaviour. A panic is permitted
+   only for a corresponding pin assertion or abort, subject to existing
+   class (b) rulings. Where the pin continues or returns an error, no panic
+   is introduced. Where the pin asserts or aborts, the implementation aborts
+   with
+   `std::process::abort()` ([source policy](../source-policy.md#compatibility-decision-order)).
+3. It treats the consumer's unchecked calls as implicit contracts. These
+   functions must succeed for in-range inputs with valid state. An
+   implementation that returns errors in these cases breaks the consumer's
+   expectations.
+4. It treats the consumer's `assert()` sites as the most important behavioural
+   contracts to keep. They are the places where unexpected state would
+   surface as crashes.
+
+---
+
+## 6. Header-completeness additions
+
+The fork includes `<pinyin.h>` from C++ translation units.
+The checked-in `pinyin.h` and `zhuyin.h` use GLib's `G_BEGIN_DECLS` and
+`G_END_DECLS` for C linkage.
+The pinyin header also carries exactly the aliases and constants
+that the fork's live TUs reference. The values are identical to the
+values in the headers of the pin, `074a2219`, and the upstream citations
+below are paths and lines at `074a2219`.
+
+### Compatibility aliases
+
+| Name | Definition | Upstream source |
+|---|---|---|
+| `PinyinKey` | `typedef ChewingKey PinyinKey;` | `src/pinyin.h:1093` |
+| `PinyinKeyPos` | `typedef ChewingKeyRest PinyinKeyPos;` | `src/pinyin.h:1094` |
+
+### Option bits (`PinyinTableFlag`, `PinyinAmbiguity2`, `PinyinCorrection2`)
+
+| Name | Value | Upstream source |
+|---|---:|---|
+| `PINYIN_INCOMPLETE` | `1U << 3` | `src/storage/pinyin_custom2.h:34` |
+| `ZHUYIN_INCOMPLETE` | `1U << 4` | `src/storage/pinyin_custom2.h:35` |
+| `USE_TONE` | `1U << 5` | `src/storage/pinyin_custom2.h:36` |
+| `USE_DIVIDED_TABLE` | `1U << 7` | `src/storage/pinyin_custom2.h:38` |
+| `USE_RESPLIT_TABLE` | `1U << 8` | `src/storage/pinyin_custom2.h:39` |
+| `DYNAMIC_ADJUST` | `1U << 9` | `src/storage/pinyin_custom2.h:40` |
+| `PINYIN_AMB_C_CH` | `1U << 10` | `src/storage/pinyin_custom2.h:50` |
+| `PINYIN_AMB_S_SH` | `1U << 11` | `src/storage/pinyin_custom2.h:51` |
+| `PINYIN_AMB_Z_ZH` | `1U << 12` | `src/storage/pinyin_custom2.h:52` |
+| `PINYIN_AMB_F_H` | `1U << 13` | `src/storage/pinyin_custom2.h:53` |
+| `PINYIN_AMB_G_K` | `1U << 14` | `src/storage/pinyin_custom2.h:54` |
+| `PINYIN_AMB_L_N` | `1U << 15` | `src/storage/pinyin_custom2.h:55` |
+| `PINYIN_AMB_L_R` | `1U << 16` | `src/storage/pinyin_custom2.h:56` |
+| `PINYIN_AMB_AN_ANG` | `1U << 17` | `src/storage/pinyin_custom2.h:57` |
+| `PINYIN_AMB_EN_ENG` | `1U << 18` | `src/storage/pinyin_custom2.h:58` |
+| `PINYIN_AMB_IN_ING` | `1U << 19` | `src/storage/pinyin_custom2.h:59` |
+| `PINYIN_AMB_ALL` | `0x3FFU << 10` | `src/storage/pinyin_custom2.h:60` |
+| `PINYIN_CORRECT_GN_NG` | `1U << 21` | `src/storage/pinyin_custom2.h:71` |
+| `PINYIN_CORRECT_MG_NG` | `1U << 22` | `src/storage/pinyin_custom2.h:72` |
+| `PINYIN_CORRECT_IOU_IU` | `1U << 23` | `src/storage/pinyin_custom2.h:73` |
+| `PINYIN_CORRECT_UEI_UI` | `1U << 24` | `src/storage/pinyin_custom2.h:74` |
+| `PINYIN_CORRECT_UEN_UN` | `1U << 25` | `src/storage/pinyin_custom2.h:75` |
+| `PINYIN_CORRECT_UE_VE` | `1U << 26` | `src/storage/pinyin_custom2.h:76` |
+| `PINYIN_CORRECT_V_U` | `1U << 27` | `src/storage/pinyin_custom2.h:77` |
+| `PINYIN_CORRECT_ON_ONG` | `1U << 28` | `src/storage/pinyin_custom2.h:78` |
+| `PINYIN_CORRECT_ALL` | `0xFFU << 21` | `src/storage/pinyin_custom2.h:79` |
+
+### Scheme defaults
+
+| Name | Value | Upstream source |
+|---|---:|---|
+| `DOUBLE_PINYIN_DEFAULT` | `DOUBLE_PINYIN_MS` (= 2) | `src/storage/pinyin_custom2.h:116` |
+| `ZHUYIN_DEFAULT` | `ZHUYIN_STANDARD` (= 1) | `src/storage/pinyin_custom2.h:132` |
+
+### Phrase-index macros, library ids, and `null_token`
+
+| Name | Value | Upstream source |
+|---|---:|---|
+| `PHRASE_MASK` | `0x00FFFFFF` | `src/include/novel_types.h:41` |
+| `PHRASE_INDEX_LIBRARY_MASK` | `0x0F000000` | `src/include/novel_types.h:42` |
+| `PHRASE_INDEX_MAKE_TOKEN` | `(((phrase_index<<24) & PHRASE_INDEX_LIBRARY_MASK) \| (token & PHRASE_MASK))` | `src/include/novel_types.h:45-46` |
+| `ADDON_DICTIONARY` | 5 | `src/include/novel_types.h:159` |
+| `NETWORK_DICTIONARY` | 6 | `src/include/novel_types.h:160` |
+| `USER_DICTIONARY` | 7 | `src/include/novel_types.h:161` |
+| `null_token` | 0 | `src/include/novel_types.h:121` |
+
+`PHRASE_MASK` is included because `PHRASE_INDEX_MAKE_TOKEN` expands it.
+No other `novel_types.h` / `pinyin_custom2.h` definitions are imported, so
+the surface stays minimal.
+
+## Boundary notes
+
+Every exported `pinyin_*` symbol is in scope and implemented live, with
+no placeholder bodies. The fuzz workspace enables `test-hooks` for its Rust decision queries.
+Shipping builds omit those queries and the fault injection code.
+
+Every C-ABI symbol requires:
+
+- a `// SAFETY:` argument for each unsafe block;
+- NULL/invalid-input coverage;
+- an oracle-backed behavioural test under the [E2E I/O compatibility rule](compatibility-policy.md#the-e2e-io-compatibility-rule).

@@ -1,0 +1,54 @@
+# Findings
+
+This directory holds the project's policies, contracts, registers and reference documents: one file per subject.
+Every difference from the pin is one entry in the [divergence register](upstream-divergences.md); no difference has a file of its own.
+Documents and tools still read every file listed here.
+New results go in pull request bodies ([verification reporting rules](../runbooks/verification.md#7-proportionate-verification)).
+Git history holds every retired record.
+
+Statuses:
+
+- **policy / contract** — normative; see [approval conditions](../../CONTRIBUTING.md#approval-conditions).
+- **register** — a living list. The [divergence register](upstream-divergences.md) holds one entry per difference from the pin, in the entry form stated at its top.
+- **reference** — describes the pin or the tree within the scope that the file states. A SPEC is reference.
+  See the [approval conditions](../../CONTRIBUTING.md#approval-conditions).
+- **open** — work still owed.
+- **machine-read** — a flag beside a status: a program or test reads this file or names its path. The path and the parts it reads stay unchanged.
+
+A parenthetical after a status is a note about scope, not a new status.
+
+| Document | Subject | Status |
+| --- | --- | --- |
+| [`abi-allocator-pairing`](abi-allocator-pairing.md) | ABI allocator pairing: the register, the gate and caller-owned returned strings | contract (the two `.alloc` registers) |
+| [`abi-reference`](abi-reference.md) | The exported libpinyin ABI: all 79 `pinyin_*` symbols, with signatures, state model, config, error behaviour and sort-word reachability | register |
+| [`addon-choose-promotion`](addon-choose-promotion.md) | Addon choose-promotion, default nibble 5 | reference |
+| [`berkeleydb-backend`](berkeleydb-backend.md) | The BerkeleyDB storage backend | reference |
+| [`bopomofo-spec`](bopomofo-spec.md) | Bopomofo/Zhuyin scheme SPEC: the four chewing functions, keyboards, indexes and the exact seam | reference |
+| [`candidate-construction`](candidate-construction.md) | Candidate-construction SPEC: the window scan, the three-key order, the frequency key and the dedup | reference |
+| [`compatibility-policy`](compatibility-policy.md) | Compatibility policy: where oxpinyin may differ from the pin, and where it may not | policy |
+| [`core-trait-seam`](core-trait-seam.md) | Core trait seam: the `oxpinyin` traits and their behavioural rules | reference |
+| [`data-formats`](data-formats.md) | libpinyin system data file formats, with the pinyin-index, phrase-index, bigram and punctuation DBM formats | reference |
+| [`double-pinyin-spec`](double-pinyin-spec.md) | Double-pinyin scheme SPEC: the scheme ABI, parser laws, tone law and auxiliary text | reference |
+| [`dynamic-adjust`](dynamic-adjust.md) | The `DYNAMIC_ADJUST` option | reference |
+| [`external-io-boundary`](external-io-boundary.md) | External I/O boundary | policy |
+| [`glib-libc-inventory`](glib-libc-inventory.md) | GLib and libc at the pin: reachable calls, oxpinyin counterparts and the verification of each family | reference |
+| [`installed-naming`](installed-naming.md) | The installed tree takes libpinyin's name; the source tree keeps ours | reference |
+| [`interpolation2-grammar`](interpolation2-grammar.md) | The `interpolation2.text` taglib grammar: one taglib port | reference |
+| [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
+| [`library-transitions-in-memory`](library-transitions-in-memory.md) | Library transitions in memory | reference |
+| [`matrix-split-tables`](matrix-split-tables.md) | Matrix split tables SPEC: the resplit pairs and divided syllables of the scan matrix | reference |
+| [`model-provenance`](model-provenance.md) | Model and table provenance | policy (model20 not redistributable) |
+| [`option-bits`](option-bits.md) | Option bits: where each `pinyin_option_t` bit class acts, and oxpinyin's handling | reference |
+| [`parser-spec`](parser-spec.md) | Full-pinyin parser SPEC: the inventory, input domain, result fields and apostrophe rules | reference |
+| [`phrase-union`](phrase-union.md) | Phrase-index union at lookup | reference |
+| [`scoring-spec`](scoring-spec.md) | Scoring: the language-model term, sentence scores and incomplete keys | reference |
+| [`segment-graph`](segment-graph.md) | SegmentGraph SPEC: the byte-position key graph and the incomplete-key inventory | reference |
+| [`sentence-surface`](sentence-surface.md) | Sentence surface: the n-best sentence rows and the measured selection residuals | reference, machine-read |
+| [`session-api`](session-api.md) | Framework-neutral session API: the `oxpinyin` session design under the C facades | reference |
+| [`session-replay`](session-replay.md) | Session replay: authored scenarios with the pin's expected candidates | reference |
+| [`store-key-ordering`](store-key-ordering.md) | Store key-ordering contract for the whole stack | contract |
+| [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian ships libpinyin on tkrzw; Ubuntu's tkrzw corrupts records | reference, machine-read |
+| [`training-algorithm`](training-algorithm.md) | The libpinyin training pipeline: algorithm characterization and trainer-workflow parity | reference |
+| [`upstream-divergences`](upstream-divergences.md) | Upstream divergences: every difference from the pin, the pin aborts oxpinyin reproduces, and pin defects to report | register |
+| [`upstream-report-drafts`](upstream-report-drafts.md) | Upstream report drafts: the libpinyin report-back batch | open |
+| [`user-store`](user-store.md) | The libpinyin user store: behaviour characterization | reference |

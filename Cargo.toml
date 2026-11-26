@@ -1,0 +1,246 @@
+[package]
+name = "oxpinyin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+include = [
+    "/LICENSE",
+    "/README.md",
+    "/src/**",
+    "/build.rs",
+    "/codegen/**",
+]
+description = "Pinyin and Zhuyin parsing, decoding, and model storage. The Rust interface is unstable."
+keywords = ["pinyin", "zhuyin", "bopomofo", "chinese", "input-method"]
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# The tkrzw and Kyoto Cabinet backends' Rust/C++ bridges (Rust/C++
+# interoperability ruling, docs/findings/compatibility-policy.md#rust-cpp-interoperability):
+# generated glue over the pin's concrete classes.
+cxx = { version = "1.0.205", optional = true }
+libc.workspace = true
+glib-sys.workspace = true
+memmap2.workspace = true
+rustc-hash.workspace = true
+bitflags.workspace = true
+num_enum.workspace = true
+compact_str.workspace = true
+phf.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+bindgen = { workspace = true, optional = true }
+# The C++ compiler probe both bridges' include handling uses.
+cc = { version = "1.4.3", optional = true }
+# Declares and finds the native backends (#1434); see the metadata below.
+system-deps = { version = "9.0.0", optional = true }
+# Generates and compiles the bridges' C++ side, with the semantic adapters
+# in src/store/tkrzw/adapter.cc and src/store/kyotocabinet/adapter.cc.
+cxx-build = { version = "1.0.205", optional = true }
+
+# Generates the phf maps over the frozen syllable inventories (see build.rs).
+phf_codegen.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+tempfile.workspace = true
+rstest.workspace = true
+
+[package.metadata.cargo-shear]
+# The maps that build.rs generates name `::phf::Map`.
+ignored = ["phf"]
+
+# One entry per backend, each probed only with its feature. The version is
+# required by the format; "0" is no floor, as libpinyin's configure sets
+# none. tkrzw and Kyoto Cabinet are found through their .pc file. Berkeley
+# DB is found without pkg-config (build.rs defaults its NO_PKG_CONFIG and
+# LIB), so its version here is never consulted.
+[package.metadata.system-deps.tkrzw]
+feature = "tkrzw"
+version = "0"
+
+# Homebrew's tkrzw.pc names -llz4 and -lzstd without their search paths.
+# Their own .pc files supply those paths.
+[package.metadata.system-deps.'cfg(target_os = "macos")']
+liblz4 = { version = "0", feature = "tkrzw" }
+libzstd = { version = "0", feature = "tkrzw" }
+
+[package.metadata.system-deps.kyotocabinet]
+feature = "kyotocabinet"
+version = "0"
+
+[package.metadata.system-deps.bdb]
+feature = "bdb"
+version = "0"
+
+[features]
+# See docs/architecture.md#backend-selection. Optional build dependencies
+# such as bindgen are enabled only by the features that use them.
+# tkrzw is maintained upstream (maintainer decision 2026-10-30 UTC).
+# tkrzw is the default on every platform. Linux CI selects kyotocabinet, because
+# GitHub's Ubuntu runners ship a defective libtkrzw (CI_LINUX_CELL in
+# tools/dev/cell.py; docs/runbooks/setup.md#linux).
+default = ["tkrzw"]
+# Test-only operations and fault points for the C crates and fuzz workspace.
+# Normal and shipped builds leave this feature off.
+test-hooks = []
+# tkrzw binds the pin's concrete classes through cxx; it needs a C++17
+# compiler and tkrzw's headers, not libclang; `cc` is named for the compiler probe.
+tkrzw = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]
+# Kyoto Cabinet binds the pin's concrete classes through cxx; it needs a
+# C++17 compiler and Kyoto Cabinet's headers, not libclang. The runtime
+# dependency is the system libkyotocabinet the distro already ships.
+kyotocabinet = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]
+# Berkeley DB backend — libpinyin's original DBM and the third drop-in
+# set. bindgen is build-time only; the runtime dependency is the system
+# libdb 5.3 the distro already ships (Debian libdb-dev, Fedora
+# libdb-devel), the same library that wrote the files it must read.
+bdb = ["dep:bindgen", "dep:system-deps"]
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation"] }
+
+[workspace]
+resolver = "3"
+members = ["capi", "zhuyin-capi", "utils", "repl", "tool-support", "tools/abi", "tools/measurement"]
+default-members = [".", "capi", "zhuyin-capi", "utils", "repl", "tool-support"]
+
+[workspace.package]
+# Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 2.
+# The alpha precedes the first 0.1.0 release.
+version = "0.1.0-alpha.2"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/shenghaoc/oxpinyin"
+# Exact on purpose (#1074): the MSRV is the pinned stable toolchain.
+rust-version = "1.98.1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = "deny"
+missing_docs = "warn"
+# unused_must_use is warn-by-default and CI's -D warnings already promotes
+# it; the explicit deny protects local builds that lack the env var.
+# unsafe_op_in_unsafe_fn: warn-by-default in edition 2024 — pinned here so
+# the FFI crates cannot regress it either.
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+# Checks for safety comments on local unsafe blocks, including the C marshalling
+# helpers. Clippy skips blocks generated by macros defined in another crate.
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+# Grows #[must_use] coverage on value-returning queries; kept at zero hits —
+# new sites must annotate or consume.
+must_use_candidate = "warn"
+# Keep these lints at zero diagnostics. Use local, reasoned expectations.
+option_option = "deny"
+unnecessary_wraps = "deny"
+unused_self = "deny"
+struct_excessive_bools = "deny"
+fn_params_excessive_bools = "deny"
+ref_option = "deny"
+needless_pass_by_value = "deny"
+
+[workspace.dependencies]
+rustc-hash = "2.1.3"
+assert_cmd = "2.2"
+assert_fs = "1.1"
+regex = "1.13"
+rstest = { version = "0.28", default-features = false }
+sha2 = "0.11"
+# Checked integer conversions for parser schemes and the Pinyin C candidate type.
+num_enum = { version = "0.7.6", default-features = false }
+# The store-backend chain crates carry default-features = false at the
+# workspace table so `--no-default-features` builds actually reach the
+# store's backend selection (docs/architecture.md#backend-selection).
+# Each crate's [features] block forwards the backend choice to its next
+# dependency toward the store. Cargo unifies
+# features, so one forwarding edge per crate reaches the store; every crate
+# that is built on its own keeps its `default` and peer features.
+oxpinyin = { path = ".", version = "=0.1.0-alpha.2", default-features = false }
+bindgen = { version = "0.73.2", default-features = false, features = ["logging", "runtime"] }
+# The parser option word (oxpinyin OptionBits); no dependencies of its own.
+bitflags = "2.13"
+smallvec = "1.15"
+compact_str = "0.10"
+# Perfect-hash text lookups over the frozen syllable inventories;
+# oxpinyin/build.rs generates the maps, so phf_codegen is build-time only.
+phf = "0.14"
+phf_codegen = "0.14"
+glib-sys = "0.22"
+libc = "0.2.189"
+# Derives Display, source() and From for the error enums.
+thiserror = "2.0"
+# The phrase-library chunk mapping (oxpinyin). No features:
+# `stable_deref_trait` stays off.
+memmap2 = { version = "0.9.11", default-features = false }
+# Test-only: collision-free, self-cleaning temp dirs for test harnesses.
+# Never a dependency of a shipping crate's normal or build graph.
+tempfile = "3.27"
+
+# Keep workspace file and line numbers in panic backtraces. The test
+# profile inherits dev; differential cells use dev at opt-level 1.
+[profile.dev]
+debug = "line-tables-only"
+
+# This wildcard excludes workspace members.
+[profile.dev.package."*"]
+debug = 0
+
+# Interactive debugging needs types and local variables, including those
+# in dependencies. Override the inherited wildcard as well as the profile.
+[profile.dev-full]
+inherits = "dev"
+debug = 2
+
+[profile.dev-full.package."*"]
+debug = 2
+
+# Release .so size lever: fat LTO + one codegen unit lets the linker
+# drop cross-crate dead code and duplicate generic instantiations that
+# per-CGU codegen keeps.
+#
+# panic = "abort" drops the unwinding tables and landing pads. On amd64
+# with Kyoto Cabinet the stripped libpinyin is 90,112 B smaller and
+# libzhuyin 77,824 B smaller; the keystroke cycle executes +0.50% hardware
+# instructions, and its wall and CPU time are unchanged within noise
+# (B/A 0.98, 95% interval 0.95 to 1.02). `just measure compare` and
+# `just packaging sizes` reproduce both.
+# The panic discipline does not depend on the strategy. The lints
+# clippy::unwrap_used/expect_used/panic/panic_in_result_fn/unreachable
+# deny explicit panic forms in every library crate's non-test scope. They
+# do not make bodies panic-free or exclude other panic sources. Since
+# Rust 1.81 a panic reaching a non-unwinding ABI boundary aborts (Rust
+# Reference, "Unwinding"), so the C boundary needs no catch site under
+# either strategy. The gimli/addr2line symbolizer is held by std's
+# default panic hook and is unaffected by either strategy.
+# [profile.profiling] keeps its explicit `lto = "thin"` and `panic =
+# "unwind"` overrides and inherits codegen-units from here.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
+# `debug = "line-tables-only"` keeps the image small; samply/perf still map
+# samples to functions and source lines. This profile uses thin LTO.
+# `cargo cinstall --release` uses the release profile's fat LTO.
+# The profiling workflow sets `panic = "unwind"` explicitly so its panic
+# strategy stays independent of the release policy.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+lto = "thin"
+panic = "unwind"

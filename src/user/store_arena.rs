@@ -1,0 +1,752 @@
+//! Session phrase operations over the arenas and the live system items.
+
+use super::*;
+use crate::data::phrase_library::ITEM_HEADER_SIZE;
+use crate::data::phrase_library::PhraseItemView;
+use crate::data::phrase_library::{ChunkItem, decode_phrase_item, encode_phrase_item};
+use crate::user::live_system::{ArenaProbe, StepLibraries};
+use crate::user::replay::UnigramAdd;
+use crate::user::user_library::{SessionPhrases, UserLibrary};
+
+fn encoded(item: &ChunkItem) -> Result<Vec<u8>, UserStoreError> {
+    encode_phrase_item(item).ok_or(UserStoreError::Persistence)
+}
+
+fn packed(keys: &[PinyinKey]) -> Result<Vec<u16>, UserStoreError> {
+    crate::user::store_libpinyin::pinyin_keys_to_packed(keys).ok_or(UserStoreError::InvalidPhrase)
+}
+
+/// Which phrase-table result the add operation uses.
+#[derive(Clone, Copy)]
+pub(super) enum PhraseSelection {
+    SearchTable,
+    NewPhrase,
+    UseToken(PhraseToken),
+}
+
+/// `_add_phrase`'s search of the phrase table before any change
+/// (`pinyin.cpp:536-542` at 074a2219): the token that `library` already holds
+/// for the phrase `words`, or `selected` when the caller chose one.
+///
+/// # Errors
+///
+/// A record the search would read past is refused first,
+/// before any commit. More than one token of the library for the phrase is
+/// [`UserStoreError::InvalidPhrase`].
+fn existing_phrase_token(
+    table: &crate::user::user_phrase_table::UserPhraseTable,
+    library: u8,
+    words: &[u32],
+    selected: PhraseSelection,
+) -> Result<Option<PhraseToken>, UserStoreError> {
+    table
+        .check_add(words)
+        .map_err(|_| UserStoreError::Persistence)?;
+    match selected {
+        PhraseSelection::SearchTable => {}
+        PhraseSelection::NewPhrase => return Ok(None),
+        PhraseSelection::UseToken(token) => return Ok(Some(token)),
+    }
+    let tokens: Vec<_> = table
+        .tokens(&phrase_table::key_ucs4(words))
+        .map_err(|_| UserStoreError::Persistence)?
+        .into_iter()
+        .filter(|token| phrase_index_library_index(*token) == library)
+        .collect();
+    if tokens.len() > 1 {
+        return Err(UserStoreError::InvalidPhrase);
+    }
+    Ok(tokens.first().copied())
+}
+
+/// The live item of `token` with the reading `packed` merged into it, for
+/// the existing-phrase path of `buffer_add_phrase`. It reads the buffer and
+/// changes nothing.
+///
+/// # Errors
+///
+/// [`UserStoreError::InvalidPhrase`] when the shipped chunk holds the item
+/// (the caller merges those; only an item the buffer added is held here),
+/// when a detached library's live slot is not the buffer's own addition,
+/// or when the live item is absent or spells another phrase.
+/// [`UserStoreError::Persistence`] when the reading cannot be merged.
+fn merged_live_item(
+    items: &crate::user::system_items::SystemItems,
+    original: crate::user::SystemLibraryRef<'_>,
+    token: PhraseToken,
+    words: &[u32],
+    packed: &[u16],
+    delta: u32,
+) -> Result<Vec<u8>, UserStoreError> {
+    if original.contains_item(token & PHRASE_MASK)
+        || (original.mapped.is_some_and(|library| library.is_detached())
+            && !items.is_added(token)
+            && items.with_live(token, |_| ()).is_some())
+    {
+        return Err(UserStoreError::InvalidPhrase);
+    }
+    items
+        .with_live(token, |bytes| {
+            let view = PhraseItemView::from_bytes(bytes)?;
+            let text_end = ITEM_HEADER_SIZE + 4 * view.phrase_length();
+            if view.as_bytes()[ITEM_HEADER_SIZE..text_end] != phrase_table::key_ucs4(words) {
+                return None;
+            }
+            Some(UserLibrary::merged_reading(view, packed, delta))
+        })
+        .flatten()
+        .ok_or(UserStoreError::InvalidPhrase)?
+        .ok_or(UserStoreError::Persistence)
+}
+
+impl UserStore {
+    /// `SubPhraseIndex::m_total_freq` of `library`: a system library's live
+    /// scalar, or a user library's items sum plus the stored total's
+    /// difference from it.
+    pub(crate) fn library_total_of(
+        &self,
+        offsets: &Offsets,
+        phrases: &SessionPhrases,
+        library: u8,
+    ) -> u32 {
+        if let Some(original) = self.originals.get(&library) {
+            return self
+                .inner
+                .system_items
+                .borrow()
+                .library_total(library, Some(original))
+                .unwrap_or(original.total);
+        }
+        // The library's own total is the pin's `m_total_freq`: it follows
+        // every add and remove, and not the bytes a wrapped add overwrote.
+        let offset = offsets.get(&library).copied().unwrap_or(0);
+        phrases
+            .libraries
+            .get(&library)
+            .map_or(offset, UserLibrary::total)
+    }
+
+    /// [`Self::library_total_of`] under the session's own borrows, for the
+    /// tests.
+    #[cfg(test)]
+    pub(crate) fn library_total_for_test(&self, library: u8) -> u32 {
+        let offsets = self.offsets();
+        let phrases = self.inner.libpinyin.phrases();
+        self.library_total_of(&offsets, &phrases, library)
+    }
+
+    /// `FacadePhraseIndex::remove_phrase_item` (`phrase_index.h:691`): the
+    /// facade and the library's totals lose the item's unigram.
+    fn take_item_out(&self, library: u8, unigram: u32) {
+        let mut items = self.inner.system_items.borrow_mut();
+        match self.originals.get(&library) {
+            Some(original) => {
+                let total = items
+                    .library_total(library, Some(original))
+                    .unwrap_or(original.total);
+                items.set_library_total(library, total.wrapping_sub(unigram));
+            }
+            None => items.sub_facade_extra(u64::from(unigram)),
+        }
+    }
+
+    /// The session side of a `USER_FILE` library transition: `library` takes
+    /// the arena's place, with its share of the facade total; `None` is an
+    /// unload, which leaves the library without a sub-index until a load. The
+    /// session's state is process memory, so this cannot fail, as
+    /// `FacadePhraseIndex::load` and `unload` cannot.
+    pub(super) fn replace_user_arena(&mut self, nibble: u8, library: Option<UserLibrary>) {
+        let mut offsets = self.offsets_mut();
+        let mut phrases = self.inner.libpinyin.phrases_mut();
+        let sum = |library: &UserLibrary| {
+            library.items().fold(0_u64, |sum, (_, item)| {
+                sum.wrapping_add(u64::from(item.unigram()))
+            })
+        };
+        let before = phrases.libraries.get(&nibble).map_or(0, sum);
+        let after = library.as_ref().map_or(0, sum);
+        let offset = library
+            .as_ref()
+            .map_or(0, |library| library.total().wrapping_sub(after as u32));
+        let old_offset = if offset == 0 {
+            offsets.remove(&nibble)
+        } else {
+            offsets.insert(nibble, offset)
+        }
+        .unwrap_or(0);
+        let moved = offset.wrapping_sub(old_offset);
+        // The facade total takes the library's new total in and the old one
+        // out (`phrase_index.cpp:237-248`).
+        self.inner
+            .system_items
+            .borrow_mut()
+            .add_facade_extra(after.wrapping_sub(before).wrapping_add(u64::from(moved)));
+        phrases.libraries.remove(&nibble);
+        if let Some(library) = library {
+            phrases.libraries.insert(nibble, library);
+            phrases.unloaded.remove(&nibble);
+        } else {
+            phrases.unloaded.insert(nibble);
+        }
+        let arena_live = phrases
+            .libraries
+            .values()
+            .any(|library| !library.is_empty());
+        drop(phrases);
+        let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
+        self.mark_committed_write(arena_live || grams_live);
+    }
+
+    /// Whether a user library's arena holds an item.
+    pub(super) fn arena_has_items(&self) -> bool {
+        self.inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .values()
+            .any(|library| !library.is_empty())
+    }
+
+    /// Addon selection copies the complete item under `token`, including
+    /// its unigram, and indexes every pronunciation
+    /// (074a2219 pinyin.cpp:2547-2558).
+    ///
+    /// `pinyin.cpp:2541-2545` takes `get_range`'s end as the token with no
+    /// overflow check and no reserved-id bump. A full library wraps to slot
+    /// 0.
+    pub(super) fn arena_promote(
+        &mut self,
+        token: PhraseToken,
+        view: &PhraseItemView<'_>,
+    ) -> Result<(), UserStoreError> {
+        let target = &self.inner.libpinyin;
+        let bytes = view.as_bytes();
+        let unigram = view.unigram();
+        let words: Vec<u32> = view
+            .phrase_codes()
+            .collect::<Option<_>>()
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let offsets = self.offsets();
+        let mut phrases = target.phrases_mut();
+        // The pin's promote reaches `phrase_table->add_index`
+        // (`pinyin.cpp:2557` at 074a2219) before it changes anything it
+        // keeps; a record it would read past (register row 101) is refused
+        // here, before any commit.
+        phrases
+            .phrase_table
+            .check_add(&words)
+            .map_err(|_| UserStoreError::Persistence)?;
+        // `add_phrase_item` selects the sub-index with
+        // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`phrase_index.h:664`).
+        let library = phrase_index_library_index(token);
+        if let Some(original) = self.originals.get(&library) {
+            // A system chunk's sub-index: the item goes to its live buffer
+            // and its total takes the unigram (`phrase_index.h:669-670`,
+            // `phrase_index.cpp:208-217`).
+            let mut items = self.inner.system_items.borrow_mut();
+            // An unloaded library's slot is NULL and the pin makes a new,
+            // empty sub-index there (`phrase_index.h:665-668`). The session
+            // has no buffer to stand for it.
+            if items.lacks_sub_index(library, original) {
+                return Err(UserStoreError::InvalidPhrase);
+            }
+            items.add_item(original, token, bytes);
+            drop(items);
+            self.inner.has_system_items.set(true);
+        } else {
+            // A user library's sub-index, or the one `add_phrase_item`
+            // makes for a library that had none (`phrase_index.h:665-668`).
+            let retained = offsets.get(&library).copied().unwrap_or(0);
+            phrases
+                .arena(library, retained)
+                .ok_or(UserStoreError::InvalidPhrase)?
+                .add(token & PHRASE_MASK, bytes)
+                .ok_or(UserStoreError::Persistence)?;
+            self.inner
+                .system_items
+                .borrow_mut()
+                .add_facade_extra(u64::from(unigram));
+        }
+        phrases
+            .phrase_table
+            .add(&words, token)
+            .map_err(|_| UserStoreError::Persistence)?;
+        for reading in view.pronunciations() {
+            let keys: Vec<crate::parser::ChewingKey> = reading
+                .keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| crate::parser::ChewingKey::from_packed(u16::from_le_bytes(*pair)))
+                .collect();
+            phrases.index.add(&keys, token);
+        }
+        drop(phrases);
+        self.mark_committed_write(true);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn session_target(&self) -> &crate::user::store_libpinyin::Target {
+        &self.inner.libpinyin
+    }
+
+    pub(super) fn arena_train(
+        &mut self,
+        token: PhraseToken,
+        readings: impl Iterator<Item = Vec<ChewingKey>>,
+        delta: u32,
+    ) {
+        let mut phrases = self.inner.libpinyin.phrases_mut();
+        // The unloaded sub-index owns no item. The pin instead uses its
+        // stale context cache here (phonetic_lookup.h:924-927); the
+        // unloaded-cache ruling in compatibility-policy.md skips that write.
+        if phrases
+            .unloaded
+            .contains(&phrase_index_library_index(token))
+        {
+            return;
+        }
+        if phrases.item(token).is_some() {
+            if let Some(library) = phrases.item_mut(token) {
+                library.train(token & PHRASE_MASK, readings, delta);
+            }
+            drop(phrases);
+            self.mark_committed_write(true);
+            return;
+        }
+        drop(phrases);
+        // Any system item is trained in place in its library's live buffer; a
+        // removed one answers no item there and is left alone.
+        let mut items = self.inner.system_items.borrow_mut();
+        if items.train_live(
+            self.originals.get(&phrase_index_library_index(token)),
+            token,
+            readings,
+            delta,
+        ) {
+            self.inner.has_system_items.set(true);
+        }
+        drop(items);
+        self.mark_committed_write(true);
+    }
+
+    /// Borrow a live user item directly from the session arena. The callback
+    /// cannot retain the view past the borrow or a later writer.
+    pub(crate) fn with_user_item<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        let phrases = self.inner.libpinyin.phrases();
+        match phrases.item(token) {
+            Some(view) => Some(read(view)),
+            None => self.with_appended_item(token, read),
+        }
+    }
+
+    /// The two sets of library bits (bit `n` for library `n`) of a trellis
+    /// step's in-place read, the per-library half of the pin's
+    /// `m_sub_phrase_indices[index]` test (074a2219 `phrase_index.h:646-650`):
+    ///
+    /// - `in_place`: the system libraries whose chunk is detached into its
+    ///   live buffer, while the session holds system items. The mask is not
+    ///   applied here ([`crate::user::LiveSystemItems::step_libraries`] applies it);
+    /// - `arena`: the libraries the session arena holds, where a user item
+    ///   can come before the live one.
+    ///
+    /// Neither set changes while a guess runs. A guess holds the store
+    /// through `&self` (`RuntimeDict::user`), and every write to a fact
+    /// they read takes `&mut self` at its root: the chunk's detach
+    /// (`PhraseLibrary::take_live_content`), the system-items flag (the
+    /// arena and buffer writes, `add_system_phrase_in`, and the unigram
+    /// adds that reach `arena_add_unigram_outcome`), and the arena's
+    /// library slots (`replace_user_arena`, `arena_promote`,
+    /// `arena_add_phrase`). The guess's own arena write, the user-search
+    /// note, writes the index only ([`Self::note_pinyin_search_keys`]).
+    pub(crate) fn step_libraries(&self) -> StepLibraries {
+        let bit = |nibble: &u8| 1_u16.checked_shl(u32::from(*nibble)).unwrap_or(0);
+        let in_place = if self.has_system_items() {
+            self.originals
+                .iter()
+                .filter(|(_, original)| {
+                    original.mapped.is_some_and(|library| library.is_detached())
+                })
+                .fold(0, |set, (nibble, _)| set | bit(nibble))
+        } else {
+            0
+        };
+        let arena = self
+            .inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .keys()
+            .fold(0, |set, nibble| set | bit(nibble));
+        StepLibraries { in_place, arena }
+    }
+
+    /// Reads the item the live buffer of `token`'s system library holds,
+    /// in place, where the library is one [`Self::step_libraries`] names
+    /// in place. One slot read answers both whether the slot is one the
+    /// library's mapped chunk holds and the item, as `get_phrase_item` reads
+    /// one offset (074a2219 `phrase_index.cpp:180-206`). With
+    /// [`ArenaProbe::First`], the session arena is asked first, and an item
+    /// there comes first.
+    ///
+    /// `None` where the arena or an added slot holds the token, or where the
+    /// buffer has no complete item. The caller then resolves the token in
+    /// the order a user item, the live item, the shipped item.
+    pub(crate) fn read_live_item_in_place<R>(
+        &self,
+        token: PhraseToken,
+        arena: ArenaProbe,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        if arena == ArenaProbe::First && self.inner.libpinyin.phrases().item(token).is_some() {
+            return None;
+        }
+        self.inner.system_items.borrow().read_ordinary(token, read)
+    }
+
+    /// Reads the item a system library's live buffer holds under `token` and
+    /// its shipped chunk lacks: an import or a replayed ADD. The buffer is the
+    /// only copy; no arena holds it.
+    pub(crate) fn with_appended_item<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        let original = self.originals.get(&phrase_index_library_index(token))?;
+        if original.mapped.is_some_and(|library| library.is_detached()) {
+            // The chunk's bytes are the live buffer's: it alone knows which
+            // of its slots the chunk did not hold.
+            if !self.has_system_items() {
+                return None;
+            }
+            return self
+                .inner
+                .system_items
+                .borrow()
+                .with_added(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
+                .flatten();
+        }
+        if original.contains_item(token & PHRASE_MASK) {
+            return None;
+        }
+        self.with_live_item(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
+            .flatten()
+    }
+
+    pub(super) fn arena_add_phrase(
+        &mut self,
+        library: u8,
+        words: &[u32],
+        keys: &[PinyinKey],
+        delta: u32,
+        selected: PhraseSelection,
+        range_end: u32,
+    ) -> Result<PhraseToken, UserStoreError> {
+        if self.originals.contains_key(&library) {
+            return self.buffer_add_phrase(library, words, keys, delta, selected);
+        }
+        let target = &self.inner.libpinyin;
+        let packed = packed(keys)?;
+        let offsets = self.offsets();
+        let mut phrases = target.phrases_mut();
+        let existing = existing_phrase_token(&phrases.phrase_table, library, words, selected)?;
+        if let Some(token) = existing {
+            let Some(item) = phrases.item(token) else {
+                return Err(UserStoreError::InvalidPhrase);
+            };
+            let text_end = ITEM_HEADER_SIZE + 4 * item.phrase_length();
+            if item.as_bytes()[ITEM_HEADER_SIZE..text_end] != phrase_table::key_ucs4(words) {
+                return Err(UserStoreError::InvalidPhrase);
+            }
+            phrases
+                .libraries
+                .get_or_default(library)
+                .ok_or(UserStoreError::InvalidPhrase)?
+                .add_reading(token & PHRASE_MASK, &packed, delta)
+                .ok_or(UserStoreError::Persistence)?;
+            drop(phrases);
+            self.mark_committed_write(true);
+            return Ok(token);
+        }
+        let end = phrases
+            .libraries
+            .get(&library)
+            .map_or(1, UserLibrary::token_end)
+            .max(range_end);
+        // `_add_phrase` takes `get_range`'s end, masked into the nibble
+        // (`phrase_index.cpp:620`), and bumps only a zero low word past
+        // the reserved id (`pinyin.cpp:589-594`): a full library wraps to
+        // slot 1, and nothing refuses (register row 119).
+        let token = crate::user::add_phrase_token(library, end);
+        let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
+        let accepted = self
+            .library_total_of(&offsets, &phrases, library)
+            .checked_add(increment)
+            .is_some();
+        let bytes = encoded(&ChunkItem {
+            phrase: words.to_vec(),
+            unigram: if accepted { increment } else { 0 },
+            prons: vec![(packed.clone(), delta)],
+        })?;
+        let retained = offsets.get(&library).copied().unwrap_or(0);
+        phrases
+            .arena(library, retained)
+            .ok_or(UserStoreError::InvalidPhrase)?
+            .add(token & PHRASE_MASK, &bytes)
+            .ok_or(UserStoreError::Persistence)?;
+        self.inner
+            .system_items
+            .borrow_mut()
+            .add_facade_extra(u64::from(increment));
+        {
+            phrases
+                .phrase_table
+                .add(words, token)
+                .map_err(|_| UserStoreError::Persistence)?;
+            let chewing: Vec<crate::parser::ChewingKey> = packed
+                .iter()
+                .copied()
+                .map(crate::parser::ChewingKey::from_packed)
+                .collect();
+            phrases.index.add(&chewing, token);
+        }
+        drop(phrases);
+        if (1..=4).contains(&library) {
+            self.inner.has_system_items.set(true);
+        }
+        self.mark_committed_write(true);
+        Ok(token)
+    }
+
+    /// `_add_phrase` for a system library that has an original (074a2219
+    /// `pinyin.cpp:515-611`), over the library's live buffer, which holds the
+    /// only copy of the item. A phrase the library already holds is removed
+    /// (`remove_phrase_item`), takes the reading (`add_pronunciation`) and is
+    /// added back (`add_phrase_item`); a new one is added after the range's
+    /// end with no unigram and then takes `count * 3` through
+    /// `add_unigram_frequency`.
+    fn buffer_add_phrase(
+        &mut self,
+        library: u8,
+        words: &[u32],
+        keys: &[PinyinKey],
+        delta: u32,
+        selected: PhraseSelection,
+    ) -> Result<PhraseToken, UserStoreError> {
+        let target = &self.inner.libpinyin;
+        let original = self
+            .originals
+            .get(&library)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let packed = packed(keys)?;
+        let mut phrases = target.phrases_mut();
+        let existing = existing_phrase_token(&phrases.phrase_table, library, words, selected)?;
+        let mut items = self.inner.system_items.borrow_mut();
+        // An unloaded library has no sub-index: `get_range` fails and
+        // `_add_phrase` adds nothing (`pinyin.cpp:589-591`).
+        if items.lacks_sub_index(library, original) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        if let Some(token) = existing {
+            let merged = merged_live_item(&items, original, token, words, &packed, delta)?;
+            items.remove_item(original, token);
+            items.add_item(original, token, &merged);
+            drop(items);
+            drop(phrases);
+            self.inner.has_system_items.set(true);
+            self.mark_committed_write(true);
+            return Ok(token);
+        }
+        let end = items.range_end(library, original);
+        // `_add_phrase`'s token (`pinyin.cpp:589-594`; register row 119).
+        let token = crate::user::add_phrase_token(library, end);
+        let bytes = encoded(&ChunkItem {
+            phrase: words.to_vec(),
+            unigram: 0,
+            prons: vec![(packed.clone(), delta)],
+        })?;
+        items.add_item(original, token, &bytes);
+        let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
+        let outcome = items
+            .add_unigram(Some(original), token, increment)
+            .unwrap_or(UnigramAdd::Missing);
+        if !outcome.is_accepted() {
+            items.add_facade_extra(u64::from(increment));
+        }
+        drop(items);
+        phrases
+            .phrase_table
+            .add(words, token)
+            .map_err(|_| UserStoreError::Persistence)?;
+        let chewing: Vec<crate::parser::ChewingKey> = packed
+            .iter()
+            .copied()
+            .map(crate::parser::ChewingKey::from_packed)
+            .collect();
+        phrases.index.add(&chewing, token);
+        drop(phrases);
+        self.inner.has_system_items.set(true);
+        self.mark_committed_write(true);
+        Ok(token)
+    }
+
+    pub(super) fn arena_add_unigram(&self, token: PhraseToken, delta: u32) -> bool {
+        // Only the sub-index's overflow is the pin's `ERROR_INTEGER_OVERFLOW`;
+        // a missing item answers another error that callers do not act on.
+        self.arena_add_unigram_outcome(token, delta).0 != UnigramAdd::Refused
+    }
+
+    /// `FacadePhraseIndex::add_unigram_frequency` over the session's state
+    /// (074a2219 `phrase_index.h:628-635`, `phrase_index.cpp:150-176`). The
+    /// facade total takes `delta` first; the sub-index then takes it only when
+    /// it holds the item and its `guint32` total can: a system library's total
+    /// is its live scalar, a user library's the sum of its items. A
+    /// sub-index that does not take it leaves the delta in the facade's extra.
+    /// The second result reports whether the facade total received the delta.
+    pub(super) fn arena_add_unigram_outcome(
+        &self,
+        token: PhraseToken,
+        delta: u32,
+    ) -> (UnigramAdd, bool) {
+        let library = phrase_index_library_index(token);
+        let mut phrases = self.inner.libpinyin.phrases_mut();
+        // phrase_index.h:631-632 returns before the facade total changes.
+        if phrases.unloaded.contains(&library) {
+            return (UnigramAdd::Missing, false);
+        }
+        let original = self.originals.get(&library);
+        let mut items = self.inner.system_items.borrow_mut();
+        if original.is_some() {
+            // An unloaded library has no sub-index: the pin answers
+            // `ERROR_NO_SUB_PHRASE_INDEX` before the facade total moves
+            // (`phrase_index.h:631-633`), so nothing moves here either.
+            if original.is_some_and(|original| items.lacks_sub_index(library, original)) {
+                return (UnigramAdd::Missing, false);
+            }
+            // A slot the buffer holds no item at (a removed or absent one)
+            // answers `Missing`.
+            let outcome = items
+                .add_unigram(original, token, delta)
+                .unwrap_or(UnigramAdd::Missing);
+            if outcome.is_accepted() {
+                self.inner.has_system_items.set(true);
+            } else {
+                items.add_facade_extra(u64::from(delta));
+            }
+            return (outcome, true);
+        }
+        items.add_facade_extra(u64::from(delta));
+        drop(items);
+        let slot = token & PHRASE_MASK;
+        let Some(library) = phrases.item_mut(token) else {
+            return (UnigramAdd::Missing, true);
+        };
+        // The pin checks the slot and reads the item before the sub-index's
+        // total overflow guard (074a2219 phrase_index.cpp:153-171).
+        if library.item(slot).is_none() {
+            return (UnigramAdd::Missing, true);
+        }
+        if library.total().checked_add(delta).is_none() {
+            return (UnigramAdd::Refused, true);
+        }
+        if library.increment_unigram(slot, delta) {
+            (UnigramAdd::Accepted, true)
+        } else {
+            (UnigramAdd::Missing, true)
+        }
+    }
+
+    pub(super) fn arena_remove(&mut self, token: PhraseToken) -> Result<bool, UserStoreError> {
+        let mask = PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK;
+        let container_keys = self.container_keys();
+        let bigram_fault = self.bigram_mask_fault_over(&container_keys, mask, token);
+        let mut phrases = self.inner.libpinyin.phrases_mut();
+        let Some(view) = phrases.item(token) else {
+            return Ok(false);
+        };
+        let item = decode_phrase_item(view.as_bytes()).ok_or(UserStoreError::Persistence)?;
+        // The phrase-table assertion precedes the reading removals.
+        let phrase_tokens = phrases
+            .phrase_table
+            .tokens(&phrase_table::key_ucs4(&item.phrase))
+            .map_err(|_| UserStoreError::Persistence)?;
+        if !phrase_tokens.contains(&token) {
+            return Ok(false);
+        }
+        let readings = item.prons.iter().map(|(packed, _)| {
+            packed
+                .iter()
+                .copied()
+                .map(crate::parser::ChewingKey::from_packed)
+                .collect()
+        });
+        if !phrases.index.can_remove(readings, token) {
+            return Err(UserStoreError::UserReadingRemoval);
+        }
+        if let Some(fault) = bigram_fault {
+            return Err(fault);
+        }
+        self.take_item_out(phrase_index_library_index(token), item.unigram);
+        phrases
+            .phrase_table
+            .remove(&item.phrase, token)
+            .map_err(|_| UserStoreError::Persistence)?;
+        for (packed, _) in &item.prons {
+            let keys: Vec<crate::parser::ChewingKey> = packed
+                .iter()
+                .copied()
+                .map(crate::parser::ChewingKey::from_packed)
+                .collect();
+            if !phrases.index.remove(&keys, token) {
+                return Err(UserStoreError::UserReadingRemoval);
+            }
+        }
+        if let Some(library) = phrases.item_mut(token) {
+            library.remove(token & PHRASE_MASK);
+        }
+        drop(phrases);
+        let grams_left = self.mask_container_over(container_keys, mask, token)?;
+        let has = !self
+            .inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .values()
+            .all(UserLibrary::is_empty);
+        self.mark_committed_write(has || grams_left);
+        Ok(true)
+    }
+
+    pub(super) fn mask_arena(&self, mask: PhraseToken, value: PhraseToken) {
+        let mut phrases = self.inner.libpinyin.phrases_mut();
+        for (&nibble, library) in &mut phrases.libraries {
+            // `FacadePhraseIndex::mask_out` tests the library through the
+            // four-bit index of the mask and the value, and the sub-index
+            // tests each token under their low 24 bits; bits 28 to 31 take
+            // no part (`novel_types.h:41-44`, `phrase_index.cpp:677-715` at
+            // 074a2219).
+            let library_mask = u32::from(phrase_index_library_index(mask));
+            let library_value = u32::from(phrase_index_library_index(value));
+            let in_library = u32::from(nibble) & library_mask == library_value;
+            let selected =
+                |slot: u32| in_library && slot & mask & PHRASE_MASK == value & PHRASE_MASK;
+            // `FacadePhraseIndex::mask_out` takes the old sub-index total out
+            // of the facade and the new one in (`phrase_index.cpp:699-718`):
+            // each removed item's frequency leaves the totals.
+            let removed: Vec<u32> = library
+                .items()
+                .filter(|&(slot, _)| selected(slot))
+                .map(|(_, item)| item.unigram())
+                .collect();
+            for unigram in removed {
+                self.take_item_out(nibble, unigram);
+            }
+            library.remove_matching(selected);
+        }
+    }
+}

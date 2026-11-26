@@ -1,0 +1,241 @@
+# Supplementary native-tail tie fixture for #747; the pin expectations of the #1764 subset are retained unchanged.
+# #1378: exact subject residuals re-measured on the float scorer; pin captures retained, selection metadata columns removed under #1764.
+# Empty subject vectors may be blank (historical rows) or -; new pin-equal rows use - to avoid trailing tabs.
+# pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-bdb
+# format=sentence-tie-order-v1
+# selection_nbest_rs_sha256=2922c48b0ac67b133026c8a293cb1e335f541a4d357b64b8c703f6fd1744a95f
+# selection_main=3391eda976de2e780e1ca3f4a82cead06ec517cb
+# corpus_entries=10465 distinct_inputs=10312
+# selected_entries=224 selected_distinct_inputs=218
+# The #747 selection read native costs with GDB at pristine Trellis::tails return (nbest.rs:425), before display dedup; the occurrences and native_costs columns that recorded them were removed under #1764.
+# Selection uses adjacent ordered tails and the exact poss(f32)/gint transform in nbest.rs:271-296.
+# profile: fresh user directory; options=0x18a (DYNAMIC_ADJUST off); sort=0x1e; offset=0.
+# Pin source: libpinyin 074a2219 src/lookup/phonetic_lookup.h:174-178 (gint tail comparison).
+# Selection covers complete indexed native tails before display dedup, including duplicate texts.
+# No column is selection metadata: the columns are the pin's guess status, pool and vectors, and the exact residual vectors.
+# No regenerator exists: the recorded contract diff harness (--regenerate-sentence-ties) was retired. The pin status, pool and vectors are frozen rows from the read-only bdb pin run, with the exact residual expectations preserved.
+# This file holds the subset selected under #1764: every declared residual and one witness per tie class; the selection rule is recorded on #1764.
+# Exact subject expectations exist only for the current selection residuals declared in sentence-surface.md §12.
+# The original six subject vectors came from selection_main (#747); current vectors are the approved #1378 re-measurement.
+# Inputs outside the #1764 subset are not held here; every retained non-residual subject surface must equal the pin exactly.
+# Pool: SOH-joined distinct texts in indexed pin order, then any additional exact residual texts.
+# Indexed vectors: comma-separated pool IDs; duplicates retained. NBEST: rank:pool-ID pairs, all type=1.
+# input\tguessed(0|1)\tpool\tpin_indexed\tpin_NBEST\tresidual_indexed\tresidual_NBEST
+a	1	阿啊	0,0,1	0:0,2:1		
+ai	1	爱艾	0,0,1	0:0,2:1		
+an	1	按安	0,1,1	0:0,1:1		
+ban	1	版半班	0,1,2	0:0,1:1,2:2		
+bian	1	便编变	0,1,2	0:0,1:1,2:2		
+can	1	参残	0,1,0	0:0,1:1		
+chun	1	春纯	0,0,1	0:0,2:1		
+dan	1	但单	0,0,1	0:0,2:1		
+diu	1	丢銩铥	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+huan	1	还环	0,0,1	0:0,2:1		
+jian	1	建间见	0,1,2	0:0,1:1,2:2		
+le	1	了乐	0,0,1	0:0,2:1		
+pi	1	批皮	0,1,0	0:0,1:1		
+ri	1	日鈤馹	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+seng	1	僧䒏鬙	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+tuan	1	团湍图案	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+angse	1	昂色昂瑟昂涩	0,1,2	0:0,1:1,2:2		
+zengzong	1	曾总曾宗曾纵	0,1,2	0:0,1:1,2:2		
+ruibeng	1	瑞崩瑞蚌瑞蹦	0,1,2	0:0,1:1,2:2		
+zhoubiao	1	周表州标	0,1,1	0:0,1:1		
+liaoyun	1	离奥运了云	0,1,1	0:0,1:1		
+pingshuan	1	平栓平拴评书安	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+quanguo	1	全国	0,0,0	0:0		
+senglun	1	僧论僧轮僧伦	0,1,2	0:0,1:1,2:2		
+baori	1	宝日宝驲宝鈤宝馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+kuaipa	1	快帕快怕会怕	0,1,2	0:0,1:1,2:2		
+naizhuo	1	乃卓乃桌乃捉	0,1,2	0:0,1:1,2:2		
+lianting	1	连听连亭连厅立案庭	0,1,2	0:0,1:1,2:2	3,3,0	0:3,2:0
+shunshui	1	顺水	0,0,0	0:0		
+yuante	1	元特院特元忒	0,1,2	0:0,1:1,2:2		
+xinshan	1	新山	0,0,0	0:0		
+jiangtuan	1	将团江团将图案	0,1,2	0:0,1:1,2:2	0,2,1	0:0,1:2,2:1
+ponuan	1	破暖破煖破渜破餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+mefang	1	么方么房么放	0,1,2	0:0,1:1,2:2		
+jiadiu	1	家丢家銩家丟家铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+qiaxian	1	恰县卡线卡西安	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+gediu	1	个丢个銩个丟个铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+benzhuo	1	笨拙本卓本桌	0,1,2	0:0,1:1,2:2		
+chuanseng	1	穿僧传䒏传鬙	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+shuanxiu	1	拴修拴秀拴宿属安修	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+miaori	1	秒日秒驲秒鈤秒馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+zhunta	1	准他准塔	0,1,1	0:0,1:1		
+menzhou	1	门周门州门洲	0,1,2	0:0,1:1,2:2		
+foudiu	1	否丢否銩否丟否铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+jiangseng	1	将僧将䒏将鬙	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+ozhang	1	哦章哦张哦长	0,1,2	0:0,1:1,2:2		
+heiri	1	黑日黑鈤黑馹	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+luanseng	1	乱僧乱鬙乱䒏路安僧	0,1,2	0:0,1:1,2:2	0,3,1	0:0,1:3,2:1
+miaoni	1	秒你妙尼	0,1,1	0:0,1:1		
+wumin	1	吴敏吾民无民	0,1,2	0:0,1:1,2:2		
+yetuan	1	也团也图案叶图案	0,1,2	0:0,1:1,2:2		
+dianzhuang	1	点状电装第安装	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+quguan	1	去官去管	0,1,0	0:0,1:1	-	-
+angjian	1	昂吉安昂间	0,0,1	0:0,2:1		
+binri	1	宾日宾驲宾鈤宾馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+zangdiu	1	葬丢葬銩葬丟葬铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+pengnuan	1	彭暖彭煖彭渜彭餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+wangban	1	王班王半王版	0,1,2	0:0,1:1,2:2		
+naidiu	1	乃丢乃銩乃丟乃铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+rengnuan	1	仍暖仍煖仍渜仍餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+rangdiu	1	让丢让銩让丟让铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+daizuan	1	带钻带纂大钻傣族安傣族按	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+potuan	1	破团破湍破団破图案破疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+maidiu	1	麦丢麦銩麦丟麦铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+wairi	1	外日外驲外鈤外馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+liaokeng	1	了坑李凹坑	0,0,1	0:0,2:1		
+raori	1	绕日绕驲绕鈤绕馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+xieaituan	1	写爱团写爱湍写爱団写爱图案写爱疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+geizuiri	1	给最日给最驲给最鈤给最馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+fangkengnei	1	方坑内	0,0,0	0:0		
+miekazi	1	灭卡子灭卡兹灭卡自	0,1,2	0:0,1:1,2:2		
+tuanbeiseng	1	团被僧团被䒏团被鬙	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+niuanshuannuan	1	纽案拴暖纽案拴煖纽案拴渜纽案拴餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+redajia	1	热大家热打架	0,0,1	0:0,2:1		
+ngraodiansai	1	嗯绕点赛嗯绕点塞嗯绕地安塞	0,1,2	0:0,1:1,2:2		
+baobangshuan	1	宝邦拴宝邦栓宝邦涮宝榜书案	0,1,2	0:0,1:1,2:2	3,0,1	0:3,1:0,2:1
+zeniangsongdiu	1	则娘送丢则娘送銩则娘送丟则娘送铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+songhaituan	1	宋海团送还湍送还图案	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+yingzuanzhou	1	应钻周应钻州应钻洲英祖庵咒	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+suannvzhuo	1	酸女卓酸女桌	0,0,1	0:0,2:1		
+xiongkenxiongtuan	1	熊肯雄团熊肯雄湍熊肯雄団熊肯雄图案熊肯雄疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+xinzuiliuzuan	1	新最刘钻新最刘纂新最刘赚新最六祖庵	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+yuqiamenuan	1	与卡么暖与卡么煖与卡么渜与卡么餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+jiangniemanuan	1	将涅玛暖将涅玛煖将涅玛渜将涅玛餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+xikabendiu	1	西卡本丢西卡本銩西卡本丟西卡本铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+saozuanreng	1	扫钻仍扫钻扔扫祖安仍	0,1,2	0:0,1:1,2:2		
+kuishakuangdiu	1	奎砂矿丢奎砂矿銩奎砂矿丟奎砂矿铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+zashuanpaqing	1	杂拴帕清杂拴帕请杂拴帕情杂树安帕清杂树安帕请杂树安帕情	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+tapikaori	1	他皮考日他皮考驲他皮考鈤他皮考馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+kaliantai	1	卡莲台卡连太卡莲太卡利安胎	0,0,1	0:0,2:1	0,0,3	0:0,2:3
+liaoqianuo	1	了卡诺了恰娜里奥卡诺利奥恰娜	0,0,1	0:0,2:1	2,0,3	0:2,1:0,2:3
+qianzhaokongceng	1	前兆空曾前兆孔层牵着孔层前着孔层	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+senyangtuan	1	森杨团森阳疃森杨疃森杨图案	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+shehecairi	1	设和才日设和才驲设和才鈤设和才馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+juedaozuan	1	绝倒钻绝倒纂绝倒赚觉道祖庵	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+xiehenshuaitong	1	写很帅同写很帅通写很率同	0,1,2	0:0,1:1,2:2		
+xuanshuanpaoshan	1	选拴袍衫选拴炮山选拴抛闪悬殊岸炮山悬殊岸炮善悬殊安袍衫	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+zengongdiu	1	怎共丢怎共銩怎共丟怎共铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+ruochaimeiqie	1	若柴美且若柴酶切	0,0,1	0:0,2:1		
+zangnanuan	1	葬那暖葬那煖葬那渜葬那餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+tuangeidong	1	团给东团给董团给洞	0,0,1	0:0,2:1	0,1,2	0:0,1:1,2:2
+tetianyun	1	特天云特天运特天韵	0,1,0	0:0,1:1	0,1,2	0:0,1:1,2:2
+chongfangzongdiu	1	冲放纵丢冲放纵銩冲放纵丟冲放纵铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+shuanfousha	1	拴否沙拴否杀拴否莎属安否沙属安否杀属安否莎	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+bangzhuaishuailozengbeilandiu	1	邦拽率咯曾被兰丢邦拽率咯曾被兰銩邦拽率咯曾被兰丟邦拽率咯曾被兰铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+junshuiyunxianshoukuanshangniukeniu	1	军水云仙首款上牛科牛军水云仙首款上牛克纽军水云仙收款上牛科牛军水云仙收款上牛克纽	0,0,1	0:0,2:1	2,2,3	0:2,2:3
+linzabeikengcouzhuaitizhangzuankese	1	林杂被坑凑拽体章钻克瑟林杂被坑凑拽体章钻克色林杂被坑凑拽体章钻科色	0,1,2	0:0,1:1,2:2		
+kuogaishaoniangtuanfu	1	扩改烧酿团副扩改烧酿团赴扩改烧酿团附	0,1,0	0:0,1:1	0,1,2	0:0,1:1,2:2
+popashangqianguokuazhushuan	1	破爬上前国跨竹拴破爬上前国跨竹栓破爬上前国跨竹涮破爬上前国跨著述安破爬上前国跨竹书案破爬上前国跨著述按	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+dianchangyoutengkuangliaocituan	1	电厂有藤筐撂次团电厂有藤筐撂次湍电厂有藤筐撂次団电厂有藤筐撂次图案电厂有藤筐撂次疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+saibiaoshuanxingmudun	1	赛表拴醒目吨赛表拴醒目顿赛表拴醒目墩赛表述鞍形目吨赛表述鞍形目顿赛表述鞍形目墩	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+touzhuoguarennengailuchouyangkuidiu	1	头卓寡人嫩该路抽样奎丢头卓寡人嫩该路抽样奎銩头卓寡人嫩该路抽样奎丟头卓寡人嫩该路抽样奎铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+nuanzuanduiguafa	1	暖钻兑卦法暖钻对卦法暖钻兑卦发暖足暗兑卦法暖足暗兑卦发	0,1,2	0:0,1:1,2:2	3,0,4	0:3,1:0,2:4
+funuanchaneiwudingoukuaipingceng	1	附暖差内无定偶快评曾附暖差内无定偶快平曾附暖差内无定偶快评层附暖差内无定偶快评蹭	0,1,2	0:0,1:1,2:2	0,2,3	0:0,1:2,2:3
+caidunshaosongleisibaoruanxuanzuan	1	菜墩邵颂雷斯堡软宣钻菜墩邵颂雷斯堡软宣纂菜墩邵颂雷斯堡软宣赚菜墩邵颂雷斯堡软宣祖庵	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+hunbiankuafengzanxiahangshuan	1	婚变跨冯赞下行拴婚变跨冯赞下行栓婚变跨冯赞下行涮婚变跨冯赞下行署安	0,1,2	0:0,1:1,2:2	3,0,1	0:3,1:0,2:1
+baishuangjianluzhuwawuwoyaoqinri	1	白霜剑录注瓦屋我要亲日白霜剑录注瓦屋我要勤日白霜剑录注瓦屋我要勤鈤白霜剑录注瓦屋我要勤馹	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+futaixieliangseng	1	赴台榭两僧赴台榭梁僧赴台榭两䒏赴台榭两鬙	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+zhinaikaoniaozhengshuanlengerchangseng	1	之乃考鸟争拴冷而长僧之乃考鸟争拴冷二长僧之乃考鸟争拴冷而长䒏之乃考鸟证书安冷而长僧之乃考鸟证书安冷二长僧之乃考鸟证书安冷而长鬙	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+shuangmiaozuanqingtawolaocucaogou	1	双庙钻请他我老粗糙沟双庙钻请他我老粗糙狗双庙钻请他我老粗糙构双苗族安庆他我老粗糙沟双苗族安庆他我老粗糙狗双苗族安庆他我老粗糙构	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+biraoguofenshenshuangxianrun	1	比绕过分身双鲜润比绕过分身双宪润比绕过分身双线闰比绕过分身双西安润	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+tianchushugubanzunhahanyeshuangtuanfu	1	天出书鼓板尊哈汉也双团副天出书鼓板尊哈汉也双团赴天出书鼓板尊哈汉也双团附	0,1,0	0:0,1:1	0,1,2	0:0,1:1,2:2
+qunruihuoshuisongchonggaohuainaoounvenuan	1	群瑞或水松崇高怀脑欧虐暖群瑞或水松崇高怀脑欧虐煖群瑞或水松崇高怀脑欧虐渜群瑞或水松崇高怀脑欧虐餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+tunshicehongshuanxiangxingmeng	1	吞噬册红拴象形梦吞噬册红拴向星盟吞噬册红拴象形蒙吞噬册红薯安详星梦吞噬册红薯安详星盟吞噬册红薯安详幸蒙	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+dupanggentuanming	1	度旁根团名度旁根团明度旁根湍鸣	0,0,1	0:0,2:1	0,1,2	0:0,1:1,2:2
+difolandaochediu	1	第佛兰倒车丢第佛兰倒车銩第佛兰倒车丟第佛兰倒车铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+chanshuanguadiebaizezarengwangguigui	1	产拴挂叠白则杂仍王鬼鬼产拴挂叠白则杂仍王桂桂产拴挂叠白则杂仍王规规阐述安挂叠白则杂仍王鬼鬼阐述安挂叠白则杂仍王桂桂阐述安挂叠白则杂仍王规规	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+liekuairichazeng	1	列快日茶曾列快日茶增列会日茶曾列快日茶赠	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+wujuebeiminchenshuanzonghao	1	五绝悲悯陈拴宗号五绝悲悯陈拴总号五绝悲悯陈拴宗好五绝悲悯陈述暗棕好五绝悲悯陈述安宗号五绝悲悯陈述安总号	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+cicangcuohuangheizahuangaiguodiu	1	此藏错黄黑杂环该国丢此藏错黄黑杂环该国銩此藏错黄黑杂环该国丟此藏错黄黑杂环该国铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+mangmiaoerkaosawangliaomiunglengbieyu	1	蟒庙而考撒王僚缪嗯冷别于蟒庙而考撒王僚缪嗯冷别与蟒庙而考撒王僚缪嗯冷别余	0,1,0	0:0,1:1	0,1,2	0:0,1:1,2:2
+chuaiernaoshuansheguitao	1	揣而脑拴折桂讨揣而脑拴折桂套揣而脑拴设桂讨揣而脑书案涉圭套揣而脑书案涉圭陶	0,1,2	0:0,1:1,2:2	3,0,4	0:3,1:0,2:4
+benchehaishuannuan	1	本车还拴暖本车还拴煖本车还拴渜本车还拴餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+diancuchuaijuanyuancui	1	点醋揣卷原崔点醋揣卷园翠点醋揣卷元翠点醋揣卷元脆	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+zhuainukuaitiluo	1	拽奴块体罗拽奴块体洛拽奴快提洛拽奴块体落	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+zaicuituanshidie	1	在翠团是叠在翠团是蝶在翠图案式蝶在翠团是爹	0,1,1	0:0,1:1	2,0,3	0:2,1:0,2:3
+junsantuoliaolan	1	军三托蓼兰军三托蓼蓝军三脱了兰军三托里奥兰军三托里奥蓝军三托里奥栏	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+guanwaimushuanbenfanraokang	1	关外亩拴本烦扰康关外亩拴本烦扰抗关外亩拴本烦扰亢关外亩数按本烦扰康关外亩数按本烦扰抗关外亩数按本烦扰亢	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+naduanriyannuanshoushuanshenzhouruisong	1	那段日言暖手拴神州瑞松那段日言暖手拴神州瑞宋那段日言暖手拴神州瑞送那段日言暖手书案审周瑞松那段日言暖手书案审周瑞宋那段日言暖手书案审周瑞送	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+negouxieyabieximini	1	呢狗血牙别西迷你呢狗血牙别西米尼呢狗血牙别西米你	0,1,2	0:0,1:1,2:2		
+quanqiongbingaoreayuanfengshuanzetian	1	权穷宾高热阿元丰拴则天权穷宾高热阿元丰拴泽田权穷宾高热阿元丰拴则田权穷宾高热阿元枫树広沢田	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+ranjieruipaodiu	1	然杰瑞炮丢然杰瑞炮銩然杰瑞炮丟然杰瑞炮铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+paipieshunmouruogengaineshaihuannuan	1	派撇顺某若根该呢晒还暖派撇顺某若根该呢晒还煖派撇顺某若根该呢晒还渜派撇顺某若根该呢晒还餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+maiduandouhadiu	1	买断都哈丢买断都哈銩买断都哈丟买断都哈铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+tanggoutaoshuandiukuanniecailanseque	1	堂沟套拴丢款涅彩蓝色却堂沟套拴丢款涅彩蓝色缺堂沟套拴丢款涅彩蓝色确堂沟套书案丢款涅彩蓝色却堂沟套书案丢款涅彩蓝色缺堂沟套书案丢款涅彩蓝色确	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+liaonipuluosang	1	了尼普洛桑了你普罗桑了尼普罗桑里奥尼普洛桑里奥尼普罗桑	0,1,2	0:0,1:1,2:2	3,4,2	0:3,1:4,2:2
+nuanmanqianzhaofang	1	暖满前罩房暖满前朝方暖满其按照方	0,1,2	0:0,1:1,2:2		
+huanlingaojingkuncadiu	1	还临高京昆擦丢还临高京昆擦銩还临高京昆擦丟还临高京昆擦铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+houkanshenyunqungajianqianzhuang	1	后看神韵群噶坚钱庄后看神韵群噶坚其安装后看神韵群噶坚前装	0,1,2	0:0,1:1,2:2		
+geiersichanshuandengruandanglangduoheian	1	给尔斯产拴等软当朗多黑暗给尔斯产拴等软当朗多黑案给尔斯产拴等软当朗多黑安给尔斯阐述安等软当朗多黑暗给尔斯阐述安等软当朗多黑案给尔斯阐述安等软当朗多黑安	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+paojuanmangaopadianzhaicenggehunguaimei	1	炮卷满高帕点寨曾个魂怪美炮卷满高帕点寨曾个魂怪每炮卷满高帕点寨曾个魂怪没炮卷满高帕蒂安寨曾个魂怪美炮卷满高帕蒂安寨曾个魂怪每炮卷满高帕蒂安寨曾个魂怪没	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+paimanqusengkasiqieguanchaihuichawa	1	排满区僧卡斯且官拆毁茶瓦排满区僧卡斯且官拆毁察瓦排满区僧卡斯且官拆毁查洼排满区僧卡斯企鹅馆拆毁茶瓦排满区僧卡斯企鹅馆拆毁察瓦排满区僧卡斯企鹅馆拆毁查洼	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+zhong'tun'nuandao'nao'lvrou	1	中屯暖到脑驴肉中屯暖到挠率柔	0,0,1	0:0,2:1		
+man'shounu'zi'chuitie'kuanmin'guang'nu	1	满授奴子锤揲宽民广奴满授奴子锤揲宽民广努	0,0,1	0:0,2:1		
+pei'ba'ge'gonghu'nuo'pang	1	佩八个拱护诺旁佩八个拱护诺庞	0,0,1	0:0,2:1		
+gun'pantui'chuancan'ken'tailong'zhuangei'zou	1	滚盘腿传参肯泰龙传给走滚盘腿传参肯泰龙传给邹	0,0,1	0:0,2:1		
+zhi'maofeng'reze'lun'lianzhuang'bin	1	之毛风热则伦理安装宾之毛风热则论连汝斌之毛风热则伦理安装滨	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+raokuo'zaijiong'guangsen'louwo	1	绕阔在囧广森楼我绕阔在囧广森楼喔	0,1,1	0:0,1:1		
+en'chenei'ji'jiangshe'zuoshuo'sui'mouhun'kangju	1	恩车内即将设左说岁某混康居恩车内即将设左说岁某混抗拒	0,1,1	0:0,1:1		
+zhu'ding'yi'mo'couxu'zhuihuo	1	注定一抹凑需追或注定一抹凑需追和	0,1,1	0:0,1:1		
+liaofang'nuo'zixuan'zou'rengzhi	1	寮房诺自选走仍之寮房诺自选走仍至	0,1,1	0:0,1:1		
+shansi'fenbing'nu'shou	1	山寺分兵弩手山寺分兵奴兽	0,0,1	0:0,2:1		
+qian'ce'tai'pan'han'yuanshuan'shunguai'tiechen	1	前侧胎盘韩元拴顺拐铁陈前侧胎盘韩元拴顺拐帖称前侧胎盘韩掾属安顺怪铁陈前侧胎盘韩掾属安顺怪帖称	0,1,1	0:0,1:1	2,3,3	0:2,1:3
+tunen'shang'zaoyu'souzen'liecai'couling'ruhuan'diu	1	图嫩上遭遇艘怎列才凑令如幻丢图嫩上遭遇艘怎列才凑令如幻丟图嫩上遭遇艘怎列才凑令如幻铥	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+fojin'haotie	1	佛金号铁佛进号铁佛金好贴佛金好帖	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+pan'chuangga'xue'leng'katuan	1	盘创嘎学冷卡团盘创嘎学冷卡湍盘创嘎学冷卡団盘创嘎学冷卡图案盘创嘎学冷卡疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+naoen'fengtun'nengzhou'shuang'shangse	1	脑恩封屯能州双上色	0,0,0	0:0		
+menxia'sunchou'men'shuan'wan'bi'shuo'rao	1	门下孙愁门闩完毕说绕门下孙愁门闩完毕说饶门下孙愁门栓完毕说绕门下孙愁门栓完毕说饶	0,1,1	0:0,1:1	2,3,3	0:2,1:3
+qinglei'rengning'bu'shuan'li'maohuai'diaozou'er	1	清泪仍宁不拴礼貌淮调走而清泪仍宁不拴礼貌淮调走二清泪仍宁部署案例毛淮调走而清泪仍宁部署案例毛淮调走二	0,1,1	0:0,1:1	2,3,3	0:2,1:3
+sanxia'fang'chidiao'dai'taihuang'shun'youbing'pengdiu	1	三下方吃掉带苔黄舜有并彭丢三下方吃掉带苔黄舜有并彭銩三下方吃掉带苔黄舜有并彭丟三下方吃掉带苔黄舜有并彭铥	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+rongkan'mu'nenlin'duo'zen'xiucou'pian'chuan	1	容看亩嫩林多怎修凑片传容看亩嫩林多怎修凑篇串	0,0,1	0:0,2:1	0,1,1	0:0,1:1
+zi'weng'pendian	1	字翁盆点字翁盆殿字翁盆店字翁盆地安	0,1,2	0:0,1:1,2:2	0,3,1	0:0,1:3,2:1
+pan'lian'a	1	番莲阿番莲啊	0,0,1	0:0,2:1	0,1,1	0:0,1:1
+peiku'tuan	1	佩库团佩库湍佩库图案	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+jianshai'hengwai'sun'xianzui'rongnve'nurui'liaoka	1	建晒横外孙县最荣虐奴瑞了卡建晒横外孙县最荣虐奴瑞了喀建晒横外孙县最荣虐奴瑞利奥卡	0,0,1	0:0,2:1	2,0,1	0:2,1:0,2:1
+ruo'cuo'hao'gunnuan'tao'tuan	1	若错号滚暖套团若错号滚暖套湍若错号滚暖套图案	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+langxiu'shuang'ru'yichuan'shi'zuo'zong'zongpai	1	朗秀双入遗传是左宗宗派	0,0,0	0:0		
+fankai'ng'lieduan'se'kengri	1	翻开嗯列段色坑日翻开嗯列段色坑驲翻开嗯列段色坑鈤翻开嗯列段色坑馹	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+shiku'tu'huang'dei'gaishua'fen	1	石窟土黄得该刷分	0,0,0	0:0		
+hun'liao'zou'chuogang'cengtuan	1	混料走辍港曾团混料走辍港曾湍混料走辍港曾団混料走辍港曾图案混料走辍港曾疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+suiman'zhi'lengtuan	1	碎曼制冷团碎曼制冷湍碎曼制冷団碎曼制冷图案碎曼制冷疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+zha'shuo'he'luoao'chanzuan	1	扎说和罗奥产钻扎说和罗奥产纂扎说和罗奥产赚扎说和罗奥缠足安	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+ruanxun'shu'oulao'shuan'wangshuan'sengruo'tiao	1	软勋属欧老鼠按王拴僧若条软勋属欧老鼠按王拴僧若调软勋属欧老鼠安王拴僧若条软勋属欧老鼠安王拴僧若调	0,0,1	0:0,2:1	2,2,3	0:2,2:3
+pao'nenfou'shuannu'yuken	1	炮嫩否拴奴与肯炮嫩否拴奴于肯炮嫩否拴奴与垦炮嫩否属安努语肯炮嫩否属安努于肯炮嫩否属安努语垦	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+ga'yao'kongo'pa'longri	1	嘎遥控哦帕龙日嘎遥控哦帕龙鈤嘎遥控哦帕龙馹	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+chou'mieshuan'pinpie'gengchang'jiang	1	丑灭拴品撇更长江丑灭拴品撇更长将丑灭鼠安贫撇更长江丑灭鼠安贫撇更长将	0,1,1	0:0,1:1	2,3,3	0:2,1:3
+fenbiao'jie'lang'pinxun'neinuan	1	分表姐郎品训内暖分表姐郎品训内煖分表姐郎品训内渜分表姐郎品训内餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+fen'wo'hun'huochui'saoting'jile'gui'zuanbo	1	分我混或吹扫厅级了贵族案波分我混或吹扫厅级了归钻波分我混或吹扫厅级了归钻伯分我混或吹扫厅级了贵族安波分我混或吹扫厅级了贵族安伯分我混或吹扫厅级了贵族安博	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+shuangluanheixion	1	双卵黑西哦那双卵黑西哦年双路暗黑系哦那双路暗黑系哦年	0,0,1	0:0,2:1	2,2,3	0:2,2:3
+luantia	1	乱啼阿乱提阿乱啼啊路安提阿	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+huikangyuantia	1	会抗原提阿会康元体阿会康元体啊会康与安提阿	0,1,2	0:0,1:1,2:2	0,2,3	0:0,1:2,2:3
+zhuangc	1	庄村	0,0,0	0:0		
+goug	1	沟谷狗狗	0,1,1	0:0,1:1	0,1,0	0:0,1:1
+banrengou'gon	1	半人狗狗哦那半人狗狗哦年半人沟谷哦那半人沟谷哦年	0,0,1	0:0,2:1	2,2,3	0:2,2:3
+tunshuanzengch	1	屯拴增产屯拴增城屯拴增程豚鼠安增产豚鼠安增城豚鼠庵赠陈	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+tuanduanluanra	1	团段乱扔阿团段乱人阿团段乱人啊团段乱日阿	0,1,2	0:0,1:1,2:2	0,3,2	0:0,1:3,2:2
+luotuanquans	1	罗团泉寺罗团全寺罗团全苏罗图安全三	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+leichel	1	类车辆类车轮类撤离	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+piaonuan	1	票暖票煖票渜票餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+piaotuan	1	票团票湍票団票图案票疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+bieyuemian	1	别月面别月免别月棉	0,0,1	0:0,2:1	0,1,2	0:0,1:1,2:2
+shengseng	1	圣僧生䒏生鬙	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+gangnuochuangnuan	1	港诺创暖港诺创煖港诺创渜港诺创餪	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+piexiannuochang	1	撇县诺长撇县诺场撇县诺常撇西安诺长撇西安诺场撇西安诺常	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+yangdianlingduan	1	杨电令断仰殿令断杨电令段仰殿岭段	0,1,2	0:0,1:1,2:2	0,2,3	0:0,1:2,2:3
+dangshuandie	1	当拴叠当拴蝶当拴迭当属安叠当属安蝶当属安迭	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+zuoqiebang	1	作切邦作切帮作切榜作企鹅帮	0,1,2	0:0,1:1,2:2	3,0,1	0:3,1:0,2:1
+xuanshuanhang	1	选拴行悬殊庵行选拴航悬殊按行悬殊安行悬殊安航	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+nvetiantuan	1	虐天团虐天湍虐天图案虐天疃	0,0,1	0:0,2:1	0,2,3	0:0,1:2,2:3
+diajiongjuantuan	1	嗲炯卷团嗲炯卷湍嗲炯卷団嗲炯卷图案嗲炯卷疃	0,1,2	0:0,1:1,2:2	0,3,4	0:0,1:3,2:4
+xingshuan	1	性拴性栓性涮行书安	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+piaomiequanseng	1	票灭权僧票灭全僧票灭全䒏票灭全鬙	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+kuangshuansao	1	矿拴扫矿拴嫂矿拴骚况属安扫况属安嫂况属安骚	0,1,2	0:0,1:1,2:2	3,4,5	0:3,1:4,2:5
+hengshuaiseng	1	横率僧横甩僧横甩䒏横甩鬙	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+tingshuanduanhuo	1	听拴段或听拴断惑听拴端或亭属安端或	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3
+seng)	1	僧䒏鬙	0,0,1	0:0,2:1	0,0,2	0:0,2:2
+ngsheitiW	1	嗯谁剃嗯谁体嗯谁题	0,1,2	0:0,1:1,2:2		
+shenzuanjiao%	1	神钻轿神钻较神钻教神族暗礁	0,1,2	0:0,1:1,2:2	0,1,3	0:0,1:1,2:3

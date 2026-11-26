@@ -1,0 +1,31 @@
+[package]
+name = "oxpinyin-tool-support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Native I/O and adapters for the oxpinyin command-line tools"
+
+[lib]
+doctest = false
+
+[features]
+default = ["tkrzw"]
+tkrzw = ["oxpinyin/tkrzw", "oxpinyin-capi/tkrzw", "oxzhuyin-capi/tkrzw"]
+kyotocabinet = ["oxpinyin/kyotocabinet", "oxpinyin-capi/kyotocabinet", "oxzhuyin-capi/kyotocabinet"]
+bdb = ["oxpinyin/bdb", "oxpinyin-capi/bdb", "oxzhuyin-capi/bdb"]
+
+[lints]
+workspace = true
+
+[dependencies]
+oxpinyin.workspace = true
+oxpinyin-capi = { path = "../capi", default-features = false }
+oxzhuyin-capi = { path = "../zhuyin-capi", default-features = false }
+libc.workspace = true
+glib-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

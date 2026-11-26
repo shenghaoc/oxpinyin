@@ -1,0 +1,486 @@
+//! Interpolates bigram probabilities and phrase-library unigram probabilities for
+//! [`crate::model::LanguageModel`]. Successor rows are read from the hash database by
+//! predecessor token. The unigram numerator is the phrase item's frequency and the
+//! denominator is the facade total for the loaded libraries.
+//!
+//! Construction supplies the interpolation weight. Runtime initialization reads it
+//! from the system configuration. Unloading a library removes its items and
+//! total from scoring.
+
+// Bigram::load, ngram_tkrzwdb.cpp:86–122;
+// FacadePhraseIndex::get_phrase_index_total_freq, phrase_index.cpp:237–247. The item
+// includes the increment from utils/training/gen_unigram.cpp. See
+// docs/findings/scoring-spec.md.
+
+use crate::vocab::phrase_index_library_index;
+use std::cell::Cell;
+use std::path::Path;
+
+use crate::{
+    model::{LanguageModel, UserCountDelta},
+    single_gram,
+    vocab::PhraseToken,
+};
+
+use crate::data::{BigramTable, DictError, PhraseLibraries, TableError};
+
+/// Error conditions for bigram lookups.
+#[derive(Debug, thiserror::Error)]
+pub enum LmError {
+    /// A table-level error (I/O, backend, etc.).
+    #[error("table error: {0}")]
+    Table(#[from] TableError),
+    /// Value bytes did not parse under the frozen bigram schema.
+    #[error("parse error")]
+    Parse,
+    /// The user-count overlay failed (a read on the user store).
+    #[error("user store error")]
+    User,
+}
+
+impl From<DictError> for LmError {
+    fn from(e: DictError) -> Self {
+        match e {
+            DictError::Table(table) => Self::Table(table),
+            DictError::Parse | DictError::Library(_) => Self::Parse,
+        }
+    }
+}
+
+impl LmError {
+    /// Whether this is the checked-read failure: a record the size check
+    /// found and the body read then failed or sized differently. Kyoto
+    /// Cabinet's `Bigram::load` asserts there (`ngram_kyotodb.cpp:131-139`
+    /// at 074a2219); the engine reports `ReadAfterCheck` and the C adapters
+    /// abort.
+    #[must_use]
+    pub(crate) fn is_read_after_check(&self) -> bool {
+        matches!(
+            self,
+            Self::Table(TableError::Store(crate::store::StoreError::ReadAfterCheck))
+        )
+    }
+}
+
+/// Phrase-item frequencies are `guint32`, even when their accumulated
+/// overlay is wider (074a2219 `phrase_index.cpp:173-175`).
+const fn merge_unigram_counts(system: u64, user: u64) -> u64 {
+    (system as u32).wrapping_add(user as u32) as u64
+}
+
+/// Stored `SingleGram` fields, unlike scoring costs, are `guint32`s.
+/// Both sums in 074a2219 `storage/ngram.cpp:305,332` wrap before the
+/// merged row is read. Keep this separate from wider unigram overlays.
+const fn merge_bigram_counts(system: u64, user: u64) -> u64 {
+    (system as u32).wrapping_add(user as u32) as u64
+}
+
+/// Adds the count and total modulo 2^32 and widens the results to `u64`.
+///
+/// Returns `None` only when the system row is absent and both original user
+/// arguments are zero. A nonzero user argument can produce a present row with
+/// two zero fields after narrowing.
+#[must_use]
+pub fn merge_bigram(
+    system: Option<(u32, u32)>,
+    user_count: u64,
+    user_total: u64,
+) -> Option<(u64, u64)> {
+    match system {
+        Some((count, total)) => {
+            let merged_count = merge_bigram_counts(u64::from(count), user_count);
+            let merged_total = merge_bigram_counts(u64::from(total), user_total);
+            Some((merged_count, merged_total))
+        }
+        None if user_count > 0 || user_total > 0 => {
+            Some((u64::from(user_count as u32), u64::from(user_total as u32)))
+        }
+        None => None,
+    }
+}
+
+/// Whether library `nibble` is visible under `mask` (bit `n` set =
+/// library `n` unloaded).
+///
+/// `mask == 0` and nibbles outside the u32 bit
+/// range are trivially visible — the same rule the runtime's dictionary
+/// applies.
+#[must_use]
+pub(crate) const fn library_visible(mask: u32, nibble: u8) -> bool {
+    mask == 0 || nibble >= 32 || mask & (1_u32 << nibble) == 0
+}
+
+/// Bigram language model over `bigram.db` and the phrase libraries.
+#[derive(Clone, Copy)]
+pub struct BigramLanguageModel<'a> {
+    tables: &'a BigramTables,
+    /// The facade's chunk items — the unigram source.
+    libraries: &'a PhraseLibraries,
+    /// The loaded-library mask shared with the dictionary: bit `n` set =
+    /// library `n` unloaded.
+    library_mask: &'a Cell<u32>,
+}
+
+/// Bigram DBM and interpolation parameters, without phrase byte ownership.
+pub struct BigramTables {
+    bigram: BigramTable,
+    /// Bigram/unigram interpolation weight λ as the pin's `gfloat`, read
+    /// from the model's `table.conf`.
+    lambda_f32: f32,
+}
+
+impl std::ops::Deref for BigramLanguageModel<'_> {
+    type Target = BigramTables;
+    fn deref(&self) -> &Self::Target {
+        self.tables
+    }
+}
+
+impl BigramTables {
+    // Bigram::attach, ngram_bdb.cpp:110–124, ngram_kyotodb.cpp:110–120 and
+    // ngram_tkrzwdb.cpp:86–99.
+    /// Attaches the system bigram hash database. An unsuccessful native open leaves an
+    /// unopened attachment available to the runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] if creating the attachment fails before the native open.
+    pub fn attach(bigram_path: &Path, lambda: f32) -> Result<Self, LmError> {
+        Ok(Self::with_table(BigramTable::attach(bigram_path)?, lambda))
+    }
+
+    fn with_table(bigram: BigramTable, lambda: f32) -> Self {
+        Self {
+            bigram,
+            lambda_f32: lambda,
+        }
+    }
+
+    /// Runs the system bigram's reset at facade fini: close and delete
+    /// (`pinyin.cpp:1208`; `ngram_tkrzwdb.cpp:40-46` and its BDB and KC
+    /// peers at 074a2219).
+    pub(crate) fn finish_attachment(&mut self) {
+        self.bigram.finish_attachment();
+    }
+
+    /// Whether the system hash is closed.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn attachment_finished(&self) -> bool {
+        self.bigram.attachment_finished()
+    }
+
+    /// Bind a model read to the owner's current library state.
+    pub fn read<'a>(
+        &'a self,
+        libraries: &'a PhraseLibraries,
+        library_mask: &'a Cell<u32>,
+    ) -> BigramLanguageModel<'a> {
+        BigramLanguageModel {
+            tables: self,
+            libraries,
+            library_mask,
+        }
+    }
+}
+
+impl BigramLanguageModel<'_> {
+    /// The facade's phrase libraries this model reads unigrams from.
+    #[must_use]
+    pub fn libraries(&self) -> &PhraseLibraries {
+        self.libraries
+    }
+
+    /// Whether `nibble` names a library the model reads.
+    #[must_use]
+    pub(crate) fn is_visible(&self, nibble: u8) -> bool {
+        self.visible(nibble)
+    }
+
+    fn visible(&self, nibble: u8) -> bool {
+        library_visible(self.library_mask.get(), nibble)
+    }
+
+    /// Whether unigram counts are available for interpolation: some
+    /// visible library holds items. Decided by the tables, not by the
+    /// facade total, which a `guint32` can wrap to zero while they stand.
+    #[cfg(test)]
+    #[must_use]
+    pub fn has_unigrams(&self) -> bool {
+        self.libraries().has_items_unloaded(self.library_mask.get())
+    }
+
+    /// `PhraseItem::get_unigram_frequency` for `token`: the stored item
+    /// field, `gen_unigram`'s `+1` included, so a phrase the n-gram corpus
+    /// never saw answers `Some(1)`.
+    ///
+    /// `None` when the token's library is not loaded or is masked
+    /// (upstream's `get_phrase_item` failing), or owns no such item.
+    #[must_use]
+    pub(crate) fn unigram_count(&self, token: u32) -> Option<u64> {
+        if !self.visible(phrase_index_library_index(token)) {
+            return None;
+        }
+        self.libraries().unigram_count(token)
+    }
+
+    /// `FacadePhraseIndex::get_phrase_index_total_freq` over the visible
+    /// libraries: their stored totals, a wrapping `guint32`
+    /// (074a2219 `phrase_index.h:440`, `phrase_index.cpp:237-248`).
+    #[must_use]
+    pub fn unigram_total(&self) -> u32 {
+        self.libraries()
+            .unigram_total_unloaded(self.library_mask.get())
+    }
+
+    /// The facade total the n-best step divides by
+    /// (074a2219 `phonetic_lookup.h:651`, `:679`; `phrase_lookup.cpp:315`,
+    /// `:334`): the visible libraries' total plus `extra`, everything the
+    /// user side and `add_unigram_frequency` added to it. The pin keeps one
+    /// `guint32` and adds to it with no overflow check, so the sum wraps.
+    #[must_use]
+    pub fn facade_total(&self, extra: u64) -> u64 {
+        u64::from(self.unigram_total().wrapping_add(extra as u32))
+    }
+
+    /// Returns `(count, total, successor_present)` for `prev → next`, or
+    /// `None` when `prev` has no bigram entry: `get_freq` over the stored
+    /// row as the pin walks it, from `lower_bound`. A stored zero-count
+    /// record is still a hit (`074a2219 ngram.cpp:231-250`).
+    fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32, bool)>, LmError> {
+        let Some(row) = self.bigram.load_checked_successors(prev)? else {
+            return Ok(None);
+        };
+        let count = single_gram::get_freq(&row, next);
+        let total = single_gram::get_total_freq(&row).unwrap_or(0);
+        self.bigram.recycle(row);
+        Ok(Some((count.unwrap_or(0), total, count.is_some())))
+    }
+
+    /// System `prev → next` counts with the §5 overlay already merged.
+    ///
+    /// This is the scoring-path load: callers must not take a raw
+    /// [`Self::transition`] and skip [`merge_bigram`].
+    fn merged_transition(
+        &self,
+        prev: u32,
+        next: u32,
+        user: UserCountDelta,
+    ) -> Result<Option<(u64, u64, bool)>, LmError> {
+        let system = self.transition(prev, next)?;
+        let present = system.is_some_and(|(_, _, present)| present) || user.bigram_count > 0;
+        Ok(merge_bigram(
+            system.map(|(count, total, _)| (count, total)),
+            user.bigram_count,
+            user.bigram_total,
+        )
+        .map(|(count, total)| (count, total, present)))
+    }
+
+    /// Loads `prev`'s system gram, one point read, and merges `user` — the
+    /// user gram's raw value, `None` when the user bigram has no key — as
+    /// the pin's lookups do before reading the row
+    /// (`phonetic_lookup.h:594-599`, `pinyin.cpp:2210-2215`,
+    /// `phrase_lookup.cpp:268-276` at `074a2219`): `None` when both are
+    /// absent, the present gram's own bytes when one is, and
+    /// `merge_single_gram` otherwise ([`crate::model::MergedGram::merge`]).
+    /// The system value enters the merge as stored, from a fresh DBM read,
+    /// whatever its length: the row's reads answer a value the pin cannot
+    /// read with the same faults as a user value ([`crate::single_gram::GramFault`]).
+    ///
+    /// # Errors
+    /// Propagates the system read failures of
+    /// [`BigramTable::load_raw_successors`](crate::data::BigramTable::load_raw_successors).
+    pub(crate) fn load_merged_row(
+        &self,
+        prev: u32,
+        user: Option<Vec<u8>>,
+    ) -> Result<Option<crate::model::MergedGram>, LmError> {
+        Ok(crate::model::MergedGram::merge(
+            self.bigram.load_raw_successors(prev)?,
+            user,
+        ))
+    }
+
+    /// The unigram the model scores `token` with: the live item field when the
+    /// user side holds one for a visible library, else the stored value plus
+    /// the user delta, merged as `guint32` (`phrase_index.cpp:173-175`).
+    fn live_unigram_count(&self, token: u32, user: &UserCountDelta) -> u64 {
+        match user
+            .unigram_live
+            .filter(|_| self.visible(phrase_index_library_index(token)))
+        {
+            Some(live) => u64::from(live),
+            None => {
+                merge_unigram_counts(self.unigram_count(token).unwrap_or(0), user.unigram_delta)
+            }
+        }
+    }
+
+    /// The item unigram of `token` plus a user delta, or the live field when
+    /// there is one. `0` is a token
+    /// with no item that the user overlay did not raise; the chunk items
+    /// are the real frequency table.
+    #[must_use]
+    pub(crate) fn unigram_freq_with_user_delta(
+        &self,
+        token: u32,
+        live: Option<u32>,
+        user_delta: u64,
+    ) -> u64 {
+        self.live_unigram_count(
+            token,
+            &UserCountDelta {
+                unigram_delta: user_delta,
+                unigram_live: live,
+                ..UserCountDelta::ZERO
+            },
+        )
+    }
+
+    /// [`LanguageModel::nbest_step_costs`] with an explicit §5 user-count
+    /// overlay.
+    ///
+    /// Both branches run over the same additive count merge. The bigram
+    /// merge happens *before* the count > 0 presence gate, so a
+    /// user-trained successor with no
+    /// system count — including a prev that has a system row but not this
+    /// next token — takes the blended branch over the merged denominator.
+    /// The presence gate itself is the pin's `get_phrase_item` over the
+    /// token's *loaded* sub-index, read first by every scoring step
+    /// (`phonetic_lookup.h:646`, `:674`; `phrase_lookup.cpp:310`, `:329`).
+    /// A token of one of the default facade's three `USER_FILE`
+    /// sub-indexes — imports, learnings and choose-promoted addon
+    /// phrases, whose items live in the user directory, not a system
+    /// chunk — is priced only when its item is readable in the user
+    /// store: its own frequency field (`unigram_live`, `Some(0)`
+    /// included) prices it. An absent item, a masked (unloaded) library's
+    /// token and a loaded library's missing item answer the default,
+    /// exactly as the pin's failing `get_phrase_item` does.
+    /// `UserCountDelta::ZERO` is bit-identical to
+    /// the trait method.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LmError`] when the system table cannot be read.
+    pub(crate) fn nbest_step_costs_with_user_delta(
+        &self,
+        prev: &PhraseToken,
+        token: &PhraseToken,
+        user: UserCountDelta,
+    ) -> Result<crate::model::NbestStepCosts, LmError> {
+        self.nbest_step_costs_using(token, user, || self.merged_transition(*prev, *token, user))
+    }
+
+    /// The part of the n-best cost law that no predecessor's row changes:
+    /// the token's unigram possibility and the two weights. Unigram and
+    /// item visibility stay live; [`crate::model::NbestTokenCosts::costs`]
+    /// applies one row item.
+    pub(crate) fn nbest_token_costs_with(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+    ) -> crate::model::NbestTokenCosts {
+        // The pin's presence gate is `get_phrase_item` over the token's
+        // loaded sub-index, and every transition reads it first
+        // (`phrase_lookup.cpp:310,329`, `phonetic_lookup.h:646,674`).
+        // `unigram_live` is the item's own field where the user side
+        // holds it: a system item's, or a `USER_FILE` library's user item
+        // (zero included). `unigram_count` reads the system chunk
+        // libraries only, so its `None` covers an unloaded library's
+        // token (`ERROR_NO_SUB_PHRASE_INDEX`) and a missing item
+        // (`ERROR_NO_ITEM`, a `USER_FILE` item the store lacks included).
+        // Those keep the seam's default answer — no n-best cost data, no
+        // rows — as does no installed unigram table at all.
+        let nibble = phrase_index_library_index(*token);
+        let count = match user.unigram_live.filter(|_| self.visible(nibble)) {
+            Some(live) => u64::from(live),
+            None => {
+                let Some(count) = self.unigram_count(*token) else {
+                    return crate::model::NbestTokenCosts::ABSENT;
+                };
+                merge_unigram_counts(count, user.unigram_delta)
+            }
+        };
+        let unigram_total = self.facade_total(user.unigram_total_delta);
+        // Pre-log pieces, with the pin's epsilon gates before weighting.
+        // IEEE division deliberately carries zero totals and NaN through.
+        let elem = count as f64 / unigram_total as f64;
+        crate::model::NbestTokenCosts {
+            elem: Some(elem),
+            lambda: self.lambda_f32,
+            unigram_lambda: (1.0_f64 - f64::from(self.lambda_f32)) as f32,
+        }
+    }
+
+    /// The token's part of the law, then one transition: a token without
+    /// an item reads no transition.
+    fn nbest_step_costs_using(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
+    ) -> Result<crate::model::NbestStepCosts, LmError> {
+        let costs = self.nbest_token_costs_with(token, user);
+        if costs.elem.is_none() {
+            return Ok(crate::model::NbestStepCosts::default());
+        }
+        Ok(costs.costs(transition()?))
+    }
+}
+
+impl LanguageModel for BigramLanguageModel<'_> {
+    type Error = LmError;
+
+    fn amplification_lambda(&self) -> f32 {
+        self.lambda_f32
+    }
+
+    fn unigram_freq(&self, token: &PhraseToken) -> Result<Option<u64>, Self::Error> {
+        // The chunk items are the phrase index's real frequency table.
+        Ok(Some(self.unigram_count(*token).unwrap_or(0)))
+    }
+
+    fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
+        Ok(Some(u64::from(self.unigram_total())))
+    }
+
+    fn nbest_step_costs(
+        &self,
+        prev: &PhraseToken,
+        token: &PhraseToken,
+    ) -> Result<crate::model::NbestStepCosts, Self::Error> {
+        // System-only: the empty-user identity of the merged path.
+        self.nbest_step_costs_with_user_delta(prev, token, UserCountDelta::ZERO)
+    }
+
+    fn nbest_token_costs(
+        &self,
+        token: &PhraseToken,
+    ) -> Result<crate::model::NbestTokenCosts, Self::Error> {
+        Ok(self.nbest_token_costs_with(token, UserCountDelta::ZERO))
+    }
+
+    fn release_row(&self, row: &mut crate::model::NbestStepRow) {
+        if let Some(chunk) = row.take_chunk() {
+            self.bigram.recycle(chunk);
+        }
+    }
+
+    fn nbest_successors_in_row<'a>(
+        &self,
+        prev: &PhraseToken,
+        row: &'a mut crate::model::NbestStepRow,
+    ) -> Result<Option<crate::model::NbestSuccessors<'a>>, Self::Error> {
+        Ok(Some(
+            row.get_or_try_init(|| self.load_merged_row(*prev, None))?
+                .map_or(
+                    crate::model::NbestSuccessors::Miss,
+                    crate::model::NbestSuccessors::Row,
+                ),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests;

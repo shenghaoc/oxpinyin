@@ -1,0 +1,12 @@
+\data model interpolation
+\1-gram
+\item 10 甲 count 8
+\item 20 乙 count 8
+\item 30 丙 count 2
+\item 40 丁 count 2
+\2-gram
+\item 1 <start> 10 甲 count 8
+\item 1 <start> 30 丙 count 2
+\item 10 甲 20 乙 count 8
+\item 30 丙 40 丁 count 2
+\end

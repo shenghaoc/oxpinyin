@@ -1,0 +1,387 @@
+//! Live system items: each loaded system library's private buffer.
+
+use crate::data::phrase_library::{ChunkItem, PhraseItemView};
+
+use crate::user::SystemLibraryRef;
+use crate::user::replay::{ReplayedLibrary, UnigramAdd};
+use crate::vocab::PhraseToken;
+
+/// The live buffer of `token`'s system library, made from `original` the
+/// first time with the total a reload left. The library is the pin's
+/// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44` at 074a2219).
+fn library_of<'a>(
+    replayed: &'a mut crate::user::LibraryTable<ReplayedLibrary>,
+    totals: &mut crate::user::LibraryTable<u32>,
+    token: PhraseToken,
+    original: SystemLibraryRef<'_>,
+) -> Option<&'a mut ReplayedLibrary> {
+    let nibble = crate::vocab::phrase_index_library_index(token);
+    replayed.get_or_insert_with(nibble, || {
+        let mut library = ReplayedLibrary::pristine(original);
+        if let Some(total) = totals.remove(&nibble) {
+            library.set_total(total);
+        }
+        library
+    })
+}
+
+/// The result of one read of a live system library's slot: the library has
+/// no live buffer, the buffer holds no readable item at the slot (a removed,
+/// unreadable or absent one), or the reader's result.
+pub(crate) enum LiveItemFields<R> {
+    NoLiveLibrary,
+    NoReadableItem,
+    Read(R),
+}
+
+/// What the session holds of the loaded system libraries beyond the shipped
+/// chunks: one live buffer per library a replay, a training, an import or an
+/// increment has written, whose items and `guint32` total are the
+/// sub-index's. A library without one is its shipped chunk.
+#[derive(Debug, Default)]
+pub(crate) struct SystemItems {
+    replayed: crate::user::LibraryTable<ReplayedLibrary>,
+    /// The sub-index total of a library that holds no live buffer but whose
+    /// total is not its original's: what a reload's replay left.
+    totals: crate::user::LibraryTable<u32>,
+    /// `FacadePhraseIndex::m_total_freq` beyond the sub-index totals of the
+    /// system libraries: the user libraries' totals and every delta the facade
+    /// took that a sub-index refused or could not take (`phrase_index.h:633`
+    /// adds before the sub-index answers).
+    facade_extra: u64,
+}
+
+impl SystemItems {
+    pub(crate) fn new(replayed: crate::user::LibraryTable<ReplayedLibrary>) -> Self {
+        Self {
+            replayed,
+            totals: crate::user::LibraryTable::new(),
+            facade_extra: 0,
+        }
+    }
+
+    /// The sub-index totals of libraries without a live buffer and the facade
+    /// total's extra, as an open or a reload leaves them.
+    pub(crate) fn with_totals(
+        mut self,
+        totals: crate::user::LibraryTable<u32>,
+        facade_extra: u64,
+    ) -> Self {
+        self.totals = totals;
+        self.facade_extra = facade_extra;
+        self
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.replayed.is_empty()
+    }
+
+    /// `SubPhraseIndex::m_total_freq` of system library `nibble`: its live
+    /// buffer's, a reload's, or the original's.
+    pub(crate) fn library_total(
+        &self,
+        nibble: u8,
+        original: Option<SystemLibraryRef<'_>>,
+    ) -> Option<u32> {
+        if let Some(library) = self.replayed.get(&nibble) {
+            return Some(library.total());
+        }
+        self.totals
+            .get(&nibble)
+            .copied()
+            .or_else(|| original.map(|library| library.total))
+    }
+
+    /// Sets a system library's sub-index total outside a replay.
+    pub(crate) fn set_library_total(&mut self, nibble: u8, total: u32) {
+        match self.replayed.get_mut(&nibble) {
+            Some(library) => library.set_total(total),
+            None => {
+                self.totals.insert(nibble, total);
+            }
+        }
+    }
+
+    /// Forgets a system library's live buffer and total.
+    pub(crate) fn forget_library(&mut self, nibble: u8) {
+        self.replayed.remove(&nibble);
+        self.totals.remove(&nibble);
+    }
+
+    /// Replaces a system library's live buffer with the one a replay of its
+    /// freshly mapped chunk left (`FacadePhraseIndex::load` then `merge`).
+    pub(crate) fn insert_library(&mut self, nibble: u8, library: ReplayedLibrary) {
+        self.totals.remove(&nibble);
+        self.replayed.insert(nibble, library);
+    }
+
+    pub(crate) fn facade_extra(&self) -> u64 {
+        self.facade_extra
+    }
+
+    pub(crate) fn add_facade_extra(&mut self, delta: u64) {
+        self.facade_extra = self.facade_extra.wrapping_add(delta);
+    }
+
+    pub(crate) fn sub_facade_extra(&mut self, delta: u64) {
+        self.facade_extra = self.facade_extra.wrapping_sub(delta);
+    }
+
+    /// Whether system library `nibble` has no sub-index: its baseline gave its
+    /// mapping to a live buffer, and no buffer holds it now. An unload drops
+    /// the buffer, and a reload that mapped nothing never makes another. The
+    /// pin has no `SubPhraseIndex` there: `add_unigram_frequency` answers
+    /// `ERROR_NO_SUB_PHRASE_INDEX` before it moves the facade total
+    /// (`phrase_index.h:631-633`), `_add_phrase`'s `get_range` fails
+    /// (`pinyin.cpp:589-591`) and `compact` skips the library
+    /// (`phrase_index.cpp:651-652`). A buffer made from the emptied baseline
+    /// would read arrays it no longer holds ([`library_of`]).
+    pub(crate) fn lacks_sub_index(&self, nibble: u8, original: SystemLibraryRef<'_>) -> bool {
+        !self.replayed.contains_key(&nibble)
+            && original.mapped.is_some_and(|library| library.is_detached())
+    }
+
+    /// `FacadePhraseIndex::compact`'s sub-index total (074a2219
+    /// `phrase_index.cpp:648-675`): the sum of the readable items the library
+    /// holds. A library with a live buffer is walked, as the pin's compact
+    /// walks its sub-index; one without is its original's own cached sum.
+    pub(crate) fn compacted_total(&self, nibble: u8, original: SystemLibraryRef<'_>) -> u32 {
+        match self.replayed.get(&nibble) {
+            Some(buffer) => buffer.readable_unigram_sum(),
+            None => original.item_total(),
+        }
+    }
+
+    /// `FacadePhraseIndex::compact`'s rebuild of system library `nibble`'s
+    /// live buffer (074a2219 `phrase_index.cpp:648-675`), if it has one.
+    pub(crate) fn compact(&mut self, nibble: u8) {
+        if let Some(buffer) = self.replayed.get_mut(&nibble) {
+            buffer.compact();
+        }
+    }
+
+    /// The live sub-index of system library `nibble` for a save's diff: its
+    /// buffer, or the shipped chunk where no write has made one.
+    pub(crate) fn live_library<'a>(
+        &'a self,
+        nibble: u8,
+        original: SystemLibraryRef<'a>,
+    ) -> crate::user::LiveSubIndex<'a> {
+        match self.replayed.get(&nibble) {
+            Some(buffer) => crate::user::LiveSubIndex::Buffer(buffer),
+            None => crate::user::LiveSubIndex::Chunk(original),
+        }
+    }
+
+    /// `SubPhraseIndex::get_range`'s end of system library `nibble`: its live
+    /// buffer's, else the original's.
+    pub(crate) fn range_end(&self, nibble: u8, original: SystemLibraryRef<'_>) -> u32 {
+        self.replayed
+            .get(&nibble)
+            .map_or(original.range_end.max(1), ReplayedLibrary::range_end)
+    }
+
+    /// `add_phrase_item` over `token`'s library buffer.
+    pub(crate) fn add_item(
+        &mut self,
+        original: SystemLibraryRef<'_>,
+        token: PhraseToken,
+        payload: &[u8],
+    ) {
+        if let Some(library) = library_of(&mut self.replayed, &mut self.totals, token, original) {
+            library.add_item(token & 0x00ff_ffff, payload);
+        }
+    }
+
+    /// `remove_phrase_item` over `token`'s library buffer: the item's bytes.
+    pub(crate) fn remove_item(
+        &mut self,
+        original: SystemLibraryRef<'_>,
+        token: PhraseToken,
+    ) -> Option<Vec<u8>> {
+        library_of(&mut self.replayed, &mut self.totals, token, original)?
+            .remove_item(token & 0x00ff_ffff)
+    }
+
+    pub(crate) fn is_removed(&self, token: PhraseToken) -> bool {
+        let slot = token & 0x00ff_ffff;
+        self.replayed
+            .get(&crate::vocab::phrase_index_library_index(token))
+            .is_some_and(|library| library.item_bytes(slot).is_none())
+    }
+
+    /// `FacadePhraseIndex::add_unigram_frequency`'s sub-index half
+    /// (`phrase_index.cpp:150-176`) for the system library of `token`. `None`
+    /// for a library with no original. The sub-index total moves with an
+    /// accepted add; the caller moves the facade's.
+    pub(crate) fn add_unigram(
+        &mut self,
+        original: Option<SystemLibraryRef<'_>>,
+        token: PhraseToken,
+        delta: u32,
+    ) -> Option<UnigramAdd> {
+        let original = original?;
+        let slot = token & 0x00ff_ffff;
+        let library = library_of(&mut self.replayed, &mut self.totals, token, original)?;
+        Some(library.add_unigram(slot, delta))
+    }
+
+    /// The item held under `token`, decoded for this call only. Nothing is
+    /// kept.
+    pub(crate) fn get(&self, token: &PhraseToken) -> Option<ChunkItem> {
+        self.replayed
+            .get(&crate::vocab::phrase_index_library_index(*token))?
+            .item(*token & 0x00ff_ffff)
+    }
+
+    /// Reads the item the live buffer of `token`'s library holds under its
+    /// slot.
+    pub(crate) fn with_live<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
+        let library = self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))?;
+        let bytes = library.item_bytes(token & 0x00ff_ffff)?;
+        Some(read(&bytes))
+    }
+
+    /// [`Self::with_live`] that also tells a library without a live buffer
+    /// from a slot the buffer holds no complete item at. The second answer
+    /// is [`Self::is_removed`], from the same slot read: the one
+    /// `get_phrase_item` read (074a2219 `phrase_index.cpp:180-206`).
+    pub(crate) fn read_live<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> LiveItemFields<R> {
+        let Some(library) = self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))
+        else {
+            return LiveItemFields::NoLiveLibrary;
+        };
+        match library.item_bytes(token & 0x00ff_ffff) {
+            Some(bytes) => LiveItemFields::Read(read(&bytes)),
+            None => LiveItemFields::NoReadableItem,
+        }
+    }
+
+    /// [`ReplayedLibrary::ordinary_item`] of `token`'s library, handed to
+    /// `read`. `None` where the library has no live buffer, the slot is an
+    /// added one or the buffer holds no complete item there.
+    pub(crate) fn read_ordinary<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        self.replayed
+            .get(&crate::vocab::phrase_index_library_index(token))?
+            .ordinary_item(token & 0x00ff_ffff)
+            .map(read)
+    }
+
+    /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`].
+    pub(crate) fn with_live_fields<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> LiveItemFields<R> {
+        let Some(library) = self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))
+        else {
+            return LiveItemFields::NoLiveLibrary;
+        };
+        match library.item_field_bytes(token & 0x00ff_ffff) {
+            Some(bytes) => LiveItemFields::Read(read(&bytes)),
+            None => LiveItemFields::NoReadableItem,
+        }
+    }
+
+    /// Trains `token`'s readings in place in its library's live buffer, which
+    /// is made from `original` the first time. Returns whether the buffer
+    /// held the item; `readings` is not consumed otherwise.
+    pub(crate) fn train_live(
+        &mut self,
+        original: Option<SystemLibraryRef<'_>>,
+        token: PhraseToken,
+        readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
+        delta: u32,
+    ) -> bool {
+        // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
+        let nibble = crate::vocab::phrase_index_library_index(token);
+        let slot = token & 0x00ff_ffff;
+        if !self.replayed.contains_key(&nibble) {
+            let Some(original) = original.filter(|library| library.contains_item(slot)) else {
+                return false;
+            };
+            let mut library = ReplayedLibrary::pristine(original);
+            if let Some(total) = self.totals.remove(&nibble) {
+                library.set_total(total);
+            }
+            self.replayed.insert(nibble, library);
+        }
+        self.replayed
+            .get_mut(&nibble)
+            .is_some_and(|library| library.train(slot, readings, delta))
+    }
+
+    /// Whether `token`'s library has a live buffer whose item under the
+    /// token's slot, if any, is one its loaded chunk lacked: an import's or a
+    /// replayed ADD's.
+    pub(crate) fn is_added(&self, token: PhraseToken) -> bool {
+        self.replayed
+            .get(&crate::vocab::phrase_index_library_index(token))
+            .is_some_and(|library| library.is_added_slot(token & 0x00ff_ffff))
+    }
+
+    /// Reads the item under `token` where it is one its library's loaded
+    /// chunk lacked ([`Self::is_added`]).
+    pub(crate) fn with_added<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
+        let library = self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))?;
+        let slot = token & 0x00ff_ffff;
+        if !library.is_added_slot(slot) {
+            return None;
+        }
+        let bytes = library.item_bytes(slot)?;
+        Some(read(&bytes))
+    }
+
+    /// The items each live buffer holds that differ from its original's, as
+    /// values: a changed or added item, and `None` where the buffer holds no
+    /// item at a slot the chunk holds. For the tests' value-model export.
+    #[cfg(test)]
+    pub(crate) fn changed_items(
+        &self,
+        originals: &impl crate::user::OriginalLibraries,
+    ) -> std::collections::BTreeMap<PhraseToken, Option<ChunkItem>> {
+        let mut changes = std::collections::BTreeMap::new();
+        for (&nibble, buffer) in &self.replayed {
+            let original = originals.get(&nibble);
+            let end = buffer
+                .range_end()
+                .max(original.map_or(0, |library| library.range_end));
+            for slot in 1..end {
+                let token = (u32::from(nibble) << 24) | slot;
+                let now = buffer.item(slot);
+                let before = original.and_then(|library| library.item(slot));
+                if now != before {
+                    changes.insert(token, now);
+                }
+            }
+        }
+        changes
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,867 @@
+//! Selection and constraints: choosing a candidate from the cached list or a re-anchored window, the §3 constraint writes, the selection record and training.
+
+use super::*;
+use crate::engine::constraint::PhraseSpan;
+use crate::engine::error::TrainingPrepFault;
+
+/// The anchor of a **before-cursor** window — the buffer start, not the
+/// lookup offset — that a caller passes to [`SelectionTarget::of_candidate`]
+/// for a row of that window.
+///
+/// The two window builders measure a candidate's `consumed_bytes` in
+/// different coordinates, and [`SelectionTarget::of_candidate`] reads the
+/// chosen span as `[anchor, anchor + consumed_bytes)`:
+///
+/// - **After-cursor** (`Session::candidates_at(offset)`) rebases its graph
+///   onto `raw[offset..]`, so `consumed_bytes` is a LENGTH measured from
+///   the lookup offset. Its anchor is that offset.
+/// - **Before-cursor** (`Session::candidates_ending_at(offset)`) reads
+///   the retained matrix, whose coordinates are absolute from
+///   the buffer start, so every row's `consumed_bytes` is the span's
+///   ABSOLUTE END — the lookup offset itself, shared by every row in the
+///   window, whatever byte each span starts on. The anchor that reproduces
+///   that end (and so the consumed advance) is therefore the coordinate
+///   those ends are measured from: 0.
+///
+/// Reusing the after-cursor anchor here would read the span as
+/// `[offset, 2 * offset)` and walk the composition off the end of the
+/// buffer; resolving the row's index against the composition-anchored
+/// cached list instead reads a different list — the caller would commit a
+/// row it never displayed.
+pub const BEFORE_CURSOR_ANCHOR: usize = 0;
+
+/// What a choose reads off the row it selects: the pin's `m_begin`,
+/// `m_end` and `m_token`, and for an n-best row `m_nbest_index`
+/// (`lookup_candidate_t`, 074a2219 `pinyin.cpp:97-105`; read at
+/// `:2515-2520` and `:2577-2590`, `zhuyin.cpp:1646-1666`). Both spans
+/// are absolute, in the store's coordinates.
+#[derive(Clone, Copy, Debug)]
+pub struct SelectionTarget {
+    /// Where the chosen span starts (`m_begin`).
+    pub span_start: usize,
+    /// Where the chosen span ends, before the separator walk
+    /// (`m_end`).
+    pub span_end: usize,
+    /// The token the choose forces (`m_token`); `None` for a row without
+    /// one.
+    pub token: Option<PhraseToken>,
+    /// The n-best tail rank, for a sentence row only.
+    pub nbest_row: Option<u8>,
+}
+
+/// Whether `Session::select_row` checks the chosen item before selecting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RowText {
+    /// Resolve the token's item; an unreadable item takes only the constraint write.
+    Resolve,
+    /// Skip item resolution: an addon row whose item the receiving context lacks
+    /// (`pinyin.cpp:2534-2563`).
+    Empty,
+}
+
+impl SelectionTarget {
+    /// The target of `candidate` read in a window anchored at `anchor`,
+    /// forcing `token_override` in place of its own token when given (the
+    /// addon promotion, `pinyin.cpp:2532-2562`).
+    ///
+    /// For the composition-anchored cached list, `anchor` is the
+    /// composition offset and the candidate's `consumed_bytes` is measured
+    /// from it; for an after-cursor window, `anchor` is that window's
+    /// caller offset and `consumed_bytes` is measured from IT (the pin's
+    /// `m_begin = start`, `pinyin.cpp:2246`) — both carry `span_start` 0,
+    /// so the span starts at `anchor`. A before-cursor window is
+    /// END-anchored at 0 with each row's own absolute `m_begin` in
+    /// `span_start` and its absolute end in `consumed_bytes`: the span
+    /// starts at `anchor + span_start`, not at the anchor, so choosing the
+    /// second key's span constrains that key alone and leaves the leading
+    /// key to the decode.
+    #[must_use]
+    pub fn of_candidate(
+        candidate: &Candidate,
+        anchor: usize,
+        token_override: Option<PhraseToken>,
+    ) -> Self {
+        Self {
+            span_start: anchor.saturating_add(candidate.span_start()),
+            span_end: anchor.saturating_add(candidate.consumed_bytes()),
+            token: token_override.or_else(|| candidate.token()),
+            nbest_row: candidate.nbest_row(),
+        }
+    }
+}
+
+/// A checked training walk. It borrows composition state only, so all
+/// dictionary/model readers can end before the user store is mutated.
+pub struct TrainingPlan<'a> {
+    state: &'a SessionState,
+    index: u8,
+    spans: Option<SpanPlan<'a>>,
+}
+
+impl TrainingPlan<'_> {
+    /// Observe the already checked steps in their original order.
+    ///
+    /// # Errors
+    /// User-model errors retain the observations before the failure.
+    pub(crate) fn observe<U: UserModel>(self, user: &mut U) -> Result<bool, EngineError> {
+        let row = &self.state.sentence.rows[usize::from(self.index)];
+        if row.spans.is_empty() {
+            let history = self.state.record.history();
+            for (index, token) in history.iter().enumerate() {
+                user.observe(&history[..index], token)
+                    .map_err(|_| EngineError::UserModel)?;
+            }
+        } else if let Some((parsed, ends)) = self.spans {
+            let mut context = Vec::with_capacity(row.spans.len());
+            for (index, span) in row.spans.iter().enumerate() {
+                if let Some(end) = ends[index] {
+                    let readings = training_readings(
+                        parsed,
+                        self.state.input.as_bytes(),
+                        span.start,
+                        end,
+                        span.text.phrase_length(),
+                    );
+                    user.observe_with_keys(&context, &span.token, readings)
+                        .map_err(|_| EngineError::UserModel)?;
+                }
+                context.push(span.token);
+            }
+        }
+        Ok(true)
+    }
+}
+
+impl<'s, D, L> Session<D, L, &'s SessionState>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    L: LanguageModel,
+{
+    /// The retained matrix, borrowed for the composition state's own
+    /// lifetime so a plan can keep it.
+    fn plan_matrix(&self) -> &'s super::matrix::ParsedMatrix {
+        let state: &'s SessionState = self.state;
+        &state.input.parsed.retained.matrix
+    }
+
+    /// Check one n-best training operation without retaining a storage
+    /// reader: the one ordered, read-only preparation step production
+    /// training and the fuzz probe share. The order is the pin's: the row
+    /// lookup's index check, then per span its forced-token check, the
+    /// caller's `check` (the user model's per-step store checks) and the
+    /// span bounds.
+    ///
+    /// # Errors
+    ///
+    /// [`TrainingPrepFault::PinAbort`] where the pin's own training abort
+    /// fires — the index past nonempty results, a stale forced token or a
+    /// stale span — and [`TrainingPrepFault::Engine`] for `check`'s
+    /// failures. Production terminates on `PinAbort`
+    /// (`Runtime::train_session`) and classifies an `Engine` fault; the
+    /// probe (`InstanceView::train_aborts`) answers `true` for `PinAbort`
+    /// and for an `Engine` store fault whose classification terminates.
+    pub(crate) fn prepare_training(
+        &self,
+        index: u8,
+        check: &mut impl FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
+    ) -> Result<Option<TrainingPlan<'s>>, TrainingPrepFault> {
+        let Some(row) = self.nbest_training_row(index)? else {
+            return Ok(None);
+        };
+        let spans = if row.spans.is_empty() {
+            let history = self.record.history();
+            for (index, token) in history.iter().enumerate() {
+                check(&history[..index], token)?;
+            }
+            None
+        } else {
+            self.plan_spans(&row.spans, check)?
+                .map(|ends| (self.plan_matrix(), ends))
+        };
+        Ok(Some(TrainingPlan {
+            state: self.state,
+            index,
+            spans,
+        }))
+    }
+}
+
+impl<D, L, S: std::borrow::Borrow<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    L: LanguageModel,
+{
+    /// The common tail of [`Session::select_target`].
+    pub(super) fn selection_outcome(&self) -> Selection {
+        if self.record.consumed() >= self.input.len() {
+            Selection::Completed
+        } else {
+            Selection::Continued
+        }
+    }
+
+    /// Whether the pin's NBEST choose of row `rank` asserts (074a2219
+    /// `pinyin.cpp:2515-2520`): the results do not hold row 0 and row
+    /// `rank` (`:2517-2518`), or `diff_result` meets a write that answers
+    /// zero (`phonetic_lookup.cpp:203`). The store and the rows are read as
+    /// [`Session::select_nbest_row`] reads them, without validation. Reads
+    /// only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn nbest_choose_aborts(&self, rank: u8) -> bool {
+        let state = self.state.borrow();
+        let (Some(best), Some(chosen)) = (
+            state.sentence.rows.first(),
+            state.sentence.rows.get(usize::from(rank)),
+        ) else {
+            return true;
+        };
+        state
+            .constraints
+            .diff_result_refuses(&best.spans, &chosen.spans, chosen.span)
+    }
+
+    /// The decoded row [`Session::prepare_training`] trains: `None` for no
+    /// results (the pin's quiet `false`), the pin's index assert past
+    /// nonempty results (`pinyin.cpp:2684` at 074a2219; the Zhuyin caller
+    /// always trains row 0, `zhuyin.cpp:1696-1715`).
+    fn nbest_training_row(
+        &self,
+        index: u8,
+    ) -> Result<Option<&crate::engine::nbest::NbestRow>, TrainingPrepFault> {
+        if self.sentence.rows.is_empty() {
+            return Ok(None);
+        }
+        self.sentence
+            .rows
+            .get(usize::from(index))
+            .map(Some)
+            .ok_or(TrainingPrepFault::PinAbort)
+    }
+
+    /// Check `spans` before the engine observes them. The check order
+    /// matches the pin: each step's forced-phrase assert, then `check`
+    /// (the user model's store checks for the step), then the span asserts.
+    /// The pin records step by step (`phonetic_lookup.h:858-929`). Its user
+    /// bigram is loaded into memory at init (`pinyin.cpp:401`) and written
+    /// to disk only by `pinyin_save` (`:1018`). An abort discards the
+    /// in-memory training changes, so checks-first is equivalent at the
+    /// C API. Answers each observed span's end, or `None` when no span is
+    /// forced (nothing trains).
+    fn plan_spans<F>(
+        &self,
+        spans: &[PhraseSpan],
+        check: &mut F,
+    ) -> Result<Option<Vec<Option<usize>>>, TrainingPrepFault>
+    where
+        F: FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
+    {
+        // 074a2219 phonetic_lookup.h:854-866,932: only OneStep or
+        // train_next observes a phrase; every phrase advances its predecessor.
+        // A no-op needs no matrix rebuild: train_next starts false
+        // and only a OneStep can start training (pin :854-872).
+        if !spans
+            .iter()
+            .any(|span| self.constraints.is_one_step_at(span.start))
+        {
+            return Ok(None);
+        }
+        // `assert(token == constraint->m_token)` at a forced position
+        // (`phonetic_lookup.h:868`): checked in the walk below, in span
+        // order. The pin's abort discards earlier in-memory training.
+        // The walk indexes raw-buffer positions, separators included. The
+        // pin's `fill_matrix` leaves a leading separator gap empty
+        // (`phonetic_key_matrix.cpp:52-78`), but the raw scan has already
+        // re-anchored a key that crosses a separator to its buffer start.
+        // The retained topology re-applies the physical separators
+        // (`ParsedMatrix::from_scan` — the matrix the lookup indexes), or a
+        // span over the gap would silently read a filled column `:663`
+        // refuses.
+        let parsed = &self.retained_parse().matrix;
+        let matrix = parsed;
+        let zeros = &parsed.zeros;
+        // 074a2219 phonetic_lookup.h:921 tails the last span at
+        // `constraints->length() - 1`, NOT the CURRENT matrix's last
+        // column: the store survives a parse (`pinyin.cpp:1497-1525`,
+        // never validating), so a re-parse that shortened the input
+        // leaves it longer than the matrix the walk now indexes. The
+        // pin's `increase_pronunciation_possibility` then asserts the
+        // walk stays inside and starts on a filled column
+        // (`storage/phonetic_key_matrix.cpp:661`, `:663`), which the
+        // engine answers as an error; the C facades abort there. The
+        // engine pre-computes the endpoints before recording anything.
+        // The pin records step by step, but its abort discards those
+        // in-memory changes, so the C API result is the same.
+        let constraint_len = self.constraints.cell_count();
+        let tail = constraint_len.saturating_sub(1);
+        let mut train_next = false;
+        let mut ends: Vec<Option<usize>> = vec![None; spans.len()];
+        let tokens: Vec<PhraseToken> = spans.iter().map(|span| span.token).collect();
+        for (index, span) in spans.iter().enumerate() {
+            // 074a2219 phonetic_lookup.h:858 walks the result positions
+            // below `constraints->length()`, reloaded each step (the
+            // pin-built `pinyin_train` compares `i` with the `GArray`'s
+            // `len`). A choose after a shortening re-parse shrinks the store
+            // (`pinyin.cpp:2579`) under a row decoded for the longer input:
+            // its later spans are never reached, trained or checked.
+            if span.start >= constraint_len {
+                break;
+            }
+            let forced = self.constraints.is_one_step_at(span.start);
+            if !(train_next || forced) {
+                continue;
+            }
+            // 074a2219 train_result3 walks the spans in order: the forced
+            // position's `assert(token == constraint->m_token)`
+            // (`phonetic_lookup.h:868`) precedes
+            // `increase_pronunciation_possibility`'s three asserts
+            // (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`) for
+            // the same span, so an earlier span's bounds fault is reached
+            // before a later span's token fault. The engine checks both
+            // during preflight; the pin records each step as it goes.
+            if forced
+                && self
+                    .constraints
+                    .one_step_token_at(span.start)
+                    .is_some_and(|forced_token| forced_token != span.token)
+            {
+                return Err(TrainingPrepFault::PinAbort);
+            }
+            // The step's bigram half comes next (`phonetic_lookup.h:876-909`:
+            // `get_total_freq` :884, the `get_freq` walk :888, `set_freq`
+            // :903), before its pronunciation update's span asserts (:925).
+            check(&tokens[..index], &span.token)?;
+            train_next = forced;
+            // 074a2219 phonetic_lookup.h:911-920 scans to the next
+            // non-null result token, not the forced constraint end.
+            let next = spans.get(index + 1).map_or(tail, |next| next.start);
+            // :921 clamps the last span to constraints->length()-1.
+            let end = next.min(tail);
+            // The span asserts in the pin's order: `end < matrix->size()`
+            // (`storage/phonetic_key_matrix.cpp:661`), a filled start
+            // column (`:663` — an internal separator holds a zero key and
+            // is accepted; only a genuine gap, a leading separator run,
+            // trips it), then a filled end column (`:664` — the internal
+            // apostrophe can leave the start column non-empty while the
+            // stale end still lands on an empty column).
+            if end >= matrix.column_count()
+                || column_is_empty(matrix, zeros, span.start)
+                || column_is_empty(matrix, zeros, end)
+            {
+                return Err(TrainingPrepFault::PinAbort);
+            }
+            ends[index] = Some(end);
+        }
+        Ok(Some(ends))
+    }
+
+    /// The sentence recorded so far: the token of every phrase the user
+    /// pinned in this composition, in selection order.
+    ///
+    /// Sentence-level candidates carry no token and are not part of the
+    /// record — exactly the phrases a `pinyin_train` call would train
+    /// (`docs/findings/user-store.md` §2.1). The C ABI uses the tail of this
+    /// slice as the predecessor for predicted-candidate training (§2.3).
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[must_use]
+    pub fn selected_tokens(&self) -> &[PhraseToken] {
+        self.record.history()
+    }
+}
+
+impl<D, L, S: std::borrow::BorrowMut<SessionState>> Session<D, L, S>
+where
+    D: Dictionary<Syllable = SyllableKey>,
+    L: LanguageModel,
+{
+    // pinyin_choose_candidate dispatches on m_begin, m_end, m_token and m_nbest_index
+    // (pinyin.cpp:2515–2520,2577–2590; zhuyin.cpp:1646–1666). diff_result requires each
+    // differing constraint write to succeed (lookup/phonetic_lookup.cpp:189–203).
+    /// Selects the token span or n-best sentence rank in a published [`SelectionTarget`]. An
+    /// ordinary token span past the current matrix returns [`Selection::Refused`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates constraint validation and refresh errors. A tokenless choice behind the
+    /// composition yields [`EngineError::Failure`].
+    ///
+    /// # Aborts
+    ///
+    /// Selecting an n-best row aborts if a differing phrase in that row cannot be written
+    /// into the current constraint store. This can occur when the selected row predates a
+    /// change of composition.
+    pub fn select_target(&mut self, target: &SelectionTarget) -> Result<Selection, EngineError> {
+        let span_end = target.span_end;
+        if target.nbest_row.is_none()
+            && target.token.is_some()
+            && span_end > self.selection_constraint_size()
+        {
+            // Both choose functions validate before and after add_constraint,
+            // even when it returns zero (074a2219 pinyin.cpp:2578-2587;
+            // zhuyin.cpp:1646-1666). Do not clip the retained span or add its
+            // token/text to the record. The ABI owns the refusal cursor.
+            self.validate_selection_constraints()?;
+            self.validate_selection_constraints()?;
+            return Ok(Selection::Refused);
+        }
+        // Only NORMAL choose validates before its write; NBEST dispatches
+        // directly to diff_result (pinyin.cpp:2515-2520,2577-2587).
+        if target.nbest_row.is_none() {
+            self.validate_selection_constraints()?;
+        }
+        let token = target.token;
+        // The chosen span in the store's coordinates — upstream's
+        // `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2582`,
+        // `zhuyin.cpp:1652,1659`); [`SelectionTarget::of_candidate`] says
+        // how a window row's span is placed there.
+        let span_start = target.span_start;
+        let constraint_start = span_start;
+        let constraint_end = self.next_boundary(span_end);
+        // A span that starts before the composition offset — a choose from
+        // a window the caller looked up behind an earlier selection (ibus's
+        // `moveCursorLeft`, `PYPPhoneticEditor.cc:595-604`, sets the lookup
+        // cursor to 0). The pin's window is built from `start = offset`
+        // (`pinyin.cpp:2229`, `m_begin = start` at
+        // `:2246`) and the choose writes `add_constraint(m_begin, m_end,
+        // token)` over whatever forcings the span overlaps (`:2578-2590`,
+        // `phonetic_lookup.cpp:61-86`) — so the choose forces the span and
+        // the record follows the store, moving back to it. An n-best row
+        // is a whole-composition hypothesis and takes the row path below.
+        if span_start < self.record.consumed() && target.nbest_row.is_none() {
+            return self.select_behind(constraint_start, constraint_end, token);
+        }
+        // The normal choose of a token: `add_constraint(m_begin, m_end,
+        // token)`, then `validate_constraint` again (074a2219
+        // `pinyin.cpp:2582-2585`, `zhuyin.cpp:1652-1662`;
+        // `phonetic_lookup.cpp:120-168`), which drops a forcing whose token
+        // does not spell its span. The record follows the forcings that
+        // survive.
+        if target.nbest_row.is_none()
+            && let Some(token) = token
+        {
+            self.constraints
+                .add(constraint_start, constraint_end, token);
+            return self.settle_written_forcing();
+        }
+        self.record_row_choice(target, constraint_end)
+    }
+
+    /// The row path of [`Self::select_target`], for an n-best row or a
+    /// choose without a token: record the token history, constrain the
+    /// phrases where an n-best row differs from the best one, move the
+    /// composition offset to `constraint_end` and
+    /// refresh.
+    fn record_row_choice(
+        &mut self,
+        target: &SelectionTarget,
+        constraint_end: usize,
+    ) -> Result<Selection, EngineError> {
+        let state = self.state.borrow_mut();
+        if let Some(token) = target.token {
+            state.record.push_token(token);
+        } else if let Some(rank) = target.nbest_row {
+            // A prepended n-best row records its whole token path —
+            // upstream's `pinyin_choose_candidate` keeps the chosen
+            // `MatchResult` on the instance and `pinyin_train` walks it;
+            // the engine's record is the token history
+            // (`docs/findings/user-store.md` §2.1). The row is looked up
+            // by its own tail rank, never by list position: the NBEST-wins
+            // dedup can drop an earlier duplicate row, shifting a
+            // surviving row off the position its rank would give it, and a
+            // positional lookup then trains the wrong path.
+            if let Some(row) = state.sentence.rows.get(usize::from(rank)) {
+                // A row replaces the whole path, including any earlier selection.
+                state
+                    .record
+                    .replace_history(row.spans.iter().map(|span| span.token));
+            }
+        }
+        // The §3 constraint writes (`pinyin_choose_candidate`,
+        // `pinyin.cpp:2576-2584`): a token-bearing candidate forces its
+        // span; an n-best row constrains only the phrases where it
+        // differs from the 1-best (`diff_result`) — a row-0 choose
+        // constrains nothing, exactly upstream.
+        if let Some(rank) = target.nbest_row {
+            let best = state.sentence.rows.first().map(|row| row.spans.as_slice());
+            let Some(chosen) = state.sentence.rows.get(usize::from(rank)) else {
+                state.record.set_consumed(constraint_end);
+                self.refresh_after_parse()?;
+                return Ok(self.selection_outcome());
+            };
+            if let Some(best) = best {
+                // NBEST choose does not validate or resize the store
+                // (pinyin.cpp:2515-2520). diff_result takes its tail from
+                // the decoded result, not the current parse (:192).
+                state
+                    .constraints
+                    .diff_result(best, &chosen.spans, chosen.span);
+            }
+        }
+        state.record.set_consumed(constraint_end);
+        self.refresh_after_parse()?;
+
+        Ok(self.selection_outcome())
+    }
+
+    /// Validates a tokenless choice at the start of the composition and
+    /// records any orphaned span for a later clear or forcing write.
+    ///
+    /// # Errors
+    /// Returns a lookup error from either constraint validation.
+    pub fn choose_tokenless(&mut self) -> Result<(), EngineError> {
+        self.validate_selection_constraints()?;
+        if self.constraints.choose_tokenless() {
+            self.rebuild_selection_from_constraints();
+        }
+        self.validate_selection_constraints()
+    }
+
+    /// Choose a previously published row whose item is currently unreadable.
+    /// Apply its constraint and validate it without decoding a sentence.
+    fn choose_unreadable_step(
+        &mut self,
+        start: usize,
+        end: usize,
+        token: PhraseToken,
+    ) -> Result<usize, EngineError> {
+        self.validate_selection_constraints()?;
+        let len = self.constraints.add(start, end, token);
+        self.validate_selection_constraints()?;
+        Ok(len)
+    }
+
+    /// The matrix size a choose validates the store to, the pin's
+    /// `m_constraints->len` after `validate_constraint` (074a2219
+    /// `phonetic_lookup.cpp:64-65`): 0 for a parse without keys.
+    #[must_use]
+    pub(crate) fn selection_capacity(&self) -> usize {
+        self.selection_constraint_size()
+    }
+
+    /// The pin's choose of an NBEST row: only the rank is read off the row;
+    /// the results, their spans and their text are this session's own
+    /// (074a2219 `pinyin.cpp:2515-2520`). The caller checks
+    /// [`Self::has_nbest_rank`] first, where the pin asserts.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from the refresh that follows the selection.
+    pub(crate) fn select_nbest_row(&mut self, rank: u8) -> Result<Selection, EngineError> {
+        let Some(row) = self.sentence.rows.get(usize::from(rank)) else {
+            return Ok(Selection::Refused);
+        };
+        let span_end = row.span;
+        self.select_target(&SelectionTarget {
+            span_start: 0,
+            span_end,
+            token: None,
+            nbest_row: Some(rank),
+        })
+    }
+
+    /// The pin's normal choose of `token` over `[start, end)` in store
+    /// coordinates (074a2219 `pinyin.cpp:2577-2590`, `zhuyin.cpp:1646-1666`).
+    /// The item lookup still chooses the unreadable-item path, which writes
+    /// and validates the constraint without refreshing the candidate list.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from the validations and the refresh.
+    pub(crate) fn select_row(
+        &mut self,
+        start: usize,
+        end: usize,
+        token: PhraseToken,
+        text: RowText,
+    ) -> Result<Selection, EngineError> {
+        if text == RowText::Resolve && self.dictionary.phrase_text_for_token(token).is_none() {
+            let len = self.choose_unreadable_step(start, end, token)?;
+            return Ok(if len == 0 {
+                Selection::Refused
+            } else {
+                self.selection_outcome()
+            });
+        }
+        self.select_target(&SelectionTarget {
+            span_start: start,
+            span_end: end,
+            token: Some(token),
+            nbest_row: None,
+        })
+    }
+
+    /// A choose whose span does not start or end on a key of the current
+    /// parse. The pin writes the forcing at a matrix column no key fills;
+    /// its second `validate_constraint` removes that forcing, and the
+    /// forcings `add_constraint` cleared stay cleared (074a2219
+    /// `pinyin.cpp:2577-2590`, `phonetic_lookup.cpp:61-86`). `[start, end)`
+    /// covers, in store coordinates, the keys the span overlaps.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from either validation.
+    pub(crate) fn choose_unspellable_span(
+        &mut self,
+        start: usize,
+        end: usize,
+    ) -> Result<Selection, EngineError> {
+        self.validate_selection_constraints()?;
+        let mut cleared = false;
+        let end = end.min(self.constraints.cell_count());
+        for index in start..end {
+            cleared |= self.constraints.clear_by_offset(index);
+        }
+        self.constraints.note_write(start..end);
+        if cleared {
+            self.rebuild_selection_from_constraints();
+        }
+        self.validate_selection_constraints()?;
+        Ok(self.selection_outcome())
+    }
+
+    /// A choose `add_constraint` refuses (`end > m_constraints->len`): both
+    /// validations still run, and nothing else changes (074a2219
+    /// `pinyin.cpp:2578-2587`, `zhuyin.cpp:1646-1666`).
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError`] from either validation.
+    pub fn refuse_selection(&mut self) -> Result<Selection, EngineError> {
+        self.validate_selection_constraints()?;
+        self.validate_selection_constraints()?;
+        Ok(Selection::Refused)
+    }
+
+    /// Revalidate existing forcings on a refused choose, preserving the pin's
+    /// resize and spelling checks without attempting sentence decoding.
+    fn validate_selection_constraints(&mut self) -> Result<(), EngineError> {
+        let size = self.selection_constraint_size();
+        let mut store = core::mem::take(&mut self.constraints);
+        let result = {
+            let retained = self.retained_parse();
+            let spelling = crate::engine::nbest::ConstraintSpelling::new(&retained.matrix);
+            store.validate(size, |start, end, token| {
+                spelling.spells(&self.dictionary, start, end, token)
+            })
+        };
+        self.constraints = store;
+        if result? || (self.constraints.is_active() && self.record.history().is_empty()) {
+            self.rebuild_selection_from_constraints();
+        }
+        Ok(())
+    }
+
+    /// `fill_matrix` clears the matrix and returns early for zero keys;
+    /// otherwise its size is parsed_len + 1, not the raw input length
+    /// (074a2219 storage/phonetic_key_matrix.cpp:30-48). Read the retained
+    /// key path and matrix rather than keeping another parse-length field.
+    fn selection_constraint_size(&self) -> usize {
+        if self.selected_path().edges.is_empty() {
+            0
+        } else {
+            self.retained_parse().matrix.bound + 1
+        }
+    }
+
+    /// A choose whose span starts before the composition offset:
+    /// the pin's `add_constraint(m_begin, m_end,
+    /// token)` (`pinyin.cpp:2582-2584`, `phonetic_lookup.cpp:61-86`) —
+    /// every forcing the span overlaps is cleared, the span is forced, and
+    /// forcings outside it survive — after which the selection record is
+    /// re-derived from the store
+    /// ([`Session::rebuild_selection_from_constraints`]), so the
+    /// composition offset moves back to the end of the forced prefix. A
+    /// row with no token has nothing to force; it keeps the old refusal
+    /// ([`EngineError::Failure`]).
+    fn select_behind(
+        &mut self,
+        start: usize,
+        end: usize,
+        token: Option<PhraseToken>,
+    ) -> Result<Selection, EngineError> {
+        let Some(token) = token else {
+            return Err(EngineError::Failure);
+        };
+        let state = self.state.borrow_mut();
+        state.constraints.resize(state.input.len() + 1);
+        state.constraints.add(start, end, token);
+        self.settle_written_forcing()
+    }
+
+    /// After a normal choose's `add_constraint`: the pin's second
+    /// `validate_constraint` (074a2219 `pinyin.cpp:2585`, `zhuyin.cpp:1662`;
+    /// `phonetic_lookup.cpp:120-168`) drops a forcing whose token does not
+    /// spell its span, and the selection record is rebuilt from the
+    /// forcings that survive. The pin's choose writes no candidate list
+    /// (`pinyin.cpp:2578-2590`; its getters read `m_candidates`, `:2845-2864`),
+    /// so a deferring session leaves its list stale here too.
+    fn settle_written_forcing(&mut self) -> Result<Selection, EngineError> {
+        self.validate_selection_constraints()?;
+        self.rebuild_selection_from_constraints();
+        self.refresh_after_parse()?;
+        Ok(self.selection_outcome())
+    }
+
+    /// Moves the forcings into new store coordinates before a validation
+    /// (`ConstraintStore::remap`), then rebuilds
+    /// the selection record from the forcings that remain.
+    pub(crate) fn remap_constraints(
+        &mut self,
+        forcing: impl Fn(usize, usize) -> Option<(usize, usize)>,
+        orphaned: impl Fn(&std::ops::Range<usize>) -> std::ops::Range<usize>,
+    ) {
+        if !self.constraints.has_spans_to_remap() {
+            return;
+        }
+        self.constraints.remap(forcing, orphaned);
+        self.rebuild_selection_from_constraints();
+    }
+
+    /// Clears the constraint run at `offset` — `pinyin_clear_constraint`
+    /// (`pinyin.cpp:2641-2647`). The offset indexes the store's
+    /// coordinate space (raw-buffer byte positions, #141's law); a hit
+    /// anywhere inside a forced run un-forces the whole run. The
+    /// selection record follows the surviving forcings, so the cleared
+    /// phrase's token leaves the record.
+    ///
+    /// Returns `false` for a free cell or an out-of-range offset.
+    #[must_use]
+    pub fn clear_constraint(&mut self, offset: usize) -> bool {
+        if !self.constraints.clear_by_offset(offset) {
+            return false;
+        }
+        self.rebuild_selection_from_constraints();
+        true
+    }
+
+    /// Rebuilds the selection record (`consumed`, `history`)
+    /// from the surviving forcings. Upstream keeps no such record — the
+    /// frontend tracks its own cursor — so the store is the engine's
+    /// single source once forcings exist.
+    pub(super) fn rebuild_selection_from_constraints(&mut self) {
+        let runs = self.constraints.runs();
+        let state = self.state.borrow_mut();
+        state
+            .record
+            .rebuild_from_constraints(state.input.len(), &runs);
+    }
+}
+
+/// 074a2219 `get_column_size(offset) > 0` (`storage/phonetic_key_matrix.cpp`):
+/// a column is occupied by either a real key or a zero key. `from_scan`
+/// records real keys in `matrix` and internal separator zero keys (and the
+/// reserved end slot) in `zeros`.
+/// A training walk's plan ([`Session::plan_spans`]): the retained matrix it
+/// indexes, borrowed from the composition state the plan itself borrows, and
+/// the end of each span it observes (`None` for one it only passes).
+type SpanPlan<'a> = (&'a super::matrix::ParsedMatrix, Vec<Option<usize>>);
+
+pub(crate) fn column_is_empty(
+    matrix: &super::matrix::ParsedMatrix,
+    zeros: &[bool],
+    offset: usize,
+) -> bool {
+    matrix.get(offset).is_none_or(<[ScanKey]>::is_empty)
+        && !zeros.get(offset).copied().unwrap_or(false)
+}
+
+/// 074a2219 storage/phonetic_key_matrix.cpp:603-670: lazy depth-first
+/// traversal keeps only one path, like the pin's cached_keys. Matrix order
+/// and multiplicity survive; separator zero keys are folded into scan edges.
+/// `compute_pronunciation_possibility_recur` (`:534-585`), which revalidates
+/// a forcing, walks the columns the same way, so
+/// [`crate::engine::nbest::ConstraintSpelling`] reads its paths from here too.
+pub(crate) fn training_readings<'a>(
+    matrix: &'a super::matrix::ParsedMatrix,
+    input: &'a [u8],
+    start: usize,
+    end: usize,
+    length: usize,
+) -> TrainingReadings<'a> {
+    // The walk pushes one frame per key and stops at `length` keys, so the
+    // stacks never outgrow `length + 1` frames and `length` keys.
+    let mut frames = Vec::with_capacity(length + 1);
+    frames.push((start, 0));
+    TrainingReadings {
+        matrix,
+        input,
+        end,
+        length,
+        frames,
+        keys: Vec::with_capacity(length),
+        yielded: false,
+    }
+}
+
+pub(crate) struct TrainingReadings<'a> {
+    matrix: &'a super::matrix::ParsedMatrix,
+    input: &'a [u8],
+    end: usize,
+    length: usize,
+    frames: Vec<(usize, usize)>,
+    keys: Vec<crate::parser::ChewingKey>,
+    yielded: bool,
+}
+
+impl TrainingReadings<'_> {
+    fn backtrack(&mut self) {
+        self.frames.pop();
+        if !self.frames.is_empty() {
+            self.keys.pop();
+        }
+    }
+}
+
+impl Iterator for TrainingReadings<'_> {
+    type Item = Vec<crate::parser::ChewingKey>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.yielded {
+            self.yielded = false;
+            self.backtrack();
+        }
+        while let Some(&(position, index)) = self.frames.last() {
+            // :607-621: exact span and phrase length only.
+            if position == self.end && self.keys.len() == self.length {
+                self.yielded = true;
+                return Some(self.keys.clone());
+            }
+            // 074a2219 phonetic_key_matrix.cpp:635-642: a zero key
+            // advances without adding a syllable, including a trailing
+            // separator after the last key. Other separator hops are
+            // already folded into the scan edge that follows them.
+            if position < self.end
+                && self.input.get(position) == Some(&b'\'')
+                && self.matrix.get(position).is_some_and(<[ScanKey]>::is_empty)
+            {
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.0 += 1;
+                }
+                continue;
+            }
+            if position >= self.end || self.keys.len() >= self.length {
+                self.backtrack();
+                continue;
+            }
+            let Some(edge) = self
+                .matrix
+                .get(position)
+                .and_then(|column| column.get(index))
+            else {
+                self.backtrack();
+                continue;
+            };
+            if let Some(frame) = self.frames.last_mut() {
+                frame.1 += 1;
+            }
+            // :629-651: visit each matrix key in order, without deduping.
+            if edge.to <= position {
+                continue;
+            }
+            self.keys.push(edge.key.chewing_key().with_tone(edge.tone));
+            self.frames.push((edge.to, 0));
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,0 +1,113 @@
+//! The system phrase index the KMM text utilities validate and print through
+//! (`utils/utils_helper.h:73-95` and `src/storage/tag_utility.cpp:360-417`
+//! at `074a2219`).
+//!
+//! `load_phrase_index` reads the cwd-relative `table.conf`, then loads every
+//! `SYSTEM_FILE` row's system chunk by its own file name, in sub-index
+//! order. A failed chunk load prints `load %s failed!\n` and exits
+//! `ENOENT`; a failed `table.conf` load prints `load table.conf failed.\n`
+//! and exits `ENOENT`. `taglib_token_to_string` resolves library zero
+//! through the pin's special table (`<start>` for `sentence_start`; every
+//! other token prints `error: unknown token:%d.\n` and answers NULL) and
+//! every other token through the loaded chunk, encoding its UCS-4 words
+//! with `g_ucs4_to_utf8`.
+
+use oxpinyin::vocab::phrase_index_library_index;
+use std::ffi::{CString, OsStr};
+
+use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
+use oxpinyin::data::PhraseLibraries;
+use oxpinyin::data::phrase_library::LibraryError;
+use oxpinyin::data::{FileName, TableConf, TableConfError};
+use oxpinyin_tool_support::input::{self as tool, k_mixture_model as edge};
+
+/// One loaded phrase index.
+pub struct SystemPhraseIndex {
+    libraries: PhraseLibraries,
+}
+
+impl SystemPhraseIndex {
+    /// Resolve the token text, printing the pin's diagnostic for an unknown token.
+    pub fn token_to_string(&self, token: u32) -> Option<Vec<u8>> {
+        tag_token_text(
+            token,
+            // 074a2219 tag_utility.cpp:391.
+            usize::from(phrase_index_library_index(token)) == 0,
+            |token| self.libraries.phrase_text(token),
+            |text| Some(text.outward_words().collect::<Vec<_>>()),
+            |token| edge::report_unknown_token(token as i32),
+        )
+    }
+
+    /// `taglib_validate_token_with_string`: whether the token's phrase text
+    /// equals `text` (compared as C strings). A token the pin cannot
+    /// resolve answers `false`, where the pin's `strcmp` reads through NULL.
+    pub fn validate_token_with_string(&self, token: u32, text: &[u8]) -> bool {
+        self.token_to_string(token).is_some_and(|answer| {
+            let answer = answer.split(|byte| *byte == 0).next().unwrap_or(&[]);
+            answer == text
+        })
+    }
+}
+
+/// `SystemTableInfo2::load(SYSTEM_TABLE_INFO)` (`import:275`,
+/// `export:128`, `gen:330`): the cwd-relative `table.conf`.
+///
+/// # Aborts
+///
+/// Aborts on every [`TableConfError::Abort`] site, as the pin's
+/// `table_info.cpp` does (`:119-175`, `:276` via `:229-286`). Missing-file
+/// and malformed-header refusals keep the `load table.conf failed.` and
+/// `ENOENT` path.
+#[must_use]
+pub fn load_table_conf() -> TableConf {
+    match TableConf::load(c"table.conf") {
+        Ok(conf) => conf,
+        Err(TableConfError::Abort(_)) => tool::abort(),
+        Err(_) => {
+            edge::report_table_conf_load_failed();
+            tool::exit(tool::ENOENT);
+        }
+    }
+}
+
+/// `load_phrase_index` (`utils_helper.h:73-95`).
+#[must_use]
+pub fn load_phrase_index(conf: &TableConf) -> SystemPhraseIndex {
+    let libraries = match load_system_libraries(conf) {
+        Ok(libraries) => libraries,
+        Err(SystemLibraryError::MissingName) => {
+            // `MemoryChunk::load(NULL)` is undefined in the pin.
+            edge::report_chunk_load_failed(c"");
+            tool::exit(tool::ENOENT);
+        }
+        Err(SystemLibraryError::Chunk(_, LibraryError::Row(_))) => tool::abort(),
+        Err(SystemLibraryError::Chunk(
+            name,
+            LibraryError::Io(_)
+            | LibraryError::Format(_)
+            | LibraryError::Layout(_)
+            | LibraryError::Unmappable { .. },
+        )) => {
+            edge::report_chunk_load_failed(&c_name(name));
+            tool::exit(tool::ENOENT);
+        }
+    };
+    SystemPhraseIndex { libraries }
+}
+
+/// Load both, in the pin's order.
+#[must_use]
+pub fn load_system_phrases() -> SystemPhraseIndex {
+    let conf = load_table_conf();
+    load_phrase_index(&conf)
+}
+
+/// A `table.conf` file name as a C string for the pin's `%s`.
+fn c_name(name: &FileName) -> CString {
+    let os: &OsStr = name.as_ref();
+    CString::new(oxpinyin::input::path_to_bytes(std::path::Path::new(os))).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests;

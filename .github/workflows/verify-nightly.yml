@@ -1,0 +1,361 @@
+name: verify-nightly
+
+# Scheduled verification: the checks too slow for the PR gate. The merge
+# conditions are docs/runbooks/verification.md, section 10. Findings here
+# open issues. Nothing here blocks a merge, because branch protection
+# requires only ci.yml's `ci-aggregate`.
+#
+# Jobs: fuzz-soak, overflow-lane, test-windows and test-macos.
+# No job may fail: there are no continue-on-error jobs.
+#
+# Every Linux job runs natively on the runner (docs/runbooks/verification.md,
+# section 10); test-windows runs on windows-2025 and test-macos on macos-26.
+# The oracle is never built or run on GitHub Actions.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Run only the full Windows workspace job
+        type: boolean
+        default: false
+      macos_only:
+        description: Run only the macOS workspace job
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# One group per ref: the schedule always runs on main, so scheduled runs
+# still queue behind each other, and a dispatch on a branch does not
+# displace them.
+concurrency:
+  group: verify-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz-soak:
+    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
+    # Pinned, not ubuntu-latest, so a runner-image move
+    # (26.04: actions/runner-images#14748) happens here under review.
+    runs-on: ubuntu-26.04
+    # The "Prepare corpora" step has 30 min. The "Soak each target"
+    # step has 60: the target builds take
+    # up to 5 min, and each of the 7 targets runs under a FUZZ_GUARD_SECONDS
+    # (420 s) limit plus 30 s for the kill, 52.5 min in all. The guard holds
+    # FUZZ_SECONDS (180 s) of fuzzing and 240 s for afl-fuzz's start-up run,
+    # which calibrates every corpus input before the -V clock starts. The job
+    # has 25 more, for
+    # the steps before the soak (up to 15 min: LLVM, cargo-afl and the AFL++
+    # build) and the upload and cache save after it. The step limit is lower
+    # than the job limit, so an overrun fails the step and the crash upload
+    # still runs. Add 8 to both numbers for each new target.
+    timeout-minutes: 115
+    defaults:
+      run:
+        shell: bash
+    env:
+      FUZZ_SECONDS: 180
+      FUZZ_GUARD_SECONDS: 420
+      AFL_NO_UI: 1
+      # The cell that CI selects on Linux (CI_LINUX_CELL in tools/dev/cell.py).
+      PINYIN_ORACLE_DBM: kc
+    steps:
+      # tools/dev/fuzz.py builds each target with the cell that PINYIN_ORACLE_DBM
+      # names: Kyoto Cabinet (tools/dev/cell.py), whose cxx bridge compiles with
+      # the image's g++: libkyotocabinet-dev from apt, no libclang.
+      - name: Install build dependencies (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libc6-dev libkyotocabinet-dev libglib2.0-dev util-linux
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          # The fuzz recipes run on the managed CPython.
+          uv: 'true'
+          # The fuzz recipes (just fuzz-setup, just fuzz).
+          just: 'true'
+          # One nightly toolchain serves cargo-afl, its builds and the runs.
+          # fuzz/rust-toolchain.toml names it, with rust-src. rustup reads that
+          # file for a command run in fuzz/, so the fuzz recipes run there and
+          # no step names the nightly.
+          rust-toolchain: 'true'
+          rust-toolchain-dir: fuzz
+      # The AFL++ LLVM plugins load into the nightly's rustc, so they build
+      # against an LLVM of the same major version (llvm-config-<major>).
+      # Ubuntu's own archive carries it: fuzz/rust-toolchain.toml pins a
+      # nightly on LLVM 22. Without clang, AFL++ compiles the plugins with
+      # the system c++.
+      - name: Install the LLVM of the fuzz nightly (apt)
+        working-directory: fuzz
+        run: |
+          major=$(rustc -vV | sed -n 's/^LLVM version: \([0-9]*\).*/\1/p')
+          sudo apt-get install -y --no-install-recommends "llvm-$major-dev"
+          "llvm-config-$major" --version
+      # afl-fuzz refuses a core_pattern that pipes crashes to a handler
+      # (apport on the runner), which delays crash reports past its waitpid.
+      - name: Let crashes reach afl-fuzz directly
+        run: echo core | sudo tee /proc/sys/kernel/core_pattern
+      # cargo-afl at the afl version of fuzz/Cargo.lock and the AFL++ it
+      # bundles, with the LLVM plugins.
+      - run: just fuzz-setup
+      # Fuzzing memory, half one: the corpora persist across nightly runs
+      # (latest-wins — the run-id key always misses so every run saves,
+      # the prefix restore-key always loads the newest save), so a soak
+      # starts where the last one ended instead of from the curated inputs
+      # alone. The next step adds the curated inputs and minimizes.
+      - name: Restore the accumulated fuzz corpora
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+      - name: Prepare corpora
+        # just fuzz-minimize, per target: the restored inputs plus the target's
+        # curated inputs (fuzz/seeds/<target>, and the fixtures that
+        # tools/dev/fuzz.py names: the five MemoryChunk files for dict-loader,
+        # art.bin's payload for phrase-library, table.conf for table-conf),
+        # deduplicated by content. A missing curated input fails. Each curated
+        # input runs alone through the target's ASan build first; then afl-cmin
+        # minimizes, and a curated input that it dropped is put back. A failing
+        # input stays in seed-issues/, with its output, for upload; the
+        # restored corpus is not replaced. Run every target even on failure.
+        timeout-minutes: 30
+        working-directory: fuzz
+        run: just fuzz-minimize
+      - name: Soak each target
+        # Every target runs even if an earlier one fails; the accumulated
+        # status is the step's exit code. just fuzz builds the target with
+        # the AFL++ LLVM plugins (CmpLog off), prints the instrumentation and
+        # LSAN_OPTIONS, runs afl-fuzz for FUZZ_SECONDS of fuzzing under the
+        # FUZZ_GUARD_SECONDS limit, prints afl-fuzz's statistics (stability
+        # and execs_per_sec among them), and fails
+        # when afl-fuzz fails, stops on a seed issue, ran no input or saved a
+        # crash or a hang. New queue entries join fuzz/corpus, which the cache
+        # saves. actions/cache saves only when the job passes (post-if:
+        # success()), so an input that stops cmin or afl-fuzz as a seed issue
+        # comes back the next night and fails again until the code is fixed.
+        # Lower than the job limit: an overrun fails this step, so the
+        # crash upload below still runs. The job's comment gives both numbers.
+        timeout-minutes: 60
+        # In fuzz/, rustup selects the fuzz nightly, the one toolchain here.
+        working-directory: fuzz
+        run: |
+          mapfile -t targets < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[].targets[] | select(.kind == ["bin"]) | .name')
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "::error::fuzz/Cargo.toml lists no targets"
+            exit 1
+          fi
+          status=0
+          for target in "${targets[@]}"; do
+            echo "::group::fuzz $target"
+            # dict-loader's input limit admits its largest curated input; just
+            # fuzz sets it. The other targets take 4096 bytes.
+            limit=(-G 4096)
+            if [ "$target" = dict-loader ]; then
+              limit=()
+            fi
+            if ! just fuzz "$target" -V "$FUZZ_SECONDS" "${limit[@]}"; then
+              status=1
+              echo "::error::fuzz target $target failed"
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
+      # Fuzzing memory, half two: a failed night survives the runner as an
+      # artifact, not as a log line that dies with the job. The cache saves
+      # only on success, so the artifact also keeps what the night found.
+      # just fuzz gives each run its own directory, fuzz/out/<target>/<run>/:
+      # afl-fuzz writes its queue and the crashing and hanging inputs under
+      # default/, and the recipe keeps a failing curated input or seed in
+      # seed-issues/ and afl-fuzz's output in afl-fuzz.log. AFL++ names
+      # inputs with ':', which an artifact's file name cannot hold, so the
+      # archive step packs the queue, findings and seed issues of every run
+      # directory, passed and stopped runs included, into one file.
+      - name: Archive fuzz inputs
+        if: failure()
+        run: uv run --managed-python python -X utf8 -m tools.dev.fuzz archive fuzz/out/fuzz-inputs.tar.gz
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-artifacts
+          path: |
+            fuzz/out/fuzz-inputs.tar.gz
+            fuzz/out/*/*/default/fuzzer_stats
+            fuzz/out/*/*/afl-cmin.log
+            fuzz/out/*/*/afl-fuzz.log
+
+  # Latent-overflow lane: the release-optimized codepath with overflow
+  # checks and debug assertions forced on — the "NDEBUG question" as CI,
+  # not as shipped configuration.
+  overflow-lane:
+    # Skipped by a windows_only or macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only && !inputs.macos_only }}
+    runs-on: ubuntu-26.04
+    # Twice a cold release build, which takes about 20 min with no Rust cache; the tests take seconds.
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTFLAGS: -C overflow-checks=y -C debug-assertions=y -D warnings
+    steps:
+      - name: Install build dependencies (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libc6-dev libkyotocabinet-dev libglib2.0-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-toolchain: 'true'
+          rust-cache: 'true'
+          cargo-nextest: 'true'
+      - run: cargo nextest run --locked --profile ci --status-level skip --workspace --release --no-default-features --features kyotocabinet
+
+  # The full Windows workspace: clippy and the tests over the workspace,
+  # built with MSVC, GLib and pkgconf from vcpkg and the repository's static
+  # tkrzw (tools/tkrzw/windows.py). It runs every night and on
+  # manual dispatch; section 10 makes it best-effort and never a PR merge
+  # condition (docs/runbooks/verification.md). Not skipped by windows_only;
+  # skipped by macos_only.
+  test-windows:
+    # Skipped by a macos_only dispatch; runs on the schedule.
+    if: ${{ !inputs.macos_only }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    # windows-2025 defaults every `run:` to pwsh; every step here is bash
+    # (`"$VCPKG_PACKAGES"`), which pwsh would not expand.
+    defaults:
+      run:
+        shell: bash
+    # ci.yml set these at workflow level; this workflow sets none.
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure vcpkg binary cache
+        run: |
+          printf 'VCPKG_BINARY_SOURCES=clear;files,%s/vcpkg-binary-cache,readwrite\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-toolchain: 'true'
+          rust-cache: 'true'
+          cargo-nextest: 'true'
+          uv: 'true'
+          just: 'true'
+      - run: rustup show active-toolchain
+      # The runner image and the vcpkg checkout it carries decide which port
+      # versions vcpkg builds. The env context does not hold the image's
+      # ImageVersion variable, so this step reads it, with the revision of the
+      # vcpkg that the install step runs, into outputs for the cache key. The
+      # key only starts a fresh entry; vcpkg's ABI hashes already keep an
+      # incompatible archive from being used.
+      - name: Identify the runner image and the vcpkg revision
+        id: vcpkg-identity
+        run: |
+          set -euo pipefail
+          vcpkg_root="$(dirname "$(command -v vcpkg)")"
+          revision="$(git -C "$vcpkg_root" rev-parse HEAD 2>/dev/null || echo unknown)"
+          printf 'image=%s\nrevision=%s\n' "${ImageVersion:-unknown}" "$revision" >> "$GITHUB_OUTPUT"
+      # Manifest mode keeps the Windows dependencies beside this checkout;
+      # the binary cache keeps vcpkg's content-addressed archives, not an
+      # installed tree. The manifest carries the same GLib, pkgconf and
+      # x64-windows request the job used before this migration.
+      - name: Restore the vcpkg binary cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-x64-windows-${{ steps.vcpkg-identity.outputs.image }}-${{ steps.vcpkg-identity.outputs.revision }}-${{ hashFiles('vcpkg.json') }}
+      - name: Install manifest dependencies (vcpkg)
+        run: |
+          set -euo pipefail
+          vcpkg install --triplet x64-windows
+          installed="$GITHUB_WORKSPACE/vcpkg_installed/x64-windows"
+          pkgconf="$installed/tools/pkgconf/pkgconf.exe"
+          # GITHUB_ENV applies to the later steps, so the probe names its own search path.
+          PKG_CONFIG_PATH="$installed/lib/pkgconfig" "$pkgconf" --modversion --cflags --libs glib-2.0
+          printf 'PKG_CONFIG=%s\n' "$pkgconf" >> "$GITHUB_ENV"
+          printf 'PKG_CONFIG_PATH=%s\n' "$installed/lib/pkgconfig" >> "$GITHUB_ENV"
+          printf '%s\n' "$installed/bin" >> "$GITHUB_PATH"
+      # Nothing packages tkrzw for Windows. The repository builds the pinned
+      # revision (tools/tkrzw/pin.json) as a static library with
+      # upstream's VCMakefile through nmake and the DLL C runtime, and puts
+      # its pkg-config directory first on PKG_CONFIG_PATH. The archive is
+      # linked into every binary, so nothing of it goes on PATH. The build is
+      # one serial nmake run of the library target, so it is not cached.
+      - name: Build tkrzw (static)
+        run: just tkrzw --prefix "$RUNNER_TEMP/tkrzw" --github-env
+      # The default backend, over the whole workspace. Clippy runs first, so
+      # a lint in Windows-only code fails here rather than nowhere.
+      - name: Clippy (Windows)
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Provide the pinned system data
+        uses: ./.github/actions/contract-data
+      - run: cargo nextest run --locked --profile ci --status-level skip --workspace
+  # macOS links Homebrew's tkrzw. The full workspace runs here;
+  # shipped macOS libraries are also built and checked separately.
+  #
+  # Platforms other than Linux are unstable but usable, so the job runs every
+  # night and on manual dispatch; section 10 makes it best-effort and never a
+  # PR merge condition (docs/runbooks/verification.md). Not skipped by
+  # macos_only.
+  test-macos:
+    # Skipped by a windows_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    # ci.yml set these at workflow level; this workflow sets none.
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-toolchain: 'true'
+          rust-cache: 'true'
+          uv: 'true'
+          just: 'true'
+          cargo-nextest: 'true'
+          cargo-c: 'true'
+      - run: rustup show active-toolchain
+      # The runner image already provides GLib and pkgconf from Homebrew.
+      # Homebrew installs tkrzw's compression dependencies with the formula.
+      - name: Install tkrzw (Homebrew)
+        run: |
+          brew install tkrzw
+          pkg-config --modversion tkrzw liblz4 libzstd
+      # On macOS the gate stages both release libraries with `just packaging
+      # install` and checks the relinked files (docs/packaging.md#export-gate).
+      - name: Check shipped macOS library exports
+        run: just abi
+      # Clippy over the lane's own feature set, so a lint in
+      # macOS-only code fails here rather than nowhere.
+      - name: Clippy (macOS)
+        run: >
+          cargo clippy --locked --workspace --all-targets
+          -- -D warnings
+      - name: Provide the pinned system data
+        uses: ./.github/actions/contract-data
+      - run: >
+          cargo nextest run --locked --profile ci --status-level skip --workspace

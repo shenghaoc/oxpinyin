@@ -1,0 +1,76 @@
+# cargo-deny policy — the single supply-chain gate. Advisories share the
+# RustSec DB with cargo-audit; running both in CI would be redundant.
+
+[graph]
+# Audit the default build. Feature-gated dependency subtrees (bdb,
+# kyotocabinet) are re-checked by the second, --all-features CI invocation.
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+# Deviation registry: every ignore carries its justification and a
+# review-by date inside the reason string; re-review on that date and
+# either renew or remove the entry.
+# Empty: the one entry this registry carried (RUSTSEC-2025-0141, bincode
+# 1.x unmaintained) reached the graph only through heed-types behind a
+# since-removed backend feature. Its own note said "no fix exists until
+# heed migrates" — heed is gone from the tree, so bincode is
+# unreachable under every feature combination and the ignore with it.
+ignore = []
+
+[bans]
+# Duplicate versions are a Stage-2 binary-size signal, not a correctness
+# issue — warn and let the size pins arbitrate.
+multiple-versions = "warn"
+highlight = "simplest-path"
+# Constitution §7 (no pinyin/IME crates as dependencies) stays a review
+# rule; a concrete ban lands here only when it needs mechanical teeth.
+deny = [
+  { crate = "cxx", wrappers = ["oxpinyin"] },
+  { crate = "cxx-build", wrappers = ["cxx", "oxpinyin"] },
+  { crate = "bindgen", wrappers = ["oxpinyin", "valgrind-requests"] },
+  { crate = "oxpinyin-capi", wrappers = ["oxpinyin-fuzz", "oxpinyin-tool-support"] },
+  { crate = "oxzhuyin-capi", wrappers = ["oxpinyin-tool-support"] },
+  { crate = "oxpinyin-tool-support", wrappers = ["oxpinyin-utils", "oxpinyin-repl"] },
+  # The REPL is the utilities' only dependent: it uses their table builders.
+  { crate = "oxpinyin-utils", wrappers = ["oxpinyin-repl"] },
+  # Leaves: nothing may depend on them. The wrapper names the crate itself,
+  # a dependency no crate can have, so any new dependent fails.
+  { crate = "oxpinyin-repl", wrappers = ["oxpinyin-repl"] },
+  { crate = "oxpinyin-fuzz", wrappers = ["oxpinyin-fuzz"] },
+]
+skip = []
+skip-tree = []
+
+[licenses]
+version = 2
+# The project is GPL-3.0-or-later; runtime deps must be GPL-compatible.
+# Workspace members that never publish (the fuzz harness) carry no license
+# field; they are ours, not third-party code.
+private = { ignore = true }
+confidence-threshold = 0.93
+allow = [
+    "GPL-3.0-or-later",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "MPL-2.0",
+    "BSL-1.0",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -1,0 +1,116 @@
+#![expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
+)]
+
+#[cfg(target_os = "linux")]
+use crate::test_support::open_descriptors;
+
+use super::{is_live, register, unregister};
+
+use crate::test_support::{TempUserDir, open};
+
+#[test]
+fn instance_outlives_context() {
+    let user_dir = TempUserDir::new("orphan-instance");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // SAFETY: the context is live and this test serializes all handle calls.
+    let owner = unsafe { crate::state::context_owner(context) };
+    let weak = std::rc::Rc::downgrade(&owner);
+    drop(owner);
+    let input = crate::test_support::cstr("nihao");
+    assert_eq!(
+        unsafe { crate::parse::pinyin_parse_more_full_pinyins(instance, input.as_ptr()) },
+        5
+    );
+    let marker = user_dir.path.join("user.conf");
+    let before = std::fs::read(&marker).expect("init marker");
+    unsafe { crate::context::pinyin_fini(context) };
+    assert!(!is_live(context));
+    let at_fini = std::fs::read(&marker).expect("fini marker");
+    assert_ne!(before, at_fini);
+    assert!(
+        weak.upgrade().is_some(),
+        "the instance retains the same allocation"
+    );
+    // Row 42: the system tables are closed, so every read is a miss. The
+    // guess completes over the retained in-memory state and decodes no
+    // sentence, and training has no sentence to train.
+    assert!(unsafe { crate::sentence::pinyin_guess_sentence(instance) });
+    assert!(!unsafe { crate::candidates::pinyin_train(instance, 0) });
+    assert!(unsafe { crate::instance::pinyin_reset(instance) });
+    unsafe { crate::instance::pinyin_free_instance(instance) };
+    assert!(
+        weak.upgrade().is_none(),
+        "the last handle releases the allocation"
+    );
+    assert_eq!(
+        std::fs::read(marker).expect("marker after release"),
+        at_fini
+    );
+}
+
+/// `pinyin_fini` deletes its tables, which closes their DBM files and
+/// releases their locks, whether or not an instance is still allocated
+/// (`pinyin.cpp:1205-1215`, `ngram_tkrzwdb.cpp:40-46` at 074a2219). A
+/// closed descriptor has released its `fcntl` lock.
+// Linux only: /proc/self/fd.
+#[cfg(target_os = "linux")]
+#[test]
+fn fini_closes_the_system_files_while_an_instance_lives() {
+    let system = crate::test_support::TempSystemDir::new("fini-closes");
+    let user_dir = TempUserDir::new("fini-closes");
+    let system_c = crate::test_support::cstr(system.path.to_str().expect("UTF-8 path"));
+    let user_c = crate::test_support::cstr(user_dir.path.to_str().expect("UTF-8 path"));
+    let context = unsafe { crate::context::pinyin_init(system_c.as_ptr(), user_c.as_ptr()) };
+    assert!(!context.is_null());
+    let instance = unsafe { crate::instance::pinyin_alloc_instance(context) };
+    assert!(!instance.is_null());
+    assert!(
+        open_descriptors(&system.path) > 0,
+        "the attached tables hold their files"
+    );
+    unsafe { crate::context::pinyin_fini(context) };
+    assert_eq!(open_descriptors(&system.path), 0);
+    unsafe { crate::instance::pinyin_free_instance(instance) };
+}
+
+#[test]
+fn import_iterator_outlives_context() {
+    let user_dir = TempUserDir::new("orphan-import");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let import = unsafe { crate::iterators::pinyin_begin_add_phrases(context, 5) };
+    assert!(!import.is_null());
+    unsafe { crate::instance::pinyin_free_instance(instance) };
+    unsafe { crate::context::pinyin_fini(context) };
+    let phrase = crate::test_support::cstr("你好");
+    let reading = crate::test_support::cstr("ni3'hao3");
+    assert!(unsafe {
+        crate::iterators::pinyin_iterator_add_phrase(import, phrase.as_ptr(), reading.as_ptr(), 7)
+    });
+    unsafe { crate::iterators::pinyin_end_add_phrases(import) };
+}
+
+#[test]
+fn a_context_is_live_from_init_to_fini() {
+    let user_dir = TempUserDir::new("live-context");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert!(is_live(context));
+    unsafe { crate::instance::pinyin_free_instance(instance) };
+    unsafe { crate::context::pinyin_fini(context) };
+    assert!(!is_live(context));
+    assert!(
+        unsafe { crate::instance::pinyin_alloc_instance(context) }.is_null(),
+        "a finalised context allocates nothing"
+    );
+    // A second finalise is a no-op, where the pin double-frees (row 105).
+    unsafe { crate::context::pinyin_fini(context) };
+    assert!(!is_live(context));
+    // Registering and forgetting a stray address leaves the rest alone.
+    let stray = std::ptr::NonNull::<crate::types::PinyinContext>::dangling().as_ptr();
+    register(stray);
+    assert!(is_live(stray));
+    assert!(unregister(stray));
+    assert!(!unregister(stray), "a second removal finds nothing");
+    assert!(!is_live(stray));
+}

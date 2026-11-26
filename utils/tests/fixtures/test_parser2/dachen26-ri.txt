@@ -1,0 +1,32 @@
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 1 chars, 1 keys.
+ri 0 1	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 2 chars, 1 keys.
+ri 0 2	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 3 chars, 1 keys.
+ri 0 3	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 2 chars, 1 keys.
+ni 0 2	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+parsed 0 chars, 0 keys.
+

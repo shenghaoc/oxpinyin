@@ -1,0 +1,52 @@
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+return continued information with length:1
+range items number:1
+start:16777218	end:16777219
+你好	ni3'hao3'	80	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+range items number:3
+start:16777217	end:16777218
+你	ni3'	100	ni2'	50	
+start:16777217	end:16777218
+你	ni3'	100	ni2'	50	
+start:16777221	end:16777222
+祢	ni3'	40	
+range items number:1
+start:33554433	end:33554434
+你	ni3'	200	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+range items number:2
+start:16777217	end:16777218
+你	ni3'	100	ni2'	50	
+start:16777221	end:16777222
+祢	ni3'	40	
+range items number:1
+start:33554433	end:33554434
+你	ni3'	200	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+range items number:1
+start:16777217	end:16777218
+你	ni3'	100	ni2'	50	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+range items number:3
+start:16777217	end:16777218
+你	ni3'	100	ni2'	50	
+start:16777217	end:16777218
+你	ni3'	100	ni2'	50	
+start:16777221	end:16777222
+祢	ni3'	40	
+range items number:1
+start:33554433	end:33554434
+你	ni3'	200	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+
+range items number:1
+start:33554434	end:33554435
+好	hao3'	100	
+Spent <TIME> us for 1000 operations, <TIME> us/op, <TIME> times/s.
+

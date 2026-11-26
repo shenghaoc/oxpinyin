@@ -1,0 +1,525 @@
+//! Direct reader for libpinyin's `pinyin_index.bin` DBM — the Rust
+//! equivalent of `ChewingLargeTable2`.
+//!
+//! libpinyin stores the pinyin index as a backend DBM (KC `TreeDB` or Tkrzw
+//! `TreeDBM`) with two key spaces sharing one file:
+//!
+//! - **Complete index:** key = packed `ChewingKey[L]` with every tone
+//!   zeroed, value = `PinyinIndexItem2<L>[]` with the original tones.
+//! - **Incomplete (initial) index:** key = packed initial-only
+//!   `ChewingKey[L]`, value = `PinyinIndexItem2<L>[]`.
+//!
+//! Every shorter prefix of a stored key has an **empty-value marker**
+//! entry — that is `SEARCH_CONTINUED`: a probe for a prefix answers "yes"
+//! when the DBM contains that key at all (empty or not).
+//!
+//! See `docs/findings/data-formats.md` §4 and
+//! `chewing_large_table2_tkrzwdb.cpp:133-296`.
+
+use crate::data::phrase_library::CHEWING_KEY_SIZE;
+use crate::parser::ChewingKey;
+use crate::vocab::MAX_PHRASE_LENGTH;
+
+use crate::data::DictError;
+// The key and record layouts this reader shares with
+// `gen_binary_files`'s writer: one written copy, so a probe here and an
+// emission there cannot drift (`crate::data::row_format`).
+#[cfg(test)]
+use crate::data::row_format::pinyin_index::encode_items;
+pub use crate::data::row_format::pinyin_index::{
+    PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key,
+};
+
+// ── ChewingTable ─────────────────────────────────────────────────
+
+/// The smallest key-byte string above every extension of `prefix` — the
+/// exclusive upper bound of the range `[prefix, …)` that holds exactly the
+/// keys starting with `prefix`. `None` when no such bound exists (every
+/// byte is `0xFF`), which callers read as "to the end".
+#[must_use]
+pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+    let last = prefix.iter().rposition(|&byte| byte != 0xFF)?;
+    let mut bound = prefix[..=last].to_vec();
+    bound[last] = bound[last].wrapping_add(1);
+    Some(bound)
+}
+
+/// Wraps a [`RawReadStore`](crate::store::RawReadStore) for raw
+/// (unframed) DBM access — the mode libpinyin's `pinyin_index.bin` needs.
+///
+/// KC and Tkrzw backends skip table framing and hand the key straight
+/// to the underlying library, matching libpinyin's flat keyspace.
+/// delegates to the well-known `"data"` table.
+pub struct RawChewingDbm<S> {
+    state: DbmState<S>,
+}
+
+enum DbmState<S> {
+    Open(S),
+    Unopened,
+    /// The open file after facade fini: the handle is dropped, which closes
+    /// it and releases its lock. An instance or iterator that outlives the
+    /// context reads misses here.
+    Closed,
+}
+
+impl<S> RawChewingDbm<S> {
+    /// Wraps an open store as a phonetic index.
+    pub const fn new(store: S) -> Self {
+        Self {
+            state: DbmState::Open(store),
+        }
+    }
+
+    fn store(&self) -> Option<&S> {
+        match &self.state {
+            DbmState::Open(store) => Some(store),
+            DbmState::Unopened | DbmState::Closed => None,
+        }
+    }
+}
+
+/// The production index store: the compiled-in backend read through
+/// its raw (unframed) keyspace.
+pub type DefaultDbm = RawChewingDbm<crate::store::DefaultStore>;
+
+impl DefaultDbm {
+    /// Attaches a native system DBM.
+    ///
+    /// # Errors
+    /// Returns the open or backend error.
+    pub fn attach(path: &std::path::Path, kind: crate::store::DbmKind) -> Result<Self, DictError> {
+        use crate::store::SystemAttachment;
+        Ok(
+            match SystemAttachment::open(path, kind).map_err(|e| DictError::Table(e.into()))? {
+                SystemAttachment::Open(store) => Self::new(store),
+                SystemAttachment::Unopened => Self {
+                    state: DbmState::Unopened,
+                },
+            },
+        )
+    }
+}
+
+/// A point read whose failure the pin answers as a miss: the value is
+/// cleared and the key reads as absent. The one failure that stays an error
+/// is a body read after a good size check, where the pin asserts.
+fn failed_read_is_a_miss(
+    read: Result<bool, crate::store::StoreError>,
+    value: &mut Vec<u8>,
+) -> Result<bool, DictError> {
+    match read {
+        Err(error @ crate::store::StoreError::ReadAfterCheck) => {
+            Err(DictError::Table(error.into()))
+        }
+        Err(
+            crate::store::StoreError::Io(_)
+            | crate::store::StoreError::Backend(_)
+            | crate::store::StoreError::ReadOnly
+            | crate::store::StoreError::InvalidInput(_),
+        ) => {
+            value.clear();
+            Ok(false)
+        }
+        Ok(found) => Ok(found),
+    }
+}
+
+impl<S: crate::store::RawReadStore> RawChewingDbm<S> {
+    pub(crate) fn attachment_failed(&self) -> bool {
+        matches!(self.state, DbmState::Unopened)
+    }
+
+    pub(crate) fn finish_attachment(&mut self) {
+        // A failed open still controls the phrase-prefix walk after fini.
+        if matches!(self.state, DbmState::Open(_)) {
+            self.state = DbmState::Closed;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attachment_finished(&self) -> bool {
+        !matches!(self.state, DbmState::Open(_))
+    }
+
+    pub(crate) fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        match &self.state {
+            DbmState::Open(store) => store
+                .get_raw(key, value)
+                .map_err(|e| DictError::Table(e.into())),
+            DbmState::Unopened | DbmState::Closed => {
+                value.clear();
+                Ok(false)
+            }
+        }
+    }
+
+    /// `Bigram::load` over the system gram: every backend answers a failed
+    /// read with false and a NULL gram, and `search_bigram2` ignores it
+    /// (`ngram_bdb.cpp:140-142`, `ngram_kyotodb.cpp:131-134`,
+    /// `ngram_tkrzwdb.cpp:111-114`, `phrase_lookup.cpp:268-269` at
+    /// 074a2219). The one failure that is not a miss is Kyoto Cabinet's
+    /// body read after a good size check, the pin's `check_result` assert
+    /// (`ngram_kyotodb.cpp:138`).
+    pub(crate) fn get_bigram(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+        match &self.state {
+            DbmState::Open(store) => failed_read_is_a_miss(store.get_bigram_raw(key, value), value),
+            DbmState::Unopened | DbmState::Closed => {
+                value.clear();
+                Ok(false)
+            }
+        }
+    }
+
+    pub(crate) fn get_pinyin_row(
+        &self,
+        key: &[u8],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
+        match &self.state {
+            DbmState::Open(store) => match store.get_pinyin_row_raw(key, value) {
+                // Kyoto Cabinet's body read after a good size check:
+                // `check_result(vsiz == m_db->get(...))`, an assert on every
+                // path through either table search
+                // (`chewing_large_table2_kyotodb.cpp:170-174`,
+                // `phrase_large_table3_kyotodb.cpp:187` at 074a2219).
+                Err(crate::store::StoreError::ReadAfterCheck) => std::process::abort(),
+                read => failed_read_is_a_miss(read, value),
+            },
+            DbmState::Unopened | DbmState::Closed => self.get(key, value),
+        }
+    }
+
+    pub(crate) fn get_phrase_row(
+        &self,
+        key: &[u8],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
+        // Both tables use the same checked read on Kyoto Cabinet, including
+        // the abort after a successful check (`phrase_large_table3_kyotodb.cpp:
+        // 174-187` at 074a2219).
+        self.get_pinyin_row(key, value)
+    }
+
+    pub(crate) fn contains(&self, key: &[u8]) -> bool {
+        match &self.state {
+            // A failed existence read is a miss: the pin tests
+            // `Get(key, nullptr).IsOK()` and returns
+            // (`chewing_large_table2_tkrzwdb.cpp:511`,
+            // `phrase_large_table3_tkrzwdb.cpp:166` at 074a2219), as its
+            // Kyoto Cabinet `check` and Berkeley DB cursor do.
+            DbmState::Open(store) => store.contains_raw(key).unwrap_or(false),
+            DbmState::Unopened | DbmState::Closed => false,
+        }
+    }
+
+    pub(crate) fn walk(
+        &self,
+        lo: &[u8],
+        hi: Option<&[u8]>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
+    ) -> Result<(), DictError> {
+        use std::ops::{Bound, ControlFlow};
+        let Some(store) = self.store() else {
+            return Ok(());
+        };
+        // The store's visitor speaks `StoreError` and answers
+        // continue/break, while the row visitor speaks `DictError` and
+        // asks to stop: a stop is a `Break`, which ends the store scan
+        // right there with no error; a visitor failure is parked here,
+        // also ends the scan with a `Break`, and is returned as itself
+        // once the scan is over. Rows are visited as the store hands
+        // them over — no collect-then-replay buffer, and nothing past
+        // the stop is scanned.
+        let mut failure: Option<DictError> = None;
+        let scan = store.scan_raw(
+            Bound::Included(lo),
+            hi.map_or(Bound::Unbounded, Bound::Excluded),
+            |key, value| match visit(key, value) {
+                Ok(true) => Ok(ControlFlow::Break(())),
+                Ok(false) => Ok(ControlFlow::Continue(())),
+                Err(e) => {
+                    failure = Some(e);
+                    Ok(ControlFlow::Break(()))
+                }
+            },
+        );
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        // A cursor step that fails ends the walk with the rows read so far:
+        // the pin returns on a failed `Jump` or `Next` and leaves its loop
+        // on a failed cursor `Get`
+        // (`chewing_large_table2_tkrzwdb.cpp:516-524`,
+        // `phrase_large_table3_tkrzwdb.cpp:171-178` at 074a2219).
+        scan.or(Ok(()))
+    }
+}
+
+/// The Rust equivalent of `ChewingLargeTable2`: a lazy, read-only view
+/// over a pinyin-index DBM.
+///
+/// Does not materialize the entire index at open time. Lookups are
+/// point reads against the DBM backend.
+pub struct ChewingTable {
+    dbm: DefaultDbm,
+}
+
+impl ChewingTable {
+    /// Constructs the phonetic index over its row store.
+    #[must_use]
+    pub const fn new(dbm: DefaultDbm) -> Self {
+        Self { dbm }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attachment_failed(&self) -> bool {
+        self.dbm.attachment_failed()
+    }
+
+    pub(crate) fn finish_attachment(&mut self) {
+        self.dbm.finish_attachment();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attachment_finished(&self) -> bool {
+        self.dbm.attachment_finished()
+    }
+
+    /// `ChewingLargeTable2::search` (`chewing_large_table2_kyotodb.cpp`)
+    /// with `ChewingTableEntry::search`'s record filter
+    /// (`chewing_large_table2.h`):
+    ///
+    /// * the DBM key is the query's **incomplete** index (initials only)
+    ///   when any query syllable is incomplete
+    ///   (`contains_incomplete_pinyin`), else its tone-zeroed
+    ///   **complete** index;
+    /// * key absent → `SEARCH_NONE`; present → `SEARCH_CONTINUED`;
+    /// * a non-empty value's `PinyinIndexItem2` records are kept when
+    ///   `pinyin_compare_with_tones(query, stored) == 0`
+    ///   ([`ChewingKey::matches_with_tones`]): initials equal, middle/final equal unless
+    ///   either side is incomplete, tones equal unless either side is
+    ///   zero — so a tone-less query accepts every tone and an incomplete
+    ///   syllable accepts every final;
+    /// * the surviving tokens, empty when the key is absent, an empty
+    ///   marker, or no record matches. Upstream additionally requires the
+    ///   record's library to be loaded; the dictionary layer applies that
+    ///   when it resolves tokens.
+    pub fn search(&self, keys: &[ChewingKey]) -> Result<Vec<u32>, DictError> {
+        self.search_continued(keys, &mut Vec::new())
+            .map(|(_, tokens)| tokens)
+    }
+
+    /// [`Self::search`] with one DBM get into `value`, the caller's
+    /// buffer: `visit` receives each surviving token in stored order, and
+    /// the answer is whether the query's index key exists, an empty marker
+    /// included. That is the `SEARCH_CONTINUED` bit the same get sets
+    /// (`chewing_large_table2_bdb.cpp:180-187`,
+    /// `chewing_large_table2_tkrzwdb.cpp:146-152`,
+    /// `chewing_large_table2_kyotodb.cpp:160-166` at 074a2219); a failed
+    /// read is a miss and sets nothing.
+    pub(crate) fn search_into(
+        &self,
+        keys: &[ChewingKey],
+        value: &mut Vec<u8>,
+        visit: impl FnMut(u32),
+    ) -> Result<bool, DictError> {
+        let present = self.read_row(keys, value)?;
+        if present {
+            visit_matching_items(keys, value, visit)?;
+        }
+        Ok(present)
+    }
+
+    /// [`Self::search_into`]'s one DBM get: the query's row read into
+    /// `value`, and whether its index key exists, an empty marker included
+    /// (`SEARCH_CONTINUED`). The caller reads the row's matching records with
+    /// [`matching_items`]. An empty query reads nothing and answers `false`.
+    pub(crate) fn read_row(
+        &self,
+        keys: &[ChewingKey],
+        value: &mut Vec<u8>,
+    ) -> Result<bool, DictError> {
+        if keys.is_empty() {
+            return Ok(false);
+        }
+        with_index_key(keys, |key| self.dbm.get_pinyin_row(key, value))
+    }
+
+    /// [`Self::search`] and [`Self::key_exists`] from one DBM get: whether
+    /// the query's index key exists (an empty marker counts), and the
+    /// surviving records' tokens, in stored order. The index key zeroes tones, so a toned query and
+    /// its tone-less spelling name the same row.
+    ///
+    /// The value is read into `value`, the caller's buffer, which the
+    /// decode loop passes to every search of a guess.
+    pub fn search_continued(
+        &self,
+        keys: &[ChewingKey],
+        value: &mut Vec<u8>,
+    ) -> Result<(bool, Vec<u32>), DictError> {
+        let mut tokens = Vec::new();
+        let present = self.search_into(keys, value, |token| tokens.push(token))?;
+        Ok((present, tokens))
+    }
+
+    /// Whether the query's index key exists at all — `SEARCH_CONTINUED`
+    /// without the record decode or a value copy, for the widen probe.
+    #[must_use]
+    pub fn key_exists(&self, keys: &[ChewingKey]) -> bool {
+        !keys.is_empty() && self.dbm.contains(&index_key(keys))
+    }
+
+    /// Whether some row extending the query's index key is past
+    /// [`MAX_PHRASE_LENGTH`] words, the most a `ChewingLargeTable2` index
+    /// key can hold (the pin instantiates its entries for lengths 1 through
+    /// `MAX_PHRASE_LENGTH`) — the key the pin's
+    /// `ChewingLargeTable2::search_suggestion` reads with `phrase_length =
+    /// key.size / sizeof(ChewingKey)` (so a trailing odd byte counts as no
+    /// word) and whose `switch` has no case for it: `default: abort()`
+    /// (`chewing_large_table2_bdb.cpp:282`). Only the keys are read, never
+    /// the values, and the scan stops at the first such key.
+    #[cfg(test)]
+    pub(crate) fn has_overlong_extension(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
+        if keys.is_empty() {
+            return Ok(false);
+        }
+        let encoded = index_key(keys);
+        let upper = prefix_upper_bound(&encoded);
+        let mut found = false;
+        self.dbm.walk(&encoded, upper.as_deref(), |key, _value| {
+            found = key.len() / CHEWING_KEY_SIZE > MAX_PHRASE_LENGTH;
+            Ok(found)
+        })?;
+        Ok(found)
+    }
+
+    /// The suggestion lookup and range walk, checking raw key lengths
+    /// before empty/odd rows are skipped or their values decoded. Returns
+    /// `true` at the pin's overlong-key abort, stopping the store scan.
+    pub(crate) fn walk_suggestions(
+        &self,
+        keys: &[ChewingKey],
+        mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
+    ) -> Result<bool, DictError> {
+        if !self.key_exists(keys) {
+            return Ok(false);
+        }
+        let encoded = index_key(keys);
+        let upper = prefix_upper_bound(&encoded);
+        let mut overlong = false;
+        self.dbm.walk(&encoded, upper.as_deref(), |key, value| {
+            overlong = key.len() / CHEWING_KEY_SIZE > MAX_PHRASE_LENGTH;
+            if overlong {
+                return Ok(true);
+            }
+            if value.is_empty() || !key.len().is_multiple_of(CHEWING_KEY_SIZE) {
+                return Ok(false);
+            }
+            let length = key.len() / CHEWING_KEY_SIZE;
+            let items = decode_items(value, length)?;
+            visit(length, &items)
+        })?;
+        Ok(overlong)
+    }
+}
+
+/// `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`): a syllable with
+/// neither middle nor final is an initial-only (incomplete) key.
+#[must_use]
+pub fn contains_incomplete(keys: &[ChewingKey]) -> bool {
+    keys.iter().any(|key| key.middle == 0 && key.final_ == 0)
+}
+
+// ChewingLargeTable2::search, chewing_large_table2.cpp:161–174.
+/// Encodes a query as a DBM key. If any input key is initial-only, every key in the
+/// sequence is reduced to its initial. Otherwise the complete-key encoding is used.
+#[must_use]
+pub fn index_key(keys: &[ChewingKey]) -> Vec<u8> {
+    if contains_incomplete(keys) {
+        encode_incomplete_key(keys)
+    } else {
+        encode_complete_key(keys)
+    }
+}
+
+/// [`index_key`] passed to `read` from a stack buffer. The pin's search
+/// keeps its index in a `ChewingKey[MAX_PHRASE_LENGTH]` array
+/// (`chewing_large_table2.cpp:161-172` at 074a2219); a longer query, which
+/// that search never takes, is encoded on the heap.
+fn with_index_key<R>(keys: &[ChewingKey], read: impl FnOnce(&[u8]) -> R) -> R {
+    if keys.len() > MAX_PHRASE_LENGTH {
+        return read(&index_key(keys));
+    }
+    let incomplete = contains_incomplete(keys);
+    let mut buf = [0_u8; CHEWING_KEY_SIZE * MAX_PHRASE_LENGTH];
+    let (words, _) = buf.as_chunks_mut::<CHEWING_KEY_SIZE>();
+    for (word, key) in words.iter_mut().zip(keys) {
+        let indexed = if incomplete {
+            ChewingKey::new(key.initial, 0, 0, 0)
+        } else {
+            ChewingKey::new(key.initial, key.middle, key.final_, 0)
+        };
+        *word = indexed.to_packed().to_le_bytes();
+    }
+    read(&buf[..CHEWING_KEY_SIZE * keys.len()])
+}
+
+/// `pinyin_compare_with_tones(query, stored, len) == 0`
+/// (`pinyin_phrase3.h:108-144`, [`ChewingKey::matches_with_tones`] at every
+/// position) over the first `query.len()` syllables of `stored` —
+/// `prefix_compare_with_tones` (`PrefixLessThanWithTones`,
+/// `chewing_large_table2.h`), the comparison the suggestion path applies
+/// to longer records.
+#[must_use]
+pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
+    if stored.len() < query.len() {
+        return false;
+    }
+    query
+        .iter()
+        .zip(stored)
+        .all(|(q, s)| q.matches_with_tones(*s))
+}
+
+/// Visits matching token records in stored order.
+///
+/// # Errors
+/// Returns a row-decoding error.
+pub fn visit_matching_items(
+    keys: &[ChewingKey],
+    value: &[u8],
+    visit: impl FnMut(u32),
+) -> Result<(), DictError> {
+    matching_items(keys, value)?.for_each(visit);
+    Ok(())
+}
+
+/// The tokens of the records of `value` that match `keys`, in stored order:
+/// the pass `ChewingTableEntry::convert` makes over a row (074a2219
+/// `chewing_large_table2.h:101-105`). An empty value has no records.
+///
+/// # Errors
+/// Returns a row-decoding error.
+pub fn matching_items<'v>(
+    keys: &'v [ChewingKey],
+    value: &'v [u8],
+) -> Result<impl Iterator<Item = u32> + 'v, DictError> {
+    let items = if value.is_empty() {
+        None
+    } else {
+        Some(crate::data::row_format::pinyin_index::item_views(
+            value,
+            keys.len(),
+        )?)
+    };
+    Ok(items.into_iter().flatten().filter_map(move |item| {
+        keys.iter()
+            .zip(item.keys())
+            .all(|(query, stored)| query.matches_with_tones(stored))
+            .then_some(item.token)
+    }))
+}
+
+#[cfg(test)]
+mod tests;

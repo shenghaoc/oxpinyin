@@ -1,0 +1,571 @@
+"""Native capability report, interpreter acceptance and tool minimums.
+
+Standard library only. Doctor reads capabilities; it does not provision,
+install or enter a container. It rejects interpreter-selection overrides and a
+free-threaded build. For each reported tool, a newer version passes, an older
+one fails with the minimum and the version found,
+and an absent one is reported with its installation step. Each report line
+names the resolved executable. Native Windows recipes use pwsh at the floor
+in pwsh-floor.txt. uv enforces the required-version in uv.toml itself, so
+doctor reports the uv it runs and compares no uv version. Each tool's version is
+read in the format that tool prints and compared by that format's rules:
+semantic versioning for most (a pre-release of the minimum is older than it),
+the projects' own numbering for GNU ld, gcov and Valgrind. cargo-nextest
+enforces the nextest-version in .config/nextest.toml itself, so doctor reports
+the answer of `cargo nextest show-config version` and compares no nextest
+version. Runbooks point here instead of repeating version lists.
+"""
+
+if __name__ == '__main__':
+    from .entry import require_utf8_mode
+
+    require_utf8_mode()
+
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import sysconfig
+from collections.abc import Callable
+from pathlib import Path
+from typing import NamedTuple
+
+from tools.dev import fuzz
+
+OVERRIDES = (
+    'UV_PYTHON',
+    'UV_PYTHON_VERSION',
+    'UV_PYTHON_IMPLEMENTATION',
+    'UV_PYTHON_VARIANT',
+    'UV_PYTHON_ARCH',
+    'UV_PYTHON_BIN_DIR',
+    'UV_PYTHON_PREFERENCE',
+    'PYTHONHOME',
+    'PYTHONPATH',
+)
+# The request .python-version states, the one place the interpreter version is
+# written. The 3.14 series bounds below stay a deliberate step: the
+# tools run with explicit UTF-8 mode.
+MANAGED_REQUEST = (Path(__file__).resolve().parents[2] / '.python-version').read_text().strip()
+PYTHON_MINIMUM = '3.14.0'
+PYTHON_BELOW = '3.15'
+PWSH_MINIMUM = Path(__file__).with_name('pwsh-floor.txt').read_text().strip()
+ROOT = Path(__file__).resolve().parents[2]
+# The bootstrap action reads these same files for the exact versions it installs.
+CARGO_C_VERSION = (ROOT / '.github/actions/bootstrap/cargo-c-version.txt').read_text().strip()
+CARGO_DENY_VERSION = (ROOT / '.github/actions/bootstrap/cargo-deny-version.txt').read_text().strip()
+
+
+class DoctorError(RuntimeError):
+    """Indicate an unsupported interpreter or an unacceptable tool version."""
+    pass
+
+
+class Version(NamedTuple):
+    """A version as one tool prints it: KEY orders it, TEXT is what a report shows."""
+    key: tuple
+    text: str
+
+
+class Format(NamedTuple):
+    """How one tool writes its version. PARSE reads its output and returns a Version, or None
+    when the output is not in this format; KEY turns a minimum into the same ordering."""
+    parse: Callable
+    key: Callable
+
+
+_SEMVER = re.compile(r'(\d+)\.(\d+)\.(\d+)'
+                     r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
+                     r'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?')
+
+
+def semver_key(text):
+    """Order a semantic version as semver.org 2.0.0 does (rule 11); ValueError when TEXT is not one.
+
+    A pre-release is older than the release it precedes (1.59.0-beta.1 < 1.59.0), so it does not
+    satisfy a minimum of that release, and newer than every lower release (1.60.0-beta.1 > 1.59.0).
+    Pre-release identifiers compare field by field: numbers numerically and below names, names in
+    ASCII order, a longer list above its own prefix. Build metadata (+...) does not take part.
+    """
+    match = _SEMVER.fullmatch(text)
+    if match is None:
+        raise ValueError(f'not a semantic version: {text!r}')
+    core = tuple(int(part) for part in match.groups()[:3])
+    prerelease = match.group(4)
+    if prerelease is None:
+        return core, 1, ()
+    return core, 0, tuple((0, int(part), '') if part.isdigit() else (1, 0, part)
+                          for part in prerelease.split('.'))
+
+
+def _semver_format(program):
+    """The format of a tool whose first line reads '<program> <semantic version> ...'."""
+    line = re.compile(rf'{re.escape(program)} (\S+)')
+
+    def parse(text):
+        """Read the leading program/version pair, returning None for malformed versions."""
+        match = line.match(text)
+        if match is None:
+            return None
+        try:
+            return Version(semver_key(match.group(1)), match.group(1))
+        except ValueError:
+            return None
+
+    return Format(parse, semver_key)
+
+
+def _dotted_key(text):
+    """Order a dotted version by every numeric component: 2.43 == 2.43.0 < 2.43.0.1 < 2.43.1."""
+    parts = [int(part) for part in text.split('.')]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+# GNU ld, gcov and Valgrind do not use semantic versioning. Each is read in its own format, compared by
+# number, and a development build counts as its number: it is never "older" for being one, and the
+# hyphen of a distribution's package release is never a pre-release.
+#
+# GNU ld: "GNU ld (GNU Binutils for Debian) 2.47", "GNU ld version 2.43.1-15.fc42". Releases are 2.43
+# and point releases such as 2.43.1; a distribution appends its package release after a hyphen
+# (2.43.1-15.fc42, dropped here) or a snapshot date after a dot (2.45.1.20251027, kept as a component).
+# Binutils numbers its development branch X.Y.50 once X.Y has branched, so a snapshot such as
+# 2.43.50.20240101 is newer than 2.43 and counts as 2.43.50; 2.42.50.<date> is the road to 2.43 and
+# does not reach it.
+_GNU_LD = re.compile(r'GNU ld (?:\(.*?\)|version)\s+(\d+(?:\.\d+)+)')
+
+
+def _parse_gnu_ld(text):
+    """Parse GNU ld numeric version components, or return None for another format."""
+    match = _GNU_LD.match(text)
+    return None if match is None else Version(_dotted_key(match.group(1)), match.group(1))
+
+
+# gcov: "gcov (Debian 16.2.0-3) 16.2.0", "gcov (GCC) 15.2.1 20260101 (Red Hat 15.2.1-7)". The package
+# string sits in parentheses, then come GCC's own version, a date and a development phase. The version
+# is the one after the package string; a hyphen release inside the parentheses is the package's. GCC
+# marks trunk snapshots "(experimental)" (N.0.0 and N.0.1, before N.1.0) and release-branch snapshots
+# "(prerelease)" (N.M.1, after N.M.0). A snapshot counts as its number: the minimum is a major version,
+# so a snapshot of N counts as N. The coverage review checked the JSON
+# format_version when it runs, which decides for a snapshot that predates the format. The phase is
+# shown in the report.
+_GCOV = re.compile(r'gcov \(.*?\)\s+(\d+(?:\.\d+)+)(.*)')
+
+
+def _parse_gcov(text):
+    """Read gcov numeric ordering and its development phase, or None for no match."""
+    match = _GCOV.match(text)
+    if match is None:
+        return None
+    version, rest = match.groups()
+    phase = re.search(r'\((experimental|prerelease)\)', rest)
+    return Version(_dotted_key(version), f'{version} {phase.group(1)}' if phase else version)
+
+
+# Valgrind: "valgrind-3.27.1". A build from the git repository adds ".GIT" to the number of the release
+# it is leading up to ("valgrind-3.22.0.GIT" is a snapshot on the way to 3.22.0); a distribution may
+# append its package release after a hyphen (dropped here). A development build counts as its number:
+# the minimum is the oldest release measured with, not a feature, and a git build of it is a fair
+# stand-in. 3.21.0.GIT is still below 3.22.0, and 3.23.0.GIT is above it.
+_VALGRIND = re.compile(r'valgrind-(\d+(?:\.\d+)*)(?:\.(GIT|SVN))?(?![\w.])')
+
+
+def _parse_valgrind(text):
+    """Read Valgrind numeric ordering and GIT/SVN display suffix, or None for no match."""
+    match = _VALGRIND.match(text)
+    if match is None:
+        return None
+    version, development = match.groups()
+    return Version(_dotted_key(version), f'{version}.{development}' if development else version)
+
+
+class Tool(NamedTuple):
+    """An external tool and the oldest version the repository accepts."""
+    name: str
+    executable: str
+    arguments: tuple
+    format: Format      # how this tool writes its version
+    minimum: str        # for a tool with a verdict, the requirement that the tool itself enforces
+    install: str
+    platform: str = ''  # sys.platform prefix this check is for; empty means every platform
+    identity: str = ''  # when set, any other program under this name is reported as absent
+    required: bool = False  # absence fails the check, rather than only reporting installation advice
+    verdict: Callable | None = None  # for a tool that enforces its own requirement: ask it
+
+
+def requirement(tool):
+    """What TOOL must meet, as a report states it."""
+    return tool.minimum if tool.verdict else f'{tool.minimum} or later'
+
+
+_NEXTEST_CURRENT = re.compile(r'^current nextest version: (\S+)$', re.M)
+
+
+def _nextest_verdict(tool, executable, environ):
+    """Ask nextest whether it meets the nextest-version in .config/nextest.toml, which it enforces.
+
+    `cargo nextest show-config version` exits 0 when every requirement holds, 10 when it misses
+    only a recommended version (nextest still runs) and 92 when it misses the required version.
+    The repository compares no nextest version itself."""
+    result = _run([executable, *tool.arguments], environ, cwd=ROOT)
+    match = _NEXTEST_CURRENT.search(f'{result.stdout}{result.stderr}' if result else '')
+    found = match[1] if match else 'unreadable version'
+    if result is not None and result.returncode in (0, 10):
+        return f'{tool.name}: {found} at {executable} ({tool.minimum}: met)'
+    if result is not None and result.returncode == 92:
+        raise DoctorError(f'{tool.name} {found} at {executable} does not meet {tool.minimum}')
+    status = 'did not start' if result is None else f'exit {result.returncode}'
+    raise DoctorError(f'{tool.name} at {executable} could not check {tool.minimum} ({status})')
+
+
+def _cargo_afl_verdict(tool, executable, environ):
+    """Apply `tools.dev.fuzz.tools_rule`, the rule that `just fuzz` applies, to this cargo-afl.
+
+    The rule returns the accepted version line, or states the problem and the
+    setup step. Doctor compares no cargo-afl version itself."""
+    try:
+        found = fuzz.tools_rule(environ)
+    except fuzz.FuzzError as error:
+        raise DoctorError(f'{tool.name} at {executable} does not meet {tool.minimum}: {error}') from None
+    return f'{tool.name}: {found} at {executable} ({tool.minimum}: met)'
+
+
+# One row per tool. A minimum is the oldest version the repository has run
+# or documents. cargo-nextest enforces the nextest-version in .config/nextest.toml itself,
+# so its row asks it. uv enforces the required-version in uv.toml itself and has no row.
+TOOLS = (
+    Tool('pwsh', 'pwsh', ('--version',), _semver_format('PowerShell'), PWSH_MINIMUM,
+         'install PowerShell from docs/runbooks/setup.md#native-windows', platform='win32', required=True),
+    Tool('cargo-nextest', 'cargo-nextest', ('nextest', 'show-config', 'version'), _semver_format('cargo-nextest'),
+         'the nextest-version in .config/nextest.toml', 'cargo install cargo-nextest --locked',
+         verdict=_nextest_verdict),
+    Tool('cargo-c', 'cargo-cinstall', ('--version',), _semver_format('cargo-c'), CARGO_C_VERSION,
+         'cargo install cargo-c --locked, or your distribution package'),
+    Tool('cargo-deny', 'cargo-deny', ('--version',), _semver_format('cargo-deny'), CARGO_DENY_VERSION,
+         f'cargo install cargo-deny --version {CARGO_DENY_VERSION} --locked'),
+    Tool('cargo-afl', 'cargo-afl', ('afl', '--version'), _semver_format('cargo-afl'),
+         'the tools rule of `just fuzz`', fuzz.SETUP,
+         platform='linux', verdict=_cargo_afl_verdict),
+    Tool('cargo-llvm-cov', 'cargo-llvm-cov', ('llvm-cov', '--version'), _semver_format('cargo-llvm-cov'),
+         '0.9.0', 'cargo install cargo-llvm-cov --locked'),
+    Tool('GNU ld', 'ld', ('--version',), Format(_parse_gnu_ld, _dotted_key), '2.42',
+         'apt-get install binutils', platform='linux', identity=r'^GNU ld\b'),
+    Tool('gcov', 'gcov', ('--version',), Format(_parse_gcov, _dotted_key), '13',
+         'apt-get install gcc', platform='linux'),
+    Tool('valgrind', 'valgrind', ('--version',), Format(_parse_valgrind, _dotted_key), '3.22.0',
+         'apt-get install valgrind', platform='linux'),
+)
+
+
+def reject_overrides(environ=None, before='doctor'):
+    """Reject interpreter-selection settings; keep storage/cache settings.
+
+    BEFORE names what the caller is about to run, for the message."""
+    environ = os.environ if environ is None else environ
+    found = [name for name in OVERRIDES if environ.get(name)]
+    if found:
+        names = ', '.join(found)
+        raise DoctorError(f'unsupported interpreter override(s): {names}; unset them before {before}')
+
+
+def _run(command, environ, cwd=None):
+    """Capture a command with the supplied environment; return None on spawn errors."""
+    try:
+        return subprocess.run(command, capture_output=True, text=True, env=environ, cwd=cwd, check=False)
+    except OSError:
+        return None
+
+
+def _numbers(text):
+    """Convert dot-separated integer components to a tuple; invalid components raise."""
+    return tuple(int(part) for part in text.split('.'))
+
+
+def _at_least(found, minimum):
+    """Compare dotted versions of any length; missing components count as zero."""
+    width = max(len(found), len(minimum))
+    pad = lambda numbers: numbers + (0,) * (width - len(numbers))
+    return pad(found) >= pad(minimum)
+
+
+def uv_version(environ=None):
+    """Return the stripped `uv --version` output of the uv that ENVIRON's PATH selects.
+
+    Raise DoctorError when uv cannot run. uv itself refuses a version below the
+    required-version in uv.toml, so doctor parses and compares no uv version.
+    """
+    environ = os.environ if environ is None else environ
+    result = _run(['uv', '--version'], environ, cwd=ROOT)
+    if result is None or result.returncode != 0:
+        raise DoctorError('uv did not run; install it as docs/runbooks/setup.md#installing-uv-and-cargo-c describes')
+    return result.stdout.strip()
+
+
+def check_python(numbers=None, releaselevel=None):
+    """Require a final version in the managed 3.14 series.
+
+    Default to the running version and release level. Raise DoctorError for
+    a prerelease, a version below 3.14.0, or a version at least 3.15; this
+    helper does not check interpreter implementation or ownership.
+    """
+    numbers = tuple(sys.version_info[:3]) if numbers is None else tuple(numbers)
+    releaselevel = sys.version_info.releaselevel if releaselevel is None else releaselevel
+    if (releaselevel != 'final' or not _at_least(numbers, _numbers(PYTHON_MINIMUM))
+            or _at_least(numbers, _numbers(PYTHON_BELOW))):
+        found = '.'.join(map(str, numbers)) + ('' if releaselevel == 'final' else f' ({releaselevel})')
+        raise DoctorError(f'CPython {PYTHON_MINIMUM} or newer, below {PYTHON_BELOW}, required; '
+                          f'found {found}')
+
+
+def identity(environ=None):
+    """Validate the running managed CPython and return its identity record.
+
+    Reject interpreter overrides, unsupported versions, disabled GIL, or a
+    base installation that is not the one uv python find answers. The
+    executable itself is not compared: in a virtual environment it is a link
+    to the base interpreter, or on Windows a separate launcher. Run uv
+    subprocesses and raise DoctorError when these acceptance checks fail.
+    """
+    environ = os.environ if environ is None else environ
+    reject_overrides(environ)
+    uv = uv_version(environ)
+    implementation = sys.implementation.name
+    version = platform.python_version()
+    if implementation != 'cpython':
+        raise DoctorError(f'CPython required; found implementation {implementation}')
+    check_python()
+    gil_disabled = sysconfig.get_config_var('Py_GIL_DISABLED')
+    if gil_disabled:
+        raise DoctorError('free-threaded CPython is not accepted; use the GIL-enabled build')
+    gil_enabled = sys._is_gil_enabled()
+    if not gil_enabled:
+        raise DoctorError('the running CPython has the GIL disabled')
+    # --system: the managed installation, not the project environment built on it.
+    result = _run(['uv', 'python', 'find', '--managed-python', '--system', MANAGED_REQUEST], environ)
+    if result is None or result.returncode != 0 or not result.stdout.strip():
+        raise DoctorError(f'the running interpreter is not a uv-managed {MANAGED_REQUEST} build')
+    managed = Path(result.stdout.strip()).resolve()
+    result = _run([str(managed), '-X', 'utf8', '-c', 'import sys; print(sys.prefix)'], environ)
+    if result is None or result.returncode != 0 or not result.stdout.strip():
+        raise DoctorError(f'cannot read the managed installation root: {managed}')
+    managed_prefix = Path(result.stdout.strip()).resolve()
+    executable = Path(sys.executable).resolve()
+    base = Path(sys.base_prefix).resolve()
+    if base != managed_prefix:
+        raise DoctorError(f'the running interpreter is not the managed one: {executable}, '
+                          f'installed in {base} (managed: {managed_prefix})')
+    return dict(implementation=implementation, version=version,
+                gil_enabled=bool(gil_enabled), gil_disabled=bool(gil_disabled),
+                executable=str(executable), managed=True,
+                uv=uv)
+
+
+def _first_line(result):
+    """Return the first nonblank output line, preferring stdout to stderr.
+
+    Return None for an absent result or empty selected stream.
+    """
+    if result is None:
+        return None
+    text = (result.stdout or result.stderr).strip()
+    return text.splitlines()[0] if text else None
+
+
+def check_tool(tool, environ=None):
+    """Return the report line for TOOL, or raise DoctorError if it is older than its minimum.
+
+    A tool that is not installed, or that is another program under the same
+    name, is reported with its installation step and does not fail the check.
+    """
+    environ = os.environ if environ is None else environ
+    executable = shutil.which(tool.executable, path=environ.get('PATH'))
+    if executable is None:
+        if tool.required:
+            raise DoctorError(f'{tool.name}: missing (requires {requirement(tool)}; install: {tool.install})')
+        return (f'{tool.name}: missing (requires {requirement(tool)}; '
+                f'install: {tool.install})')
+    if tool.verdict:
+        return tool.verdict(tool, executable, environ)
+    result = _run([executable, *tool.arguments], environ)
+    text = _first_line(result)
+    output = ((result.stdout or result.stderr) if result else '').strip()
+    if tool.identity and not re.search(tool.identity, text or ''):
+        return (f'{tool.name}: not found, {tool.executable} is {text or "unidentified"} at {executable} '
+                f'(requires {tool.minimum} or later; install: {tool.install})')
+    version = tool.format.parse(output)
+    if (result is None or result.returncode != 0 or version is None
+            or version.key < tool.format.key(tool.minimum)):
+        found = version.text if version is not None else (text or 'unreadable version')
+        raise DoctorError(f'{tool.name} {tool.minimum} or later required; found {found} at {executable}')
+    return f'{tool.name}: {version.text} at {executable} (minimum {tool.minimum})'
+
+
+def tool_lines(environ=None):
+    """Return (lines, failures): every tool that applies here, against its minimum."""
+    lines = []
+    failures = []
+    for tool in TOOLS:
+        if tool.platform and not sys.platform.startswith(tool.platform):
+            continue
+        try:
+            line = check_tool(tool, environ)
+        except DoctorError as exc:
+            failures.append(str(exc))
+            lines.append(f'FAIL: {exc}')
+        else:
+            lines.append(line)
+    return lines, failures
+
+
+def windows_compiler(environ):
+    """Find MSVC through the fixed Visual Studio Installer location, without PATH."""
+    root = environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')
+    vswhere = Path(root) / 'Microsoft Visual Studio/Installer/vswhere.exe'
+    result = _run([str(vswhere), '-latest', '-products', '*', '-requires',
+                   'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+                   '-property', 'installationPath'], environ)
+    if result is None or result.returncode or not result.stdout.strip():
+        return 'missing (Visual Studio Installer found no MSVC C++ tools)'
+    installation = Path(result.stdout.strip().splitlines()[0])
+    try:
+        version = (installation / 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt').read_text().strip()
+    except OSError:
+        return 'missing (MSVC default toolset version is unavailable)'
+    architecture = 'arm64' if platform.machine().upper() == 'ARM64' else 'x64'
+    compiler = installation / 'VC/Tools/MSVC' / version / 'bin' / f'Host{architecture}' / architecture / 'cl.exe'
+    if not compiler.is_file():
+        return f'missing (MSVC compiler not found at {compiler})'
+    return f'MSVC {version} at {compiler}'
+
+
+def host_lines(environ=None):
+    """Collect OS, architecture, compiler, and available utility descriptions.
+
+    Run version queries with environ; executable discovery uses the current
+    process PATH. Return lines without printing or provisioning.
+    """
+    environ = os.environ if environ is None else environ
+    lines = [f'os: {platform.system()} {platform.release()}',
+             f'architecture: {platform.machine()}']
+    rustup = shutil.which('rustup')
+    rustc = shutil.which('rustc')
+    if rustup:
+        line = _first_line(_run(['rustup', 'show', 'active-toolchain'], environ))
+        lines.append(f'rust toolchain: {line or "unknown"}')
+    elif rustc:
+        lines.append(f'rust toolchain: {_first_line(_run([rustc, "--version"], environ)) or "unknown"}')
+    else:
+        lines.append('rust toolchain: missing (install rustup: https://rustup.rs)')
+    if sys.platform == 'win32':
+        lines.append(f'compiler: {windows_compiler(environ)}')
+    else:
+        cc = shutil.which('cc')
+        lines.append(f'compiler: {(_first_line(_run([cc, "--version"], environ)) if cc else "missing") or "unknown"}')
+    backends = ['pkg-config', 'db5.3_dump', 'kchashmgr', 'tkrzw_dbm_util']
+    found = [f'{name}={"yes" if shutil.which(name) else "no"}' for name in backends]
+    lines.append('native backend utilities: ' + ', '.join(found))
+    runtimes = [name for name in ('container', 'podman', 'docker', 'wslc') if shutil.which(name)]
+    lines.append('container runtime: ' + (', '.join(runtimes) if runtimes else 'none present'))
+    return lines
+
+
+def oracle_dependency_lines(environ=None):
+    """Report Debian oracle build packages from the shared mode manifest."""
+    if not sys.platform.startswith('linux'):
+        return []
+    manifest = Path(__file__).resolve().parents[2] / 'tools/oracle/dependencies.json'
+    groups = json.loads(manifest.read_text())
+    environ = os.environ if environ is None else environ
+    unavailable = ['oracle dependencies: Debian package check unavailable on this Linux host']
+    executable = shutil.which('dpkg-query', path=environ.get('PATH'))
+    if executable is None:
+        return unavailable
+    packages = list(dict.fromkeys(package for group in groups.values() for package in group))
+    try:
+        result = subprocess.run([executable, '-W', '-f=${Package}\t${Architecture}\t${db:Status-Status}\n', *packages],
+                                capture_output=True, text=True, env=environ, check=False)
+    except OSError as exc:
+        return [f'{unavailable[0]} ({exc})']
+    if result.returncode == 2:
+        # Exit status 1 only means some package is unknown; 2 means dpkg-query itself failed.
+        detail = (result.stderr or '').strip().splitlines()
+        return [unavailable[0] + (f' ({detail[0]})' if detail else ' (dpkg-query exited with status 2)')]
+    native = _first_line(_run(['dpkg', '--print-architecture'], environ))
+    if native is None:
+        return [unavailable[0] + ' (native architecture unknown)']
+    installed = set()
+    for line in result.stdout.splitlines():
+        fields = line.split('\t')
+        if len(fields) == 3 and fields[2] == 'installed' and fields[1] in ('all', native):
+            installed.add(fields[0].split(':', 1)[0])
+    lines = []
+    for group, members in groups.items():
+        absent = [package for package in members if package not in installed]
+        detail = ('optional, not installed ' if group == 'full' else 'missing ') + ', '.join(absent)
+        lines.append(f'oracle {group}: ' + (detail if absent else 'installed'))
+    return lines
+
+
+def collect(environ=None):
+    """Return (lines, status) without printing or provisioning."""
+    environ = os.environ if environ is None else environ
+    lines = host_lines(environ)
+    lines.extend(oracle_dependency_lines(environ))
+    status = 0
+    try:
+        info = identity(environ)
+        lines.extend([
+            f'uv: {info["uv"].removeprefix("uv ")}',
+            f'interpreter: {info["implementation"]} {info["version"]} '
+            f'(minimum {PYTHON_MINIMUM}, below {PYTHON_BELOW})',
+            f'managed: {"yes" if info["managed"] else "no"}',
+            f'gil: {"enabled" if info["gil_enabled"] else "disabled"}',
+            f'executable: {info["executable"]}',
+        ])
+    except DoctorError as exc:
+        lines.append(f'FAIL: {exc}')
+        status = 1
+    tools, failures = tool_lines(environ)
+    lines.extend(tools)
+    if failures:
+        status = 1
+    return lines, status
+
+
+def cargo_tool_pins(root=ROOT):
+    """Crates.io fallbacks; just follows its justfile, None is the newest release."""
+    match = re.search(r'^set minimum-version := "([^"]+)"$', (root / 'justfile').read_text(), re.MULTILINE)
+    if match is None:
+        raise DoctorError(f'{root / "justfile"} has no minimum-version declaration')
+    return {'just': match.group(1), 'cargo-nextest': None, 'cargo-c': CARGO_C_VERSION,
+            'cargo-deny': CARGO_DENY_VERSION}
+
+
+def cargo_tool(name, root=ROOT):
+    """Return the installed-tool check that provisioning uses to keep or replace NAME."""
+    if name == 'just':
+        def verdict(tool, executable, environ):
+            result = _run([executable, '--justfile', str(root / 'justfile'), '--summary'], environ)
+            if result is None or result.returncode:
+                raise DoctorError(f'{tool.name} at {executable} does not meet {tool.minimum}')
+            version = _first_line(_run([executable, '--version'], environ))
+            return f'{tool.name}: {version} at {executable} ({tool.minimum}: met)'
+        return Tool('just', 'just', (), None, "the justfile's minimum-version",
+                    'cargo install just --locked', required=True, verdict=verdict)
+    return next(tool for tool in TOOLS if tool.name == name)._replace(required=True)
+
+
+def main():
+    """Print the capability report and return its aggregate status."""
+    lines, status = collect()
+    for line in lines:
+        print(line)
+    return status
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

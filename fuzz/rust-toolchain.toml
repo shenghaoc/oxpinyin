@@ -1,0 +1,11 @@
+[toolchain]
+# The repository's one nightly. rustup selects it for every command run in
+# this directory; the sanitizer gates read the channel from this file
+# (tools/dev/test_runner.py). Exact on purpose (#1074): a nightly is
+# identified only by its date.
+# The AFL++ LLVM plugins must use rustc's LLVM major version. This is the
+# last nightly on LLVM 22: Ubuntu 26.04's own archive supplies LLVM 22
+# (llvm-22-dev), and AFL++ 4.40c, the Apache-2.0 release, accepts LLVM 22
+# but not 23.
+channel = "nightly-2026-08-05"
+components = ["rust-src", "clippy"]

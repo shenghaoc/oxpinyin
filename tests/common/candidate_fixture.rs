@@ -1,0 +1,170 @@
+//! The oracle structure capture.
+#![allow(dead_code)]
+
+use std::io;
+use std::path::Path;
+
+/// The single committed candidate capture, relative to the repository root.
+pub const STRUCTURE_FIXTURE: &str = "fixtures/w4/oracle-candidate-structure.txt";
+
+/// A row's `lookup_candidate_type_t`, as the capture's `type` column names it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum OracleCandidateType {
+    /// `NBEST_MATCH_CANDIDATE` — a sentence-decode (n-best) candidate.
+    NbestMatch,
+    /// `NORMAL_CANDIDATE` — a phrase-lookup candidate.
+    Normal,
+    /// `ZOMBIE_CANDIDATE`.
+    Zombie,
+    /// `PREDICTED_BIGRAM_CANDIDATE`.
+    PredictedBigram,
+    /// `PREDICTED_PREFIX_CANDIDATE`.
+    PredictedPrefix,
+    /// `ADDON_CANDIDATE`.
+    Addon,
+    /// `LONGER_CANDIDATE`.
+    Longer,
+    /// `PREDICTED_PUNCTUATION_CANDIDATE`.
+    PredictedPunctuation,
+}
+
+impl OracleCandidateType {
+    /// The frozen public enum **name**, as written to the fixture's `type`
+    /// column.
+    #[must_use]
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::NbestMatch => "NBEST_MATCH_CANDIDATE",
+            Self::Normal => "NORMAL_CANDIDATE",
+            Self::Zombie => "ZOMBIE_CANDIDATE",
+            Self::PredictedBigram => "PREDICTED_BIGRAM_CANDIDATE",
+            Self::PredictedPrefix => "PREDICTED_PREFIX_CANDIDATE",
+            Self::Addon => "ADDON_CANDIDATE",
+            Self::Longer => "LONGER_CANDIDATE",
+            Self::PredictedPunctuation => "PREDICTED_PUNCTUATION_CANDIDATE",
+        }
+    }
+
+    /// Parses a frozen public enum name back to a variant, for fixture readers.
+    #[must_use]
+    pub fn from_wire(text: &str) -> Option<Self> {
+        Some(match text {
+            "NBEST_MATCH_CANDIDATE" => Self::NbestMatch,
+            "NORMAL_CANDIDATE" => Self::Normal,
+            "ZOMBIE_CANDIDATE" => Self::Zombie,
+            "PREDICTED_BIGRAM_CANDIDATE" => Self::PredictedBigram,
+            "PREDICTED_PREFIX_CANDIDATE" => Self::PredictedPrefix,
+            "ADDON_CANDIDATE" => Self::Addon,
+            "LONGER_CANDIDATE" => Self::Longer,
+            "PREDICTED_PUNCTUATION_CANDIDATE" => Self::PredictedPunctuation,
+            _ => return None,
+        })
+    }
+}
+
+/// One structure row, retaining the input verbatim and its captured rank.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StructuredCandidateRow {
+    /// Exact corpus input, including punctuation and whitespace.
+    pub input: String,
+    /// One-based rank in the captured list.
+    pub rank: usize,
+    /// Candidate text; repeated text is retained.
+    pub text: String,
+    /// Public candidate type reported by the oracle.
+    pub candidate_type: OracleCandidateType,
+    /// Captured index, present only for an n-best candidate.
+    pub nbest_index: Option<u8>,
+}
+
+/// Parsed structure capture. Rows retain file order and multiplicity.
+#[derive(Clone, Debug)]
+pub struct CandidateFixture {
+    /// Pin identity copied from the capture header.
+    pub pin_ref: String,
+    /// The header's `total_inputs` count: the distinct inputs the capture holds.
+    pub total_inputs: usize,
+    /// The header's `total_triples` count: the rows the capture holds.
+    pub total_triples: usize,
+    /// Structured rows in capture order.
+    pub rows: Vec<StructuredCandidateRow>,
+}
+
+impl CandidateFixture {
+    /// Read a structure capture, reporting I/O or malformed-data errors.
+    pub fn read(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::parse(&std::fs::read_to_string(path)?)
+    }
+
+    /// Parse the five-column structure format without normalizing inputs.
+    pub fn parse(raw: &str) -> io::Result<Self> {
+        let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
+        if raw.lines().next() != Some("# pinyin-oracle-candidate-structure-v1") {
+            return Err(invalid("missing candidate structure v1 header"));
+        }
+        let pin_ref = raw
+            .lines()
+            .find_map(|line| line.strip_prefix("# pin_ref="))
+            .filter(|pin| !pin.is_empty())
+            .ok_or_else(|| invalid("missing pin_ref header"))?
+            .to_owned();
+        // `# total_inputs=N (...)`: the count is the first token after `=`.
+        let header_count = |key: &'static str| {
+            raw.lines()
+                .find_map(|line| line.strip_prefix(key))
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|count| count.parse::<usize>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("missing or non-numeric {key} header"),
+                    )
+                })
+        };
+        let total_inputs = header_count("# total_inputs=")?;
+        let total_triples = header_count("# total_triples=")?;
+        let mut rows = Vec::new();
+        for (index, line) in raw.lines().enumerate() {
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            let bad_row = || {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("malformed candidate structure row {}: {line:?}", index + 1),
+                )
+            };
+            let fields: Vec<_> = line.split('\t').collect();
+            let [input, rank, text, kind, nbest] = fields.as_slice() else {
+                return Err(bad_row());
+            };
+            let rank = rank
+                .parse::<usize>()
+                .ok()
+                .filter(|rank| *rank > 0)
+                .ok_or_else(bad_row)?;
+            let candidate_type = OracleCandidateType::from_wire(kind).ok_or_else(bad_row)?;
+            let nbest_index = if *nbest == "-" {
+                None
+            } else {
+                Some(nbest.parse::<u8>().map_err(|_| bad_row())?)
+            };
+            if nbest_index.is_some() != (candidate_type == OracleCandidateType::NbestMatch) {
+                return Err(bad_row());
+            }
+            rows.push(StructuredCandidateRow {
+                input: (*input).to_owned(),
+                rank,
+                text: (*text).to_owned(),
+                candidate_type,
+                nbest_index,
+            });
+        }
+        Ok(Self {
+            pin_ref,
+            total_inputs,
+            total_triples,
+            rows,
+        })
+    }
+}

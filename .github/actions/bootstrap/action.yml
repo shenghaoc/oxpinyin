@@ -1,0 +1,262 @@
+name: 'bootstrap'
+description: |-
+  Shared post-checkout bootstrap cluster for this repository's
+  workflows: the checkout registered as a git safe.directory (the
+  release-packages.yml distro-container jobs run as root over a root-owned
+  checkout), an optional rustup install for those container jobs, an
+  optional install of the toolchain and components that
+  rust-toolchain.toml names (minimal profile), optional CI tools (uv
+  through astral-sh/setup-uv, with the managed Python and its build
+  check; just, cargo-nextest, cargo-deny and cargo-shear through
+  taiki-e/install-action, just, cargo-deny and cargo-shear at exact
+  versions and cargo-nextest at the latest version that the pinned action carries,
+  and cargo-c from its
+  upstream macOS release archive), and an optional Swatinem/rust-cache
+  restore of the registry and build artifacts, with saves only on main
+  (its post step runs with the composite's completion). Tool binaries are
+  not cached.
+
+  The actions/checkout step stays inline in every calling job. A local
+  `./` action cannot run the checkout that makes it visible: a job
+  resolves it only after a checkout exists. Call this right after
+  checkout.
+
+  The optional Rust and tool steps default to off, so a bare call does
+  nothing.
+  Composite-action inputs are strings; the switches take 'true'/'false'.
+
+inputs:
+  safe-directory:
+    description: >-
+      Register the checkout as a git safe.directory. Required in the
+      release-packages.yml distro-container jobs, which run as root over a
+      root-owned checkout.
+      String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rustup:
+    description: >-
+      Install rustup from sh.rustup.rs with the minimal profile, then the
+      toolchain and components that rust-toolchain.toml names. For the
+      release-packages.yml distro-container jobs, whose images have no
+      rustup. String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rust-toolchain:
+    description: >-
+      Install the toolchain and components that the rust-toolchain.toml in
+      rust-toolchain-dir names, with the rustup already on PATH (the hosted
+      runners'). String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rust-toolchain-dir:
+    description: >-
+      The directory whose rust-toolchain.toml names the toolchain: the
+      repository root by default, `fuzz` for the one pinned nightly.
+    required: false
+    default: '.'
+  uv:
+    description: >-
+      Install uv with astral-sh/setup-uv, then install and check the managed
+      Python that .python-version names. It states no version: the action
+      reads required-version from uv.toml and installs the newest uv that
+      satisfies it. String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  just:
+    description: >-
+      Install just with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-nextest:
+    description: >-
+      Install cargo-nextest with taiki-e/install-action. It states no version:
+      the action installs the latest version in the manifest of its pinned
+      commit. String 'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-deny:
+    description: >-
+      Install cargo-deny with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-shear:
+    description: >-
+      Install cargo-shear with taiki-e/install-action. String 'true'/'false'
+      (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  cargo-c:
+    description: >-
+      Install cargo-c from its upstream release archive into a fresh prefix
+      and put it on PATH. macOS on ARM64 only; any other runner fails. String
+      'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rust-cache:
+    description: >-
+      Run Swatinem/rust-cache as the final bootstrap step. Only refs/heads/main
+      saves the cache; every other ref restores only. String
+      'true'/'false' (composite-action inputs are strings).
+    required: false
+    default: 'false'
+  rust-cache-key:
+    description: 'Additional key input for Swatinem/rust-cache.'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Require the repository Python lock
+      shell: bash
+      run: echo 'UV_LOCKED=1' >> "$GITHUB_ENV"
+
+    # The distro-container jobs run as root over a root-owned checkout, so later
+    # git invocations need the safe.directory entry to accept the checkout.
+    - name: Register the checkout as a git safe.directory
+      if: inputs.safe-directory == 'true'
+      shell: bash
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+    # No toolchain yet: the next step installs the one rust-toolchain.toml names.
+    - name: Install rustup
+      if: inputs.rustup == 'true'
+      shell: bash
+      run: curl --fail --location --retry 3 --show-error https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+
+    # GITHUB_PATH applies to later steps.
+    - name: Put rustup on PATH
+      if: inputs.rustup == 'true'
+      shell: bash
+      run: printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+
+    # rustup reads the channel and the components from the rust-toolchain.toml
+    # of the working directory. In a container job no default toolchain is
+    # set, so a command run outside the checkout has none.
+    - name: Install the pinned Rust toolchain
+      if: inputs.rustup == 'true' || inputs.rust-toolchain == 'true'
+      shell: bash
+      working-directory: ${{ inputs.rust-toolchain-dir }}
+      run: rustup toolchain install
+
+    # No version input: setup-uv reads
+    # required-version from uv.toml (the repository root) and, with the
+    # default highest resolution, installs the newest uv that satisfies it.
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      if: inputs.uv == 'true'
+      with:
+        enable-cache: false
+
+    # The one install and build check for every job that takes uv. The frozen
+    # references contain the process name python3.14:, and a free-threaded
+    # interpreter must fail here rather than as a behaviour difference later.
+    # uv run installs the interpreter, as it does for every recipe.
+    - name: Set up pinned repository Python
+      if: inputs.uv == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        uv run --managed-python python -X utf8 - <<'PYTHON'
+        from pathlib import Path
+        import subprocess
+        import sys
+        import sysconfig
+        assert sys.implementation.name == "cpython"
+        assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)
+        assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+        assert sys._is_gil_enabled()
+        # The base installation is compared, not the executable: in the project's
+        # virtual environment the executable is a link or a separate launcher.
+        managed = subprocess.check_output(
+            ["uv", "python", "find", "--managed-python", "--system"],
+            text=True).strip()
+        managed_prefix = subprocess.check_output(
+            [managed, "-X", "utf8", "-c", "import sys; print(sys.prefix)"],
+            text=True).strip()
+        assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()
+        PYTHON
+
+    # just uses the justfile's minimum-version; cargo-deny and cargo-shear use
+    # the version files beside this action. `latest` for cargo-nextest is the
+    # version in the manifest of the pinned install-action commit.
+    - name: Resolve the install-action tools
+      id: tools
+      if: inputs.just == 'true' || inputs.cargo-nextest == 'true' || inputs.cargo-deny == 'true' || inputs.cargo-shear == 'true'
+      shell: bash
+      env:
+        JUST: ${{ inputs.just }}
+        CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
+        CARGO_DENY: ${{ inputs.cargo-deny }}
+        CARGO_SHEAR: ${{ inputs.cargo-shear }}
+      run: |
+        set -euo pipefail
+        wanted=()
+        resolve() {
+          if [ "$3" = true ]; then
+            if [ -z "$2" ]; then
+              printf '::error::no version declared for %s\n' "$1"
+              exit 1
+            fi
+            wanted+=("$1@$2")
+          fi
+        }
+        resolve just "$(sed -n 's/^set minimum-version := "\([^"]*\)"$/\1/p' justfile)" "$JUST"
+        resolve cargo-nextest latest "$CARGO_NEXTEST"
+        resolve cargo-deny "$(cat .github/actions/bootstrap/cargo-deny-version.txt)" "$CARGO_DENY"
+        resolve cargo-shear "$(cat .github/actions/bootstrap/cargo-shear-version.txt)" "$CARGO_SHEAR"
+        if [ "${#wanted[@]}" -gt 0 ]; then
+          printf 'wanted=%s\n' "${wanted[*]}" >> "$GITHUB_OUTPUT"
+        fi
+
+    # Checksum verification stays
+    # on (its default) and fallback is off, so a tool the action cannot install
+    # from a release fails the job. The action has no retry or timeout input;
+    # its downloads retry inside the script.
+    - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
+      if: steps.tools.outputs.wanted != ''
+      with:
+        tool: ${{ steps.tools.outputs.wanted }}
+        fallback: none
+
+    # The upstream release archive for macOS, an arm64 build, held to its
+    # SHA-256. The version and the hash
+    # move together, by hand. A failed download, another hash, another runner
+    # or another version fails the step: nothing falls back to a source
+    # build. See the `just doctor` tool minimums in docs/runbooks/setup.md
+    # (Linux).
+    - name: Install cargo-c
+      if: inputs.cargo-c == 'true'
+      shell: bash
+      env:
+        CARGO_C_SHA256: d1f50b54a6918acde11e0129c3f737f129a6cefe14e16ea1fc1a2c2ef7941039
+      run: |
+        set -euo pipefail
+        if [ "$RUNNER_OS-$RUNNER_ARCH" != macOS-ARM64 ]; then
+          printf '::error::the cargo-c archive is for macOS on ARM64, not %s on %s\n' "$RUNNER_OS" "$RUNNER_ARCH"
+          exit 1
+        fi
+        CARGO_C_VERSION=$(cat .github/actions/bootstrap/cargo-c-version.txt)
+        archive="$RUNNER_TEMP/cargo-c-macos.zip"
+        curl --fail --location --retry 3 --show-error --output "$archive" \
+          "https://github.com/lu-zero/cargo-c/releases/download/v$CARGO_C_VERSION/cargo-c-macos.zip"
+        printf '%s  %s\n' "$CARGO_C_SHA256" "$archive" | shasum -a 256 --check
+        mkdir -p "$RUNNER_TEMP/cargo-c/bin"
+        unzip -q "$archive" -d "$RUNNER_TEMP/cargo-c/bin"
+        reported=$("$RUNNER_TEMP/cargo-c/bin/cargo-cinstall" --version)
+        printf '%s\n' "$reported"
+        case "$reported" in
+          "cargo-c $CARGO_C_VERSION"|"cargo-c $CARGO_C_VERSION+"*) ;;
+          *) printf '::error::cargo-c reports %s, not %s\n' "$reported" "$CARGO_C_VERSION"; exit 1 ;;
+        esac
+        printf '%s/cargo-c/bin\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+    # Pinned to a tag commit; do not bump without re-verifying.
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      if: inputs.rust-cache == 'true'
+      with:
+        cache-bin: 'false'
+        key: ${{ inputs.rust-cache-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}

@@ -1,0 +1,10 @@
+Usage:
+  ngseg [OPTION?] - n-gram segment
+
+Help Options:
+  -h, --help                    Show help options
+
+Application Options:
+  -o, --outputfile=filename     output
+  --generate-extra-enter        generate 
+

@@ -1,0 +1,930 @@
+//! libpinyin's `FlexibleBigram` training container, on the store's backends.
+//!
+//! The pin's k-mixture-model tools keep their working model in a DBM whose
+//! records are raw, host-native bytes: an eight-byte magic record and one
+//! four-byte-token-keyed single gram per predecessor token. This module
+//! reproduces that container class and that byte layout on whichever
+//! backend the crate compiles, so a file it writes is a file the pin's own
+//! `gen_k_mixture_model`, `export_k_mixture_model` and
+//! `validate_k_mixture_model` read, and the reverse.
+//!
+//! # On-disk layout
+//!
+//! The pin (`src/storage/flexible_ngram_bdb.h`,
+//! `flexible_ngram_kyotodb.h`, `flexible_ngram_tkrzwdb.h` at 074a2219)
+//! stores two kinds of record in one flat keyspace.
+//!
+//! **The magic record.** Its key is `m_magic_header_index`, two
+//! `phrase_token_t`s both set to `null_token`, so eight zero bytes. Its
+//! value is the four-byte magic number (`KMMP` for the k-mixture model)
+//! followed by the caller's magic header (`KMixtureModelMagicHeader`, three
+//! native `guint32`s). A fresh container is created with the magic number
+//! alone — the pin's Berkeley DB `DB_DBT_PARTIAL` put at offset 0 and the
+//! KC/Tkrzw whole-value set both leave a four-byte record
+//! (`flexible_ngram_bdb.h:118-131`, `flexible_ngram_kyotodb.h:157-161`,
+//! `flexible_ngram_tkrzwdb.h:161-167`) — and `set_magic_header` rewrites
+//! the value as the magic number plus the header
+//! (`flexible_ngram_bdb.h:338-356`, `flexible_ngram_kyotodb.h:319-342`,
+//! `flexible_ngram_tkrzwdb.h:333-357`).
+//!
+//! **A single gram.** Its key is one `phrase_token_t` in host byte order.
+//! Its value is the caller's array header followed by a token-ascending
+//! array of `ArrayItemWithToken` records: a four-byte `phrase_token_t`
+//! followed by the caller's array item
+//! (`flexible_single_gram.h:57-60,75-78,151-181`). On the little-endian
+//! linux/amd64 reference this is the k-mixture model's 8-byte
+//! `KMixtureModelArrayHeader` and 20-byte records (4-byte token plus the
+//! 16-byte `KMixtureModelArrayItem`); the layout is the pin's
+//! `memcpy`/struct layout, not a normalised encoding, so no length prefix
+//! or padding is added here.
+//!
+//! # Container class
+//!
+//! All three backends open a hash container with the pin's own class and
+//! flags: Berkeley DB `DB_HASH` at mode 0644
+//! (`flexible_ngram_bdb.h:110-114`), Kyoto Cabinet `HashDB`
+//! (`flexible_ngram_kyotodb.h:143-155`) and tkrzw `HashDBM`
+//! (`flexible_ngram_tkrzwdb.h:145-159`). [`FlexibleBigram::attach`] opens
+//! it through [`attach_hash`], which runs that backend's own
+//! open, retry and signature-write sequence. The object it leaves and the
+//! attach answer are kept apart, as the pin keeps `m_db` and `attach`'s
+//! return value apart.
+//!
+//! # Iteration order
+//!
+//! [`FlexibleBigram::get_all_items`] walks the container in its **native
+//! order** through [`RawReadStore::native_keys`], as the pin's
+//! `get_all_items` does: a Berkeley DB `DB_NEXT` cursor
+//! (`flexible_ngram_bdb.h:245-291`), a Kyoto Cabinet `iterate`
+//! (`flexible_ngram_kyotodb.h:262-272`) or a tkrzw `ProcessEach`
+//! (`flexible_ngram_tkrzwdb.h:274-282`). The order differs between
+//! backends and between files, so it is not sorted here; the KMM caller
+//! must not rely on it, and the pin's tools do not.
+//!
+//! # Pin error behaviour
+//!
+//! A missing key is a miss: [`FlexibleBigram::load`] answers `None`, the
+//! header getters `None`. A closed handle answers `false`/`None` through the
+//! `Option`/`bool` results. Where the pin asserts that a record is at least
+//! one array header long, `assert(db_data.size == sizeof(ArrayHeader))` and
+//! `assert(retsize >= vsiz)` (`flexible_ngram_bdb.h:388`,
+//! `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`),
+//! [`FlexibleBigram::get_array_header`] aborts there. It does no work before
+//! that point, as the pin's read does none. [`FlexibleBigram::load`] returns the same
+//! error for such a value. The pin loads that value and later reads outside
+//! it, and the tools report it as a store error (`upstream-divergences.md#flexiblebigram-malformed-record-lengths`).
+//! On a failed key walk, Berkeley DB prints `training db error, exit!`
+//! without a newline to stderr and exits with status `EIO`
+//! (`flexible_ngram_bdb.h:279-286`). Kyoto Cabinet and tkrzw return the
+//! token keys collected before the failure.
+
+use std::marker::PhantomData;
+use std::path::Path;
+
+use oxpinyin::store::{BackendError, DefaultStore, RawReadStore, StoreError, WriteStore};
+
+/// The pin's `attach` flags for a hash container: `ATTACH_READONLY`,
+/// `ATTACH_READWRITE`, or `ATTACH_READWRITE | ATTACH_CREATE`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttachMode {
+    /// `ATTACH_READONLY`.
+    ReadOnly,
+    /// `ATTACH_READWRITE`, without `ATTACH_CREATE`.
+    ReadWrite,
+    /// `ATTACH_READWRITE | ATTACH_CREATE`.
+    OpenOrCreateWritable,
+}
+
+/// What a `FlexibleBigram` attach leaves, before its signature check:
+/// the backend's own open and retry sequence
+/// ([`attach_hash`]).
+pub enum HashAttach<B> {
+    /// The native open failed.
+    Closed,
+    /// The open failed, but walking the keys succeeds with no entries.
+    EmptyWalk,
+    /// An existing container opened; the caller checks its signature.
+    Opened(B),
+    /// The CREATE retry created the container and wrote the signature.
+    /// The flag is the attach answer.
+    Created(B, bool),
+}
+
+/// Failure reading or decoding a FlexibleBigram row.
+#[derive(Debug)]
+pub enum LoadError {
+    /// The value is shorter than the flexible array header.
+    ShortArrayHeader,
+    /// The native read or fixed-record decode failed.
+    Store(StoreError),
+}
+impl From<StoreError> for LoadError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ShortArrayHeader => {
+                f.write_str("flexible bigram single gram is shorter than its array header")
+            }
+            Self::Store(error) => error.fmt(f),
+        }
+    }
+}
+impl std::error::Error for LoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ShortArrayHeader => None,
+            Self::Store(error) => Some(error),
+        }
+    }
+}
+
+/// The magic record's eight-byte key: two `null_token` `phrase_token_t`s
+/// (`flexible_ngram_bdb.h:118-121`, `flexible_ngram_kyotodb.h:157-158`,
+/// `flexible_ngram_tkrzwdb.h:161-162`). Every token key is four bytes, so
+/// this is the one record the pin's `get_all_items` visitors skip.
+pub const MAGIC_KEY: [u8; 8] = [0; 8];
+
+/// The pin's magic-number field length (`char m_magic_number[4]`).
+const MAGIC_NUMBER_LEN: usize = 4;
+
+/// The pin's `phrase_token_t` field length.
+const TOKEN_LEN: usize = 4;
+
+/// `EIO`'s status on every host the pin builds for; `exit(EIO)` is the pin's
+/// unrecoverable `get_all_items` answer (`flexible_ngram_bdb.h:285`).
+const EIO_EXIT_CODE: i32 = 5;
+
+/// One fixed-layout record of the pin's structs, encoded and decoded as the
+/// pin's `memcpy` does.
+///
+/// Implementors define the k-mixture model's magic header, array header and
+/// array item. [`Self::LEN`] must be the pin's `sizeof` for that type and
+/// [`Self::encode`] must write exactly `LEN` bytes in the pin's
+/// host-native layout — do not add a length prefix, padding or a normalised
+/// byte order.
+pub trait FixedRecord: Clone {
+    /// The record's `sizeof`, in bytes.
+    const LEN: usize;
+
+    /// The value the pin's `memset(&record, 0, sizeof(record))` produces.
+    fn zeroed() -> Self;
+
+    /// Write the record as the pin `memcpy`s it into exactly [`Self::LEN`] bytes.
+    fn encode(&self, bytes: &mut [u8]);
+
+    /// Read a record from exactly [`Self::LEN`] bytes of the pin's layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when `bytes` does not hold a valid record.
+    fn decode(bytes: &[u8]) -> Result<Self, StoreError>;
+}
+
+/// The three k-mixture-model record types and the container's magic number.
+///
+/// The pin's `FlexibleBigram` is a template over the same three types and
+/// takes the four-byte magic number in its constructor
+/// (`flexible_ngram.h:27-29`, `k_mixture_model.h:110-166`). A KMM caller
+/// names `KMMP` and the three structs here.
+pub trait FlexibleGramSpec {
+    /// The four-byte magic number, e.g. the k-mixture model's `KMMP`.
+    const MAGIC_NUMBER: [u8; 4];
+    /// The pin's `MagicHeader`.
+    type MagicHeader: FixedRecord;
+    /// The pin's `ArrayHeader`.
+    type ArrayHeader: FixedRecord;
+    /// The pin's `ArrayItem`.
+    type ArrayItem: FixedRecord;
+}
+
+/// One array item with its token — the pin's `ArrayItemWithToken`
+/// (`flexible_single_gram.h:57-60`).
+///
+/// The pin stores the token first, then the item, both host-native. The
+/// record order in a single gram is ascending by [`Self::token`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrayItemWithToken<I> {
+    /// The successor `phrase_token_t`, host-native.
+    pub token: u32,
+    /// The caller's array item.
+    pub item: I,
+}
+
+/// The pin's `FlexibleSingleGram`: an array header and a token-ascending
+/// item array (`flexible_single_gram.h:37-321`).
+///
+/// This is the in-memory value of one single gram. The item operations
+/// mirror the pin's in-memory `FlexibleSingleGram` methods; persistence is
+/// [`FlexibleBigram::store`], as the pin's tools do
+/// (`utils/training/gen_k_mixture_model.cpp:252-271`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SingleGram<H, I> {
+    header: H,
+    items: Vec<ArrayItemWithToken<I>>,
+}
+
+impl<H: FixedRecord, I: FixedRecord> Default for SingleGram<H, I> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<H: FixedRecord, I: FixedRecord> SingleGram<H, I> {
+    /// A gram with the pin's zeroed array header and no items
+    /// (`flexible_single_gram.h:75-78`).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            header: H::zeroed(),
+            items: Vec::new(),
+        }
+    }
+
+    /// Builds a gram from a header and a sequence of items. Supply items in ascending token
+    /// order for later token searches.
+    #[must_use]
+    pub fn from_parts(header: H, items: Vec<ArrayItemWithToken<I>>) -> Self {
+        Self { header, items }
+    }
+
+    /// The array header.
+    #[must_use]
+    pub fn header(&self) -> &H {
+        &self.header
+    }
+
+    /// Replace the array header.
+    pub fn set_header(&mut self, header: H) {
+        self.header = header;
+    }
+
+    /// Returns items in stored order. [`Self::from_parts`] preserves the order supplied by
+    /// its caller.
+    #[must_use]
+    pub fn items(&self) -> &[ArrayItemWithToken<I>] {
+        &self.items
+    }
+
+    /// The item of `token`, or `None` when the gram has none.
+    ///
+    /// Rust's partition point uses the pin's token comparator, followed by
+    /// the pin's own scan (`flexible_single_gram.h:63-65,232-257`). Results
+    /// agree on token-ascending records. Unsorted stored records violate
+    /// the search precondition; their result is not a compatibility promise.
+    /// See `upstream-divergences.md#flexiblebigram-unsorted-record-search`.
+    #[must_use]
+    pub fn get_array_item(&self, token: u32) -> Option<I> {
+        let mut index = self.lower_bound(token);
+        while let Some(entry) = self.items.get(index) {
+            if entry.token > token {
+                return None;
+            }
+            if entry.token == token {
+                return Some(entry.item.clone());
+            }
+            index += 1;
+        }
+        None
+    }
+
+    /// Insert the item of `token`; `false` when the gram already has one
+    /// (`flexible_single_gram.h:151-181`).
+    pub fn insert_array_item(&mut self, token: u32, item: I) -> bool {
+        let mut index = self.lower_bound(token);
+        while let Some(entry) = self.items.get(index) {
+            if entry.token > token {
+                self.items.insert(index, ArrayItemWithToken { token, item });
+                return true;
+            }
+            if entry.token == token {
+                return false;
+            }
+            index += 1;
+        }
+        self.items.push(ArrayItemWithToken { token, item });
+        true
+    }
+
+    /// Remove and answer the item of `token`, or `None` when absent
+    /// (`flexible_single_gram.h:193-221`).
+    pub fn remove_array_item(&mut self, token: u32) -> Option<I> {
+        let mut index = self.lower_bound(token);
+        while let Some(entry) = self.items.get(index) {
+            if entry.token > token {
+                return None;
+            }
+            if entry.token == token {
+                return Some(self.items.remove(index).item);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    /// Replace the item of `token`; `false` when absent
+    /// (`flexible_single_gram.h:268-290`).
+    pub fn set_array_item(&mut self, token: u32, item: I) -> bool {
+        let mut index = self.lower_bound(token);
+        while let Some(entry) = self.items.get(index) {
+            if entry.token > token {
+                return false;
+            }
+            if entry.token == token {
+                self.items[index].item = item;
+                return true;
+            }
+            index += 1;
+        }
+        false
+    }
+
+    /// First token not less than `token`, for a token-ascending item array.
+    /// Use the standard API; do not imitate an external library's probes.
+    fn lower_bound(&self, token: u32) -> usize {
+        self.items.partition_point(|entry| entry.token < token)
+    }
+
+    /// The pin's raw value: header then token-then-item records.
+    pub fn encode(&self) -> Vec<u8> {
+        encode_value(&self.header, &self.items)
+    }
+}
+
+/// The pin's `FlexibleBigram` over the compiled-in store backend.
+///
+/// `S` names the three record types and the magic number.
+pub struct FlexibleBigram<S> {
+    /// The container, when its native open succeeded.
+    db: Option<DefaultStore>,
+    /// Whether a failed attach still reports a successful empty key walk.
+    empty_walk: bool,
+    /// `attach`'s answer, kept apart from the object it leaves.
+    attached: bool,
+    read_only: bool,
+    _spec: PhantomData<fn() -> S>,
+}
+
+impl<S> Drop for FlexibleBigram<S> {
+    /// `~FlexibleBigram` is `reset()` (`flexible_ngram_tkrzwdb.h:84-90,
+    /// 111-113`): synchronize the deferred writes before dropping the handle.
+    fn drop(&mut self) {
+        if let Some(db) = self.db.as_ref() {
+            let _ = db.flush();
+        }
+    }
+}
+
+/// One single gram of `S`'s array header and array item types.
+pub type SpecGram<S> =
+    SingleGram<<S as FlexibleGramSpec>::ArrayHeader, <S as FlexibleGramSpec>::ArrayItem>;
+
+impl<S> FlexibleBigram<S>
+where
+    S: FlexibleGramSpec,
+{
+    /// The pin's `attach(filename, flags)` (`flexible_ngram_bdb.h:94-153`,
+    /// `flexible_ngram_kyotodb.h:129-180`, `flexible_ngram_tkrzwdb.h:
+    /// 128-187` at 074a2219). A null filename leaves no object. Otherwise
+    /// the backend opens the hash container ([`attach_hash`]),
+    /// and an existing container is checked against
+    /// [`FlexibleGramSpec::MAGIC_NUMBER`]. [`Self::attached`] is the
+    /// answer. A container that opened stays accessible even when the
+    /// signature check fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a failure before the native open.
+    pub fn attach(path: Option<&Path>, mode: AttachMode) -> Result<Self, StoreError> {
+        let mut this = Self {
+            db: None,
+            empty_walk: false,
+            attached: false,
+            read_only: mode == AttachMode::ReadOnly,
+            _spec: PhantomData,
+        };
+        let Some(path) = path else {
+            return Ok(this);
+        };
+        match attach_hash(path, mode, (&MAGIC_KEY, &S::MAGIC_NUMBER))? {
+            HashAttach::Closed => {}
+            HashAttach::EmptyWalk => this.empty_walk = true,
+            HashAttach::Created(db, answer) => {
+                this.db = Some(db);
+                this.attached = answer;
+            }
+            HashAttach::Opened(db) => {
+                this.db = Some(db);
+                // A failed signature read is the pin's `false`, as a
+                // missing or different magic number is.
+                this.attached = this
+                    .read_value(&MAGIC_KEY)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|value| Self::matches_magic(&value));
+            }
+        }
+        Ok(this)
+    }
+
+    /// `attach`'s answer.
+    #[must_use]
+    pub const fn attached(&self) -> bool {
+        self.attached
+    }
+
+    /// Load one single gram; `None` when the token has no row, or when the
+    /// handle is closed (`flexible_ngram_bdb.h:165-187` and its peers).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError::ShortArrayHeader`] when the stored value is
+    /// shorter than the array header. The pin's `load` succeeds on it and
+    /// reads outside the record later (`flexible_single_gram.h:88-105`,
+    /// `:232-257`, `:300-306`). Returns another [`StoreError`] when the
+    /// record read fails or the value's item tail is not whole.
+    pub fn load(&self, token: u32) -> Result<Option<SpecGram<S>>, LoadError> {
+        let Some(value) = self.read_gram(&token.to_ne_bytes())? else {
+            return Ok(None);
+        };
+        let (header, items) = decode_value(&value)?;
+        Ok(Some(SingleGram::from_parts(header, items)))
+    }
+
+    /// Copy `source`'s stored value of `token` into this container unchanged:
+    /// the pin's `load` of the source followed by `store` of the gram it
+    /// loaded, which writes the loaded bytes back without decoding them
+    /// (`merge_k_mixture_model.cpp:142-146` at 074a2219). This holds for a
+    /// value the gram types cannot decode, such as one shorter than the
+    /// array header. `false` when `source` has no row or no object, or this
+    /// handle is closed or read-only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the source read or the write fails.
+    pub fn copy_single_gram(&self, token: u32, source: &Self) -> Result<bool, StoreError> {
+        let key = token.to_ne_bytes();
+        let Some(value) = source.read_gram(&key)? else {
+            return Ok(false);
+        };
+        self.write_value(&key, &value)
+    }
+
+    /// Store one single gram; `false` when the handle is closed or
+    /// read-only (the pin returns false when `m_db` is null or the put
+    /// fails, `flexible_ngram_bdb.h:198-214` and its peers).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
+    pub fn store(&self, token: u32, gram: &SpecGram<S>) -> Result<bool, StoreError> {
+        self.write_value(&token.to_ne_bytes(), &gram.encode())
+    }
+
+    /// Remove one single gram; `false` when the token has no row, or when
+    /// the handle is closed or read-only (`flexible_ngram_bdb.h:224-235`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the existence read or the delete fails.
+    pub fn remove(&self, token: u32) -> Result<bool, StoreError> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(false);
+        };
+        if self.read_only {
+            return Ok(false);
+        }
+        // The pin's one `del`/`remove`/`Remove`, whose answer is the
+        // method's (`flexible_ngram_bdb.h:224-235`,
+        // `flexible_ngram_kyotodb.h:246-252`, `flexible_ngram_tkrzwdb.h:
+        // 257-263`).
+        let found = db.remove_raw(&token.to_ne_bytes())?;
+        Ok(found)
+    }
+
+    // Berkeley DB uses DB_DBT_PARTIAL (flexible_ngram_bdb.h:302–328). Kyoto Cabinet asserts
+    // on a failed bounded read, unexpected length or invalid magic
+    // (flexible_ngram_kyotodb.h:282–309). tkrzw checks size and magic after Get
+    // (flexible_ngram_tkrzwdb.h:292–323).
+    /// Reads the model's magic header. Berkeley DB reads the header at byte offset four, so a
+    /// longer record can contain a usable header. A closed handle, a missing tkrzw record or
+    /// a record containing just the magic number has no header. Kyoto Cabinet and tkrzw check
+    /// the magic number before decoding a full header.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a returned backend error or a [`FixedRecord::decode`] error.
+    pub fn get_magic_header(&self) -> Result<Option<S::MagicHeader>, StoreError> {
+        self.read_magic_header(<S::MagicHeader as FixedRecord>::LEN)
+    }
+
+    /// The Berkeley DB read of the magic header: a partial read at the
+    /// header's offset, so an over-long record answers the header bytes and
+    /// a short one answers `None` (`flexible_ngram_bdb.h:302-328`).
+    #[cfg(feature = "bdb")]
+    fn read_magic_header(&self, header_len: usize) -> Result<Option<S::MagicHeader>, StoreError> {
+        // `DB_DBT_PARTIAL` at offset 4: an over-long record answers the
+        // header bytes, as the pin's BDB partial read does.
+        let Some(value) =
+            self.read_partial(&MAGIC_KEY, MAGIC_NUMBER_LEN as u32, header_len as u32)?
+        else {
+            return Ok(None);
+        };
+        if value.len() != header_len {
+            return Ok(None);
+        }
+        Ok(Some(S::MagicHeader::decode(&value)?))
+    }
+
+    /// The Kyoto Cabinet read of the magic header: a read bounded to the
+    /// magic number and the header. A record of the magic number alone
+    /// answers `None`; a failed read, any other size and a wrong magic
+    /// number abort, as the pin's asserts do
+    /// (`flexible_ngram_kyotodb.h:282-309`).
+    #[cfg(feature = "kyotocabinet")]
+    fn read_magic_header(&self, header_len: usize) -> Result<Option<S::MagicHeader>, StoreError> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(None);
+        };
+        let mut value = vec![0; MAGIC_NUMBER_LEN + header_len];
+        let size = db
+            .get_raw_bounded(&MAGIC_KEY, &mut value)
+            .unwrap_or_else(|_| std::process::abort());
+        if size != Some(value.len()) {
+            if size != Some(MAGIC_NUMBER_LEN) {
+                std::process::abort();
+            }
+            return Ok(None);
+        }
+        if !Self::matches_magic(&value) {
+            std::process::abort();
+        }
+        Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
+    }
+
+    /// The tkrzw read of the magic header: the complete value. A record of
+    /// the magic number alone answers `None`; any other size and a wrong
+    /// magic number abort, as the pin's asserts do
+    /// (`flexible_ngram_tkrzwdb.h:292-323`).
+    #[cfg(feature = "tkrzw")]
+    fn read_magic_header(&self, header_len: usize) -> Result<Option<S::MagicHeader>, StoreError> {
+        let Some(value) = self.read_value(&MAGIC_KEY)? else {
+            return Ok(None);
+        };
+        if value.len() != MAGIC_NUMBER_LEN + header_len {
+            if value.len() != MAGIC_NUMBER_LEN {
+                std::process::abort();
+            }
+            return Ok(None);
+        }
+        if !Self::matches_magic(&value) {
+            std::process::abort();
+        }
+        Ok(Some(S::MagicHeader::decode(&value[MAGIC_NUMBER_LEN..])?))
+    }
+
+    #[cfg(feature = "bdb")]
+    fn read_partial(
+        &self,
+        key: &[u8],
+        offset: u32,
+        length: u32,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(None);
+        };
+        let mut value = Vec::new();
+        Ok(db
+            .get_raw_partial(key, offset, length, &mut value)?
+            .then_some(value))
+    }
+
+    /// Set the magic header, writing the magic number in front of it as the
+    /// pin's KC and tkrzw implementations do (`flexible_ngram_kyotodb.h:319-342`,
+    /// `flexible_ngram_tkrzwdb.h:333-357`); the Berkeley DB partial put
+    /// writes the same final bytes (`flexible_ngram_bdb.h:338-356`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend write fails.
+    pub fn set_magic_header(&self, header: &S::MagicHeader) -> Result<bool, StoreError> {
+        if self.db.is_none() || self.read_only {
+            return Ok(false);
+        }
+        let mut value = vec![0; MAGIC_NUMBER_LEN + S::MagicHeader::LEN];
+        value[..MAGIC_NUMBER_LEN].copy_from_slice(&S::MAGIC_NUMBER);
+        header.encode(&mut value[MAGIC_NUMBER_LEN..]);
+        self.write_value(&MAGIC_KEY, &value)
+    }
+
+    /// Get one single gram's array header; `None` when the token has no
+    /// row (`flexible_ngram_bdb.h:367-391`, `flexible_ngram_kyotodb.h:353-374`,
+    /// `flexible_ngram_tkrzwdb.h:368-391`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StoreError`] when the record read fails or the header
+    /// bytes do not decode.
+    ///
+    /// # Aborts
+    /// A record shorter than the array header aborts at the pin's size
+    /// assertion (`flexible_ngram_bdb.h:388`,
+    /// `flexible_ngram_kyotodb.h:371`, `flexible_ngram_tkrzwdb.h:388`).
+    pub fn get_array_header(&self, token: u32) -> Result<Option<S::ArrayHeader>, StoreError> {
+        let header_len = <S::ArrayHeader as FixedRecord>::LEN;
+        #[cfg(feature = "bdb")]
+        {
+            let Some(value) = self.read_partial(&token.to_ne_bytes(), 0, header_len as u32)? else {
+                return Ok(None);
+            };
+            if value.len() != header_len {
+                std::process::abort();
+            }
+            Ok(Some(S::ArrayHeader::decode(&value)?))
+        }
+        #[cfg(not(feature = "bdb"))]
+        {
+            let Some(value) = self.read_value(&token.to_ne_bytes())? else {
+                return Ok(None);
+            };
+            let Some(header) = value.get(..header_len) else {
+                std::process::abort();
+            };
+            Ok(Some(S::ArrayHeader::decode(header)?))
+        }
+    }
+
+    // The pin uses a partial put on BDB (flexible_ngram_bdb.h:402–420) and
+    // read/overwrite/store on KC and tkrzw (flexible_ngram_kyotodb.h:385–408,
+    // flexible_ngram_tkrzwdb.h:402–430).
+    /// Writes a single gram's array header while retaining its item bytes. A newly created
+    /// record contains the header alone.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] on a failed read or write.
+    pub fn set_array_header(
+        &self,
+        token: u32,
+        header: &S::ArrayHeader,
+    ) -> Result<bool, StoreError> {
+        if self.db.is_none() || self.read_only {
+            return Ok(false);
+        }
+        let key = token.to_ne_bytes();
+        let header_len = <S::ArrayHeader as FixedRecord>::LEN;
+        let mut value = self.read_value(&key)?.unwrap_or_default();
+        if value.len() < header_len {
+            value.resize(header_len, 0);
+        }
+        header.encode(&mut value[..header_len]);
+        self.write_value(&key, &value)
+    }
+
+    // Kyoto Cabinet ignores the iterate status (flexible_ngram_kyotodb.h:262–272).
+    // The pin's training utilities ignore the tkrzw ProcessEach status returned by
+    // flexible_ngram_tkrzwdb.h:274–282 (for example, export_k_mixture_model.cpp:53,74).
+    /// Collects token keys in the container's native walk order. The magic key and other keys
+    /// outside the token width are skipped. A closed handle gives [`None`]. On a walk
+    /// failure, Kyoto Cabinet and tkrzw return the token keys collected before the
+    /// failure, which may be empty.
+    ///
+    /// The order is the backend's, not sorted: [`RawReadStore::native_keys`]
+    /// is the shared seam, and its hash-container arms are the pin's own
+    /// walks — a Berkeley DB `DB_NEXT` cursor, a Kyoto Cabinet `iterate`
+    /// and a tkrzw `ProcessEach`, each in its library's order. A failed
+    /// Kyoto Cabinet CREATE retry answers an empty walk.
+    ///
+    /// On Berkeley DB, cursor creation must succeed before the walk.
+    #[must_use]
+    pub fn get_all_items(&self) -> Option<Vec<u32>> {
+        if self.empty_walk {
+            return Some(Vec::new());
+        }
+        let db = self.db.as_ref()?;
+        let mut keys = Vec::new();
+        let status = db.native_keys(&mut keys);
+        if cfg!(feature = "bdb") && status.is_err() {
+            training_db_error();
+        }
+        Some(
+            keys.into_iter()
+                .filter_map(|key| <[u8; 4]>::try_from(key.as_slice()).ok())
+                .map(u32::from_ne_bytes)
+                .collect(),
+        )
+    }
+
+    /// The magic record's value starts with this container's magic number.
+    fn matches_magic(value: &[u8]) -> bool {
+        value.len() >= MAGIC_NUMBER_LEN && value[..MAGIC_NUMBER_LEN] == S::MAGIC_NUMBER
+    }
+
+    /// Read `key` from the raw keyspace; `None` on a miss or a closed
+    /// handle.
+    fn read_value(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(None);
+        };
+        let mut value = Vec::new();
+        Ok(db.get_raw(key, &mut value)?.then_some(value))
+    }
+
+    /// Read one single gram the way the pin's `load` does: Kyoto Cabinet
+    /// checks the size and then reads the body, which
+    /// [`RawReadStore::get_bigram_raw`] reproduces (and reports a changed
+    /// size as [`StoreError::ReadAfterCheck`], where the pin's
+    /// `check_result(…)` asserts, `flexible_ngram_kyotodb.h:202-210`). The
+    /// other two backends read the value once.
+    fn read_gram(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(None);
+        };
+        let mut value = Vec::new();
+        Ok(db.get_bigram_raw(key, &mut value)?.then_some(value))
+    }
+
+    /// Write `key` to the raw keyspace; `false` on a closed or read-only
+    /// handle.
+    fn write_value(&self, key: &[u8], value: &[u8]) -> Result<bool, StoreError> {
+        let Some(db) = self.db.as_ref() else {
+            return Ok(false);
+        };
+        if self.read_only {
+            return Ok(false);
+        }
+        if db.is_read_only() {
+            return Err(StoreError::ReadOnly);
+        }
+        db.set_raw(key, value)?;
+        Ok(true)
+    }
+}
+
+/// The value of a single gram: the encoded header then the token-then-item
+/// records.
+fn encode_value<H: FixedRecord, I: FixedRecord>(
+    header: &H,
+    items: &[ArrayItemWithToken<I>],
+) -> Vec<u8> {
+    let mut value = vec![0; H::LEN + items.len() * (TOKEN_LEN + I::LEN)];
+    header.encode(&mut value[..H::LEN]);
+    for (index, entry) in items.iter().enumerate() {
+        let at = H::LEN + index * (TOKEN_LEN + I::LEN);
+        value[at..at + TOKEN_LEN].copy_from_slice(&entry.token.to_ne_bytes());
+        entry
+            .item
+            .encode(&mut value[at + TOKEN_LEN..at + TOKEN_LEN + I::LEN]);
+    }
+    value
+}
+
+/// [`encode_value`]'s inverse, with the pin's length check made explicit so
+/// a truncated record is a `Result` instead of an out-of-bounds read: a
+/// value shorter than the header is [`LoadError::ShortArrayHeader`], and a
+/// partial item tail is a backend error.
+fn decode_value<H: FixedRecord, I: FixedRecord>(
+    value: &[u8],
+) -> Result<(H, Vec<ArrayItemWithToken<I>>), LoadError> {
+    let header_len = H::LEN;
+    let item_len = TOKEN_LEN + I::LEN;
+    if value.len() < header_len {
+        return Err(LoadError::ShortArrayHeader);
+    }
+    if !(value.len() - header_len).is_multiple_of(item_len) {
+        return Err(StoreError::Backend(BackendError::from(format!(
+            "flexible bigram value is {} bytes: a {header_len}-byte header plus whole \
+             {item_len}-byte item records expected",
+            value.len(),
+        )))
+        .into());
+    }
+    let header = H::decode(&value[..header_len])?;
+    let mut items = Vec::with_capacity((value.len() - header_len) / item_len);
+    for record in value[header_len..].chunks_exact(item_len) {
+        let mut token = [0u8; TOKEN_LEN];
+        token.copy_from_slice(&record[..TOKEN_LEN]);
+        let item = I::decode(&record[TOKEN_LEN..])?;
+        items.push(ArrayItemWithToken {
+            token: u32::from_ne_bytes(token),
+            item,
+        });
+    }
+    Ok((header, items))
+}
+
+// The pin reports an unrecoverable DB_NEXT failure here
+// (flexible_ngram_bdb.h:279-286).
+/// Writes the training database error without a newline and exits with `EIO`.
+fn training_db_error() -> ! {
+    use std::io::Write as _;
+    std::io::stderr()
+        .write_all(b"training db error, exit!")
+        .ok();
+    std::process::exit(EIO_EXIT_CODE);
+}
+
+#[cfg(test)]
+mod tests;
+
+/// `FlexibleBigram::attach` (`flexible_ngram_bdb.h:94-153` at
+/// 074a2219) with Berkeley DB's documented handle sequence. The pin
+/// retries `DB->open` on its failed handle (`:110-115`) and reads the
+/// signature through a handle whose open failed (`:134-146`). Berkeley
+/// DB requires `DB->close` after a failed `DB->open`, and no other call
+/// on that handle (`dbopen.html`, `dbclose.html`, 5.3.28). So each
+/// failed open closes its handle, the CREATE retry uses a new one, and
+/// a failed attach keeps nothing. The difference is libdb's missing
+/// `BDB1565` lines (compatibility register, Berkeley DB failed handles).
+///
+/// # Errors
+/// Returns failures before a native open.
+#[cfg(feature = "bdb")]
+pub fn attach_hash(
+    path: &Path,
+    mode: AttachMode,
+    signature: (&[u8], &[u8]),
+) -> Result<HashAttach<DefaultStore>, StoreError> {
+    let read_only = mode == AttachMode::ReadOnly;
+    // `Ok(None)`: the native `DB->open` failed and its handle is closed.
+    let open = |create| DefaultStore::try_open_native(path, true, read_only, create);
+    if let Some(store) = open(false)? {
+        return Ok(HashAttach::Opened(store));
+    }
+    if mode != AttachMode::OpenOrCreateWritable {
+        return Ok(HashAttach::Closed);
+    }
+    let Some(store) = open(true)? else {
+        return Ok(HashAttach::Closed);
+    };
+    // The pin's `DB_DBT_PARTIAL` put at offset 0 of a new record stores
+    // the same four bytes; its answer is the attach answer (`:118-131`).
+    let (key, value) = signature;
+    let written = store.set_raw(key, value).is_ok();
+    Ok(HashAttach::Created(store, written))
+}
+
+/// `FlexibleBigram::attach` (`flexible_ngram_kyotodb.h:129-180` at
+/// 074a2219): a `HashDB` opened without `OCREATE`, and with
+/// `ATTACH_CREATE` opened again with it. After a failed CREATE retry,
+/// the pin's key walk succeeds with no entries because it ignores the
+/// `iterate` result (`:154-155,262-272`). The retry's signature `set`
+/// is ignored (`:157-162`).
+///
+/// The retry is a second `open` of the same object with the pin's
+/// mode, `OREADER | OWRITER | OCREATE`, so it reads the state the
+/// first open left (`FFATAL` from `set_error`).
+///
+/// # Errors
+/// Returns failures before a native open.
+#[cfg(feature = "kyotocabinet")]
+pub fn attach_hash(
+    path: &Path,
+    mode: AttachMode,
+    signature: (&[u8], &[u8]),
+) -> Result<HashAttach<DefaultStore>, StoreError> {
+    let read_only = mode == AttachMode::ReadOnly;
+    let mut store = DefaultStore::allocate_native(true, read_only)?;
+    if store.try_open_native(path, false)? {
+        return Ok(HashAttach::Opened(store));
+    }
+    if mode != AttachMode::OpenOrCreateWritable {
+        return Ok(HashAttach::Closed);
+    }
+    if !store.try_open_native(path, true)? {
+        return Ok(HashAttach::EmptyWalk);
+    }
+    let (key, value) = signature;
+    let _ = store.set_raw(key, value);
+    Ok(HashAttach::Created(store, true))
+}
+
+/// `FlexibleBigram::attach` (`flexible_ngram_tkrzwdb.h:128-187` at
+/// 074a2219): one `HashDBM`, opened with `OPEN_NO_CREATE`, and with
+/// `ATTACH_CREATE` opened again without it. A failed open without
+/// CREATE, or a failed retry, deletes the object with no `Close`
+/// (`:148-158`). The retry's signature `Set` is ignored (`:161-167`).
+///
+/// # Errors
+/// Returns failures before a native open.
+#[cfg(feature = "tkrzw")]
+pub fn attach_hash(
+    path: &Path,
+    mode: AttachMode,
+    signature: (&[u8], &[u8]),
+) -> Result<HashAttach<DefaultStore>, StoreError> {
+    let read_only = mode == AttachMode::ReadOnly;
+    let mut store = DefaultStore::allocate_native(true, read_only);
+    if store.try_open_native(path, false)? {
+        return Ok(HashAttach::Opened(store));
+    }
+    if mode != AttachMode::OpenOrCreateWritable || !store.try_open_native(path, true)? {
+        return Ok(HashAttach::Closed);
+    }
+    let (key, value) = signature;
+    let _ = store.set_raw(key, value);
+    Ok(HashAttach::Created(store, true))
+}

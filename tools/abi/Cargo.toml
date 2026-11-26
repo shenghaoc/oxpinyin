@@ -1,0 +1,43 @@
+[package]
+name = "oxpinyin-abi-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[[test]]
+name = "abi"
+path = "tests/abi.rs"
+required-features = ["abi-test"]
+
+[features]
+abi-test = ["dep:bindgen", "dep:pkg-config", "dep:oxpinyin"]
+kyotocabinet = ["oxpinyin?/kyotocabinet"]
+bdb = ["oxpinyin?/bdb"]
+tkrzw = ["oxpinyin?/tkrzw"]
+
+[dependencies]
+# Only the Rust constants are linked. Both C facades are loaded at run time.
+oxpinyin = { workspace = true, optional = true }
+
+[dev-dependencies]
+glib-sys.workspace = true
+tempfile.workspace = true
+libloading = "0.8.9"
+
+[package.metadata.cargo-shear]
+ignored = [
+    # `tests/abi.rs` includes bindgen's `OUT_DIR` loader, which names `::libloading::Library`.
+    "libloading",
+    # Backend features forward through `oxpinyin?/…`; dev-dependencies cannot be optional.
+    "oxpinyin",
+]
+
+[build-dependencies]
+bindgen = { workspace = true, optional = true }
+pkg-config = { version = "0.3", optional = true }
