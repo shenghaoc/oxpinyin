@@ -731,14 +731,6 @@ impl ReplayedLibrary {
         (length >= 2).then(|| at as usize..at as usize + length)
     }
 
-    /// The item's fields for an in-place edit, as `get_phrase_item`'s view
-    /// is written through (`phrase_index.cpp:150-178`): the bytes inside
-    /// the content, shared with any slot that reads them.
-    fn edit_fields(&mut self, slot: u32) -> Option<&mut [u8]> {
-        let record = self.record(slot)?;
-        self.content_mut().get_mut(record)
-    }
-
     fn complete_item(&self, slot: u32) -> Option<&[u8]> {
         Some(PhraseItemView::from_bytes(self.fields(slot)?)?.as_bytes())
     }
@@ -821,14 +813,20 @@ impl ReplayedLibrary {
         readings: impl Iterator<Item = Vec<crate::parser::ChewingKey>>,
         delta: u32,
     ) -> bool {
-        let Some(bytes) = self.complete_item(slot) else {
+        // One offset read gives the item (`get_phrase_item`,
+        // `phrase_index.cpp:180-206`); a complete item is trained in place.
+        let Some(record) = self.record(slot).filter(|record| {
+            self.content()
+                .get(record.clone())
+                .and_then(PhraseItemView::from_bytes)
+                .is_some()
+        }) else {
             return false;
         };
-        let end = bytes.len();
-        let Some(bytes) = self.edit_fields(slot) else {
+        let Some(bytes) = self.content_mut().get_mut(record) else {
             return false;
         };
-        crate::user::user_library::train_readings(&mut bytes[..end], readings, delta);
+        crate::user::user_library::train_readings(bytes, readings, delta);
         true
     }
 
