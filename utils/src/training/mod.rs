@@ -48,34 +48,47 @@ impl Gram {
     /// `SingleGram::get_freq`: the count stored for `token`, `None` where
     /// the pin's binary search finds no record.
     pub(crate) fn get_freq(&self, token: u32) -> Option<u32> {
+        let index = self.lower_bound(token);
         self.records
-            .binary_search_by_key(&token, |(next, _)| *next)
-            .ok()
-            .map(|index| self.records[index].1)
+            .get(index)
+            .filter(|(next, _)| *next == token)
+            .map(|(_, freq)| *freq)
     }
 
     /// `SingleGram::set_freq`: `false` where the record is absent
     /// (`check_result` is `assert` in the reference build).
     pub(crate) fn set_freq(&mut self, token: u32, freq: u32) -> bool {
-        match self.records.binary_search_by_key(&token, |(next, _)| *next) {
-            Ok(index) => {
-                self.records[index].1 = freq;
+        let index = self.lower_bound(token);
+        match self.records.get_mut(index) {
+            Some((next, stored)) if *next == token => {
+                *stored = freq;
                 true
             }
-            Err(_) => false,
+            _ => false,
         }
     }
 
     /// `SingleGram::insert_freq`: `false` where the token is already
     /// present; otherwise the record goes at its lower-bound position.
     pub(crate) fn insert_freq(&mut self, token: u32, freq: u32) -> bool {
-        match self.records.binary_search_by_key(&token, |(next, _)| *next) {
-            Ok(_) => false,
-            Err(position) => {
-                self.records.insert(position, (token, freq));
-                true
-            }
+        let index = self.lower_bound(token);
+        if self
+            .records
+            .get(index)
+            .is_some_and(|(next, _)| *next == token)
+        {
+            return false;
         }
+        self.records.insert(index, (token, freq));
+        true
+    }
+
+    /// The pin's `SingleGram` lower bound: the first record whose token is
+    /// not less than `token` (`ngram.cpp:231-250`; the walk
+    /// `src/single_gram.rs`'s `get_freq` mirrors), not the unspecified
+    /// index a binary search gives among equal keys.
+    fn lower_bound(&self, token: u32) -> usize {
+        self.records.partition_point(|(next, _)| *next < token)
     }
 
     /// `SingleGram::m_chunk`'s bytes (`encode_single_gram`), the value
@@ -245,4 +258,24 @@ pub(crate) fn filename_value(parsed: &ParsedOptions, index: usize) -> Option<CSt
 /// the path; Windows uses the shared lossy UTF-8 filename decoder.
 pub(crate) fn path_of(name: &CStr) -> std::path::PathBuf {
     oxpinyin::input::path_from_bytes(name.to_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Gram;
+
+    /// `SingleGram::get_freq` and `set_freq` walk from `lower_bound`
+    /// (`ngram.cpp:231-250`): the first of equal successor tokens is the
+    /// one read and written, not whichever a binary search lands on.
+    #[test]
+    fn a_gram_reads_and_writes_the_first_of_equal_tokens() {
+        let mut gram = Gram {
+            total: 3,
+            records: vec![(7, 1), (7, 2)],
+        };
+        assert_eq!(gram.get_freq(7), Some(1));
+        assert!(gram.set_freq(7, 9));
+        assert_eq!(gram.records, vec![(7, 9), (7, 2)]);
+        assert!(!gram.insert_freq(7, 0), "the token is already present");
+    }
 }
