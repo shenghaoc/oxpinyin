@@ -722,13 +722,21 @@ impl ReplayedLibrary {
         item_record(self.content(), self.word(slot)).filter(|record| record.len() >= 2)
     }
 
+    /// Where [`Self::fields`] lies in the content: the slot's offset is
+    /// read once, as `get_phrase_item` reads it (`phrase_index.cpp:180-206`),
+    /// so a write goes to the same bytes without a second lookup.
+    fn record(&self, slot: u32) -> Option<std::ops::Range<usize>> {
+        let at = self.word(slot);
+        let length = item_record(self.content(), at)?.len();
+        (length >= 2).then(|| at as usize..at as usize + length)
+    }
+
     /// The item's fields for an in-place edit, as `get_phrase_item`'s view
     /// is written through (`phrase_index.cpp:150-178`): the bytes inside
     /// the content, shared with any slot that reads them.
     fn edit_fields(&mut self, slot: u32) -> Option<&mut [u8]> {
-        let length = self.fields(slot)?.len();
-        let at = self.word(slot) as usize;
-        self.content_mut().get_mut(at..at + length)
+        let record = self.record(slot)?;
+        self.content_mut().get_mut(record)
     }
 
     fn complete_item(&self, slot: u32) -> Option<&[u8]> {
@@ -758,20 +766,23 @@ impl ReplayedLibrary {
         self.complete_item(slot).map(raw_unigram)
     }
 
+    /// `SubPhraseIndex::add_unigram_frequency` (`phrase_index.cpp:150-176`):
+    /// one offset read, the overflow guard, then the frequency is read and
+    /// written in place, through the view any slot sharing the bytes reads.
     pub(crate) fn add_unigram(&mut self, slot: u32, delta: u32) -> UnigramAdd {
-        let Some(fields) = self
-            .fields(slot)
-            .filter(|bytes| bytes.len() >= ITEM_HEADER_SIZE)
+        let Some(record) = self
+            .record(slot)
+            .filter(|record| record.len() >= ITEM_HEADER_SIZE)
         else {
             return UnigramAdd::Missing;
         };
         let Some(total) = self.total.checked_add(delta) else {
             return UnigramAdd::Refused;
         };
-        let frequency = raw_unigram(fields).wrapping_add(delta);
-        let Some(bytes) = self.edit_fields(slot) else {
+        let Some(bytes) = self.content_mut().get_mut(record) else {
             return UnigramAdd::Missing;
         };
+        let frequency = raw_unigram(bytes).wrapping_add(delta);
         bytes[2..ITEM_HEADER_SIZE].copy_from_slice(&frequency.to_le_bytes());
         self.total = total;
         UnigramAdd::Accepted
