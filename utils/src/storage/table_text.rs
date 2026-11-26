@@ -33,8 +33,8 @@ pub(crate) struct PunctRecord {
     pub punctuation: CString,
 }
 
-/// `table_text_split_line` (`:34-52`): four fields of `line` (which ends in
-/// its NUL), or `None`.
+/// `table_text_split_line` (`:34-52`): four fields of `line`, or `None`.
+/// The end of the slice stands for the pin's terminating NUL.
 fn split_line(line: &[u8]) -> Option<[&[u8]; 4]> {
     let mut fields: [&[u8]; 4] = [&[]; 4];
     let mut cur = 0_usize;
@@ -88,8 +88,6 @@ fn parse_freq(field: &[u8]) -> Option<usize> {
 /// `table_text_read_pinyin_record` (`:75-97`).
 pub(crate) fn read_pinyin_record(file: &mut TableFile) -> Option<Record> {
     while let Some(line) = file.read_line() {
-        let mut line = line;
-        line.push(0);
         let Some(fields) = split_line(&line) else {
             continue;
         };
@@ -114,8 +112,6 @@ pub(crate) fn read_pinyin_record(file: &mut TableFile) -> Option<Record> {
 /// `table_text_read_punct_record` (`:99-121`).
 pub(crate) fn read_punct_record(file: &mut TableFile) -> Option<PunctRecord> {
     while let Some(line) = file.read_line() {
-        let mut line = line;
-        line.push(0);
         let Some(fields) = split_line(&line) else {
             continue;
         };

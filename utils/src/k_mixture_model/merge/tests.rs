@@ -117,7 +117,7 @@ fn a_short_target_row_aborts_at_the_targets_header() {
     if let Some(dir) = child_dir() {
         let target = plant(&dir, "target.db", &[(TOKEN, SHORT)]);
         let source = plant(&dir, "source.db", &[(TOKEN, WHOLE)]);
-        let _ = super::merge_array_items(
+        super::merge_array_items(
             &crate::k_mixture_model::database::Database::open_read_write(Some(&target)),
             &crate::k_mixture_model::database::Database::open_read_only(Some(&source)),
         );
@@ -140,7 +140,7 @@ fn a_short_source_row_the_target_lacks_is_copied_unchanged() {
     {
         let target = crate::k_mixture_model::database::Database::open_read_write(Some(&target));
         let source = crate::k_mixture_model::database::Database::open_read_only(Some(&source));
-        assert!(super::merge_array_items(&target, &source));
+        super::merge_array_items(&target, &source);
     }
     let HashAttach::Opened(db) = attach_hash(
         &dir.path().join("target.db"),

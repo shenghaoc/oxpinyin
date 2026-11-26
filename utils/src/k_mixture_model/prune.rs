@@ -60,14 +60,8 @@ pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
         // `retrieve_all` in `prune_k_mixture_model` (class (b)) and takes
         // the store-error exit.
         let mut single_gram = db.load_checked(token);
-        let mut removed_array = Vec::new();
-        prune_k_mixture_model(
-            &mut magic_header,
-            &mut single_gram,
-            &mut removed_array,
-            prune_k,
-            cdf,
-        );
+        let removed_array =
+            prune_k_mixture_model(&mut magic_header, &mut single_gram, prune_k, cdf);
         db.store(token, &single_gram);
 
         for item in &removed_array {
@@ -92,14 +86,15 @@ pub fn run(filename: Option<&CStr>, prune_k: i32, cdf: f64) {
     }
 }
 
-/// `prune_k_mixture_model` over one single gram (`:45-105`).
+/// `prune_k_mixture_model` over one single gram (`:45-105`); answers the
+/// removed items, the pin's `removed_array`, in removal order.
 fn prune_k_mixture_model(
     magic_header: &mut KMixtureModelMagicHeader,
     single_gram: &mut super::records::KmmGram,
-    removed_array: &mut Vec<ArrayItemWithToken<KMixtureModelArrayItem>>,
     prune_k: i32,
     cdf: f64,
-) {
+) -> Vec<ArrayItemWithToken<KMixtureModelArrayItem>> {
+    let mut removed_array = Vec::new();
     let array = single_gram.items().to_vec();
     for item in &array {
         let token = item.token;
@@ -152,4 +147,5 @@ fn prune_k_mixture_model(
             magic_header.m_total_freq = magic_header.m_total_freq.wrapping_sub(removed_count);
         }
     }
+    removed_array
 }

@@ -20,7 +20,7 @@ fn a_short_first_word_row_takes_the_store_error_exit() {
         second.insert(TOKEN + 1, 1);
         let mut unigram = DirectHashTable::new();
         unigram.insert(TOKEN + 1, 1);
-        let _ = train_second_word(
+        train_second_word(
             &mut unigram,
             &bigram,
             &pairs,

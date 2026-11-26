@@ -322,7 +322,7 @@ pub fn read_phrase_items(
             PhoneticType::Zhuyin => pinyin::parse_zhuyin(&record.pinyin),
         };
         if item.phrase.len() == keys.len() {
-            add_pronunciation(&mut item, &keys, record.token, record.freq);
+            add_pronunciation(&mut item, &keys, record.freq);
         } else {
             tool::storage::report_phrase_index_skip(&record.pinyin, &record.phrase);
         }
@@ -342,13 +342,7 @@ fn fresh_item() -> ChunkItem {
 
 /// `PhraseItem::add_pronunciation` (`src/storage/phrase_index.cpp:56-93`);
 /// `freq` is `input.freq` narrowed to the `guint32` delta.
-fn add_pronunciation(
-    item: &mut ChunkItem,
-    keys: &[oxpinyin::parser::ChewingKey],
-    token: u32,
-    freq: usize,
-) {
-    let _ = token;
+fn add_pronunciation(item: &mut ChunkItem, keys: &[oxpinyin::parser::ChewingKey], freq: usize) {
     // The pin parses `size_t freq` and passes it to
     // `PhraseItem::add_pronunciation(..., guint32 delta)`
     // (`phrase_index.cpp:556`, `:524-583`): the narrowing is unsigned
