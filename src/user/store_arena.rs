@@ -188,24 +188,11 @@ impl UserStore {
         } else {
             phrases.unloaded.insert(nibble);
         }
-        let arena_live = phrases
-            .libraries
-            .values()
-            .any(|library| !library.is_empty());
+        let arena_live = phrases.has_items();
         drop(phrases);
         drop(offsets);
         let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
         self.mark_committed_write(arena_live || grams_live);
-    }
-
-    /// Whether a user library's arena holds an item.
-    pub(super) fn arena_has_items(&self) -> bool {
-        self.inner
-            .libpinyin
-            .phrases()
-            .libraries
-            .values()
-            .any(|library| !library.is_empty())
     }
 
     /// Addon selection copies the complete item under `token`, including
@@ -715,13 +702,7 @@ impl UserStore {
         }
         drop(phrases);
         let grams_left = self.mask_container_over(container_keys, mask, token)?;
-        let has = !self
-            .inner
-            .libpinyin
-            .phrases()
-            .libraries
-            .values()
-            .all(UserLibrary::is_empty);
+        let has = self.inner.libpinyin.phrases().has_items();
         self.mark_committed_write(has || grams_left);
         Ok(true)
     }

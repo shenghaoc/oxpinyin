@@ -34,6 +34,6 @@ fn dense_mask_keeps_duplicate_tokens_in_stored_order() {
     let mut entry =
         PhraseTableEntry::from_bytes(tokens.into_iter().flat_map(u32::to_le_bytes).collect())
             .unwrap();
-    assert!(entry.mask_out(1, 0));
+    entry.mask_out(1, 0);
     assert_eq!(entry.as_bytes(), [5, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0]);
 }

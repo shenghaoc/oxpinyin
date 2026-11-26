@@ -40,22 +40,13 @@ impl NativeTable {
         self.0.contains_raw(key).unwrap_or(false)
     }
 
+    /// Every record in key order: the walk from the empty prefix, which
+    /// every key starts with.
     pub(crate) fn for_each_record<E>(
         &self,
-        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<(), E>,
     ) -> Result<(), E> {
-        let mut result = Ok(());
-        self.0
-            .scan_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
-                result = visit(key, value);
-                Ok(if result.is_ok() {
-                    ControlFlow::Continue(())
-                } else {
-                    ControlFlow::Break(())
-                })
-            })
-            .unwrap_or_else(|_| std::process::abort());
-        result
+        self.for_each_record_starting_with(&[], visit)
     }
 
     pub(crate) fn rewrite(&self, rewrite: &mut RecordRewrite<'_>) -> Result<(), StoreError> {
@@ -88,18 +79,13 @@ impl NativeTable {
         result
     }
 
-    pub(crate) fn keys_starting_with(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
-        let mut keys = Vec::new();
-        let Ok(()) =
-            self.for_each_record_starting_with::<std::convert::Infallible>(prefix, |key, _| {
-                keys.push(key.to_vec());
-                Ok(())
-            });
-        keys
-    }
-
     #[cfg(test)]
     pub(crate) fn keys(&self) -> Vec<Vec<u8>> {
-        self.keys_starting_with(&[])
+        let mut keys = Vec::new();
+        let Ok(()) = self.for_each_record::<std::convert::Infallible>(|key, _| {
+            keys.push(key.to_vec());
+            Ok(())
+        });
+        keys
     }
 }

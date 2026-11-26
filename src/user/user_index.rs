@@ -407,14 +407,16 @@ impl UserIndex {
             return;
         }
         let mut lengths = [false; MAX_PHRASE_LENGTH + 1];
-        for key in self.records.keys_starting_with(&prefix) {
-            if key.len() == prefix.len() {
-                continue;
-            }
-            if let Some(seen) = lengths.get_mut(key.len() / CHEWING_KEY_SIZE) {
-                *seen = true;
-            }
-        }
+        let Ok(()) = self
+            .records
+            .for_each_record_starting_with::<std::convert::Infallible>(&prefix, |key, _| {
+                if key.len() != prefix.len()
+                    && let Some(seen) = lengths.get_mut(key.len() / CHEWING_KEY_SIZE)
+                {
+                    *seen = true;
+                }
+                Ok(())
+            });
         for (len, seen) in lengths.iter().enumerate() {
             if *seen {
                 *self.slot_mut(len) = Slot::Empty;

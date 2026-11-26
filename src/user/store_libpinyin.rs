@@ -349,12 +349,7 @@ fn holds_user_data(target: &Target) -> bool {
         )
         .exists()
     });
-    has_bigram_file
-        || target
-            .phrases()
-            .libraries
-            .values()
-            .any(|library| !library.is_empty())
+    has_bigram_file || target.phrases().has_items()
 }
 
 /// The unigram mass in the loaded USER_FILE arenas, used only to retain

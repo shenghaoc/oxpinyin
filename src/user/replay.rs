@@ -776,11 +776,16 @@ impl ReplayedLibrary {
         self.total = self.total.wrapping_add(raw_unigram(payload));
     }
 
-    pub(crate) fn remove_item(&mut self, slot: u32) -> Option<Vec<u8>> {
-        let bytes = self.complete_item(slot)?.as_bytes().to_vec();
+    /// Takes the complete item at `slot` out, and its unigram count out of
+    /// the index total; whether there was one.
+    pub(crate) fn remove_item(&mut self, slot: u32) -> bool {
+        let Some(item) = self.complete_item(slot) else {
+            return false;
+        };
+        let unigram = raw_unigram(item.as_bytes());
         self.set_word(slot, 0);
-        self.total = self.total.wrapping_sub(raw_unigram(&bytes));
-        Some(bytes)
+        self.total = self.total.wrapping_sub(unigram);
+        true
     }
 
     /// `get_range`'s end (074a2219 `phrase_index.cpp:624-646`): one past

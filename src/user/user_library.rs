@@ -57,9 +57,9 @@ pub(super) fn train_readings(
 pub(crate) struct UserLibrary {
     total: u32,
     /// Each slot's item offset in `content`, as the pin's offset table
-    /// holds it. `usize::MAX` names a slot whose offset was past the
-    /// content end when the library loaded.
-    slots: BTreeMap<u32, usize>,
+    /// holds it. `None` names a slot whose offset was past the content end
+    /// when the library loaded.
+    slots: BTreeMap<u32, Option<usize>>,
     content: Vec<u8>,
 }
 
@@ -126,6 +126,11 @@ pub(crate) struct SessionPhrases {
 }
 
 impl SessionPhrases {
+    /// Whether any session arena holds an item.
+    pub(crate) fn has_items(&self) -> bool {
+        self.libraries.values().any(|library| !library.is_empty())
+    }
+
     /// The arena of `nibble`, created if it is absent. A library with no
     /// arena keeps the total its chunk stored (`phrase_index.cpp:237-248`
     /// reads `m_total_freq` at load, items or none) as its retained offset;
@@ -247,7 +252,7 @@ impl UserLibrary {
         // `add_phrase_item`'s placement, as the system sub-index's: a
         // `guint32` offset that wraps, written in place where it wrapped.
         let start = crate::user::replay::place(&mut self.content, bytes) as usize;
-        self.slots.insert(slot, start);
+        self.slots.insert(slot, Some(start));
         self.total = self.total.wrapping_add(change.unigram);
     }
 
@@ -268,7 +273,10 @@ impl UserLibrary {
     pub(crate) fn remove_matching(&mut self, selected: impl Fn(u32) -> bool) {
         let content = &self.content;
         self.slots.retain(|&slot, start| {
-            let Some(item) = content.get(*start..).and_then(PhraseItemView::from_bytes) else {
+            let Some(item) = start
+                .and_then(|start| content.get(start..))
+                .and_then(PhraseItemView::from_bytes)
+            else {
                 return true;
             };
             if !selected(slot) {
@@ -294,7 +302,7 @@ impl UserLibrary {
             return false;
         };
         let unigram = item.unigram().wrapping_add(delta);
-        let Some(&start) = self.slots.get(&slot) else {
+        let Some(&Some(start)) = self.slots.get(&slot) else {
             return false;
         };
         // In place, as `add_unigram_frequency` writes (`phrase_index.cpp:
@@ -372,7 +380,7 @@ impl UserLibrary {
     ) {
         let Some(item) = self.item(slot) else { return };
         let length = item.as_bytes().len();
-        let Some(&start) = self.slots.get(&slot) else {
+        let Some(&Some(start)) = self.slots.get(&slot) else {
             return;
         };
         // In place through the item's view, whatever shares or follows it.
@@ -421,14 +429,7 @@ impl UserLibrary {
                 // Unreadable for the slot's whole life: an offset that began
                 // past the content would read whatever a later append puts
                 // there (class (b)).
-                Some((
-                    slot as u32,
-                    if start >= content_len {
-                        usize::MAX
-                    } else {
-                        start
-                    },
-                ))
+                Some((slot as u32, (start < content_len).then_some(start)))
             })
             .collect();
         Some(Self {
@@ -439,7 +440,7 @@ impl UserLibrary {
     }
 
     pub(crate) fn pronunciation_count(&self, slot: u32) -> Option<u32> {
-        let start = *self.slots.get(&slot)?;
+        let start = (*self.slots.get(&slot)?)?;
         self.content.get(start..)?.get(1).copied().map(u32::from)
     }
 
@@ -466,13 +467,13 @@ impl UserLibrary {
     }
 
     pub(crate) fn item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
-        self.view(*self.slots.get(&slot)?)
+        self.view((*self.slots.get(&slot)?)?)
     }
 
     pub(crate) fn items(&self) -> impl Iterator<Item = (u32, PhraseItemView<'_>)> + '_ {
         self.slots
             .iter()
-            .filter_map(|(&slot, &start)| Some((slot, self.view(start)?)))
+            .filter_map(|(&slot, &start)| Some((slot, self.view(start?)?)))
     }
 
     /// The size of the content a compaction would leave: the first eight
