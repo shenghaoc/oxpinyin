@@ -13,9 +13,7 @@
 //! [`crate::model::UserCountDelta`]; the save cycle is the §4 `m_modified`
 //! gate and the persistence point behind `pinyin_save`.
 
-use rustc_hash::FxHashMap;
 use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::collections::VecDeque;
 use std::fmt;
 use std::rc::Rc;
 
@@ -582,26 +580,28 @@ pub enum TrainingFault {
     PartialTail,
 }
 
-/// One training call's replay: the grams its checked steps left, each
-/// passing step's outcome in step order, and the fault a failing check met.
+/// One training call's replay: each passing step's outcome in step order,
+/// the next step to observe, and the fault a failing check met.
 #[derive(Debug, Default)]
 pub struct TrainingCheck {
-    grams: FxHashMap<PhraseToken, Vec<u8>>,
-    steps: VecDeque<CheckedStep>,
+    steps: Vec<CheckedStep>,
+    next: usize,
     fault: Option<TrainingFault>,
 }
 
 /// A passing step's [`trained_gram`] outcome, recorded by
 /// [`UserStore::check_training_step_with`] for
-/// [`UserStore::observe_checked_selection`]: the step's pair, its seed and
-/// the gram it stores, `None` where the overflow guard leaves the gram
-/// unchanged (`phonetic_lookup.h:876-904` at 074a2219).
+/// [`UserStore::observe_checked_selection`]: the step's pair, its seed, the
+/// gram the step left, and whether the step stores it. The overflow guard
+/// leaves the gram unchanged and skips its store (`phonetic_lookup.h:876-904`
+/// at 074a2219).
 #[derive(Debug)]
 struct CheckedStep {
     prev: PhraseToken,
     cur: PhraseToken,
     seed: u64,
-    gram: Option<Vec<u8>>,
+    gram: Vec<u8>,
+    stores: bool,
 }
 
 impl TrainingCheck {
@@ -609,6 +609,17 @@ impl TrainingCheck {
     #[must_use]
     pub const fn fault(&self) -> Option<TrainingFault> {
         self.fault
+    }
+
+    /// The gram the latest checked step with predecessor `prev` left: the
+    /// gram a later step on `prev` trains, as the pin's later `load` reads
+    /// the earlier `store` (`phonetic_lookup.h:878`, `:904`).
+    fn latest_gram(&self, prev: PhraseToken) -> Option<&Vec<u8>> {
+        self.steps
+            .iter()
+            .rev()
+            .find(|step| step.prev == prev)
+            .map(|step| &step.gram)
     }
 }
 
@@ -829,27 +840,29 @@ impl UserStore {
             check.fault = Some(TrainingFault::Abort);
             return Err(UserStoreError::FailedUserBigramStore);
         }
-        let gram = match check.grams.entry(prev) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(self.bigram_row(prev)?.unwrap_or_else(single_gram::new_gram))
-            }
+        // A step owns its trained gram. A repeated predecessor trains a copy
+        // of the gram its latest checked step left; any other reads the store.
+        let mut gram = match check.latest_gram(prev) {
+            Some(gram) => gram.clone(),
+            None => self.bigram_row(prev)?.unwrap_or_else(single_gram::new_gram),
         };
         if gram.len() < single_gram::TOTAL_LEN {
             check.fault = Some(TrainingFault::Abort);
             return Err(UserStoreError::ShortUserBigramValue);
         }
-        if single_gram::has_partial_tail(gram) {
+        if single_gram::has_partial_tail(&gram) {
             check.fault = Some(TrainingFault::PartialTail);
             return Err(UserStoreError::PartialUserBigramTail);
         }
-        match trained_gram(gram, cur) {
+        match trained_gram(&mut gram, cur) {
             Ok((seed, stored)) => {
-                check.steps.push_back(CheckedStep {
+                let stores = stored.is_some();
+                check.steps.push(CheckedStep {
                     prev,
                     cur,
                     seed,
-                    gram: stored.map(<[u8]>::to_vec),
+                    gram,
+                    stores,
                 });
                 Ok(())
             }
@@ -1266,20 +1279,20 @@ impl UserStore {
         last: PhraseToken,
         cur: PhraseToken,
     ) -> Result<u64, UserStoreError> {
-        let step = check
-            .steps
-            .pop_front()
-            .filter(|step| step.prev == last && step.cur == cur);
-        let Some(step) = step else {
+        // The step's gram moves out of the check: no later observation reads
+        // it, because the check already copied it for any later step.
+        let step = check.steps.get_mut(check.next).map(|step| {
+            (
+                step.prev == last && step.cur == cur,
+                step.seed,
+                step.stores.then(|| std::mem::take(&mut step.gram)),
+            )
+        });
+        check.next = check.next.saturating_add(1);
+        let Some((true, seed, gram)) = step else {
             return self.observe_selection(last, cur);
         };
-        let seed = self.commit_step(
-            last,
-            cur,
-            SeedPolicy::Training,
-            step.seed,
-            step.gram.as_deref(),
-        )?;
+        let seed = self.commit_step(last, cur, SeedPolicy::Training, seed, gram.as_deref())?;
         self.inner.dirty.set(true);
         Ok(seed)
     }

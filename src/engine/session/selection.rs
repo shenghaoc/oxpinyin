@@ -114,7 +114,7 @@ impl TrainingPlan<'_> {
         } else if let Some((parsed, ends)) = self.spans {
             let mut context = Vec::with_capacity(row.spans.len());
             for (index, span) in row.spans.iter().enumerate() {
-                if let Some(end) = ends[index] {
+                if let Some(&Some(end)) = ends.get(index) {
                     let readings = training_readings(
                         parsed,
                         self.state.input.as_bytes(),
@@ -163,7 +163,7 @@ where
     pub(crate) fn prepare_training(
         &self,
         index: u8,
-        check: &mut impl FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
+        check: &mut impl FnMut(Option<&PhraseToken>, &PhraseToken) -> Result<(), EngineError>,
     ) -> Result<Option<TrainingPlan<'s>>, TrainingPrepFault> {
         let Some(row) = self.nbest_training_row(index)? else {
             return Ok(None);
@@ -171,7 +171,7 @@ where
         let spans = if row.spans.is_empty() {
             let history = self.record.history();
             for (index, token) in history.iter().enumerate() {
-                check(&history[..index], token)?;
+                check(history[..index].last(), token)?;
             }
             None
         } else {
@@ -253,7 +253,7 @@ where
         check: &mut F,
     ) -> Result<Option<Vec<Option<usize>>>, TrainingPrepFault>
     where
-        F: FnMut(&[PhraseToken], &PhraseToken) -> Result<(), EngineError>,
+        F: FnMut(Option<&PhraseToken>, &PhraseToken) -> Result<(), EngineError>,
     {
         // 074a2219 phonetic_lookup.h:854-866,932: only OneStep or
         // train_next observes a phrase; every phrase advances its predecessor.
@@ -294,8 +294,9 @@ where
         let constraint_len = self.constraints.cell_count();
         let tail = constraint_len.saturating_sub(1);
         let mut train_next = false;
-        let mut ends: Vec<Option<usize>> = vec![None; spans.len()];
-        let tokens: Vec<PhraseToken> = spans.iter().map(|span| span.token).collect();
+        // One end per span the walk reaches, in span order; a span past the
+        // walk has none. The pushes allocate once, from the allocator's cache.
+        let mut ends: Vec<Option<usize>> = Vec::with_capacity(spans.len());
         for (index, span) in spans.iter().enumerate() {
             // 074a2219 phonetic_lookup.h:858 walks the result positions
             // below `constraints->length()`, reloaded each step (the
@@ -308,6 +309,7 @@ where
             }
             let forced = self.constraints.is_one_step_at(span.start);
             if !(train_next || forced) {
+                ends.push(None);
                 continue;
             }
             // 074a2219 train_result3 walks the spans in order: the forced
@@ -329,7 +331,7 @@ where
             // The step's bigram half comes next (`phonetic_lookup.h:876-909`:
             // `get_total_freq` :884, the `get_freq` walk :888, `set_freq`
             // :903), before its pronunciation update's span asserts (:925).
-            check(&tokens[..index], &span.token)?;
+            check(spans[..index].last().map(|span| &span.token), &span.token)?;
             train_next = forced;
             // 074a2219 phonetic_lookup.h:911-920 scans to the next
             // non-null result token, not the forced constraint end.
@@ -349,7 +351,7 @@ where
             {
                 return Err(TrainingPrepFault::PinAbort);
             }
-            ends[index] = Some(end);
+            ends.push(Some(end));
         }
         Ok(Some(ends))
     }
