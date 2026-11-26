@@ -371,19 +371,17 @@ impl PhraseExportRead<'_> {
         let Some(end) = live.system_range_end(self.index) else {
             return;
         };
-        let mut token = start;
-        while token < end {
-            // `get_phrase_item` fails for a token a journal REMOVE took out,
-            // and finds nothing in a slot with no item: neither is selected.
-            if let Some(Some(nth)) = live
-                .read(token, |item| first_pronunciation(&item.view()))
+        // `get_phrase_item` fails for a token a journal REMOVE took out, and
+        // finds nothing in a slot with no item: neither is selected.
+        let found = (start..end).find_map(|token| {
+            live.read(token, |item| first_pronunciation(&item.view()))
                 .found()
-            {
-                self.next_token = token;
-                self.next_pronunciation = nth;
-                return;
-            }
-            token += 1;
+                .flatten()
+                .map(|nth| (token, nth))
+        });
+        if let Some((token, nth)) = found {
+            self.next_token = token;
+            self.next_pronunciation = nth;
         }
     }
 
@@ -393,17 +391,14 @@ impl PhraseExportRead<'_> {
     /// skipped; the read that follows is the assert.
     fn probe_user(&mut self, start: u32) {
         let end = self.memo.user_end;
-        let mut token = start;
-        while token < end {
-            let found = self
-                .with_user_item(token, |item| first_pronunciation(&item))
-                .flatten();
-            if let Some(nth) = found {
-                self.next_token = token;
-                self.next_pronunciation = nth;
-                return;
-            }
-            token += 1;
+        let found = (start..end).find_map(|token| {
+            self.with_user_item(token, |item| first_pronunciation(&item))
+                .flatten()
+                .map(|nth| (token, nth))
+        });
+        if let Some((token, nth)) = found {
+            self.next_token = token;
+            self.next_pronunciation = nth;
         }
     }
 

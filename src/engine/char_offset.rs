@@ -340,10 +340,7 @@ where
         return Ok(CharacterOffset::Refused);
     };
     // The columns run from 0 to the input length inclusive.
-    let len = columns.len() - 1;
-    if offset > len {
-        return Err(EngineError::LookupOffsetOutOfRange { offset, len });
-    }
+    crate::engine::check_lookup_offset_range(columns.len() - 1, offset)?;
     if offset > 0 && columns.get(offset - 1).is_some_and(Column::lone_zero) {
         return Err(EngineError::ZeroKeyOffsetCheck);
     }

@@ -2,6 +2,7 @@
 //! `guess_sentence_with_prefix`, and the merged suggestion rows
 //! `_compute_predicted_prefix_candidates` ranks.
 
+use crate::model::Dictionary;
 use crate::runtime::RuntimeDict;
 use crate::user::UserStore;
 use crate::vocab::PhraseText;
@@ -19,26 +20,21 @@ use crate::vocab::PhraseText;
 /// tokens match a single suffix.
 pub fn compute_prefixes(
     dict: &RuntimeDict,
-    user: &UserStore,
     prefix: Option<&PhraseText>,
 ) -> Result<Vec<u32>, crate::engine::EngineError> {
     let Some(prefix) = prefix else {
         return Ok(Vec::new());
     };
     let prefix: Vec<u32> = prefix.outward_words().collect();
-    let user_lookup = user.lookup();
     let max = prefix.len().min(crate::vocab::MAX_PHRASE_LENGTH);
     let mut tokens = Vec::new();
     for length in 1..=max {
-        let suffix = &prefix[prefix.len() - length..];
-        let mut matches = dict.system().tokens_for_ucs4(suffix).unwrap_or_default();
-        matches.extend(user_lookup.tokens_for_ucs4(suffix).iter().copied());
-        matches.retain(|token| dict.phrase_table_token_enabled(*token));
+        // The system and user tables' enabled tokens, sorted by library.
+        let matches = dict.tokens_for_ucs4(&prefix[prefix.len() - length..]);
         // 074a2219 pinyin.cpp:1414-1420 reduces each suffix separately.
         if matches.len() > 4 {
             return Err(crate::engine::EngineError::PinAssert);
         }
-        crate::model::sort_tokens_by_library(&mut matches);
         tokens.extend(matches);
     }
     Ok(tokens)

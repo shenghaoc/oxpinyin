@@ -620,13 +620,6 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     }
 }
 
-impl<
-    S: std::borrow::BorrowMut<InstanceState>,
-    E: std::borrow::BorrowMut<crate::engine::SessionState>,
-> InstanceView<'_, S, E>
-{
-}
-
 /// A matrix key as the getters render it.
 fn matrix_key_at(key: MatrixKey) -> KeyAt {
     KeyAt {

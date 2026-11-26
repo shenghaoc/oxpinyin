@@ -306,6 +306,7 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
     // SAFETY: live instance after guess_predicted.
     let inst = unsafe { instance_ref(instance) };
     let bigrams: Vec<&str> = inst
+        .state
         .candidates
         .iter()
         .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE)
@@ -367,12 +368,14 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
         "both suggestion rows present"
     );
     let before: Vec<String> = inst
+        .state
         .candidates
         .iter()
         .map(|row| String::from_utf8_lossy(row.text_bytes()).into_owned())
         .collect();
     let leader_before = before[0].clone();
     let trailing_token = inst
+        .state
         .candidates
         .iter()
         .skip(1)
@@ -390,6 +393,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
     // SAFETY: live instance after guess_predicted.
     let inst = unsafe { instance_ref(instance) };
     let after: Vec<String> = inst
+        .state
         .candidates
         .iter()
         .map(|row| String::from_utf8_lossy(row.text_bytes()).into_owned())
@@ -415,6 +419,7 @@ fn predicted_candidates_prepend_punctuation_for_hao() {
     // SAFETY: live instance after guess_predicted.
     let inst = unsafe { instance_ref(instance) };
     let puncts: Vec<&str> = inst
+        .state
         .candidates
         .iter()
         .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
@@ -626,6 +631,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
     let total = inst.core.lm.amplified_total();
     // (text, length, amplified frequency, library, stored-text key)
     let rows: Vec<(String, usize, u64, usize, Vec<u8>)> = inst
+        .state
         .candidates
         .iter()
         .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)

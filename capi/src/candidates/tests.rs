@@ -327,7 +327,8 @@ impl Open {
         let (index, token) = {
             // SAFETY: live instance immediately after the guess.
             let inst = unsafe { instance_ref(self.instance) };
-            inst.candidates
+            inst.state
+                .candidates
                 .iter()
                 .enumerate()
                 .find_map(|(index, row)| {
@@ -647,7 +648,8 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
         let index = {
             // SAFETY: the guess completed; the instance remains live.
             let inst = unsafe { instance_ref(instance) };
-            inst.candidates
+            inst.state
+                .candidates
                 .iter()
                 .position(|row| row.text_bytes() == "你".as_bytes())
                 .expect("你 candidate")
@@ -668,6 +670,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
         // SAFETY: live instance immediately after the guess.
         let inst = unsafe { instance_ref(instance) };
         let index = inst
+            .state
             .candidates
             .iter()
             .position(|cd| cd.text_bytes() == "好".as_bytes())
@@ -890,6 +893,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
         // SAFETY: live instance; snapshot valid until the next guess.
         let inst = unsafe { instance_ref(instance) };
         let (index, cand) = inst
+            .state
             .candidates
             .iter()
             .enumerate()
@@ -1026,7 +1030,8 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
     let index = {
         // SAFETY: live instance; snapshot valid until the next guess.
         let inst = unsafe { instance_ref(instance) };
-        inst.candidates
+        inst.state
+            .candidates
             .iter()
             .position(|c| {
                 c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE
@@ -1130,6 +1135,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
         let store = inst.core.user;
         assert_eq!(store.addon_promotion_range_end(), None);
         let (index, cand) = inst
+            .state
             .candidates
             .iter()
             .enumerate()
@@ -1396,7 +1402,8 @@ fn choose_addon_row(
     let index = {
         // SAFETY: live instance; the snapshot is valid until the next guess.
         let inst = unsafe { instance_ref(instance) };
-        inst.candidates
+        inst.state
+            .candidates
             .iter()
             .position(|c| c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE)
             .expect("the crafted addon offers an ADDON candidate")

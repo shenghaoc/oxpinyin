@@ -90,9 +90,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     // `_compute_prefixes` reduces each tail substring's search with the
     // validating `reduce_tokens` (`pinyin.cpp:1415`), which asserts on more
     // than four tokens (`phrase_large_table3.h:95`) before the guess.
-    let Ok(prefixes) =
-        oxpinyin::facade::compute_prefixes(&inst.core.dict, inst.core.user, prefix.as_ref())
-    else {
+    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, prefix.as_ref()) else {
         std::process::abort();
     };
     let matrix_has_keys = inst.core.mode_has_keys();

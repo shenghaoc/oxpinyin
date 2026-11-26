@@ -210,15 +210,14 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let mut inst = unsafe { instance_mut(instance) };
-    if candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
-        return c_int::try_from(inst.core.pin_matrix_columns())
-            .map_or(c_int::MAX, |columns| columns - 1);
-    }
     let answer = match candidate_type {
         lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR => end,
         lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => begin,
-        lookup_candidate_type_t::BEST_MATCH_CANDIDATE
-        | lookup_candidate_type_t::ZOMBIE_CANDIDATE => {
+        lookup_candidate_type_t::BEST_MATCH_CANDIDATE => {
+            return c_int::try_from(inst.core.pin_matrix_columns())
+                .map_or(c_int::MAX, |columns| columns - 1);
+        }
+        lookup_candidate_type_t::ZOMBIE_CANDIDATE => {
             return match inst.core.refuse_selection() {
                 Ok(_) => offset as u32 as c_int,
                 Err(_) => -1,

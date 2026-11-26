@@ -16,7 +16,7 @@ fn handles_retain_context_and_borrow_the_live_backing() {
         );
         let row = candidate(instance, "nihao", 0);
         let view = instance_ref(instance);
-        let first = view.candidates.iter().next().unwrap();
+        let first = view.state.candidates.iter().next().unwrap();
         assert_eq!(candidate_ptr(first), row);
         assert!(std::ptr::eq(candidate_ref(row), first));
         assert!(crate::sentence::pinyin_guess_sentence(instance));
@@ -32,9 +32,9 @@ fn handles_retain_context_and_borrow_the_live_backing() {
             weak.upgrade()
                 .is_some_and(|owner| Rc::ptr_eq(&owner, instance_ref(instance).owner))
         );
-        instance_mut(instance).full_aux_options = OptionBits::USE_TONE;
+        instance_mut(instance).state.full_aux_options = OptionBits::USE_TONE;
         assert_eq!(
-            instance_ref(instance).full_aux_options,
+            instance_ref(instance).state.full_aux_options,
             OptionBits::USE_TONE
         );
         assert!(

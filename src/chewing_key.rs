@@ -267,24 +267,13 @@ impl std::fmt::Display for KeyText {
     }
 }
 
-/// The pinyin-family branch: bare for the zero tone, `%s%d` otherwise. A
-/// hand-crafted key with a two-digit tone renders without a suffix (see
-/// [`digit`]).
+/// The pinyin-family branch: bare for the zero tone, `%s%d` otherwise.
+/// Tones above 5 are unreachable from the packed form; a hand-crafted key
+/// with a two-digit tone renders without a suffix.
 const fn digit_text(base: &'static str, tone: u8) -> KeyText {
-    match (tone, digit(tone)) {
-        (CHEWING_ZERO_TONE, _) | (_, None) => KeyText::Plain(base),
-        (_, Some(_)) => KeyText::Digit(base, tone),
-    }
-}
-
-/// The tone digit appended by the pinyin-family renderers (upstream's
-/// `%d`); tones above 5 are unreachable from the packed form. A
-/// hand-crafted key with a two-digit tone renders without a suffix
-/// rather than panicking on the `b'0' + tone` overflow.
-const fn digit(tone: u8) -> Option<char> {
     match tone {
-        0..=9 => Some((b'0' + tone) as char),
-        _ => None,
+        CHEWING_ZERO_TONE | 10.. => KeyText::Plain(base),
+        _ => KeyText::Digit(base, tone),
     }
 }
 

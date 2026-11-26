@@ -207,9 +207,8 @@ impl<'a> RuntimeDict<'a> {
                     .flatten()
             },
         )?;
-        let query: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
+        let mut query: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
         self.user.note_pinyin_search_keys(&query);
-        let mut query = query;
         for (key, &tone) in query.iter_mut().zip(tones) {
             *key = key.with_tone(tone);
         }
@@ -298,8 +297,7 @@ impl<'a> RuntimeDict<'a> {
                 if item.origin() != ItemOrigin::Overlay {
                     return None;
                 }
-                let (matched, total) = Self::item_possibility(item, query);
-                Some((matched, total))
+                Some(Self::item_possibility(item, query))
             })
             .found()
             .flatten()
@@ -1062,7 +1060,7 @@ impl Dictionary for RuntimeDict<'_> {
         );
         tokens.retain(|token| self.phrase_table_token_enabled(*token));
         crate::model::sort_tokens_by_library(&mut tokens);
-        tokens.into_iter().collect()
+        tokens
     }
 
     fn phrase_span_searches_are_observable(&self) -> bool {
@@ -1102,7 +1100,7 @@ impl Dictionary for RuntimeDict<'_> {
             });
         }
         crate::model::sort_tokens_by_library(&mut tokens);
-        Ok(Some(tokens.into_iter().collect()))
+        Ok(Some(tokens))
     }
 
     /// `_token_get_phrase` over the facade: the system libraries' item
