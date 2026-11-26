@@ -6,6 +6,8 @@
 
 use std::os::raw::c_char;
 
+use oxpinyin::engine::CharacterOffset;
+
 use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance};
@@ -257,17 +259,16 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
     )
     .unwrap_or_default();
     let char_count = match inst.core.character_offset(&text, offset, false) {
-        Ok((Some(char_count), _)) => char_count,
-        Ok((None, walked)) => {
-            // The walk's own `false` still stores the length it reached
-            // (`*plength = length`, `pinyin.cpp:3238`); the earlier
-            // returns (no keys, empty phrase, a character without a
-            // token) leave it untouched.
-            if walked {
-                write_if_nonnull!(length, 0);
-            }
+        Ok(CharacterOffset::Found(char_count)) => char_count,
+        // The walk's own `false` still stores the length it reached
+        // (`*plength = length`, `pinyin.cpp:3238`); the earlier returns (no
+        // keys, empty phrase, a character without a token) leave it
+        // untouched.
+        Ok(CharacterOffset::NoPath) => {
+            write_if_nonnull!(length, 0);
             return false;
         }
+        Ok(CharacterOffset::Refused) => return false,
         // Register row 19: the pin's recursion and entry asserts
         // (`pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`).
         // `_pre_compute_tokens`' `reduce_tokens` count assert

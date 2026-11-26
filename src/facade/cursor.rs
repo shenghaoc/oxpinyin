@@ -394,7 +394,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// Lookup byte offset → character count within `phrase` in the
     /// instance's active parse mode — the `pinyin_get_character_offset` /
     /// `zhuyin_get_character_offset` law
-    /// ([`crate::engine::character_offset_with_walk_over_keys`]) over
+    /// ([`crate::engine::character_offset_walk`]) over
     /// [`Self::mode_input`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
     /// over the stored original input. The first result is the character
@@ -411,16 +411,20 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         phrase: &crate::vocab::PhraseText,
         offset: usize,
         zhuyin: bool,
-    ) -> Result<(Option<usize>, bool), EngineError> {
+    ) -> Result<crate::engine::CharacterOffset, EngineError> {
         let Some(source) = self.span_source() else {
             return self
                 .session
                 .character_offset_with_walk(phrase, offset, zhuyin);
         };
-        crate::engine::character_offset_with_walk_over_keys(
-            (source.input, source.separators),
+        let columns = crate::engine::matrix_columns(
+            source.input,
             source.parsed,
             self.parse_matrix.iter().copied(),
+            source.separators,
+        );
+        crate::engine::character_offset_walk(
+            columns.as_ref(),
             self.session.dictionary(),
             phrase,
             offset,

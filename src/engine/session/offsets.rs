@@ -125,7 +125,7 @@ where
 
     /// Lookup byte offset → character count within `phrase` over the
     /// session's own scan matrix under the calling facade's zero-key rule
-    /// ([`crate::engine::character_offset_with_walk_over_keys`]): `Ok(Some(n))` when a key
+    /// ([`crate::engine::character_offset_walk`]): `Ok(Found(n))` when a key
     /// path pronouncing `phrase`'s first `n` characters reaches `offset`,
     /// `Ok(None)` for the pin's graceful `false` (empty matrix, empty
     /// phrase, a character with no dictionary token, no satisfying path).
@@ -143,15 +143,19 @@ where
         phrase: &crate::vocab::PhraseText,
         offset: usize,
         zhuyin: bool,
-    ) -> Result<(Option<usize>, bool), EngineError> {
+    ) -> Result<crate::engine::CharacterOffset, EngineError> {
         // The retained working matrix, not the parsed-only one `matrix_keys`
         // builds for scheme modes: pre-parsed scheme segments keep their
         // boundaries and gain no divided/resplit alternates, as every other
         // law over the session's matrix has it.
-        crate::engine::character_offset_with_walk_over_keys(
-            (self.input.as_bytes(), true),
+        let columns = crate::engine::matrix_columns(
+            self.input.as_bytes(),
             self.retained_parse().matrix.bound,
             self.matrix_keys().iter(),
+            true,
+        );
+        crate::engine::character_offset_walk(
+            columns.as_ref(),
             &self.dictionary,
             phrase,
             offset,

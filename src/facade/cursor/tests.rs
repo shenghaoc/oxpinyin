@@ -219,7 +219,7 @@ mod native {
                 .read(&context.runtime)
                 .character_offset(&"弄".into(), offset, law == UserConfLaw::Zhuyin)
                 .unwrap(),
-            (Some(expected), true)
+            crate::engine::CharacterOffset::Found(expected)
         );
     }
 

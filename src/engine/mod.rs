@@ -18,7 +18,7 @@ pub(crate) mod session;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
 pub use char_offset::{
-    MatrixColumns, character_offset_with_walk_over_keys, key_pronounced_by, matrix_columns,
+    CharacterOffset, MatrixColumns, character_offset_walk, key_pronounced_by, matrix_columns,
     remember_walk,
 };
 pub use cursor::{
