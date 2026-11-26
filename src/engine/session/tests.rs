@@ -652,7 +652,7 @@ fn a_stored_phrase_trains_with_its_stored_length() {
 
         fn observe_with_keys(
             &mut self,
-            _history: &[PhraseToken],
+            _last: Option<PhraseToken>,
             _token: &PhraseToken,
             readings: &mut impl crate::model::ReadingWalk,
         ) -> Result<(), Self::Error> {

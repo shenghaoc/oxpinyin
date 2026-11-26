@@ -113,7 +113,7 @@ impl TrainingPlan<'_> {
                     .map_err(|_| EngineError::UserModel)?;
             }
         } else if let Some((parsed, ends)) = self.spans {
-            let mut context = Vec::with_capacity(row.spans.len());
+            let mut last = None;
             let mut stacks = ReadingStacks::default();
             for (index, span) in row.spans.iter().enumerate() {
                 if let Some(&Some(end)) = ends.get(index) {
@@ -125,10 +125,10 @@ impl TrainingPlan<'_> {
                         span.phrase_length,
                         &mut stacks,
                     );
-                    user.observe_with_keys(&context, &span.token, &mut readings)
+                    user.observe_with_keys(last, &span.token, &mut readings)
                         .map_err(|_| EngineError::UserModel)?;
                 }
-                context.push(span.token);
+                last = Some(span.token);
             }
         }
         Ok(true)
@@ -254,7 +254,7 @@ where
         &self,
         spans: &[PhraseSpan],
         check: &mut F,
-    ) -> Result<Option<Vec<Option<usize>>>, TrainingPrepFault>
+    ) -> Result<Option<SpanEnds>, TrainingPrepFault>
     where
         F: FnMut(Option<&PhraseToken>, &PhraseToken) -> Result<(), EngineError>,
     {
@@ -298,8 +298,8 @@ where
         let tail = constraint_len.saturating_sub(1);
         let mut train_next = false;
         // One end per span the walk reaches, in span order; a span past the
-        // walk has none. The pushes allocate once, from the allocator's cache.
-        let mut ends: Vec<Option<usize>> = Vec::with_capacity(spans.len());
+        // walk has none, held inline up to `MAX_PHRASE_LENGTH` spans.
+        let mut ends = SpanEnds::new();
         for (index, span) in spans.iter().enumerate() {
             // 074a2219 phonetic_lookup.h:858 walks the result positions
             // below `constraints->length()`, reloaded each step (the
@@ -751,15 +751,19 @@ where
     }
 }
 
+/// A training walk's plan ([`Session::plan_spans`]): the retained matrix it
+/// indexes, borrowed from the composition state the plan itself borrows, and
+/// the end of each span it observes (`None` for one it only passes).
+type SpanPlan<'a> = (&'a super::matrix::ParsedMatrix, SpanEnds);
+
+/// One end per span a training walk reaches, held inline for the phrase
+/// counts a sentence row usually has.
+type SpanEnds = smallvec::SmallVec<[Option<usize>; MAX_PHRASE_LENGTH]>;
+
 /// 074a2219 `get_column_size(offset) > 0` (`storage/phonetic_key_matrix.cpp`):
 /// a column is occupied by either a real key or a zero key. `from_scan`
 /// records real keys in `matrix` and internal separator zero keys (and the
 /// reserved end slot) in `zeros`.
-/// A training walk's plan ([`Session::plan_spans`]): the retained matrix it
-/// indexes, borrowed from the composition state the plan itself borrows, and
-/// the end of each span it observes (`None` for one it only passes).
-type SpanPlan<'a> = (&'a super::matrix::ParsedMatrix, Vec<Option<usize>>);
-
 pub(crate) fn column_is_empty(
     matrix: &super::matrix::ParsedMatrix,
     zeros: &[bool],

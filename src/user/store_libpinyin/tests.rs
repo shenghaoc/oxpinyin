@@ -1766,8 +1766,13 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
         )
         .expect("open");
         let mut paths = vec![vec![key.with_tone(2)]].into_iter();
-        UserModel::observe_with_keys(&mut store, &[], &token, &mut crate::model::lent(&mut paths))
-            .expect("train");
+        UserModel::observe_with_keys(
+            &mut store,
+            None,
+            &token,
+            &mut crate::model::lent(&mut paths),
+        )
+        .expect("train");
         let state = export_state(&store, &base).expect("state");
         assert_eq!(
             state.system_overrides[&1][&1]
@@ -1798,8 +1803,13 @@ fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
         )
         .expect("reopen");
         let mut paths = vec![vec![key.with_tone(0)], vec![key.with_tone(0)]].into_iter();
-        UserModel::observe_with_keys(&mut store, &[], &token, &mut crate::model::lent(&mut paths))
-            .expect("retrain");
+        UserModel::observe_with_keys(
+            &mut store,
+            None,
+            &token,
+            &mut crate::model::lent(&mut paths),
+        )
+        .expect("retrain");
         let state = export_state(&store, &base).expect("state");
         assert_eq!(
             state.system_overrides[&1][&1]
@@ -1862,7 +1872,7 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
             .expect("extra reading");
         UserModel::observe_with_keys(
             &mut store,
-            &[],
+            None,
             &token,
             &mut crate::model::lent([vec![ni.with_tone(2)]]),
         )
@@ -1881,7 +1891,7 @@ fn live_system_readings_train_import_and_replay_without_double_counting() {
         assert_eq!(counts(&store), [100, 96]);
         UserModel::observe_with_keys(
             &mut store,
-            &[],
+            None,
             &token,
             &mut crate::model::lent([vec![ni.with_tone(2)]]),
         )
@@ -2473,8 +2483,13 @@ fn appended_system_readings_keep_absolute_training_counts() {
         token = store
             .add_system_phrase_in(1, None, &"拟".into(), &keys, Some(5))
             .expect("append");
-        UserModel::observe_with_keys(&mut store, &[], &token, &mut crate::model::lent([vec![ni]]))
-            .expect("train appended");
+        UserModel::observe_with_keys(
+            &mut store,
+            None,
+            &token,
+            &mut crate::model::lent([vec![ni]]),
+        )
+        .expect("train appended");
         assert_eq!(
             store.with_effective_system_item(token, |item| item.prons[0].1),
             Some(74)

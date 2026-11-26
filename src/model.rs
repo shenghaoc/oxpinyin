@@ -941,7 +941,10 @@ pub trait UserModel {
     /// Returns [`Self::Error`] when the model backend cannot record the observation.
     fn observe(&mut self, history: &[PhraseToken], token: &PhraseToken) -> Result<(), Self::Error>;
 
-    /// Records a trained token and the tone-bearing readings of its matrix span.
+    /// Records a trained token after its predecessor `last` (`None` at the
+    /// sentence start), with the tone-bearing readings of its matrix span.
+    /// The pin trains a step from its last token alone
+    /// (074a2219 `phonetic_lookup.h:858-932`).
     ///
     /// Readings retain matrix order and multiplicity; each has the phrase's
     /// syllable length. The default records the token alone, by delegating
@@ -952,11 +955,11 @@ pub trait UserModel {
     /// Returns [`Self::Error`] when the observation cannot be recorded.
     fn observe_with_keys(
         &mut self,
-        history: &[PhraseToken],
+        last: Option<PhraseToken>,
         token: &PhraseToken,
         _readings: &mut impl ReadingWalk,
     ) -> Result<(), Self::Error> {
-        self.observe(history, token)
+        self.observe(last.as_slice(), token)
     }
 }
 

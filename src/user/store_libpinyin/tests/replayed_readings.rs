@@ -183,7 +183,7 @@ fn exported(store: &UserStore, base: &SystemOriginals, slot: u32) -> Vec<u32> {
 
 fn train(store: &mut UserStore, slot: u32, reading: ChewingKey, paths: usize) {
     let readings = vec![vec![reading]; paths];
-    UserModel::observe_with_keys(store, &[], &(LIBRARY | slot), &mut readings.iter())
+    UserModel::observe_with_keys(store, None, &(LIBRARY | slot), &mut readings.iter())
         .expect("train");
 }
 
