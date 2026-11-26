@@ -13,7 +13,6 @@
 // docs/findings/scoring-spec.md.
 
 use crate::vocab::phrase_index_library_index;
-use std::cell::Cell;
 use std::path::Path;
 
 use crate::{
@@ -118,7 +117,7 @@ pub struct BigramLanguageModel<'a> {
     libraries: &'a PhraseLibraries,
     /// The loaded-library mask shared with the dictionary: bit `n` set =
     /// library `n` unloaded.
-    library_mask: &'a Cell<u32>,
+    library_mask: u32,
 }
 
 /// Bigram DBM and interpolation parameters, without phrase byte ownership.
@@ -174,7 +173,7 @@ impl BigramTables {
     pub fn read<'a>(
         &'a self,
         libraries: &'a PhraseLibraries,
-        library_mask: &'a Cell<u32>,
+        library_mask: u32,
     ) -> BigramLanguageModel<'a> {
         BigramLanguageModel {
             tables: self,
@@ -198,7 +197,7 @@ impl BigramLanguageModel<'_> {
     }
 
     fn visible(&self, nibble: u8) -> bool {
-        library_visible(self.library_mask.get(), nibble)
+        library_visible(self.library_mask, nibble)
     }
 
     /// Whether unigram counts are available for interpolation: some
@@ -207,7 +206,7 @@ impl BigramLanguageModel<'_> {
     #[cfg(test)]
     #[must_use]
     pub fn has_unigrams(&self) -> bool {
-        self.libraries().has_items_unloaded(self.library_mask.get())
+        self.libraries().has_items_unloaded(self.library_mask)
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token`: the stored item
@@ -229,8 +228,7 @@ impl BigramLanguageModel<'_> {
     /// (074a2219 `phrase_index.h:440`, `phrase_index.cpp:237-248`).
     #[must_use]
     pub fn unigram_total(&self) -> u32 {
-        self.libraries()
-            .unigram_total_unloaded(self.library_mask.get())
+        self.libraries().unigram_total_unloaded(self.library_mask)
     }
 
     /// The facade total the n-best step divides by

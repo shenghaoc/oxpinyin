@@ -1,5 +1,4 @@
 //! tests/storage/test_matrix.cpp and tests/lookup/test_*_lookup.cpp, 074a2219.
-use std::cell::Cell;
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
@@ -311,7 +310,7 @@ impl Lookup {
         lookup(
             prepared,
             &self.tables.read(&self.libraries),
-            &model.read(&self.libraries, &Cell::new(0)),
+            &model.read(&self.libraries, 0),
         )
     }
     /// Runs phrase segmentation with no user overlay. Returns an empty result
@@ -326,7 +325,7 @@ impl Lookup {
         phrase_lookup(
             words,
             &self.tables.read(&self.libraries),
-            &model.read(&self.libraries, &Cell::new(0)),
+            &model.read(&self.libraries, 0),
         )
     }
     /// Resolve a result token to its native stored phrase.

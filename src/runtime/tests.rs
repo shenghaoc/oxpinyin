@@ -1,5 +1,6 @@
 use super::*;
 use crate::user::PinyinKey;
+use std::cell::Cell;
 
 // Basis: phonetic_lookup.h:643-656 at 074a2219.
 #[test]
@@ -132,10 +133,10 @@ fn zhuyin_open_holds_no_addon_or_punct_handles() {
 
     for (law, attached) in [(UserConfLaw::Pinyin, true), (UserConfLaw::Zhuyin, false)] {
         let runtime = Runtime::open_with_law(system.path(), None, law).unwrap();
-        let addons = runtime.dict().addons.borrow();
-        assert_eq!(addons.dict.has_open_indexes(), attached);
+        let addons = runtime.dict().addons;
+        assert_eq!(addons.has_open_indexes(), attached);
         assert_eq!(runtime.dict().punct.is_open(), attached);
-        let row = addons.dict.row(4).unwrap();
+        let row = addons.row(4).unwrap();
         assert_eq!(
             row.system,
             Some(crate::data::FileName::from_bytes(b"art-local.bin"))

@@ -53,8 +53,8 @@ fn an_overlong_live_item_never_falls_back_to_a_shipped_copy() {
     .unwrap();
     let store =
         crate::user::test_session::open(&user, originals, versions, UserConfLaw::Pinyin).unwrap();
-    let unloaded = Cell::new(0);
-    let live = LiveSystemItems::new(&shipped, &store, &unloaded);
+    let unloaded = 0;
+    let live = LiveSystemItems::new(&shipped, &store, unloaded);
     assert_eq!(live.pronunciation_count(0x0100_0001).found(), Some(255));
     assert_eq!(
         live.read(0x0100_0001, |item| item.unigram()),
@@ -124,8 +124,8 @@ fn session_over_system_library(
 fn a_nonstock_loaded_library_is_a_system_library() {
     let dir = tempfile::tempdir().unwrap();
     let (libraries, store) = session_over_system_library(dir.path(), 6, "NETWORK_DICTIONARY");
-    let unloaded = Cell::new(0);
-    let live = LiveSystemItems::new(&libraries, &store, &unloaded);
+    let unloaded = 0;
+    let live = LiveSystemItems::new(&libraries, &store, unloaded);
     assert!(live.is_system_library(6));
     assert!(!live.is_system_library(5));
     assert_eq!(
@@ -154,8 +154,8 @@ fn a_promotion_into_a_system_library_5_writes_that_sub_index() {
     assert_eq!(token, 0x0500_0002);
     assert!(!store.has_user_library(5));
     assert_eq!(crate::user::test_session::library_total(&store, 5), 101);
-    let unloaded = Cell::new(0);
-    let live = LiveSystemItems::new(&libraries, &store, &unloaded);
+    let unloaded = 0;
+    let live = LiveSystemItems::new(&libraries, &store, unloaded);
     assert_eq!(live.read(token, |item| item.unigram()), Lookup::Found(100));
     assert_eq!(
         live.read(0x0500_0001, |item| item.unigram()),
@@ -235,8 +235,8 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     let store = crate::user::test_session::open(&user, originals, versions, UserConfLaw::Pinyin)
         .expect("open");
 
-    let unloaded = Cell::new(0);
-    let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
+    let unloaded = 0;
+    let live = LiveSystemItems::new(store.originals().phrase_libraries(), &store, unloaded);
     let (replayed, removed, untouched, absent) = (
         crate::vocab::phrase_index_make_token(1, 1),
         crate::vocab::phrase_index_make_token(1, 2),
@@ -296,8 +296,8 @@ fn live_items_distinguish_found_absent_and_unloaded() {
     );
     assert!(store.system_item_removed(removed));
 
-    let unloaded = Cell::new(1 << 1);
-    let hidden = LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
+    let unloaded = 1 << 1;
+    let hidden = LiveSystemItems::new(store.originals().phrase_libraries(), &store, unloaded);
     assert_eq!(hidden.read(untouched, summary), Lookup::Unloaded);
     assert_eq!(hidden.pronunciation_count(untouched), Lookup::Unloaded);
     assert!(!hidden.is_visible(untouched));

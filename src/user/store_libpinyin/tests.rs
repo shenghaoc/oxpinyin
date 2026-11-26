@@ -902,9 +902,9 @@ fn frequency_of(
     store: &UserStore,
     token: u32,
 ) -> crate::user::Lookup<(crate::user::ItemOrigin, u32)> {
-    let unloaded = std::cell::Cell::new(0);
+    let unloaded = 0;
     let libraries = store.originals().phrase_libraries();
-    crate::user::LiveSystemItems::new(libraries, store, &unloaded).read(token, |item| {
+    crate::user::LiveSystemItems::new(libraries, store, unloaded).read(token, |item| {
         (
             item.origin(),
             item.pronunciation(0).map_or(0, |reading| reading.frequency),
@@ -989,9 +989,9 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     );
     assert_eq!(frequency_of(&store, token(2)), Lookup::Absent);
     assert!(store.system_item_removed(token(2)));
-    let unloaded = std::cell::Cell::new(0);
+    let unloaded = 0;
     let live =
-        crate::user::LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
+        crate::user::LiveSystemItems::new(store.originals().phrase_libraries(), &store, unloaded);
     assert_eq!(live.read(token(2), |_| ()), Lookup::Absent);
     assert_eq!(live.pronunciation_count(token(2)), Lookup::Found(255));
     assert_eq!(
