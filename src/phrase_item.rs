@@ -109,7 +109,16 @@ impl PhraseItemView<'_> {
     /// Whether every declared word of the text lies inside the item's bytes.
     #[must_use]
     pub(crate) fn phrase_words_present(&self) -> bool {
-        self.phrase_codes().all(|word| word.is_some())
+        self.phrase_words().is_some()
+    }
+
+    /// The item's stored UCS-4 words, as `get_phrase_string` copies them
+    /// (074a2219 `phrase_index.h:105-110`), where the bytes hold every
+    /// declared word.
+    #[must_use]
+    pub(crate) fn phrase_words(&self) -> Option<&[[u8; 4]]> {
+        let end = ITEM_HEADER_SIZE.checked_add(4 * self.phrase_length())?;
+        Some(self.bytes.get(ITEM_HEADER_SIZE..end)?.as_chunks::<4>().0)
     }
 
     /// The phrase's stored UCS-4 words in order, `None` where the item's
