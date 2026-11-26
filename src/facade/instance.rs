@@ -350,23 +350,20 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         // index while `&self` is borrowed, so reading it again answers the
         // phrase it answered.
         let mut last = None;
-        Some(
-            self.session
-                .sentence_phrases(index)?
-                .map(move |part| match part {
-                    SentencePart::Token(token) => {
-                        let mut words = smallvec::SmallVec::new();
-                        if self.dict.copy_token_words(token, &mut words) {
-                            last = Some(token);
-                            SentencePhrase::Words(words)
-                        } else {
-                            last.and_then(|last| self.dict.token_words(last))
-                                .unwrap_or_else(|| SentencePhrase::Text(PhraseText::default()))
-                        }
+        Some(self.session.sentence_phrases(index)?.map(move |part| {
+            match part {
+                SentencePart::Token(token) => match self.dict.words_for_token(token) {
+                    Some(words) => {
+                        last = Some(token);
+                        SentencePhrase::Words(words)
                     }
-                    SentencePart::Raw(text) => SentencePhrase::Text(text),
-                }),
-        )
+                    None => last
+                        .and_then(|last| self.dict.token_words(last))
+                        .unwrap_or_else(|| SentencePhrase::Text(PhraseText::default())),
+                },
+                SentencePart::Raw(text) => SentencePhrase::Text(text),
+            }
+        }))
     }
 
     /// The phrase-segment result's token count.
