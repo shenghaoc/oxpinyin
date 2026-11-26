@@ -284,15 +284,12 @@ impl UserStore {
             fini.abandon();
             UserStoreError::SessionSeed
         })?;
-        let has_user_data = holds_user_data(&target, &replayed);
+        let has_user_data = holds_user_data(&target);
 
         // The replay's buffers are the sub-indices' items from here on: the
         // session owns them, and a removal is a slot the buffer holds no item
         // at.
         let has_system_items = !replayed.is_empty();
-        let has_removed_system_items = replayed
-            .values()
-            .any(crate::user::replay::ReplayedLibrary::has_removed);
         let library_offsets = seeded_totals.offsets;
         let system_items = crate::user::system_items::SystemItems::new(replayed)
             .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
@@ -300,7 +297,6 @@ impl UserStore {
         let inner = StoreInner {
             has_system_items: Cell::new(has_system_items),
             system_items: RefCell::new(system_items),
-            has_removed_system_items: Cell::new(has_removed_system_items),
             offsets: RefCell::new(library_offsets),
             dirty: Cell::new(false),
             write_generation: Cell::new(0),
@@ -343,12 +339,9 @@ fn load_user_bigram(dir: Option<&Path>) -> Result<DefaultUserBigramDb, Persisten
     }
 }
 
-/// Whether the opened session holds user data: an item a replay added, the
-/// user bigram's file, or a non-empty arena. The flag only gates a fast path.
-fn holds_user_data(
-    target: &Target,
-    replayed: &crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
-) -> bool {
+/// Whether the opened session holds user data: the user bigram's file or a
+/// non-empty arena. The flag only gates the user-bigram read.
+fn holds_user_data(target: &Target) -> bool {
     let has_bigram_file = target.dir.as_deref().is_some_and(|dir| {
         crate::input::build_path(
             dir,
@@ -356,10 +349,7 @@ fn holds_user_data(
         )
         .exists()
     });
-    replayed
-        .values()
-        .any(crate::user::replay::ReplayedLibrary::has_added)
-        || has_bigram_file
+    has_bigram_file
         || target
             .phrases()
             .libraries

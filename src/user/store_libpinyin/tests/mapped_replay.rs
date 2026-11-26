@@ -172,10 +172,10 @@ fn a_journal_add_into_a_mapped_hole_is_readable() {
     );
 }
 
-/// Basis: policy rows 107 and 111 (a read takes the header's extent, across the
-/// next record; a write reaches only its addressed slot).
+/// Basis: `074a2219 phrase_index.cpp:180-206` (a read takes the header's extent, across the
+/// next record) and `:486-500` (a MODIFY no larger than that extent writes it in place).
 #[test]
-fn a_system_record_crossing_the_next_record_cannot_modify_it() {
+fn a_system_record_crossing_the_next_record_writes_into_it() {
     let mut old = vec![1, 2];
     old.extend_from_slice(&100_u32.to_le_bytes());
     old.extend_from_slice(&0x4f60_u32.to_le_bytes());
@@ -211,24 +211,26 @@ fn a_system_record_crossing_the_next_record_cannot_modify_it() {
     )
     .expect("write overlapping chunk");
     let mut store = profile.open();
+    // Slot 1's extent covers slot 2's record: the in-place MODIFY gives
+    // slot 2 one reading and the unigram 77.
     assert_eq!(store.system_unigram(LIBRARY | 1), Some(100));
-    assert_eq!(store.system_unigram(LIBRARY | 2), Some(50));
+    assert_eq!(store.system_unigram(LIBRARY | 2), Some(77));
     assert_eq!(
         crate::user::LiveSystemItems::unmasked(store.originals().phrase_libraries(), &store)
             .pronunciation_count(LIBRARY | 2)
             .found(),
-        Some(0)
+        Some(1)
     );
     store.mark_modified();
     store.save_reporting().expect("save");
     drop(store);
     let reopened = profile.open();
     assert_eq!(reopened.system_unigram(LIBRARY | 1), Some(100));
-    assert_eq!(reopened.system_unigram(LIBRARY | 2), Some(50));
+    assert_eq!(reopened.system_unigram(LIBRARY | 2), Some(77));
     assert_eq!(
         crate::user::LiveSystemItems::unmasked(reopened.originals().phrase_libraries(), &reopened)
             .pronunciation_count(LIBRARY | 2)
             .found(),
-        Some(0)
+        Some(1)
     );
 }

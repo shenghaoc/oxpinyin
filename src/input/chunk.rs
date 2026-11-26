@@ -247,6 +247,13 @@ impl Mapping {
     pub(crate) fn as_slice(&self) -> &[u8] {
         &self.0
     }
+
+    /// Borrow the mapped bytes for writing. The mapping is private and
+    /// copy-on-write: a write makes only its own pages private, and never
+    /// reaches the file or another mapping of it.
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
 }
 
 /// A failed chunk save after an open or payload write. Header writes abort.

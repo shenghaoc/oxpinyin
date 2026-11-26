@@ -152,6 +152,13 @@ impl SystemItems {
         }
     }
 
+    /// `FacadePhraseIndex::compact`'s rebuild of system library `nibble`'s
+    /// live buffer (074a2219 `phrase_index.cpp:648-675`), if it has one:
+    /// the sum of the readable items it holds.
+    pub(crate) fn compact(&mut self, nibble: u8) -> Option<u32> {
+        self.replayed.get_mut(&nibble).map(ReplayedLibrary::compact)
+    }
+
     /// The live sub-index of system library `nibble` for a save's diff: its
     /// buffer, or the shipped chunk where no write has made one.
     pub(crate) fn live_library<'a>(
@@ -193,16 +200,6 @@ impl SystemItems {
     ) -> Option<Vec<u8>> {
         library_of(&mut self.replayed, &mut self.totals, token, original)?
             .remove_item(token & 0x00ff_ffff)
-    }
-
-    /// Whether any live buffer holds an item its original lacks.
-    pub(crate) fn has_added(&self) -> bool {
-        self.replayed.values().any(ReplayedLibrary::has_added)
-    }
-
-    /// Whether any live buffer had an item of its original taken out.
-    pub(crate) fn has_removed(&self) -> bool {
-        self.replayed.values().any(ReplayedLibrary::has_removed)
     }
 
     pub(crate) fn is_removed(&self, token: PhraseToken) -> bool {

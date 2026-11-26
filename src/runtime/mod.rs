@@ -289,12 +289,11 @@ impl<'a> RuntimeDict<'a> {
                 }
                 text
             });
-        if self.token_filter_active() {
-            // An unloaded library's phrases leave every read: upstream
-            // frees the sub-index (`phrase_index.cpp:260-268`), the
-            // mask keeps the monolithic tables resident but invisible.
-            out.retain(|entry| self.library_visible_token(entry.token()));
-        }
+        // An unloaded library's phrases leave every read: upstream frees
+        // the sub-index (`phrase_index.cpp:260-268`), the mask keeps the
+        // monolithic tables resident but invisible. A removed item fails
+        // its `get_phrase_item` (`:180-206`), as at every pin read.
+        out.retain(|entry| self.library_visible_token(entry.token()));
         Ok((unreadable, system_present))
     }
 
@@ -502,7 +501,7 @@ impl<'a> RuntimeDict<'a> {
         {
             priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
         }
-        if self.token_filter_active() && !self.library_visible_token(token) {
+        if !self.library_visible_token(token) {
             return None;
         }
         Some(priced)
@@ -687,12 +686,6 @@ impl<'a> RuntimeDict<'a> {
             return live.read(token, |_| ()).found().is_some();
         }
         live.is_visible(token)
-    }
-
-    /// Whether any entry-level filter can hide a token: a library is
-    /// unloaded, or the user store holds a removed system item.
-    fn token_filter_active(&self) -> bool {
-        self.live_items().filter_active()
     }
 
     /// Whether phrase-table search has an enabled token array for this library.

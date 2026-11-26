@@ -277,14 +277,6 @@ impl<'a> LiveSystemItems<'a> {
         self.user.has_system_items()
     }
 
-    /// Whether any entry-level filter can hide a token: a library is
-    /// unloaded or the session holds a removed item. Consumers:
-    /// `RuntimeDict::token_filter_active`.
-    #[must_use]
-    pub(crate) fn filter_active(&self) -> bool {
-        self.unloaded_mask() != 0 || self.user.has_removed_system_items()
-    }
-
     /// Whether the token's library is loaded and no journal REMOVE took its
     /// item out. Consumers: `RuntimeDict::library_visible_token`, the export
     /// probe's removed check.

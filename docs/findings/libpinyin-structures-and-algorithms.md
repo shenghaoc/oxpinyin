@@ -235,11 +235,17 @@ private view when the payload fits, and otherwise removes/appends the whole
 payload. A failed record leaves the applied prefix. Stale item views, cross-item
 header reads and the registered short-ADD exception retain their existing laws.
 
-`Merge` in `src/user/replay.rs` owns a writable private view of the
-original file, separate from the immutable save baseline. It copies content only
-when an append needs owned storage, or as a fallback when a second mapping
-cannot be made. Unchanged slot offsets are read directly from the baseline;
-only relocated/removed offsets enter a sparse map. The loader validates and
+`Merge` in `src/user/replay.rs` replays into a live sub-index kept as the
+pin's `SubPhraseIndex` keeps it (`storage/phrase_index.h:257-261`): one offset
+table and one content buffer, read in place from the library's private
+copy-on-write mapping until a write must grow them, then owned
+(`include/memory_chunk.h:102-122`). A removal writes a 0 offset in place; an
+add appends to the content and writes the offset
+(`storage/phrase_index.cpp:208-235`). Every other write goes in place, as the
+pin's does, and a journal payload is stored as it is. Content offsets are
+`guint32` and wrap. `compact` rebuilds both buffers at the pin's points
+(`storage/phrase_index.cpp:648-675`), skipping a library that no write
+changed since its last rebuild. The loader validates and
 walks one journal byte buffer without building a vector of records; mask
 snapshots keep the owned-record path. Session opens retain completed
 original-item views after constant-time structural validation of each
@@ -671,7 +677,7 @@ relative to the repository root.
 | Table-text scanner | First 4 fields. At most 4095 bytes per read and 255 bytes per copied string. Decimal tokens fit `u32` and counts fit `size_t` | `storage/table_text_parser.h:34-49,54-90,99-114` | `utils/src/storage/table_text.rs:38-41,69-86`, `TableFile::read_line`, `ascii_strtoull` and `strlcpy_256` in `tool-support/src/input.rs` |
 | MemoryChunk header and checksum | 8-byte minimum header. Four-byte little-endian checksum words and eight-bit shifts for remaining bytes | `include/memory_chunk.h:69,136-160,427-438,486-496` | `src/input/chunk.rs:108-118`, `src/data/chunk_format.rs:29,66-78` |
 | SingleGram header and record stride | 4-byte minimum header, 8-byte item stride | `storage/ngram.cpp:37-38,48-70`, `include/novel_types.h:105-108` | `src/single_gram.rs:20-23`, `src/user/store.rs:1454-1467` |
-| Journal ADD item header and mask-out header count | ADD needs at least 6 bytes. Mask-out needs one journal header and asserts on a second | `storage/phrase_index.h:56,124-126`, `storage/phrase_index.cpp:457,721-747` | `src/user/replay.rs:911-917`, `src/user/persistence.rs:1931-1942` |
+| Journal ADD item header and mask-out header count | ADD needs at least 6 bytes. Mask-out needs one journal header and asserts on a second | `storage/phrase_index.h:56,124-126`, `storage/phrase_index.cpp:457,721-747` | `src/user/replay.rs:234-236`, `src/user/persistence.rs:1931-1942` |
 | Phrase-item length and pronunciation count | Both fields are 8-bit unsigned. The 256th distinct pronunciation wraps the count to zero | `storage/phrase_index.h:100-114`, `storage/phrase_index.cpp:56-91,195-204` | `src/user/user_library.rs:372`, `src/user/store.rs:327-330,365` |
 | Phrase-content offset and signed bulk growth | At the pin offsets wrap modulo 2³². A fresh bulk copy reaches the unsafe growth boundary at 2³¹ bytes | `include/novel_types.h:128`, `storage/phrase_index.cpp:208-217,365-390`, `storage/phrase_index_logger.h:115-117`, `include/memory_chunk.h:95-98,290-296` | Runtime offsets keep their width and stored offsets are checked. `src/user/user_library.rs`, `src/user/persistence.rs`. Compatibility policy rows 111–112 cover these boundaries |
 | Journal record payload length | The 16-bit field wraps modulo 65536 | `storage/phrase_index_logger.h:248-293` | The encoder refuses a payload above 65535 bytes. `src/data/user_files.rs:886-926`. [Accepted language artefact](upstream-divergences.md#oversized-journal-record-payloads-policy-row-123) |

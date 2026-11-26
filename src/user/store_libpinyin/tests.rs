@@ -910,7 +910,9 @@ fn frequency_of(
     })
 }
 
-/// Basis: policy row 107 (an over-read item answers no item; the records around it apply).
+/// Basis: `074a2219 phrase_index.cpp:486-500` (the over-read header is written in place);
+/// policy row 130 (its item passes the content end: no item, the count inside the content
+/// stays readable); the records around it apply.
 #[test]
 fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     use crate::data::phrase_library::encode_phrase_item;
@@ -989,7 +991,7 @@ fn an_over_read_item_answers_no_item_and_the_records_around_it_stay() {
     let live =
         crate::user::LiveSystemItems::new(store.originals().phrase_libraries(), &store, &unloaded);
     assert_eq!(live.read(token(2), |_| ()), Lookup::Absent);
-    assert_eq!(live.pronunciation_count(token(2)), Lookup::Absent);
+    assert_eq!(live.pronunciation_count(token(2)), Lookup::Found(255));
     assert_eq!(
         frequency_of(&store, token(3)),
         Lookup::Found((ItemOrigin::Overlay, 39))
@@ -1058,7 +1060,6 @@ fn session_owns_the_replayed_overrides_it_was_opened_with() {
         BTreeMap::from([(token, None)])
     );
     assert!(store.has_system_items());
-    assert!(store.has_removed_system_items());
     assert!(store.system_item_removed(token));
     assert!(store.system_item_removed(token + 1));
     let state = export_state(&store, &originals()).expect("export");
@@ -2556,9 +2557,11 @@ fn mapped_system_append_accepts_second_reading_after_save_and_reopen() {
     std::fs::remove_dir_all(shipped_dir).expect("cleanup shipped");
 }
 
-/// Basis: policy rows 107 and 111 (each write changes only its addressed slot).
+/// Basis: `074a2219 phrase_index.cpp:150-178` (a unigram write goes in place, into the
+/// record an aliased offset shares) and `:477-484` (the replay stops at the alias's MODIFY,
+/// whose old item no longer matches).
 #[test]
-fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
+fn aliased_offsets_share_their_writes_through_save_and_reopen() {
     use crate::data::chunk_format::chunk_checksum;
     use crate::data::phrase_library::PhraseLibrary;
     use crate::data::phrase_library::build_chunk;
@@ -2614,7 +2617,14 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
                 store.system_unigram(b),
                 store.system_unigram(c)
             ),
-            (Some(105), Some(100), Some(70))
+            (Some(105), Some(105), Some(70))
+        );
+        // Every write reaches both slots of the shared record.
+        assert!(store.add_system_unigram_frequency(a, 3));
+        assert!(store.add_system_unigram_frequency(b, 2));
+        assert_eq!(
+            (store.system_unigram(a), store.system_unigram(b)),
+            (Some(110), Some(110))
         );
         assert!(store.add_system_unigram_frequency(c, 7));
         assert_eq!(store.system_unigram(c), Some(77));
@@ -2625,7 +2635,7 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
     let records: Vec<LogRecord<Vec<u8>>> = log_records(&payload)
         .map(|record| record.expect("record").into_owned())
         .collect();
-    assert_eq!(records.len(), 3, "{records:?}");
+    assert_eq!(records.len(), 4, "{records:?}");
     let LogRecord::ModifyHeader {
         old_total,
         new_total,
@@ -2633,7 +2643,7 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
     else {
         panic!("{:?}", records[0]);
     };
-    assert_eq!((*old_total, *new_total), (220, 282));
+    assert_eq!((*old_total, *new_total), (220, 297));
     let modify = |record: &LogRecord<Vec<u8>>| match record {
         LogRecord::Modify {
             token,
@@ -2645,10 +2655,13 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
         | LogRecord::ModifyHeader { .. }) => panic!("{other:?}"),
     };
     let (token_a, old_a, new_a) = modify(&records[1]);
-    let (token_c, old_c, new_c) = modify(&records[2]);
-    assert_eq!((token_a, token_c), (1, 3));
+    let (token_b, old_b, new_b) = modify(&records[2]);
+    let (token_c, old_c, new_c) = modify(&records[3]);
+    assert_eq!((token_a, token_b, token_c), (1, 2, 3));
     assert_eq!(u32::from_le_bytes(old_a[2..6].try_into().unwrap()), 100);
-    assert_eq!(u32::from_le_bytes(new_a[2..6].try_into().unwrap()), 105);
+    assert_eq!(u32::from_le_bytes(new_a[2..6].try_into().unwrap()), 110);
+    assert_eq!(u32::from_le_bytes(old_b[2..6].try_into().unwrap()), 100);
+    assert_eq!(u32::from_le_bytes(new_b[2..6].try_into().unwrap()), 110);
     assert_eq!(u32::from_le_bytes(old_c[2..6].try_into().unwrap()), 70);
     assert_eq!(u32::from_le_bytes(new_c[2..6].try_into().unwrap()), 77);
     let store = crate::user::test_session::open(&dir, originals(), versions(), UserConfLaw::Pinyin)
@@ -2659,7 +2672,7 @@ fn aliased_offsets_keep_independent_values_through_save_and_reopen() {
             store.system_unigram(b),
             store.system_unigram(c)
         ),
-        (Some(105), Some(100), Some(77))
+        (Some(110), Some(110), Some(70))
     );
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");

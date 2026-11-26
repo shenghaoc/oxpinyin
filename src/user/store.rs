@@ -520,21 +520,14 @@ pub(crate) type Offsets = crate::user::LibraryTable<u32>;
 pub struct StoreInner {
     pub(crate) has_system_items: Cell<bool>,
     pub(crate) system_items: RefCell<crate::user::system_items::SystemItems>,
-    /// Whether a journal REMOVE took out an item of a loaded system library:
-    /// `get_phrase_item` fails for it from then on (074a2219
-    /// `phrase_index.cpp:180-206`, `:219-236`), though the shipped chunk still
-    /// holds the item and the phrase table the token. The library's live
-    /// buffer is the record; this only gates the per-token check.
-    pub(crate) has_removed_system_items: Cell<bool>,
     /// The user libraries' stored-total differences ([`Offsets`]).
     pub(crate) offsets: RefCell<Offsets>,
     pub(crate) dirty: Cell<bool>,
     /// Revision observed by the phrase export iterator.
     pub(crate) write_generation: Cell<u64>,
-    /// First gate on the decode read path: `false` answers `count_delta` and
-    /// `unigram_delta` with zero from this one flag.
-    /// Recomputed at `open` and maintained only
-    /// by `UserStore::mark_committed_write`.
+    /// The gate in front of the user-bigram read: `false` means the
+    /// container holds no gram. Recomputed at `open` and maintained only by
+    /// `UserStore::mark_committed_write`.
     pub(crate) has_user_data: Cell<bool>,
     /// The libpinyin session metadata (optional directory, system originals).
     /// Transient sessions retain originals without a directory; others use the
@@ -1190,7 +1183,9 @@ impl UserStore {
                 let old = items
                     .library_total(library, Some(original))
                     .unwrap_or(original.total);
-                let new = items.compacted_total(library, original);
+                let new = items
+                    .compact(library)
+                    .unwrap_or_else(|| items.compacted_total(library, original));
                 items.set_library_total(library, new);
                 let share = old.wrapping_sub(original.total);
                 items.add_facade_extra(u64::from(share.wrapping_sub(new.wrapping_sub(current))));
@@ -2107,7 +2102,6 @@ impl UserStore {
                 .libraries
                 .retain(|nibble, _| !originals.contains_key(nibble));
         }
-        let buffer_live;
         {
             let phrases = target.phrases();
             let arena_has_system_items = phrases
@@ -2131,11 +2125,9 @@ impl UserStore {
                     }
                 }
             }
-            buffer_live = items.has_added();
             self.inner
                 .has_system_items
                 .set(!items.is_empty() || arena_has_system_items);
-            self.inner.has_removed_system_items.set(items.has_removed());
         }
         let arena_live = {
             let phrases = target.phrases();
@@ -2143,7 +2135,7 @@ impl UserStore {
                 .libraries
                 .values()
                 .any(|library| !library.is_empty())
-        } || buffer_live;
+        };
         // A session's grams are user data too.
         let has_grams = self.container().is_empty().is_ok_and(|empty| !empty);
         self.mark_committed_write(has_grams || arena_live);
@@ -2263,14 +2255,6 @@ impl UserStore {
     #[must_use]
     pub(crate) fn has_system_items(&self) -> bool {
         self.inner.has_system_items.get()
-    }
-
-    /// Whether a journal REMOVE took out a system item of this session
-    /// ([`Self::system_item_removed`]): the one flag that gates the
-    /// per-token check.
-    #[must_use]
-    pub(crate) fn has_removed_system_items(&self) -> bool {
-        self.inner.has_removed_system_items.get()
     }
 
     /// Whether a journal REMOVE took the item behind system `token` out of
@@ -2629,7 +2613,6 @@ impl UserStore {
         }
         drop(phrases);
         self.inner.has_system_items.set(true);
-        self.inner.has_removed_system_items.set(true);
         self.mark_committed_write(true);
     }
 }

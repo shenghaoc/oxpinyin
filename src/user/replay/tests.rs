@@ -1,5 +1,6 @@
 use super::*;
 use crate::data::phrase_library::PhraseLibrary;
+use std::collections::BTreeMap;
 
 fn item(phrase: &[u32], unigram: u32, prons: &[(Vec<u16>, u32)]) -> ChunkItem {
     ChunkItem {
@@ -58,9 +59,8 @@ fn add_candidates_preserve_sparse_additions() {
     for (name, merge, added) in cases {
         let (_, _, view) = merge.finish_views(&mut None, &"test");
         let view = view.expect("retained originals");
-        let expected: Vec<_> = view
-            .slots()
-            .filter(|&slot| !original.contains_item(slot))
+        let expected: Vec<_> = (1..view.range_end())
+            .filter(|&slot| !original.contains_item(slot) && view.item(slot).is_some())
             .collect();
         let actual: Vec<_> = view
             .add_candidates()
@@ -133,9 +133,25 @@ fn merge_of(library: &SystemLibrary, records: Vec<LogRecord>) -> Merged {
     let (total, gone, retained) = merge.finish_views(&mut None, &"test");
     let mut overrides: BTreeMap<_, _> = gone.into_iter().map(|slot| (slot, None)).collect();
     if let Some(retained) = retained {
-        overrides.extend(retained.slots().map(|slot| (slot, retained.item(slot))));
+        overrides.extend(changed_items(
+            &ReplayedLibrary::pristine(library.view()),
+            &retained,
+        ));
     }
     (outcome, total, overrides)
+}
+
+/// The slots whose item `after` reads differently from `before`.
+fn changed_items(
+    before: &ReplayedLibrary,
+    after: &ReplayedLibrary,
+) -> BTreeMap<u32, Option<ChunkItem>> {
+    (0..before.range_end().max(after.range_end()))
+        .filter_map(|slot| {
+            let now = after.item(slot);
+            (now != before.item(slot)).then_some((slot, now))
+        })
+        .collect()
 }
 
 fn modify(token: u32, old_item: Vec<u8>, new_item: Vec<u8>) -> LogRecord {
@@ -266,9 +282,10 @@ fn an_absent_modify_stops_with_the_previous_item_intact() {
     assert!(!overrides.contains_key(&7));
 }
 
-/// Basis: policy row 107 (journal payloads stand alone).
+/// Basis: `074a2219 phrase_index.cpp:486-500` (a payload no larger than the item is written
+/// over it in place); `:180-206` (the read takes the header's extent, across the old bytes).
 #[test]
-fn an_incomplete_modify_cannot_borrow_bytes_from_other_records() {
+fn an_incomplete_modify_completes_from_the_bytes_it_overwrites() {
     let short = bytes_with(&[1, 1], 200);
     let (outcome, total, overrides) = merge_of(
         &library(),
@@ -282,7 +299,10 @@ fn an_incomplete_modify_cannot_borrow_bytes_from_other_records() {
     );
     assert!(outcome.is_ok());
     assert_eq!(total, Some(250));
-    assert_eq!(overrides.get(&1), Some(&None));
+    assert_eq!(
+        overrides.get(&1),
+        Some(&Some(item(&[0x4f60], 200, &[(vec![1], 100)])))
+    );
     assert!(!overrides.contains_key(&2));
     assert!(overrides[&5].is_some());
 }
@@ -375,18 +395,39 @@ fn an_empty_phrase_is_an_item_of_its_header_length() {
 
 fn assert_rollback_restores(original: &SystemLibrary, records: Vec<LogRecord>) {
     let mut merge = Merge::new(Some(original.view()));
+    let lengths = (merge.live.offsets().len(), merge.live.content().len());
     for record in records {
         assert!(merge.apply_fixture(&record).is_ok());
     }
-    assert!(!merge.live.changes.is_empty());
+    assert!(logged(&merge));
     let rolled = merge.rollback();
     let before = ReplayedLibrary::pristine(original.view());
+    assert_restored(&rolled, &before);
+    assert_eq!((rolled.offsets().len(), rolled.content().len()), lengths);
+}
+
+fn logged(merge: &Merge) -> bool {
+    merge
+        .live
+        .journal
+        .as_ref()
+        .is_some_and(|journal| !journal.undo.is_empty())
+}
+
+/// Every slot reads, allocates and answers as before the replay.
+fn assert_restored(rolled: &ReplayedLibrary, before: &ReplayedLibrary) {
     assert_eq!(rolled.total(), before.total());
     assert_eq!(rolled.range_end(), before.range_end());
     for slot in 0..before.range_end() {
         assert_eq!(rolled.item_bytes(slot), before.item_bytes(slot));
+        assert_eq!(
+            rolled.ordinary_item(slot).map(|item| item.as_bytes()),
+            before.ordinary_item(slot).map(|item| item.as_bytes())
+        );
+        assert_eq!(rolled.is_added_slot(slot), before.is_added_slot(slot));
+        assert!(!rolled.item_is_incomplete(slot));
     }
-    assert_eq!(rolled.slots().count(), 0);
+    assert!(changed_items(before, rolled).is_empty());
 }
 
 fn rollback_cases() -> Vec<Vec<LogRecord>> {
@@ -413,6 +454,18 @@ fn rollback_cases() -> Vec<Vec<LogRecord>> {
             },
             modify(2, two(), with_freq(two(), 88)),
         ],
+        // A distant ADD, then a REMOVE and an incomplete MODIFY.
+        vec![
+            LogRecord::Add {
+                token: 5000,
+                new_item: one(),
+            },
+            LogRecord::Remove {
+                token: 2,
+                old_item: two(),
+            },
+            modify(1, one(), bytes_with(&[1, 1], 3)),
+        ],
     ]
 }
 
@@ -436,7 +489,7 @@ fn rollback_restores_a_mapped_buffer() {
     let dir = crate::user::test_session::tempdir("rollback");
     let path = dir.join("rollback.bin");
     std::fs::write(&path, chunk).expect("write");
-    for records in rollback_cases().into_iter().take(1) {
+    for records in rollback_cases() {
         let mapped = crate::data::phrase_library::PhraseLibrary::open(&path).expect("open");
         let mut library = SystemLibrary {
             total: mapped.total_freq(),
@@ -453,18 +506,14 @@ fn rollback_restores_a_mapped_buffer() {
             .expect("owner");
         let live = ReplayedLibrary::from_mapping(content, library.total);
         let mut merge = Merge::from_live(Some(library.view()), live);
-        assert!(matches!(merge.live.baseline, Baseline::Mapped(_)));
+        assert!(merge.live.mapping.is_some());
         for record in records {
             assert!(merge.apply_fixture(&record).is_ok());
         }
-        assert!(!merge.live.changes.is_empty());
+        assert!(logged(&merge));
         let rolled = merge.rollback();
-        assert_eq!(rolled.total(), before.total());
-        assert_eq!(rolled.range_end(), before.range_end());
-        for slot in 0..before.range_end() {
-            assert_eq!(rolled.item_bytes(slot), before.item_bytes(slot));
-        }
-        assert_eq!(rolled.slots().count(), 0);
+        // The offset words written in the mapping are back.
+        assert_restored(&rolled, &before);
     }
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
@@ -485,14 +534,19 @@ fn sparse_unigram_edits_emit_only_changed_items_and_replay_the_native_journal() 
         let mut live = ReplayedLibrary::pristine(old.view());
         let mut expected = vec![LogRecord::ModifyHeader {
             old_total: total,
-            new_total: if total == 7 { 9 } else { total },
+            new_total: if total == 7 { 11 } else { total },
         }];
         for (slot, before) in &old.items {
             let outcome = live.add_unigram(*slot, 1);
             if total == 7 {
                 assert!(matches!(outcome, UnigramAdd::Accepted));
+                // The first edit copied the record to the content end; the
+                // second writes that copy in place.
+                let content = live.content().len();
+                assert!(matches!(live.add_unigram(*slot, 1), UnigramAdd::Accepted));
+                assert_eq!(live.content().len(), content);
                 let mut after = before.clone();
-                after.unigram += 1;
+                after.unigram += 2;
                 expected.push(modify(
                     *slot,
                     journal_item_bytes(before),
@@ -657,7 +711,50 @@ fn training_leaves_an_absent_slot_alone_and_does_not_consume_the_readings() {
         consumed = true;
         None::<Vec<ChewingKey>>
     });
+    let end = buffer.range_end();
     assert!(!buffer.train(9, readings, 5));
     assert!(!consumed);
-    assert!(buffer.slots().all(|slot| slot != 9));
+    assert!(buffer.item(9).is_none());
+    assert_eq!(buffer.range_end(), end);
+}
+
+/// Basis: `074a2219 phrase_index.cpp:624-646` (`get_range` scans back past
+/// zero offsets) and `:648-675` (`compact`); policy row 130 (an item past the
+/// content end reads as no item and keeps its slot).
+#[test]
+fn range_end_gives_back_trailing_removals_and_keeps_incomplete_slots() {
+    let mut live = ReplayedLibrary::pristine(library().view());
+    assert_eq!(live.range_end(), 3);
+    // An item past the table grows it.
+    live.add_item(7, &one());
+    assert_eq!(live.range_end(), 8);
+    // A trailing removal gives its slot back, with the zero offsets below it.
+    assert!(live.remove_item(7).is_some());
+    assert_eq!(live.range_end(), 3);
+    assert!(live.remove_item(2).is_some());
+    assert_eq!(live.range_end(), 2);
+    // A payload stored whole whose header passes the content end reads as
+    // no item and still occupies its slot.
+    live.add_item(5, &bytes_with(&[1, 1], 7));
+    assert!(live.item(5).is_none());
+    assert!(live.item_is_incomplete(5));
+    assert_eq!(live.range_end(), 6);
+    // An offset past the content reads as no item and occupies its slot.
+    live.put_word(4, live.content().len() as u32 + 100);
+    assert!(live.item_field_bytes(4).is_none());
+    // The rebuild keeps every read and every slot.
+    let before: Vec<_> = (0..6)
+        .map(|slot| live.item_field_bytes(slot).map(Cow::into_owned))
+        .collect();
+    // It answers the readable sum the slot walk finds, and again unchanged.
+    let sum = live.readable_unigram_sum();
+    assert_eq!(live.compact(), sum);
+    assert_eq!(live.compact(), sum);
+    let after: Vec<_> = (0..6)
+        .map(|slot| live.item_field_bytes(slot).map(Cow::into_owned))
+        .collect();
+    assert_eq!(after, before);
+    assert_eq!(live.range_end(), 6);
+    assert!(live.remove_item(1).is_some());
+    assert_eq!(live.range_end(), 6);
 }

@@ -197,8 +197,7 @@ impl UserStore {
         self.mark_committed_write(arena_live || grams_live);
     }
 
-    /// Whether the session holds an item beyond the shipped chunks: an arena
-    /// item of a user library, or one a system library's live buffer added.
+    /// Whether a user library's arena holds an item.
     pub(super) fn arena_has_items(&self) -> bool {
         self.inner
             .libpinyin
@@ -206,7 +205,6 @@ impl UserStore {
             .libraries
             .values()
             .any(|library| !library.is_empty())
-            || self.inner.system_items.borrow().has_added()
     }
 
     /// Addon selection copies the complete item under `token`, including
