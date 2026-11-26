@@ -1,7 +1,7 @@
 //! The shared comparison and the narrow masks that every frozen case uses.
 use crate::support::expected::*;
 use crate::support::*;
-use oxpinyin::store::{DefaultStore, WriteStore as _, WriteTxn as _};
+use oxpinyin::store::{DefaultStore, WriteStore as _};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::Path;
@@ -78,13 +78,9 @@ fn tree_and_hash_rows_keep_keys_values_and_empty_values() {
         } else {
             DefaultStore::create(&path).expect("tree store")
         };
-        store
-            .write(|txn| {
-                txn.put_raw(&[2, 0], &[5, 6])?;
-                txn.put_raw(&[1, 0], &[1, 2, 3, 4])?;
-                txn.put_raw(&[3, 0], &[])
-            })
-            .expect("write");
+        store.set_raw(&[2, 0], &[5, 6]).expect("write");
+        store.set_raw(&[1, 0], &[1, 2, 3, 4]).expect("write");
+        store.set_raw(&[3, 0], &[]).expect("write");
         drop(store);
         assert_eq!(
             rows(&path).expect("rows"),
@@ -230,7 +226,7 @@ fn changed_dbm_rows_are_rejected() {
     let (directory, before) = tree();
     let path = directory.path().join("rows.db");
     let store = DefaultStore::create(&path).unwrap();
-    store.write(|txn| txn.put_raw(b"key", b"original")).unwrap();
+    store.set_raw(b"key", b"original").unwrap();
     drop(store);
     let files = after(directory.path(), &before);
     let digest = files
@@ -248,7 +244,7 @@ fn changed_dbm_rows_are_rejected() {
         &expected
     ));
     let store = DefaultStore::create(&path).unwrap();
-    store.write(|txn| txn.put_raw(b"key", b"originaL")).unwrap();
+    store.set_raw(b"key", b"originaL").unwrap();
     drop(store);
     let files = after(directory.path(), &before);
     assert!(refuses(

@@ -246,7 +246,7 @@ mod flexible_bigram {
         ArrayItemWithToken, AttachMode, FixedRecord, FlexibleBigram, FlexibleGramSpec, MAGIC_KEY,
         SingleGram,
     };
-    use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, WriteStore, WriteTxn};
+    use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, WriteStore};
 
     // ── the k-mixture-model records ────────────────────────────────────
 
@@ -552,8 +552,7 @@ mod flexible_bigram {
         let foreign = scratch.path().join("foreign.db");
         {
             let db = DefaultStore::create_hash(&foreign).expect("hash create");
-            db.write(|txn| txn.put_raw(&MAGIC_KEY, b"BAAD"))
-                .expect("foreign magic");
+            db.set_raw(&MAGIC_KEY, b"BAAD").expect("foreign magic");
         }
         for mode in [AttachMode::OpenOrCreateWritable, AttachMode::ReadOnly] {
             let model = Model::attach(Some(&foreign), mode).expect("attach");
@@ -567,7 +566,7 @@ mod flexible_bigram {
         let signatureless = scratch.path().join("signatureless.db");
         {
             let db = DefaultStore::create_hash(&signatureless).expect("hash create");
-            db.write(|txn| txn.put_raw(&7u32.to_ne_bytes(), b"not a model"))
+            db.set_raw(&7u32.to_ne_bytes(), b"not a model")
                 .expect("foreign row");
         }
         let model =
@@ -584,8 +583,7 @@ mod flexible_bigram {
         let path = scratch.path().join("foreign.db");
         {
             let db = DefaultStore::create_hash(&path).expect("hash create");
-            db.write(|txn| txn.put_raw(&MAGIC_KEY, b"BAAD"))
-                .expect("foreign magic");
+            db.set_raw(&MAGIC_KEY, b"BAAD").expect("foreign magic");
         }
         {
             let model =
@@ -693,12 +691,9 @@ mod flexible_bigram {
                 let path = scratch.join("short.db");
                 {
                     let db = DefaultStore::create_hash(&path).expect("hash create");
-                    db.write(|txn| {
-                        txn.put_raw(&MAGIC_KEY, b"KMMP")?;
-                        txn.put_raw(&7u32.to_ne_bytes(), &[0u8; 4])?;
-                        Ok(())
-                    })
-                    .expect("short record");
+                    db.set_raw(&MAGIC_KEY, b"KMMP").expect("short record");
+                    db.set_raw(&7u32.to_ne_bytes(), &[0u8; 4])
+                        .expect("short record");
                 }
                 *before.borrow_mut() = fs::read(&path).expect("saved record");
             },

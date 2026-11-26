@@ -141,14 +141,6 @@ bool synchronize(const kc::BasicDB& db, bool hard) {
   return mutable_db(db).synchronize(hard);
 }
 
-bool begin_transaction(const kc::BasicDB& db, bool hard) {
-  return mutable_db(db).begin_transaction(hard);
-}
-
-bool end_transaction(const kc::BasicDB& db, bool commit) {
-  return mutable_db(db).end_transaction(commit);
-}
-
 bool load_snapshot(const kc::BasicDB& db, const std::string& path) {
   return mutable_db(db).load_snapshot(path);
 }

@@ -39,24 +39,21 @@
 //! Weak, and for the same reason as tkrzw's.
 //! libpinyin uses no Berkeley DB environment and no transactions — every
 //! `open` passes `NULL` for both — so a standalone `DB` handle has no
-//! transaction to commit. [`crate::store::WriteStore::write`] therefore buffers
-//! the closure's puts and removes, answers in-closure reads from that
-//! buffer over the database, and applies the buffer in one pass on `Ok`;
-//! on `Err` the buffer is dropped and nothing is written. A crash
-//! *during* that apply can leave part of a batch on disk.
+//! transaction to commit. Each raw write is one native call:
+//! [`WriteStore::set_raw`] one `DB->put`, [`WriteStore::remove_raw`] one
+//! `DB->del`; a removal of an absent record is the not-found answer. The
+//! pin has no multi-record operation. A crash *during* a save can leave
+//! part of the file's records applied.
 //!
 //! Durability is the other way round: it is *stronger* here, not weaker.
-//! Each commit ends with `DB->sync`, which is the only flush libdb
-//! offers an environment-less handle, so once `write` returns the batch
-//! is on the device rather than merely in the operating system's hands.
-//! This backend cannot offer the soft commit tier Kyoto Cabinet and
-//! tkrzw use; [`crate::store::WriteStore::compact`] calls the same `DB->sync`
-//! and so owes nothing `write` has not already paid. The sync does not
-//! repair the atomicity: the apply pass writes one record at a time and
-//! the sync follows it, so a crash mid-apply leaves part of the batch
-//! applied — and a crash that tears one of those page writes can
-//! corrupt the database outright, which re-opening does not repair;
-//! recovery is from a known-good copy.
+//! [`WriteStore::flush`] ends with `DB->sync`, which is the only flush libdb
+//! offers an environment-less handle, so once it returns the records are on
+//! the device rather than merely in the operating system's hands. The sync
+//! does not repair the atomicity: the save writes one record at a time and
+//! the sync follows it, so a crash mid-write leaves part of it applied — and
+//! a crash that tears one of those page writes can corrupt the database
+//! outright, which re-opening does not repair; recovery is from a
+//! known-good copy.
 //!
 //! Matching libpinyin here is the point: a transactional environment
 //! would write log and region files beside the user's profile, which
@@ -81,13 +78,11 @@
 
 mod ffi;
 
-use std::collections::BTreeMap;
-use std::marker::PhantomData;
 use std::ops::Bound;
 use std::path::Path;
 
 use crate::store::common::{Row, in_bounds};
-use crate::store::{Flow, RawReadStore, StoreError, WriteStore, WriteTxn};
+use crate::store::{Flow, RawReadStore, StoreError, WriteStore};
 
 use ffi::{Db, Seek};
 
@@ -155,40 +150,6 @@ impl BdbStore {
             Db::open_attach(path, db_type, read_only, create, ffi::SYSTEM_FILE_MODE)?
                 .map(|db| Self { db }),
         )
-    }
-
-    /// Applies a finished transaction's buffer and syncs. Not generic, so
-    /// the many `write` closures share one copy of it.
-    #[inline(never)]
-    fn commit(&self, buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), StoreError> {
-        self.commit_with(buffer, true).map(drop)
-    }
-
-    /// Applies `buffer`, one `DB->put` or `DB->del` per record, then syncs
-    /// when `sync`. The answer is false when a `DB->del` found no record.
-    fn commit_with(
-        &self,
-        buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-        sync: bool,
-    ) -> Result<bool, StoreError> {
-        let mut found = true;
-        for (key, value) in buffer {
-            match value {
-                Some(value) => self.db.put(&key, &value)?,
-                None => found &= self.db.del(&key)?,
-            }
-        }
-        // Push the batch out, so a reader — including the user's own
-        // libpinyin — sees a consistent file once `write` returns.
-        // Without it the pages stay in the private mpool of a handle
-        // opened with no environment, where no other process can reach
-        // them. `DB->sync` is the only flush available here and it goes
-        // all the way to the device, so this commit exceeds the seam's
-        // floor; see `WriteStore::write`'s durability note.
-        if sync {
-            self.db.sync()?;
-        }
-        Ok(found)
     }
 
     /// The raw keyspace in ascending key order — the ordered (`DB_BTREE`)
@@ -357,8 +318,6 @@ impl RawReadStore for BdbStore {
 }
 
 impl WriteStore for BdbStore {
-    type Txn<'a> = BdbTxn<'a>;
-
     /// A system table, created as `attach` creates one: mode 0644
     /// (`ffi::SYSTEM_FILE_MODE`).
     fn create(path: &Path) -> Result<Self, StoreError> {
@@ -407,14 +366,6 @@ impl WriteStore for BdbStore {
         })
     }
 
-    /// A user index table, created as `save_db` creates one: mode 0600
-    /// (`ffi::USER_FILE_MODE`).
-    fn create_user(path: &Path) -> Result<Self, StoreError> {
-        Ok(Self {
-            db: Db::open(path, ffi::DB_BTREE, false, true, ffi::USER_FILE_MODE)?,
-        })
-    }
-
     /// `ChewingLargeTable2::save_db` / `PhraseLargeTable3::save_db`
     /// (`chewing_large_table2_bdb.cpp:135-162`,
     /// `phrase_large_table3_bdb.cpp:150-177` at 074a2219): unlink, create a
@@ -434,80 +385,8 @@ impl WriteStore for BdbStore {
         Ok(())
     }
 
-    fn write<R>(
-        &self,
-        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<R, StoreError> {
-        // A read-only store refuses the whole transaction, not merely the
-        // writes inside it: the tier contract is that `write` on a
-        // read-only handle is `ReadOnly` even when the closure happens to
-        // write nothing, which the shared write suite asserts.
-        if self.db.is_read_only() {
-            return Err(StoreError::ReadOnly);
-        }
-        let mut txn = BdbTxn {
-            store: PhantomData,
-            buffer: BTreeMap::new(),
-        };
-        let out = f(&mut txn)?;
-        self.commit(txn.buffer)?;
-        Ok(out)
-    }
-
-    /// `FlexibleBigram::store` and `remove` (`flexible_ngram_bdb.h:
-    /// 198-214`, `:224-235` at 074a2219): the `DB->put` or `DB->del` alone,
-    /// its answer the pin's. `reset()` makes the one `DB->sync`
-    /// (`:51-57`), which [`WriteStore::flush`] is.
-    fn write_deferred<R>(
-        &self,
-        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<(R, bool), StoreError> {
-        if self.db.is_read_only() {
-            return Err(StoreError::ReadOnly);
-        }
-        let mut txn = BdbTxn {
-            store: PhantomData,
-            buffer: BTreeMap::new(),
-        };
-        let out = f(&mut txn)?;
-        let found = self.commit_with(txn.buffer, false)?;
-        Ok((out, found))
-    }
-
     fn flush(&self) -> Result<(), StoreError> {
         self.db.sync()
-    }
-}
-
-/// The buffered write transaction described in the module note.
-pub struct BdbTxn<'store> {
-    /// The transaction borrows its store for its lifetime.
-    store: PhantomData<&'store BdbStore>,
-    /// Raw key → new value, or `None` for a removal. Ordered so the apply
-    /// pass touches keys in B-tree order.
-    buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-}
-
-impl WriteTxn for BdbTxn<'_> {
-    // The point operations stay out of line: the user store calls them from
-    // hundreds of sites, and inlining each one's buffer insert into every
-    // caller costs far more code than a direct call. Dispatch is static
-    // either way.
-
-    /// The bare-keyspace half of the raw seam: what `stage_dbm`'s tree
-    /// containers and the user-bigram writer write through, and what
-    /// `get_raw`/`range_raw` read back on this backend.
-    #[inline(never)]
-    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        self.buffer.insert(key.to_vec(), Some(value.to_vec()));
-        Ok(())
-    }
-
-    /// The removal half of [`WriteTxn::put_raw`].
-    #[inline(never)]
-    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
-        self.buffer.insert(key.to_vec(), None);
-        Ok(())
     }
 }
 

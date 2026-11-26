@@ -2,12 +2,7 @@ use super::{
     Class, Db, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_SUCCESS, TkrzwStore, TkrzwUserBigramDb,
     copy_tkrzwdb, open_hash, open_hash_create, open_system,
 };
-use crate::store::{GramReadOwned, RawReadOwned, StoreError, UserBigramDb, WriteStore, WriteTxn};
-
-fn header_record_count(path: &std::path::Path) -> u64 {
-    let bytes = std::fs::read(path).unwrap();
-    u64::from_be_bytes(bytes[24..32].try_into().unwrap())
-}
+use crate::store::{GramReadOwned, RawReadOwned, StoreError, UserBigramDb, WriteStore};
 
 fn reset_syncs() -> usize {
     super::RESET_SYNCS.with(std::cell::Cell::get)
@@ -219,29 +214,6 @@ fn loading_preserves_the_pins_colliding_bucket_chain_and_values() {
     assert_eq!(loaded.keys().unwrap(), before);
 }
 
-// 074a2219 flexible_ngram_tkrzwdb.h:84-90,236-246,257-263 synchronizes on reset.
-#[test]
-fn a_deferred_write_and_remove_leave_the_synchronize_to_flush() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("flexible.db");
-    let store = open_hash_create(&path).unwrap();
-    store
-        .write_deferred(|txn| txn.put_raw(b"key1", b"one"))
-        .unwrap();
-    store
-        .write_deferred(|txn| txn.put_raw(b"key2", b"two"))
-        .unwrap();
-    assert_eq!(header_record_count(&path), 0);
-    store.flush().unwrap();
-    assert_eq!(header_record_count(&path), 2);
-    store.write_deferred(|txn| txn.remove_raw(b"key1")).unwrap();
-    assert_eq!(header_record_count(&path), 2);
-    store.flush().unwrap();
-    assert_eq!(header_record_count(&path), 1);
-    store.write(|txn| txn.put_raw(b"key3", b"three")).unwrap();
-    assert_eq!(header_record_count(&path), 2);
-}
-
 // 074a2219 chewing_large_table2_tkrzwdb.cpp:63-69, ngram_tkrzwdb.cpp:40-46 and register row 157.
 #[test]
 fn a_system_tree_synchronizes_before_close_and_a_hash_does_not() {
@@ -284,21 +256,17 @@ fn tkrzw_library_honours_its_sentinel_protocol() {
         reason = "The helper owns and closes the native database before the fixture directory is released"
     )]
     fn check(class: &str, store: TkrzwStore) {
-        store
-            .write(|txn| {
-                txn.put_raw(b"kept", b"v")?;
-                txn.put_raw(b"removed", b"v")
-            })
-            .unwrap();
+        store.set_raw(b"kept", b"v").unwrap();
+        store.set_raw(b"removed", b"v").unwrap();
 
-        store.write(|txn| txn.remove_raw(b"absent")).unwrap();
+        store.remove_raw(b"absent").unwrap();
         assert_eq!(
             store.read_raw(b"absent").unwrap(),
             None,
             "{class}: removing an absent record stored one: {CAUSE}"
         );
 
-        store.write(|txn| txn.remove_raw(b"removed")).unwrap();
+        store.remove_raw(b"removed").unwrap();
         assert_eq!(
             store.read_raw(b"removed").unwrap(),
             None,

@@ -698,30 +698,6 @@ impl Db {
         u64::try_from(count).map_err(|_| self.error("kcdbcount"))
     }
 
-    /// Begins a transaction.
-    ///
-    /// Unlike the Berkeley DB backend — where libpinyin's environment-less
-    /// opens leave no transaction to use — Kyoto Cabinet gives a
-    /// standalone handle real transactions, so this backend's atomic
-    /// writes are the library's own rather than a buffered imitation.
-    pub(crate) fn begin_transaction(&self) -> Result<(), StoreError> {
-        // `hard = false` asks for a transaction durable against process
-        // crash but not against power loss, which matches what the
-        // commit's `sync(false)` then provides.
-        if !sys::begin_transaction(&self.db, false) {
-            return Err(self.error("kcdbbegintran"));
-        }
-        Ok(())
-    }
-
-    /// Ends a transaction, committing or rolling back.
-    pub(crate) fn end_transaction(&self, commit: bool) -> Result<(), StoreError> {
-        if !sys::end_transaction(&self.db, commit) {
-            return Err(self.error("kcdbendtran"));
-        }
-        Ok(())
-    }
-
     /// Opens a cursor, which borrows this database. `cursor()` allocates
     /// with `new` (`kchashdb.h:1242`, `kcplantdb.h:1952`, `kcprotodb.h:1052`,
     /// `kcstashdb.h:951`), so it is never null.

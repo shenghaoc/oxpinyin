@@ -200,21 +200,16 @@ fn suggestion_walk_matches_the_separate_probes() {
 // Rust RawChewingDbm::walk translates visitor stop and preserves visitor errors.
 #[test]
 fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
-    use crate::store::{DefaultStore, RawReadStore as _, WriteStore as _, WriteTxn as _};
+    use crate::store::{DefaultStore, RawReadStore as _, WriteStore as _};
     let dir = tempfile::tempdir().expect("scratch directory");
     let path = dir.path().join(format!(
         "walk_stop.{}",
         crate::__internal::DEFAULT_STORE_EXT
     ));
     let store = DefaultStore::create(&path).unwrap();
-    store
-        .write(|txn| {
-            for i in 0_u8..8 {
-                txn.put_raw(&[i], &[i])?;
-            }
-            Ok(())
-        })
-        .unwrap();
+    for i in 0_u8..8 {
+        store.set_raw(&[i], &[i]).unwrap();
+    }
     drop(store);
     let dbm = RawChewingDbm::new(DefaultStore::open_read_only(&path).unwrap());
 

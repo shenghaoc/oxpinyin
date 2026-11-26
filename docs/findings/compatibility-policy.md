@@ -601,7 +601,7 @@ A comparison normalises those eight bytes only, for named cases only, and only w
 A later case on the same path names its files.
 Every other byte and file is compared exactly, and equal observations stay `MATCH`; this is not a `POLICY-ACCEPTED` difference.
 A saved user-bigram comparison may differ in the same eight bytes and nowhere else, and its bucket-chain order must match.
-These programs call `WriteStore::set_raw` for a plain native write. `WriteStore::write` retains its transaction and durability rules.
+These programs call `WriteStore::set_raw` for a plain native write. The store has no transaction seam: each write is one native call, as the pin's own are.
 
 ## What is not an exception
 
