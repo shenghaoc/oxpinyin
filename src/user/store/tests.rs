@@ -1580,18 +1580,13 @@ fn training_past_the_gram_total_limit_keeps_the_gram() {
     );
     let mut store = crate::user::test_session::open_w3(user.path());
     let before = store.system_unigram(hao).unwrap();
-    let mut check = TrainingCheck::default();
-    store.check_training_step_with(&mut check, ni, hao).unwrap();
     let cached = crate::user::native_fixture::gram_bytes(COUNT, &[(hao, COUNT)]);
-    // A missing token would be inserted before the pin skips its store.
-    // Repeated checked steps must retain the original row on that refusal.
-    store
-        .check_training_step_with(&mut check, ni, zhong)
-        .unwrap();
-    assert_eq!(check.latest_gram(ni), Some(&cached));
-    store.check_training_step_with(&mut check, ni, hao).unwrap();
-    assert_eq!(check.latest_gram(ni), Some(&cached));
-    assert_eq!(check.fault(), None);
+    // A missing token would be inserted before the pin skips its store, so
+    // the refused step leaves the stored row as it was.
+    let zhong_before = store.system_unigram(zhong).unwrap();
+    store.observe_selection(ni, zhong).unwrap();
+    assert_eq!(store.bigram_row(ni).unwrap(), Some(cached));
+    assert_eq!(store.system_unigram(zhong), Some(zhong_before + 483));
     store.observe_selection(1, ni).unwrap();
     store.observe_selection(ni, hao).unwrap();
     assert_eq!(store.system_unigram(hao), Some(before + 154_560));
@@ -1613,7 +1608,7 @@ fn training_past_the_gram_total_limit_keeps_the_gram() {
 /// Basis: `phonetic_lookup.h:876-929` (one load, train and store of the
 /// predecessor's gram per step, then the unigram by seed * 7).
 #[test]
-fn a_checked_training_step_stores_the_gram_its_check_trained() {
+fn a_repeated_predecessor_trains_the_gram_its_earlier_step_stored() {
     let system = crate::user::native_fixture::system_dir();
     let [ni, hao] =
         ["你", "好"].map(|text| crate::user::test_session::native_tokens(&system, text)[0]);
@@ -1621,38 +1616,13 @@ fn a_checked_training_step_stores_the_gram_its_check_trained() {
     // first step stored.
     let start = crate::vocab::SENTENCE_START;
     let steps = [(start, ni), (ni, hao), (hao, ni), (ni, hao)];
-    let trained = |checked: bool| {
-        let user = tempfile::tempdir().unwrap();
-        crate::user::native_fixture::write_user_conf(user.path(), &system);
-        let mut store = crate::user::test_session::open_w3(user.path());
-        let mut check = TrainingCheck::default();
-        for (prev, cur) in steps {
-            store
-                .check_training_step_with(&mut check, prev, cur)
-                .unwrap();
-        }
-        let seeds: Vec<u64> = steps
-            .iter()
-            .map(|&(prev, cur)| {
-                if checked {
-                    store.observe_checked_selection(&mut check, prev, cur)
-                } else {
-                    store.observe_selection(prev, cur)
-                }
-                .unwrap()
-            })
-            .collect();
-        let grams: Vec<_> = [start, ni, hao]
-            .map(|prev| store.bigram_row(prev).unwrap())
-            .to_vec();
-        (
-            seeds,
-            grams,
-            store.system_unigram(ni),
-            store.system_unigram(hao),
-        )
-    };
-    let checked = trained(true);
-    assert_eq!(checked, trained(false));
-    assert_eq!(checked.0, [69, 69, 69, 138]);
+    let user = tempfile::tempdir().unwrap();
+    crate::user::native_fixture::write_user_conf(user.path(), &system);
+    let mut store = crate::user::test_session::open_w3(user.path());
+    let seeds: Vec<u64> = steps
+        .iter()
+        .map(|&(prev, cur)| store.observe_selection(prev, cur).unwrap())
+        .collect();
+    assert_eq!(seeds, [69, 69, 69, 138]);
+    assert_eq!(store.bigram_count(ni, hao).unwrap(), 69 + 138);
 }

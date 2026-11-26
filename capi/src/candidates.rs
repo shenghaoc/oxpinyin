@@ -945,12 +945,12 @@ pub unsafe fn oxpinyin_choose_aborts(
     }
 }
 
-/// Whether [`pinyin_train`] of row `index` terminates: one of the pin's
-/// own training asserts, or a store fault
-/// the facade classifies as the pin's training abort.
-/// The facade's [`oxpinyin::facade::InstanceView::train_aborts`], the one
-/// ordered, read-only preparation `pinyin_train` runs, simulated store
-/// check included. Reads only. For the in-tree fuzz harness, which skips
+/// Whether [`pinyin_train`] of row `index` terminates at one of the pin's
+/// own training asserts that a C API call can reach: the index past the
+/// results, a stale forced phrase or a stale span.
+/// The facade's [`oxpinyin::facade::InstanceView::train_aborts`]: the checks
+/// `pinyin_train`'s walk makes, in its order, without training. The store's
+/// own aborts need a planted user bigram. Reads only. For the in-tree fuzz harness, which skips
 /// such a call: not in `pinyin.h`, a Rust function compiled only with
 /// `test-hooks` and never into the shipped artifact.
 ///

@@ -39,7 +39,7 @@ use crate::{
 
 use super::{Selection, SelectionTarget, Session};
 use crate::engine::SessionSettings;
-use crate::engine::error::{EngineError, TrainingPrepFault};
+use crate::engine::error::{EngineError, TrainingStop};
 use crate::fixture_doubles::{
     FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
 };
@@ -446,24 +446,21 @@ fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
     )
 }
 
-/// Trains row `index` through the production path: prepare the checked
-/// plan, then observe it. `Runtime::train_session` terminates on
-/// [`TrainingPrepFault::PinAbort`]; the tests read the fault itself.
+/// Trains row `index` through the production walk
+/// ([`SessionState::train`]). `Runtime::train_session` terminates on
+/// [`TrainingStop::PinAbort`]; the tests read the stop itself.
 fn train_prepared<D, L, U>(
     session: &Session<D, L>,
     index: u8,
     user: &mut U,
-) -> Result<bool, TrainingPrepFault>
+) -> Result<bool, TrainingStop<U::Error>>
 where
-    D: Dictionary<Syllable = SyllableKey> + Clone,
-    L: LanguageModel + Clone,
+    D: Dictionary<Syllable = SyllableKey>,
+    L: LanguageModel,
     U: UserModel,
 {
-    let view = session.read(session.dictionary.clone(), session.model.clone());
-    let Some(plan) = view.prepare_training(index, &mut |_, _| Ok(()))? else {
-        return Ok(false);
-    };
-    Ok(plan.observe(user)?)
+    let state: &crate::engine::SessionState = session;
+    state.train(index, user)
 }
 
 /// Selects the candidate carrying `token` after typing `text` (the
@@ -529,9 +526,9 @@ fn training_without_results_does_not_observe_selection_history() {
 #[test]
 fn training_checks_reparsed_span_columns() {
     for (raw, expected) in [
-        ("ni", Err(TrainingPrepFault::PinAbort)),
-        ("'ni", Err(TrainingPrepFault::PinAbort)),
-        ("ni'hao", Err(TrainingPrepFault::PinAbort)),
+        ("ni", Err(TrainingStop::PinAbort)),
+        ("'ni", Err(TrainingStop::PinAbort)),
+        ("ni'hao", Err(TrainingStop::PinAbort)),
         ("ni'ha", Ok(true)),
     ] {
         let mut session = trellis_session();
@@ -598,23 +595,43 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
     );
 }
 
-// Basis: phonetic_lookup.h:858–929 at 074a2219.
+// Basis: phonetic_lookup.h:858–929 and phonetic_key_matrix.cpp:661–664 at 074a2219.
 #[test]
-fn an_earlier_store_check_failure_precedes_a_later_pin_fault() {
+fn an_earlier_steps_store_refusal_precedes_a_later_pin_abort() {
+    struct Failing;
+    impl UserModel for Failing {
+        type Error = EngineError;
+
+        fn observe(
+            &mut self,
+            _history: &[PhraseToken],
+            _token: &PhraseToken,
+        ) -> Result<(), Self::Error> {
+            Err(EngineError::UserModel)
+        }
+    }
+
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("initial parse");
     assert!(session.guess_sentence().expect("guess"));
     select_row(&mut session, 1).expect("choose 你");
     session.replace_raw("ni").expect("shrink");
-    let view = session.read(session.dictionary.clone(), session.model.clone());
-    let Err(fault) = view.prepare_training(0, &mut |_, _| Err(EngineError::UserModel)) else {
-        panic!("the first span's store check fails");
+    // The steps run in order: the first span's store refuses before the
+    // walk reaches the stale second span, which aborts once the store
+    // takes the first.
+    assert_eq!(
+        train_prepared(&session, 0, &mut Failing),
+        Err(TrainingStop::User(EngineError::UserModel))
+    );
+    let mut recorder = Recorder {
+        observed: Vec::new(),
     };
-    assert!(matches!(fault, TrainingPrepFault::Engine(_)));
-    let Err(fault) = view.prepare_training(0, &mut |_, _| Ok(())) else {
-        panic!("the stale span refuses");
-    };
-    assert_eq!(fault, TrainingPrepFault::PinAbort);
+    assert_eq!(
+        train_prepared(&session, 0, &mut recorder),
+        Err(TrainingStop::PinAbort)
+    );
+    assert_eq!(recorder.observed.len(), 1, "the first step stays recorded");
+    assert!(session.training_aborts(0));
 }
 
 // Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
@@ -630,7 +647,7 @@ fn training_refuses_a_stale_forced_token_at_a_later_span() {
         observed: Vec::new(),
     };
     let error = train_prepared(&session, 0, &mut recorder).expect_err("the later forcing refuses");
-    assert_eq!(error, TrainingPrepFault::PinAbort);
+    assert_eq!(error, TrainingStop::PinAbort);
 }
 
 // Basis: phonetic_lookup.h:847–932 and phonetic_key_matrix.cpp:603–664 at 074a2219.
@@ -693,7 +710,7 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     );
 }
 
-// Basis: Rust TrainingPlan::observe error propagation contract.
+// Basis: Rust SessionState::train error propagation contract.
 #[test]
 fn train_reports_a_failing_user_model() {
     struct Failing;
@@ -717,12 +734,11 @@ fn train_reports_a_failing_user_model() {
         keys: 1,
         span: 2,
     }];
-    let TrainingPrepFault::Engine(error) =
-        train_prepared(&session, 0, &mut Failing).expect_err("the model fails")
-    else {
-        panic!("a user-model failure is an engine fault, not a pin abort");
-    };
-    assert_eq!(error, EngineError::UserModel);
+    assert_eq!(
+        train_prepared(&session, 0, &mut Failing),
+        Err(TrainingStop::User(EngineError::UserModel)),
+        "a user-model failure is the model's own, not a pin abort"
+    );
 }
 
 // Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.

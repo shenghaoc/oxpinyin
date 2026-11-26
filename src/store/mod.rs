@@ -650,6 +650,26 @@ mod user_bigram {
         /// Returns [`StoreError`] when the read fails.
         fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
 
+        /// `Bigram::load` as `train_result3` calls it
+        /// (`phonetic_lookup.h:876-881` at 074a2219): [`Self::get`]'s buffer
+        /// contract, with a failed read answering no value, as the pin's
+        /// `load` answers `false` and training makes a fresh gram
+        /// (`ngram_bdb.cpp:127-145`, `ngram_tkrzwdb.cpp:102-121`,
+        /// `ngram_kyotodb.cpp:124-144`). Kyoto Cabinet's `load` checks the
+        /// size before its read only to size a C++ buffer; in its
+        /// single-threaded in-memory database the two cannot disagree, so
+        /// one read gives the same answer.
+        ///
+        /// # Errors
+        ///
+        /// None: the result is `Ok` whether or not the read succeeds.
+        fn load(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+            self.get(key, value).or_else(|_| {
+                value.clear();
+                Ok(false)
+            })
+        }
+
         /// `Bigram::store`: set `key` to `value`.
         ///
         /// # Errors

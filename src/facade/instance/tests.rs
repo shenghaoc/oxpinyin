@@ -496,9 +496,11 @@ mod native {
         assert!(!no_user.read(&fixture.runtime).train_aborts(9));
     }
 
-    // Register row 113 covers a store fault during training.
+    // Register row 113 covers a store fault during training. Only a planted
+    // user bigram reaches it, so the probe, which answers for the faults a
+    // C API call can reach, does not.
     #[test]
-    fn a_store_fault_that_production_dies_on_answers_the_probe_true() {
+    fn a_planted_store_fault_aborts_production_and_not_the_probe() {
         let user = TempUserDir::new("train-probe-store-abort");
         let gram = |tokens: &[u32]| {
             let mut value = 0_u32.to_le_bytes().to_vec();
@@ -521,7 +523,7 @@ mod native {
         assert_eq!(instance.bind(&context.runtime).parse_full_more("nihao"), 5);
         assert!(guess(&context, &mut instance));
         choose_a_phrase_and_reguess(&context, &mut instance);
-        assert!(instance.read(&context.runtime).train_aborts(0));
+        assert!(!instance.read(&context.runtime).train_aborts(0));
         let result = context.train(&instance, 0);
         assert!(
             matches!(&result, Err(crate::engine::EngineError::TrainingAbort)),

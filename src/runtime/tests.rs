@@ -2097,6 +2097,79 @@ fn train_session_aborts_past_the_nonempty_results() {
     );
 }
 
+/// Chooses 你 and then 好 over `nihao` and guesses again, so both phrases are
+/// forced and train; answers the token 你 was chosen as.
+fn choose_ni_hao(runtime: &Runtime, state: &mut crate::engine::SessionState) -> u32 {
+    runtime.session(state).replace_raw("nihao").unwrap();
+    let mut tokens = Vec::new();
+    for (offset, text) in [(0, "你"), (2, "好")] {
+        let row = runtime
+            .session(state)
+            .candidates_at_for_abi(offset, false)
+            .unwrap()
+            .iter()
+            .find(|row| {
+                row.kind() == crate::engine::CandidateKind::Phrase
+                    && row.text().as_str() == Some(text)
+            })
+            .unwrap()
+            .clone();
+        tokens.push(row.token().unwrap());
+        runtime
+            .session(state)
+            .select_target(&crate::engine::SelectionTarget::of_candidate(
+                &row, offset, None,
+            ))
+            .unwrap();
+    }
+    assert!(runtime.session(state).guess_sentence().unwrap());
+    tokens[0]
+}
+
+// Basis: phonetic_lookup.h:858-932 at 074a2219 and register row 100: the
+// pin's walk trains each step before the next, and oxpinyin stops at the
+// step whose predecessor's gram has a partial item tail.
+#[test]
+fn a_partial_tail_at_a_later_step_keeps_the_earlier_steps() {
+    let user = TempUserDir::new("train-partial-later");
+    let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
+    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let ni = choose_ni_hao(&runtime, &mut state);
+    // A guess refuses a partial predecessor (register row 98), so the gram
+    // the second step loads turns partial after the guess.
+    let mut value = 7_u32.to_le_bytes().to_vec();
+    value.extend_from_slice(&9_u32.to_le_bytes());
+    value.extend_from_slice(&7_u32.to_le_bytes());
+    value.extend_from_slice(&[0xa5, 0x5a, 0x01]);
+    runtime.user_store().plant_gram(ni, &value);
+    assert!(!runtime.user_store().is_modified());
+    let result = runtime.train_session(&state, 0);
+    assert!(
+        matches!(
+            result,
+            Err(crate::engine::EngineError::UnsafeTrainingPredecessor)
+        ),
+        "{result:?}"
+    );
+    let store = runtime.user_store();
+    assert_eq!(
+        store
+            .bigram_count(crate::vocab::SENTENCE_START, ni)
+            .unwrap(),
+        69,
+        "the first step stays trained"
+    );
+    assert_eq!(
+        store.bigram_row(ni).unwrap(),
+        Some(value),
+        "the refused step's gram is unchanged"
+    );
+    assert!(
+        store.is_modified(),
+        "the kept step is saved with the context"
+    );
+}
+
 #[cfg(feature = "tkrzw")]
 fn system_items(name: &str) -> (u32, std::collections::BTreeMap<u32, Vec<u8>>) {
     let bytes =

@@ -119,7 +119,7 @@ segment (`pinyin_phrase_segment`, `:423`) and save (`pinyin_save`,
 oxpinyin's `Session` (`oxpinyin`) carries the same operations as
 methods — `replace_raw` and its variants for parse, `guess_sentence`
 and `candidates_at` for guess, `select` and `clear_constraint` for
-select, `prepare_training` and its `observe` plan, `phrase_segment` — with save on
+select, `SessionState::train` for training, `phrase_segment` — with save on
 `ContextCore::save_user` (`oxpinyin`). Both C ABIs drive only
 these.
 
@@ -562,7 +562,7 @@ and space, with two item reads per qualifying pair, as at the pin.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `TrainingPlan::observe` over `Session::prepare_training` (`src/engine/session/selection.rs`), `trained_gram` and `train_pronunciations` (`src/user/store.rs`), constants in `src/user/seed.rs` | same / follows; the C adapters abort where the pin aborts, except on an unsorted user gram, where the pin's `set_freq` misses and aborts and oxpinyin trains and answers `true` (accepted; row 85, [record](upstream-divergences.md#stored-gram-partitions-training)) |
+| Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `SessionState::train` (`src/engine/session/selection.rs`), `trained_gram` and `train_pronunciations` (`src/user/store.rs`), constants in `src/user/seed.rs` | same / follows; the C adapters abort where the pin aborts, except on an unsorted user gram, where the pin's `set_freq` misses and aborts and oxpinyin trains and answers `true` (accepted; row 85, [record](upstream-divergences.md#stored-gram-partitions-training)) |
 | Predicted choice | `pinyin_choose_predicted_candidate` (`pinyin.cpp:2591`) | `observe_predicted`, `observe_predicted_prefix` | same / follows |
 | Add phrase | `_add_phrase` searches the phrase table, then merges a reading or allocates at the end of the sub-index range (`pinyin.cpp:514-611`). | `plan_add` preflights the lookup. `arena_add_phrase` uses `UserLibrary::token_end` or the live system range (`src/facade/import.rs:91-150`, `src/user/store_arena.rs:386-434,509-511`). | configured `USER_FILE` dispatch (#1965) |
 | Remember input | `_remember_phrase_recur` (`pinyin.cpp:3578`), recursive matrix walk | `pinyin_remember_user_input` (`capi/src/user_data.rs`) over `remember_walk` (`src/engine/char_offset.rs`), the same walk over the parse-time matrix in every parse mode, with the pin's fuzzy alternatives (and, for the index-parsed full pinyin, its resplit and divided additions) built at the parse (register row 93) | same walk. Packed alternate retained (#1970). |

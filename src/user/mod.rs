@@ -49,7 +49,6 @@ pub use library_table::{LibrarySet, LibraryTable};
 pub(crate) use live_system::StepLibraries;
 pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys, SystemItem};
 pub use lookup::UserLookup;
-pub(crate) use model::CheckedTraining;
 
 pub use persistence::{
     MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals, UserConfLaw,
@@ -65,9 +64,7 @@ pub use phrase::{
     key_tone, toned_key,
 };
 pub use replay::{JournalFault, UnigramAdd};
-pub use store::{
-    MaskCheck, TrainingCheck, TrainingFault, UserStore, UserStoreError, add_system_reading,
-};
+pub use store::{MaskCheck, UserStore, UserStoreError, add_system_reading};
 #[cfg(test)]
 pub use test_session::UserState;
 

@@ -26,12 +26,11 @@ pub use cursor::{
     right_word_offset_over_spans,
 };
 pub use error::EngineError;
-pub(crate) use error::{TrainingPrepFault, abort_toned_incomplete};
+pub(crate) use error::{TrainingStop, abort_toned_incomplete};
 pub use nbest::NbestShape;
 pub use session::{
     BEFORE_CURSOR_ANCHOR, CandidateRanking, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection,
-    SelectionTarget, SentencePart, Session, SessionSettings, SessionState, TrainingPlan,
-    amplified_frequency,
+    SelectionTarget, SentencePart, Session, SessionSettings, SessionState, amplified_frequency,
 };
 
 pub(crate) use session::{check_lookup_offset_range, normalize_lookup_offset, parse_time_keys};

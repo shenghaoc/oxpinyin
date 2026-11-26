@@ -76,7 +76,7 @@ The settings value does not change the session's default options, each C facade'
 | Options | `set_options`, `set_sort_options`, `set_candidate_ranking`, `set_nbest_shape` |
 | Sentences | `guess_sentence`, `sentence_lookup_active`, `sentence_text` ([sentence-surface.md](sentence-surface.md)) |
 | Deferred list | `set_defer_list_builds`, `refresh_candidates` ([below](#deferred-candidate-list)) |
-| Training | `prepare_training`, then `TrainingPlan::observe` |
+| Training | `SessionState::train`: each step checked, then trained |
 
 `Selection` is `Refused`, `Continued` or `Completed`.
 
