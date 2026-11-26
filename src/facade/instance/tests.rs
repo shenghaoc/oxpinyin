@@ -313,6 +313,7 @@ mod native {
         let phrases = view
             .sentence_phrases(0)
             .unwrap()
+            .map(|part| part.text())
             .collect::<Option<Vec<_>>>()
             .unwrap();
         assert!(phrases.len() > 1);

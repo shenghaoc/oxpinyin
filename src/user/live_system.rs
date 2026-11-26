@@ -87,7 +87,8 @@ pub struct Reading<'a> {
 }
 
 impl<'a> SystemItem<'a> {
-    fn view(&self) -> PhraseItemView<'a> {
+    /// The item's bytes as a phrase item.
+    pub(crate) fn view(&self) -> PhraseItemView<'a> {
         match self {
             Self::Shipped(item) | Self::Replayed(item) => *item,
         }
@@ -134,12 +135,6 @@ impl<'a> SystemItem<'a> {
     #[must_use]
     pub fn phrase_text(&self) -> Option<PhraseText> {
         self.view().phrase_text()
-    }
-
-    /// Whether every declared word of the text lies inside the item's bytes.
-    #[must_use]
-    pub(crate) fn phrase_words_present(&self) -> bool {
-        self.view().phrase_words_present()
     }
 
     /// Reading `nth` in stored order.

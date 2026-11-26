@@ -752,37 +752,43 @@ impl<'a> RuntimeDict<'a> {
     /// view, so readings that pass the content end do not hide its text.
     #[must_use]
     pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
-        let read = |length: usize, words_present: bool, text: Option<PhraseText>| {
-            words_present.then_some(TokenPhrase {
-                phrase_length: length,
-                text,
-            })
-        };
+        self.with_token_item(token, |item| TokenPhrase {
+            phrase_length: item.phrase_length(),
+            text: item.phrase_text(),
+        })
+    }
+
+    /// The stored words of `token`'s item, copied, where
+    /// [`Self::token_phrase`] resolves the item: the words `convert_to_utf8`
+    /// copies with `get_phrase_string` (074a2219 `lookup/lookup.cpp:45-47`).
+    #[must_use]
+    pub fn token_words(&self, token: u32) -> Option<crate::marshal::SentencePhrase> {
+        self.with_token_item(token, |item| {
+            // Every declared word is present: `with_token_item` checks it.
+            crate::marshal::SentencePhrase::Words(item.phrase_codes().flatten().collect())
+        })
+    }
+
+    /// Reads `token`'s item where the facade resolves it: the system item
+    /// a library mask leaves visible, else the user item; `None` where the
+    /// item is absent or its bytes end before a declared word.
+    fn with_token_item<R>(
+        &self,
+        token: u32,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        let read = |item: PhraseItemView<'_>| item.phrase_words_present().then(|| read(item));
         if self.is_system_library(phrase_index_library_index(token)) {
             return self
                 .live_items()
-                .read_fields(token, |item| {
-                    read(
-                        item.phrase_length(),
-                        item.phrase_words_present(),
-                        item.phrase_text(),
-                    )
-                })
+                .read_fields(token, |item| read(item.view()))
                 .found()
                 .flatten();
         }
         if !self.library_visible(u32::from(phrase_index_library_index(token))) {
             return None;
         }
-        self.user
-            .with_user_item(token, |item| {
-                read(
-                    item.phrase_length(),
-                    item.phrase_words_present(),
-                    item.phrase_text(),
-                )
-            })
-            .flatten()
+        self.user.with_user_item(token, read).flatten()
     }
 
     /// Whether the default facade owns this item. Missing/unloaded libraries

@@ -123,7 +123,7 @@ pub(crate) fn sentence(context: &ContextCore, instance: &InstanceCore, rank: u8)
         .sentence_phrases(rank)
         .map(|parts| {
             parts
-                .flatten()
+                .filter_map(|part| part.text())
                 .map(|part| part.as_str().unwrap().to_owned())
                 .collect()
         })

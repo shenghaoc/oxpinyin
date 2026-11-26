@@ -174,7 +174,7 @@ pub unsafe extern "C" fn zhuyin_get_sentence(
 /// borrows, including the phrase inputs. Its contents need not be
 /// initialized.
 unsafe fn write_owned_sentence(
-    phrases: impl IntoIterator<Item = Option<impl core::borrow::Borrow<oxpinyin::vocab::PhraseText>>>,
+    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<oxpinyin::marshal::SentencePhrase>>,
     sentence: *mut *mut c_char,
 ) -> bool {
     write_if_nonnull!(sentence, crate::ffi::sentence_text(phrases));
