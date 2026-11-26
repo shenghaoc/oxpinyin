@@ -200,7 +200,33 @@ pub struct FixtureDictionary {
     entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>>,
     /// Each token's phrase item: one pronunciation per record that spells
     /// it, toneless, with frequency 1.
-    items: BTreeMap<PhraseToken, oxpinyin::model::PronunciationRows>,
+    items: BTreeMap<PhraseToken, Vec<(Vec<ChewingKey>, u32)>>,
+}
+
+/// The `PhraseItem` bytes `rows` stand for (074a2219 `phrase_index.h:56`):
+/// a placeholder text as long as the readings, then each reading's packed
+/// keys and frequency.
+fn item_bytes(rows: &[(Vec<ChewingKey>, u32)]) -> Vec<u8> {
+    let length = rows.first().map_or(0, |(keys, _)| keys.len());
+    assert!(
+        rows.iter().all(|(keys, _)| keys.len() == length),
+        "one reading length"
+    );
+    let mut bytes = vec![
+        u8::try_from(length).expect("a phrase length"),
+        u8::try_from(rows.len()).expect("a reading count"),
+    ];
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    for _ in 0..length {
+        bytes.extend_from_slice(&0x4e00_u32.to_le_bytes());
+    }
+    for (keys, frequency) in rows {
+        for key in keys {
+            bytes.extend_from_slice(&key.to_packed().to_le_bytes());
+        }
+        bytes.extend_from_slice(&frequency.to_le_bytes());
+    }
+    bytes
 }
 
 impl FixtureDictionary {
@@ -212,7 +238,7 @@ impl FixtureDictionary {
     pub fn parse(text: &str) -> Result<Self, FixtureError> {
         let records = parse_vocab(text)?;
         let mut entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>> = BTreeMap::new();
-        let mut items: BTreeMap<PhraseToken, oxpinyin::model::PronunciationRows> = BTreeMap::new();
+        let mut items: BTreeMap<PhraseToken, Vec<(Vec<ChewingKey>, u32)>> = BTreeMap::new();
 
         for record in records {
             items
@@ -283,14 +309,18 @@ impl PhraseList for FixtureDictionary {
             .collect())
     }
 
-    fn phrase_item_pronunciations(
+    fn read_phrase_item<R>(
         &self,
         token: PhraseToken,
-    ) -> Result<oxpinyin::model::PhraseItemRead, FixtureError> {
-        Ok(self.items.get(&token).cloned().map_or(
-            oxpinyin::model::PhraseItemRead::NoItem,
-            oxpinyin::model::PhraseItemRead::Item,
-        ))
+        read: impl FnOnce(oxpinyin::data::phrase_library::PhraseItemView<'_>) -> R,
+    ) -> Result<Option<R>, FixtureError> {
+        Ok(self.items.get(&token).map(|rows| {
+            let bytes = item_bytes(rows);
+            read(
+                oxpinyin::data::phrase_library::PhraseItemView::from_bytes(&bytes)
+                    .expect("an item"),
+            )
+        }))
     }
 
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {

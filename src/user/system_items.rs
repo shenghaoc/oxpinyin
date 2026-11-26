@@ -282,6 +282,19 @@ impl SystemItems {
             .map(read)
     }
 
+    /// Lends the complete item `token`'s live library holds under its slot,
+    /// whichever way the slot was filled.
+    pub(crate) fn read_complete<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        let library = self
+            .replayed
+            .get(&crate::vocab::phrase_index_library_index(token))?;
+        library.complete_item(token & 0x00ff_ffff).map(read)
+    }
+
     /// [`Self::with_live`] over [`ReplayedLibrary::item_field_bytes`].
     pub(crate) fn with_live_fields<R>(
         &self,

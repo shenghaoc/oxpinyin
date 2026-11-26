@@ -825,8 +825,8 @@ matrix against the stored pronunciations of the item, with no expansion and
 no cap. An incomplete key matches any final
 (`storage/pinyin_phrase3.h:80-86`).
 
-`ConstraintSpelling::spells` reads each forced token through
-`Dictionary::phrase_item_pronunciations`. A missing item clears its forcing.
+`ConstraintSpelling::spells` reads each forced token's item in place through
+`Dictionary::read_phrase_item`. A missing item clears its forcing.
 The method borrows the parse's placed matrix and shares
 `GenerationView::sum_paths` with sentence pricing. It sums the total once,
 sums the matching frequencies at each leaf with wrapping u32 arithmetic and divides in f32.
@@ -881,7 +881,7 @@ chewing parsers refuse an initial-only key (`zhuyin_parser2.cpp:256-257`).
 
 A read never fails: `UserStore::phrase` (`src/user/store.rs`)
 always returns `Ok`, and so does the system source's phrase read,
-`phrase_item_pronunciations` (`src/data/dict.rs`).
+`read_phrase_item` (`src/data/dict.rs`).
 
 N-best constraint writes follow `phonetic_lookup.cpp:172-205`: the decoded
 result supplies the tail; `changed` is set before each differing write;

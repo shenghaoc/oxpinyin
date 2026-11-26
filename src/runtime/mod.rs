@@ -28,7 +28,7 @@ use crate::user::{
 use crate::{
     model::{
         Dictionary, LanguageModel, MergedGram, NbestStepCosts, NbestTokenCosts, PhraseIndexRanges,
-        PhraseItemRead, TrellisItem, TrellisPathMemo, UserCountDelta,
+        TrellisItem, TrellisPathMemo, UserCountDelta,
     },
     vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey},
 };
@@ -1230,18 +1230,26 @@ impl Dictionary for RuntimeDict<'_> {
     /// the item a library mask hides is the pin's freed sub-index, an item
     /// the user store replaced or owns is read from there, and any other
     /// system item from the shipped chunk.
-    fn phrase_item_pronunciations(
+    fn read_phrase_item<R>(
         &self,
         token: PhraseToken,
-    ) -> Result<PhraseItemRead, Self::Error> {
-        let value = token;
-        if !self.library_visible_token(value) {
-            return Ok(PhraseItemRead::NoItem);
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Result<Option<R>, Self::Error> {
+        if !self.library_visible_token(token) {
+            return Ok(None);
         }
-        if let Some(rows) = self.user.item_pronunciations(value) {
-            return Ok(PhraseItemRead::Item(rows));
+        let mut read = Some(read);
+        if let Some(found) = self
+            .user
+            .with_effective_item(token, |item| read.take().map(|read| read(item)))
+            .flatten()
+        {
+            return Ok(Some(found));
         }
-        self.system.phrase_item_pronunciations(token)
+        match read {
+            Some(read) => self.system.read_phrase_item(token, read),
+            None => Ok(None),
+        }
     }
 }
 

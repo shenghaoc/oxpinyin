@@ -57,6 +57,27 @@ unsafe fn import_readings(
         .expect("the import gave the phrase a token")
 }
 
+/// The readings of the item the dictionary resolves for `token`, as packed
+/// keys and frequencies in stored order.
+fn item_readings(
+    dict: &oxpinyin::runtime::RuntimeDict<'_>,
+    token: u32,
+) -> Option<Vec<(Vec<u16>, u32)>> {
+    oxpinyin::model::Dictionary::read_phrase_item(dict, token, |item| {
+        item.pronunciations()
+            .map(|reading| {
+                let keys = reading.keys.as_chunks::<2>().0;
+                (
+                    keys.iter().map(|pair| u16::from_le_bytes(*pair)).collect(),
+                    reading.freq,
+                )
+            })
+            .collect()
+    })
+    .ok()
+    .flatten()
+}
+
 /// The stored readings of `token` as `(packed first key, frequency)`.
 ///
 /// # Safety
@@ -69,10 +90,10 @@ unsafe fn import_readings(
 /// rule).
 unsafe fn stored_readings(instance: *mut PinyinInstance, token: u32) -> Vec<(u16, u32)> {
     // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
-    (unsafe { with_store(instance, |store| store.item_pronunciations(token)) })
+    (unsafe { crate::test_support::with_dict(instance, |dict| item_readings(dict, token)) })
         .expect("an item")
         .iter()
-        .map(|(keys, freq)| (keys[0].to_packed(), *freq))
+        .map(|(keys, freq)| (keys[0], *freq))
         .collect()
 }
 
@@ -334,7 +355,7 @@ fn remember_user_input_adds_along_every_complete_path() {
         .expect("the import gave 弄 a token");
     let readings = |instance| {
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        (unsafe { with_store(instance, |store| store.item_pronunciations(token)) })
+        (unsafe { crate::test_support::with_dict(instance, |dict| item_readings(dict, token)) })
             .expect("an item")
             .iter()
             .map(|(keys, freq)| (keys.len(), *freq))

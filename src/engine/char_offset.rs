@@ -98,25 +98,22 @@ fn pronounces<D>(dictionary: &D, key: MatrixKey, token: PhraseToken) -> Result<b
 where
     D: Dictionary<Syllable = SyllableKey>,
 {
-    match dictionary
-        .phrase_item_pronunciations(token)
-        .map_err(|_| EngineError::Failure)?
-    {
-        crate::model::PhraseItemRead::Item(rows) => {
-            let query = [key.key()];
-            let total = rows
-                .iter()
-                .fold(0_u32, |sum, (_, freq)| sum.wrapping_add(*freq));
-            let matched = rows
-                .iter()
-                .filter(|(stored, _)| crate::engine::nbest::reading_matches(&query, stored))
-                .fold(0_u32, |sum, (_, freq)| sum.wrapping_add(*freq));
+    let query = [key.key()];
+    Ok(dictionary
+        .read_phrase_item(token, |item| {
+            let total = item
+                .pronunciations()
+                .fold(0_u32, |sum, reading| sum.wrapping_add(reading.freq));
+            let matched = item
+                .pronunciations()
+                .filter(|reading| crate::engine::nbest::reading_matches(&query, reading.keys))
+                .fold(0_u32, |sum, reading| sum.wrapping_add(reading.freq));
             // phrase_index.h:141-162: wrapping guint32 sums, then gfloat
             // division; the caller compares against FLT_EPSILON.
-            Ok(total != 0 && matched as f32 / total as f32 >= f32::EPSILON)
-        }
-        crate::model::PhraseItemRead::NoItem => Ok(false),
-    }
+            total != 0 && matched as f32 / total as f32 >= f32::EPSILON
+        })
+        .map_err(|_| EngineError::Failure)?
+        .unwrap_or(false))
 }
 
 /// Whether `token`'s item pronounces `key` with a kept possibility, the

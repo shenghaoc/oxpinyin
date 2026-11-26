@@ -18,8 +18,8 @@ use std::collections::hash_map::Entry;
 
 use crate::{
     model::{
-        Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, PhraseItemRead,
-        TokenPhrase, TrellisItem,
+        Dictionary, LanguageModel, MergedGram, NbestSuccessors, PhraseIndexRanges, TokenPhrase,
+        TrellisItem,
     },
     parser::ChewingKey,
     vocab::{PhraseText, PhraseToken, SyllableKey},
@@ -30,6 +30,7 @@ use crate::engine::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::engine::error::EngineError;
 use crate::engine::session::matrix::{ParsedMatrix, ScanMatrix};
 use crate::engine::session::{ScanKey, column_is_empty};
+use crate::phrase_item::{CHEWING_KEY_SIZE, PhraseItemView};
 use crate::vocab::{MAX_PHRASE_LENGTH, SENTENCE_START};
 
 /// Token map for keyed lookup only; it does not decide output order.
@@ -1315,12 +1316,21 @@ impl<'a> ConstraintSpelling<'a> {
         D: Dictionary<Syllable = SyllableKey>,
     {
         let dictionary_error = |_: D::Error| EngineError::Failure;
-        let PhraseItemRead::Item(rows) = dictionary
-            .phrase_item_pronunciations(token)
+        dictionary
+            .read_phrase_item(token, |item| self.item_spells(item, start, end))
             .map_err(dictionary_error)?
-        else {
-            return Ok(false);
-        };
+            .unwrap_or(Ok(false))
+    }
+
+    /// [`Self::spells`] over the item the dictionary lends: the pin's
+    /// `compute_pronunciation_possibility` reads the stored pronunciations
+    /// in place (`phrase_index.h:136-163`).
+    fn item_spells(
+        &self,
+        item: PhraseItemView<'_>,
+        start: usize,
+        end: usize,
+    ) -> Result<bool, EngineError> {
         let parsed = self.parsed;
         let columns = parsed;
         if end >= columns.column_count()
@@ -1334,14 +1344,15 @@ impl<'a> ConstraintSpelling<'a> {
             zeros: &parsed.zeros,
         };
         // `phrase_length`: every stored pronunciation spells it.
-        let Some(length) = rows.first().map(|(keys, _)| keys.len()) else {
+        if item.n_pronunciations() == 0 {
             return Ok(false);
-        };
+        }
+        let length = item.phrase_length();
         // `total_freq` is read-independent; the pin's guard returns zero
         // for an item whose frequencies sum to zero.
-        let total = rows.iter().fold(0_u32, |total, (_, frequency)| {
-            total.wrapping_add(*frequency)
-        });
+        let total = item
+            .pronunciations()
+            .fold(0_u32, |total, reading| total.wrapping_add(reading.freq));
         if total == 0 {
             return Ok(false);
         }
@@ -1350,12 +1361,10 @@ impl<'a> ConstraintSpelling<'a> {
                 if reading.len() != length {
                     return Ok(0.0);
                 }
-                let matched = rows
-                    .iter()
-                    .filter(|(stored, _)| reading_matches(reading, stored))
-                    .fold(0_u32, |matched, (_, frequency)| {
-                        matched.wrapping_add(*frequency)
-                    });
+                let matched = item
+                    .pronunciations()
+                    .filter(|stored| reading_matches(reading, stored.keys))
+                    .fold(0_u32, |matched, stored| matched.wrapping_add(stored.freq));
                 Ok(matched as f32 / total as f32)
             })?;
         Ok(sum >= f32::EPSILON)
@@ -1363,14 +1372,18 @@ impl<'a> ConstraintSpelling<'a> {
 }
 
 /// `pinyin_compare_with_tones(query, stored, phrase_length) == 0`
-/// (`src/storage/pinyin_phrase3.h:108-144` at 074a2219), key by key
+/// (`src/storage/pinyin_phrase3.h:108-144` at 074a2219) of a query against
+/// a stored reading's packed keys, key by key
 /// (the three passes only reorder which difference is reported): initials
 /// equal (`:68-71`); middle and final equal, or either side the
 /// incomplete `(ZERO_MIDDLE, ZERO_FINAL)` pair (`:73-94`, the incomplete
 /// test at `:80-86`); tones equal, or either side zero (`:96-105`).
-pub(crate) fn reading_matches(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
-    query.len() == stored.len()
-        && query.iter().zip(stored).all(|(q, s)| {
+pub(crate) fn reading_matches(query: &[ChewingKey], stored: &[u8]) -> bool {
+    let stored = stored.as_chunks::<CHEWING_KEY_SIZE>();
+    query.len() == stored.0.len()
+        && stored.1.is_empty()
+        && query.iter().zip(stored.0).all(|(q, bits)| {
+            let s = ChewingKey::from_packed(u16::from_le_bytes(*bits));
             q.initial == s.initial
                 && ((q.middle == s.middle && q.final_ == s.final_)
                     || (q.middle == 0 && q.final_ == 0)

@@ -148,6 +148,21 @@ pub(crate) unsafe fn with_store<R>(
     read(inst.core.user)
 }
 
+/// Read the instance's dictionary for one assertion; no reference escapes.
+///
+/// # Safety
+///
+/// As [`with_store`].
+pub(crate) unsafe fn with_dict<R>(
+    instance: *mut PinyinInstance,
+    read: impl FnOnce(&oxpinyin::runtime::RuntimeDict<'_>) -> R,
+) -> R {
+    // SAFETY: as `with_store`'s: a live instance, between serialized C
+    // operations. The closure cannot return a borrow into the dictionary.
+    let inst = unsafe { instance_ref(instance) };
+    read(&inst.core.dict)
+}
+
 /// The first snapshot row of `kind`, with its token.
 ///
 /// # Safety

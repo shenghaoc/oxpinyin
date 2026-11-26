@@ -40,7 +40,7 @@ Its methods are exactly the 12 methods the engine calls:
 | Sentence trellis | `trellis_ranges_continued`, `trellis_step_item`, `trellis_step_text` | `src/engine/nbest.rs` |
 | Candidate window | `candidate_search_into`, `search_addon_into`, `checked_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` | `src/engine/session/lookup.rs`, `src/engine/session/selection.rs` |
 | Phrase segmentation | `tokens_for_ucs4`, `phrase_span_searches_are_observable`, `phrase_span_continues` | `src/engine/phrase.rs`, `src/engine/char_offset.rs` |
-| Forcing | `phrase_item_pronunciations` | `src/engine/nbest.rs`, `src/engine/char_offset.rs` |
+| Forcing | `read_phrase_item` | `src/engine/nbest.rs`, `src/engine/char_offset.rs` |
 
 An empty search is `Ok` with no entries.
 Implementations return entries in a stable, deterministic order.
@@ -87,8 +87,8 @@ A dictionary with nothing to keep uses `()`.
 
 ### Forcing
 
-`phrase_item_pronunciations(token)` reads the stored pronunciations of the phrase item behind a token.
-It answers `PhraseItemRead::NoItem` for a token without an item, as the pin's `get_phrase_item` fails for it.
+`read_phrase_item(token, read)` lends the phrase item behind a token to `read`, in place, as the pin's `PhraseItem` reads through `get_phrase_item`'s view.
+It answers `None` for a token without an item, as the pin's `get_phrase_item` fails for it.
 A forcing is then revalidated as the pin's `validate_constraint` does it (`phonetic_lookup.cpp:120-165` at 074a2219).
 
 ## `PhraseList`
@@ -108,7 +108,7 @@ impl<T: PhraseList> Dictionary for T { /* PathMemo = () */ }
 `PhraseList` is the adapter for a dictionary that lists entries: the fixture doubles (`tests/common/fixture_doubles.rs` and the unit-test doubles) and the evaluation tool's `EvalDictionary` (`utils/src/training/eval_correction_rate.rs`).
 `lookup` is its one required method.
 An implementor overrides only the hooks it models:
-`trellis_records`, `trellis_item`, `lookup_into_flagged`, `candidate_search_into`, `phrase_prefix_exists`, `tokens_for_text`, `tokens_for_ucs4`, `lookup_addon`, `suggest_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` and `phrase_item_pronunciations`.
+`trellis_records`, `trellis_item`, `lookup_into_flagged`, `candidate_search_into`, `phrase_prefix_exists`, `tokens_for_text`, `tokens_for_ucs4`, `lookup_addon`, `suggest_extension_tokens`, `phrase_text_for_token`, `phrase_length_for_token` and `read_phrase_item`.
 
 The blanket implementation derives every `Dictionary` method from the hooks, with `PathMemo = ()`.
 A dictionary that overrides no hook gets these answers, which are weaker than the pin's:
@@ -124,7 +124,7 @@ A dictionary that overrides no hook gets these answers, which are weaker than th
 | `tokens_for_ucs4` | `tokens_for_text` (default: empty) for an all-scalar span; empty for a span with a non-scalar. |
 | `phrase_span_searches_are_observable`, `phrase_span_continues` | `false`, `true`. |
 | `phrase_text_for_token`, `phrase_length_for_token` | `None`, and the length of `phrase_text_for_token`'s text. |
-| `phrase_item_pronunciations` | `PhraseItemRead::NoItem`. |
+| `read_phrase_item` | `None`. |
 
 `phrase_prefix_exists` defaults to `true`, so `SEARCH_CONTINUED` is always set: the candidate set is the same, and the window scan searches to the end of the input.
 

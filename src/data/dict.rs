@@ -19,11 +19,12 @@
 //! surviving token through its library — a token whose library is not
 //! loaded is invisible, upstream's `NULL == head` skip.
 
+use crate::phrase_item::PhraseItemView;
 use crate::vocab::phrase_index_library_index;
 use std::path::Path;
 
 use crate::{
-    model::{Dictionary, PhraseIndexRanges, PhraseItemRead, TokenPhrase, TrellisItem},
+    model::{Dictionary, PhraseIndexRanges, TokenPhrase, TrellisItem},
     parser::ChewingKey,
     vocab::{PhraseEntry, PhraseText, PhraseToken, SyllableKey},
 };
@@ -720,13 +721,18 @@ impl Dictionary for SystemDictionary<'_> {
         Dictionary::phrase_text_for_token(self, token).map(|text| text.phrase_length())
     }
 
-    /// `get_phrase_item` then the item's stored pronunciations, read from
-    /// the loaded library ([`PhraseLibraries::pronunciation_rows`]).
-    fn phrase_item_pronunciations(&self, token: PhraseToken) -> Result<PhraseItemRead, DictError> {
+    /// `get_phrase_item` on the loaded library: its complete item, lent in
+    /// place.
+    fn read_phrase_item<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Result<Option<R>, DictError> {
         Ok(self
             .libraries()
-            .pronunciation_rows(token)
-            .map_or(PhraseItemRead::NoItem, PhraseItemRead::Item))
+            .library(token)
+            .and_then(|library| library.item(token))
+            .map(read))
     }
 }
 
