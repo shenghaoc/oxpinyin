@@ -90,11 +90,22 @@ fn build_columns(
     columns
 }
 
-/// Whether `token`'s item pronounces `key` with a kept possibility —
-/// `item.get_pronunciation_possibility(&key) >= FLT_EPSILON` over the
-/// item's stored pronunciations (`phrase_index.h:136-163`). A token with
-/// no readable item keeps nothing.
-fn pronounces<D>(dictionary: &D, key: MatrixKey, token: PhraseToken) -> Result<bool, EngineError>
+/// Whether `token`'s item pronounces `key` with a kept possibility, the
+/// pin's `item.get_pronunciation_possibility(&key) >= FLT_EPSILON`: the
+/// test both `_get_char_offset_recur` (`pinyin.cpp:3170-3174`) and
+/// `_remember_phrase_recur` (`:3640-3645`) apply before a key consumes the
+/// next cached token: `item.get_pronunciation_possibility(&key) >=
+/// FLT_EPSILON` over the item's stored pronunciations
+/// (`phrase_index.h:136-163`). A token with no readable item keeps nothing.
+///
+/// # Errors
+///
+/// The dictionary's backend failure as [`EngineError::Failure`].
+pub fn key_pronounced_by<D>(
+    dictionary: &D,
+    key: MatrixKey,
+    token: PhraseToken,
+) -> Result<bool, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
 {
@@ -116,26 +127,6 @@ where
         .unwrap_or(false))
 }
 
-/// Whether `token`'s item pronounces `key` with a kept possibility, the
-/// pin's `item.get_pronunciation_possibility(&key) >= FLT_EPSILON`: the
-/// test both `_get_char_offset_recur` (`pinyin.cpp:3170-3174`) and
-/// `_remember_phrase_recur` (`:3640-3645`) apply before a key consumes the
-/// next cached token.
-///
-/// # Errors
-///
-/// The dictionary's backend failure as [`EngineError::Failure`].
-pub fn key_pronounced_by<D>(
-    dictionary: &D,
-    key: MatrixKey,
-    token: PhraseToken,
-) -> Result<bool, EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey>,
-{
-    pronounces(dictionary, key, token)
-}
-
 /// The pin's matrix columns for one parse, owned so a walk can alternate
 /// dictionary reads with writes to the store behind them.
 pub struct MatrixColumns {
@@ -147,7 +138,7 @@ pub struct MatrixColumns {
 /// The columns of one parse, or `None` for the empty matrix (`fill_matrix`
 /// returns before sizing it when the parse placed no key,
 /// `phonetic_key_matrix.cpp:34-38`). Arguments as
-/// [`character_offset_with_walk_over_keys`].
+/// [`character_offset_walk`].
 #[must_use]
 pub fn matrix_columns(
     input: &[u8],
@@ -302,7 +293,7 @@ where
     let Some(&token) = tokens.get(length) else {
         return Ok(None);
     };
-    if !pronounces(dictionary, key, token)? {
+    if !key_pronounced_by(dictionary, key, token)? {
         return Ok(None);
     }
     if key.end() > offset {
@@ -319,17 +310,11 @@ where
     )
 }
 
-/// The character-offset walk over one raw buffer, its parse, and its keys.
-///
-/// `input` is the active mode's own buffer, `parsed_len` the parse's
-/// consumed byte count, `keys` the matrix keys in column order (each at
-/// its syllable start), and `separators` whether `'` is a zero-key
-/// separator in that mode. `zhuyin` selects the walk that tests zero keys.
-/// The first value is the character count on
-/// success, or `None` on graceful refusal (empty matrix, empty or invalid
-/// phrase, a character with no dictionary token, or no satisfying path).
-/// The second value reports whether the walk ran so the facade can leave
-/// the caller's output alone on an early refusal without rereading the DBM.
+/// The character-offset walk over one parse's columns, `None` for the
+/// empty matrix ([`matrix_columns`]). `zhuyin` selects the walk that tests
+/// zero keys. The answer tells an early refusal, which leaves the caller's
+/// output alone, from a walk that found no path, without rereading the
+/// DBM.
 ///
 /// # Errors
 ///
@@ -338,37 +323,32 @@ where
 /// (the pin's asserts); [`EngineError::PinAssert`] for the two
 /// recursion asserts; the dictionary's backend failure as
 /// [`EngineError::Failure`].
-pub fn character_offset_with_walk_over_keys<D>(
-    (input, separators): (&[u8], bool),
-    parsed_len: usize,
-    keys: impl IntoIterator<Item = MatrixKey>,
+pub fn character_offset_walk<D>(
+    columns: Option<&MatrixColumns>,
     dictionary: &D,
     phrase: &crate::vocab::PhraseText,
     offset: usize,
     zhuyin: bool,
-) -> Result<(Option<usize>, bool), EngineError>
+) -> Result<CharacterOffset, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
 {
     // `0 == matrix.size()`: no parse ran, or the parse placed no key —
     // `fill_matrix` clears the matrix and returns before sizing it when
     // the key vector is empty (`phonetic_key_matrix.cpp:34-38`).
-    let mut keys = keys.into_iter().peekable();
-    if input.is_empty() || keys.peek().is_none() {
-        return Ok((None, false));
+    let Some(MatrixColumns { columns, .. }) = columns else {
+        return Ok(CharacterOffset::Refused);
+    };
+    // The columns run from 0 to the input length inclusive.
+    let len = columns.len() - 1;
+    if offset > len {
+        return Err(EngineError::LookupOffsetOutOfRange { offset, len });
     }
-    if offset > input.len() {
-        return Err(EngineError::LookupOffsetOutOfRange {
-            offset,
-            len: input.len(),
-        });
-    }
-    let columns = build_columns(input, parsed_len, keys, separators);
     if offset > 0 && columns.get(offset - 1).is_some_and(Column::lone_zero) {
         return Err(EngineError::ZeroKeyOffsetCheck);
     }
     if phrase.is_empty() {
-        return Ok((None, false));
+        return Ok(CharacterOffset::Refused);
     }
 
     // `_pre_compute_tokens`: the first token of each character's
@@ -382,12 +362,28 @@ where
             return Err(EngineError::PinAssert);
         }
         let Some(&token) = found.first() else {
-            return Ok((None, false));
+            return Ok(CharacterOffset::Refused);
         };
         tokens.push(token);
     }
 
-    walk(dictionary, &columns, &tokens, 0, offset, 0, zhuyin).map(|count| (count, true))
+    Ok(walk(dictionary, columns, &tokens, 0, offset, 0, zhuyin)?
+        .map_or(CharacterOffset::NoPath, CharacterOffset::Found))
+}
+
+/// What [`character_offset_walk`] answered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CharacterOffset {
+    /// The pin's early `false`, before its walk ran: the empty matrix, an
+    /// empty phrase, or a character with no dictionary token. The caller's
+    /// output stays untouched.
+    Refused,
+    /// The walk ran and found no path: the pin's `false` after it stored
+    /// the length it reached (`*plength = length`, `pinyin.cpp:3238`).
+    NoPath,
+    /// A key path pronouncing the phrase's first `n` characters reaches the
+    /// offset.
+    Found(usize),
 }
 
 #[cfg(test)]
