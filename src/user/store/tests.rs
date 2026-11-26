@@ -1588,9 +1588,9 @@ fn training_past_the_gram_total_limit_keeps_the_gram() {
     store
         .check_training_step_with(&mut check, ni, zhong)
         .unwrap();
-    assert_eq!(check.grams.get(&ni), Some(&cached));
+    assert_eq!(check.latest_gram(ni), Some(&cached));
     store.check_training_step_with(&mut check, ni, hao).unwrap();
-    assert_eq!(check.grams.get(&ni), Some(&cached));
+    assert_eq!(check.latest_gram(ni), Some(&cached));
     assert_eq!(check.fault(), None);
     store.observe_selection(1, ni).unwrap();
     store.observe_selection(ni, hao).unwrap();

@@ -1261,8 +1261,8 @@ pub struct RuntimeLm<'a> {
 /// its checked read cannot fail after the size check; no user container
 /// reports that failure either.
 /// The user store's per-step training check, as the shared preparation
-/// ([`crate::engine::Session::prepare_training`]) takes it: the predecessor
-/// is the last history token, or sentence start for the first step.
+/// ([`crate::engine::Session::prepare_training`]) takes it: the step's
+/// predecessor token, sentence start when it has none.
 /// Read-only — [`UserStore::check_training_step_with`] replays earlier
 /// checked steps on copies of the grams without writing the store — so
 /// production training and the fuzz probe pass the same check.
@@ -1274,14 +1274,12 @@ pub struct RuntimeLm<'a> {
 pub(crate) fn training_step_check(
     user: &UserStore,
     check: &mut crate::user::TrainingCheck,
-    history: &[PhraseToken],
+    last: Option<&PhraseToken>,
     token: &PhraseToken,
 ) -> Result<(), EngineError> {
     user.check_training_step_with(
         check,
-        history
-            .last()
-            .map_or(crate::vocab::SENTENCE_START, |token| *token),
+        last.map_or(crate::vocab::SENTENCE_START, |token| *token),
         *token,
     )
     .map_err(|_| EngineError::UserModel)
@@ -1806,8 +1804,8 @@ impl Runtime {
         let mut check = crate::user::TrainingCheck::default();
         let prepared = state
             .read(self.dict(), self.lm())
-            .prepare_training(index, &mut |history, token| {
-                training_step_check(user, &mut check, history, token)
+            .prepare_training(index, &mut |last, token| {
+                training_step_check(user, &mut check, last, token)
             });
         let user = &mut self.user;
         let result = match prepared {

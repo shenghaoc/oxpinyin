@@ -397,8 +397,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         let prepared = self
             .read()
             .session
-            .prepare_training(index, &mut |history, token| {
-                crate::runtime::training_step_check(user, &mut check, history, token)
+            .prepare_training(index, &mut |last, token| {
+                crate::runtime::training_step_check(user, &mut check, last, token)
             });
         match prepared {
             Err(crate::engine::TrainingPrepFault::PinAbort) => true,
