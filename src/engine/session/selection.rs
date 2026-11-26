@@ -3,6 +3,7 @@
 use super::*;
 use crate::engine::constraint::PhraseSpan;
 use crate::engine::error::TrainingPrepFault;
+use crate::vocab::MAX_PHRASE_LENGTH;
 
 /// The anchor of a **before-cursor** window — the buffer start, not the
 /// lookup offset — that a caller passes to [`SelectionTarget::of_candidate`]
@@ -113,6 +114,7 @@ impl TrainingPlan<'_> {
             }
         } else if let Some((parsed, ends)) = self.spans {
             let mut context = Vec::with_capacity(row.spans.len());
+            let mut stacks = ReadingStacks::default();
             for (index, span) in row.spans.iter().enumerate() {
                 if let Some(&Some(end)) = ends.get(index) {
                     let readings = training_readings(
@@ -121,6 +123,7 @@ impl TrainingPlan<'_> {
                         span.start,
                         end,
                         span.text.phrase_length(),
+                        &mut stacks,
                     );
                     user.observe_with_keys(&context, &span.token, readings)
                         .map_err(|_| EngineError::UserModel)?;
@@ -778,20 +781,32 @@ pub(crate) fn training_readings<'a>(
     start: usize,
     end: usize,
     length: usize,
+    stacks: &'a mut ReadingStacks,
 ) -> TrainingReadings<'a> {
-    // The walk pushes one frame per key and stops at `length` keys, so the
-    // stacks never outgrow `length + 1` frames and `length` keys.
-    let mut frames = Vec::with_capacity(length + 1);
-    frames.push((start, 0));
+    stacks.frames.clear();
+    stacks.keys.clear();
+    stacks.frames.push((start, 0));
     TrainingReadings {
         matrix,
         input,
         end,
         length,
-        frames,
-        keys: Vec::with_capacity(length),
+        stacks,
         yielded: false,
     }
+}
+
+/// The reading walk's stacks, which the caller owns and lends to each walk,
+/// as the pin reuses one `m_cached_keys` buffer (`phonetic_lookup.h:924-926`).
+/// The walk pushes one frame per key and stops at `length` keys, so it never
+/// holds more than `length + 1` frames and `length` keys. Up to
+/// `MAX_PHRASE_LENGTH` keys they stay inline. `length` is the item's stored
+/// header count (`nbest_rows`), which a crafted item can set past that
+/// bound; such a walk spills to the heap.
+#[derive(Default)]
+pub(crate) struct ReadingStacks {
+    frames: smallvec::SmallVec<[(usize, usize); MAX_PHRASE_LENGTH + 1]>,
+    keys: smallvec::SmallVec<[crate::parser::ChewingKey; MAX_PHRASE_LENGTH]>,
 }
 
 pub(crate) struct TrainingReadings<'a> {
@@ -799,16 +814,15 @@ pub(crate) struct TrainingReadings<'a> {
     input: &'a [u8],
     end: usize,
     length: usize,
-    frames: Vec<(usize, usize)>,
-    keys: Vec<crate::parser::ChewingKey>,
+    stacks: &'a mut ReadingStacks,
     yielded: bool,
 }
 
 impl TrainingReadings<'_> {
     fn backtrack(&mut self) {
-        self.frames.pop();
-        if !self.frames.is_empty() {
-            self.keys.pop();
+        self.stacks.frames.pop();
+        if !self.stacks.frames.is_empty() {
+            self.stacks.keys.pop();
         }
     }
 }
@@ -820,11 +834,11 @@ impl Iterator for TrainingReadings<'_> {
             self.yielded = false;
             self.backtrack();
         }
-        while let Some(&(position, index)) = self.frames.last() {
+        while let Some(&(position, index)) = self.stacks.frames.last() {
             // :607-621: exact span and phrase length only.
-            if position == self.end && self.keys.len() == self.length {
+            if position == self.end && self.stacks.keys.len() == self.length {
                 self.yielded = true;
-                return Some(self.keys.clone());
+                return Some(self.stacks.keys.to_vec());
             }
             // 074a2219 phonetic_key_matrix.cpp:635-642: a zero key
             // advances without adding a syllable, including a trailing
@@ -834,12 +848,12 @@ impl Iterator for TrainingReadings<'_> {
                 && self.input.get(position) == Some(&b'\'')
                 && self.matrix.get(position).is_some_and(<[ScanKey]>::is_empty)
             {
-                if let Some(frame) = self.frames.last_mut() {
+                if let Some(frame) = self.stacks.frames.last_mut() {
                     frame.0 += 1;
                 }
                 continue;
             }
-            if position >= self.end || self.keys.len() >= self.length {
+            if position >= self.end || self.stacks.keys.len() >= self.length {
                 self.backtrack();
                 continue;
             }
@@ -851,15 +865,17 @@ impl Iterator for TrainingReadings<'_> {
                 self.backtrack();
                 continue;
             };
-            if let Some(frame) = self.frames.last_mut() {
+            if let Some(frame) = self.stacks.frames.last_mut() {
                 frame.1 += 1;
             }
             // :629-651: visit each matrix key in order, without deduping.
             if edge.to <= position {
                 continue;
             }
-            self.keys.push(edge.key.chewing_key().with_tone(edge.tone));
-            self.frames.push((edge.to, 0));
+            self.stacks
+                .keys
+                .push(edge.key.chewing_key().with_tone(edge.tone));
+            self.stacks.frames.push((edge.to, 0));
         }
         None
     }
