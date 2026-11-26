@@ -7,7 +7,7 @@
 use crate::marshal::{for_each_stored_word_utf8, phrase_text_bytes, stored_words_utf8_len};
 use crate::parser::ChewingKey;
 use crate::runtime::{PhraseItemView, RuntimeDict};
-use crate::user::{MAX_KEY_TONE, SystemItem, UserPronunciation, UserStore};
+use crate::user::{MAX_KEY_TONE, UserPronunciation, UserStore};
 use crate::vocab::{NULL_TOKEN, PhraseText, SENTENCE_START};
 
 use std::collections::VecDeque;
@@ -96,37 +96,14 @@ pub enum ExportStep<R> {
 /// `pinyin_iterator_get_next_phrase` renders them (`pinyin.cpp:712-739`).
 /// The writers put the text and the `'`-joined pinyin straight into buffers
 /// of the reported lengths; the string builders allocate each once.
-pub struct ExportRow<'a>(RowSource<'a>);
-
-enum RowSource<'a> {
-    /// A system library's own item or a session arena's: the phrase as
-    /// stored `ucs4_t` code points, the pronunciation as packed `ChewingKey`
-    /// bytes.
-    Mapped {
-        item: PhraseItemView<'a>,
-        keys: &'a [u8],
-        count: u32,
-    },
-}
-
-/// The syllables of one pronunciation: each a spelling and the tone digit
-/// `ChewingKey::get_pinyin_string` appends to it (`chewing_key.cpp:47-57`
-/// at 074a2219: the content table's pinyin, then `%d` of a non-zero tone).
-#[derive(Clone)]
-enum Syllables<'a> {
-    Packed(std::slice::Iter<'a, [u8; 2]>),
-}
-
-impl Iterator for Syllables<'_> {
-    type Item = (&'static str, Option<u8>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Packed(pairs) => pairs
-                .next()
-                .map(|pair| chewing_syllable(ChewingKey::from_packed(u16::from_le_bytes(*pair)))),
-        }
-    }
+pub struct ExportRow<'a> {
+    /// The item: a system library's own or a session arena's, its phrase
+    /// stored as `ucs4_t` code points.
+    item: PhraseItemView<'a>,
+    /// The pronunciation as packed `ChewingKey` bytes.
+    keys: &'a [u8],
+    /// The pronunciation's count.
+    count: u32,
 }
 
 /// `ChewingKey::get_pinyin_string` without the allocation: the spelling
@@ -141,7 +118,7 @@ fn chewing_syllable(key: ChewingKey) -> (&'static str, Option<u8>) {
 }
 
 /// The keys of one stored reading, from its packed little-endian words.
-fn packed_keys(keys: &[u8]) -> impl Iterator<Item = ChewingKey> + '_ {
+fn packed_keys(keys: &[u8]) -> impl Iterator<Item = ChewingKey> + Clone + '_ {
     keys.as_chunks::<2>()
         .0
         .iter()
@@ -171,9 +148,7 @@ impl ExportRow<'_> {
     /// [`Self::with_text_bytes`]; [`Self::for_each_text_utf8`] hands out the
     /// same bytes without this text.
     fn phrase_text(&self) -> Option<PhraseText> {
-        match &self.0 {
-            RowSource::Mapped { item, .. } => item.phrase_text(),
-        }
+        self.item.phrase_text()
     }
 
     /// Lends the phrase's outward bytes, encoded once, to `with`, or answers
@@ -190,9 +165,7 @@ impl ExportRow<'_> {
     /// [`crate::marshal::stored_words_utf8_len`].
     #[must_use]
     pub fn text_utf8_len(&self) -> Option<usize> {
-        match &self.0 {
-            RowSource::Mapped { item, .. } => stored_words_utf8_len(item.phrase_codes()),
-        }
+        stored_words_utf8_len(self.item.phrase_codes())
     }
 
     /// Hands [`Self::with_text_bytes`]'s bytes to `emit` straight from the
@@ -200,9 +173,7 @@ impl ExportRow<'_> {
     /// [`crate::marshal::for_each_stored_word_utf8`]. Together they are
     /// [`Self::text_utf8_len`] bytes.
     pub fn for_each_text_utf8(&self, emit: impl FnMut(&[u8])) {
-        match &self.0 {
-            RowSource::Mapped { item, .. } => for_each_stored_word_utf8(item.phrase_codes(), emit),
-        }
+        for_each_stored_word_utf8(self.item.phrase_codes(), emit)
     }
 
     /// The `get_pinyin_string` assert the pin dies at while rendering this
@@ -214,85 +185,51 @@ impl ExportRow<'_> {
     /// zero and the content-table assert (`:50`) holds.
     #[must_use]
     pub fn key_assert(&self) -> Option<ExportAssert> {
-        match &self.0 {
-            RowSource::Mapped { keys, .. } => reading_assert(packed_keys(keys)),
-        }
+        reading_assert(packed_keys(self.keys))
     }
 
     /// The pronunciation's key strings, each the bytes of
     /// `_ChewingKey::get_pinyin_string` (`pinyin.cpp:726-728`) as its
     /// spelling and the digit of a non-zero tone: the elements of the pin's
     /// `g_strjoinv("'", …)` (`:733`).
+    /// Each syllable is a spelling and the tone digit
+    /// `ChewingKey::get_pinyin_string` appends to it (`chewing_key.cpp:47-57`
+    /// at 074a2219: the content table's pinyin, then `%d` of a non-zero tone).
     pub fn pinyin_strings(&self) -> impl Iterator<Item = (&'static str, Option<u8>)> + Clone + '_ {
-        self.syllables()
+        packed_keys(self.keys).map(chewing_syllable)
     }
 
     /// The pronunciation's stored count (`item.get_nth_pronunciation`'s
     /// `freq`, `pinyin.cpp:724`).
     #[must_use]
     pub fn count(&self) -> u64 {
-        match &self.0 {
-            RowSource::Mapped { count, .. } => u64::from(*count),
-        }
-    }
-
-    fn syllables(&self) -> Syllables<'_> {
-        match &self.0 {
-            RowSource::Mapped { keys, .. } => Syllables::Packed(keys.as_chunks::<2>().0.iter()),
-        }
+        u64::from(self.count)
     }
 }
 
-/// One item under a token, wherever it lives.
-enum ItemRef<'a> {
-    Mapped(PhraseItemView<'a>),
-    Arena(PhraseItemView<'a>),
+/// The pronunciation the cursor moves to after reading `from - 1`:
+/// `nth_pronun ++; if (nth_pronun < n_pronuns)` (`pinyin.cpp:742-746`).
+/// Every stored pronunciation counts, as the pin's `n_pronuns` does; one
+/// this engine cannot spell is read and refused, not skipped.
+fn next_pronunciation(item: &PhraseItemView<'_>, from: usize) -> Option<usize> {
+    (from < item.n_pronunciations()).then_some(from)
 }
 
-impl<'a> From<SystemItem<'a>> for ItemRef<'a> {
-    fn from(item: SystemItem<'a>) -> Self {
-        match item {
-            SystemItem::Shipped(item) | SystemItem::Replayed(item) => Self::Mapped(item),
-        }
-    }
+/// What the probe asks of an item (`pinyin.cpp:682`): that it holds a
+/// pronunciation. The text is not looked at until the read.
+fn first_pronunciation(item: &PhraseItemView<'_>) -> Option<usize> {
+    next_pronunciation(item, 0)
 }
 
-impl ItemRef<'_> {
-    /// `item.get_n_pronunciation()`.
-    fn n_pronunciations(&self) -> usize {
-        match self {
-            Self::Mapped(item) | Self::Arena(item) => item.n_pronunciations(),
-        }
-    }
-
-    /// The pronunciation the cursor moves to after reading `from - 1`:
-    /// `nth_pronun ++; if (nth_pronun < n_pronuns)` (`pinyin.cpp:742-746`).
-    /// Every stored pronunciation counts, as the pin's `n_pronuns` does; one
-    /// this engine cannot spell is read and refused, not skipped.
-    fn next_pronunciation(&self, from: usize) -> Option<usize> {
-        (from < self.n_pronunciations()).then_some(from)
-    }
-
-    /// What the probe asks of an item (`pinyin.cpp:682`): that it holds a
-    /// pronunciation. The text is not looked at until the read.
-    fn first_pronunciation(&self) -> Option<usize> {
-        self.next_pronunciation(0)
-    }
-
-    /// Pronunciation `nth` of the item as a row: `get_nth_pronunciation`
-    /// (`pinyin.cpp:724`), `None` for an `nth` at or past the item's count.
-    fn row(&self, nth: usize) -> Option<ExportRow<'_>> {
-        Some(ExportRow(match self {
-            Self::Mapped(item) | Self::Arena(item) => {
-                let pronunciation = item.pronunciation(nth)?;
-                RowSource::Mapped {
-                    item: *item,
-                    keys: pronunciation.keys,
-                    count: pronunciation.freq,
-                }
-            }
-        }))
-    }
+/// Pronunciation `nth` of the item as a row: `get_nth_pronunciation`
+/// (`pinyin.cpp:724`), `None` for an `nth` at or past the item's count.
+fn export_row<'a>(item: &'a PhraseItemView<'_>, nth: usize) -> Option<ExportRow<'a>> {
+    let pronunciation = item.pronunciation(nth)?;
+    Some(ExportRow {
+        item: *item,
+        keys: pronunciation.keys,
+        count: pronunciation.freq,
+    })
 }
 
 struct PhraseExportRead<'a> {
@@ -363,11 +300,11 @@ impl PhraseExportRead<'_> {
             // is (`phrase_index.cpp:199-203` at 074a2219). The row is
             // missing only past the count, the pin's `:721` assert; its
             // `:724` read cannot fail after that (`phrase_index.cpp:33-44`).
-            let row = item.row(nth).ok_or(ExportAssert::Pronunciation)?;
+            let row = export_row(&item, nth).ok_or(ExportAssert::Pronunciation)?;
             if let Some(site) = row.key_assert() {
                 return Err(site);
             }
-            Ok((read(&row), item.next_pronunciation(nth + 1)))
+            Ok((read(&row), next_pronunciation(&item, nth + 1)))
         });
         let (out, following) = match step {
             Some(Err(site)) => return ExportStep::Assert(site),
@@ -439,7 +376,7 @@ impl PhraseExportRead<'_> {
             // `get_phrase_item` fails for a token a journal REMOVE took out,
             // and finds nothing in a slot with no item: neither is selected.
             if let Some(Some(nth)) = live
-                .read(token, |item| ItemRef::from(item).first_pronunciation())
+                .read(token, |item| first_pronunciation(&item.view()))
                 .found()
             {
                 self.next_token = token;
@@ -459,7 +396,7 @@ impl PhraseExportRead<'_> {
         let mut token = start;
         while token < end {
             let found = self
-                .with_user_item(token, |item| item.first_pronunciation())
+                .with_user_item(token, |item| first_pronunciation(&item))
                 .flatten();
             if let Some(nth) = found {
                 self.next_token = token;
@@ -473,13 +410,17 @@ impl PhraseExportRead<'_> {
     /// `get_phrase_item` for `token` (`phrase_index.cpp:180-206`): the
     /// session's replacement first, then the mapped chunk; a `USER_FILE`
     /// token reads the session store. `None` is `ERROR_NO_ITEM`.
-    fn with_item<R>(&mut self, token: u32, read: impl FnOnce(ItemRef<'_>) -> R) -> Option<R> {
+    fn with_item<R>(
+        &mut self,
+        token: u32,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
         self.refresh();
         if self.user.originals().get(&self.index).is_some() {
             return self
                 .system
                 .live_items_ignoring_mask()
-                .read(token, |item| read(ItemRef::from(item)))
+                .read(token, |item| read(item.view()))
                 .found();
         }
         self.with_user_item(token, read)
@@ -488,9 +429,12 @@ impl PhraseExportRead<'_> {
     /// The `USER_FILE` item under `token`: the session's arena item, or
     /// else the item a system library's live buffer appended, read from the
     /// store on every call. `None` is no item; a session's read cannot fail.
-    fn with_user_item<R>(&self, token: u32, read: impl FnOnce(ItemRef<'_>) -> R) -> Option<R> {
-        self.user
-            .with_user_item(token, |item| read(ItemRef::Arena(item)))
+    fn with_user_item<R>(
+        &self,
+        token: u32,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        self.user.with_user_item(token, read)
     }
 }
 
