@@ -82,7 +82,7 @@ impl SharedMatrix {
     /// a parse without keys, `phonetic_key_matrix.cpp:34-38`) or a key has
     /// no spelling.
     pub(crate) fn of(inst: &crate::state::CapiInstanceRead<'_>) -> Option<Self> {
-        let keys = if inst.core.double_parse.is_some() {
+        let keys = if inst.core.double_parse().is_some() {
             Vec::new()
         } else {
             inst.core.mode_key_list()
@@ -99,20 +99,20 @@ impl SharedMatrix {
     ) -> Option<Self> {
         let core = &inst.core;
         let parsed_len = core.parsed_len;
-        let spans: Vec<(&'static str, u8, usize, usize)> =
-            if let Some(parse) = core.double_parse.as_ref() {
-                // `mode_key_list` leaves the double-pinyin tone out; the key
-                // carries it (`ChewingKey::m_tone`).
-                parse
-                    .keys()
-                    .iter()
-                    .map(|k| (k.key().text(), k.tone(), k.start(), k.end()))
-                    .collect()
-            } else {
-                keys.iter()
-                    .map(|k| (k.text, k.tone, k.begin, k.end))
-                    .collect()
-            };
+        let spans: Vec<(&'static str, u8, usize, usize)> = if let Some(parse) = core.double_parse()
+        {
+            // `mode_key_list` leaves the double-pinyin tone out; the key
+            // carries it (`ChewingKey::m_tone`).
+            parse
+                .keys()
+                .iter()
+                .map(|k| (k.key().text(), k.tone(), k.start(), k.end()))
+                .collect()
+        } else {
+            keys.iter()
+                .map(|k| (k.text, k.tone, k.begin, k.end))
+                .collect()
+        };
         let mut keys = Vec::with_capacity(spans.len());
         for (text, tone, begin, end) in spans {
             if end > parsed_len || begin >= end {

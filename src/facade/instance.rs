@@ -81,6 +81,62 @@ pub struct InstanceCore {
     state: InstanceState,
 }
 
+/// The parse a scheme parse call keeps: one per parse entry point that
+/// reads the input through its own parser rather than the session's scan.
+#[derive(Debug)]
+pub enum ModeParse {
+    /// A zhuyin keyboard parse (the chewing entry point).
+    Zhuyin(ZhuyinParse),
+    /// A double-pinyin parse.
+    Double(DoublePinyinParse),
+    /// A LUOMA / `SECONDARY_ZHUYIN` full-pinyin index parse.
+    Full(FullPinyinIndexParse),
+}
+
+impl ModeParse {
+    /// The bytes of the original input the parse consumed.
+    #[must_use]
+    pub fn consumed(&self) -> usize {
+        match self {
+            Self::Zhuyin(parse) => parse.consumed(),
+            Self::Double(parse) => parse.consumed(),
+            Self::Full(parse) => parse.consumed(),
+        }
+    }
+}
+
+impl InstanceState {
+    /// The stored zhuyin parse, when the last parse call was the chewing
+    /// entry point.
+    #[must_use]
+    pub const fn zhuyin_parse(&self) -> Option<&ZhuyinParse> {
+        match &self.mode_parse {
+            Some(ModeParse::Zhuyin(parse)) => Some(parse),
+            _ => None,
+        }
+    }
+
+    /// The stored double-pinyin parse, when the last parse call was the
+    /// double-pinyin entry point.
+    #[must_use]
+    pub const fn double_parse(&self) -> Option<&DoublePinyinParse> {
+        match &self.mode_parse {
+            Some(ModeParse::Double(parse)) => Some(parse),
+            _ => None,
+        }
+    }
+
+    /// The stored full-pinyin index parse, when the last parse call was
+    /// the full-pinyin entry point under LUOMA or `SECONDARY_ZHUYIN`.
+    #[must_use]
+    pub const fn full_parse(&self) -> Option<&FullPinyinIndexParse> {
+        match &self.mode_parse {
+            Some(ModeParse::Full(parse)) => Some(parse),
+            _ => None,
+        }
+    }
+}
+
 /// Cursor, parse and presentation state retained between calls.
 pub struct InstanceState {
     /// The context's live option/scheme state, by handle.
@@ -93,24 +149,15 @@ pub struct InstanceState {
     /// upstream `m_parsed_len`, in the active parse mode's own
     /// coordinates. Allocation and reset both store 0.
     pub parsed_len: usize,
-    /// Most recent double-pinyin parse, when the last parse call was the
-    /// double-pinyin entry point. Used for aux text and
+    /// The parse the most recent scheme parse call stored: chewing, double
+    /// pinyin, or the LUOMA / `SECONDARY_ZHUYIN` full-pinyin index parse.
+    /// `None` for plain full pinyin and after a reset. Used for aux text and
     /// candidate-offset mapping back to the original input bytes.
-    pub double_parse: Option<DoublePinyinParse>,
-    /// Original double-pinyin input for sentence/preedit fallback
-    /// display.
-    pub double_input: String,
-    /// Most recent Zhuyin parse, when the last parse call was the chewing
-    /// entry point.
-    pub zhuyin_parse: Option<ZhuyinParse>,
-    /// Original Zhuyin input for sentence/preedit fallback display.
-    pub zhuyin_input: String,
-    /// Most recent full-pinyin index parse (LUOMA / `SECONDARY_ZHUYIN`),
-    /// when the last parse call was the full-pinyin entry point under
-    /// such a scheme. Used for aux-text rendering over the raw input.
-    pub full_parse: Option<FullPinyinIndexParse>,
-    /// Original full-pinyin input for aux-text cursor mapping.
-    pub full_input: String,
+    pub mode_parse: Option<ModeParse>,
+    /// The original input of [`Self::mode_parse`], for sentence/preedit
+    /// fallback display and aux-text cursor mapping. Empty while
+    /// `mode_parse` is `None`.
+    pub parse_input: String,
     /// The pin's parse-time matrix for the index-parsed full pinyin, double
     /// pinyin and chewing entry points: the parse's keys plus the steps the
     /// pin runs after `fill_matrix` under the options in force at that parse
@@ -208,12 +255,8 @@ impl InstanceCore {
                 live,
                 phrase_result: Vec::new(),
                 parsed_len: 0,
-                double_parse: None,
-                double_input: String::new(),
-                zhuyin_parse: None,
-                zhuyin_input: String::new(),
-                full_parse: None,
-                full_input: String::new(),
+                mode_parse: None,
+                parse_input: String::new(),
                 parse_matrix: Vec::new(),
                 validated: ValidatedLayout::default(),
             },
@@ -278,21 +321,19 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     }
 
     pub(crate) fn validate_lookup_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return check_lookup_offset_range(parse.consumed(), offset);
+        match &self.mode_parse {
+            Some(ModeParse::Zhuyin(parse)) => check_lookup_offset_range(parse.consumed(), offset),
+            Some(ModeParse::Double(parse)) => check_lookup_offset_range(parse.consumed(), offset),
+            Some(ModeParse::Full(parse)) => {
+                // The min is defensive only: `parse_input` and the parse are
+                // set together and cleared together, so consumed never
+                // exceeds the buffer — but a desync must refuse, not
+                // slice-panic.
+                let consumed = parse.consumed().min(self.parse_input.len());
+                normalize_lookup_offset(&self.parse_input.as_bytes()[..consumed], offset)
+            }
+            None => self.session.normalized_lookup_offset(offset),
         }
-        if let Some(parse) = self.double_parse.as_ref() {
-            return check_lookup_offset_range(parse.consumed(), offset);
-        }
-        if let Some(parse) = self.full_parse.as_ref() {
-            // The min is defensive only: `full_input` and the parse are
-            // set together and cleared together, so consumed never
-            // exceeds the buffer — but a desync must refuse, not
-            // slice-panic.
-            let consumed = parse.consumed().min(self.full_input.len());
-            return normalize_lookup_offset(&self.full_input.as_bytes()[..consumed], offset);
-        }
-        self.session.normalized_lookup_offset(offset)
     }
 
     /// The phrase-table tokens stored for `phrase`, in library order.
@@ -442,12 +483,8 @@ impl<
     pub fn reset_parse_state(&mut self) {
         self.session.reset_composition();
         self.parsed_len = 0;
-        self.double_parse = None;
-        self.double_input.clear();
-        self.zhuyin_parse = None;
-        self.zhuyin_input.clear();
-        self.full_parse = None;
-        self.full_input.clear();
+        self.mode_parse = None;
+        self.parse_input.clear();
         self.parse_matrix.clear();
     }
 
@@ -544,23 +581,19 @@ impl<
     /// plain and index-parsed full pinyin, whose session coordinates are
     /// the original ones.
     fn abi_key_images(&self, map_double_pinyin: bool) -> Option<Vec<KeyImage>> {
-        if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return Some(key_images(
-                parse
-                    .keys()
-                    .iter()
-                    .map(|item| (item.start(), item.end(), item.key().text().len())),
-            ));
+        match &self.mode_parse {
+            Some(ModeParse::Zhuyin(parse)) => {
+                Some(key_images(parse.keys().iter().map(|item| {
+                    (item.start(), item.end(), item.key().text().len())
+                })))
+            }
+            Some(ModeParse::Double(parse)) if map_double_pinyin => {
+                Some(key_images(parse.keys().iter().map(|item| {
+                    (item.start(), item.end(), item.key().text().len())
+                })))
+            }
+            _ => None,
         }
-        if map_double_pinyin && let Some(parse) = self.double_parse.as_ref() {
-            return Some(key_images(
-                parse
-                    .keys()
-                    .iter()
-                    .map(|item| (item.start(), item.end(), item.key().text().len())),
-            ));
-        }
-        None
     }
 
     /// Builds one bound mapper for a publication pass. It owns the base
@@ -662,7 +695,7 @@ impl<
         }
         self.validated = ValidatedLayout {
             columns,
-            double_pinyin: images.is_some() && self.zhuyin_parse.is_none(),
+            double_pinyin: images.is_some() && self.zhuyin_parse().is_none(),
             images,
         };
     }

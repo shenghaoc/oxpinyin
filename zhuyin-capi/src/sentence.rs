@@ -45,13 +45,13 @@ fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     if inst.core.parsed_len == 0 {
         return false;
     }
-    if let Some(parse) = &inst.core.zhuyin_parse {
+    if let Some(parse) = inst.core.zhuyin_parse() {
         return !parse.keys().is_empty();
     }
-    if let Some(parse) = &inst.core.double_parse {
+    if let Some(parse) = inst.core.double_parse() {
         return !parse.keys().is_empty();
     }
-    if let Some(parse) = &inst.core.full_parse {
+    if let Some(parse) = inst.core.full_parse() {
         return !parse.keys().is_empty();
     }
     // Hanyu's only consumed bytes without keys are apostrophes
@@ -421,7 +421,7 @@ fn guess_candidates_result(
     // reserved slot). Every after-cursor guess searches again, even at
     // the composition offset: unload may have changed library visibility
     // without a parse (074a2219 zhuyin.cpp:1468-1512).
-    let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+    let session_offset = if let Some(parse) = inst.core.zhuyin_parse() {
         oxpinyin::facade::zhuyin_lookup_session_offset(
             parse,
             inst.core.session.raw_input().len(),
@@ -441,8 +441,7 @@ fn guess_candidates_result(
     let sentence_rows_only = !before_cursor
         && inst
             .core
-            .zhuyin_parse
-            .as_ref()
+            .zhuyin_parse()
             .is_some_and(|parse| oxpinyin::facade::zhuyin_offset_is_mid_key(parse, normalized));
     // The before-cursor window is re-anchored just like the after-cursor
     // one: `snapshot_candidates` records each row's index into THIS list,
@@ -454,7 +453,7 @@ fn guess_candidates_result(
     // `oxpinyin::engine::BEFORE_CURSOR_ANCHOR`.
     let searched_here = !sentence_rows_only
         && (!before_cursor
-            || inst.core.zhuyin_parse.as_ref().is_none_or(|parse| {
+            || inst.core.zhuyin_parse().is_none_or(|parse| {
                 oxpinyin::facade::zhuyin_original_offset(parse, session_offset) == normalized
             }));
     let abort_on_rank = searched_here && facade_total_is_zero(&inst.read());

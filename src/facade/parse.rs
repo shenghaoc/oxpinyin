@@ -9,7 +9,8 @@ use crate::parser::{
 };
 use crate::vocab::SyllableKey;
 
-use crate::facade::instance::{InstanceState, InstanceView};
+use crate::engine::MatrixKey;
+use crate::facade::instance::{InstanceState, InstanceView, ModeParse};
 
 /// How the facade forwards the option word for one-key and batch chewing parses.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -297,9 +298,15 @@ impl<
                 return 0;
             }
             self.parsed_len = parsed.consumed();
-            text.clone_into(&mut self.full_input);
-            self.full_parse = Some(parsed);
-            self.keep_parse_matrix(divided);
+            let keys: Vec<_> = parsed
+                .keys()
+                .iter()
+                .map(|key| {
+                    let chewing = ChewingKey::from_pinyin(key.canonical()).unwrap_or_default();
+                    MatrixKey::from_chewing(chewing.with_tone(key.tone()), key.start(), key.end())
+                })
+                .collect();
+            self.keep_parse(text, ModeParse::Full(parsed), &keys, divided);
             return self.parsed_len;
         }
         let consumed = match self.session.replace_raw(text) {
@@ -310,16 +317,17 @@ impl<
         consumed
     }
 
-    /// Builds the pin's parse-time matrix from the keys of the parse just
-    /// stored, under the options in force now: `fill_matrix`, then
-    /// `resplit_step` and `inner_split_step` when `divided` (pinyin's
-    /// full-pinyin entry point, `pinyin.cpp:1514-1520`), then
-    /// `fuzzy_syllable_step`. The remember walk reads it later,
-    /// whatever the options have become since.
-    fn keep_parse_matrix(&mut self, divided: bool) {
-        let keys = crate::facade::cursor::matrix_keys_of(&self.parser_key_list());
+    /// Stores `parse` and its input, and builds the pin's parse-time
+    /// matrix from the parser's `keys` under the options in force now:
+    /// `fill_matrix`, then `resplit_step` and `inner_split_step` when
+    /// `divided` (pinyin's full-pinyin entry point, `pinyin.cpp:1514-1520`),
+    /// then `fuzzy_syllable_step`. The remember walk reads the matrix
+    /// later, whatever the options have become since.
+    fn keep_parse(&mut self, text: &str, parse: ModeParse, keys: &[MatrixKey], divided: bool) {
+        text.clone_into(&mut self.parse_input);
+        self.mode_parse = Some(parse);
         self.parse_matrix =
-            crate::engine::parse_time_keys(&keys, self.parsed_len, self.options(), divided);
+            crate::engine::parse_time_keys(keys, self.parsed_len, self.options(), divided);
     }
 
     /// The chewing batch seam — the shared skeleton (continue/restart,
@@ -356,9 +364,8 @@ impl<
         }
 
         self.parsed_len = parsed.consumed();
-        text.clone_into(&mut self.zhuyin_input);
-        self.zhuyin_parse = Some(parsed);
-        self.keep_parse_matrix(false);
+        let keys: Vec<_> = parsed.keys().iter().map(zhuyin_matrix_key).collect();
+        self.keep_parse(text, ModeParse::Zhuyin(parsed), &keys, false);
         self.parsed_len
     }
 
@@ -409,11 +416,29 @@ impl<
         }
 
         self.parsed_len = parsed.consumed();
-        text.clone_into(&mut self.double_input);
-        self.double_parse = Some(parsed);
-        self.keep_parse_matrix(false);
+        let keys: Vec<_> = parsed.keys().iter().map(double_matrix_key).collect();
+        self.keep_parse(text, ModeParse::Double(parsed), &keys, false);
         self.parsed_len
     }
+}
+
+/// A zhuyin parser key as a matrix key: its chewing key under its tone.
+fn zhuyin_matrix_key(key: &ZhuyinKey) -> MatrixKey {
+    MatrixKey::from_chewing(
+        key.key().chewing_key().with_tone(key.tone()),
+        key.start(),
+        key.end(),
+    )
+}
+
+/// A double-pinyin parser key as a matrix key: its chewing key under its
+/// tone.
+fn double_matrix_key(key: &DoublePinyinKey) -> MatrixKey {
+    MatrixKey::from_chewing(
+        key.key().chewing_key().with_tone(key.tone()),
+        key.start(),
+        key.end(),
+    )
 }
 
 #[cfg(test)]

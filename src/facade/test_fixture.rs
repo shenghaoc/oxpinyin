@@ -152,9 +152,9 @@ pub(crate) fn native_window(
 fn native_offset(context: &ContextCore, instance: &InstanceCore, offset: usize) -> usize {
     let view = instance.read(&context.runtime);
     let offset = view.validate_lookup_offset(offset).unwrap();
-    if let Some(parse) = &view.double_parse {
+    if let Some(parse) = view.double_parse() {
         crate::facade::double_session_offset(parse, offset)
-    } else if let Some(parse) = &view.zhuyin_parse {
+    } else if let Some(parse) = view.zhuyin_parse() {
         crate::facade::zhuyin_session_offset(parse, offset)
     } else {
         offset

@@ -331,11 +331,7 @@ mod native {
         assert!(guess(&context, &mut instance));
         for offset in [0, 2] {
             assert!(!crate::facade::double_offset_is_mid_key(
-                instance
-                    .read(&context.runtime)
-                    .double_parse
-                    .as_ref()
-                    .unwrap(),
+                instance.read(&context.runtime).double_parse().unwrap(),
                 offset
             ));
             assert!(
@@ -346,11 +342,7 @@ mod native {
         }
         for offset in [1, 3] {
             assert!(crate::facade::double_offset_is_mid_key(
-                instance
-                    .read(&context.runtime)
-                    .double_parse
-                    .as_ref()
-                    .unwrap(),
+                instance.read(&context.runtime).double_parse().unwrap(),
                 offset
             ));
         }
