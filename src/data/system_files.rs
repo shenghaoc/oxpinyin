@@ -30,9 +30,10 @@ pub enum SystemDbm {
 }
 
 impl SystemDbm {
-    /// The name libpinyin gives the file (`pinyin_internal.h:57-66`).
+    /// The file name: libpinyin's own, the same on Kyoto Cabinet, tkrzw and
+    /// Berkeley DB (`pinyin_internal.h:57-66` does not vary with the DBM).
     #[must_use]
-    pub const fn libpinyin_name(self) -> &'static str {
+    pub const fn file_name(self) -> &'static str {
         match self {
             Self::PinyinIndex => "pinyin_index.bin",
             Self::PhraseIndex => "phrase_index.bin",
@@ -41,13 +42,6 @@ impl SystemDbm {
             Self::AddonPinyinIndex => "addon_pinyin_index.bin",
             Self::AddonPhraseIndex => "addon_phrase_index.bin",
         }
-    }
-
-    /// The file name: libpinyin's own, the same on Kyoto Cabinet, tkrzw and
-    /// Berkeley DB (`pinyin_internal.h:57-66` does not vary with the DBM).
-    #[must_use]
-    pub fn file_name(self) -> String {
-        self.libpinyin_name().to_owned()
     }
 }
 

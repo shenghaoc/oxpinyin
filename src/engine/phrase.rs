@@ -45,16 +45,12 @@ struct Node {
     token: PhraseToken,
     /// The predecessor node's token (`m_handles[0]`).
     prev: PhraseToken,
-    /// `m_last_step` — the span's start position; [`START_SENTINEL`]
-    /// marks the virtual start node.
-    last_step: usize,
+    /// `m_last_step` — the span's start position; `None` for the virtual
+    /// start node.
+    last_step: Option<usize>,
     /// Accumulated f32 log possibility (upstream `m_poss`).
     poss: f32,
 }
-
-/// The virtual start's `m_last_step` (upstream leaves it at the
-/// zero-value sentinel; `usize::MAX` plays that role here).
-const START_SENTINEL: usize = usize::MAX;
 
 /// One DP step: insertion-ordered nodes plus the token → index map
 /// (upstream's `steps_content` array + `steps_index` hash — the array
@@ -198,7 +194,7 @@ where
     steps[0].relax(Node {
         token: SENTENCE_START,
         prev: null,
-        last_step: START_SENTINEL,
+        last_step: None,
         poss: 0.0,
     });
 
@@ -265,7 +261,7 @@ where
                 step.relax(Node {
                     token,
                     prev: node.token,
-                    last_step: from_step,
+                    last_step: Some(from_step),
                     poss: (f64::from(node.poss) + blended.ln()) as f32,
                 });
             }
@@ -283,7 +279,7 @@ where
             step.relax(Node {
                 token,
                 prev: from.token,
-                last_step: from_step,
+                last_step: Some(from_step),
                 poss: (f64::from(from.poss) + probability.ln()) as f32,
             });
         }
@@ -301,15 +297,12 @@ fn backtrack(steps: &[Step], n: usize, mut result: Vec<PhraseToken>) -> (bool, V
         return (false, result);
     };
     let mut cursor = best.clone();
-    loop {
-        if cursor.last_step == START_SENTINEL {
-            break;
-        }
-        result[cursor.last_step] = cursor.token;
-        let Some(node) = steps[cursor.last_step]
+    while let Some(start) = cursor.last_step {
+        result[start] = cursor.token;
+        let Some(node) = steps[start]
             .index
             .get(&cursor.prev)
-            .map(|&position| steps[cursor.last_step].content[position].clone())
+            .map(|&position| steps[start].content[position].clone())
         else {
             // A broken chain — upstream returns `false` mid-backtrack
             // with whatever the walk wrote so far.

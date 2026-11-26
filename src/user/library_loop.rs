@@ -13,37 +13,20 @@ use crate::user::{SessionProfile, SystemOriginals};
 
 /// Where the library loop stopped: the one record of every way a default row
 /// ends the pin's init.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum LibraryLoopStop {
     /// A row the pin dies on before or instead of reading it
     /// (`pinyin.cpp:388`, `memory_chunk.h:434`, `:493`).
+    #[error("{0:?}")]
     Row(TableConfSite),
     /// The row's system chunk: unmappable (`pinyin.cpp:256`, then the empty
     /// chunk), a directory `MemoryChunk::mmap` asserts on
     /// (`memory_chunk.h:493`), or a layout read past it.
-    Library(LibraryError),
+    #[error("{0}")]
+    Library(#[source] LibraryError),
     /// The row's log reached a pin assertion.
-    Journal(JournalFault),
-}
-
-impl std::fmt::Display for LibraryLoopStop {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Row(site) => write!(f, "{site:?}"),
-            Self::Library(error) => error.fmt(f),
-            Self::Journal(fault) => fault.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for LibraryLoopStop {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Row(_) => None,
-            Self::Library(error) => Some(error),
-            Self::Journal(fault) => Some(fault),
-        }
-    }
+    #[error("{0}")]
+    Journal(#[source] JournalFault),
 }
 
 /// The default rows of one init, and the directory their chunks live in.

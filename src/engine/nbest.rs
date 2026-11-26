@@ -428,10 +428,8 @@ impl Trellis {
         })
     }
 
-    fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
+    fn beam(&mut self, position: usize) -> Vec<BeamEntry> {
         select_top(self.candidates(position), NBEAM, self.shape.nstore())
-            .into_iter()
-            .collect()
     }
 
     /// 074a2219 phonetic_lookup.h:329-339: only the fixed final step,

@@ -121,26 +121,15 @@ impl UserDbm {
         }
     }
 
-    /// The name libpinyin gives the file (`pinyin_internal.h:58,61-63`).
-    ///
-    /// The two `.bin` names are DBM tree files despite the extension —
-    /// `ChewingLargeTable2::load_db`/`save_db` and
-    /// `PhraseLargeTable3::load_db`/`save_db` open the build DBM, the
-    /// same as their system-side twins.
+    /// The file name: libpinyin's own, the same on Kyoto Cabinet, tkrzw and
+    /// Berkeley DB (`pinyin_internal.h:58,61-63` does not vary with the DBM).
     #[must_use]
-    pub const fn libpinyin_name(self) -> &'static str {
+    pub const fn file_name(self) -> &'static str {
         match self {
             Self::Bigram => "user_bigram.db",
             Self::PinyinIndex => "user_pinyin_index.bin",
             Self::PhraseIndex => "user_phrase_index.bin",
         }
-    }
-
-    /// The file name: libpinyin's own, the same on Kyoto Cabinet, tkrzw and
-    /// Berkeley DB (`pinyin_internal.h:58,61-63` does not vary with the DBM).
-    #[must_use]
-    pub fn file_name(self) -> String {
-        self.libpinyin_name().to_owned()
     }
 
     /// Whether the file is a hash container (`user_bigram.db` is a KC
@@ -461,32 +450,18 @@ impl UserTableInfo {
 }
 
 /// What upstream makes of a `user.conf` its `load` cannot complete.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum UserConfError {
     /// `fopen` answered NULL, which is the load's `false` (`:330-334`) after
     /// its `open %s failed.` line.
+    #[error("user.conf: cannot be opened")]
     Unopenable,
     /// A version directive did not convert, which is the load's `false`
     /// (`table_info.cpp:339-342`, `:345-348`): upstream leaves the marker
     /// at its reset defaults and the profile reads as non-conforming.
+    #[error("user.conf: the `{0}` directive is missing or malformed")]
     Line(&'static str),
 }
-
-impl std::fmt::Display for UserConfError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unopenable => f.write_str("user.conf: cannot be opened"),
-            Self::Line(line) => {
-                write!(
-                    f,
-                    "user.conf: the `{line}` directive is missing or malformed"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for UserConfError {}
 
 /// One `PhraseIndexLogger` record (`phrase_index_logger.h`).
 ///
@@ -565,18 +540,21 @@ impl LogRecord<&[u8]> {
 }
 
 /// Why a [`LogReader`] could not decode a record.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum LogFault {
     /// A `MODIFY_HEADER` record whose token is not `null_token`: the pin's
     /// `assert(token == null_token)` (`phrase_index_logger.h:202`) aborts
     /// while reading it.
+    #[error("phrase index logger: MODIFY_HEADER record carries token {0:#010x}")]
     HeaderToken(u32),
     /// A complete header record whose bounded runs lack a whole total.
     /// The walk can continue at the next record.
+    #[error("phrase index logger: header totals are missing")]
     MissingHeaderTotals,
     /// A payload whose declared length runs past the logger's end: the pin's
     /// `set_content` copies that many bytes from past its chunk, an
     /// over-read with no defined result. The walk stops here.
+    #[error("phrase index logger: a payload runs past the log")]
     OverRead,
 }
 
@@ -597,23 +575,6 @@ pub(crate) enum LogEnd {
     /// [`LogFault::OverRead`].
     OverRead,
 }
-
-impl std::fmt::Display for LogFault {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::HeaderToken(token) => write!(
-                f,
-                "phrase index logger: MODIFY_HEADER record carries token {token:#010x}"
-            ),
-            Self::MissingHeaderTotals => {
-                f.write_str("phrase index logger: header totals are missing")
-            }
-            Self::OverRead => write!(f, "phrase index logger: a payload runs past the log"),
-        }
-    }
-}
-
-impl std::error::Error for LogFault {}
 
 /// `PhraseIndexLogger`'s record walk over a log's bytes, record by record,
 /// as `has_next_record` and `next_record` take it (074a2219

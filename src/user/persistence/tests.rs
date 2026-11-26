@@ -268,9 +268,9 @@ fn save_then_load_round_trips_the_state() {
         .collect();
     names.sort();
     let mut expected = vec![
-        UserDbm::Bigram.file_name(),
-        UserDbm::PinyinIndex.file_name(),
-        UserDbm::PhraseIndex.file_name(),
+        UserDbm::Bigram.file_name().to_owned(),
+        UserDbm::PinyinIndex.file_name().to_owned(),
+        UserDbm::PhraseIndex.file_name().to_owned(),
         "user.conf".to_owned(),
     ];
     let layout = UserFileLayout::stock();
@@ -1066,7 +1066,7 @@ fn user_files_take_the_pins_creation_modes() {
     };
     let mut expected: Vec<(String, u32)> = vec![(USER_CONF.to_owned(), 0o666)];
     for dbm in [UserDbm::Bigram, UserDbm::PinyinIndex, UserDbm::PhraseIndex] {
-        expected.push((dbm.file_name(), dbm_request));
+        expected.push((dbm.file_name().to_owned(), dbm_request));
     }
     let layout = UserFileLayout::stock();
     for (_, name) in layout.user_libraries().iter().chain(layout.system_logs()) {

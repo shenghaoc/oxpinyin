@@ -40,11 +40,15 @@ pub(crate) enum Stop {
 /// shared Rust crates return it at the pin's point, after the records the pin
 /// applied before it; the C adapters abort on it. Each names the library
 /// (sub-index) whose log reached it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum JournalFault {
     /// `PhraseIndexLogger::next_record`'s `assert(token == null_token)` on a
     /// `MODIFY_HEADER` record (`phrase_index_logger.h:202`), reached by
     /// `merge` and by `merge_with_mask`'s `_peek_header`.
+    #[error(
+        "library {library}'s log: MODIFY_HEADER token {token:#010x} \
+         (upstream asserts, phrase_index_logger.h:202)"
+    )]
     HeaderToken {
         /// The library whose log holds the record.
         library: u8,
@@ -55,6 +59,10 @@ pub enum JournalFault {
     /// `add_phrase_item` reads its unigram through
     /// `PhraseItem::get_unigram_frequency`, whose `check_result` asserts
     /// (`memory_chunk.h:390` via `phrase_index.cpp:457`, `:215`).
+    #[error(
+        "library {library}'s log: ADD payload under six bytes for {token:#010x} \
+         (upstream asserts, memory_chunk.h:390)"
+    )]
     ShortAdd {
         /// The library whose log holds the record.
         library: u8,
@@ -63,6 +71,10 @@ pub enum JournalFault {
     },
     /// `_peek_header`'s `assert(1 >= header_count)` (`phrase_index.cpp:745`),
     /// reached only by `merge_with_mask`.
+    #[error(
+        "library {library}'s log: more than one MODIFY_HEADER \
+         (upstream asserts, phrase_index.cpp:745)"
+    )]
     MultipleHeaders {
         /// The library whose log holds the headers.
         library: u8,
@@ -71,6 +83,10 @@ pub enum JournalFault {
     /// (`phrase_index.cpp:778`, `:785`, `:791`, `:795`): a payload shorter
     /// than six bytes asserts in `get_unigram_frequency`'s `check_result`
     /// (`memory_chunk.h:390`), the read of row 108 on `mask_out`'s path.
+    #[error(
+        "library {library}'s log: kept payload under six bytes for {token:#010x} \
+         (upstream asserts, memory_chunk.h:390)"
+    )]
     ShortMaskedItem {
         /// The library whose log holds the record.
         library: u8,
@@ -81,6 +97,10 @@ pub enum JournalFault {
     /// both chunk pointers (`phrase_index.cpp:838`): a kept ADD fails
     /// `assert(NULL == oldone)` (`phrase_index_logger.h:245`, row 97) and a
     /// kept REMOVE fails `assert(NULL == newone)` (`:257`).
+    #[error(
+        "library {library}'s log: kept ADD or REMOVE for {token:#010x} \
+         (upstream asserts, phrase_index_logger.h:245/257)"
+    )]
     SurvivingRecord {
         /// The library whose log holds the record.
         library: u8,
@@ -103,40 +123,6 @@ impl JournalFault {
         }
     }
 }
-
-impl std::fmt::Display for JournalFault {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::HeaderToken { library, token } => write!(
-                f,
-                "library {library}'s log: MODIFY_HEADER token {token:#010x} \
-                 (upstream asserts, phrase_index_logger.h:202)"
-            ),
-            Self::ShortAdd { library, token } => write!(
-                f,
-                "library {library}'s log: ADD payload under six bytes for {token:#010x} \
-                 (upstream asserts, memory_chunk.h:390)"
-            ),
-            Self::MultipleHeaders { library } => write!(
-                f,
-                "library {library}'s log: more than one MODIFY_HEADER \
-                 (upstream asserts, phrase_index.cpp:745)"
-            ),
-            Self::ShortMaskedItem { library, token } => write!(
-                f,
-                "library {library}'s log: kept payload under six bytes for {token:#010x} \
-                 (upstream asserts, memory_chunk.h:390)"
-            ),
-            Self::SurvivingRecord { library, token } => write!(
-                f,
-                "library {library}'s log: kept ADD or REMOVE for {token:#010x} \
-                 (upstream asserts, phrase_index_logger.h:245/257)"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for JournalFault {}
 
 /// What `FacadePhraseIndex::add_unigram_frequency` answers, through
 /// `SubPhraseIndex::add_unigram_frequency`.
