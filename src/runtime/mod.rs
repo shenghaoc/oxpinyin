@@ -762,9 +762,11 @@ impl<'a> RuntimeDict<'a> {
     /// view, so readings that pass the content end do not hide its text.
     #[must_use]
     pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
-        self.with_token_item(token, |item| TokenPhrase {
-            phrase_length: item.phrase_length(),
-            text: item.phrase_text(),
+        self.with_token_item(token, |item| {
+            item.phrase_words_present().then(|| TokenPhrase {
+                phrase_length: item.phrase_length(),
+                text: item.phrase_text(),
+            })
         })
     }
 
@@ -773,21 +775,27 @@ impl<'a> RuntimeDict<'a> {
     /// copies with `get_phrase_string` (074a2219 `lookup/lookup.cpp:45-47`).
     #[must_use]
     pub fn token_words(&self, token: u32) -> Option<crate::marshal::SentencePhrase> {
+        // The words go straight into the caller's buffer, as `get_phrase_string`
+        // copies them into `convert_to_utf8`'s stack buffer; the read itself
+        // answers only whether the item resolved.
+        let mut words = smallvec::SmallVec::new();
         self.with_token_item(token, |item| {
-            // Every declared word is present: `with_token_item` checks it.
-            crate::marshal::SentencePhrase::Words(item.phrase_codes().flatten().collect())
-        })
+            let stored = item.phrase_words()?;
+            words.extend(stored.iter().map(|word| u32::from_le_bytes(*word)));
+            Some(())
+        })?;
+        Some(crate::marshal::SentencePhrase::Words(words))
     }
 
     /// Reads `token`'s item where the facade resolves it: the system item
     /// a library mask leaves visible, else the user item; `None` where the
-    /// item is absent or its bytes end before a declared word.
+    /// item is absent or `read` answers `None`. Each reader refuses an item
+    /// whose bytes end before a declared word.
     fn with_token_item<R>(
         &self,
         token: u32,
-        read: impl FnOnce(PhraseItemView<'_>) -> R,
+        read: impl FnOnce(PhraseItemView<'_>) -> Option<R>,
     ) -> Option<R> {
-        let read = |item: PhraseItemView<'_>| item.phrase_words_present().then(|| read(item));
         if self.is_system_library(phrase_index_library_index(token)) {
             return self
                 .live_items()
