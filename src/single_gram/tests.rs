@@ -1,6 +1,6 @@
 use super::{
     GramFault, checked_get_freq, checked_search, get_freq, get_length, get_total_freq, insert_freq,
-    lower_bound, mask_out, merge_single_gram, new_gram, retrieve_all, set_freq,
+    lower_bound, mask_out, new_gram, retrieve_all, set_freq,
 };
 
 fn gram(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
@@ -173,18 +173,16 @@ fn walks_stop_at_the_last_whole_item() {
 }
 
 #[test]
-fn merge_copies_one_side_and_sums_both() {
+fn merge_sums_both_sides() {
     // Pin 074a2219: ngram.cpp:277–352.
-    let mut merged = gram(9, &[(1, 1)]);
-    assert!(!merge_single_gram(&mut merged, None, None));
-    assert_eq!(items(&merged), [(1, 1)]);
-    let user = gram(3, &[(2, 3)]);
-    assert!(merge_single_gram(&mut merged, None, Some(&user)));
-    assert_eq!(merged, user);
+    let user = gram(3, &[(2, 3), (7, 1)]);
     let system = gram(u32::MAX, &[(1, 4), (2, 5)]);
-    assert!(merge_single_gram(&mut merged, Some(&system), Some(&user)));
+    // Both rows are present and readable, so the production entry merges them.
+    let merged = crate::model::MergedGram::merge(Some(system), Some(user))
+        .expect("two rows merge")
+        .into_chunk();
     assert_eq!(get_total_freq(&merged), Some(2));
-    assert_eq!(items(&merged), [(1, 4), (2, 8)]);
+    assert_eq!(items(&merged), [(1, 4), (2, 8), (7, 1)]);
 }
 
 #[test]
