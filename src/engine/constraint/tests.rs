@@ -8,7 +8,7 @@ fn span(start: usize, value: u32, text: &str) -> PhraseSpan {
     PhraseSpan {
         start,
         token: token(value),
-        text: text.into(),
+        phrase_length: text.chars().count(),
     }
 }
 

@@ -671,7 +671,7 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     let spans = vec![PhraseSpan {
         start: 0,
         token: 1,
-        text,
+        phrase_length: text.phrase_length(),
     }];
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
@@ -737,7 +737,7 @@ fn a_row_records_its_whole_token_path() {
         spans: vec![crate::engine::constraint::PhraseSpan {
             start: 0,
             token: 9,
-            text: "\u{884}".into(),
+            phrase_length: 1,
         }],
         keys: 1,
         span: 2,
@@ -769,7 +769,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
                 token: 0x100,
-                text: "好".into(),
+                phrase_length: 1,
             }],
             keys: 1,
             span: 3,
@@ -779,7 +779,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
                 token: 0x101,
-                text: "好".into(),
+                phrase_length: 1,
             }],
             keys: 1,
             span: 3,
@@ -789,7 +789,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
                 token: 0x102,
-                text: "浩".into(),
+                phrase_length: 1,
             }],
             keys: 1,
             span: 3,
@@ -1949,7 +1949,7 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
                 token: 0x100,
-                text: "\u{597d}".into(),
+                phrase_length: 1,
             }],
             keys: 1,
             span: 3,
@@ -1959,7 +1959,7 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
             spans: vec![crate::engine::constraint::PhraseSpan {
                 start: 0,
                 token: 0x102,
-                text: "\u{6d69}".into(),
+                phrase_length: 1,
             }],
             keys: 1,
             span: 3,

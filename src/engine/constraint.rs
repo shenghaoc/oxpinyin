@@ -16,7 +16,7 @@
 use std::ops::Range;
 
 use crate::engine::error::EngineError;
-use crate::vocab::{PhraseText, PhraseToken};
+use crate::vocab::PhraseToken;
 
 /// One constraint cell (`trellis_constraint_t`,
 /// `phonetic_lookup.h:121-137`).
@@ -39,9 +39,9 @@ pub enum Cell {
 pub struct PhraseSpan {
     pub start: usize,
     pub token: PhraseToken,
-    /// The phrase's text; training reads its stored length
-    /// ([`PhraseText::phrase_length`]).
-    pub(crate) text: PhraseText,
+    /// The item's stored phrase length, the `get_phrase_length` training
+    /// walks the span's readings for (074a2219 `phonetic_lookup.h:922-927`).
+    pub(crate) phrase_length: usize,
 }
 
 /// The constraint array (`ForwardPhoneticConstraints`).
