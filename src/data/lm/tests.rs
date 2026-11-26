@@ -28,7 +28,7 @@ mod language_model {
         BigramLanguageModel, BigramTables, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm,
     };
 
-    use crate::store::{DefaultStore, WriteStore, WriteTxn};
+    use crate::store::{DefaultStore, WriteStore};
 
     use crate::data::support::ChunkBuilder;
 
@@ -86,14 +86,10 @@ mod language_model {
             std::fs::write(dir.path().join("gbk_char.bin"), gbk.build()).unwrap();
             let store =
                 DefaultStore::create_hash(&dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
-            store
-                .write(|txn| {
-                    let mut value = 7_u32.to_le_bytes().to_vec();
-                    value.extend_from_slice(&HAO.to_le_bytes());
-                    value.extend_from_slice(&7_u32.to_le_bytes());
-                    txn.put_raw(&NI.to_le_bytes(), &value)
-                })
-                .unwrap();
+            let mut value = 7_u32.to_le_bytes().to_vec();
+            value.extend_from_slice(&HAO.to_le_bytes());
+            value.extend_from_slice(&7_u32.to_le_bytes());
+            store.set_raw(&NI.to_le_bytes(), &value).unwrap();
             Self { dir }
         }
 
@@ -498,9 +494,7 @@ mod language_model {
         let fix = Fixture::new();
         let store =
             DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
-        store
-            .write(|txn| txn.put_raw(&NI.to_le_bytes(), &[]))
-            .unwrap();
+        store.set_raw(&NI.to_le_bytes(), &[]).unwrap();
         drop(store);
         let model = fix.open();
         let lm = model.model();
@@ -534,9 +528,7 @@ mod language_model {
             DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
         let value =
             crate::single_gram::encode_single_gram(11, &[(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)]);
-        store
-            .write(|txn| txn.put_raw(&NI.to_le_bytes(), &value))
-            .unwrap();
+        store.set_raw(&NI.to_le_bytes(), &value).unwrap();
         drop(store);
         let model = fix.open();
         let lm = model.model();

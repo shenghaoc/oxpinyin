@@ -18,7 +18,7 @@ use std::path::Path;
 // under test, not a second copy of it.
 use oxpinyin::data::chunk_format::chunk_checksum;
 use oxpinyin::data::phrase_library::{FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR};
-use oxpinyin::store::{WriteStore, WriteTxn};
+use oxpinyin::store::WriteStore;
 
 /// Builds one phrase-library chunk file from slot → item entries.
 /// One item's pieces: `(unigram, text, pronunciations as (packed
@@ -153,12 +153,7 @@ pub fn push_packed_key(buf: &mut Vec<u8>, initial: u8, middle: u8, final_: u8, t
 /// layout libpinyin's DBMs use (no table-name framing).
 pub fn write_raw_rows<S: WriteStore>(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     let store = S::create(path).expect("create store");
-    store
-        .write(|txn| {
-            for (key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
-        .expect("bulk put_raw");
+    for (key, value) in rows {
+        store.set_raw(key, value).expect("bulk set_raw");
+    }
 }

@@ -159,8 +159,6 @@ pub(super) mod sys {
         fn count(db: &BasicDB) -> i64;
         fn rewrite(db: &BasicDB, rewriter: &mut Rewriter<'_, '_>) -> bool;
         fn synchronize(db: &BasicDB, hard: bool) -> bool;
-        fn begin_transaction(db: &BasicDB, hard: bool) -> bool;
-        fn end_transaction(db: &BasicDB, commit: bool) -> bool;
         fn load_snapshot(db: &BasicDB, path: &CxxString) -> bool;
         fn dump_snapshot(db: &BasicDB, path: &CxxString) -> bool;
 

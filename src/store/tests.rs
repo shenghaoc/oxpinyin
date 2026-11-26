@@ -7,18 +7,13 @@ use rstest::rstest;
 
 use super::{
     DefaultStore, DefaultUserBigramDb, GramReadOwned, RawReadOwned, RawReadStore, StoreError,
-    UserBigramDb, WriteStore, WriteTxn,
+    UserBigramDb, WriteStore,
 };
 
 fn put_rows(store: &DefaultStore, rows: &[(&[u8], &[u8])]) {
-    store
-        .write(|txn| {
-            for &(key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
-        .unwrap();
+    for &(key, value) in rows {
+        store.set_raw(key, value).unwrap();
+    }
 }
 
 // RawReadStore::range_raw compares raw byte bounds and visits each matching key and value.
@@ -81,35 +76,6 @@ fn scan_break_stops_and_error_propagates(#[case] fail: bool) {
     }
 }
 
-// WriteStore::write and write_deferred leave no changes after a closure error.
-#[rstest]
-#[case::regular(false)]
-#[case::deferred(true)]
-fn atomic_rollback(#[case] deferred: bool) {
-    let dir = tempfile::tempdir().unwrap();
-    let db = DefaultStore::create_hash(&dir.path().join("raw.db")).unwrap();
-    put_rows(&db, &[(b"kept", b"old")]);
-    let change = |txn: &mut <DefaultStore as WriteStore>::Txn<'_>| {
-        txn.put_raw(b"new", b"value")?;
-        txn.remove_raw(b"kept")?;
-        Err::<(), _>(StoreError::InvalidInput("rolled back"))
-    };
-    let result = if deferred {
-        db.write_deferred(change).map(drop)
-    } else {
-        db.write(change)
-    };
-    assert!(matches!(
-        result,
-        Err(StoreError::InvalidInput("rolled back"))
-    ));
-    assert_eq!(db.read_raw(b"new").unwrap(), None);
-    assert_eq!(
-        db.read_raw(b"kept").unwrap().as_deref(),
-        Some(b"old".as_slice())
-    );
-}
-
 // RawReadStore::get_raw replaces a dirty buffer on a hit and clears it on a miss.
 #[test]
 fn point_reads_refill_one_buffer() {
@@ -144,45 +110,17 @@ fn empty_value_is_a_record() {
     assert!(!db.contains_raw(b"absent").unwrap());
 }
 
-// WriteTxn::remove_raw accepts an absent key and supersedes an earlier put.
-#[rstest]
-#[case::absent(false, false)]
-#[case::present(true, false)]
-#[case::pending(false, true)]
-fn remove_in_write(#[case] present: bool, #[case] pending: bool) {
-    let db = DefaultStore::create_in_memory().unwrap();
-    put_rows(&db, &[(b"kept", b"v")]);
-    if present {
-        put_rows(&db, &[(b"k", b"v")]);
-    }
-    db.write(|txn| {
-        if pending {
-            txn.put_raw(b"k", b"v")?;
-        }
-        txn.remove_raw(b"k")
-    })
-    .unwrap();
-    assert!(!db.contains_raw(b"k").unwrap());
-    assert!(db.contains_raw(b"kept").unwrap());
-}
-
 // WriteStore returns ReadOnly on mutation of an opened reader and preserves its data.
-#[rstest]
-#[case::write("write")]
-#[case::deferred("deferred")]
-fn read_only_reopen_preserves_reads_and_rejects_mutation(#[case] operation: &str) {
+#[test]
+fn read_only_reopen_preserves_reads_and_rejects_mutation() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("reader.db");
     let writer = DefaultStore::create(&path).unwrap();
     put_rows(&writer, &[(b"k", b"old")]);
     drop(writer);
     let reader = DefaultStore::open_read_only(&path).unwrap();
-    let result = match operation {
-        "write" => reader.write(|txn| txn.put_raw(b"k", b"new")),
-        "deferred" => reader.write_deferred(|txn| txn.remove_raw(b"k")).map(drop),
-        _ => unreachable!(),
-    };
-    assert!(matches!(result, Err(StoreError::ReadOnly)));
+    let result = reader.set_raw(b"k", b"new");
+    assert!(result.is_err(), "a read-only handle refuses a write");
     assert_eq!(
         reader.read_raw(b"k").unwrap().as_deref(),
         Some(b"old".as_slice())
@@ -306,9 +244,7 @@ fn a_native_hash_snapshot_keeps_both_predecessor_rows() {
             .collect::<Vec<_>>()
     });
     for (token, row) in [1_u32, 2].into_iter().zip(&rows) {
-        bigram
-            .write(|txn| txn.put_raw(&token.to_ne_bytes(), row))
-            .unwrap();
+        bigram.set_raw(&token.to_ne_bytes(), row).unwrap();
     }
     let mut keys = Vec::new();
     bigram.native_keys(&mut keys).unwrap();
@@ -356,34 +292,6 @@ fn save_then_load_keeps_every_record() {
             db.read_gram(&token.to_le_bytes()).expect("get")
         );
     }
-}
-
-// WriteStore::write_deferred reports whether every applied removal found a record.
-#[test]
-fn the_deferred_removal_flag_aggregates_every_removal() {
-    let scratch = tempfile::tempdir().expect("scratch directory");
-    let db = DefaultStore::create_hash(&scratch.path().join("raw.db")).expect("hash create");
-    let put = |key: &'static [u8]| {
-        db.write_deferred(|txn| txn.put_raw(key, b"v"))
-            .expect("put");
-    };
-    let remove_two = |first: &'static [u8], second: &'static [u8]| {
-        db.write_deferred(|txn| {
-            txn.remove_raw(first)?;
-            txn.remove_raw(second)
-        })
-        .expect("remove")
-        .1
-    };
-    put(b"a");
-    put(b"b");
-    assert!(remove_two(b"a", b"b"), "both records found");
-    put(b"b");
-    assert!(!remove_two(b"a", b"b"), "one of two missing");
-    let ((), found) = db
-        .write_deferred(|txn| txn.put_raw(b"c", b"v"))
-        .expect("put");
-    assert!(found, "no removal at all");
 }
 
 // 074a2219 ngram_bdb.cpp:84-86, ngram_kyotodb.cpp:86-88 and ngram_tkrzwdb.cpp:69-72 refuse an unlink error.

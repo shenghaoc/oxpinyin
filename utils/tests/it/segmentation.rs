@@ -110,7 +110,7 @@ fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
     use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
     use oxpinyin::data::row_format::phrase_index::encode_ucs4_key;
     use oxpinyin::single_gram::encode_single_gram;
-    use oxpinyin::store::{DefaultStore, WriteStore as _, WriteTxn as _};
+    use oxpinyin::store::{DefaultStore, WriteStore as _};
     use oxpinyin::vocab::{SENTENCE_START, phrase_index_make_token};
     use oxpinyin_tool_support::data::encode_tokens;
 
@@ -138,12 +138,10 @@ fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
     std::fs::remove_file(&phrase_path).expect("remove copied phrase index");
     let phrases = DefaultStore::create(&phrase_path).expect("create phrase index");
     phrases
-        .write(|txn| {
-            txn.put_raw(
-                &encode_ucs4_key("甲"),
-                &encode_tokens(&[unigram_choice, bigram_choice]),
-            )
-        })
+        .set_raw(
+            &encode_ucs4_key("甲"),
+            &encode_tokens(&[unigram_choice, bigram_choice]),
+        )
         .expect("write phrase index");
     drop(phrases);
 
@@ -155,7 +153,7 @@ fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
     std::fs::remove_file(&bigram_path).expect("remove copied bigram table");
     let bigrams = DefaultStore::create_hash(&bigram_path).expect("create bigram table");
     bigrams
-        .write(|txn| txn.put_raw(&SENTENCE_START.to_le_bytes(), &value))
+        .set_raw(&SENTENCE_START.to_le_bytes(), &value)
         .expect("write sentence-start gram");
     drop(bigrams);
 

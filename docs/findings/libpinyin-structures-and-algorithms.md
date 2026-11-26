@@ -181,7 +181,8 @@ for a header of size H and checking the native returned size
 tkrzw reads the whole value before checking its size
 (`flexible_ngram_tkrzwdb.h:292-323`). Tools-only KC writes call native
 `set` without transactions; reset synchronizes at
-`flexible_ngram_kyotodb.h:88`. Shipping store transactions are unchanged.
+`flexible_ngram_kyotodb.h:88`. The store has no transaction seam: each raw
+write is one native call, as the pin's own are.
 
 `SingleGram::search` starts at the existing lower bound and appends in
 stored order until the range end (`flexible_single_gram.h:118-139`). For

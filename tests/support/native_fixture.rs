@@ -153,38 +153,28 @@ pub fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
 /// in place of any file there: a system table with records the library
 /// never writes.
 pub fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin::store::{WriteStore as _, WriteTxn as _};
+    use oxpinyin::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
     }
     let store = oxpinyin::store::DefaultStore::create(path).expect("create the DBM");
-    store
-        .write(|txn| {
-            for (key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
-        .expect("write the DBM rows");
+    for (key, value) in rows {
+        store.set_raw(key, value).expect("write the DBM rows");
+    }
 }
 
 /// A hash DBM of the running backend at `path` that holds exactly `rows`, in
 /// place of any file there: a system bigram with grams the library never
 /// writes.
 pub fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
-    use oxpinyin::store::{WriteStore as _, WriteTxn as _};
+    use oxpinyin::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
     }
     let store = oxpinyin::store::DefaultStore::create_hash(path).expect("create the DBM");
-    store
-        .write(|txn| {
-            for (key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
-        .expect("write the DBM rows");
+    for (key, value) in rows {
+        store.set_raw(key, value).expect("write the DBM rows");
+    }
 }
 
 /// Replaces the user index at `path` with one that holds exactly `rows`,

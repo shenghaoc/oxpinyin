@@ -80,9 +80,6 @@ bool iterate(const ::kyotocabinet::BasicDB& db, Sink& sink);
 std::int64_t count(const ::kyotocabinet::BasicDB& db);
 // `synchronize(hard)`: proc = NULL, checker = NULL, the pin's form.
 bool synchronize(const ::kyotocabinet::BasicDB& db, bool hard);
-// `begin_transaction(hard)` and `end_transaction(commit)`.
-bool begin_transaction(const ::kyotocabinet::BasicDB& db, bool hard);
-bool end_transaction(const ::kyotocabinet::BasicDB& db, bool commit);
 // `load_snapshot(path)` and `dump_snapshot(path)`: checker = NULL, the
 // pin's form (`chewing_large_table2_kyotodb.cpp:105,129`).
 bool load_snapshot(const ::kyotocabinet::BasicDB& db, const std::string& path);

@@ -121,41 +121,6 @@ pub type RecordSink<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a
 
 // ── traits ─────────────────────────────────────────────────────────
 
-/// A write transaction over a store file's raw keyspace.
-///
-/// An `Err` from the closure writes nothing provided the rollback succeeds.
-/// Kyoto Cabinet's `KcStore::roll_back` (`kyotocabinet/mod.rs`) discards the
-/// rollback's own error, so a failed rollback can leave the closure's
-/// writes in place. A failure or crash during commit can leave part of
-/// the batch applied, as in libpinyin. See the "Atomicity" sections in the
-/// backend module docs: [Berkeley DB], [tkrzw], and [Kyoto Cabinet].
-/// Reached through [`WriteStore::write`] as the backend's own
-/// [`WriteStore::Txn`] type; the trait is not object safe.
-///
-/// [Berkeley DB]: https://github.com/shenghaoc/oxpinyin/blob/main/src/store/bdb/mod.rs
-/// [tkrzw]: https://github.com/shenghaoc/oxpinyin/blob/main/src/store/tkrzw/mod.rs
-/// [Kyoto Cabinet]: https://github.com/shenghaoc/oxpinyin/blob/main/src/store/kyotocabinet/mod.rs
-pub trait WriteTxn {
-    /// Insert or overwrite a raw `key` → `value` in the file's bare
-    /// keyspace — the write half of [`RawReadStore::get_raw`]. Rows
-    /// written here are what `get_raw` / [`RawReadStore::range_raw`] read
-    /// back on the same backend: what libpinyin's own DBMs store and what
-    /// `oxpinyin-utils`' storage utilities write.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend write fails.
-    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
-
-    /// Remove a raw `key` — the removal counterpart of
-    /// [`WriteTxn::put_raw`]. No-op when the key is absent.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the backend write fails.
-    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError>;
-}
-
 /// The write tier: creation and raw writes.
 ///
 /// Adds mutation on top of [`RawReadStore`], whose reads a writable backend
@@ -185,14 +150,6 @@ pub trait WriteStore: RawReadStore {
             self.range_raw(Bound::Unbounded, Bound::Unbounded, sink)
         })
     }
-
-    /// The backend's write transaction, handed to the closure of
-    /// [`WriteStore::write`] by mutable reference. Each backend names
-    /// its own concrete type, so the transaction's methods are called
-    /// without dynamic dispatch.
-    type Txn<'a>: WriteTxn
-    where
-        Self: 'a;
 
     /// Open or create a store file in read-write mode.
     ///
@@ -234,25 +191,6 @@ pub trait WriteStore: RawReadStore {
     fn create_in_memory() -> Result<Self, StoreError>
     where
         Self: Sized;
-    /// Create a **user** tree file: the two index tables `pinyin_save`
-    /// writes into a user dir. It is [`WriteStore::create`] with the
-    /// file mode libpinyin's own `save_db` creates a user table with,
-    /// where that differs from the one `attach` uses for the system
-    /// tables. Berkeley DB passes 0600 there and 0644 in `attach`, and
-    /// Kyoto Cabinet writes a user table through an `std::ofstream`
-    /// (0666). The process umask applies on top, as it does upstream.
-    /// The default is [`WriteStore::create`] (tkrzw's `save_db` opens
-    /// its tables exactly as `attach` does).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the store cannot be created.
-    fn create_user(path: &Path) -> Result<Self, StoreError>
-    where
-        Self: Sized,
-    {
-        Self::create(path)
-    }
     /// Writes one user phrase/pinyin index in the backend's pin format,
     /// with the calls the pin's `save_db` makes. `records` hands each
     /// record, in ascending key order, to the sink it is given; nothing
@@ -272,47 +210,6 @@ pub trait WriteStore: RawReadStore {
     where
         Self: Sized;
 
-    /// Run `f` inside a write transaction. An `Err` from `f` writes
-    /// nothing provided the rollback succeeds. On Kyoto Cabinet the
-    /// rollback's own error is discarded, so a failed rollback can leave
-    /// the closure's writes in place (see [`WriteTxn`]). `Ok` starts the
-    /// commit. A failure or crash during commit can leave part of the
-    /// batch applied, as in libpinyin. See
-    /// [`WriteTxn`] for links to each backend's "Atomicity" section.
-    /// The closure sees its own writes.
-    ///
-    /// # Durability
-    ///
-    /// A commit that returns `Ok` has left the process on every backend: it
-    /// is visible to any other reader and survives a **process** crash.
-    /// That is the floor the seam guarantees, and it is what `write`
-    /// promises — no more.
-    ///
-    /// **Stable storage is `WriteStore::compact`'s guarantee, not
-    /// this one.** The Kyoto Cabinet and tkrzw backends commit with a
-    /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`.
-    /// Berkeley DB exceeds the floor: it has no softer primitive to
-    /// offer — `DB->sync` is the only flush libdb gives an
-    /// environment-less handle, while skipping it would strand the
-    /// batch in a private mpool no other process can read. Callers must
-    /// not read any of that as the contract.
-    ///
-    /// Profile saves compact the in-memory session store. They write through
-    /// [`WriteStore::write_user_index`] and the user bigram's save path. The
-    /// synchronization of those files depends on the backend. A successful save does not
-    /// guarantee that the whole profile has reached stable storage.
-    ///
-    /// The closure must not call [`WriteStore::write`] again. Backends may
-    /// serialize write transactions, so a nested call can block forever.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the transaction or its callback fails.
-    fn write<R>(
-        &self,
-        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<R, StoreError>;
-
     /// Removes one raw record without a transaction or a sync.
     ///
     /// # Errors
@@ -323,29 +220,6 @@ pub trait WriteStore: RawReadStore {
     /// Whether writes are disabled for the native handle.
     #[doc(hidden)]
     fn is_read_only(&self) -> bool;
-
-    /// The pin's `FlexibleBigram` writes: the closure's puts and removes,
-    /// applied as one native `set` or `remove` each when the closure
-    /// returns `Ok`, with no transaction and no sync. An `Err` from the
-    /// closure applies nothing. [`WriteStore::flush`] is the one sync, at
-    /// the owner's reset (`flexible_ngram_bdb.h:51-57`,
-    /// `flexible_ngram_kyotodb.h:86-92`, `flexible_ngram_tkrzwdb.h:84-90`).
-    ///
-    /// The flag aggregates the applied removals: true unless one of them
-    /// found no record, and true when the closure removes nothing. It is
-    /// not one native result. `FlexibleBigram::remove` is its only reader,
-    /// and its closure holds exactly one removal, so there the flag is that
-    /// removal's native answer, which the pin's `remove` returns.
-    /// A store that holds no such container refuses with
-    /// [`StoreError::InvalidInput`].
-    ///
-    /// # Errors
-    ///
-    /// As [`WriteStore::write`].
-    fn write_deferred<R>(
-        &self,
-        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<(R, bool), StoreError>;
 
     /// Synchronizes the native container.
     /// # Errors
@@ -813,17 +687,17 @@ pub use read_faults::fail_point_read_of;
 #[cfg(feature = "tkrzw")]
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
-pub use tkrzw::{TkrzwStore, TkrzwTxn, TkrzwUserBigramDb};
+pub use tkrzw::{TkrzwStore, TkrzwUserBigramDb};
 
 #[cfg(feature = "bdb")]
 mod bdb;
 #[cfg(feature = "bdb")]
-pub use bdb::{BdbStore, BdbTxn, BdbUserBigramDb};
+pub use bdb::{BdbStore, BdbUserBigramDb};
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
-pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
+pub use kyotocabinet::{KcStore, KcUserBigramDb};
 
 mod system_attach;
 pub use system_attach::{AccessMode, DbmKind, SystemAttachment};

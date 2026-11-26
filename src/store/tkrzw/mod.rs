@@ -54,25 +54,23 @@
 //!
 //! # Writes
 //!
-//! [`WriteStore::write`] buffers the closure's raw puts and removes, and on
-//! `Ok` applies the buffer in key order with the pin's calls: one `Set(key,
-//! value)` per put (`ngram_tkrzwdb.cpp:132`) and one `Remove(key)` per
-//! removal (`:140`), a removal of an absent record being the no-op the
-//! trait contract names. On `Err` the buffer is dropped and nothing is
-//! written. The pin has no multi-record operation, so neither has this
-//! backend: another reader of a file-backed store can see a batch half
-//! applied, and a crash during the apply can leave it so, as it could
-//! leave the pin's own sequence of `Set`s.
+//! Each raw write is one native call: [`WriteStore::set_raw`] is one
+//! `Set(key, value)` (`ngram_tkrzwdb.cpp:132`) and
+//! [`WriteStore::remove_raw`] one `Remove(key)` (`:140`), a removal of an
+//! absent record being the no-op the trait contract names. The pin has no
+//! multi-record operation, so neither has this backend: another reader of a
+//! file-backed store can see a save's records appear one at a time, and a
+//! crash during the save can leave it half applied, as it could leave the
+//! pin's own sequence of `Set`s.
 //!
-//! Every non-empty commit then calls `Synchronize(false)`, the soft sync
-//! the pin's `save_db` sequences end with (`ngram_tkrzwdb.cpp:80`,
-//! `chewing_large_table2_tkrzwdb.cpp:126`): on a file-backed store the
-//! buffered data is handed to the operating system, so the file is
-//! consistent and visible to any reader and the write survives a process
-//! crash. It is not yet on the device. [`WriteStore::compact`] is the hard
-//! sync (`Synchronize(true)`), the one point at which a file-backed store
-//! reaches stable storage; the pin never syncs hard, and the trait's
-//! durability promise is the only reason the call exists.
+//! The profile save (`write_user_index`) calls `Synchronize(false)`, the
+//! soft sync the pin's `save_db` sequences end with
+//! (`ngram_tkrzwdb.cpp:80`, `chewing_large_table2_tkrzwdb.cpp:126`): on a
+//! file-backed store the data is handed to the operating system, so the
+//! file is consistent and visible to any reader and the write survives a
+//! process crash. It is not yet on the device. No path syncs hard
+//! (`Synchronize(true)`), as the pin never does: [`WriteStore::flush`] is
+//! the same soft `Synchronize(false)`.
 //!
 //! `UserStore::save_reporting` compacts its in-memory `BabyDBM`, where
 //! synchronization has no effect (`tkrzw_dbm_baby.cc:583-596`). The profile
@@ -125,7 +123,6 @@
 
 mod bridge;
 
-use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::ops::Bound;
 use std::path::Path;
@@ -134,7 +131,7 @@ use std::pin::Pin;
 use cxx::{CxxString, UniquePtr, let_cxx_string};
 
 use crate::store::common::{in_bounds, validate_path};
-use crate::store::{Flow, StoreError, WriteStore, WriteTxn};
+use crate::store::{Flow, StoreError, WriteStore};
 use bridge::ffi;
 
 /// `Status::SUCCESS` — pinned by number, with `adapter.cc`'s `static_assert`
@@ -741,8 +738,6 @@ impl crate::store::RawReadStore for TkrzwStore {
 }
 
 impl WriteStore for TkrzwStore {
-    type Txn<'a> = TkrzwTxn<'a>;
-
     fn create(path: &Path) -> Result<Self, StoreError> {
         open(path, true)
     }
@@ -796,24 +791,6 @@ impl WriteStore for TkrzwStore {
         file.db.synchronize(false)
     }
 
-    fn write<R>(
-        &self,
-        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<R, StoreError> {
-        self.write_with(true, f).map(|(out, _)| out)
-    }
-
-    /// `FlexibleBigram::store` and `remove` (`flexible_ngram_tkrzwdb.h:
-    /// 236-246`, `:259-263` at 074a2219): the `Set` or `Remove` alone, its
-    /// status the answer. The pin's `reset()` makes the one
-    /// `Synchronize(false)` (`:84-90`), which [`WriteStore::flush`] is.
-    fn write_deferred<R>(
-        &self,
-        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
-    ) -> Result<(R, bool), StoreError> {
-        self.write_with(false, f)
-    }
-
     /// `m_db->Synchronize(false)` (`flexible_ngram_tkrzwdb.h:84-90`).
     fn flush(&self) -> Result<(), StoreError> {
         self.db.synchronize(false)
@@ -841,88 +818,6 @@ impl TkrzwStore {
         let options = if create { OPEN_DEFAULT } else { OPEN_NO_CREATE };
         let status = self.db.open(path, !self.read_only, options)?;
         Ok(status.code == STATUS_SUCCESS)
-    }
-
-    /// [`WriteStore::write`], with the end-of-commit soft sync when `sync`.
-    fn write_with<R>(
-        &self,
-        sync: bool,
-        f: impl FnOnce(&mut TkrzwTxn<'_>) -> Result<R, StoreError>,
-    ) -> Result<(R, bool), StoreError> {
-        if self.read_only {
-            return Err(StoreError::ReadOnly);
-        }
-        let db = &self.db;
-        let mut txn = TkrzwTxn {
-            store: PhantomData,
-            buffer: BTreeMap::new(),
-        };
-        // On `Err` the buffer dies with the transaction and nothing was
-        // ever written: rollback is the absence of the apply below.
-        let result = f(&mut txn)?;
-        let found = commit(db, &txn.buffer, sync)?;
-        Ok((result, found))
-    }
-}
-
-// ── write transaction ─────────────────────────────────────────────
-
-/// Applies a finished transaction's buffer with the pin's calls, one `Set`
-/// or `Remove` per record in key order, then, when `sync`, the soft sync. Not
-/// generic, so the many `write` closures share one copy of it. The answer
-/// is false when a `Remove` found no record (`NOT_FOUND_ERROR`), which the
-/// trait's `remove` treats as a no-op and `write_deferred` reports.
-#[inline(never)]
-fn commit(
-    db: &Db,
-    buffer: &BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    sync: bool,
-) -> Result<bool, StoreError> {
-    let mut found = true;
-    for (key, slot) in buffer {
-        match slot {
-            Some(value) => db.set(key, value)?,
-            None => found &= db.remove(key)?,
-        }
-    }
-    if sync && !buffer.is_empty() {
-        // Soft: on a file-backed store the commit is visible and
-        // process-crash durable, and `compact` is its hard sync. The
-        // in-memory session store has no file for either level.
-        db.synchronize(false)?;
-    }
-    Ok(found)
-}
-
-/// Buffers a write transaction's mutations until the apply in
-/// [`WriteStore::write`].
-///
-/// Keys are the file's raw keys, applied in ascending order. A `None`
-/// slot is a pending removal. The transaction borrows its store for its
-/// lifetime.
-pub struct TkrzwTxn<'db> {
-    store: PhantomData<&'db Db>,
-    buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-}
-
-impl WriteTxn for TkrzwTxn<'_> {
-    // The point operations stay out of line: the user store calls them from
-    // hundreds of sites, and inlining each one's buffer insert into every
-    // caller costs far more code than a direct call. Dispatch is static
-    // either way.
-    #[inline(never)]
-    fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
-        // The file's bare keyspace, so the row is exactly what
-        // `get_raw`/`range_raw` read back on this backend.
-        self.buffer.insert(key.to_vec(), Some(value.to_vec()));
-        Ok(())
-    }
-
-    #[inline(never)]
-    fn remove_raw(&mut self, key: &[u8]) -> Result<(), StoreError> {
-        // The removal half of `put_raw`, on the same bare keyspace.
-        self.buffer.insert(key.to_vec(), None);
-        Ok(())
     }
 }
 

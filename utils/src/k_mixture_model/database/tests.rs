@@ -112,18 +112,15 @@ pub(crate) fn assert_short_single_gram_exit(name: &str) {
 /// Create a `KMMP` container at `dir/name` holding `rows`, written as
 /// raw values, and answer its file name for `attach`.
 pub(crate) fn plant(dir: &std::path::Path, name: &str, rows: &[(u32, &[u8])]) -> std::ffi::CString {
-    use oxpinyin::store::{DefaultStore, WriteStore as _, WriteTxn as _};
+    use oxpinyin::store::{DefaultStore, WriteStore as _};
     use oxpinyin_tool_support::flexible_ngram::MAGIC_KEY;
     let path = dir.join(name);
     let db = DefaultStore::create_hash(&path).expect("hash create");
-    db.write(|txn| {
-        txn.put_raw(&MAGIC_KEY, b"KMMP")?;
-        for (token, value) in rows {
-            txn.put_raw(&token.to_ne_bytes(), value)?;
-        }
-        Ok(())
-    })
-    .expect("planted rows");
+    db.set_raw(&MAGIC_KEY, b"KMMP").expect("planted rows");
+    for (token, value) in rows {
+        db.set_raw(&token.to_ne_bytes(), value)
+            .expect("planted rows");
+    }
     std::ffi::CString::new(path.into_os_string().into_encoded_bytes()).expect("path without NUL")
 }
 

@@ -1,7 +1,7 @@
 //! Native unreadable candidate fixtures shared by the runtime and C tests.
 use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
 use oxpinyin::parser::ChewingKey;
-use oxpinyin::store::{DefaultStore, WriteStore, WriteTxn};
+use oxpinyin::store::{DefaultStore, WriteStore};
 use std::{fs, path::Path};
 
 #[derive(Clone, Copy)]
@@ -87,17 +87,12 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         DefaultStore::write_user_index(&index_path, |sink| sink(&key, &value)).unwrap();
     } else {
         let index = DefaultStore::create(&index_path).unwrap();
-        index
-            .write(|txn| {
-                txn.put_raw(&key, &value)?;
-                if matches!(case, Case::MaskedExtension) {
-                    // Too short for one record: only a decode of this
-                    // row fails.
-                    txn.put_raw(&extension, &[1, 2, 3])?;
-                }
-                Ok(())
-            })
-            .unwrap();
+        index.set_raw(&key, &value).unwrap();
+        if matches!(case, Case::MaskedExtension) {
+            // Too short for one record: only a decode of this
+            // row fails.
+            index.set_raw(&extension, &[1, 2, 3]).unwrap();
+        }
     }
     (dir, user)
 }

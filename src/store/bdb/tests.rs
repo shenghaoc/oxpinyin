@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use super::BdbStore;
-use crate::store::{RawReadStore, SystemAttachment, WriteStore, WriteTxn};
+use crate::store::{RawReadStore, SystemAttachment, WriteStore};
 
 // BdbStore's ordered cursor keeps its row valid across a point read on the same handle.
 #[test]
@@ -12,12 +12,8 @@ fn raw_readers_keep_rows_valid_during_reentrant_reads() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tree.db");
     let writer = BdbStore::create(&path).unwrap();
-    writer
-        .write(|txn| {
-            txn.put_raw(b"a", b"short")?;
-            txn.put_raw(b"b", &[3; 9000])
-        })
-        .unwrap();
+    writer.set_raw(b"a", b"short").unwrap();
+    writer.set_raw(b"b", &[3; 9000]).unwrap();
     drop(writer);
     let db = BdbStore::open_read_only(&path).unwrap();
     let mut seen = Vec::new();
@@ -186,14 +182,11 @@ fn raw_keys(store: &BdbStore, lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> Vec<Vec<u8>
 fn a_user_index_is_created_as_a_mode_0600_btree() {
     let dir = tempfile::tempdir().expect("scratch dir");
     let path = dir.path().join("user.db");
-    let store = BdbStore::create_user(&path).expect("create_user");
-    store
-        .write(|txn| {
-            txn.put_raw(b"k1", b"v1")?;
-            txn.put_raw(b"k2", b"v2")
-        })
-        .expect("write");
-    drop(store);
+    BdbStore::write_user_index(&path, |sink| {
+        sink(b"k1", b"v1")?;
+        sink(b"k2", b"v2")
+    })
+    .expect("write_user_index");
     assert_eq!(mode_of(&path), 0o600);
 
     let tree = BdbStore::open_read_only(&path).expect("a btree file");
@@ -214,14 +207,9 @@ fn an_attached_bigram_saves_as_a_replaced_mode_0600_hash_copy() {
         (&[2, 0, 0, 0], b"gram-two"),
         (&[0, 1, 0, 0], b""),
     ];
-    bigram
-        .write(|txn| {
-            for (key, value) in rows {
-                txn.put_raw(key, value)?;
-            }
-            Ok(())
-        })
-        .expect("store");
+    for (key, value) in rows {
+        bigram.set_raw(key, value).expect("store");
+    }
 
     let destination = dir.path().join("saved.db");
     std::fs::write(&destination, b"not a database: save_db unlinks it first").expect("old file");
@@ -261,13 +249,9 @@ fn a_tree_walk_after_an_excluded_key_starts_at_the_next_record() {
     use Bound::{Excluded, Included, Unbounded};
     let dir = tempfile::tempdir().unwrap();
     let db = BdbStore::create(&dir.path().join("tree.db")).unwrap();
-    db.write(|txn| {
-        for key in [b"b", b"c", b"d"] {
-            txn.put_raw(key, b"v")?;
-        }
-        Ok(())
-    })
-    .unwrap();
+    for key in [b"b", b"c", b"d"] {
+        db.set_raw(key, b"v").unwrap();
+    }
     for (lo, hi, expected) in [
         (
             Excluded(b"b".as_slice()),
@@ -290,13 +274,9 @@ fn a_hash_walk_is_cut_at_the_bounds_and_counts_every_record() {
     let dir = tempfile::tempdir().unwrap();
     let db = BdbStore::create_hash(&dir.path().join("bigram.db")).unwrap();
     let mut keys = [0xff_u32, 1, 0x100, 0x0100_05db].map(u32::to_le_bytes);
-    db.write(|txn| {
-        for key in &keys {
-            txn.put_raw(key, b"gram")?;
-        }
-        Ok(())
-    })
-    .unwrap();
+    for key in &keys {
+        db.set_raw(key, b"gram").unwrap();
+    }
     keys.sort();
     let mut native = Vec::new();
     db.native_keys(&mut native).unwrap();
@@ -325,7 +305,7 @@ fn a_hash_walk_is_cut_at_the_bounds_and_counts_every_record() {
 fn a_bigram_save_stops_when_its_source_cursor_does_not_open() {
     let dir = tempfile::tempdir().expect("scratch dir");
     let source = BdbStore::create_hash(&dir.path().join("source.db")).expect("source");
-    source.write(|txn| txn.put_raw(b"k", b"v")).expect("record");
+    source.set_raw(b"k", b"v").expect("record");
     let destination = dir.path().join("destination.db");
     crate::store::fail_iterator_creation_after(0);
     let result = source.save_bigram_db(&destination);

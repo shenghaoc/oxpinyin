@@ -2,9 +2,7 @@ use rstest::rstest;
 use std::ops::{Bound, ControlFlow};
 
 use super::{KcStore, KcUserBigramDb};
-use crate::store::{
-    AccessMode, DbmKind, RawReadOwned, RawReadStore, UserBigramDb, WriteStore, WriteTxn,
-};
+use crate::store::{AccessMode, DbmKind, RawReadOwned, RawReadStore, UserBigramDb, WriteStore};
 
 const OREADER: u32 = 1;
 const OWRITER: u32 = 2;
@@ -241,14 +239,9 @@ fn scan_raw_is_ascending_and_bounded_on_every_container(#[case] hash: bool) {
     }
     .unwrap();
     let keys: &[&[u8]] = &[b"\0", b"\x01", b"\x01A", b"\xff"];
-    writer
-        .write(|txn| {
-            for &key in keys.iter().rev() {
-                txn.put_raw(key, key)?;
-            }
-            Ok(())
-        })
-        .unwrap();
+    for &key in keys.iter().rev() {
+        writer.set_raw(key, key).unwrap();
+    }
     drop(writer);
     let reader = if hash {
         KcStore::open_hash_read_only(&path)
@@ -314,7 +307,7 @@ fn hash_paths_create_and_reopen_tree_and_hash_files() {
             } else {
                 KcStore::create(&path).unwrap()
             };
-            store.write(|txn| txn.put_raw(b"key", b"value")).unwrap();
+            store.set_raw(b"key", b"value").unwrap();
             drop(store);
             assert!(path.is_file(), "the literal filename must be created");
             let store = if hash {
