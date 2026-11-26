@@ -35,7 +35,7 @@ The next section states which modules it may depend on.
 |---|---|
 | `options`, `static_strings`, `string_tables`, `ucs4`, `direct`, `chewing_key`, `chewing_key_data`, `full_pinyin_index`, `syllables`, `vocab`, `zhuyin_map`, `scheme`, `parser` | The parser layer: option bits, the frozen string and content tables, UCS-4 phrase text, the packed `ChewingKey` and its renderers, the syllable inventory and the full-pinyin, double-pinyin and zhuyin parsers. `vocab` also holds the one definition of the pin's `novel_types.h` types and constants: `PhraseToken`, the alias of `phrase_token_t` (`typedef guint32`), the token masks, the library count and library ids, `null_token`, `sentence_start`, `MAX_PHRASE_LENGTH`, and `PHRASE_INDEX_LIBRARY_INDEX` and `PHRASE_INDEX_MAKE_TOKEN`. The public `vocab` module owns these names and exposes phrase text from the private `ucs4` implementation. The public `parser` module exposes the phonetic keys and parser types from their private implementation files. The only item re-exported at the crate root is `OptionBits`. |
 | `graph` | The weighted segment graph and the decoder over it. |
-| `model`, `single_gram` | The dictionary and language-model contracts and the `SingleGram` value layout and operations. |
+| `model`, `single_gram`, `phrase_item` | The dictionary and language-model contracts, the `SingleGram` value layout and operations, and the `PhraseItem` view that every layer reads an item through. |
 | `engine` | Session state, candidate construction, selection, constraints, training plans and decoding. It is storage-free: it reads the system and user models only through the `model` traits. |
 | `store` | The ordered key–value store traits and the three DBM backends, `DefaultStore` included. |
 | `input` | The external-I/O boundary: the pin's C-library and GLib calls for configuration, locale, chunk files, the save path and diagnostics. |
@@ -49,7 +49,7 @@ The next section states which modules it may depend on.
 
 ### Module dependencies
 
-The base is the parser layer with `graph`, `model` and `single_gram`.
+The base is the parser layer with `graph`, `model`, `single_gram` and `phrase_item`.
 Base modules may depend on each other. Callers name each item through its owning module; `OptionBits` is available at the crate root.
 Every other module may depend on the base and on the modules that this table names.
 The table states the rule for production code.

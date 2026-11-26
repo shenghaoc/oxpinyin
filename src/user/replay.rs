@@ -273,7 +273,7 @@ impl Merge {
     fn remove(&mut self, token: u32, old_item: &[u8]) -> Result<(), Stop> {
         let slot = token & PHRASE_MASK;
         let mismatch = Stop::Mismatch("REMOVE", token);
-        let Some(bytes) = self.live.complete_item(slot) else {
+        let Some(bytes) = self.live.complete_item(slot).map(|item| item.as_bytes()) else {
             // The class (b) result for an absent token is a no-op for a
             // readable old item. A removal that would read an incomplete
             // item stops at this record.
@@ -295,6 +295,7 @@ impl Merge {
         let old_len = self
             .live
             .complete_item(slot)
+            .map(|item| item.as_bytes())
             .filter(|&bytes| bytes == old_item)
             .ok_or(Stop::Mismatch("MODIFY", token))?
             .len();
@@ -731,14 +732,16 @@ impl ReplayedLibrary {
         (length >= 2).then(|| at as usize..at as usize + length)
     }
 
-    fn complete_item(&self, slot: u32) -> Option<&[u8]> {
-        Some(PhraseItemView::from_bytes(self.fields(slot)?)?.as_bytes())
+    /// The complete item under `slot`, checked once: every read of a
+    /// complete item derives what it needs from this view.
+    pub(crate) fn complete_item(&self, slot: u32) -> Option<PhraseItemView<'_>> {
+        PhraseItemView::from_bytes(self.fields(slot)?)
     }
 
     /// Decodes a complete item at the supplied slot.
     #[must_use]
     pub fn item(&self, slot: u32) -> Option<ChunkItem> {
-        decode_phrase_item(self.complete_item(slot)?)
+        decode_phrase_item(self.complete_item(slot)?.as_bytes())
     }
 
     /// Whether a slot holds an incomplete item.
@@ -755,7 +758,8 @@ impl ReplayedLibrary {
     }
 
     pub(crate) fn unigram(&self, slot: u32) -> Option<u32> {
-        self.complete_item(slot).map(raw_unigram)
+        self.complete_item(slot)
+            .map(|item| raw_unigram(item.as_bytes()))
     }
 
     /// `SubPhraseIndex::add_unigram_frequency` (`phrase_index.cpp:150-176`):
@@ -787,7 +791,7 @@ impl ReplayedLibrary {
     }
 
     pub(crate) fn remove_item(&mut self, slot: u32) -> Option<Vec<u8>> {
-        let bytes = self.complete_item(slot)?.to_vec();
+        let bytes = self.complete_item(slot)?.as_bytes().to_vec();
         self.set_word(slot, 0);
         self.total = self.total.wrapping_sub(raw_unigram(&bytes));
         Some(bytes)
@@ -831,7 +835,8 @@ impl ReplayedLibrary {
     }
 
     pub(crate) fn item_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
-        self.complete_item(slot).map(Cow::Borrowed)
+        self.complete_item(slot)
+            .map(|item| Cow::Borrowed(item.as_bytes()))
     }
 
     /// The complete item under `slot`, read in place, unless the shipped

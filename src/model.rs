@@ -1,5 +1,6 @@
 //! Dictionary and language-model contracts used by the session engine.
 use crate::parser::ChewingKey;
+use crate::phrase_item::PhraseItemView;
 use crate::single_gram;
 use crate::single_gram::GramFault;
 use crate::vocab::{
@@ -256,20 +257,23 @@ pub trait Dictionary {
     /// prefix (`074a2219` pinyin.cpp:1711-1740; zhuyin.cpp:1146-1175).
     fn phrase_length_for_token(&self, token: u32) -> Option<usize>;
 
-    /// The stored pronunciations of the phrase item behind `token` —
-    /// `FacadePhraseIndex::get_phrase_item` then `get_nth_pronunciation`
-    /// (`phrase_index.h` at the pin `074a2219`): each pronunciation's keys,
-    /// tones included, and its `guint32` frequency, in stored order. This is
-    /// what `ForwardPhoneticConstraints::validate_constraint` revalidates a
-    /// forcing against (`phonetic_lookup.cpp:120-165`): it searches no
-    /// table. [`PhraseItemRead::NoItem`] when the dictionary has no item for
-    /// the token, as the pin's `get_phrase_item` fails then.
+    /// Lends the phrase item behind `token` to `read`, in place —
+    /// `FacadePhraseIndex::get_phrase_item` (`phrase_index.h:646-657` at the
+    /// pin `074a2219`), whose view the pin's `PhraseItem` reads through. This
+    /// is what `ForwardPhoneticConstraints::validate_constraint` revalidates
+    /// a forcing against (`phonetic_lookup.cpp:120-165`): it searches no
+    /// table. `Ok(None)` when the dictionary has no item for the token, as
+    /// the pin's `get_phrase_item` fails then and leaves the caller's item
+    /// untouched (`phrase_index.h:649-650`, `phrase_index.cpp:189-193`).
     ///
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the backend cannot read the item.
-    fn phrase_item_pronunciations(&self, token: PhraseToken)
-    -> Result<PhraseItemRead, Self::Error>;
+    fn read_phrase_item<R>(
+        &self,
+        token: PhraseToken,
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Result<Option<R>, Self::Error>;
 }
 
 /// A dictionary that lists entries: the fixture doubles and the evaluation
@@ -473,19 +477,20 @@ pub trait PhraseList {
         PhraseList::phrase_text_for_token(self, token).map(|text| text.phrase_length())
     }
 
-    /// [`Dictionary::phrase_item_pronunciations`] for this dictionary.
+    /// [`Dictionary::read_phrase_item`] for this dictionary.
     ///
-    /// The default answers [`PhraseItemRead::NoItem`]: a dictionary that
-    /// keeps no phrase items has none to read.
+    /// The default answers `Ok(None)`: a dictionary that keeps no phrase
+    /// items has none to lend.
     ///
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the backend cannot read the item.
-    fn phrase_item_pronunciations(
+    fn read_phrase_item<R>(
         &self,
         _token: PhraseToken,
-    ) -> Result<PhraseItemRead, Self::Error> {
-        Ok(PhraseItemRead::NoItem)
+        _read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Result<Option<R>, Self::Error> {
+        Ok(None)
     }
 }
 
@@ -587,11 +592,12 @@ impl<T: PhraseList> Dictionary for T {
         PhraseList::phrase_length_for_token(self, token)
     }
 
-    fn phrase_item_pronunciations(
+    fn read_phrase_item<R>(
         &self,
         token: PhraseToken,
-    ) -> Result<PhraseItemRead, Self::Error> {
-        PhraseList::phrase_item_pronunciations(self, token)
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Result<Option<R>, Self::Error> {
+        PhraseList::read_phrase_item(self, token, read)
     }
 }
 
@@ -654,10 +660,6 @@ fn overlong_extension_gate<L: PhraseList>(_list: &L, _syllables: &[L::Syllable])
     false
 }
 
-/// A phrase item's stored pronunciations in stored order: each one's keys,
-/// tones included, and its `guint32` frequency.
-pub type PronunciationRows = Vec<(Vec<ChewingKey>, u32)>;
-
 /// What `_token_get_phrase` and `convert_to_utf8` read from a present item
 /// (074a2219 `pinyin.cpp:1627-1646`, `zhuyin.cpp:1096-1114`,
 /// `lookup/lookup.cpp:39-68`): the stored length and GLib's conversion of
@@ -679,19 +681,6 @@ impl From<PhraseText> for TokenPhrase {
             text: Some(text),
         }
     }
-}
-
-/// What [`Dictionary::phrase_item_pronunciations`] found behind a token.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PhraseItemRead {
-    /// The token has no readable item: its library is not loaded or hidden,
-    /// or the slot is empty. The pin's `get_phrase_item` then fails and
-    /// leaves the caller's `PhraseItem` untouched (`phrase_index.h:649-650`,
-    /// `phrase_index.cpp:189-193`), so the caller keeps whatever item it
-    /// last read.
-    NoItem,
-    /// The item's pronunciations.
-    Item(PronunciationRows),
 }
 
 /// The order `reduce_tokens` gives a token list

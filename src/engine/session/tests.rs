@@ -2852,7 +2852,7 @@ fn the_matrix_keys_are_the_parse_in_column_order() {
 /// (`phonetic_lookup.cpp:120-165` at 074a2219).
 struct ItemDictionary {
     inner: FixtureDictionary,
-    items: std::collections::HashMap<u32, crate::model::PronunciationRows>,
+    items: std::collections::HashMap<u32, Rows>,
     /// Every item read fails, as a backend that cannot serve it would.
     failing: bool,
 }
@@ -2868,26 +2868,54 @@ impl PhraseList for ItemDictionary {
             .expect("fixture lookups cannot fail"))
     }
 
-    fn phrase_item_pronunciations(
+    fn read_phrase_item<R>(
         &self,
         token: PhraseToken,
-    ) -> Result<crate::model::PhraseItemRead, EngineError> {
+        read: impl FnOnce(crate::data::phrase_library::PhraseItemView<'_>) -> R,
+    ) -> Result<Option<R>, EngineError> {
         if self.failing {
             return Err(EngineError::Failure);
         }
-        Ok(self
-            .items
-            .get(&token)
-            .cloned()
-            .map_or(crate::model::PhraseItemRead::NoItem, |rows| {
-                crate::model::PhraseItemRead::Item(rows)
-            }))
+        Ok(self.items.get(&token).map(|rows| {
+            let bytes = item_bytes(rows);
+            read(crate::data::phrase_library::PhraseItemView::from_bytes(&bytes).expect("an item"))
+        }))
     }
+}
+
+/// A phrase item's readings in stored order: each one's keys, tones
+/// included, and its frequency.
+type Rows = Vec<(Vec<crate::parser::ChewingKey>, u32)>;
+
+/// The `PhraseItem` bytes `rows` stand for (074a2219 `phrase_index.h:56`):
+/// a placeholder text as long as the readings, then each reading's packed
+/// keys and frequency.
+fn item_bytes(rows: &[(Vec<crate::parser::ChewingKey>, u32)]) -> Vec<u8> {
+    let length = rows.first().map_or(0, |(keys, _)| keys.len());
+    assert!(
+        rows.iter().all(|(keys, _)| keys.len() == length),
+        "one reading length"
+    );
+    let mut bytes = vec![
+        u8::try_from(length).expect("a phrase length"),
+        u8::try_from(rows.len()).expect("a reading count"),
+    ];
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    for _ in 0..length {
+        bytes.extend_from_slice(&0x4e00_u32.to_le_bytes());
+    }
+    for (keys, frequency) in rows {
+        for key in keys {
+            bytes.extend_from_slice(&key.to_packed().to_le_bytes());
+        }
+        bytes.extend_from_slice(&frequency.to_le_bytes());
+    }
+    bytes
 }
 
 /// 中华人民 and 种花人民 as one item: `zhong1 hua2 ren2 min2` (frequency 50)
 /// and `zhong3 hua1 ren2 min2` (frequency 1).
-fn wide_abbreviation_item() -> crate::model::PronunciationRows {
+fn wide_abbreviation_item() -> Rows {
     let reading = |spellings: [(&str, u8); 4]| -> Vec<crate::parser::ChewingKey> {
         spellings
             .into_iter()
@@ -2913,9 +2941,7 @@ fn wide_abbreviation_item() -> crate::model::PronunciationRows {
 /// A session over `zhhrm`, five keys of which four are incomplete, with
 /// token 7 forced over all of it and the selection record rebuilt from that
 /// forcing.
-fn wide_abbreviation_session(
-    item: Option<crate::model::PronunciationRows>,
-) -> Session<ItemDictionary, TrellisModel> {
+fn wide_abbreviation_session(item: Option<Rows>) -> Session<ItemDictionary, TrellisModel> {
     let mut session = Session::new(
         SessionSettings::default(),
         ItemDictionary {

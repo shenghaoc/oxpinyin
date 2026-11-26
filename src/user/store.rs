@@ -13,6 +13,7 @@
 //! [`crate::model::UserCountDelta`]; the save cycle is the §4 `m_modified`
 //! gate and the persistence point behind `pinyin_save`.
 
+use crate::phrase_item::PhraseItemView;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::fmt;
 use std::rc::Rc;
@@ -2283,61 +2284,27 @@ impl UserStore {
         Some(item)
     }
 
-    /// The stored pronunciations of the item this store holds behind
-    /// `token`, as `(keys, frequency)` rows in stored order (074a2219
-    /// `phrase_index.h` `get_nth_pronunciation`): an imported or trained
-    /// system item, or a user-file library's phrase.
-    pub fn item_pronunciations(
+    /// Lends the item this store holds behind `token` to `read`, in place:
+    /// a session arena's or an added item, else a system library's live
+    /// item (`get_phrase_item`, 074a2219 `phrase_index.h:646-657`). `None`
+    /// where the store holds none, so the caller reads the loaded library.
+    pub(crate) fn with_effective_item<R>(
         &self,
         token: PhraseToken,
-    ) -> Option<crate::model::PronunciationRows> {
-        use crate::user::store_libpinyin::pinyin_keys_to_packed;
-        if let Some(readings) = self.with_user_item(token, |item| {
-            item.pronunciations()
-                .map(|reading| {
-                    (
-                        reading
-                            .keys
-                            .as_chunks::<2>()
-                            .0
-                            .iter()
-                            .map(|b| ChewingKey::from_packed(u16::from_le_bytes(*b)))
-                            .collect(),
-                        reading.freq,
-                    )
-                })
-                .collect()
-        }) {
-            return Some(readings);
+        read: impl FnOnce(PhraseItemView<'_>) -> R,
+    ) -> Option<R> {
+        let mut read = Some(read);
+        if let Some(found) = self
+            .with_user_item(token, |item| read.take().map(|read| read(item)))
+            .flatten()
+        {
+            return Some(found);
         }
-        if self.is_system_library(phrase_index_library_index(token)) {
-            return self.with_effective_system_item(token, |item| {
-                item.prons
-                    .iter()
-                    .map(|(packed, frequency)| {
-                        let keys = packed
-                            .iter()
-                            .map(|&bits| crate::parser::ChewingKey::from_packed(bits))
-                            .collect();
-                        (keys, *frequency)
-                    })
-                    .collect()
-            });
+        if !self.is_system_library(phrase_index_library_index(token)) || !self.has_system_items() {
+            return None;
         }
-        self.phrase(token).map(|phrase| {
-            phrase
-                .pronunciations()
-                .iter()
-                .filter_map(|pronunciation| {
-                    let keys = pinyin_keys_to_packed(pronunciation.keys())?
-                        .into_iter()
-                        .map(crate::parser::ChewingKey::from_packed)
-                        .collect();
-                    let frequency = u32::try_from(pronunciation.count()).unwrap_or(u32::MAX);
-                    Some((keys, frequency))
-                })
-                .collect()
-        })
+        let read = read?;
+        self.inner.system_items.borrow().read_complete(token, read)
     }
 
     /// The live sub-index's range end for the export probe. A promotion can
@@ -2369,6 +2336,7 @@ impl UserStore {
     /// original. A borrowed item is stable for this call and copied nowhere.
     /// Only its unigram field is stale; the test-only
     /// `Self::system_item_override` supplies the live unigram.
+    #[cfg(test)]
     pub(crate) fn with_effective_system_item<R>(
         &self,
         token: PhraseToken,

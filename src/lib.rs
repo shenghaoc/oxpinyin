@@ -68,6 +68,8 @@ mod packed_records;
 #[forbid(unsafe_code)]
 pub mod parser;
 #[forbid(unsafe_code)]
+mod phrase_item;
+#[forbid(unsafe_code)]
 pub mod runtime;
 #[forbid(unsafe_code)]
 mod scheme;
