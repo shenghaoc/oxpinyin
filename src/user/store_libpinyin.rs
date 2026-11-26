@@ -374,7 +374,7 @@ fn seeded_mass(
 }
 
 fn seed_totals(
-    originals: &impl crate::user::OriginalLibraries,
+    originals: &crate::user::SystemOriginals,
     library_totals: &crate::user::LibraryTable<u32>,
     replayed: &crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
     user_libraries: &crate::user::LibraryTable<crate::user::user_library::UserLibrary>,
@@ -430,7 +430,7 @@ fn seed_totals(
 #[cfg(test)]
 pub fn export_state(
     store: &UserStore,
-    originals: &impl crate::user::OriginalLibraries,
+    originals: &crate::user::SystemOriginals,
 ) -> Result<UserState, UserStoreError> {
     let mut state = export_for_save(store)?;
     let Ok(()) = store

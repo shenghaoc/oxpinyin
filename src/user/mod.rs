@@ -77,8 +77,7 @@ pub(crate) mod native_fixture;
 pub(crate) mod contract_data;
 
 pub use persistence::{
-    Loaded, OriginalLibraries, PersistenceError, SelectedOriginals, SystemLibraryRef,
-    check_format_unnamed, fini, lowered_open_counter,
+    Loaded, PersistenceError, SystemLibraryRef, check_format_unnamed, fini, lowered_open_counter,
 };
 pub use seed::{
     CEILING_SEED, EXPAND_FACTOR, INITIAL_SEED, UNIGRAM_FACTOR, predicted_seed, training_seed,

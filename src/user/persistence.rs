@@ -341,59 +341,6 @@ pub struct SystemOriginals {
     layout: UserFileLayout,
 }
 
-/// An operation's selection of original libraries. It retains no byte owner.
-pub struct SelectedOriginals<'a> {
-    owner: &'a SystemOriginals,
-    mask: u16,
-}
-
-/// Baseline reads shared by the whole owner and an operation's selection.
-pub trait OriginalLibraries {
-    /// Configured profile filenames.
-    fn layout(&self) -> &UserFileLayout;
-    /// Borrow one selected original library.
-    fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>>;
-    /// Borrow selected libraries in nibble order.
-    fn iter(&self) -> impl Iterator<Item = (&u8, SystemLibraryRef<'_>)>;
-    /// Whether this operation includes a library.
-    fn contains_key(&self, nibble: &u8) -> bool {
-        self.get(nibble).is_some()
-    }
-    /// Selected library nibbles in order.
-    fn keys(&self) -> impl Iterator<Item = &u8> {
-        self.iter().map(|(nibble, _)| nibble)
-    }
-}
-
-impl OriginalLibraries for SystemOriginals {
-    fn layout(&self) -> &UserFileLayout {
-        &self.layout
-    }
-    fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
-        self.get(nibble)
-    }
-    fn iter(&self) -> impl Iterator<Item = (&u8, SystemLibraryRef<'_>)> {
-        self.iter()
-    }
-}
-
-impl OriginalLibraries for SelectedOriginals<'_> {
-    fn layout(&self) -> &UserFileLayout {
-        self.owner.layout()
-    }
-    fn get(&self, nibble: &u8) -> Option<SystemLibraryRef<'_>> {
-        if *nibble >= 16 || self.mask & (1 << *nibble) == 0 {
-            return None;
-        }
-        self.owner.get(nibble)
-    }
-    fn iter(&self) -> impl Iterator<Item = (&u8, SystemLibraryRef<'_>)> {
-        self.owner
-            .iter()
-            .filter(|(nibble, _)| self.mask & (1 << **nibble) != 0)
-    }
-}
-
 impl SystemOriginals {
     /// `libraries` under `layout`.
     #[must_use]
@@ -441,11 +388,6 @@ impl SystemOriginals {
         if let Some(library) = self.libraries.get_mut(&nibble) {
             library.total = total;
         }
-    }
-
-    /// Select existing baselines for a transition without transferring their bytes.
-    pub fn selected(&self, mask: u16) -> SelectedOriginals<'_> {
-        SelectedOriginals { owner: self, mask }
     }
 
     /// The uniquely owned baseline mappings, borrowed by dictionary and LM reads.
@@ -803,18 +745,12 @@ pub(crate) struct LoadedProfile {
 /// libraries carry and `state.indexed` names, and the indexed readings of
 /// items added to a system library.
 #[cfg(test)]
-pub(crate) fn chewing_rows(
-    state: &UserState,
-    originals: &impl OriginalLibraries,
-) -> Vec<PinyinIndexItem> {
+pub(crate) fn chewing_rows(state: &UserState, originals: &SystemOriginals) -> Vec<PinyinIndexItem> {
     chewing_rows_inner(state, originals)
 }
 
 #[cfg(test)]
-fn chewing_rows_inner(
-    state: &UserState,
-    originals: &impl OriginalLibraries,
-) -> Vec<PinyinIndexItem> {
+fn chewing_rows_inner(state: &UserState, originals: &SystemOriginals) -> Vec<PinyinIndexItem> {
     // The pinyin index holds the readings `add_index` saw. The phrase
     // index is independently stored and copied verbatim below.
     let mut chewing_rows: Vec<PinyinIndexItem> = Vec::new();
@@ -1338,7 +1274,7 @@ pub(crate) type Reloaded = (
 #[cfg(test)]
 pub(crate) fn load_library_logs(
     dir: &Path,
-    originals: &impl OriginalLibraries,
+    originals: &SystemOriginals,
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = crate::user::LibraryTable::new();
@@ -1391,7 +1327,7 @@ pub(crate) fn load_user_library(
 #[cfg(test)]
 pub(crate) fn load_masked_logs(
     dir: &Path,
-    originals: &impl OriginalLibraries,
+    originals: &SystemOriginals,
     mask: u32,
     value: u32,
 ) -> Result<Reloaded, JournalFault> {
@@ -1485,7 +1421,7 @@ pub(crate) fn read_mask_log(
 /// assertion ends it.
 fn replay_logs(
     dir: &Path,
-    originals: &impl OriginalLibraries,
+    originals: &SystemOriginals,
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
     only_originals: bool,
@@ -1572,7 +1508,7 @@ fn record_merge(
 )]
 fn replay_log(
     dir: &Path,
-    originals: &impl OriginalLibraries,
+    originals: &SystemOriginals,
     loaded: &mut Loaded,
     nibble: u8,
     file: &FileName,
@@ -2024,7 +1960,7 @@ fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, Librar
 pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &impl OriginalLibraries,
+    originals: &SystemOriginals,
     reporting: &mut SaveReporting<'_, B>,
 ) -> Result<(), PersistenceError> {
     // `_write_files` writes every file whatever the one before did
@@ -2105,7 +2041,7 @@ impl Staged {
 fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &impl OriginalLibraries,
+    originals: &SystemOriginals,
     reporting: &mut SaveReporting<'_, B>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
@@ -2205,7 +2141,7 @@ fn log_chunk(
 fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
-    originals: &impl OriginalLibraries,
+    originals: &SystemOriginals,
     reporting: &mut SaveReporting<'_, B>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
