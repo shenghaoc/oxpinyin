@@ -28,10 +28,9 @@ use smallvec::SmallVec;
 
 use crate::engine::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::engine::error::EngineError;
-use crate::engine::session::matrix::{ParsedMatrix, ScanMatrix};
-use crate::engine::session::{ScanKey, column_is_empty};
+use crate::engine::session::matrix::ParsedMatrix;
 use crate::phrase_item::{CHEWING_KEY_SIZE, PhraseItemView};
-use crate::vocab::{MAX_PHRASE_LENGTH, SENTENCE_START};
+use crate::vocab::MAX_PHRASE_LENGTH;
 
 /// Token map for keyed lookup only; it does not decide output order.
 type TokenMap<V> = rustc_hash::FxHashMap<u32, V>;
@@ -812,39 +811,8 @@ where
 /// today's walk, bit for bit.
 #[cfg(test)]
 pub fn nbest_sentences<D, L>(
-    matrix: &ScanMatrix,
+    matrix: &crate::engine::session::matrix::ScanMatrix,
     bound: usize,
-    dictionary: &D,
-    model: &L,
-    history: &[PhraseToken],
-    constraints: Option<&ConstraintStore>,
-    shape: NbestShape,
-) -> Result<Vec<NbestRow>, EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey>,
-    L: LanguageModel,
-{
-    nbest_sentences_generation(
-        GenerationInput {
-            matrix,
-            bound,
-            physical_separators: true,
-            topology: None,
-        },
-        dictionary,
-        model,
-        history,
-        constraints,
-        shape,
-    )
-}
-
-/// Decodes a prepared scan matrix with the requested generation shape.
-///
-/// # Errors
-/// Returns an engine error when dictionary or model access fails.
-pub fn nbest_sentences_generation<D, L>(
-    input: GenerationInput<'_>,
     dictionary: &D,
     model: &L,
     history: &[PhraseToken],
@@ -858,18 +826,31 @@ where
     // The sentence path's single-seed law: the constrained decode seeds
     // the virtual start; the free walk seeds the history's last token.
     let seed = match constraints {
-        Some(_) => SENTENCE_START,
-        None => history.last().map_or(SENTENCE_START, |token| *token),
+        Some(_) => crate::vocab::SENTENCE_START,
+        None => history
+            .last()
+            .map_or(crate::vocab::SENTENCE_START, |token| *token),
     };
-    nbest_sentences_with_seeds_generation(input, dictionary, model, &[seed], constraints, shape)
+    nbest_sentences_generation(
+        &ParsedMatrix::from_scan(matrix, bound, true),
+        dictionary,
+        model,
+        &[seed],
+        constraints,
+        shape,
+    )
 }
 
-/// The prefix-seeded variant: every seed token becomes a zero-cost
-/// initial node, upstream's `fill_prefixes` over `m_prefixes =
-/// [sentence_start] + _compute_prefixes(prefix)` — the exact shape
-/// `pinyin_guess_sentence_with_prefix` drives.
-pub(super) fn nbest_sentences_with_seeds_generation<D, L>(
-    input: GenerationInput<'_>,
+/// Decodes the placed topology of a parse with the requested generation
+/// shape. Every seed token becomes a zero-cost initial node, upstream's
+/// `fill_prefixes` over `m_prefixes = [sentence_start] +
+/// _compute_prefixes(prefix)`: a plain guess seeds `sentence_start` alone,
+/// `pinyin_guess_sentence_with_prefix` the prefix tokens after it.
+///
+/// # Errors
+/// Returns an engine error when dictionary or model access fails.
+pub fn nbest_sentences_generation<D, L>(
+    topology: &ParsedMatrix,
     dictionary: &D,
     model: &L,
     seeds: &[PhraseToken],
@@ -880,29 +861,8 @@ where
     D: Dictionary<Syllable = SyllableKey>,
     L: LanguageModel,
 {
-    let GenerationInput {
-        matrix,
-        bound,
-        physical_separators,
-        topology,
-    } = input;
-    let owned;
-    let generation = if let Some(topology) = topology {
-        GenerationView {
-            columns: topology,
-            zeros: &topology.zeros,
-        }
-    } else {
-        owned = crate::engine::session::matrix::ParsedMatrix::from_scan(
-            matrix,
-            bound,
-            physical_separators,
-        );
-        GenerationView {
-            columns: &owned,
-            zeros: &owned.zeros,
-        }
-    };
+    let bound = topology.bound;
+    let generation = GenerationView { columns: topology };
     let mut trellis = Trellis::with_seeds(bound, seeds, shape);
     // One path scratch for every span search of the call.
     let mut scratch = GenerationPath::default();
@@ -1038,19 +998,6 @@ where
     Ok(rows)
 }
 
-/// Scan data and separator policy for one decoder invocation.
-#[derive(Clone, Copy)]
-pub struct GenerationInput<'a> {
-    /// Packed scan edges.
-    pub matrix: &'a ScanMatrix,
-    /// Last byte column reached by the decode.
-    pub bound: usize,
-    /// Whether separator columns occupy positions in the result.
-    pub physical_separators: bool,
-    /// Previously placed columns, when available.
-    pub topology: Option<&'a crate::engine::session::matrix::ParsedMatrix>,
-}
-
 #[derive(Default)]
 struct GenerationPath {
     keys: SmallVec<[SyllableKey; 16]>,
@@ -1069,7 +1016,6 @@ struct GenerationPath {
 /// Exact-scheme formatting separators are not physical zero keys.
 struct GenerationView<'a> {
     columns: &'a ParsedMatrix,
-    zeros: &'a [bool],
 }
 
 impl GenerationView<'_> {
@@ -1091,7 +1037,7 @@ impl GenerationView<'_> {
         if start == end {
             return if keys.is_empty() { Ok(0.0) } else { leaf(keys) };
         }
-        if self.zeros.get(start).copied().unwrap_or(false) {
+        if self.columns.has_zero(start) {
             return self.sum_paths(start + 1, end, length, keys, leaf);
         }
         let mut sum = 0.0_f32;
@@ -1121,14 +1067,11 @@ impl GenerationView<'_> {
         let Some(column) = self.columns.get(start) else {
             return Ok(false);
         };
-        if column.is_empty() && !self.zeros.get(start).copied().unwrap_or(false) {
+        if column.is_empty() && !self.columns.has_zero(start) {
             return Ok(false);
         }
         // search_matrix's empty-end-column gate is independent of paths.
-        if end + 1 < self.columns.column_count()
-            && self.columns.get(end).is_none_or(<[ScanKey]>::is_empty)
-            && !self.zeros[end]
-        {
+        if end + 1 < self.columns.column_count() && self.columns.column_is_empty(end) {
             return Ok(true);
         }
         // A failed search leaves the scratch mid-path.
@@ -1180,7 +1123,7 @@ impl GenerationView<'_> {
                 .append_from(&mut path.ranges, |()| LazySlot::new(id));
             return Ok(hit);
         }
-        if self.zeros.get(start).copied().unwrap_or(false) {
+        if self.columns.has_zero(start) {
             return self.walk(start + 1, end, dictionary, path, into);
         }
         let Some(column) = self.columns.get(start) else {
@@ -1329,18 +1272,14 @@ impl<'a> ConstraintSpelling<'a> {
         start: usize,
         end: usize,
     ) -> Result<bool, EngineError> {
-        let parsed = self.parsed;
-        let columns = parsed;
+        let columns = self.parsed;
         if end >= columns.column_count()
-            || column_is_empty(columns, &parsed.zeros, start)
-            || column_is_empty(columns, &parsed.zeros, end)
+            || columns.column_is_empty(start)
+            || columns.column_is_empty(end)
         {
             return Ok(false);
         }
-        let generation = GenerationView {
-            columns,
-            zeros: &parsed.zeros,
-        };
+        let generation = GenerationView { columns };
         // `phrase_length`: every stored pronunciation spells it.
         if item.n_pronunciations() == 0 {
             return Ok(false);

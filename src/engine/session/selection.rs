@@ -276,10 +276,9 @@ impl<'a> Iterator for TrainingSteps<'a> {
             // filled end column. The pin reaches them after the step's
             // gram is stored; an abort leaves nothing it wrote observable,
             // so they are checked before the step's writes.
-            let zeros = &self.matrix.zeros;
             if end >= self.matrix.column_count()
-                || column_is_empty(self.matrix, zeros, span.start)
-                || column_is_empty(self.matrix, zeros, end)
+                || self.matrix.column_is_empty(span.start)
+                || self.matrix.column_is_empty(end)
             {
                 return Some(self.abort());
             }
@@ -603,13 +602,18 @@ where
     /// Revalidate existing forcings on a refused choose, preserving the pin's
     /// resize and spelling checks without attempting sentence decoding.
     fn validate_selection_constraints(&mut self) -> Result<(), EngineError> {
-        self.revalidate_selection_constraints().map(|_| ())
+        self.validate_constraints_to(self.selection_constraint_size())
+            .map(|_| ())
     }
 
-    /// [`Self::validate_selection_constraints`], answering whether it rebuilt
-    /// the selection record from the forcings.
-    fn revalidate_selection_constraints(&mut self) -> Result<bool, EngineError> {
-        let size = self.selection_constraint_size();
+    /// Re-syncs the constraint store to `size` columns — upstream
+    /// `validate_constraint`: grow with free cells (forcings survive
+    /// typing), shrink by truncation, drop forcings that overrun or no
+    /// longer spell. If a forcing dropped (the buffer changed under it),
+    /// or the safe selection record was cleared while forcings remain, the
+    /// record follows the surviving forcings. Answers whether it rebuilt
+    /// the record.
+    pub(super) fn validate_constraints_to(&mut self, size: usize) -> Result<bool, EngineError> {
         let mut store = core::mem::take(&mut self.constraints);
         let result = {
             let retained = self.retained_parse();
@@ -677,7 +681,7 @@ where
     fn settle_written_forcing(&mut self) -> Result<Selection, EngineError> {
         // The record is a function of the forcings, so a validation that
         // rebuilt it already left the record the rebuild below would make.
-        if !self.revalidate_selection_constraints()? {
+        if !self.validate_constraints_to(self.selection_constraint_size())? {
             self.rebuild_selection_from_constraints();
         }
         self.refresh_after_parse()?;
@@ -727,19 +731,6 @@ where
             .record
             .rebuild_from_constraints(state.input.len(), &runs);
     }
-}
-
-/// 074a2219 `get_column_size(offset) > 0` (`storage/phonetic_key_matrix.cpp`):
-/// a column is occupied by either a real key or a zero key. `from_scan`
-/// records real keys in `matrix` and internal separator zero keys (and the
-/// reserved end slot) in `zeros`.
-pub(crate) fn column_is_empty(
-    matrix: &super::matrix::ParsedMatrix,
-    zeros: &[bool],
-    offset: usize,
-) -> bool {
-    matrix.get(offset).is_none_or(<[ScanKey]>::is_empty)
-        && !zeros.get(offset).copied().unwrap_or(false)
 }
 
 /// 074a2219 storage/phonetic_key_matrix.cpp:603-670: lazy depth-first

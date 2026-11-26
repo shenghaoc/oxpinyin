@@ -8,7 +8,7 @@ pub use crate::data::chewing_table::{
 pub use crate::data::phrase_library::backing::LibraryBytes;
 pub use crate::data::phrase_table::PhraseTable;
 pub use crate::direct::parse as scan_direct;
-pub use crate::engine::nbest::{GenerationInput, nbest_sentences_generation};
+pub use crate::engine::nbest::nbest_sentences_generation;
 pub use crate::engine::phrase::phrase_segment_ucs4;
 pub use crate::engine::session::matrix::{ParsedMatrix, ScanMatrix};
 pub use crate::engine::session::{apostrophe_extended, build_scan_matrix_over};

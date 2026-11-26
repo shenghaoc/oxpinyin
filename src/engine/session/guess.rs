@@ -55,39 +55,7 @@ where
     ///
     /// Propagates validation, lookup and refresh errors after clearing the previous results.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
-        self.set_candidate_prefixes(core::iter::empty());
-        self.sentence.begin();
-        if self.input.is_empty() {
-            // validate_constraint shrinks the store to the empty matrix
-            // before get_nbest_match refuses it (074a2219,
-            // phonetic_lookup.cpp:123-138, pinyin.cpp:1379-1380).
-            self.constraints.clear();
-            self.record.clear();
-            return Ok(false);
-        }
-        let bound = self.retained_parse().matrix.bound;
-        if bound == 0 {
-            return Ok(false);
-        }
-
-        self.validate_guess_constraints(bound, bound + 1)?;
-
-        let retained = self.retained_parse();
-        self.sentence.rows = crate::engine::nbest::nbest_sentences_generation(
-            crate::engine::nbest::GenerationInput {
-                matrix: &retained.scan,
-                bound,
-                physical_separators: self.input.physical_separators(),
-                topology: Some(&retained.matrix),
-            },
-            &self.dictionary,
-            &self.model,
-            &[],
-            Some(&self.constraints),
-            self.nbest_shape,
-        )?;
-        self.refresh_after_parse()?;
-        Ok(true)
+        self.guess_sentence_with_prefix(&[])
     }
 
     // pinyin_guess_sentence_with_prefix, pinyin.cpp:1426–1441; fill_prefixes,
@@ -119,21 +87,16 @@ where
             return Ok(false);
         }
 
-        self.validate_guess_constraints(bound, bound + 1)?;
+        self.validate_constraints_to(bound + 1)?;
 
         // `m_prefixes = [sentence_start] + _compute_prefixes(prefix)`:
         // every entry seeds a zero-cost initial node.
-        let mut seeds = Vec::with_capacity(prefix_tokens.len() + 1);
+        let mut seeds: smallvec::SmallVec<[PhraseToken; 8]> =
+            smallvec::SmallVec::with_capacity(prefix_tokens.len() + 1);
         seeds.push(crate::vocab::SENTENCE_START);
         seeds.extend_from_slice(prefix_tokens);
-        let retained = self.retained_parse();
-        self.sentence.rows = crate::engine::nbest::nbest_sentences_with_seeds_generation(
-            crate::engine::nbest::GenerationInput {
-                matrix: &retained.scan,
-                bound,
-                physical_separators: self.input.physical_separators(),
-                topology: Some(&retained.matrix),
-            },
+        self.sentence.rows = crate::engine::nbest::nbest_sentences_generation(
+            &self.retained_parse().matrix,
             &self.dictionary,
             &self.model,
             &seeds,
@@ -142,31 +105,5 @@ where
         )?;
         self.refresh_after_parse()?;
         Ok(true)
-    }
-
-    /// Re-syncs the constraint store to the matrix the last parse filled —
-    /// upstream `pinyin_update_constraints`: grow with free cells
-    /// (forcings survive typing), shrink by truncation, drop forcings that
-    /// overrun or no longer spell. If a forcing dropped (the buffer changed
-    /// under it), the selection record follows the surviving forcings.
-    /// `validation_size` is the store size the pin validates against.
-    fn validate_guess_constraints(
-        &mut self,
-        _bound: usize,
-        validation_size: usize,
-    ) -> Result<(), EngineError> {
-        let mut store = core::mem::take(&mut self.constraints);
-        let retained = self.retained_parse();
-        let spelling = crate::engine::nbest::ConstraintSpelling::new(&retained.matrix);
-        let dropped = store.validate(validation_size, |start, end, token| {
-            spelling.spells(&self.dictionary, start, end, token)
-        });
-        self.constraints = store;
-        if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
-            // A temporary incompatible parse may have cleared the safe
-            // selection record while retaining the actual constraints.
-            self.rebuild_selection_from_constraints();
-        }
-        Ok(())
     }
 }

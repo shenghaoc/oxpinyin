@@ -295,7 +295,7 @@ mod guess;
 mod lookup;
 mod offsets;
 mod selection;
-pub(crate) use selection::column_is_empty;
+
 pub use selection::{BEFORE_CURSOR_ANCHOR, RowText, SelectionTarget};
 mod state;
 
