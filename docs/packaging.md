@@ -1,5 +1,7 @@
 # Packaging oxpinyin as a C library (cargo-c)
 
+This page is for integrators and packagers.
+
 This document records how `oxpinyin-capi` is packaged and installed as a shared and static C library, and the decisions behind it.
 On Linux, the installed tree is a drop-in for a same-backend libpinyin build.
 Consumers such as `ibus-libpinyin` link the 79-symbol `pinyin.h` surface exactly as they link upstream (`libpinyin.pc`, `-lpinyin`, `libpinyin.so.15`) and need no source changes.

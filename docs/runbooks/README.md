@@ -1,5 +1,7 @@
 # Runbooks
 
+These pages are for contributors. The [setup guide](setup.md) is for integrators and packagers.
+
 These pages are the step-by-step procedures for the manual tasks in this repository.
 Each page states what it needs, what to run and what "done" looks like.
 The findings that each page links give the reasons for the procedure.

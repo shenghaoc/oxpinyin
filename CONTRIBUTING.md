@@ -1,5 +1,7 @@
 # Contributing
 
+This page is for contributors: it gives the workflow, the review rules and the approval conditions.
+
 oxpinyin reproduces a pinned libpinyin: its behaviour follows the pin, defects included ([source policy](docs/source-policy.md), [compatibility policy](docs/findings/compatibility-policy.md)).
 
 ## Workflow

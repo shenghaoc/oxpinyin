@@ -1,11 +1,10 @@
 # Product
 
-oxpinyin is a GPL-3.0-or-later Rust re-expression of libpinyin 2.11.92.
+oxpinyin is a GPL-3.0-or-later idiomatic Rust rewrite of libpinyin 2.11.92.
 On Linux, it ships as a drop-in replacement at the `libpinyin.so.15` ABI.
 The Zhuyin facade uses `libzhuyin.so.15`.
-Project claims call it a "re-expression".
-They do not claim that it replaces, succeeds or outperforms libpinyin.
-Numerical performance claims are limited to scoped measurements ([controlling rule](source-policy.md#controlling-rule)).
+Project claims call it an "idiomatic Rust rewrite".
+They do not claim that it succeeds libpinyin. Performance comparisons with libpinyin are stated only as scoped measurements ([controlling rule](source-policy.md#controlling-rule)).
 See the [roadmap](../ROADMAP.md) and [constitution](constitution.md).
 
 **Goal (maintainer, 2026-09-12).**
@@ -37,3 +36,4 @@ No frontend drives the ABI end to end in this repository.
 The findings use fcitx5-oxpinyin as a reference consumer, not a shipped driver.
 The [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) describes architecture, data formats and the model.
 The pinned source is the authority when it differs from the wiki.
+The [ibus-libpinyin wiki](https://github.com/libpinyin/ibus-libpinyin/wiki) documents the consumer's features and installation.
