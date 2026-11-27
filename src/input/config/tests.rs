@@ -5,7 +5,7 @@ fn file(bytes: &[u8]) -> (tempfile::TempDir, CString) {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("table.conf");
     std::fs::write(&path, bytes).expect("write");
-    let name = crate::input::c_path(&path).expect("c path");
+    let name = std::ffi::CString::new(crate::input::path_to_bytes(&path)).expect("c path");
     (dir, name)
 }
 
@@ -90,7 +90,8 @@ fn a_nul_ends_the_token_strcmp_sees() {
 #[test]
 fn opening_a_missing_file_fails() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let name = crate::input::c_path(&dir.path().join("absent")).expect("c path");
+    let name = std::ffi::CString::new(crate::input::path_to_bytes(&dir.path().join("absent")))
+        .expect("c path");
     assert!(UserTableInfoReader::open(&name).is_err());
 }
 
@@ -99,7 +100,7 @@ fn opening_a_missing_file_fails() {
 fn the_writer_prints_the_four_lines() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("user.conf");
-    let name = crate::input::c_path(&path).expect("c path");
+    let name = std::ffi::CString::new(crate::input::path_to_bytes(&path)).expect("c path");
     let fields = UserTableInfoFields {
         binary_format_version: -1,
         model_data_version: 14,
@@ -112,7 +113,10 @@ fn the_writer_prints_the_four_lines() {
         "binary format version:-1{newline}model data version:14{newline}database format:KyotoCabinet{newline}open counter:3{newline}"
     );
     assert_eq!(std::fs::read(&path).expect("read"), expected.as_bytes());
-    let missing = crate::input::c_path(&dir.path().join("absent/user.conf")).expect("c path");
+    let missing = std::ffi::CString::new(crate::input::path_to_bytes(
+        &dir.path().join("absent/user.conf"),
+    ))
+    .expect("c path");
     assert!(!save_user_table_info(&missing, &fields));
 }
 

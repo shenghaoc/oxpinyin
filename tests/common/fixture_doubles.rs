@@ -19,10 +19,10 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
+use oxpinyin::__internal::model::{LanguageModel, PhraseList};
+use oxpinyin::__internal::parser::Completeness;
+use oxpinyin::__internal::vocab::PhraseEntry;
 use oxpinyin::facade::{ChewingKey, PhraseText, PhraseToken, SyllableKey};
-use oxpinyin::model::{LanguageModel, PhraseList};
-use oxpinyin::parser::Completeness;
-use oxpinyin::vocab::PhraseEntry;
 
 /// Why a fixture could not be read.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -313,12 +313,12 @@ impl PhraseList for FixtureDictionary {
     fn read_phrase_item<R>(
         &self,
         token: PhraseToken,
-        read: impl FnOnce(oxpinyin::data::phrase_library::PhraseItemView<'_>) -> R,
+        read: impl FnOnce(oxpinyin::__internal::data::phrase_library::PhraseItemView<'_>) -> R,
     ) -> Result<Option<R>, FixtureError> {
         Ok(self.items.get(&token).map(|rows| {
             let bytes = item_bytes(rows);
             read(
-                oxpinyin::data::phrase_library::PhraseItemView::from_bytes(&bytes)
+                oxpinyin::__internal::data::phrase_library::PhraseItemView::from_bytes(&bytes)
                     .expect("an item"),
             )
         }))

@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
-use oxpinyin::engine::{Session, SessionSettings};
+use oxpinyin::__internal::engine::{Session, SessionSettings};
 use oxpinyin::facade::{Candidate, CandidateKind};
 
 use super::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};

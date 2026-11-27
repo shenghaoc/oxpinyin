@@ -107,11 +107,12 @@ fn the_output_file_receives_the_stream() {
 
 #[test]
 fn ngseg_uses_a_complete_bigram_record_before_a_partial_tail() {
-    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
-    use oxpinyin::data::row_format::phrase_index::encode_ucs4_key;
-    use oxpinyin::single_gram::encode_single_gram;
-    use oxpinyin::store::{DefaultStore, WriteStore as _};
-    use oxpinyin::vocab::{SENTENCE_START, phrase_index_make_token};
+    use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
+    use oxpinyin::__internal::data::row_format::phrase_index::encode_ucs4_key;
+    use oxpinyin::__internal::single_gram::encode_single_gram;
+    use oxpinyin::__internal::store::{DefaultStore, WriteStore as _};
+    use oxpinyin::__internal::vocab::SENTENCE_START;
+    use oxpinyin::facade::phrase_index_make_token;
     use oxpinyin_tool_support::data::encode_tokens;
 
     let (_directory, data) = data_dir();

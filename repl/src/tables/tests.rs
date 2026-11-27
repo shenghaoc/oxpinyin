@@ -20,7 +20,7 @@ fn an_empty_phrase_row_still_reports_continuation() {
 /// with the next token; it does not consume and discard that next token.
 #[test]
 fn a_zero_cursor_keeps_the_following_chewing_token() {
-    use oxpinyin::data::row_format::pinyin_index::encode_item;
+    use oxpinyin::__internal::data::row_format::pinyin_index::encode_item;
     let key = ChewingKey::from_pinyin("ni").unwrap();
     let mut bytes = Vec::new();
     for token in [0, 1, 2] {

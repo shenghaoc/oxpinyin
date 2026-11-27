@@ -21,7 +21,8 @@
 //! `can't open file: %s.\n` and `error:%s.\n` and exits with the saved
 //! `errno` (`:352-358`).
 
-use oxpinyin::vocab::{NULL_TOKEN, SENTENCE_START};
+use oxpinyin::__internal::vocab::SENTENCE_START;
+use oxpinyin::facade::NULL_TOKEN;
 use std::ffi::CStr;
 
 use oxpinyin_tool_support::input::{

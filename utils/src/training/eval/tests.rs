@@ -15,14 +15,13 @@
 use super::fixture_doubles;
 use super::{EvalLanguageModel, LibraryPhraseSource, correction_rate};
 use crate::storage::Hash;
-use oxpinyin::data::PhraseLibraries;
-use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
-use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::model::PhraseList;
-use oxpinyin::parser::ChewingKey;
-use oxpinyin::single_gram::encode_single_gram;
-use oxpinyin::vocab::PhraseEntry;
-use oxpinyin::vocab::{PhraseToken, SyllableKey};
+use oxpinyin::__internal::data::PhraseLibraries;
+use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
+use oxpinyin::__internal::data::row_format::encode_token_key;
+use oxpinyin::__internal::model::PhraseList;
+use oxpinyin::__internal::single_gram::encode_single_gram;
+use oxpinyin::__internal::vocab::PhraseEntry;
+use oxpinyin::facade::{ChewingKey, PhraseToken, SyllableKey};
 
 const VOCAB: &str = "\
 token=16777226\tkeys=zhong\ttext=中\tunigram=100

@@ -17,7 +17,7 @@ use crate::segment::data;
 use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
 use crate::segment::{segment_lines, text_of, trellis};
-use oxpinyin::vocab::NULL_TOKEN;
+use oxpinyin::facade::NULL_TOKEN;
 
 /// One phrase result line: `%d %s` with the phrase item's text
 /// (`convert_to_utf8`, `src/lookup/lookup.cpp:27-69`). A missing item is
@@ -34,7 +34,7 @@ fn print_phrase(output: &OutputStream, search: &PhraseSearch<'_>, token: u32) {
 /// `deal_with_segmentable` (`ngseg.cpp:70-94`).
 fn deal_with_segmentable(
     search: &PhraseSearch<'_>,
-    bigram: Option<&oxpinyin::data::BigramTable>,
+    bigram: Option<&oxpinyin::__internal::data::BigramTable>,
     lambda: f32,
     run: &[u32],
     output: &OutputStream,

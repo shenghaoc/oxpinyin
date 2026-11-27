@@ -208,7 +208,7 @@ pub(crate) fn files_of(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>
 pub(crate) fn directory_reads_as_a_chunk_here() -> bool {
     let probe = tempfile::tempdir().expect("probe dir");
     std::fs::write(probe.path().join("e".repeat(25)), b"x").expect("fill the probe");
-    oxpinyin::data::phrase_library::directory_reads_as_a_chunk(probe.path())
+    oxpinyin::__internal::data::phrase_library::directory_reads_as_a_chunk(probe.path())
 }
 
 /// The descriptors this process holds on files under `dir`.

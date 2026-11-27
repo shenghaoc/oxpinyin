@@ -4,7 +4,7 @@
 //! bigram counts and row totals. It scores with the float probabilities
 //! used by the pin's `PhoneticLookup`.
 
-use oxpinyin::data::PhraseLibraries;
+use oxpinyin::__internal::data::PhraseLibraries;
 
 use crate::storage::Hash;
 use crate::training::{Gram, load_gram};

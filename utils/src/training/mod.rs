@@ -14,10 +14,10 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
-use oxpinyin::vocab::NULL_TOKEN;
+use oxpinyin::facade::NULL_TOKEN;
 use std::ffi::{CStr, CString};
 
-use oxpinyin::data::FileType;
+use oxpinyin::__internal::data::FileType;
 
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::{OptionArg, OptionEntry};
@@ -151,7 +151,7 @@ fn filename_entry(
 /// A C string's bytes as the path the store opens. On Unix the bytes are
 /// the path; Windows uses the shared lossy UTF-8 filename decoder.
 pub(crate) fn path_of(name: &CStr) -> std::path::PathBuf {
-    oxpinyin::input::path_from_bytes(name.to_bytes())
+    oxpinyin::__internal::input::path_from_bytes(name.to_bytes())
 }
 
 #[cfg(test)]

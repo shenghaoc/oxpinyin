@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use crate::fixtures::w3;
-use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::store::{DefaultStore, RawReadStore};
+use oxpinyin::__internal::data::row_format::encode_token_key;
+use oxpinyin::__internal::store::{DefaultStore, RawReadStore};
 use oxpinyin_tool_support::data::decode_single_gram;
 
 /// The binary named `name`, built for this feature set.
@@ -119,7 +119,7 @@ fn gen_deleted_ngram_restarts_after_a_blank_line_as_the_pin_does() {
 #[test]
 fn interpolation2_parses_to_the_expected_counts() {
     use assert_cmd::cargo::cargo_bin_cmd;
-    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
+    use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
 
     let dir = w3();
     let items: Vec<_> = [(10, '中'), (20, '钟'), (30, '国')]
@@ -401,7 +401,7 @@ mod frozen {
         use crate::support::{inventory, mask_glib_prefix, snapshot_inputs};
         use assert_cmd::cargo::cargo_bin_cmd;
         use assert_fs::{TempDir, prelude::*};
-        use oxpinyin::parser::ChewingKey;
+        use oxpinyin::facade::ChewingKey;
         use rstest::rstest;
 
         use super::bigram_db_not_berkeley_db;
@@ -421,7 +421,7 @@ mod frozen {
         // an extra key in each database.
         #[test]
         fn an_extra_bigram_key_is_not_read_by_evaluation() {
-            use oxpinyin::store::{DefaultStore, WriteStore};
+            use oxpinyin::__internal::store::{DefaultStore, WriteStore};
 
             let directory = w3();
             {
@@ -463,13 +463,15 @@ mod frozen {
         // deliberately absent from some index rows: the decoded probe text
         // identifies the winning key without calling a private helper.
         fn readings_fixture(
-            readings: &[(oxpinyin::parser::ChewingKey, u32)],
-            other_key: oxpinyin::parser::ChewingKey,
-            index: &[(u32, oxpinyin::parser::ChewingKey)],
+            readings: &[(oxpinyin::facade::ChewingKey, u32)],
+            other_key: oxpinyin::facade::ChewingKey,
+            index: &[(u32, oxpinyin::facade::ChewingKey)],
         ) -> TempDir {
-            use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
-            use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
-            use oxpinyin::store::{DefaultStore, WriteStore};
+            use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
+            use oxpinyin::__internal::data::row_format::pinyin_index::{
+                encode_complete_key, encode_item,
+            };
+            use oxpinyin::__internal::store::{DefaultStore, WriteStore};
 
             let directory = w3();
             let source = ChunkItem {

@@ -1,8 +1,9 @@
 //! Every compiled double-pinyin scheme over arbitrary byte input: parse
 //! must be total and deterministic.
 
+use oxpinyin::__internal::parser::DoublePinyinParser;
 use oxpinyin::OptionBits;
-use oxpinyin::parser::{DoublePinyinParser, DoublePinyinScheme};
+use oxpinyin::facade::DoublePinyinScheme;
 
 /// Inputs per child: AFL++'s suggested start
 /// (`instrumentation/README.persistent_mode.md`), which bounds a child's

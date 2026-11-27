@@ -1,7 +1,7 @@
 //! Native unreadable candidate fixtures shared by the runtime and C tests.
-use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
+use oxpinyin::__internal::data::row_format::pinyin_index::{encode_complete_key, encode_item};
+use oxpinyin::__internal::store::{DefaultStore, WriteStore};
 use oxpinyin::facade::ChewingKey;
-use oxpinyin::store::{DefaultStore, WriteStore};
 use std::{fs, path::Path};
 
 #[derive(Clone, Copy)]
@@ -63,9 +63,9 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
 
     let index_path = if matches!(case, Case::Fallback) {
         let conf = oxpinyin::facade::TableConf::load_from_dir(dir.path()).unwrap();
-        let versions = oxpinyin::data::user_files::SystemVersions::from_conf(&conf);
+        let versions = oxpinyin::__internal::data::user_files::SystemVersions::from_conf(&conf);
         assert!(
-            oxpinyin::data::user_files::UserTableInfo::conform_to(&versions)
+            oxpinyin::__internal::data::user_files::UserTableInfo::conform_to(&versions)
                 .save(user.path().join("user.conf").as_path())
         );
         user.path().join("user_pinyin_index.bin")

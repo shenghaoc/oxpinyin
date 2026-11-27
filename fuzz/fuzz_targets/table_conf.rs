@@ -5,7 +5,7 @@
 
 use std::io::Write;
 
-use oxpinyin::data::TableConf;
+use oxpinyin::facade::TableConf;
 
 /// Inputs per child: AFL++'s suggested start
 /// (`instrumentation/README.persistent_mode.md`), which bounds a child's

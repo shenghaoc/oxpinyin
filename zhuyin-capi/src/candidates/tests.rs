@@ -30,7 +30,7 @@ use crate::test_support::{
 
 use crate::types::LookupCandidate;
 
-use oxpinyin::vocab::SENTENCE_START;
+use oxpinyin::__internal::vocab::SENTENCE_START;
 
 use rstest::rstest;
 
@@ -358,7 +358,7 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         let record = [&4u32.to_le_bytes()[..], &[0; 4], &[4, 0], total, total].concat();
         assert_eq!(
             bytes,
-            oxpinyin::data::chunk_format::build_memory_chunk(&record).expect("frame"),
+            oxpinyin::__internal::data::chunk_format::build_memory_chunk(&record).expect("frame"),
             "{}",
             path.display()
         );
@@ -367,26 +367,26 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
     assert!(
         user_dir
             .path
-            .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name())
+            .join(oxpinyin::__internal::data::user_files::UserDbm::Bigram.file_name())
             .is_file()
     );
     let conf =
         oxpinyin::facade::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
-    let marker =
-        oxpinyin::data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
-            .expect("saved user.conf");
+    let marker = oxpinyin::__internal::data::user_files::UserTableInfo::load_path(
+        &user_dir.path.join("user.conf"),
+    )
+    .expect("saved user.conf");
     assert!(
-        marker.is_conform(&oxpinyin::data::user_files::SystemVersions::from_conf(
-            &conf
-        ))
+        marker
+            .is_conform(&oxpinyin::__internal::data::user_files::SystemVersions::from_conf(&conf))
     );
     // The saved user bigram holds no record.
     {
-        use oxpinyin::store::{DefaultUserBigramDb, UserBigramDb as _};
+        use oxpinyin::__internal::store::{DefaultUserBigramDb, UserBigramDb as _};
         let bigram = DefaultUserBigramDb::load_db(
             &user_dir
                 .path
-                .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name()),
+                .join(oxpinyin::__internal::data::user_files::UserDbm::Bigram.file_name()),
         )
         .expect("the saved user bigram");
         assert!(

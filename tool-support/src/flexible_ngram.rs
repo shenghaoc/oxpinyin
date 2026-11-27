@@ -81,7 +81,9 @@
 use std::marker::PhantomData;
 use std::path::Path;
 
-use oxpinyin::store::{BackendError, DefaultStore, RawReadStore, StoreError, WriteStore};
+use oxpinyin::__internal::store::{
+    BackendError, DefaultStore, RawReadStore, StoreError, WriteStore,
+};
 
 /// The pin's `attach` flags for a hash container: `ATTACH_READONLY`,
 /// `ATTACH_READWRITE`, or `ATTACH_READWRITE | ATTACH_CREATE`.

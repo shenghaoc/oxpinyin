@@ -1,11 +1,9 @@
 //! The full-pinyin parser result before scan-matrix transformations.
 
 use crate::parser::{Key, Parse};
-use oxpinyin::{
-    OptionBits,
-    graph::{Edge, SegmentGraph},
-    vocab::SyllableKey,
-};
+use oxpinyin::__internal::graph::Edge;
+use oxpinyin::OptionBits;
+use oxpinyin::facade::{SegmentGraph, SyllableKey};
 
 /// Converts a selected path into the consumed byte prefix and key spans.
 #[must_use]
@@ -26,7 +24,7 @@ pub struct LookupRow {
     /// Phrase-start column and token, in result-vector order.
     pub tokens: Vec<(usize, u32)>,
     /// Concatenated phrase text, retaining raw UCS-4 words.
-    pub text: oxpinyin::vocab::PhraseText,
+    pub text: oxpinyin::facade::PhraseText,
     /// Bytes the row spans: the bound of the decode, the pin's
     /// `MatchResult` length less its terminal column.
     pub span: usize,
@@ -52,7 +50,7 @@ impl PreparedLookup {
         };
         (0..columns).flat_map(|position| {
             let zero = self.matrix.has_zero(position).then(|| Key {
-                key: oxpinyin::parser::ChewingKey::default(),
+                key: oxpinyin::facade::ChewingKey::default(),
                 span: position..position + 1,
             });
             let keys = self
@@ -77,9 +75,9 @@ impl PreparedLookup {
 pub fn prepare_lookup(
     input: &[u8],
     options: OptionBits,
-) -> Result<PreparedLookup, oxpinyin::engine::EngineError> {
+) -> Result<PreparedLookup, oxpinyin::facade::EngineError> {
     let (input, graph) =
-        full_graph(input, options).ok_or(oxpinyin::engine::EngineError::Failure)?;
+        full_graph(input, options).ok_or(oxpinyin::facade::EngineError::Failure)?;
     let path = graph.fewest_keys(options);
     let parsed = selected_parse(input.as_ref(), &path);
     let scan = oxpinyin::__internal::ScanMatrix::from_columns(
@@ -97,10 +95,10 @@ pub fn lookup<D, L>(
     prepared: &PreparedLookup,
     dictionary: &D,
     model: &L,
-) -> Result<Vec<LookupRow>, oxpinyin::engine::EngineError>
+) -> Result<Vec<LookupRow>, oxpinyin::facade::EngineError>
 where
-    D: oxpinyin::model::Dictionary<Syllable = SyllableKey>,
-    L: oxpinyin::model::LanguageModel,
+    D: oxpinyin::facade::Dictionary<Syllable = SyllableKey>,
+    L: oxpinyin::__internal::model::LanguageModel,
 {
     oxpinyin::__internal::nbest_sentences_generation(
         &prepared.matrix,
@@ -108,7 +106,7 @@ where
         model,
         &[1],
         None,
-        oxpinyin::engine::NbestShape::PINYIN,
+        oxpinyin::__internal::engine::NbestShape::PINYIN,
     )
     .map(|rows| {
         rows.into_iter()
@@ -135,10 +133,10 @@ pub fn phrase_lookup<D, L>(
     words: &[u32],
     dictionary: &D,
     model: &L,
-) -> Result<Vec<oxpinyin::vocab::PhraseToken>, oxpinyin::engine::EngineError>
+) -> Result<Vec<oxpinyin::facade::PhraseToken>, oxpinyin::facade::EngineError>
 where
-    D: oxpinyin::model::Dictionary<Syllable = SyllableKey>,
-    L: oxpinyin::model::LanguageModel,
+    D: oxpinyin::facade::Dictionary<Syllable = SyllableKey>,
+    L: oxpinyin::__internal::model::LanguageModel,
 {
     oxpinyin::__internal::phrase_segment_ucs4(dictionary, model, words).map(|(_, tokens)| tokens)
 }

@@ -37,7 +37,7 @@ use crate::test_support::system_dir;
 
 use crate::types::PinyinInstance;
 
-use oxpinyin::vocab::SENTENCE_START;
+use oxpinyin::__internal::vocab::SENTENCE_START;
 
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 use std::path::Path;
@@ -84,7 +84,7 @@ fn save_aborts_where_a_copy_fails_a_destination_write() {
             // it.
             unsafe { train_once(context) };
             // The first copy writes one record and fails the next.
-            oxpinyin::store::fail_destination_write_after(1);
+            oxpinyin::__internal::store::fail_destination_write_after(1);
             unsafe { pinyin_save(context) };
         },
     );
@@ -233,7 +233,7 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     assert!(
         user_dir
             .path
-            .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name())
+            .join(oxpinyin::__internal::data::user_files::UserDbm::Bigram.file_name())
             .exists(),
         "the dirty save wrote the user bigram"
     );

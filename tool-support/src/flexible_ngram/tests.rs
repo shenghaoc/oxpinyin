@@ -92,7 +92,7 @@ impl super::FlexibleGramSpec for Spec {
 
 #[test]
 fn magic_header_reads_follow_backend_sizes() {
-    use oxpinyin::store::WriteStore;
+    use oxpinyin::__internal::store::WriteStore;
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
     use std::process::Command;
@@ -246,7 +246,7 @@ mod flexible_bigram {
         ArrayItemWithToken, AttachMode, FixedRecord, FlexibleBigram, FlexibleGramSpec, MAGIC_KEY,
         SingleGram,
     };
-    use oxpinyin::store::{DefaultStore, RawReadStore, StoreError, WriteStore};
+    use oxpinyin::__internal::store::{DefaultStore, RawReadStore, StoreError, WriteStore};
 
     // ── the k-mixture-model records ────────────────────────────────────
 

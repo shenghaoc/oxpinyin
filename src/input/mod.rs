@@ -1,8 +1,7 @@
 //! Native I/O for the library. This module owns configuration
 //! reads and writes, diagnostics, [`chunk`] mappings and writes, and path operations.
 //!
-//! [`c_path`] converts a whole path for a C call. [`c_string`] converts the prefix
-//! ending at its first NUL.
+//! [`c_string`] converts the prefix of a path that ends at its first NUL.
 
 // The external I/O boundary is described in docs/findings/external-io-boundary.md.
 
@@ -22,13 +21,6 @@ pub use path::{
 
 use std::ffi::CString;
 use std::path::Path;
-
-/// `path` as the C string `fopen` receives: its bytes as the platform
-/// encodes them, or `None` when they hold a NUL, which no C path can.
-#[must_use]
-pub fn c_path(path: &Path) -> Option<CString> {
-    CString::new(path::path_to_bytes(path)).ok()
-}
 
 /// A filename from a Rust path or an internal C-string interface.
 /// Rust paths retain their native encoding. C strings use the shared

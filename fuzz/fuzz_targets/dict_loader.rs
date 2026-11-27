@@ -10,7 +10,7 @@
 
 use std::io::Write;
 
-use oxpinyin::data::phrase_library::PhraseLibrary;
+use oxpinyin::__internal::data::phrase_library::PhraseLibrary;
 
 fn walk(library: &PhraseLibrary) -> Vec<(u32, usize, usize)> {
     let _ = library.total_freq();

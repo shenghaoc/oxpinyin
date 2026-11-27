@@ -29,7 +29,8 @@
 
 use std::ffi::CString;
 
-use oxpinyin::data::{TableConf, TableConfError};
+use oxpinyin::__internal::data::TableConfError;
+use oxpinyin::facade::TableConf;
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::{OptionArg, OptionEntry};
 
@@ -85,7 +86,7 @@ pub(crate) fn load_table_conf() -> TableConf {
 
 /// The name bytes of one `table.conf` column.
 pub(crate) fn os_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
-    oxpinyin::input::path_to_bytes(std::path::Path::new(name)).to_vec()
+    oxpinyin::__internal::input::path_to_bytes(std::path::Path::new(name)).to_vec()
 }
 
 /// The `CString` a `table.conf` name column names.

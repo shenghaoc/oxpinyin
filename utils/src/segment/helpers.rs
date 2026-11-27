@@ -6,7 +6,7 @@ use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::{OptionArg, OptionEntry, OutputStream};
 
 use super::phrase;
-use oxpinyin::vocab::NULL_TOKEN;
+use oxpinyin::facade::NULL_TOKEN;
 
 /// The pin's `assert(cond)` failure: `abort()` without the macro's message
 /// (`docs/findings/upstream-divergences.md#utility-check-macros-write-no-message`).

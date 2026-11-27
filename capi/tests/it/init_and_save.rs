@@ -98,7 +98,7 @@ fn init_aborts_on_an_unknown_table_conf_database_format() {
         |user| {
             let format = format!(
                 "database format:{}",
-                oxpinyin::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin::__internal::data::DEFAULT_STORE_DB_FORMAT
             );
             let system = conf_system(
                 user.parent().expect("scratch"),
@@ -144,7 +144,8 @@ fn init_answers_for_the_two_library_layout_faults() {
         |user| {
             let scratch = user.parent().expect("scratch");
             let chunk = |payload: &[u8]| {
-                oxpinyin::data::chunk_format::build_memory_chunk(payload).expect("frame")
+                oxpinyin::__internal::data::chunk_format::build_memory_chunk(payload)
+                    .expect("frame")
             };
             let mut outside = [0_u8; 32];
             for (at, value) in [(4, 17_u32), (8, 100), (12, 21)] {
@@ -431,7 +432,7 @@ fn init_aborts_on_an_unknown_user_conf_database_format() {
             let text = std::fs::read_to_string(&path).expect("user.conf");
             let format = format!(
                 "database format:{}",
-                oxpinyin::data::DEFAULT_STORE_DB_FORMAT
+                oxpinyin::__internal::data::DEFAULT_STORE_DB_FORMAT
             );
             std::fs::write(&path, text.replace(&format, "database format:LMDB"))
                 .expect("write user.conf");

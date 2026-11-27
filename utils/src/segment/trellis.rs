@@ -8,12 +8,13 @@
 
 use rustc_hash::FxHashMap;
 
-use oxpinyin::data::{BigramTable, DictError, TableError};
-use oxpinyin::single_gram::{checked_get_freq, get_total_freq};
-use oxpinyin::store::StoreError;
+use oxpinyin::__internal::data::{BigramTable, DictError, TableError};
+use oxpinyin::__internal::single_gram::{checked_get_freq, get_total_freq};
+use oxpinyin::__internal::store::StoreError;
 
 use crate::segment::phrase::PhraseSearch;
-use oxpinyin::vocab::{NULL_TOKEN, SENTENCE_START};
+use oxpinyin::__internal::vocab::SENTENCE_START;
+use oxpinyin::facade::NULL_TOKEN;
 
 /// One `lookup_value_t` (`lookup.h:36-53`).
 #[derive(Clone, Copy, Debug)]

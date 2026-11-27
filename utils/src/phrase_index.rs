@@ -12,13 +12,13 @@
 //! every other token through the loaded chunk, encoding its UCS-4 words
 //! with `g_ucs4_to_utf8`.
 
-use oxpinyin::vocab::phrase_index_library_index;
+use oxpinyin::__internal::vocab::phrase_index_library_index;
 use std::ffi::{CString, OsStr};
 
 use crate::utils_helper::{SystemLibraryError, load_system_libraries, tag_token_text};
-use oxpinyin::data::PhraseLibraries;
-use oxpinyin::data::phrase_library::LibraryError;
-use oxpinyin::data::{FileName, TableConf, TableConfError};
+use oxpinyin::__internal::data::phrase_library::LibraryError;
+use oxpinyin::__internal::data::{FileName, PhraseLibraries, TableConfError};
+use oxpinyin::facade::TableConf;
 use oxpinyin_tool_support::input::{self as tool, k_mixture_model as edge};
 
 /// One loaded phrase index.
@@ -106,7 +106,10 @@ pub fn load_system_phrases() -> SystemPhraseIndex {
 /// A `table.conf` file name as a C string for the pin's `%s`.
 fn c_name(name: &FileName) -> CString {
     let os: &OsStr = name.as_ref();
-    CString::new(oxpinyin::input::path_to_bytes(std::path::Path::new(os))).unwrap_or_default()
+    CString::new(oxpinyin::__internal::input::path_to_bytes(
+        std::path::Path::new(os),
+    ))
+    .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -114,8 +114,8 @@ fn n_pronunciation_without_a_sub_index_writes_zero() {
 /// answer true with the whole stored item.
 #[test]
 fn token_getters_return_a_phrase_longer_than_sixteen_whole() {
-    use oxpinyin::data::chunk_format::build_memory_chunk;
-    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
+    use oxpinyin::__internal::data::chunk_format::build_memory_chunk;
+    use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-long-phrase");
     write_user_conf(&user.path, &system_dir());
@@ -186,7 +186,7 @@ fn a_stored_user_key_word_is_read_back_verbatim() {
     payload[at..at + 2].copy_from_slice(&0x8000_u16.to_le_bytes());
     std::fs::write(
         &path,
-        oxpinyin::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        oxpinyin::__internal::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("write user.bin");
     let (context, instance) = open_at(&user.path);

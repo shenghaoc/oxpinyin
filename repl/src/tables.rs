@@ -1,13 +1,15 @@
 //! tests/storage/test_{phrase,chewing}_table.cpp at 074a2219.
 use crate::{load_text_tables, present};
+use oxpinyin::__internal::data::chewing_index_key as index_key;
+use oxpinyin::__internal::data::phrase_library::ChunkItem;
+use oxpinyin::__internal::data::row_format::phrase_index::{
+    decode_tokens, encode_ucs4_key_scalars,
+};
+use oxpinyin::__internal::user::SystemLibrary;
+use oxpinyin::__internal::vocab::phrase_index_library_index;
 use oxpinyin::__internal::{ReplayedLibrary, journal_item_bytes};
 use oxpinyin::OptionBits;
-use oxpinyin::data::chewing_index_key as index_key;
-use oxpinyin::data::phrase_library::ChunkItem;
-use oxpinyin::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
-use oxpinyin::parser::ChewingKey;
-use oxpinyin::user::SystemLibrary;
-use oxpinyin::vocab::phrase_index_library_index;
+use oxpinyin::facade::ChewingKey;
 use oxpinyin_tool_support::data::search_row;
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::table_tests as output;

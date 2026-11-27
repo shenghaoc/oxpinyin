@@ -1,5 +1,5 @@
 use super::load_heap;
-use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
+use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
 
 #[test]
 fn heap_loaded_library_keeps_its_payload_after_file_changes() {

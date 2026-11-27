@@ -9,8 +9,9 @@
 //! pin's order exactly. `SEARCH_CONTINUED` comes from the key's presence
 //! alone (`phrase_large_table3_tkrzwdb.cpp:124-153`).
 
-use oxpinyin::data::PhraseLibraries;
-use oxpinyin::vocab::{phrase_index_library_index, phrase_index_make_token};
+use oxpinyin::__internal::data::PhraseLibraries;
+use oxpinyin::__internal::vocab::phrase_index_library_index;
+use oxpinyin::facade::phrase_index_make_token;
 use oxpinyin_tool_support::data::PhraseIndexTable;
 
 /// One phrase-table search's answer.
@@ -38,7 +39,7 @@ impl Found {
         self.tokens
             .first()
             .copied()
-            .unwrap_or(oxpinyin::vocab::NULL_TOKEN)
+            .unwrap_or(oxpinyin::facade::NULL_TOKEN)
     }
 }
 
