@@ -99,31 +99,33 @@ impl SharedMatrix {
     ) -> Option<Self> {
         let core = &inst.core;
         let parsed_len = core.parsed_len;
-        let spans: Vec<(&'static str, u8, usize, usize)> = if let Some(parse) = core.double_parse()
-        {
+        let mut placed = Vec::new();
+        if let Some(parse) = core.double_parse() {
             // `mode_key_list` leaves the double-pinyin tone out; the key
             // carries it (`ChewingKey::m_tone`).
-            parse
-                .keys()
-                .iter()
-                .map(|k| (k.key().text(), k.tone(), k.start(), k.end()))
-                .collect()
-        } else {
-            keys.iter()
-                .map(|k| (k.text, k.tone, k.begin, k.end))
-                .collect()
-        };
-        let mut keys = Vec::with_capacity(spans.len());
-        for (text, tone, begin, end) in spans {
-            if end > parsed_len || begin >= end {
-                continue;
+            for key in parse.keys() {
+                place_key(
+                    &mut placed,
+                    parsed_len,
+                    key.key().text(),
+                    key.tone(),
+                    key.start(),
+                    key.end(),
+                )?;
             }
-            keys.push(MatrixKey {
-                key: ChewingKey::from_pinyin(text)?.with_tone(tone),
-                begin,
-                end,
-            });
+        } else {
+            for key in keys {
+                place_key(
+                    &mut placed,
+                    parsed_len,
+                    key.text,
+                    key.tone,
+                    key.begin,
+                    key.end,
+                )?;
+            }
         }
+        let keys = placed;
         if keys.is_empty() {
             return None;
         }
@@ -377,6 +379,27 @@ pub(crate) fn split_zhuyin(spelling: &str, split: usize) -> (&str, &str) {
         .nth(split)
         .map_or(spelling.len(), |(offset, _)| offset);
     spelling.split_at(end)
+}
+
+/// Places the key spelled `text` over `begin..end` when the span lies
+/// inside the parsed bytes; `None` when the text has no spelling, which
+/// ends the matrix build.
+fn place_key(
+    placed: &mut Vec<MatrixKey>,
+    parsed_len: usize,
+    text: &str,
+    tone: u8,
+    begin: usize,
+    end: usize,
+) -> Option<()> {
+    if end <= parsed_len && begin < end {
+        placed.push(MatrixKey {
+            key: ChewingKey::from_pinyin(text)?.with_tone(tone),
+            begin,
+            end,
+        });
+    }
+    Some(())
 }
 
 /// The tone digit `%d` appends, for tones 1 to 5.
