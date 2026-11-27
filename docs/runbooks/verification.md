@@ -176,6 +176,7 @@ Between completion gates, iteration feedback guides the fix while it takes shape
 1. Run named unit tests of the touched crate.
    Select the test target and the test name: `cargo nextest run -p <crate> --lib -E 'test(<name>)'` or `cargo nextest run -p <crate> --test <target> -E 'test(<name>)'`.
    A name filter alone still compiles every test target in the crate.
+   `cargo nextest run -p <crate> --lib <module>::` runs only one module's tests; the filter shortens the run, not the build.
 2. Select a small, explicit set of differential cases that reaches the changed behaviour.
 3. Name the witness case of the defect and its neighbours by case ID.
 
