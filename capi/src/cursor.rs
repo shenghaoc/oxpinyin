@@ -3,8 +3,8 @@
 //! Cursor normalization and word-level left and right moves follow the
 //! pin's key-matrix rules
 //! (`pinyin.cpp:3008-3095` at the pin) over the engine's positional
-//! data, using `oxpinyin::__internal::engine::lookup_offset_over_spans` and the
-//! `*_word_offset_over_spans` functions. Where the pin's `_check_offset` aborts
+//! data, through [`oxpinyin::facade::InstanceView::lookup_offset`] and the
+//! word moves `left_offset` and `right_offset`. Where the pin's `_check_offset` aborts
 //! (`pinyin.cpp:2175`), the left and right moves abort too;
 //! `pinyin_get_pinyin_offset` aborts only over an empty matrix with a parsed
 //! length above 0 and a cursor of 1 or more; a cursor of 0, or a parsed length

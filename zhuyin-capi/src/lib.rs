@@ -1,4 +1,4 @@
-//! Implements the libzhuyin C API and ABI.
+//! The drop-in `libzhuyin` C ABI. The C header `zhuyin.h` is the contract.
 //!
 //! Linux packages provide `libzhuyin.so.15`.
 //! Native Rust interfaces are unsupported internal details.

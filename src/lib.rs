@@ -1,13 +1,8 @@
-//! Provides shared parsing, decoding, and storage for the libpinyin and libzhuyin C libraries.
+//! oxpinyin is an idiomatic Rust rewrite of libpinyin. It aims for close to bug-for-bug
+//! compatibility with the pinned upstream release.
 //!
-//! Native Rust interfaces are unsupported internal details.
-//!
-//! ## Aborts
-//!
-//! Malformed or corrupt stored data and failed backend operations can abort the process,
-//! as in libpinyin. Individual items omit these aborts. Their `Aborts` sections describe
-//! termination caused by caller arguments or call order, or by an operation that exits
-//! the process.
+//! The product is the C ABI: `oxpinyin-capi` provides `libpinyin` and `oxzhuyin-capi`
+//! provides `libzhuyin`. [`facade`] is the Rust layer that those two crates build on.
 //!
 //! ## Further reading
 //!

@@ -1,7 +1,5 @@
-//! Unsupported interfaces for this workspace's command-line tools, fuzz targets and
-//! test fixtures.
+//! Unsupported interfaces for this workspace's command-line tools and tests.
 //! These interfaces may change without notice.
-//! Rustdoc hides this module, and any crate can still import its public items.
 
 pub use crate::data::chewing_table::{
     ChewingTable, DefaultDbm, RawChewingDbm, visit_matching_items,
