@@ -148,6 +148,7 @@ which is empty or a copy of the plain files of `PERF_USER_DIR`. The observations
 phrases, cursors, call returns, the list after FIRST and the final sentence. `windows` holds each
 window's total and per-iteration `elapsed_ns` and, with `PERF_HW`, `hw_instructions`.
 `--perf-typing-sequence` reads its sort from `PERF_SORT` (default `0x1e`).
+Every `bisect` keystroke loop reads its candidate sort from the same setting.
 
 With `PERF_KEYS=1`, each observation of `--perf-typing-sequence` also holds the figures of its
 key, from the span that the totals add: `elapsed_ns`, `hw_instructions` and `major_faults`.
@@ -639,6 +640,8 @@ just measure compare --base origin/main --head origin/main
 just measure profile --revision origin/main --template 'CPU Profiler'
 just measure profile --revision origin/main --template Allocations
 ```
+
+To measure under ibus-libpinyin's default sort, set [`PERF_SORT`](#shipping-measurement-inputs): `PERF_SORT=0x1c just measure compare --base origin/main --head origin/main`.
 
 `just measure profile --template 'CPU Counters'` records the default CPU Bottlenecks mode and prints the Useful, Instruction Delivery, Instruction Processing and Discarded shares of CPU bandwidth over the process lifetime, with the measured loop's share of that span. Pass enough `--cycles` for the printed loop share to be at least 0.9; 200 cycles gave 0.88 on a quiet Apple M5.
 

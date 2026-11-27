@@ -470,6 +470,7 @@ fn tables(library: &abi::Library) -> Result<(abi::Typing, abi::Guess)> {
 }
 
 fn measure(subject: &Subject, data: &str, manifest: &str) -> Result<()> {
+    let sort = workload::sort_option()?;
     let cycles = super::strict_cycles()?;
     let (typing, guess) = tables(&subject.library)?;
     let user = abi::UserDir::temporary("bisect-measure-")?;
@@ -484,6 +485,7 @@ fn measure(subject: &Subject, data: &str, manifest: &str) -> Result<()> {
         typing: &typing,
         guess: &guess,
         instance: instance.handle,
+        sort,
         operations: 0,
         failed: false,
     };

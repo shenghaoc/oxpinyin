@@ -25,6 +25,7 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         .unwrap_or_else(|| "run".into());
     let diag = mode == "rss-diag";
     let hardware = std::env::var_os("PERF_HW").is_some();
+    let sort = workload::sort_option()?;
     let user = abi::UserDir::supplied_or_temporary("bisect-perf-")?;
     let library = abi::Library::open(&args[2])?;
     let core = abi::Core::load(&library, &facade)?;
@@ -69,6 +70,7 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
         typing: &typing,
         guess: &guess,
         instance: instance.handle,
+        sort,
         operations: 0,
         failed: false,
     };

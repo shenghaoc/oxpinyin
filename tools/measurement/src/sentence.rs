@@ -1,5 +1,5 @@
 //! Sentence-only and accumulated-prefix observations outside collection anchors.
-use crate::{Result, Usage, abi, output, platform, require};
+use crate::{Result, Usage, abi, output, platform, require, workload};
 use std::ffi::CStr;
 use std::io::Write;
 
@@ -31,19 +31,6 @@ fn bisect_typing_unit(
         parsed: (typing.parse)(instance, input.as_ptr()),
         sentence: (sentence.guess)(instance),
         candidates: guess.at(instance, 0, sort),
-    }
-}
-
-/// The typing sequence's candidate sort: `PERF_SORT` as decimal or `0x` hexadecimal,
-/// otherwise `0x1e`.
-fn sort_option() -> Result<u32> {
-    match std::env::var("PERF_SORT").ok().filter(|s| !s.is_empty()) {
-        None => Ok(0x1e),
-        Some(value) => match value.strip_prefix("0x") {
-            Some(hex) => u32::from_str_radix(hex, 16),
-            None => value.parse(),
-        }
-        .map_err(|_| Usage("PERF_SORT must be a decimal or 0x hexadecimal u32".into()).into()),
     }
 }
 
@@ -126,9 +113,14 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
     }
     let iterations = iterations.unwrap_or(0);
     let is_typing = args[1] == "--perf-typing-sequence";
-    // Only the typing sequence guesses candidates, so only it reads `PERF_SORT`. It alone
-    // types keys, so only it reads `PERF_KEYS` and `PERF_PAGE_OUT`, before any work.
-    let sort = if is_typing { sort_option()? } else { 0x1e };
+    // Of these modes only the typing sequence guesses candidates, so only it reads
+    // `PERF_SORT`. It alone types keys, so only it reads `PERF_KEYS` and `PERF_PAGE_OUT`,
+    // before any work.
+    let sort = if is_typing {
+        workload::sort_option()?
+    } else {
+        0x1e
+    };
     let keys = if is_typing {
         Keys::read(&args[2], &args[3])?
     } else {
