@@ -162,13 +162,15 @@ impl UserStore {
             replayed: originals.take_live_libraries(),
             ..Default::default()
         };
-        Self::open_session(None, &mut originals, versions, law, profile)
+        Self::open_session(None, originals, versions, law, profile).map(|store| *store)
     }
 
     /// Open the user store on a libpinyin user directory whose profile
     /// [`check_profile`](Self::check_profile) already judged, over `originals`
-    /// that the library loop fills as it walks `rows`. The loop reads the
-    /// profile under `law` into the session's state in process memory, and
+    /// that the library loop fills as it walks `rows`. When the loop
+    /// completes, the session takes the filled originals and `originals`
+    /// holds an empty set. The loop reads the profile under `law` into the
+    /// session's state in process memory, and
     /// `UserStore::save_reporting` writes the pin's files back. Dropping
     /// the returned owner is the facade's fini: it makes the law's fini-time
     /// `user.conf` write ([`crate::user::fini`]).
@@ -195,7 +197,16 @@ impl UserStore {
     ) -> Result<Self, UserStoreError> {
         let (profile, stop) = persistence::load_session_in_loop(user_dir, originals, rows, &check);
         stop.map_err(UserStoreError::LibraryLoop)?;
-        Self::open_session(Some(user_dir), originals, versions, law, profile)
+        // The caller keeps its binding, so the session takes the originals
+        // and leaves an empty set in their place.
+        let originals = std::mem::replace(
+            originals,
+            SystemOriginals::new(
+                Default::default(),
+                crate::data::user_files::UserFileLayout::stock(),
+            ),
+        );
+        Self::open_session(Some(user_dir), originals, versions, law, profile).map(|store| *store)
     }
 
     /// `check_format` alone, for an init that must judge the profile before
@@ -222,14 +233,16 @@ impl UserStore {
     }
 
     /// Seed the session and load the user bigram after the system bigram attach.
+    /// The store comes back boxed, so the context open holds one pointer
+    /// while the session takes the originals.
     #[inline(never)]
     pub(crate) fn open_session(
         user_dir: Option<&Path>,
-        originals: &mut SystemOriginals,
+        originals: SystemOriginals,
         versions: SystemVersions,
         law: UserConfLaw,
         profile: persistence::LoadedProfile,
-    ) -> Result<Self, UserStoreError> {
+    ) -> Result<Box<Self>, UserStoreError> {
         let persistence::LoadedProfile {
             loaded,
             replayed,
@@ -256,7 +269,7 @@ impl UserStore {
         // failure cannot leave a store without them: each is the pin's
         // death, never a degraded open, and leaves without finalizing.
         let seeded_totals = seed_totals(
-            originals,
+            &originals,
             &loaded.library_totals,
             &replayed,
             &user_libraries,
@@ -305,17 +318,7 @@ impl UserStore {
             bigram_db,
             libpinyin: target,
         };
-        Ok(Self::from_parts(
-            inner,
-            fini,
-            std::mem::replace(
-                originals,
-                SystemOriginals::new(
-                    Default::default(),
-                    crate::data::user_files::UserFileLayout::stock(),
-                ),
-            ),
-        ))
+        Ok(Box::new(Self::from_parts(inner, fini, originals)))
     }
 }
 
