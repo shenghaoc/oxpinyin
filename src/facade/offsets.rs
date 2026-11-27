@@ -40,9 +40,9 @@ pub fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
 /// at a mid-key column searches an empty column: every `search_matrix`
 /// answers `SEARCH_NONE`, no item is appended, and the list is the
 /// prepended sentence rows alone (`zhuyin.cpp:1498-1512`, `:1624-1626`).
-/// The after-cursor facade path asks this before snapping the offset to
-/// the key's column (issue #577); the before-cursor builder already
-/// answers nothing for a span ending mid-key.
+/// Ask this before an after-cursor lookup snaps the offset to the key's
+/// column. A before-cursor lookup already answers nothing for a span
+/// ending mid-key.
 #[must_use]
 pub fn zhuyin_offset_is_mid_key(parse: &ZhuyinParse, offset: usize) -> bool {
     offset < parse.consumed() && !parse.keys().iter().any(|item| item.start() == offset)
@@ -50,7 +50,7 @@ pub fn zhuyin_offset_is_mid_key(parse: &ZhuyinParse, offset: usize) -> bool {
 
 /// Whether an original lookup offset falls strictly inside a parsed
 /// double-pinyin key — [`zhuyin_offset_is_mid_key`]'s sibling for the
-/// pinyin facade (#625). The pin's matrix holds a key only on the column
+/// pinyin facade. The pin's matrix holds a key only on the column
 /// its key rest begins on (`fill_matrix`, `phonetic_key_matrix.cpp:52-56`
 /// at 074a2219), so `pinyin_guess_candidates` at a mid-key column searches
 /// nothing and answers the prepended sentence rows alone

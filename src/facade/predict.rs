@@ -44,8 +44,9 @@ pub fn compute_prefixes(
 /// merged in the order `_compute_predicted_prefix_candidates` receives
 /// them, keeping only suggestions with a readable phrase item.
 ///
-/// The loaded-library mask applies to both tables. The ordering law is
-/// `runtime::merge_suggestion_rows`.
+/// The loaded-library mask applies to both tables. The tokens are grouped by
+/// library nibble ascending, and within a group they keep the UCS-4 walk order
+/// and the stored token order within one text.
 #[must_use]
 pub fn merged_suggestions(
     dict: &RuntimeDict,

@@ -24,20 +24,10 @@ use crate::facade::ContextCore;
 /// is buffered, so a change that reaches an item before the call that reads
 /// it is read, as it is at the pin.
 ///
-/// Items come from three places, each read when a call needs it: a system
-/// library's own item from the mapped chunk, the session's replacement for
-/// it from the live buffer, and an item from the session arena. The probes skip a
-/// token only where the pin's do, an absent item or one with no
-/// pronunciation; a present item that is malformed is read and refused at
-/// the pin's assert site ([`ExportAssert`]). Every read is infallible, as
-/// the pin's in-memory sub-index read is: a libpinyin session keeps its
-/// phrases in memory, in per-library arenas.
-///
-/// What the store answers is held while its write generation stands still
-/// and re-read as soon as it moves: an arena's token end. The pin re-reads
-/// its range on every call because it is an offset read; the session
-/// store's is a range scan, and no write can change its answer without
-/// moving the generation. An item is read from the store on every call.
+/// The probes skip a token only where the pin's do: an absent item or one
+/// with no pronunciation. A present item that is malformed is read and
+/// refused at the pin's assert site ([`ExportAssert`]). Every read is
+/// infallible, as the pin's in-memory sub-index read is.
 #[derive(Default)]
 pub struct PhraseExportCursor {
     index: u8,
@@ -59,8 +49,8 @@ struct Memo {
 /// call meets them. The probe itself skips a token only when
 /// `get_phrase_item` answers no item or the item has no pronunciation
 /// (`:680-682`, `:761-763`); a present item that is malformed is selected,
-/// and the read dies at one of these. The oracle build keeps asserts on, so
-/// `check_result` is `assert` (`pinyin_utils.h:30`).
+/// and the read dies at one of these. With asserts enabled, `check_result`
+/// is `assert` (`pinyin_utils.h:30`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportAssert {
     /// `assert(ERROR_OK == retval)` after `get_phrase_item` (`:709`): no
@@ -94,8 +84,6 @@ pub enum ExportStep<R> {
 /// One row the cursor is reading, borrowed from its item: the phrase, one
 /// pronunciation and that pronunciation's count, as
 /// `pinyin_iterator_get_next_phrase` renders them (`pinyin.cpp:712-739`).
-/// The writers put the text and the `'`-joined pinyin straight into buffers
-/// of the reported lengths; the string builders allocate each once.
 pub struct ExportRow<'a> {
     /// The item: a system library's own or a session arena's, its phrase
     /// stored as `ucs4_t` code points.
@@ -161,16 +149,14 @@ impl ExportRow<'_> {
 
     /// The length of [`Self::with_text_bytes`]'s bytes, read from the item's
     /// stored words with no intermediate text, or `None` where the pin's
-    /// `g_ucs4_to_utf8` hands the caller a NULL phrase (`pinyin.cpp:715-716`):
-    /// `marshal::stored_words_utf8_len`.
+    /// `g_ucs4_to_utf8` hands the caller a NULL phrase (`pinyin.cpp:715-716`).
     #[must_use]
     pub fn text_utf8_len(&self) -> Option<usize> {
         stored_words_utf8_len(self.item.phrase_codes())
     }
 
     /// Hands [`Self::with_text_bytes`]'s bytes to `emit` straight from the
-    /// item's stored words, one word at a time:
-    /// `marshal::for_each_stored_word_utf8`. Together they are
+    /// item's stored words, one word at a time. Together they are
     /// [`Self::text_utf8_len`] bytes.
     pub fn for_each_text_utf8(&self, emit: impl FnMut(&[u8])) {
         for_each_stored_word_utf8(self.item.phrase_codes(), emit)
@@ -630,7 +616,7 @@ impl ExportSource<'_> {
         RenderedItem::new(phrase.phrase_text(), pinyins, sites)
     }
 }
-/// One rendered §9 bigram-export row: the `'`-joined pronunciation of the
+/// One rendered bigram-export row: the `'`-joined pronunciation of the
 /// pair and the scaled count. The row's phrase is the pin's `m_phrase`, the
 /// conversion of the pair `has_next` loaded ([`BigramExportWalk::pair`]),
 /// which the C adapter converts and keeps on its handle.

@@ -369,7 +369,7 @@ where
         .map_or(CharacterOffset::NoPath, CharacterOffset::Found))
 }
 
-/// What `character_offset_walk` answered.
+/// What a character-offset walk answered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CharacterOffset {
     /// The pin's early `false`, before its walk ran: the empty matrix, an

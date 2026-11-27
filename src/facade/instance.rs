@@ -34,8 +34,8 @@ pub struct PublishedRow {
     pub text: crate::engine::RowText,
 }
 
-/// State behind a facade's instance handle, minus the C parts: everything
-/// the two C-ABI crates' `CapiInstance`s held in identical shape.
+/// State behind a facade's instance handle, minus the C parts: the state
+/// both C crates keep for an instance in the same shape.
 ///
 /// The C
 /// layers hold one of these plus their ABI-only fields (the context
@@ -379,7 +379,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     }
 
     /// The stored length and text of `token`'s item, as the C token getters
-    /// read them (`runtime::RuntimeDict::token_phrase`).
+    /// read them.
     #[must_use]
     pub fn token_phrase(&self, token: u32) -> Option<crate::runtime::TokenPhrase> {
         self.dict.token_phrase(token)
@@ -407,7 +407,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// each token resolved through the live phrase index now, as the pin's
     /// `convert_to_utf8` does when the caller reads the sentence
     /// (`src/lookup/lookup.cpp:37-48` at 074a2219). A resolved token's part
-    /// is its item's stored words (`runtime::RuntimeDict::token_words`).
+    /// is its item's stored words.
     ///
     /// The pin ignores the result of `get_phrase_item` (`:45`), and a failed
     /// read leaves the item as it was (`SubPhraseIndex::get_phrase_item`,
@@ -556,7 +556,7 @@ impl<
     /// bounds map onto this parse's store coordinates, the caller choosing
     /// the transformed seams its facade can populate. A bound inside a key
     /// names a matrix column no key fills, so the forcing does not survive
-    /// the second validation (`crate::engine::Session::choose_unspellable_span`).
+    /// the second validation.
     /// The columns are the pin's own (`parse_matrix`), divided and resplit
     /// keys included.
     /// The caller's choose offset takes no part.
@@ -812,8 +812,8 @@ pub enum TrainingRefusal {
 }
 
 /// Classifies the shared result of `train_result3`. The engine terminates
-/// at the pin's own training aborts (`Runtime::train_session`); the ABI
-/// performs the terminal action for the store faults classified here.
+/// at the pin's own training aborts; the ABI performs the terminal action
+/// for the store faults classified here.
 ///
 /// # Errors
 ///

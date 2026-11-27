@@ -64,9 +64,6 @@ pub enum CursorFault {
 
 impl CursorFault {
     /// Classifies `error` under `law`.
-    ///
-    /// The match names every [`EngineError`] variant, so a new variant
-    /// gets a decision here.
     #[must_use]
     pub fn of(error: &EngineError, law: CursorLaw) -> Self {
         match error {
@@ -226,13 +223,8 @@ impl AbiColumns<'_> {
     }
 }
 
-/// One matrix key at an offset: its canonical pinyin spelling, its tone,
-/// and its raw span.
-///
-/// The spelling because all renderers want text, and because the LUOMA /
-/// `SECONDARY_ZHUYIN` index parse carries a canonical spelling rather than
-/// a vocabulary key; the vocabulary key rides beside it where the parse has
-/// one.
+/// One matrix key at an offset: its parser key, its canonical pinyin
+/// spelling, its tone and its raw span.
 #[derive(Clone, Copy, Debug)]
 pub struct KeyAt {
     /// The exact parser key.
@@ -410,8 +402,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
 
     /// Lookup byte offset → character count within `phrase` in the
     /// instance's active parse mode — the `pinyin_get_character_offset` /
-    /// `zhuyin_get_character_offset` law
-    /// (`engine::character_offset_walk`) over
+    /// `zhuyin_get_character_offset` law over
     /// [`Self::mode_input`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
     /// over the stored original input. The first result is the character

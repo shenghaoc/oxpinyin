@@ -705,8 +705,8 @@ impl<'a> RuntimeDict<'a> {
 
     /// Read only the nth insertion-ordered key list and the stored length of
     /// a system item. `None` means a missing item/library; a present item
-    /// with no nth reading retains its length for the existing class-(b)
-    /// zero-key C result (074a2219 `pinyin.cpp:2801-2818`,
+    /// with no nth reading retains its length, and the C getter answers
+    /// zero keys (074a2219 `pinyin.cpp:2801-2818`,
     /// `zhuyin.cpp:1793-1810`). A `USER_FILE` item is read in place with
     /// [`Self::with_user_nth_pronunciation_words`]; this answers `None` for
     /// it.

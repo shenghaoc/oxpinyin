@@ -13,10 +13,10 @@ use crate::vocab::MAX_PHRASE_LENGTH;
 /// different coordinates, and [`SelectionTarget::of_candidate`] reads the
 /// chosen span as `[anchor, anchor + consumed_bytes)`:
 ///
-/// - **After-cursor** (`Session::candidates_at(offset)`) rebases its graph
+/// - **After-cursor** (`Session::candidates_at_for_abi(offset, _)`) rebases its graph
 ///   onto `raw[offset..]`, so `consumed_bytes` is a LENGTH measured from
 ///   the lookup offset. Its anchor is that offset.
-/// - **Before-cursor** (`Session::candidates_ending_at(offset)`) reads
+/// - **Before-cursor** (`Session::candidates_ending_at_for_abi(offset, _)`) reads
 ///   the retained matrix, whose coordinates are absolute from
 ///   the buffer start, so every row's `consumed_bytes` is the span's
 ///   ABSOLUTE END — the lookup offset itself, shared by every row in the

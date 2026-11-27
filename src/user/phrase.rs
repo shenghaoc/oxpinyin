@@ -114,7 +114,7 @@ pub fn key_pinyin_string(key: PinyinKey) -> Option<String> {
 }
 
 /// Whether `token` lives in [`USER_DICTIONARY`] — the same nibble test as
-/// `pinyin_is_user_candidate` (`pinyin.cpp:3716-3719`, §3.2).
+/// `pinyin_is_user_candidate` (`pinyin.cpp:3716-3719`).
 #[must_use]
 pub const fn is_user_token(token: PhraseToken) -> bool {
     phrase_index_library_index(token) == USER_DICTIONARY

@@ -328,9 +328,7 @@ impl<
             crate::engine::parse_time_keys(keys, self.parsed_len, self.options(), divided);
     }
 
-    /// The chewing batch seam — the shared skeleton (continue/restart,
-    /// scheme dispatch, empty check, exact-input drive, state store) with
-    /// the facade's [`ChewingCorrections`].
+    /// The chewing batch parse with the facade's [`ChewingCorrections`].
     ///
     /// Returns the original-input bytes consumed, 0 on failure or empty
     /// input.
@@ -364,12 +362,10 @@ impl<
         self.parsed_len
     }
 
-    /// The double-pinyin batch seam — pinyin-facade-only (libzhuyin has
-    /// no double-pinyin surface), carried here because it is the same
-    /// orchestration shape: parse through the live scheme under the full
-    /// option word (the frozen double-pinyin SPEC's Tone section), with the
-    /// session under that same word, then drive the decoder with the exact
-    /// segments.
+    /// The double-pinyin batch parse, for the pinyin facade only (libzhuyin
+    /// has no double-pinyin surface): parse through the live scheme under the
+    /// full option word, with the session under that same word, then drive
+    /// the decoder with the exact segments.
     ///
     /// Returns the original-input bytes consumed, 0 on failure or empty
     /// input.

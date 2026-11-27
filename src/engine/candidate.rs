@@ -81,14 +81,6 @@ pub enum CandidateKind {
 }
 
 /// One offered conversion.
-///
-/// Sized to need (48 bytes): the byte count and the span start are `u32`,
-/// the width of the segment graph's positions (`MAX_GRAPH_POSITION`); and
-/// the n-best rank is an `Option<u8>`, the
-/// pin's own `gint8 m_nbest_index` width (`pinyin.cpp:102` at 074a2219)
-/// plus its absent state. A window of a
-/// hundred-odd rows is retained per instance, so each byte here is a
-/// hundred-odd bytes of instance heap.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
     text: PhraseText,
@@ -111,7 +103,11 @@ pub struct Candidate {
     kind: CandidateKind,
 }
 
-// The row width the doc above claims; a field that grows it shows up here.
+// Keep the row at 48 bytes: an instance retains a window of a hundred-odd
+// rows, so each byte here is a hundred-odd bytes of instance heap. The byte
+// count and the span start are `u32` (`MAX_GRAPH_POSITION`), and the n-best
+// rank is the pin's `gint8 m_nbest_index` width (`pinyin.cpp:102` at
+// 074a2219) as an `Option<u8>`. A field that grows the row fails here.
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::size_of::<Candidate>() == 48);
 
@@ -151,7 +147,7 @@ impl Candidate {
     /// window it came from: 0 for a window anchored at a lookup offset
     /// (its rows are measured from that offset) and the span's absolute
     /// start for a before-cursor window, whose rows all END at the lookup
-    /// offset (`Session::candidates_ending_at`) but begin wherever each
+    /// offset but begin wherever each
     /// matching key path starts. Upstream's `m_begin`: the choose writes
     /// its constraint on `[m_begin, m_end)` and, for a before-cursor row,
     /// answers `m_begin` as the new cursor (`zhuyin.cpp:1656-1660` at the
@@ -196,9 +192,8 @@ impl Candidate {
 
     /// The scoring token behind this candidate, when it is one phrase.
     ///
-    /// A shell never needs it; the session uses it as the bigram history for
-    /// whatever the user types next. A sentence built from several phrases
-    /// has no single token.
+    /// The session uses it as the bigram history for the next input. A
+    /// sentence built from several phrases has no single token.
     #[must_use]
     pub const fn token(&self) -> Option<PhraseToken> {
         self.token

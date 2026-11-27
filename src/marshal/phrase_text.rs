@@ -96,8 +96,8 @@ pub enum SentencePhrase {
 
 impl SentencePhrase {
     /// The length of the phrase's `g_ucs4_to_utf8` bytes (`:58`), or `None`
-    /// where that conversion answers NULL: `stored_words_utf8_len` for
-    /// stored words, [`phrase_text_len`] for text.
+    /// where that conversion answers NULL. Text has the length
+    /// [`phrase_text_len`] gives.
     #[must_use]
     pub fn utf8_len(&self) -> Option<usize> {
         match self {
@@ -107,8 +107,7 @@ impl SentencePhrase {
     }
 
     /// Hands the [`Self::utf8_len`] bytes to `emit`, with no intermediate
-    /// text: `for_each_stored_word_utf8` for stored words,
-    /// [`phrase_text_bytes`] for text.
+    /// text. For text, the bytes are those of [`phrase_text_bytes`].
     pub fn for_each_utf8(&self, mut emit: impl FnMut(&[u8])) {
         match self {
             Self::Words(words) => for_each_stored_word_utf8(words.iter().copied().map(Some), emit),
