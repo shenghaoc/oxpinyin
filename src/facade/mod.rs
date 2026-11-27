@@ -56,8 +56,38 @@ pub use offsets::{
     zhuyin_offset_is_mid_key, zhuyin_original_offset, zhuyin_session_offset,
 };
 pub use parse::{ChewingCorrections, PinyinCorrections, full_scheme, zhuyin_scheme};
-pub use predict::{compute_prefixes, merged_suggestions};
+pub use predict::{compute_prefixes, merged_suggestions, predicted_bigram_items};
 pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
+
+// The items of the modules below that the two C crates name. The C crates import
+// them from here; no other module is part of the library's interface.
+pub use crate::data::{TableConf, TableConfSite, table_conf_load_failed};
+pub use crate::engine::{
+    BEFORE_CURSOR_ANCHOR, Candidate, CandidateKind, CandidateList, CharacterOffset, EngineError,
+    Law, MatrixKey, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection, SelectionTarget,
+    SessionState, amplified_frequency, key_pronounced_by, rank_by_frequency, remember_walk,
+};
+pub use crate::graph::SegmentGraph;
+pub use crate::input::filename;
+pub use crate::marshal::{
+    SentencePhrase, direct_zhuyin_reading, parser_prefix, phrase_text_bytes, phrase_text_len,
+    prefix_text, scalar_text, utf8_to_ucs4,
+};
+pub use crate::model::Dictionary;
+pub use crate::parser::{
+    ChewingKey, DoublePinyinScheme, FullPinyinIndexParse, FullPinyinScheme, KeyText, ZhuyinParse,
+    ZhuyinScheme, parse_zhuyin_direct,
+};
+pub use crate::runtime::RuntimeDict;
+pub use crate::user::{
+    INITIAL_SEED, PinyinKey, UnigramAdd, UserConfLaw, UserStore, UserStoreError, is_user_token,
+    toned_key, unigram_delta,
+};
+pub use crate::vocab::{
+    ADDON_DICTIONARY, GBK_DICTIONARY, MAX_PHRASE_LENGTH, NETWORK_DICTIONARY, NULL_TOKEN,
+    PHRASE_INDEX_LIBRARY_COUNT, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseText, PhraseToken,
+    SyllableKey, TSI_DICTIONARY, USER_DICTIONARY, phrase_index_make_token,
+};
 
 // pinyin_init, pinyin.cpp:329.
 /// Initial pinyin options. Tone input is enabled and incomplete input is disabled.

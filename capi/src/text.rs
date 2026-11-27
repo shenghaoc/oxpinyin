@@ -4,8 +4,7 @@
 //! the cursor. Double-pinyin and chewing text follows the selected scheme.
 
 use oxpinyin::OptionBits;
-use oxpinyin::graph::SegmentGraph;
-use oxpinyin::parser::ZhuyinParse;
+use oxpinyin::facade::{SegmentGraph, ZhuyinParse};
 
 use crate::aux_matrix::{AuxText, SharedMatrix, split_zhuyin};
 use crate::ffi::{borrow_or_return, strconcat_aux, strdup, write_if_nonnull};
@@ -89,7 +88,7 @@ fn keys_aux_text(keys: impl IntoIterator<Item = (String, usize, usize)>, cursor:
 /// raw spans, rendering each key's canonical spelling plus its tone digit.
 fn full_index_aux_text(
     input: &str,
-    parse: &oxpinyin::parser::FullPinyinIndexParse,
+    parse: &oxpinyin::facade::FullPinyinIndexParse,
     cursor: usize,
 ) -> AuxText {
     let parsed_len = parse.consumed().min(input.len());

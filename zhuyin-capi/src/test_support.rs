@@ -54,7 +54,7 @@ pub unsafe fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> Str
 /// context, its instances or its iterators.
 pub unsafe fn with_store<R>(
     instance: *mut ZhuyinInstance,
-    f: impl FnOnce(&oxpinyin::user::UserStore) -> R,
+    f: impl FnOnce(&oxpinyin::facade::UserStore) -> R,
 ) -> R {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`; the store is a value field, and the shared

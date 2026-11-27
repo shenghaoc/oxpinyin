@@ -6,7 +6,7 @@
 
 use std::os::raw::c_char;
 
-use oxpinyin::engine::CharacterOffset;
+use oxpinyin::facade::CharacterOffset;
 
 use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{instance_mut, instance_ref};
@@ -42,7 +42,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) ->
 
 /// Logs one warning for a lookup that would read past a predecessor's system
 /// or user bigram value. Returns `true` when it logs the warning.
-pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::engine::EngineError) -> bool {
+pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::facade::EngineError) -> bool {
     oxpinyin::facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
 
@@ -82,7 +82,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     let mut inst = borrow_or_return!(instance, instance_mut, false);
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`pinyin.cpp:1431-1434`); `None` adds nothing.
-    let prefix = oxpinyin::marshal::prefix_text(
+    let prefix = oxpinyin::facade::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
     if crate::predict::clear_borrowed_prefix(&mut inst, prefix) {
         return true;
     }
-    let prefix = oxpinyin::marshal::prefix_text(
+    let prefix = oxpinyin::facade::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -250,7 +250,7 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
     if columns > 0 && offset >= columns {
         std::process::abort();
     }
-    let text = oxpinyin::marshal::utf8_to_ucs4(
+    let text = oxpinyin::facade::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -258,7 +258,7 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
     .unwrap_or_default();
     let char_count = match inst
         .core
-        .character_offset(&text, offset, oxpinyin::engine::Law::Pinyin)
+        .character_offset(&text, offset, oxpinyin::facade::Law::Pinyin)
     {
         Ok(CharacterOffset::Found(char_count)) => char_count,
         // The walk's own `false` still stores the length it reached
@@ -348,7 +348,7 @@ impl GuessFrame {
 fn lookup_window(
     inst: &mut crate::state::CapiInstanceMut<'_>,
     frame: &GuessFrame,
-) -> Option<oxpinyin::engine::CandidateList> {
+) -> Option<oxpinyin::facade::CandidateList> {
     let window = match inst
         .core
         .session
@@ -363,23 +363,23 @@ fn lookup_window(
         // (ngram.cpp:303-304, pinyin.cpp:1848).
         // A Kyoto Cabinet body read after its size check asserts at the load
         // (pinyin.cpp:2212, ngram_kyotodb.cpp:138-139).
-        Err(oxpinyin::engine::EngineError::ReadAfterCheck) => std::process::abort(),
+        Err(oxpinyin::facade::EngineError::ReadAfterCheck) => std::process::abort(),
         // Register row 98: the DYNAMIC_ADJUST merge or read of the previous
         // token's grams reads past a partial value (class (b), one warning;
         // `pinyin.cpp:2214`, `:1848-1849`).
-        Err(error @ oxpinyin::engine::EngineError::UnsafeLookupPredecessor) => {
+        Err(error @ oxpinyin::facade::EngineError::UnsafeLookupPredecessor) => {
             inst.state.candidates.clear();
             refuse_lookup_gram("pinyin_guess_candidates", &error);
             return None;
         }
         Err(
-            oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin::engine::EngineError::Failure
-            | oxpinyin::engine::EngineError::ZeroKeyOffsetCheck
-            | oxpinyin::engine::EngineError::PinAssert
-            | oxpinyin::engine::EngineError::UnsafeTrainingPredecessor
-            | oxpinyin::engine::EngineError::TrainingAbort
-            | oxpinyin::engine::EngineError::UserModel,
+            oxpinyin::facade::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin::facade::EngineError::Failure
+            | oxpinyin::facade::EngineError::ZeroKeyOffsetCheck
+            | oxpinyin::facade::EngineError::PinAssert
+            | oxpinyin::facade::EngineError::UnsafeTrainingPredecessor
+            | oxpinyin::facade::EngineError::TrainingAbort
+            | oxpinyin::facade::EngineError::UserModel,
         ) => {
             // Unreachable for a well-formed lookup: the offset-shaped
             // contracts are refused by `validate_lookup_offset` and
@@ -419,7 +419,7 @@ fn lookup_window(
 /// `offset` to [`crate::candidates::pinyin_choose_candidate`] to select a row from this
 /// lookup.
 ///
-/// When [`SORT_WITHOUT_SENTENCE_CANDIDATE`](oxpinyin::engine::SORT_WITHOUT_SENTENCE_CANDIDATE)
+/// When [`SORT_WITHOUT_SENTENCE_CANDIDATE`](oxpinyin::facade::SORT_WITHOUT_SENTENCE_CANDIDATE)
 /// is clear, rows from [`pinyin_guess_sentence`] appear at the head as
 /// `NBEST_MATCH_CANDIDATE` entries with their tail rank. Setting the bit
 /// skips that prepend (`pinyin.cpp:2295-2296`). A phrase row with the same
@@ -487,7 +487,7 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     // refusal keeps its silent `false`.
     let normalized = match inst
         .core
-        .abi_candidate_offset(offset, oxpinyin::engine::Law::Pinyin)
+        .abi_candidate_offset(offset, oxpinyin::facade::Law::Pinyin)
     {
         Ok(normalized) => normalized,
         Err(oxpinyin::facade::CursorFault::PinAssert) => std::process::abort(),

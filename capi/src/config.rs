@@ -5,7 +5,7 @@ use std::os::raw::c_int;
 use crate::ffi::borrow_or_return;
 use crate::state::context_mut;
 use crate::types::{PinyinContext, PinyinOptionT};
-use oxpinyin::vocab::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
+use oxpinyin::facade::{GBK_DICTIONARY, PHRASE_INDEX_LIBRARY_COUNT};
 
 // pinyin.cpp:1299-1306.
 /// Set pinyin options on the context.
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn pinyin_set_full_pinyin_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    let Ok(scheme) = oxpinyin::parser::FullPinyinScheme::try_from(scheme) else {
+    let Ok(scheme) = oxpinyin::facade::FullPinyinScheme::try_from(scheme) else {
         // Register row 5d, `pinyin_parser2.cpp:398`: `set_scheme`'s
         // `default:` is an `abort()`.
         std::process::abort();
@@ -97,11 +97,11 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    let scheme = match oxpinyin::parser::DoublePinyinScheme::try_from(scheme) {
+    let scheme = match oxpinyin::facade::DoublePinyinScheme::try_from(scheme) {
         // CUSTOMIZED (30): register row 5a, `pinyin_parser2.cpp:611`
         // `abort()`. The `m_fallback_table = NULL` before it (`:580`) is
         // in memory only.
-        Ok(oxpinyin::parser::DoublePinyinScheme::Customized) => std::process::abort(),
+        Ok(oxpinyin::facade::DoublePinyinScheme::Customized) => std::process::abort(),
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
@@ -146,7 +146,7 @@ pub unsafe extern "C" fn pinyin_set_zhuyin_scheme(
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
     let Some(scheme) = oxpinyin::facade::zhuyin_scheme(scheme)
-        .filter(|scheme| *scheme != oxpinyin::parser::ZhuyinScheme::StandardDvorak)
+        .filter(|scheme| *scheme != oxpinyin::facade::ZhuyinScheme::StandardDvorak)
     else {
         // Register rows 5c and 5d: `pinyin.cpp:1189` (`default:`) and, for
         // the `STANDARD_DVORAK` slot, `zhuyin_parser2.cpp:295`; both are

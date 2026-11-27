@@ -18,7 +18,7 @@ use crate::iterators::{
 use crate::test_support::{TempUserDir, cstr, open};
 
 #[cfg(unix)]
-use oxpinyin::vocab::USER_DICTIONARY;
+use oxpinyin::facade::USER_DICTIONARY;
 
 use std::ptr;
 
@@ -40,17 +40,18 @@ unsafe fn export_an_unspellable_reading(page: *mut u8) {
         let ctx = unsafe { crate::state::context_mut(context) };
         let store = ctx.core.user_store_mut();
         let syllable = |text: &str| {
-            oxpinyin::vocab::SyllableKey::from_text(text)
+            oxpinyin::facade::SyllableKey::from_text(text)
                 .expect("syllable")
                 .index()
         };
-        let ni = oxpinyin::user::toned_key(syllable("ni"), 0).expect("key");
+        let ni = oxpinyin::facade::toned_key(syllable("ni"), 0).expect("key");
         store
             .add_phrase_in(USER_DICTIONARY, &"你".into(), &[ni], Some(5))
             .expect("a reading the engine spells");
         // One past `MAX_KEY_TONE`: the add checks lengths only.
         let past_the_tones =
-            oxpinyin::user::toned_key(syllable("hao"), oxpinyin::user::MAX_KEY_TONE).expect("key")
+            oxpinyin::facade::toned_key(syllable("hao"), oxpinyin::user::MAX_KEY_TONE)
+                .expect("key")
                 + (1 << oxpinyin::user::KEY_TONE_SHIFT);
         store
             .add_phrase_in(USER_DICTIONARY, &"好".into(), &[past_the_tones], Some(3))

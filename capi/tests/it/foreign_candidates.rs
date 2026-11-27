@@ -619,11 +619,11 @@ fn a_span_ending_inside_a_receiver_key_clears_and_forces_nothing() {
 fn a_divided_column_row_forces_its_span(#[values(true, false)] same_instance: bool) {
     // A private library 1 holding 西 under `xi` and 安 under `an`.
     let scratch = tempfile::tempdir().expect("scratch");
-    let xi = oxpinyin::parser::ChewingKey::from_pinyin("xi")
+    let xi = oxpinyin::facade::ChewingKey::from_pinyin("xi")
         .expect("frozen syllable")
         .with_tone(1)
         .to_packed();
-    let an = oxpinyin::parser::ChewingKey::from_pinyin("an")
+    let an = oxpinyin::facade::ChewingKey::from_pinyin("an")
         .expect("frozen syllable")
         .with_tone(1)
         .to_packed();

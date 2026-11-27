@@ -36,7 +36,7 @@ pub struct LookupCandidate;
 /// vendored `chewing_key.h` allocates exactly these 2 bytes and may copy
 /// keys through the pointer, so this must write and read what upstream
 /// writes and reads — the packed-word contract. The renderers decode the word
-/// through [`oxpinyin::parser::ChewingKey`].
+/// through [`oxpinyin::facade::ChewingKey`].
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChewingKey {
@@ -57,7 +57,7 @@ impl ChewingKey {
 
     /// Packs the core elements into the ABI word.
     #[must_use]
-    pub(crate) const fn from_core(key: oxpinyin::parser::ChewingKey) -> Self {
+    pub(crate) const fn from_core(key: oxpinyin::facade::ChewingKey) -> Self {
         Self {
             packed: key.to_packed(),
         }
@@ -65,8 +65,8 @@ impl ChewingKey {
 
     /// Decodes the word for the renderers.
     #[must_use]
-    pub(crate) const fn to_core(self) -> oxpinyin::parser::ChewingKey {
-        oxpinyin::parser::ChewingKey::from_packed(self.packed)
+    pub(crate) const fn to_core(self) -> oxpinyin::facade::ChewingKey {
+        oxpinyin::facade::ChewingKey::from_packed(self.packed)
     }
 }
 
@@ -164,14 +164,14 @@ pub type GChar = c_char;
 // Header phrase-index literals must stay byte-identical to the canonical
 // `oxpinyin` token layout. `PinyinKey` / `PinyinKeyPos` are C-only
 // typedefs in the checked-in `pinyin.h`, so they do not collide
-// with `oxpinyin::user::PinyinKey` (`u16`).
+// with `oxpinyin::facade::PinyinKey` (`u16`).
 const _: () = {
-    assert!(oxpinyin::vocab::USER_DICTIONARY == 7);
-    assert!(oxpinyin::vocab::PHRASE_MASK == 0x00FF_FFFF);
-    assert!(oxpinyin::vocab::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
+    assert!(oxpinyin::facade::USER_DICTIONARY == 7);
+    assert!(oxpinyin::facade::PHRASE_MASK == 0x00FF_FFFF);
+    assert!(oxpinyin::facade::PHRASE_INDEX_LIBRARY_MASK == 0x0F00_0000);
 };
 
 /// The network phrase dictionary index from `novel_types.h`.
-pub use oxpinyin::vocab::NETWORK_DICTIONARY;
+pub use oxpinyin::facade::NETWORK_DICTIONARY;
 /// The user phrase dictionary index from `novel_types.h`.
-pub use oxpinyin::vocab::USER_DICTIONARY;
+pub use oxpinyin::facade::USER_DICTIONARY;

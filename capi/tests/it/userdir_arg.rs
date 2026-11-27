@@ -19,7 +19,7 @@
 
 use crate::support::{names, system_dir_cstr};
 
-use oxpinyin::vocab::USER_DICTIONARY;
+use oxpinyin::facade::USER_DICTIONARY;
 use std::path::PathBuf;
 
 use std::ptr;

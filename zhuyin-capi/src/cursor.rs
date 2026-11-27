@@ -87,7 +87,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let found = match inst.core.abi_key_at(offset, oxpinyin::engine::Law::Zhuyin) {
+    let found = match inst.core.abi_key_at(offset, oxpinyin::facade::Law::Zhuyin) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
         Err(_) => std::process::abort(),
@@ -220,7 +220,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let found = match inst.core.abi_key_at(offset, oxpinyin::engine::Law::Zhuyin) {
+    let found = match inst.core.abi_key_at(offset, oxpinyin::facade::Law::Zhuyin) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
         Err(_) => std::process::abort(),
@@ -320,7 +320,7 @@ pub unsafe extern "C" fn zhuyin_get_left_zhuyin_offset(
     }
     let result = match inst
         .core
-        .abi_left_offset(offset, oxpinyin::engine::Law::Zhuyin)
+        .abi_left_offset(offset, oxpinyin::facade::Law::Zhuyin)
     {
         Ok(result) => result,
         // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,

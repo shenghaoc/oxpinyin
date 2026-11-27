@@ -57,7 +57,7 @@ pub unsafe extern "C" fn pinyin_parse_full_pinyin(
     onekey: *mut ChewingKey,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false, onepinyin, onekey);
-    let text = oxpinyin::marshal::scalar_text(
+    let text = oxpinyin::facade::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -113,7 +113,7 @@ pub unsafe extern "C" fn pinyin_parse_double_pinyin(
     onekey: *mut ChewingKey,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false, onepinyin, onekey);
-    let text = oxpinyin::marshal::scalar_text(
+    let text = oxpinyin::facade::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -152,7 +152,7 @@ pub unsafe extern "C" fn pinyin_parse_chewing(
     onekey: *mut ChewingKey,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false, onechewing, onekey);
-    let text = oxpinyin::marshal::scalar_text(
+    let text = oxpinyin::facade::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onechewing) },
@@ -205,7 +205,7 @@ pub unsafe extern "C" fn pinyin_get_luoma_pinyin_string(
         display_string_getter(
             key,
             utf8_str,
-            oxpinyin::parser::ChewingKey::luoma_pinyin_text,
+            oxpinyin::facade::ChewingKey::luoma_pinyin_text,
         )
     }
 }
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
         display_string_getter(
             key,
             utf8_str,
-            oxpinyin::parser::ChewingKey::secondary_zhuyin_text,
+            oxpinyin::facade::ChewingKey::secondary_zhuyin_text,
         )
     }
 }
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn pinyin_get_secondary_zhuyin_string(
 unsafe fn display_string_getter(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin::parser::ChewingKey) -> oxpinyin::parser::KeyText,
+    render: impl FnOnce(oxpinyin::facade::ChewingKey) -> oxpinyin::facade::KeyText,
 ) -> bool {
     // The pin never reads `instance` (`pinyin.cpp:2729-2749`); it writes
     // `*utf8_str` before any check, so a NULL out stays guarded (row 41).

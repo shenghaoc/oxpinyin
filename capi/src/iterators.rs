@@ -8,9 +8,10 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use oxpinyin::OptionBits;
-use oxpinyin::facade::{BigramExportWalk, BigramProbeFault, BigramStep, ExportStep, GramLoadFault};
-use oxpinyin::graph::SegmentGraph;
-use oxpinyin::user::{PinyinKey, toned_key};
+use oxpinyin::facade::{
+    BigramExportWalk, BigramProbeFault, BigramStep, ExportStep, GramLoadFault, ImportPlan,
+    PinyinKey, SegmentGraph, phrase_text_bytes, toned_key,
+};
 
 use crate::ffi::{
     backing_mut, backing_ref, borrow_or_return, malloc_cstr, malloc_cstr_chunks, strconcat_pair,
@@ -20,7 +21,6 @@ use crate::state::{ContextOwner, context_owner, context_ref, owner_mut, owner_re
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
-use oxpinyin::marshal::phrase_text_bytes;
 
 /// State behind `export_iterator_t *`: the pin's iterator state, which
 /// reads each item when a call needs it and buffers no row.
@@ -57,7 +57,7 @@ impl BigramHandle {
         let Some((first, second)) = self.walk.pair() else {
             return;
         };
-        let encode = |text: &oxpinyin::vocab::PhraseText| {
+        let encode = |text: &oxpinyin::facade::PhraseText| {
             let bytes = phrase_text_bytes(text);
             malloc_cstr(&bytes)
         };
@@ -229,9 +229,6 @@ pub unsafe extern "C" fn pinyin_iterator_add_phrase(
         .commit_import(handle.index, &phrase, &keys, original, count)
 }
 
-/// What [`pinyin_iterator_add_phrase`] does with one pair before it writes.
-use oxpinyin::facade::ImportPlan;
-
 /// `pinyin.cpp:614-652` and `_add_phrase` (`:514-611`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
 /// order. Reads only.
@@ -247,7 +244,7 @@ unsafe fn plan_import(
     pinyin: *const c_char,
 ) -> ImportPlan {
     // Scalar input conversion; raw-word import is tracked by #1279.
-    let phrase = oxpinyin::marshal::utf8_to_ucs4(
+    let phrase = oxpinyin::facade::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -255,7 +252,7 @@ unsafe fn plan_import(
     .unwrap_or_default();
     // The reading is parsed from the raw bytes (`pinyin.cpp:638`): the
     // keys before an invalid sequence stand, as they do at the pin.
-    let pinyin = oxpinyin::marshal::parser_prefix(
+    let pinyin = oxpinyin::facade::parser_prefix(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyin) },

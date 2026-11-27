@@ -1,7 +1,7 @@
 //! Compare both headers with oxpinyin constants and the pin's keyboard scheme values.
 
 use super::bindings::{pinyin, zhuyin};
-use oxpinyin::{OptionBits, vocab};
+use oxpinyin::{OptionBits, facade};
 
 macro_rules! check {
     ($name:ident, $value:expr) => {{
@@ -52,14 +52,14 @@ fn header_constants_match_rust_and_pinned_schemes() {
     check!(DOUBLE_PINYIN_MS, 2);
     check!(ZHUYIN_DEFAULT, 1);
     check!(ZHUYIN_STANDARD, 1);
-    check!(PHRASE_MASK, vocab::PHRASE_MASK);
-    check!(PHRASE_INDEX_LIBRARY_MASK, vocab::PHRASE_INDEX_LIBRARY_MASK);
-    check!(ADDON_DICTIONARY, u32::from(vocab::ADDON_DICTIONARY));
-    check!(NETWORK_DICTIONARY, u32::from(vocab::NETWORK_DICTIONARY));
-    check!(USER_DICTIONARY, u32::from(vocab::USER_DICTIONARY));
-    check!(null_token, vocab::NULL_TOKEN);
+    check!(PHRASE_MASK, facade::PHRASE_MASK);
+    check!(PHRASE_INDEX_LIBRARY_MASK, facade::PHRASE_INDEX_LIBRARY_MASK);
+    check!(ADDON_DICTIONARY, u32::from(facade::ADDON_DICTIONARY));
+    check!(NETWORK_DICTIONARY, u32::from(facade::NETWORK_DICTIONARY));
+    check!(USER_DICTIONARY, u32::from(facade::USER_DICTIONARY));
+    check!(null_token, facade::NULL_TOKEN);
     check!(
         OXPINYIN_USER_TOKEN,
-        vocab::phrase_index_make_token(vocab::USER_DICTIONARY, vocab::NULL_TOKEN)
+        facade::phrase_index_make_token(facade::USER_DICTIONARY, facade::NULL_TOKEN)
     );
 }

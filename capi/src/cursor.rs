@@ -97,7 +97,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let Ok(Some(found)) = inst.core.abi_key_at(offset, oxpinyin::engine::Law::Pinyin) else {
+    let Ok(Some(found)) = inst.core.abi_key_at(offset, oxpinyin::facade::Law::Pinyin) else {
         return false;
     };
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_string(
     // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
     // parameters: a non-NULL output is aligned and writable without conflicting with live
     // borrows.
-    unsafe { render_key(key, utf8_str, oxpinyin::parser::ChewingKey::pinyin_text) }
+    unsafe { render_key(key, utf8_str, oxpinyin::facade::ChewingKey::pinyin_text) }
 }
 
 // eim.cpp:512-515.
@@ -262,7 +262,7 @@ pub unsafe extern "C" fn pinyin_get_zhuyin_string(
     // SAFETY: The entry point guarantees Borrowed objects: a non-NULL key is valid for reads. Out-
     // parameters: a non-NULL output is aligned and writable without conflicting with live
     // borrows.
-    unsafe { render_key(key, utf8_str, oxpinyin::parser::ChewingKey::zhuyin_text) }
+    unsafe { render_key(key, utf8_str, oxpinyin::facade::ChewingKey::zhuyin_text) }
 }
 
 // eim.cpp:478-479.
@@ -313,7 +313,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_strings(
 /// renderers assert the tone (`:40`, `:75`, `:92`, `:105`): a key packed from
 /// caller memory with a field outside them aborts the process, as the pin
 /// does.
-fn abort_on_elements_outside_dims(key: oxpinyin::parser::ChewingKey) {
+fn abort_on_elements_outside_dims(key: oxpinyin::facade::ChewingKey) {
     if !key.elements_in_dims() {
         std::process::abort();
     }
@@ -321,7 +321,7 @@ fn abort_on_elements_outside_dims(key: oxpinyin::parser::ChewingKey) {
 
 /// The tone half of [`abort_on_elements_outside_dims`], asserted after the
 /// `get_table_index` guard by every renderer that prints a tone.
-fn abort_on_tone_outside_dims(key: oxpinyin::parser::ChewingKey) {
+fn abort_on_tone_outside_dims(key: oxpinyin::facade::ChewingKey) {
     if !key.tone_in_dims() {
         std::process::abort();
     }
@@ -338,7 +338,7 @@ fn abort_on_tone_outside_dims(key: oxpinyin::parser::ChewingKey) {
 unsafe fn render_key(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl Fn(oxpinyin::parser::ChewingKey) -> oxpinyin::parser::KeyText,
+    render: impl Fn(oxpinyin::facade::ChewingKey) -> oxpinyin::facade::KeyText,
 ) -> bool {
     // The pin never reads `instance` (`pinyin.cpp:2707-2727`).
     if key.is_null() {
@@ -559,7 +559,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let Ok(Some(found)) = inst.core.abi_key_at(offset, oxpinyin::engine::Law::Pinyin) else {
+    let Ok(Some(found)) = inst.core.abi_key_at(offset, oxpinyin::facade::Law::Pinyin) else {
         return false;
     };
     let packed = found.packed;

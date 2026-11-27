@@ -32,7 +32,7 @@ use crate::support::zhuyin_parse_more_chewings;
 #[cfg(unix)]
 use crate::support::zhuyin_train;
 
-use oxpinyin::vocab::USER_DICTIONARY;
+use oxpinyin::facade::USER_DICTIONARY;
 
 use std::path::Path;
 

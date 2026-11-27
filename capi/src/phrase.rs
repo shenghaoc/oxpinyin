@@ -67,7 +67,7 @@ pub unsafe extern "C" fn pinyin_phrase_segment(
             }
         };
     }
-    let Some(text) = oxpinyin::marshal::utf8_to_ucs4(
+    let Some(text) = oxpinyin::facade::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(sentence) },
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn pinyin_get_phrase_token(
     token: *mut PhraseTokenT,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false);
-    write_if_nonnull!(token, oxpinyin::vocab::NULL_TOKEN);
+    write_if_nonnull!(token, oxpinyin::facade::NULL_TOKEN);
     let Some(value) = inst.core.phrase_token(index as usize) else {
         return false;
     };

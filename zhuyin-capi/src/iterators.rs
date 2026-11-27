@@ -7,8 +7,7 @@
 use std::os::raw::{c_char, c_int};
 
 use oxpinyin::OptionBits;
-use oxpinyin::parser::parse_zhuyin_direct;
-use oxpinyin::user::{PinyinKey, toned_key};
+use oxpinyin::facade::{ImportPlan, PinyinKey, parse_zhuyin_direct, toned_key};
 
 use crate::state::{ContextOwner, context_owner, owner_mut, owner_ref};
 use crate::types::{ImportIterator, ZhuyinContext};
@@ -136,9 +135,6 @@ pub unsafe extern "C" fn zhuyin_iterator_add_phrase(
         .commit_import(index, &phrase, &keys, original, count)
 }
 
-/// What [`zhuyin_iterator_add_phrase`] does with one pair before it writes.
-use oxpinyin::facade::ImportPlan;
-
 /// `zhuyin.cpp:500-534` and `_add_phrase` (`:400-458`) up to the add calls:
 /// the parse, the length gates and the phrase-table checks, in the pin's
 /// order. Reads only.
@@ -153,13 +149,13 @@ unsafe fn plan_import(
     phrase: *const c_char,
     pinyin: *const c_char,
 ) -> ImportPlan {
-    let phrase = oxpinyin::marshal::utf8_to_ucs4(
+    let phrase = oxpinyin::facade::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
     )
     .unwrap_or_default();
-    let pinyin = oxpinyin::marshal::direct_zhuyin_reading(
+    let pinyin = oxpinyin::facade::direct_zhuyin_reading(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(pinyin) },
