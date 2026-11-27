@@ -517,7 +517,7 @@ impl<
                     .any(|key| key.syllable_start() == begin)
                     || images
                         .windows(2)
-                        .any(|pair| pair[0].begin_end.1 <= begin && begin < pair[1].begin_end.0);
+                        .any(|pair| pair[0].end <= begin && begin < pair[1].begin);
                 let ends_a_key = self.parse_matrix.iter().any(|key| key.end() == end);
                 (
                     session_bound(&images, begin, false),
@@ -819,7 +819,10 @@ pub fn refuse_lookup_gram(name: &str, error: &EngineError, log: impl FnOnce(&str
 /// its canonical text's session span.
 #[derive(PartialEq, Eq)]
 struct KeyImage {
-    begin_end: (usize, usize),
+    /// The original span's start.
+    begin: usize,
+    /// The original span's end.
+    end: usize,
     column: usize,
     text_start: usize,
     text_end: usize,
@@ -833,7 +836,8 @@ fn key_images(keys: impl Iterator<Item = (usize, usize, usize)>) -> Vec<KeyImage
     for (begin, end, len) in keys {
         let column = if images.is_empty() { 0 } else { text_start - 1 };
         images.push(KeyImage {
-            begin_end: (begin, end),
+            begin,
+            end,
             column,
             text_start,
             text_end: text_start + len,
@@ -854,12 +858,12 @@ fn session_bound(images: &[KeyImage], offset: usize, is_end: bool) -> usize {
     let exact = if is_end {
         images
             .iter()
-            .find(|image| image.begin_end.1 == offset)
+            .find(|image| image.end == offset)
             .map(|image| image.text_end)
     } else {
         images
             .iter()
-            .find(|image| image.begin_end.0 == offset)
+            .find(|image| image.begin == offset)
             .map(|image| image.column)
     };
     if let Some(position) = exact {
@@ -867,9 +871,9 @@ fn session_bound(images: &[KeyImage], offset: usize, is_end: bool) -> usize {
     }
     if let Some(image) = images
         .iter()
-        .find(|image| image.begin_end.0 < offset && offset < image.begin_end.1)
+        .find(|image| image.begin < offset && offset < image.end)
     {
-        let inside = image.text_start + (offset - image.begin_end.0);
+        let inside = image.text_start + (offset - image.begin);
         return inside.clamp(
             image.text_start + 1,
             image.text_end.saturating_sub(1).max(image.text_start + 1),
@@ -880,7 +884,7 @@ fn session_bound(images: &[KeyImage], offset: usize, is_end: bool) -> usize {
     }
     images
         .iter()
-        .find(|image| image.begin_end.0 > offset)
+        .find(|image| image.begin > offset)
         .map_or_else(
             || images.last().map_or(0, |image| image.text_end),
             |image| image.column,
@@ -892,31 +896,31 @@ fn session_bound(images: &[KeyImage], offset: usize, is_end: bool) -> usize {
 /// key's column, the `'` in front of it, so the span covers the same keys.
 /// Otherwise it maps as [`session_bound`] maps an end.
 fn session_end(images: &[KeyImage], offset: usize) -> usize {
-    if let Some(image) = images.iter().find(|image| image.begin_end.1 == offset) {
+    if let Some(image) = images.iter().find(|image| image.end == offset) {
         return image.text_end;
     }
     images
         .iter()
-        .find(|image| image.begin_end.0 == offset)
+        .find(|image| image.begin == offset)
         .map_or_else(|| session_bound(images, offset, true), |image| image.column)
 }
 
 /// Map one session bound through the publication pass's base key images.
 fn published_bound(images: &[KeyImage], offset: usize) -> usize {
     if let Some(image) = images.iter().find(|image| image.text_end == offset) {
-        return image.begin_end.1;
+        return image.end;
     }
     if let Some(image) = images.iter().find(|image| image.column == offset) {
-        return image.begin_end.0;
+        return image.begin;
     }
     if let Some(image) = images
         .iter()
         .find(|image| image.text_start < offset && offset < image.text_end)
     {
-        let (begin, end) = image.begin_end;
+        let (begin, end) = (image.begin, image.end);
         return (begin + (offset - image.text_start)).min(end.saturating_sub(1).max(begin));
     }
-    images.last().map_or(offset, |image| image.begin_end.1)
+    images.last().map_or(offset, |image| image.end)
 }
 
 #[cfg(test)]

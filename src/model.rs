@@ -1358,18 +1358,17 @@ impl NbestTokenCosts {
         }
     }
 
-    /// Both branches for one transition `(freq, total, present)`; a
-    /// transition that is absent or not present leaves the unigram branch
-    /// alone. No branch answers the default.
+    /// Both branches for one present transition `(freq, total)`; an absent
+    /// one leaves the unigram branch alone. No branch answers the default.
     #[must_use]
-    pub fn costs(&self, transition: Option<(u64, u64, bool)>) -> NbestStepCosts {
+    pub fn costs(&self, transition: Option<(u64, u64)>) -> NbestStepCosts {
         if self.elem.is_none() {
             return NbestStepCosts::default();
         }
         let unigram = self.unigram();
         let blended = match transition {
-            Some((freq, total, true)) => self.blended(freq, total),
-            _ => None,
+            Some((freq, total)) => self.blended(freq, total),
+            None => None,
         };
         if blended.is_none() && unigram.is_none() {
             return NbestStepCosts::default();

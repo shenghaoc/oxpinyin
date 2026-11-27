@@ -22,7 +22,15 @@ use crate::facade::instance::{InstanceState, InstanceView, ModeParse};
 /// One original-coordinate ABI column's first item: the packed key and its
 /// raw begin and end. A packed `0` is a zero key (or a key with no
 /// `ChewingKey` spelling, which the pin's tests treat alike).
-type AbiItem = (u16, usize, usize);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AbiItem {
+    /// The packed `ChewingKey`.
+    pub packed: u16,
+    /// The raw begin (`m_raw_begin`).
+    pub begin: usize,
+    /// The raw end (`m_raw_end`).
+    pub end: usize,
+}
 
 /// The pin law that an [`EngineError`] of a cursor or lookup call comes
 /// from. Each law asserts at its own sites, so the same error can be an
@@ -188,7 +196,11 @@ impl AbiColumns<'_> {
                 // The Full index variant has only canonical text: its key
                 // converts by spelling, as before.
                 let packed = key.chewing.to_packed();
-                return Some((packed, key.begin, key.end));
+                return Some(AbiItem {
+                    packed,
+                    begin: key.begin,
+                    end: key.end,
+                });
             }
         }
         if self.keys.is_empty() {
@@ -200,13 +212,17 @@ impl AbiColumns<'_> {
             || (self.separators
                 && self.input.get(position) == Some(&b'\'')
                 && position >= self.keys.span(0).0);
-        zero.then_some((0, position, position + 1))
+        zero.then_some(AbiItem {
+            packed: 0,
+            begin: position,
+            end: position + 1,
+        })
     }
 
     /// Whether the column at `position` exists and its first item packs
     /// to `0` — the pin's zero-column test.
     fn packs_zero(&self, position: usize) -> bool {
-        self.get(position).is_some_and(|item| item.0 == 0)
+        self.get(position).is_some_and(|item| item.packed == 0)
     }
 }
 
@@ -492,7 +508,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         };
         if law == Law::Pinyin {
             let mut at = offset;
-            while item.0 == 0 && at + 1 < columns.len() {
+            while item.packed == 0 && at + 1 < columns.len() {
                 at += 1;
                 let Some(next) = columns.get(at) else {
                     return Ok(None);
@@ -589,7 +605,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
             return Err(EngineError::ZeroKeyOffsetCheck);
         }
         let mut left = offset.saturating_sub(1);
-        while left > 0 && columns.get(left).is_none_or(|item| item.2 != offset) {
+        while left > 0 && columns.get(left).is_none_or(|item| item.end != offset) {
             left -= 1;
         }
         // The pin normalizes offset, not left. Validate the unnormalized left.
@@ -609,7 +625,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     #[cfg(test)]
     #[must_use]
     pub fn key_at(&self, offset: usize) -> Option<KeyAt> {
-        let (packed, begin, end) = self.abi_key_at(offset, Law::Pinyin).ok()??;
+        let AbiItem { packed, begin, end } = self.abi_key_at(offset, Law::Pinyin).ok()??;
         if packed == 0 {
             return None;
         }

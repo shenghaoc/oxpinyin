@@ -264,7 +264,7 @@ impl BigramLanguageModel<'_> {
         prev: u32,
         next: u32,
         user: UserCountDelta,
-    ) -> Result<Option<(u64, u64, bool)>, LmError> {
+    ) -> Result<Option<(u64, u64)>, LmError> {
         let system = self.transition(prev, next)?;
         let present = system.is_some_and(|(_, _, present)| present) || user.bigram_count > 0;
         Ok(merge_bigram(
@@ -272,7 +272,8 @@ impl BigramLanguageModel<'_> {
             user.bigram_count,
             user.bigram_total,
         )
-        .map(|(count, total)| (count, total, present)))
+        // A merged row the token is missing from prices no bigram branch.
+        .filter(|_| present))
     }
 
     /// Loads `prev`'s system gram, one point read, and merges `user` — the
@@ -417,7 +418,7 @@ impl BigramLanguageModel<'_> {
         &self,
         token: &PhraseToken,
         user: UserCountDelta,
-        transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
+        transition: impl FnOnce() -> Result<Option<(u64, u64)>, LmError>,
     ) -> Result<crate::model::NbestStepCosts, LmError> {
         let costs = self.nbest_token_costs_with(token, user);
         if costs.elem.is_none() {

@@ -94,7 +94,7 @@ fn abi_key_at_a_separator_reads_the_zero_key_only_for_zhuyin() {
             .abi_key_at(3, law)
             .expect("no zero-column fault")
             .expect("a key")
-            .0
+            .packed
     };
     assert_eq!(packed(Law::Zhuyin).to_le_bytes(), [0x00, 0x00]);
     assert_eq!(packed(Law::Pinyin).to_le_bytes(), [0x86, 0x02]);
@@ -255,7 +255,7 @@ mod native {
             .abi_key_at(2, crate::engine::Law::Pinyin)
             .unwrap()
             .unwrap();
-        assert_eq!((key.1, key.2), (2, 4));
+        assert_eq!((key.begin, key.end), (2, 4));
     }
 
     // Register row 122 preserves resplit keys on both parse paths.
