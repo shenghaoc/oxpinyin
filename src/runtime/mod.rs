@@ -344,19 +344,19 @@ impl<'a> RuntimeDict<'a> {
     /// The item a step prices for `token`, including an unranged ONESTEP
     /// token. Ranged user entries retain their query text; otherwise read
     /// the stored item. The effective-item overlay and library mask apply.
-    /// The text is built only when `want_text`.
+    /// The text is built only under [`StepText::Build`].
     #[cfg(test)]
     fn priced_token(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
         token: u32,
-        want_text: bool,
+        text: StepText,
     ) -> Option<PricedToken> {
         if syllables.is_empty() {
             return None;
         }
-        self.priced_on_path(&self.path_pricing(syllables, tones), token, want_text)
+        self.priced_on_path(&self.path_pricing(syllables, tones), token, text)
     }
 
     /// [`Self::priced_token`] over a non-empty path's [`PathPricing`].
@@ -364,7 +364,7 @@ impl<'a> RuntimeDict<'a> {
         &self,
         path: &PathPricing,
         token: u32,
-        want_text: bool,
+        text: StepText,
     ) -> Option<PricedToken> {
         let user = path.user.iter().rev().find(|entry| entry.token() == token);
         let mut priced = if let Some(entry) = user {
@@ -383,7 +383,7 @@ impl<'a> RuntimeDict<'a> {
                     pronunciation,
                     unigram: None,
                 },
-                text: want_text.then(|| TokenPhrase::from(entry.text().clone())),
+                text: text.build(|| TokenPhrase::from(entry.text().clone())),
             }
         } else if let Some(priced) = self.user.with_user_item(token, |view| {
             // A second imported reading need not have an index entry
@@ -397,7 +397,7 @@ impl<'a> RuntimeDict<'a> {
                     pronunciation,
                     unigram: None,
                 },
-                text: want_text.then(|| TokenPhrase {
+                text: text.build(|| TokenPhrase {
                     phrase_length: view.phrase_length(),
                     text: view.phrase_text(),
                 }),
@@ -413,7 +413,7 @@ impl<'a> RuntimeDict<'a> {
                 .read(token, |item| {
                     (
                         u32::try_from(item.phrase_length()).unwrap_or(u32::MAX),
-                        want_text.then(|| TokenPhrase {
+                        text.build(|| TokenPhrase {
                             phrase_length: item.phrase_length(),
                             text: item.phrase_text(),
                         }),
@@ -442,19 +442,19 @@ impl<'a> RuntimeDict<'a> {
         Some(priced)
     }
 
-    /// What a trellis step prices of `token` on `path`, with its text when
-    /// `want_text`: [`Self::read_in_place`], else the full resolution of
+    /// What a trellis step prices of `token` on `path`, with its text under
+    /// [`StepText::Build`]: [`Self::read_in_place`], else the full resolution of
     /// [`Self::priced_on_path`], which answers the same for an ordinary live
     /// item.
-    fn priced(&self, path: &PathPricing, token: u32, want_text: bool) -> Option<PricedToken> {
+    fn priced(&self, path: &PathPricing, token: u32, text: StepText) -> Option<PricedToken> {
         self.read_in_place(path, token, |item| PricedToken {
             item: Self::step_item(item, &path.keys),
-            text: want_text.then(|| TokenPhrase {
+            text: text.build(|| TokenPhrase {
                 phrase_length: item.phrase_length(),
                 text: item.phrase_text(),
             }),
         })
-        .or_else(|| self.priced_on_path(path, token, want_text))
+        .or_else(|| self.priced_on_path(path, token, text))
     }
 
     /// The ordinary live item behind `token`, read in place and handed to
@@ -782,6 +782,24 @@ pub struct PathPricing {
     libraries: crate::user::StepLibraries,
 }
 
+/// Whether a priced step also builds its phrase text. The pin's trellis
+/// step reads no text (`phonetic_lookup.h:646-656`); only a sentence's text
+/// read builds one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StepText {
+    /// Price the item only.
+    Skip,
+    /// Price the item and build its text.
+    Build,
+}
+
+impl StepText {
+    /// `build`'s answer under [`Self::Build`], else `None`.
+    fn build<T>(self, build: impl FnOnce() -> T) -> Option<T> {
+        (self == Self::Build).then(build)
+    }
+}
+
 /// One token as the ordinary lookup prices it.
 struct PricedToken {
     item: TrellisItem,
@@ -820,7 +838,7 @@ impl RuntimeDict<'_> {
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         let mut out = Vec::new();
         for (token, ()) in ranges.walk_tokens() {
-            if let Some(priced) = self.priced_token(syllables, tones, token, true) {
+            if let Some(priced) = self.priced_token(syllables, tones, token, StepText::Build) {
                 // An entry needs a text; an item whose text does not convert
                 // is not listed.
                 let Some(text) = priced.text.and_then(|phrase| phrase.text) else {
@@ -876,7 +894,7 @@ impl RuntimeDict<'_> {
         tones: &[u8],
         token: u32,
     ) -> Option<TrellisItem> {
-        self.priced_token(syllables, tones, token, false)
+        self.priced_token(syllables, tones, token, StepText::Skip)
             .map(|priced| priced.item)
     }
 
@@ -896,7 +914,7 @@ impl RuntimeDict<'_> {
         let path =
             memo.get_or_try_init(|| Ok::<_, DictError>(self.path_pricing(syllables, tones)))?;
         Ok(self
-            .priced_on_path(path, token, false)
+            .priced_on_path(path, token, StepText::Skip)
             .map(|priced| priced.item))
     }
 
@@ -1010,7 +1028,7 @@ impl Dictionary for RuntimeDict<'_> {
         Ok(self
             .read_in_place(path, token, |item| Self::step_item(item, &path.keys))
             .or_else(|| {
-                self.priced_on_path(path, token, false)
+                self.priced_on_path(path, token, StepText::Skip)
                     .map(|priced| priced.item)
             }))
     }
@@ -1025,7 +1043,7 @@ impl Dictionary for RuntimeDict<'_> {
             return Ok(None);
         }
         Ok(self
-            .priced(&self.path_pricing(syllables, tones), token, true)
+            .priced(&self.path_pricing(syllables, tones), token, StepText::Build)
             .and_then(|priced| priced.text))
     }
 
