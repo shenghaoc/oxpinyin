@@ -1772,8 +1772,9 @@ impl UserStore {
         )
     }
 
-    /// [`Self::reload_system_libraries_retaining`] merging the logs `logs`
-    /// already holds ([`Self::read_mask_log`]) instead of reading them again;
+    /// Replays a remap without losing its mappings when the journal refuses
+    /// it, merging the logs `logs` already holds ([`Self::read_mask_log`])
+    /// instead of reading them again;
     /// a library not in `logs` is read when the replay reaches it.
     ///
     /// # Errors
@@ -1822,7 +1823,7 @@ impl UserStore {
     /// a journal assertion. A transient session has no log to merge.
     ///
     /// # Errors
-    /// The same journal fault as [`Self::load_system_libraries`].
+    /// The [`JournalFault`](crate::user::JournalFault) where the merge reaches a pin assertion.
     pub(crate) fn load_system_libraries_retaining(
         &mut self,
         originals: &mut crate::user::SystemOriginals,
@@ -1999,7 +2000,7 @@ impl UserStore {
         has_grams || arena_live
     }
 
-    /// The faults [`Self::mask_out`] reaches before it changes anything, in
+    /// The faults `pinyin_mask_out`'s store side reaches before it changes anything, in
     /// the pin's order (`pinyin.cpp:1228-1230`): an overlong user pinyin index
     /// key, a phrase-table record the mask would read past, then the user bigram's non-token key, short value, partial
     /// tail and residual gram. It changes no state, so a
@@ -2009,7 +2010,7 @@ impl UserStore {
     ///
     /// # Errors
     ///
-    /// The [`UserStoreError`] [`Self::mask_out`] would return.
+    /// The [`UserStoreError`] that the mask-out would return.
     pub(crate) fn check_mask_out(
         &self,
         mask: PhraseToken,
@@ -2050,7 +2051,7 @@ impl UserStore {
         self.apply_mask_out(checked, mask, value)
     }
 
-    /// [`Self::mask_out`] after [`Self::check_mask_out`] passed for the same
+    /// `pinyin_mask_out`'s store side after [`Self::check_mask_out`] passed for the same
     /// `mask` and `value`, with no write to the user tables in between: the
     /// index, the phrase table, the arenas and the bigram take the mask, and
     /// nothing is checked again. The bigram mask walks the keys the check

@@ -65,7 +65,7 @@ where
     /// mutates only the scan scratch and `out` — never the composition
     /// offset, the constraint store, or the history — so a caller may build
     /// a window at a lookup offset without disturbing the cached list
-    /// ([`Session::candidates_at`]). With `anchor == self.record.consumed()`
+    /// ([`Session::candidates_at_for_abi`]). With `anchor == self.record.consumed()`
     /// it reproduces `Session::refresh`'s cached list exactly.
     /// Prepends the LONGER candidate row when the sort word leaves
     /// `SORT_WITHOUT_LONGER_CANDIDATE` clear — the pin's
@@ -708,8 +708,8 @@ where
     /// cannot read: the pin's parse merges no gram
     /// (`pinyin_parse_more_full_pinyins`, `pinyin.cpp:1497-1520`), so the
     /// eager list leaves that gram's bigram term out and keeps the unigram
-    /// term. Only an explicit guess ([`Session::candidates_at`],
-    /// [`Session::candidates_ending_at`]) gates.
+    /// term. Only an explicit guess ([`Session::candidates_at_for_abi`],
+    /// [`Session::candidates_ending_at_for_abi`]) gates.
     pub(super) fn refresh(&mut self) -> Result<(), EngineError> {
         // The cached list is anchored at the composition offset the session
         // owns. Reuse its buffer so the scan keeps its capacity across
@@ -729,7 +729,7 @@ where
     /// [`Self::refresh`], unless the session defers list builds
     /// (`Session::set_defer_list_builds`). Deferred, the parse seams and the
     /// guesses still build the scan matrix, so its errors surface there as
-    /// before, and the list is left stale for [`Session::refresh_candidates`].
+    /// before, and the list is left stale until the next [`Self::refresh`].
     pub(super) fn refresh_after_parse(&mut self) -> Result<(), EngineError> {
         if !self.defer_list_builds {
             return self.refresh();

@@ -43,8 +43,8 @@ impl FullPinyinParser {
     /// [`OptionBits::FORCE_TONE`] requires the digit. Otherwise a spelling
     /// without a tone produces a key with tone zero.
     ///
-    /// The spelling must match in full. [`SyllableKey::from_option_text`] admits
-    /// option-enabled aliases. Initials alone require [`OptionBits::PINYIN_INCOMPLETE`].
+    /// The spelling must match in full, or be a correction or ambiguity alias whose
+    /// option bit is set. Initials alone require [`OptionBits::PINYIN_INCOMPLETE`].
     /// An unmatched spelling returns [`None`].
     #[must_use]
     pub fn parse_one_key(options: OptionBits, input: &[u8]) -> Option<ChewingKey> {

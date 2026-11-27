@@ -426,7 +426,7 @@ impl SystemDictionary<'_> {
         Ok(())
     }
 
-    /// [`Self::trellis_ranges_with`] and the prefix probe from one DBM get:
+    /// The trellis ranges for `query` and the prefix probe, from one DBM get:
     /// the ranges, and whether the query's index key exists
     /// (`SEARCH_CONTINUED`, set from the same get that serves the search).
     /// The get reads into `scratch`, the caller's buffer.

@@ -334,7 +334,7 @@ impl UserTableInfo {
     ///
     /// # Errors
     ///
-    /// [`UserConfError::Unopenable`] reports an open failure, [`UserConfError::Line`] a
+    /// `UserConfError::Unopenable` reports an open failure, `UserConfError::Line` a
     /// required field that could not be read.
     ///
     /// # Aborts
@@ -383,7 +383,7 @@ impl UserTableInfo {
     /// # Errors
     ///
     /// As [`Self::load`]; a path holding a NUL is
-    /// [`UserConfError::Unopenable`].
+    /// `UserConfError::Unopenable`.
     ///
     /// # Aborts
     /// As [`Self::load`].

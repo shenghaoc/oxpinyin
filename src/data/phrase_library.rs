@@ -468,7 +468,7 @@ impl PhraseLibrary {
     /// an in-bounds layout check, as the pin's empty sub-index does.
     ///
     /// # Errors
-    /// Returns the same mapping and out-of-bounds layout errors as [`Self::open`].
+    /// Returns [`LibraryError`] when the mapping fails or a layout check finds data out of bounds.
     ///
     /// # Aborts
     /// A failed header word read aborts at the pin's assertion.

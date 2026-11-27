@@ -143,7 +143,7 @@ impl BigramTables {
     ///
     /// # Errors
     ///
-    /// Returns [`LmError`] if creating the attachment fails before the native open.
+    /// Returns an error if creating the attachment fails before the native open.
     pub fn attach(bigram_path: &Path, lambda: f32) -> Result<Self, LmError> {
         Ok(Self::with_table(BigramTable::attach(bigram_path)?, lambda))
     }

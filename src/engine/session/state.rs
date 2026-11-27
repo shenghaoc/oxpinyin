@@ -495,12 +495,13 @@ where
     /// Off by default: each builds it, as the session API always has. On,
     /// the parse seams and the guesses still build the scan matrix, so its
     /// errors surface where they did, and all four leave the list stale.
-    /// A reader of [`Session::candidates`] or [`Session::full_parsed_len`] calls
-    /// `Session::refresh_candidates` first. A failure of the deferred build then surfaces from that call
-    /// rather than from the parse or the guess. This is the C facades'
+    /// Reading the cached list (`Session::candidates`) does not rebuild it: the
+    /// caller calls `Session::refresh_candidates` first, and a failure of the
+    /// deferred build then surfaces from that call rather than from the parse or
+    /// the guess. Both are test-only. This is the C facades'
     /// mode: upstream builds candidates only in `pinyin_guess_candidates`
     /// (`pinyin.cpp:2184-2308` at 074a2219), which the C ABI answers from
-    /// its own re-anchored window ([`Session::candidates_at`]).
+    /// its own re-anchored window ([`Session::candidates_at_for_abi`]).
     pub(crate) fn set_defer_list_builds(&mut self, defer: bool) {
         self.defer_list_builds = defer;
     }

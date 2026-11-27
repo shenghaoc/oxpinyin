@@ -270,7 +270,9 @@ impl DoublePinyinParser {
     // DoublePinyinParser2::parse, pinyin_parser2.cpp:531–574.
     // pinyin_parse_more_double_pinyins forwards the option word at pinyin.cpp:1543.
     /// Greedily parses the longest keyboard prefix, trying the longest key first at each
-    /// position. [`Self::parse_one_key`] describes the tone and incomplete-key options.
+    /// position. One keyboard byte can spell an initial under
+    /// [`OptionBits::PINYIN_INCOMPLETE`]. A third byte must be an ASCII digit from 1 to 5
+    /// and requires [`OptionBits::USE_TONE`]. [`OptionBits::FORCE_TONE`] requires it.
     ///
     /// The returned spans and consumed length count bytes of the original input.
     #[must_use]
@@ -993,7 +995,9 @@ impl ZhuyinParser {
     ///
     /// The active keyboard supplies its correction rules. [`OptionBits::ZHUYIN_INCOMPLETE`],
     /// [`OptionBits::USE_TONE`] and [`OptionBits::FORCE_TONE`] control incomplete keys and
-    /// tone handling. [`Self::parse_one_key`] describes forced tone for each keyboard family.
+    /// tone handling. On simple keyboards and Dachen CP26, forced tone requires a tone only
+    /// with [`OptionBits::USE_TONE`]. The discrete keyboards require a tone whenever forced
+    /// tone is set.
     #[must_use]
     pub fn parse_with_options(&self, input: &[u8], options: OptionBits) -> ZhuyinParse {
         let Some(keyboard) = self.scheme.keyboard() else {
