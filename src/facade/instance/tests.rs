@@ -758,6 +758,7 @@ mod native_full_data {
                             },
                         )
                         .unwrap()
+                        .map(|item| (item.packed, item.begin, item.end))
                 })
                 .collect::<Vec<_>>(),
             [Some((23, 0, 2)), None, Some((7, 2, 3)), None]

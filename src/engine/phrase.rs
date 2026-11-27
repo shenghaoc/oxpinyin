@@ -123,7 +123,7 @@ where
         }
     };
     let costs = model.nbest_token_costs(&token).map_err(lm)?;
-    Ok(costs.costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true))))
+    Ok(costs.costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total)))))
 }
 
 /// Returns `(matched, result)` where `result` is the character-length

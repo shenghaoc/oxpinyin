@@ -103,8 +103,10 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
     // and the pin's `int` positions narrow into them mod 2^16: past byte
     // 65535 the positions wrap, as the pin's do (`docs/findings/upstream-divergences.md#key-positions-past-byte-65535`).
-    KEY_REST_SLOT.begin.store(found.1 as u16, Ordering::Relaxed);
-    KEY_REST_SLOT.end.store(found.2 as u16, Ordering::Relaxed);
+    KEY_REST_SLOT
+        .begin
+        .store(found.begin as u16, Ordering::Relaxed);
+    KEY_REST_SLOT.end.store(found.end as u16, Ordering::Relaxed);
     // The returned pointer refers to the static slot above.
     write_if_nonnull!(
         key_rest,
@@ -560,7 +562,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key(
     let Ok(Some(found)) = inst.core.abi_key_at(offset, oxpinyin::engine::Law::Pinyin) else {
         return false;
     };
-    let packed = found.0;
+    let packed = found.packed;
     KEY_SLOT.store(packed, Ordering::Relaxed);
     // The returned pointer refers to the static slot above.
     write_if_nonnull!(key, KEY_SLOT.as_ptr().cast::<ChewingKey>());

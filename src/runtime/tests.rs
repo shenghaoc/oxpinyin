@@ -706,7 +706,7 @@ mod backend_files {
                 .lm()
                 .nbest_token_costs(&token)
                 .unwrap()
-                .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
+                .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total))))
         };
         let before = costs(&runtime, &mut row);
         assert_eq!(
@@ -2706,7 +2706,7 @@ mod step_item {
         };
         assert_eq!(bits(old), bits(new));
         for item in [None, Some((3_u32, 7_u32)), Some((5, 7))] {
-            let transition = item.map(|(freq, total)| (u64::from(freq), u64::from(total), true));
+            let transition = item.map(|(freq, total)| (u64::from(freq), u64::from(total)));
             let old_step = old.costs(transition);
             let new_step = new.costs(transition);
             assert_eq!(

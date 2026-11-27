@@ -41,7 +41,7 @@ mod language_model {
         item: Option<(u32, u32)>,
     ) -> crate::model::NbestStepCosts {
         lm.nbest_token_costs_with(&token, user)
-            .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
+            .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total))))
     }
 
     const NI: u32 = 0x0100_0010;
@@ -503,9 +503,7 @@ mod language_model {
         let mut row = NbestStepRow::default();
         let prev = NI;
         assert_eq!(
-            lm.nbest_token_costs(&GBK)
-                .unwrap()
-                .costs(Some((1, 1, true))),
+            lm.nbest_token_costs(&GBK).unwrap().costs(Some((1, 1))),
             crate::model::NbestStepCosts::default()
         );
         let Some(crate::model::NbestSuccessors::Row(gram)) =
@@ -546,7 +544,7 @@ mod language_model {
         assert_eq!(
             lm.nbest_token_costs(&HAO)
                 .unwrap()
-                .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true))),
+                .costs(item.map(|(freq, total)| (u64::from(freq), u64::from(total)))),
             lm.nbest_step_costs(&prev, &HAO).unwrap()
         );
     }

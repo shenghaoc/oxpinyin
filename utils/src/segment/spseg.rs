@@ -41,9 +41,9 @@ impl Step {
     };
 }
 
-/// `segment` + `backtrace` (`spseg.cpp:86-168`): the chosen phrases as
-/// `(token, start, length)` within `run`.
-fn segment_run(search: &PhraseSearch<'_>, run: &[u32]) -> Vec<(u32, usize, usize)> {
+/// `segment` + `backtrace` (`spseg.cpp:86-168`): the chosen phrases' steps,
+/// in `run` order.
+fn segment_run(search: &PhraseSearch<'_>, run: &[u32]) -> Vec<Step> {
     let len = run.len();
     let mut steps = vec![Step::UNREACHABLE; len + 1];
     steps[0].nword = 0;
@@ -83,7 +83,7 @@ fn segment_run(search: &PhraseSearch<'_>, run: &[u32]) -> Vec<(u32, usize, usize
     let mut cursor = len;
     while cursor != 0 {
         let step = steps[cursor];
-        phrases.push((step.token, step.phrase_start, step.phrase_len));
+        phrases.push(step);
         // A relaxed cell always has `i < k`, so its phrase is not empty. An
         // empty phrase is the default cell an unreachable tail would leave;
         // the pin would loop there forever, and refusing to emit instead
@@ -99,9 +99,9 @@ fn segment_run(search: &PhraseSearch<'_>, run: &[u32]) -> Vec<(u32, usize, usize
 
 /// `deal_with_segmentable` (`spseg.cpp:170-189`).
 fn deal_with_segmentable(search: &PhraseSearch<'_>, run: &[u32], output: &OutputStream) {
-    for (token, start, len) in segment_run(search, run) {
-        let text = text_of(&run[start..start + len]);
-        tool::segmentation::print_token_line(output, token as i32, text.as_deref());
+    for step in segment_run(search, run) {
+        let text = text_of(&run[step.phrase_start..step.phrase_start + step.phrase_len]);
+        tool::segmentation::print_token_line(output, step.token as i32, text.as_deref());
     }
 }
 
