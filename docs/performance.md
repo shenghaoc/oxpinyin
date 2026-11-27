@@ -75,16 +75,18 @@ Its "total memory" is PSS.
 
 ## macOS arm64, oxpinyin only
 
-Measured at `b221f3312` with [`just measure compare`](runbooks/benches.md#native-macos-source-revisions).
+Measured at #2327 with [`just measure compare`](runbooks/benches.md#native-macos-source-revisions), except the `leaks --atExit` row, which is from `b221f3312`.
 
 | Measure | oxpinyin |
 | --- | ---: |
-| Instructions per operation | 698,280 |
-| Time per operation | 27.44 µs (27.27–28.77) |
-| Footprint at loop end | 7,373,304 B |
-| Lifetime peak footprint | 15,761,888 B |
+| Instructions per operation | 698,314 |
+| Time per operation | 27.70 µs (27.47–29.57) |
+| Footprint at loop end | 7,373,316 B |
+| Lifetime peak footprint | 15,753,696 B |
 | Peak RSS | 21,725,184 B |
-| Stripped (`strip -x`) `libpinyin.15.0.0.dylib` | 971,816 B |
+| Stripped (`strip -x`) `libpinyin.15.0.0.dylib` | 955,304 B |
+| `__TEXT` segment of the stripped dylib (`size -m`) | 868,352 B |
+| `__text` section of the stripped dylib (`size -m`) | 726,360 B |
 | `leaks --atExit` | 0 leaks |
 
 Host: Mac17,2, Apple M5, 16 GB, macOS 27.2.1 (26B131), Xcode 27.2, tkrzw 1.0.34 (Homebrew), rustc 1.98.1.
