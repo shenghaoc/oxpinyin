@@ -1707,3 +1707,98 @@ mod native_files {
         (header, counts)
     }
 }
+
+/// Every default-library token the LONGER path can reach, with the extra
+/// tokens a test added: where the dictionary answers an item unigram, it is
+/// the model's `unigram_freq`. Returns how many tokens carried one, and
+/// how many the model answered instead.
+fn check_item_unigrams(ctx: &ContextCore, extra: &[u32]) -> (usize, usize) {
+    use crate::model::{Dictionary, LanguageModel};
+    let dict = ctx.runtime.dict();
+    let lm = ctx.runtime.lm();
+    let mut tokens = extra.to_vec();
+    for library in 1..16_u8 {
+        let base = crate::vocab::phrase_index_make_token(library, 0);
+        if let Some(chunk) = dict.system().libraries().library(base) {
+            tokens.extend(
+                chunk
+                    .token_range()
+                    .map(|slot| crate::vocab::phrase_index_make_token(library, slot)),
+            );
+        }
+    }
+    let (mut item, mut model) = (0, 0);
+    for token in tokens {
+        match dict.phrase_length_and_item_unigram(token, usize::MAX) {
+            Some((_, Some(unigram))) => {
+                let expected = lm.unigram_freq(&token).expect("model read");
+                assert_eq!(Some(u64::from(unigram)), expected, "token {token:#010x}");
+                item += 1;
+            }
+            Some((_, None)) => model += 1,
+            None => {}
+        }
+    }
+    (item, model)
+}
+
+// 074a2219 pinyin.cpp:1899-1911 reads the LONGER unigram from the item it
+// fetched; the dictionary answers that field only where it is the model's.
+#[test]
+fn the_longer_item_unigram_is_the_models_in_every_session_state() {
+    const USER: u8 = 7;
+    let user = tempfile::tempdir().expect("user dir");
+    let mut ctx = open(user.path());
+    let (gbk, text) = first_item(&ctx, GBK);
+
+    // A fresh profile: the shipped items.
+    let (fresh, model) = check_item_unigrams(&ctx, &[]);
+    assert!(fresh > 0);
+    assert_eq!(model, 0, "every default library is covered");
+
+    // A trained token: the live buffer's item.
+    let before = check_item_unigrams(&ctx, &[]);
+    assert!(ctx.user_store_mut().add_system_unigram_frequency(gbk, 5));
+    assert_eq!(check_item_unigrams(&ctx, &[]), before);
+
+    // A saved library unloaded and loaded again: the replayed log.
+    import(&mut ctx, GBK, gbk, &text, 1);
+    assert_eq!(ctx.save_user(), SaveOutcome::Saved);
+    assert!(ctx.unload_phrase_library(GBK));
+    assert_eq!(ctx.load_phrase_library(GBK), Ok(true));
+    assert_eq!(check_item_unigrams(&ctx, &[]), before);
+
+    // A user-library phrase: its own item, with no shipped chunk.
+    let syllable = SyllableKey::from_text("a").expect("syllable").index();
+    let keys = vec![toned_key(syllable, 1).expect("key"); text.char_count().expect("length")];
+    let added = ctx
+        .user_store_mut()
+        .add_phrase_in(USER, &text, &keys, Some(3))
+        .expect("user phrase");
+    let (item, model) = check_item_unigrams(&ctx, &[added]);
+    assert_eq!((item, model), (before.0 + 1, 0));
+}
+
+// The proof covers a library with an original; a system row that names no
+// user file has none, so its tokens read the model.
+#[test]
+fn a_system_row_without_a_user_file_reads_the_model_unigram() {
+    use crate::model::Dictionary;
+    let scratch = tempfile::tempdir().expect("scratch");
+    let system = system_with_gbk_naming_no_user_file(scratch.path());
+    // The pin refuses this row with a user directory (`NullUserFile`), so
+    // the layout opens without one.
+    let ctx = ContextCore::open(&system, None, WORD, UserConfLaw::Pinyin).expect("opens");
+    let token = |library| crate::vocab::phrase_index_make_token(library, 1);
+    let dict = ctx.runtime.dict();
+    assert!(matches!(
+        dict.phrase_length_and_item_unigram(token(GBK), usize::MAX),
+        Some((_, None))
+    ));
+    assert!(matches!(
+        dict.phrase_length_and_item_unigram(token(GB), usize::MAX),
+        Some((_, Some(_)))
+    ));
+    let (item, model) = check_item_unigrams(&ctx, &[]);
+    assert!(item > 0 && model > 0);
+}
