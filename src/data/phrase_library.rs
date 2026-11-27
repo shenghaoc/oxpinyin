@@ -609,15 +609,16 @@ impl PhraseLibrary {
             return 1..range_end;
         }
         let slots = (self.offsets.end - self.offsets.start) / 4;
-        let mut end = slots;
-        while end > 1 {
-            let slot = u32_at(self.payload(), self.offsets.start + 4 * (end - 1));
-            if slot.is_some_and(|offset| offset != 0) {
-                break;
-            }
-            end -= 1;
-        }
-        1..u32::try_from(end.max(1)).unwrap_or(u32::MAX)
+        // One past the last slot after slot 0 with an item offset; slot 0
+        // never ends the range.
+        let end = (1..slots)
+            .rev()
+            .find(|&slot| {
+                u32_at(self.payload(), self.offsets.start + 4 * slot)
+                    .is_some_and(|offset| offset != 0)
+            })
+            .map_or(1, |slot| slot + 1);
+        1..u32::try_from(end).unwrap_or(u32::MAX)
     }
 
     /// Whether the library stores any item content, without walking its
