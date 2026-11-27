@@ -394,11 +394,14 @@ where
         state.record.clamp_consumed(state.input.as_str());
     }
 
-    // pinyin_set_options stores the word, pinyin.cpp:1299–1306. Existing matrix reads are at
-    // pinyin.cpp:1373–1386,2184–2190.
+    // pinyin_set_options stores the word and nothing else, pinyin.cpp:1299–1307 (the table
+    // forwards are under #if 0). Existing matrix reads are at pinyin.cpp:1373–1386,2184–2190.
     /// Replaces the option word and refreshes an active composition. The current matrix
     /// retains the options used for its parse. New spelling and matrix options take effect at
     /// the next parse.
+    ///
+    /// Under `Session::set_defer_list_builds` a change leaves the list stale instead and
+    /// searches no table, as `set_sort_options` does: the pin's option store reads nothing.
     ///
     /// # Errors
     ///
@@ -409,6 +412,10 @@ where
         }
         self.options = options;
         if self.input.is_empty() {
+            return Ok(());
+        }
+        if self.defer_list_builds {
+            self.lookup.stale = true;
             return Ok(());
         }
         self.refresh()
@@ -488,13 +495,13 @@ where
 
     /// Selects whether the parse seams ([`Session::replace_raw`] and its
     /// variants), the sentence guesses ([`Session::guess_sentence`],
-    /// [`Session::guess_sentence_with_prefix`]), a sort-word change
-    /// ([`Session::set_sort_options`]) and a selection
+    /// [`Session::guess_sentence_with_prefix`]), an option or sort-word change
+    /// ([`Session::set_options`], [`Session::set_sort_options`]) and a selection
     /// ([`Session::select_target`]) build the candidate list.
     ///
     /// Off by default: each builds it, as the session API always has. On,
     /// the parse seams and the guesses still build the scan matrix, so its
-    /// errors surface where they did, and all four leave the list stale.
+    /// errors surface where they did, and all five leave the list stale.
     /// Reading the cached list (`Session::candidates`) does not rebuild it: the
     /// caller calls `Session::refresh_candidates` first, and a failure of the
     /// deferred build then surfaces from that call rather than from the parse or
