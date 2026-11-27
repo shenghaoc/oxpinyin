@@ -73,6 +73,16 @@ impl Diagnostic {
         )
     }
 }
+/// `PERF_PAGE_OUT` needs Linux's `madvise(MADV_PAGEOUT)`. No value of this type exists here.
+pub(crate) enum PageOut {}
+impl PageOut {
+    pub(crate) fn new(_library: &str, _data: &str) -> Result<Self> {
+        Err(crate::Usage("PERF_PAGE_OUT needs Linux madvise(MADV_PAGEOUT)".into()).into())
+    }
+    pub(crate) fn run(&self) -> Result<super::PagedOut> {
+        match *self {}
+    }
+}
 pub(crate) fn trim() -> &'static str {
     "null"
 }

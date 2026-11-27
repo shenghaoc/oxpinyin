@@ -47,6 +47,59 @@ fn sort_option() -> Result<u32> {
     }
 }
 
+/// What the typing sequence records for each key, from `PERF_KEYS` and `PERF_PAGE_OUT`.
+enum Keys {
+    /// Neither is set: the totals only.
+    Totals,
+    /// `PERF_KEYS`: each key's figures in its observation, beside the totals.
+    Each,
+    /// `PERF_PAGE_OUT`: each key's figures, and a page-out of the library and the data before
+    /// the first key of each iteration after the first.
+    PageOut(platform::PageOut),
+}
+impl Keys {
+    fn read(library: &str, data: &str) -> Result<Self> {
+        let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+        Ok(if set("PERF_PAGE_OUT") {
+            Self::PageOut(platform::PageOut::new(library, data)?)
+        } else if set("PERF_KEYS") {
+            Self::Each
+        } else {
+            Self::Totals
+        })
+    }
+}
+
+/// One key's figures under `PERF_KEYS`, from the span that the totals add.
+struct Key {
+    elapsed_ns: u64,
+    /// `None` without `PERF_HW`, or when the counter gave no sample.
+    hw_instructions: Option<u64>,
+    /// `None` where the target counts no major faults.
+    major_faults: Option<u64>,
+    paged_out: Option<platform::PagedOut>,
+}
+impl Key {
+    fn write(&self, out: &mut impl Write) -> std::io::Result<()> {
+        write!(
+            out,
+            ",\"elapsed_ns\":{},\"hw_instructions\":",
+            self.elapsed_ns
+        )?;
+        output::nullable_number(out, self.hw_instructions)?;
+        out.write_all(b",\"major_faults\":")?;
+        output::nullable_number(out, self.major_faults)?;
+        if let Some(paged) = &self.paged_out {
+            write!(
+                out,
+                ",\"page_out\":{{\"mappings\":{},\"library_bytes\":{},\"data_bytes\":{}}}",
+                paged.mappings, paged.library_bytes, paged.data_bytes
+            )?;
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn run(args: &[String]) -> Result<()> {
     // #lizard forgives(cyclomatic_complexity)
     // One ordered replay keeps preparation, collection and observation in their required order.
@@ -73,8 +126,15 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
     }
     let iterations = iterations.unwrap_or(0);
     let is_typing = args[1] == "--perf-typing-sequence";
-    // Only the typing sequence guesses candidates, so only it reads `PERF_SORT`.
+    // Only the typing sequence guesses candidates, so only it reads `PERF_SORT`. It alone
+    // types keys, so only it reads `PERF_KEYS` and `PERF_PAGE_OUT`, before any work.
     let sort = if is_typing { sort_option()? } else { 0x1e };
+    let keys = if is_typing {
+        Keys::read(&args[2], &args[3])?
+    } else {
+        Keys::Totals
+    };
+    let each = !matches!(keys, Keys::Totals);
     let user = abi::UserDir::temporary("bisect-sentence-")?;
     let library = abi::Library::open(&args[2])?;
     let core = abi::Core::load(&library, "pinyin")?;
@@ -131,6 +191,12 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
             if !is_typing {
                 step.parsed = (typing.parse)(instance.handle, prefix.as_ptr());
             }
+            // The page-out follows the reset: a frontend resets at commit, then idles.
+            let paged_out = match &keys {
+                Keys::PageOut(page_out) if repeat != 0 && n == first => Some(page_out.run()?),
+                _ => None,
+            };
+            let faults = if each { platform::major_faults() } else { None };
             if let Some(c) = &mut counter {
                 c.enable();
             }
@@ -142,11 +208,13 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
                 step.sentence = bisect_sentence_unit(&sentence, instance.handle);
             }
             let end = platform::now_ns();
-            if let Some(c) = &mut counter {
+            let sample = counter.as_mut().and_then(platform::Counter::sample);
+            if counter.is_some() {
                 hw_instructions = hw_instructions
-                    .zip(c.sample())
+                    .zip(sample)
                     .map(|(total, count)| total + count);
             }
+            let faults = faults.and_then(|before| platform::major_faults()?.checked_sub(before));
             require(
                 start != 0
                     && end >= start
@@ -156,6 +224,12 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
                 "sentence workload failed",
             )?;
             elapsed += end - start;
+            let key = each.then(|| Key {
+                elapsed_ns: end - start,
+                hw_instructions: sample,
+                major_faults: faults,
+                paged_out,
+            });
             if n != first {
                 out.write_all(b",")?;
             }
@@ -167,6 +241,7 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
                 instance.handle,
                 prefix.to_str()?,
                 &step,
+                key.as_ref(),
                 is_typing,
             )?;
         }
@@ -201,6 +276,7 @@ fn observe(
     instance: abi::Handle,
     input: &str,
     step: &Step,
+    key: Option<&Key>,
     is_typing: bool,
 ) -> Result<()> {
     let mut value = std::ptr::null_mut();
@@ -208,6 +284,9 @@ fn observe(
     let value = abi::StringValue::new(value, release);
     out.write_all(b"{\"input\":")?;
     output::string(out, input)?;
+    if let Some(key) = key {
+        key.write(out)?;
+    }
     write!(
         out,
         ",\"parsed\":{},\"guess_sentence\":{},\"get_sentence\":{ok},\"sentence\":",

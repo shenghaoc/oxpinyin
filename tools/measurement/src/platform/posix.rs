@@ -32,6 +32,16 @@ fn clock(id: libc::clockid_t) -> u64 {
     }
     time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
 }
+/// The major page faults of this process so far: `getrusage` `ru_majflt`.
+pub(crate) fn major_faults() -> Option<u64> {
+    // SAFETY: rusage contains only integer fields, which admit zero.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: usage points to writable storage for one rusage.
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
+        return None;
+    }
+    u64::try_from(usage.ru_majflt).ok()
+}
 pub(crate) fn fresh_user(path: &Path) -> Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     let mut builder = std::fs::DirBuilder::new();

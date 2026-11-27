@@ -1,6 +1,10 @@
 use crate::Result;
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, OsStr};
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 use valgrind_requests::callgrind;
 
 pub(crate) struct Collection;
@@ -250,6 +254,108 @@ mod allocator {
         "null"
     }
     pub(super) fn dump(_directory: &str, _tag: &str) {}
+}
+
+/// `PERF_PAGE_OUT`: pages out, in this process, the mappings of the library and of the files
+/// directly in the system data directory, as an idle system reclaims them. A file is known by
+/// its device and inode, so a symbolic link in the given paths does not hide its mappings.
+pub(crate) struct PageOut {
+    library: FileId,
+    data: FileId,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FileId {
+    device: u64,
+    inode: u64,
+}
+impl FileId {
+    fn of(path: &Path) -> std::io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+}
+impl PageOut {
+    pub(crate) fn new(library: &str, data: &str) -> Result<Self> {
+        let id = |path: &str| {
+            FileId::of(path.as_ref()).map_err(|error| format!("PERF_PAGE_OUT: {path}: {error}"))
+        };
+        Ok(Self {
+            library: id(library)?,
+            data: id(data)?,
+        })
+    }
+    /// Calls `madvise(MADV_PAGEOUT)` on each mapping of the library and of a data file, then
+    /// `posix_fadvise(POSIX_FADV_DONTNEED)` on its file. Fails when the kernel refuses, or when
+    /// the library or the data has no mapping. The read runs before the measured key starts.
+    pub(crate) fn run(&self) -> Result<super::PagedOut> {
+        // Bytes, not a string: a mapped path need not be UTF-8.
+        let maps = std::fs::read("/proc/self/maps")?;
+        let mut paged = super::PagedOut::default();
+        for line in maps.split(|&b| b == b'\n') {
+            self.advise(line, &mut paged)?;
+        }
+        crate::require(
+            paged.library_bytes != 0 && paged.data_bytes != 0,
+            "PERF_PAGE_OUT: the library or the data has no mapping",
+        )?;
+        Ok(paged)
+    }
+    /// Pages out one `/proc/self/maps` line's mapping when it maps the library or a data file.
+    fn advise(&self, line: &[u8], paged: &mut super::PagedOut) -> Result<()> {
+        // The path starts at the line's first `/`: no earlier field contains one.
+        let Some(at) = line.iter().position(|&b| b == b'/') else {
+            return Ok(());
+        };
+        let path = Path::new(OsStr::from_bytes(&line[at..]));
+        // A path that no longer names a file, such as a deleted one, is not the subject's.
+        let Ok(id) = FileId::of(path) else {
+            return Ok(());
+        };
+        let library = id == self.library;
+        if !library && path.parent().and_then(|parent| FileId::of(parent).ok()) != Some(self.data) {
+            return Ok(());
+        }
+        let range = mapping_range(line).ok_or("PERF_PAGE_OUT: unreadable /proc/self/maps line")?;
+        let bytes = range.len();
+        // SAFETY: the range is a mapping of this process, as /proc/self/maps lists it.
+        // MADV_PAGEOUT reclaims its pages and leaves the mapping and its contents unchanged.
+        let status = unsafe {
+            libc::madvise(
+                std::ptr::without_provenance_mut(range.start),
+                bytes,
+                libc::MADV_PAGEOUT,
+            )
+        };
+        if status != 0 {
+            let error = std::io::Error::last_os_error();
+            return Err(format!("PERF_PAGE_OUT: madvise {}: {error}", path.display()).into());
+        }
+        let file = std::fs::File::open(path)
+            .map_err(|error| format!("PERF_PAGE_OUT: {}: {error}", path.display()))?;
+        // SAFETY: file is open for the call; offset 0 and length 0 cover the whole file.
+        let status =
+            unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
+        if status != 0 {
+            let error = std::io::Error::from_raw_os_error(status);
+            return Err(format!("PERF_PAGE_OUT: posix_fadvise {}: {error}", path.display()).into());
+        }
+        paged.mappings += 1;
+        if library {
+            paged.library_bytes += bytes as u64;
+        } else {
+            paged.data_bytes += bytes as u64;
+        }
+        Ok(())
+    }
+}
+/// The address range of a `/proc/self/maps` line: its first field, `start-end` in hexadecimal.
+fn mapping_range(line: &[u8]) -> Option<std::ops::Range<usize>> {
+    let field = line.split(|&b| b == b' ').next()?;
+    let (start, end) = std::str::from_utf8(field).ok()?.split_once('-')?;
+    Some(usize::from_str_radix(start, 16).ok()?..usize::from_str_radix(end, 16).ok()?)
 }
 
 pub(crate) fn native(_args: &[String]) -> Result<()> {

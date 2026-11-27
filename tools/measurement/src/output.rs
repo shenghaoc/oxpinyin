@@ -31,6 +31,13 @@ pub(crate) fn nullable(out: &mut impl Write, value: Option<&str>) -> io::Result<
     }
 }
 
+pub(crate) fn nullable_number(out: &mut impl Write, value: Option<u64>) -> io::Result<()> {
+    match value {
+        Some(number) => write!(out, "{number}"),
+        None => out.write_all(b"null"),
+    }
+}
+
 pub(crate) fn numbers(out: &mut impl Write, values: &[u64]) -> io::Result<()> {
     out.write_all(b"[")?;
     for (i, value) in values.iter().enumerate() {
