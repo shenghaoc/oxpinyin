@@ -18,7 +18,7 @@ fn prefix_filter_checks_the_stored_length() {
     let hao = ChewingKey::from_pinyin("hao").unwrap();
     for (query, stored, expected) in [(&[ni][..], &[ni, hao][..], true), (&[ni, ni], &[ni], false)]
     {
-        assert_eq!(prefix_keys_match(query, stored), expected);
+        assert_eq!(prefix_keys_match(query, stored.iter().copied()), expected);
     }
 }
 
@@ -173,7 +173,13 @@ fn suggestion_walk_matches_the_separate_probes() {
         let mut fused = Vec::new();
         let fused_overlong = table
             .walk_suggestions(&[ni], |len, items| {
-                fused.push((len, items.to_vec()));
+                let items: Vec<PinyinIndexItem> = items
+                    .map(|item| PinyinIndexItem {
+                        token: item.token,
+                        keys: item.keys().collect(),
+                    })
+                    .collect();
+                fused.push((len, items));
                 Ok(false)
             })
             .unwrap();

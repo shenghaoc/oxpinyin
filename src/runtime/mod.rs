@@ -588,36 +588,55 @@ impl<'a> RuntimeDict<'a> {
     /// frequencies and the unigram do not participate in those checks.
     #[must_use]
     pub fn token_text(&self, token: u32) -> Option<PhraseText> {
+        self.read_text_item(token, |item| item.phrase_text())
+    }
+
+    /// Reads the item [`Self::token_text`] takes its text from: a system
+    /// library's live item, or a visible user library's own item. `None`
+    /// where there is no such item or `read` answers none.
+    fn read_text_item<R>(
+        &self,
+        token: u32,
+        read: impl FnOnce(PhraseItemView<'_>) -> Option<R>,
+    ) -> Option<R> {
         if self.is_system_library(phrase_index_library_index(token)) {
             return self
                 .live_items()
-                .read(token, |item| item.phrase_text())
+                .read(token, |item| read(item.view()))
                 .found()
                 .flatten();
         }
         if !self.library_visible(phrase_index_library_index(token)) {
             return None;
         }
-        self.user
-            .with_user_item(token, |item| item.phrase_text())
-            .flatten()
+        self.user.with_user_item(token, read).flatten()
     }
 
-    /// Whether [`Self::token_text`] answers a text, without building it.
-    fn token_text_converts(&self, token: u32) -> bool {
-        if self.is_system_library(phrase_index_library_index(token)) {
-            return self
-                .live_items()
-                .read(token, |item| item.view().phrase_text_converts())
-                .found()
-                .unwrap_or(false);
+    /// Resolves `token` as [`Dictionary::phrase_text_for_token`] reads its
+    /// text: through the library gate to [`Self::read_text_item`]'s item,
+    /// answered by `item`; where that answers none, the full read of the
+    /// shipped item, then the user store's phrase, answered by `text`. The
+    /// text, its presence and its length share this one chain.
+    fn resolve_phrase_text<R>(
+        &self,
+        token: u32,
+        item: impl FnOnce(PhraseItemView<'_>) -> Option<R>,
+        text: impl FnOnce(PhraseText) -> R,
+    ) -> Option<R> {
+        if !self.library_visible_token(token) {
+            return None;
         }
-        if !self.library_visible(phrase_index_library_index(token)) {
-            return false;
+        if let Some(found) = self.read_text_item(token, item) {
+            return Some(found);
         }
-        self.user
-            .with_user_item(token, |item| item.phrase_text_converts())
-            .unwrap_or(false)
+        self.system
+            .phrase_text(token)
+            .or_else(|| {
+                self.user
+                    .phrase(token)
+                    .and_then(|phrase| phrase.phrase_text())
+            })
+            .map(text)
     }
 
     /// The stored length and text of the token's item, as the C token
@@ -1099,26 +1118,31 @@ impl Dictionary for RuntimeDict<'_> {
     /// items live there). The library mask hides an unloaded library's
     /// token, matching the pin's freed sub-index.
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
-        if !self.library_visible_token(token) {
-            return None;
-        }
-        if let Some(text) = self
-            .token_text(token)
-            .or_else(|| self.system.phrase_text(token))
-        {
-            return Some(text);
-        }
-        let store = self.user;
-        store.phrase(token).and_then(|phrase| phrase.phrase_text())
+        self.resolve_phrase_text(token, |item| item.phrase_text(), |text| text)
     }
 
     /// The first source [`Self::phrase_text_for_token`] reads, checked
     /// without building its text; any other answer takes the full read.
     fn has_phrase_text_for_token(&self, token: u32) -> bool {
-        if !self.library_visible_token(token) {
-            return false;
-        }
-        self.token_text_converts(token) || self.phrase_text_for_token(token).is_some()
+        self.resolve_phrase_text(
+            token,
+            |item| item.phrase_text_converts().then_some(()),
+            drop,
+        )
+        .is_some()
+    }
+
+    /// The first source answers with the item's declared length, without
+    /// building the text: a converting item's text holds one word per
+    /// declared character (`PhraseText::from_stored_words` over
+    /// `phrase_codes`), so its `phrase_length` is the item's. Any other
+    /// answer takes the full read.
+    fn phrase_text_length_for_token(&self, token: u32) -> Option<usize> {
+        self.resolve_phrase_text(
+            token,
+            |item| item.phrase_text_converts().then(|| item.phrase_length()),
+            |text| text.phrase_length(),
+        )
     }
 
     fn phrase_length_for_token(&self, token: u32) -> Option<usize> {

@@ -257,6 +257,13 @@ pub trait Dictionary {
         self.phrase_text_for_token(token).is_some()
     }
 
+    /// The `phrase_length` of the text [`Self::phrase_text_for_token`]
+    /// answers, without building it where the dictionary can.
+    fn phrase_text_length_for_token(&self, token: u32) -> Option<usize> {
+        self.phrase_text_for_token(token)
+            .map(|text| text.phrase_length())
+    }
+
     /// The current phrase item's stored length, or `None` for a missing or
     /// unloaded item. Offset-zero dynamic ranking chooses the longest retained
     /// prefix (`074a2219` pinyin.cpp:1711-1740; zhuyin.cpp:1146-1175).
