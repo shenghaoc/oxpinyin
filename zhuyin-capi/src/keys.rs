@@ -181,11 +181,7 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
         // SAFETY: Handles guarantees the NULL-checked instance is live.
         // Serial calls excludes mutation; no other view is held while
         // this closure reads the scheme.
-        let scheme = unsafe { instance_ref(instance) }
-            .core
-            .live
-            .full_scheme
-            .get();
+        let scheme = unsafe { instance_ref(instance) }.core.live().full_scheme();
         match scheme {
             oxpinyin::facade::FullPinyinScheme::Luoma => core.luoma_pinyin_text(),
             oxpinyin::facade::FullPinyinScheme::SecondaryZhuyin => core.secondary_zhuyin_text(),

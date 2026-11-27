@@ -166,7 +166,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
         let inst = unsafe { crate::state::instance_ref(instance) };
         let token = |text: &str| {
             inst.core
-                .dict
+                .dict()
                 .tokens_for_ucs4(&text.chars().map(u32::from).collect::<Vec<_>>())[0]
         };
         (token("好"), token("你好"), token("好"), token("号"))

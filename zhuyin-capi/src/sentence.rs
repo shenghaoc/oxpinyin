@@ -44,7 +44,7 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::facade::EngineErr
 }
 
 fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    if inst.core.parsed_len == 0 {
+    if inst.core.parsed_len() == 0 {
         return false;
     }
     if let Some(parse) = inst.core.zhuyin_parse() {
@@ -60,10 +60,10 @@ fn matrix_has_keys(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
     // (074a2219, storage/pinyin_parser2.cpp:238-250,360-378).
     // Inspect the consumed prefix without rebuilding the parse matrix.
     inst.core
-        .session
+        .session()
         .raw_input()
         .bytes()
-        .take(inst.core.parsed_len)
+        .take(inst.core.parsed_len())
         .any(|byte| byte != b'\'')
 }
 
@@ -104,7 +104,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     // each tail substring's search with the validating `reduce_tokens`
     // (`zhuyin.cpp:933`, `:953`), which asserts on more than four tokens
     // (`phrase_large_table3.h:95`).
-    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, prefix.as_ref()) else {
+    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(inst.core.dict(), prefix.as_ref()) else {
         std::process::abort();
     };
     let matrix_has_keys = matrix_has_keys(&inst.read());
@@ -335,11 +335,11 @@ fn lookup_window(
 ) -> Result<oxpinyin::facade::CandidateList, CandidateGuessRefusal> {
     let looked_up = if before_cursor {
         inst.core
-            .session
+            .session_mut()
             .candidates_ending_at_for_abi(session_offset, abort_on_rank)
     } else {
         inst.core
-            .session
+            .session_mut()
             .candidates_at_for_abi(session_offset, abort_on_rank)
     };
     let window = match looked_up {
@@ -377,10 +377,11 @@ fn guess_candidates_result(
     if !matrix_has_keys(&inst.read()) {
         return Ok(false);
     }
-    if inst.core.session.set_options(inst.core.options()).is_err() {
+    let options = inst.core.options();
+    if inst.core.session_mut().set_options(options).is_err() {
         return Ok(false);
     }
-    if !inst.core.session.is_composing() {
+    if !inst.core.session().is_composing() {
         return Ok(false);
     }
     // `zhuyin.cpp`'s `_check_offset` asserts `zero_key != key` on the column
@@ -404,7 +405,7 @@ fn guess_candidates_result(
     let session_offset = if let Some(parse) = inst.core.zhuyin_parse() {
         oxpinyin::facade::zhuyin_lookup_session_offset(
             parse,
-            inst.core.session.raw_input().len(),
+            inst.core.session().raw_input().len(),
             normalized,
             before_cursor,
         )
@@ -439,7 +440,7 @@ fn guess_candidates_result(
     // The facade's `guint32` unigram total: the loaded libraries' sum, the
     // user store's deltas and the accepted
     // `zhuyin_token_add_unigram_frequency` deltas, wrapped.
-    let abort_on_rank = searched_here && inst.core.lm.amplified_total() == 0;
+    let abort_on_rank = searched_here && inst.core.lm().amplified_total() == 0;
     let window_owned = lookup_window(inst, session_offset, before_cursor, abort_on_rank)?;
     // Every snapshot row below carries its own span in this window, which a
     // later `zhuyin_choose_candidate` selects; the window's storage then

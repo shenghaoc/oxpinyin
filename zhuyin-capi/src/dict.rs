@@ -60,7 +60,7 @@ pub unsafe extern "C" fn zhuyin_lookup_tokens(
         // Count the pin's prepared arrays before GLib can call a log handler.
         (0..oxpinyin::facade::PHRASE_INDEX_LIBRARY_COUNT)
             .filter(|&library| {
-                inst.core.dict.phrase_table_token_enabled(
+                inst.core.dict().phrase_table_token_enabled(
                     oxpinyin::facade::phrase_index_make_token(library, 0),
                 )
             })
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
     // an intermediate `Vec`.
     if inst
         .core
-        .dict
+        .dict()
         .with_user_nth_pronunciation_words(token, nth as usize, |length, words| {
             if !keys.is_null() {
                 // SAFETY: The caller supplies a GArray with two-byte
@@ -270,7 +270,11 @@ pub unsafe extern "C" fn zhuyin_token_get_nth_pronunciation(
         }
         return true;
     }
-    let Some(reading) = inst.core.dict.token_nth_pronunciation(token, nth as usize) else {
+    let Some(reading) = inst
+        .core
+        .dict()
+        .token_nth_pronunciation(token, nth as usize)
+    else {
         return false;
     };
     let Some(packed) = reading.keys.as_deref() else {
@@ -349,5 +353,5 @@ pub unsafe extern "C" fn zhuyin_token_add_unigram_frequency(
     delta: GUint,
 ) -> bool {
     let ctx = borrow_or_return!(instance, crate::state::instance_context_mut, false);
-    ctx.core.runtime.add_unigram_delta(token, delta)
+    ctx.core.runtime_mut().add_unigram_delta(token, delta)
 }

@@ -43,14 +43,14 @@ pub struct PublishedRow {
 /// snapshot).
 pub struct InstanceCore {
     /// Retained composition, with no dictionary or model owner.
-    pub session: crate::engine::SessionState,
+    pub(crate) session: crate::engine::SessionState,
     state: InstanceState,
 }
 
 /// The parse a scheme parse call keeps: one per parse entry point that
 /// reads the input through its own parser rather than the session's scan.
 #[derive(Debug)]
-pub enum ModeParse {
+pub(crate) enum ModeParse {
     /// A zhuyin keyboard parse (the chewing entry point).
     Zhuyin(ZhuyinParse),
     /// A double-pinyin parse.
@@ -62,7 +62,7 @@ pub enum ModeParse {
 impl ModeParse {
     /// The bytes of the original input the parse consumed.
     #[must_use]
-    pub fn consumed(&self) -> usize {
+    pub(crate) fn consumed(&self) -> usize {
         match self {
             Self::Zhuyin(parse) => parse.consumed(),
             Self::Double(parse) => parse.consumed(),
@@ -72,6 +72,39 @@ impl ModeParse {
 }
 
 impl InstanceState {
+    /// The context's live option and scheme state.
+    #[must_use]
+    pub const fn live(&self) -> &LiveOptions {
+        &self.live
+    }
+
+    /// Bytes of raw input the most recent parse call consumed (`m_parsed_len`).
+    #[must_use]
+    pub const fn parsed_len(&self) -> usize {
+        self.parsed_len
+    }
+
+    /// The original input of the stored scheme parse; empty when there is none.
+    #[must_use]
+    pub fn parse_input(&self) -> &str {
+        &self.parse_input
+    }
+
+    /// The pin's parse-time matrix for the index-parsed entry points, for a C crate's test.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn parse_matrix(&self) -> &[crate::engine::MatrixKey] {
+        &self.parse_matrix
+    }
+
+    /// The parse-time matrix, for a C crate's test to change.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub const fn parse_matrix_mut(&mut self) -> &mut Vec<crate::engine::MatrixKey> {
+        &mut self.parse_matrix
+    }
+
     /// The stored zhuyin parse, when the last parse call was the chewing
     /// entry point.
     #[must_use]
@@ -106,31 +139,31 @@ impl InstanceState {
 /// Cursor, parse and presentation state retained between calls.
 pub struct InstanceState {
     /// The context's live option/scheme state, by handle.
-    pub live: LiveOptions,
+    pub(crate) live: LiveOptions,
     /// The phrase-segment span DP's output, written by `phrase_segment`
     /// and read by the `get_n_phrase` / `get_phrase_token` pair. Cleared
     /// by the full reset and by nothing else.
-    pub phrase_result: Vec<PhraseToken>,
+    pub(crate) phrase_result: Vec<PhraseToken>,
     /// Bytes of raw input consumed by the most recent parse call —
     /// upstream `m_parsed_len`, in the active parse mode's own
     /// coordinates. Allocation and reset both store 0.
-    pub parsed_len: usize,
+    pub(crate) parsed_len: usize,
     /// The parse the most recent scheme parse call stored: chewing, double
     /// pinyin, or the LUOMA / `SECONDARY_ZHUYIN` full-pinyin index parse.
     /// `None` for plain full pinyin and after a reset. Used for aux text and
     /// candidate-offset mapping back to the original input bytes.
-    pub mode_parse: Option<ModeParse>,
+    pub(crate) mode_parse: Option<ModeParse>,
     /// The original input of [`Self::mode_parse`], for sentence/preedit
     /// fallback display and aux-text cursor mapping. Empty while
     /// `mode_parse` is `None`.
-    pub parse_input: String,
+    pub(crate) parse_input: String,
     /// The pin's parse-time matrix for the index-parsed full pinyin, double
     /// pinyin and chewing entry points: the parse's keys plus the steps the
     /// pin runs after `fill_matrix` under the options in force at that parse
     /// (fuzzy alternatives, and for libpinyin full pinyin the resplit and divided
     /// passes). Empty for plain full pinyin, whose scan matrix the session
     /// keeps, and while no key was placed.
-    pub parse_matrix: Vec<crate::engine::MatrixKey>,
+    pub(crate) parse_matrix: Vec<crate::engine::MatrixKey>,
     /// The layout of the pin's constraint array as the last validation
     /// sized it. Allocation and the full reset store the empty layout.
     validated: ValidatedLayout,
@@ -154,15 +187,48 @@ struct ValidatedLayout {
 /// One operation's composition and storage borrows.
 pub struct InstanceView<'a, S, E> {
     /// Composition borrowed with current dictionary and model readers.
-    pub session: crate::engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E>,
+    pub(crate) session: crate::engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E>,
     /// Learning store borrowed for this operation.
-    pub user: &'a UserStore,
+    pub(crate) user: &'a UserStore,
     /// Current dictionary reader.
-    pub dict: RuntimeDict<'a>,
+    pub(crate) dict: RuntimeDict<'a>,
     /// Current language-model reader.
-    pub lm: RuntimeLm<'a>,
+    pub(crate) lm: RuntimeLm<'a>,
     /// Borrowed cursor, parse and presentation state.
-    pub state: S,
+    pub(crate) state: S,
+}
+
+impl<'a, S, E> InstanceView<'a, S, E> {
+    /// The composition, with the current dictionary and model readers.
+    #[must_use]
+    pub const fn session(&self) -> &crate::engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E> {
+        &self.session
+    }
+
+    /// The composition, for a change.
+    pub const fn session_mut(
+        &mut self,
+    ) -> &mut crate::engine::Session<RuntimeDict<'a>, RuntimeLm<'a>, E> {
+        &mut self.session
+    }
+
+    /// The learning store borrowed for this operation.
+    #[must_use]
+    pub const fn user(&self) -> &'a UserStore {
+        self.user
+    }
+
+    /// The current dictionary reader.
+    #[must_use]
+    pub const fn dict(&self) -> &RuntimeDict<'a> {
+        &self.dict
+    }
+
+    /// The current language-model reader.
+    #[must_use]
+    pub const fn lm(&self) -> &RuntimeLm<'a> {
+        &self.lm
+    }
 }
 
 /// An operation that can change composition but only read phrase storage.
@@ -211,6 +277,11 @@ impl<
 }
 
 impl InstanceCore {
+    /// The retained composition, for a change.
+    pub const fn session_mut(&mut self) -> &mut crate::engine::SessionState {
+        &mut self.session
+    }
+
     /// Assemble retained state; operation readers are supplied by the context.
     pub(crate) fn new(session: crate::engine::SessionState, live: LiveOptions) -> Self {
         Self {

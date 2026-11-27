@@ -49,13 +49,13 @@ fn guess_predicted_result(
     // `_compute_prefixes`' validating `reduce_tokens` (`pinyin.cpp:2424`,
     // `:1415`; `phrase_large_table3.h:95`) asserts on a tail substring with
     // more than four tokens, before the empty check.
-    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, prefix) else {
+    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(inst.core.dict(), prefix) else {
         std::process::abort();
     };
     // `m_prefixes` is emptied and refilled before the empty check
     // (`pinyin.cpp:2423-2426`).
-    inst.core.session.set_candidate_prefixes(prefixes);
-    let prefixes = inst.core.session.candidate_prefixes();
+    inst.core.session_mut().set_candidate_prefixes(prefixes);
+    let prefixes = inst.core.session().candidate_prefixes();
     let Some(prefix) = prefix.filter(|_| !prefixes.is_empty()) else {
         return Ok(false);
     };
@@ -64,16 +64,16 @@ fn guess_predicted_result(
     // gram the pin reads past in its walk is refused here: one warning and
     // `false`, with the candidate list left empty in both APIs (the short
     // and the residual-total grams abort inside the walk).
-    let successors = oxpinyin::facade::predicted_bigram_items(inst.core.user, prefixes)?;
+    let successors = oxpinyin::facade::predicted_bigram_items(inst.core.user(), prefixes)?;
 
     let mut items = Vec::new();
-    append_predicted_bigrams(&inst.core.dict, &successors, &mut items);
-    append_predicted_prefix(&inst.core.dict, inst.core.user, prefix, &mut items);
+    append_predicted_bigrams(inst.core.dict(), &successors, &mut items);
+    append_predicted_prefix(inst.core.dict(), inst.core.user(), prefix, &mut items);
     score_predictions(
         &mut items,
-        &inst.core.dict,
-        inst.core.user,
-        inst.core.lm.amplified_total(),
+        inst.core.dict(),
+        inst.core.user(),
+        inst.core.lm().amplified_total(),
         inst.state.predicted_lambda,
     );
     sort_predicted(&mut items);
@@ -137,7 +137,7 @@ pub(crate) fn clear_borrowed_prefix(
     if borrowed {
         inst.state.candidates.clear();
         inst.core
-            .session
+            .session_mut()
             .set_candidate_prefixes(core::iter::empty());
     }
     borrowed
@@ -218,8 +218,8 @@ pub(crate) fn prediction_answer(outcome: Result<bool, &'static str>) -> bool {
 fn prepend_punctuations(inst: &mut crate::state::CapiInstanceMut<'_>) {
     let mut puncts: Vec<Vec<u8>> = Vec::new();
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
-    for token in inst.core.session.candidate_prefixes() {
-        for punct in inst.core.dict.punctuations(*token) {
+    for token in inst.core.session().candidate_prefixes() {
+        for punct in inst.core.dict().punctuations(*token) {
             let bytes = phrase_text_bytes(&punct).into_owned();
             if seen.insert(bytes.clone()) {
                 puncts.push(bytes);

@@ -60,7 +60,7 @@ pub unsafe fn with_store<R>(
     // `zhuyin_alloc_instance`; the store is a value field, and the shared
     // reference lives only for the duration of `f`.
     let inst = unsafe { instance_mut(instance) };
-    f(inst.core.user)
+    f(inst.core.user())
 }
 
 /// Hand-built `PhraseIndexLogger` records for the journal-replay tests

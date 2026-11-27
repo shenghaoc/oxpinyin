@@ -124,7 +124,7 @@ unsafe fn selected_tokens(instance: *mut PinyinInstance) -> Vec<u32> {
     // SAFETY: the live instance is read between serialized ABI calls.
     unsafe { crate::state::instance_ref(instance) }
         .core
-        .session
+        .session()
         .selected_tokens()
         .to_vec()
 }
@@ -146,7 +146,7 @@ fn removing_a_user_candidate_keeps_the_instance_owner(#[values(false, true)] fin
     assert!(unsafe { pinyin_remove_user_candidate(instance, candidate) });
     // SAFETY: the instance remains live; the removal's exclusive borrow ended.
     let inst = unsafe { crate::state::instance_ref(instance) };
-    assert!(inst.core.user.phrase(token).is_none());
+    assert!(inst.core.user().phrase(token).is_none());
     unsafe { crate::instance::pinyin_free_instance(instance) };
     if !finalized {
         unsafe { crate::context::pinyin_fini(context) };
@@ -358,7 +358,7 @@ impl Open {
         // SAFETY: as in `store`.
         unsafe { instance_ref(self.instance) }
             .core
-            .dict
+            .dict()
             .system()
             .libraries()
             .library(u32::from(library) << 24)
@@ -371,7 +371,7 @@ impl Open {
         // SAFETY: as in `store`.
         unsafe { instance_ref(self.instance) }
             .core
-            .lm
+            .lm()
             .amplified_total()
     }
 }
@@ -478,7 +478,7 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
         inst.core
-            .dict
+            .dict()
             .tokens_for_ucs4(&"你".chars().map(u32::from).collect::<Vec<_>>())[0]
     };
 
@@ -564,8 +564,8 @@ fn choosing_an_existing_prefix_row_after_item_removal_advances_the_facade_total(
     // Library 1 is loaded; this slot is absent from the mini fixture, so the
     // item read fails exactly as a journal-removed phrase item does.
     let token = 0x0100_FFFE;
-    assert!(inst.core.dict.phrase_table_token_enabled(token));
-    assert!(!inst.core.dict.token_exists(token));
+    assert!(inst.core.dict().phrase_table_token_enabled(token));
+    assert!(!inst.core.dict().token_exists(token));
     inst.state.candidates.push(CapiCandidate {
         text: TextSpan::NULL,
         text_ptr: ptr::null(),
@@ -576,11 +576,11 @@ fn choosing_an_existing_prefix_row_after_item_removal_advances_the_facade_total(
         end: 0,
     });
     let candidate = crate::state::candidate_ptr(&inst.state.candidates[0]);
-    let before = inst.core.lm.amplified_total();
+    let before = inst.core.lm().amplified_total();
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, candidate) });
     // SAFETY: the C operation completed; re-borrow its live instance.
     let inst = unsafe { instance_ref(instance) };
-    let after = inst.core.lm.amplified_total();
+    let after = inst.core.lm().amplified_total();
     assert_eq!(
         after - before,
         483,
@@ -588,7 +588,7 @@ fn choosing_an_existing_prefix_row_after_item_removal_advances_the_facade_total(
     );
     assert!(
         inst.core
-            .dict
+            .dict()
             .live_items()
             .read(token, |_| ())
             .found()
@@ -600,17 +600,17 @@ fn choosing_an_existing_prefix_row_after_item_removal_advances_the_facade_total(
         // SAFETY: the preceding instance read has ended before the owner write.
         unsafe { crate::state::instance_context_mut(instance) }
             .core
-            .runtime
+            .runtime_mut()
             .unload_library(1)
     );
     // SAFETY: re-borrow the live instance after the owner write.
     let inst = unsafe { instance_ref(instance) };
-    let before = inst.core.lm.amplified_total();
+    let before = inst.core.lm().amplified_total();
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, candidate) });
     // SAFETY: the C operation completed; re-borrow its live instance.
     let inst = unsafe { instance_ref(instance) };
     assert_eq!(
-        inst.core.lm.amplified_total(),
+        inst.core.lm().amplified_total(),
         before,
         "an unloaded library has no facade total to advance"
     );
@@ -709,7 +709,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
         // SAFETY: the choose completed and the instance is still live.
         unsafe { instance_ref(instance) }
             .core
-            .session
+            .session()
             .selected_tokens(),
         if refused {
             &[][..]
@@ -953,7 +953,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
     // The user store now carries the phrase under nibble 5, with a reading.
     // SAFETY: live instance.
     let inst = unsafe { instance_ref(instance) };
-    let store = inst.core.user;
+    let store = inst.core.user();
     assert_eq!(
         store
             .token_for_phrase_in(oxpinyin::facade::ADDON_DICTIONARY, &text)
@@ -1064,7 +1064,7 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
     // SAFETY: as above.
     let tokens: Vec<u32> = unsafe { instance_ref(instance) }
         .core
-        .session
+        .session()
         .selected_tokens()
         .to_vec();
     assert_eq!(tokens, [PROMOTED]);
@@ -1130,7 +1130,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
     let (index, token, text, keys, total) = {
         // SAFETY: live instance; the snapshot is valid until the next guess.
         let inst = unsafe { instance_ref(instance) };
-        let store = inst.core.user;
+        let store = inst.core.user();
         assert_eq!(store.addon_promotion_range_end(), None);
         let (index, cand) = inst
             .state
@@ -1140,7 +1140,11 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .find(|(_, c)| c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE)
             .expect("art addon offers an ADDON candidate for erhuang");
         let token = cand.token.get().expect("addon token");
-        let item = inst.core.dict.addon_phrase_item(token).expect("addon item");
+        let item = inst
+            .core
+            .dict()
+            .addon_phrase_item(token)
+            .expect("addon item");
         let view = oxpinyin::__internal::data::phrase_library::PhraseItemView::from_bytes(&item)
             .expect("addon item bytes");
         let keys: Vec<_> = view
@@ -1175,7 +1179,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
         // SAFETY: the live instance still owns this snapshot.
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(inst.state.candidates[index].token.get(), Some(token));
-        let store = inst.core.user;
+        let store = inst.core.user();
         assert_eq!(store.addon_promotion_range_end(), None);
         assert!(
             store
@@ -1550,7 +1554,10 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
         // SAFETY: the instance is live and this read ends before the close.
         let inst = unsafe { crate::state::instance_ref(instance) };
         assert_eq!(
-            inst.core.user.bigram_successors(1).expect("the start gram"),
+            inst.core
+                .user()
+                .bigram_successors(1)
+                .expect("the start gram"),
             [(token | 0x8000_0000, 69)]
         );
     }

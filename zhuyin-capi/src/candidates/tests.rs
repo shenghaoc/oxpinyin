@@ -86,7 +86,8 @@ fn choosing_from_a_before_cursor_window_uses_that_window() {
     // The session's own composition offset advanced to the span's end,
     // which is the whole joined buffer here.
     // SAFETY: the instance is live and no other reference is held.
-    let session = unsafe { &instance_mut(instance).core.session };
+    let inst = unsafe { instance_mut(instance) };
+    let session = inst.core.session();
     assert_eq!(
         session.composition_offset(),
         session.raw_input().len(),
@@ -173,7 +174,7 @@ fn reparse_keeps_the_reanchored_candidates_selection(
         (
             index,
             inst.core
-                .dict
+                .dict()
                 .tokens_for_ucs4(&"好".chars().map(u32::from).collect::<Vec<_>>())[0],
         )
     };
@@ -208,7 +209,7 @@ fn reparse_keeps_the_reanchored_candidates_selection(
             // SAFETY: the choose completed and the instance is still live.
             unsafe { crate::state::instance_ref(instance) }
                 .core
-                .session
+                .session()
                 .selected_tokens(),
             if refused {
                 &[][..]

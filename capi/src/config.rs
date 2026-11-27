@@ -66,7 +66,7 @@ pub unsafe extern "C" fn pinyin_set_full_pinyin_scheme(
         // `default:` is an `abort()`.
         std::process::abort();
     };
-    ctx.core.live.full_scheme.set(scheme);
+    ctx.core.live().set_full_scheme(scheme);
     true
 }
 
@@ -107,14 +107,14 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
         // (`:614`), and the wrapper ignores that `false` and answers `true`
         // (`pinyin.cpp:1155-1159`). The scheme stays.
         Err(_) => {
-            ctx.core.live.double_fallback_cleared.set(true);
+            ctx.core.live().set_double_fallback_cleared(true);
             return true;
         }
         Ok(scheme) => scheme,
     };
     // A valid scheme brings its fallback table back.
-    ctx.core.live.double_scheme.set(scheme);
-    ctx.core.live.double_fallback_cleared.set(false);
+    ctx.core.live().set_double_scheme(scheme);
+    ctx.core.live().set_double_fallback_cleared(false);
     true
 }
 
@@ -153,7 +153,7 @@ pub unsafe extern "C" fn pinyin_set_zhuyin_scheme(
         // `abort()`, with the old parser already deleted in memory.
         std::process::abort();
     };
-    ctx.core.live.zhuyin_scheme.set(scheme);
+    ctx.core.live().set_zhuyin_scheme(scheme);
     true
 }
 
@@ -229,7 +229,7 @@ pub unsafe extern "C" fn pinyin_unload_addon_phrase_library(
     }
     let ctx = borrow_or_return!(context, context_mut, false);
     // In range, the pin answers an unconditional `true`.
-    ctx.core.runtime.unload_system_addon(index)
+    ctx.core.runtime_mut().unload_system_addon(index)
 }
 
 // pinyin.cpp:457.

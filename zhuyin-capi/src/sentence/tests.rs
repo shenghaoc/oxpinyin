@@ -35,7 +35,7 @@ unsafe fn zero_total(context: *mut ZhuyinContext) -> *mut ZhuyinInstance {
     // SAFETY: `instance` is live; the reference ends in this block.
     let total = unsafe { crate::state::instance_ref(instance) }
         .core
-        .lm
+        .lm()
         .amplified_total();
     let total = u32::try_from(total).expect("a guint32 total");
     assert!(unsafe {

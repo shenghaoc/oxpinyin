@@ -62,7 +62,7 @@ impl CapiContext {
             oxpinyin::facade::UserConfLaw::Pinyin,
         )?;
         // Use the `gfloat` scanned by `table_info.cpp:220` directly.
-        let predicted_lambda = core.runtime.table_conf().lambda_f32();
+        let predicted_lambda = core.runtime().table_conf().lambda_f32();
         Ok(Self {
             predicted_lambda,
             core,
@@ -106,7 +106,7 @@ impl CapiContext {
             // the pin dies of SIGSEGV on the empty chunk (class (b)), so
             // the call fails with one warning.
             Err(oxpinyin::facade::LibraryRowAssert::NullChunkName)
-                if oxpinyin::facade::null_chunk_asserts(self.core.runtime.system_dir()) =>
+                if oxpinyin::facade::null_chunk_asserts(self.core.runtime().system_dir()) =>
             {
                 std::process::abort()
             }
@@ -337,7 +337,7 @@ pub(crate) unsafe fn instance_ref<'a>(ptr: *mut PinyinInstance) -> CapiInstanceR
     let instance = unsafe { handles::instance_ref(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let runtime = &context.core.runtime;
+    let runtime = &context.core.runtime();
     CapiInstance {
         context: instance.context,
         owner: &instance.owner,
@@ -354,7 +354,7 @@ pub(crate) unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> CapiInstanceM
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let runtime = &context.core.runtime;
+    let runtime = &context.core.runtime();
     CapiInstance {
         context: instance.context,
         owner: &instance.owner,

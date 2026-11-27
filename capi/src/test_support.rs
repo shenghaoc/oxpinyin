@@ -99,7 +99,7 @@ pub unsafe fn wrap_facade_total_to_zero(instance: *mut PinyinInstance) {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
     let total = unsafe { crate::state::instance_ref(instance) }
         .core
-        .lm
+        .lm()
         .amplified_total();
     let total = u32::try_from(total).expect("a guint32 total");
     assert!(unsafe {
@@ -108,7 +108,7 @@ pub unsafe fn wrap_facade_total_to_zero(instance: *mut PinyinInstance) {
     // SAFETY: as above.
     let after = unsafe { crate::state::instance_ref(instance) }
         .core
-        .lm
+        .lm()
         .amplified_total();
     assert_eq!(after, 0, "the facade total wraps to zero");
 }
@@ -145,7 +145,7 @@ pub(crate) unsafe fn with_store<R>(
     // SAFETY: tests call this only with a live instance, between serialized
     // C operations. The closure cannot return a borrow into the store.
     let inst = unsafe { instance_ref(instance) };
-    read(inst.core.user)
+    read(inst.core.user())
 }
 
 /// Read the instance's dictionary for one assertion; no reference escapes.
@@ -160,7 +160,7 @@ pub(crate) unsafe fn with_dict<R>(
     // SAFETY: as `with_store`'s: a live instance, between serialized C
     // operations. The closure cannot return a borrow into the dictionary.
     let inst = unsafe { instance_ref(instance) };
-    read(&inst.core.dict)
+    read(inst.core.dict())
 }
 
 /// The first snapshot row of `kind`, with its token.

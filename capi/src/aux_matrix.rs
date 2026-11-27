@@ -97,7 +97,7 @@ impl SharedMatrix {
         keys: &[KeyAt],
     ) -> Option<Self> {
         let core = &inst.core;
-        let parsed_len = core.parsed_len;
+        let parsed_len = core.parsed_len();
         let mut placed = Vec::new();
         if let Some(parse) = core.double_parse() {
             // `mode_key_list` leaves the double-pinyin tone out; the key

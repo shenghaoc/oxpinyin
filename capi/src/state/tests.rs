@@ -11,7 +11,7 @@ fn handles_retain_context_and_borrow_the_live_backing() {
     let weak = unsafe {
         context_mut(context).core.set_options(OptionBits::USE_TONE);
         assert_eq!(
-            context_ref(context).core.live.options.get(),
+            context_ref(context).core.live().options(),
             OptionBits::USE_TONE
         );
         let row = candidate(instance, "nihao", 0);

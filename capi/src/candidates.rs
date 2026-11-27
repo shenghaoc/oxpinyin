@@ -545,7 +545,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         // SAFETY: no instance view is live; this serialized C operation
         // exclusively borrows the retained owner for the unigram write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(
+        return unigram_leg_answer(ctx.core.runtime_mut().add_unigram_outcome(
             token,
             oxpinyin::facade::unigram_delta(oxpinyin::facade::INITIAL_SEED),
         ));
@@ -566,7 +566,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
     // The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg (`pinyin.cpp:2565-2576`),
     // reached after the addon promotion exactly as the pin's dispatch
     // falls through to it.
-    if inst.core.session.sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0 {
+    if inst.core.session().sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0 {
         if offset != 0 {
             // Register row 45: the pin's `assert(0 == offset)` (`:2566`),
             // after the addon promotion above, which is in memory.
@@ -580,7 +580,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         // operation exclusively borrows its retained owner for the unigram
         // write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(
+        return unigram_leg_answer(ctx.core.runtime_mut().add_unigram_outcome(
             token,
             oxpinyin::facade::unigram_delta(oxpinyin::facade::INITIAL_SEED),
         ));
@@ -699,7 +699,7 @@ unsafe fn try_promote_addon(
         let addon_token = unsafe { candidate_ref(candidate) }.token.get()?;
         // SAFETY: the caller supplies a live instance with no other view.
         let inst = unsafe { instance_ref(instance) };
-        inst.core.dict.addon_phrase_item(addon_token)?
+        inst.core.dict().addon_phrase_item(addon_token)?
     };
     let promoted = {
         // SAFETY: the read views above have ended; the caller serializes
@@ -791,23 +791,23 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
     // without a bigram (`pinyin.cpp:2608-2616`, `phrase_index.h:628-634`;
     // #1231 ruling). The receiver decides, not the row's display string.
     if candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
-        && !inst.core.dict.token_exists(token)
+        && !inst.core.dict().token_exists(token)
     {
         // An unloaded library has no sub-index: the pin returns
         // ERROR_NO_SUB_PHRASE_INDEX before touching the facade total,
         // and the prefix branch still answers true.
-        if inst.core.dict.phrase_table_token_enabled(token) {
+        if inst.core.dict().phrase_table_token_enabled(token) {
             // SAFETY: the read view is no longer used; the retained owner is
             // exclusively borrowed for this serialized unigram mutation.
             let ctx = unsafe { crate::state::instance_context_mut(instance) };
-            let _ = ctx.core.runtime.add_unigram_delta(
+            let _ = ctx.core.runtime_mut().add_unigram_delta(
                 token,
                 oxpinyin::facade::unigram_delta(oxpinyin::facade::INITIAL_SEED),
             );
         }
         return true;
     }
-    let last = inst.core.session.prefix_predecessor();
+    let last = inst.core.session().prefix_predecessor();
     let prefix = candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE;
     // SAFETY: all candidate and prefix reads are complete; the retained owner
     // is exclusively borrowed for the prediction training write.
@@ -954,7 +954,7 @@ pub unsafe fn oxpinyin_choose_aborts(
         | lookup_candidate_type_t::ZOMBIE_CANDIDATE
         | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
         | lookup_candidate_type_t::ADDON_CANDIDATE => {
-            offset != 0 && inst.core.session.sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
+            offset != 0 && inst.core.session().sort_options() & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
         }
     }
 }

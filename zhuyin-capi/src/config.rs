@@ -49,7 +49,7 @@ pub unsafe extern "C" fn zhuyin_set_chewing_scheme(
         // deleted in memory (`:710-711`).
         std::process::abort();
     };
-    ctx.core.live.zhuyin_scheme.set(scheme);
+    ctx.core.live().set_zhuyin_scheme(scheme);
     true
 }
 
@@ -85,7 +85,7 @@ pub unsafe extern "C" fn zhuyin_set_full_pinyin_scheme(
         // scheme in memory.
         std::process::abort();
     };
-    ctx.core.live.full_scheme.set(scheme);
+    ctx.core.live().set_full_scheme(scheme);
     true
 }
 
