@@ -33,7 +33,9 @@
 # runs `cargo cinstall` through just packaging install (which completes
 # the .pc), with the backend chosen by cargo-c's ordinary
 # `--no-default-features --features <backend>`. See the header of
-# just packaging release-stage.
+# just packaging release-stage. Each lane builds with its distribution's own
+# build flags, as its libpinyin package does, and the install gate requires
+# BIND_NOW on both shipped libraries.
 #
 # Three jobs:
 #   package — 3-container matrix; each child stages the drop-in tree, builds
@@ -144,13 +146,13 @@ jobs:
               bash tar gzip zstd git ca-certificates curl \
               gcc g++ make pkg-config \
               libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev \
-              libglib2.0-dev cargo-c
+              libglib2.0-dev cargo-c dpkg-dev
             ;;
           fedora)
             dnf -y --setopt=install_weak_deps=False install \
               bash tar gzip zstd git curl ca-certificates \
               gcc gcc-c++ make pkgconf \
-              kyotocabinet-devel glib2-devel rpm-build cargo-c
+              kyotocabinet-devel glib2-devel rpm-build redhat-rpm-config cargo-c
             ;;
           arch)
             pacman -Sy --noconfirm \
@@ -216,10 +218,40 @@ jobs:
         if: matrix.backend == 'tkrzw'
         run: uv run --managed-python python -X utf8 -m tools.dev.packaging distro-tkrzw-library --github-env
 
+      # Each lane builds with its distribution's own build flags, taken from
+      # the distribution's own tool, as its libpinyin package is built: the
+      # relink takes LDFLAGS (-z now gives BIND_NOW) and cc-rs takes CFLAGS
+      # and CXXFLAGS for the C++ bridges. The flags stay in this step.
       - name: Build and stage the drop-in tree
         env:
+          DISTRO: ${{ matrix.distro }}
           BACKEND: ${{ matrix.backend }}
         run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            debian)
+              # hardening=+all is the option of Debian's libpinyin debian/rules.
+              eval "$(DEB_BUILD_MAINT_OPTIONS=hardening=+all dpkg-buildflags --export=sh)"
+              ;;
+            fedora)
+              CFLAGS="$(rpm --eval '%{build_cflags}')"
+              CXXFLAGS="$(rpm --eval '%{build_cxxflags}')"
+              LDFLAGS="$(rpm --eval '%{build_ldflags}')"
+              export CFLAGS CXXFLAGS LDFLAGS CC=gcc
+              ;;
+            arch)
+              # makepkg.conf's flags as the file sets them. Its LDFLAGS carry
+              # the hardening (-z now, -z relro).
+              set +u
+              source /etc/makepkg.conf
+              set -u
+              export CFLAGS CXXFLAGS LDFLAGS
+              ;;
+            *)
+              echo "unknown distro '$DISTRO'" >&2
+              exit 2
+              ;;
+          esac
           uv run --managed-python python -X utf8 -m tools.dev.packaging release-stage "$BACKEND" \
             --prefix=/usr --libdir="$LIBDIR" --dest="$PWD/stage"
 
@@ -284,6 +316,11 @@ jobs:
           fail() { echo "::error::gate failed: $*" >&2; exit 1; }
           # The pin installs its shared libraries with mode 0755.
           uv run --managed-python python -X utf8 -m tools.dev.packaging check-library-mode "$LIBDIR"
+          # The distribution's LDFLAGS reached the relink: the shipped
+          # libraries bind every symbol at load time, as its libpinyin does.
+          for library in libpinyin.so.15 libzhuyin.so.15; do
+            readelf -d "$LIBDIR/$library" | grep -q BIND_NOW || fail "$LIBDIR/$library has no BIND_NOW"
+          done
           PCVER="$(uv run --managed-python python -X utf8 -m tools.dev.packaging pc-version)"
           [ "$(pkg-config --modversion libpinyin)" = "$PCVER" ] || fail "libpinyin modversion"
           [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
