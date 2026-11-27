@@ -25,26 +25,38 @@ use oxpinyin::vocab::{NULL_TOKEN, SENTENCE_START};
 
 /// `main` (`gen_ngram.cpp:45-124`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
-    run(args, false);
+    run(args, Trainer::Ngram);
+}
+
+/// Which of the two n-gram trainers runs: `gen_ngram`, which also trains
+/// the unigrams and saves the libraries, or `gen_deleted_ngram`, which
+/// trains the deleted bigram only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Trainer {
+    /// `gen_ngram`.
+    Ngram,
+    /// `gen_deleted_ngram`.
+    DeletedNgram,
 }
 
 /// The shared body of `gen_ngram` and `gen_deleted_ngram`.
-pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
+pub(crate) fn run(args: impl IntoIterator<Item = OsString>, trainer: Trainer) {
     let _ = tool::set_locale_from_environment();
-    let (parameter_string, entries): (&'static std::ffi::CStr, Vec<_>) = if deleted {
-        (
-            c"- generate deleted n-gram",
-            vec![
-                skip_pi_gram_entry(),
-                crate::training::deleted_bigram_entry(),
-            ],
-        )
-    } else {
-        (
-            c"- generate n-gram",
-            vec![skip_pi_gram_entry(), crate::training::bigram_entry()],
-        )
-    };
+    let (parameter_string, entries): (&'static std::ffi::CStr, Vec<_>) =
+        if trainer == Trainer::DeletedNgram {
+            (
+                c"- generate deleted n-gram",
+                vec![
+                    skip_pi_gram_entry(),
+                    crate::training::deleted_bigram_entry(),
+                ],
+            )
+        } else {
+            (
+                c"- generate n-gram",
+                vec![skip_pi_gram_entry(), crate::training::bigram_entry()],
+            )
+        };
     let parsed = tool::parse_options_or_exit(parameter_string, &entries, args);
     let train_pi_gram = parsed.flag(0);
     let bigram_name = parsed.filename(1);
@@ -54,7 +66,7 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
         &conf,
         crate::utils_helper::TableSet::Default,
         &[FileType::SystemFile],
-        if deleted {
+        if trainer == Trainer::DeletedNgram {
             // `gen_deleted_ngram.cpp:72-73`.
             tool::ENODATA
         } else {
@@ -70,8 +82,8 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
             .unwrap_or_else(|error| oxpinyin_tool_support::input::exit_on_store_error(&error))
     });
 
-    train(&mut libraries, bigram.as_ref(), train_pi_gram, deleted);
-    if !deleted {
+    train(&mut libraries, bigram.as_ref(), train_pi_gram, trainer);
+    if trainer == Trainer::Ngram {
         libraries.save_rows(
             &conf,
             crate::utils_helper::TableSet::Default,
@@ -82,7 +94,7 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
 
 /// The `std::getline(std::cin, linebuf)` loop (`gen_ngram.cpp:77-118`,
 /// `gen_deleted_ngram.cpp:78-116`).
-fn train(libraries: &mut Libraries, bigram: Option<&Hash>, train_pi_gram: bool, deleted: bool) {
+fn train(libraries: &mut Libraries, bigram: Option<&Hash>, train_pi_gram: bool, trainer: Trainer) {
     let mut reader = oxpinyin_tool_support::input::LineReader::stdin();
     let mut cur_token = NULL_TOKEN;
     let mut last_token;
@@ -97,7 +109,7 @@ fn train(libraries: &mut Libraries, bigram: Option<&Hash>, train_pi_gram: bool, 
         }
 
         // `/* training uni-gram */`: `gen_ngram` only.
-        if !deleted {
+        if trainer == Trainer::Ngram {
             libraries.add_unigram(cur_token, 1);
         }
 

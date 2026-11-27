@@ -10,5 +10,5 @@ use std::ffi::OsString;
 
 /// `main` (`gen_deleted_ngram.cpp:46-119`).
 pub fn main(args: impl IntoIterator<Item = OsString>) {
-    super::gen_ngram::run(args, true);
+    super::gen_ngram::run(args, super::gen_ngram::Trainer::DeletedNgram);
 }

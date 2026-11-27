@@ -49,17 +49,21 @@ pub struct Parse {
 
 // PinyinDirectParser2::parse and ZhuyinDirectParser2::parse, pinyin_parser2.cpp:623–715
 // and zhuyin_parser2.cpp:858–960.
-/// Parses space- or apostrophe-separated full pinyin, or Zhuyin text when `zhuyin` is
-/// set. Each segment must spell one key. After a match, separator runs count toward the
+/// Parses space- or apostrophe-separated full pinyin, or Zhuyin text under
+/// [`Law::Zhuyin`](oxpinyin::engine::Law::Zhuyin). Each segment must spell one key. After a match, separator runs count toward the
 /// consumed byte prefix. A leading separator or a rejected segment stops the parse.
 #[must_use]
-pub fn parse_direct(input: &[u8], options: oxpinyin::OptionBits, zhuyin: bool) -> Parse {
+pub fn parse_direct(
+    input: &[u8],
+    options: oxpinyin::OptionBits,
+    law: oxpinyin::engine::Law,
+) -> Parse {
     let mut keys = Vec::new();
     let consumed = oxpinyin::__internal::scan_direct(
         input,
         |span| {
             let segment = &input[span];
-            if zhuyin {
+            if law == oxpinyin::engine::Law::Zhuyin {
                 let (key, tone) = oxpinyin::__internal::parse_zhuyin_direct_key(
                     core::str::from_utf8(segment).ok()?,
                     options,

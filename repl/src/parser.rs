@@ -11,7 +11,7 @@ enum Parser {
     Full,
     Double,
     Zhuyin(ZhuyinScheme),
-    Direct(bool),
+    Direct(oxpinyin::engine::Law),
 }
 
 impl Parser {
@@ -44,7 +44,7 @@ impl Parser {
                         .collect(),
                 }
             }
-            Self::Direct(zhuyin) => parse_direct(input, options, zhuyin),
+            Self::Direct(law) => parse_direct(input, options, law),
         }
     }
 }
@@ -91,8 +91,8 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             b"dachen26" => Parser::Zhuyin(ZhuyinScheme::DachenCp26),
             _ => Parser::Full,
         },
-        b"pinyindirect" => Parser::Direct(false),
-        b"zhuyindirect" => Parser::Direct(true),
+        b"pinyindirect" => Parser::Direct(oxpinyin::engine::Law::Pinyin),
+        b"zhuyindirect" => Parser::Direct(oxpinyin::engine::Law::Zhuyin),
         _ => Parser::Full,
     };
     let mut options =

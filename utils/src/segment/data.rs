@@ -34,13 +34,22 @@ pub(crate) struct Tables {
     pub bigram: Option<BigramTable>,
 }
 
+/// Which model a segmentation tool loads beside the unigram tables.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Gram {
+    /// The unigram tables only.
+    Unigram,
+    /// The system bigram too.
+    Bigram,
+}
+
 /// Loads `table.conf`, the phrase table, the system libraries and, when
-/// `with_bigram` is set, the system bigram, ending the program where the
+/// [`Gram::Bigram`], the system bigram, ending the program where the
 /// pin does: a `table.conf` the scanner refused writes the utility's line
 /// and exits `ENOENT`; a chunk that did not load writes `load %s failed!`
 /// and exits `ENOENT`; a malformed `table.conf` the pin `abort()`s on (or
 /// reads uninitialised) is oxpinyin's refusal.
-pub(crate) fn load_or_exit(with_bigram: bool) -> Tables {
+pub(crate) fn load_or_exit(gram: Gram) -> Tables {
     let conf = match TableConf::load(c"table.conf") {
         Ok(conf) => conf,
         // `SystemTableInfo2::load`'s `abort()` sites, and the
@@ -79,7 +88,7 @@ pub(crate) fn load_or_exit(with_bigram: bool) -> Tables {
             tool::exit(tool::ENOENT);
         }
     };
-    let bigram = with_bigram
+    let bigram = (gram == Gram::Bigram)
         .then(|| oxpinyin_tool_support::data::open_bigram(Path::new("bigram.db")).ok())
         .flatten();
     Tables {

@@ -17,7 +17,7 @@ pub(crate) fn parse(pinyin: &CStr) -> Vec<ChewingKey> {
     oxpinyin_tool_support::parser::parse_direct(
         pinyin.to_bytes(),
         oxpinyin::OptionBits::USE_TONE,
-        false,
+        oxpinyin::engine::Law::Pinyin,
     )
     .keys
     .into_iter()
