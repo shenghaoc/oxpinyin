@@ -1,4 +1,4 @@
-//! Lifecycle and settings: opening a session, resetting it, replacing the raw buffer, the live option and shape switches, and the read-only accessors (raw input, candidates, composition offset).
+//! Lifecycle and settings: opening a session, resetting it, replacing the raw buffer, the live option and shape switches, and the read-only accessors (raw input, composition offset).
 
 use super::*;
 
@@ -7,29 +7,35 @@ where
     D: Dictionary<Syllable = SyllableKey>,
     L: LanguageModel,
 {
-    /// Opens a session over the supplied backends.
+    /// Opens a session over the supplied backends under `options`, the
+    /// word of the context that owns it.
     ///
-    /// Settings and backend handles arrive as data; the session reads no
-    /// environment and discovers no path. Construction cannot fail: it
-    /// reads no dictionary or model record.
-    pub fn new(settings: SessionSettings, dictionary: D, model: L) -> Self {
+    /// The option word and backend handles arrive as data; the session
+    /// reads no environment and discovers no path. Construction cannot
+    /// fail: it reads no dictionary or model record.
+    pub fn new(dictionary: D, model: L, options: OptionBits) -> Self {
         Self {
             dictionary,
             model,
-            state: SessionState {
-                options: settings.options(),
-                law: Law::Pinyin,
-                defer_list_builds: false,
-                input: InputBuffer::default(),
-                record: SelectionRecord::default(),
-                constraints: crate::engine::constraint::ConstraintStore::default(),
-                lookup: Lookup::default(),
-                sentence: SentenceState::default(),
-                candidate_prefixes: Vec::new(),
-                scratch: Scratch::default(),
-                #[cfg(test)]
-                scan_unreadable: 0,
-            },
+            options,
+            state: SessionState::default(),
+        }
+    }
+}
+
+impl Default for SessionState {
+    /// An empty composition: no input, no selection, no constraints and no
+    /// sentence rows, under the pinyin law and the parity sort word.
+    fn default() -> Self {
+        Self {
+            law: Law::Pinyin,
+            input: InputBuffer::default(),
+            record: SelectionRecord::default(),
+            constraints: crate::engine::constraint::ConstraintStore::default(),
+            sort_word: PARITY_SORT_WORD,
+            sentence: SentenceState::default(),
+            candidate_prefixes: Vec::new(),
+            scratch: Scratch::default(),
         }
     }
 }
@@ -53,7 +59,7 @@ where
             .starts_with(&self.input.as_bytes()[..self.record.consumed()])
     }
 
-    /// The option word applied ([`Self::set_options`]).
+    /// The context's option word this operation runs under.
     #[must_use]
     pub fn options(&self) -> OptionBits {
         self.options
@@ -62,7 +68,7 @@ where
     /// The last sort-option word applied ([`Self::set_sort_options`]).
     #[must_use]
     pub fn sort_options(&self) -> u32 {
-        self.lookup.sort_word
+        self.sort_word
     }
 
     /// The sort word that orders this session's candidate lists under its
@@ -79,25 +85,9 @@ where
     /// not produce.
     pub(super) fn rank_word(&self) -> u32 {
         match self.law {
-            Law::Pinyin => self.lookup.sort_word,
+            Law::Pinyin => self.sort_word,
             Law::Zhuyin => SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY,
         }
-    }
-
-    /// The current candidates, in rank order.
-    ///
-    /// Sentence rows appear at the head of this list only after
-    /// [`Session::guess_sentence`] has run for the current composition:
-    /// upstream's candidate list prepends its n-best rows exactly when
-    /// `m_nbest_results` is non-empty (`pinyin.cpp:2292-2293`), and the
-    /// corpus pins were captured without a sentence guess.
-    ///
-    /// Under `Session::set_defer_list_builds`, call
-    /// `Session::refresh_candidates` first.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn candidates(&self) -> &CandidateList {
-        &self.lookup.candidates
     }
 
     /// Whether a sentence lookup has run since the last reset.
@@ -160,8 +150,8 @@ where
     /// Bytes of the raw input consumed by selections so far — the
     /// composition offset the candidate lookup is anchored at.
     ///
-    /// After a successful [`Session::select_target`] this is the chosen
-    /// candidate's absolute end position: the previous anchor plus the
+    /// After a successful token choose ([`Session::select_row`]) this is the
+    /// chosen candidate's absolute end position: the previous anchor plus the
     /// candidate's span (separator run included), never past the raw
     /// input. The C ABIs do not answer it: a choose answers from the row's
     /// own `m_begin` and `m_end` as the pin does.
@@ -194,7 +184,6 @@ where
     pub fn set_candidate_prefixes(&mut self, prefixes: impl IntoIterator<Item = PhraseToken>) {
         self.candidate_prefixes.clear();
         self.candidate_prefixes.extend(prefixes);
-        self.lookup.stale = true;
     }
 
     // pinyin_reset clears m_constraints and m_nbest_results, pinyin.cpp:2693–2704.
@@ -218,35 +207,9 @@ where
     /// Until then `pinyin_get_sentence` answers the old rows and
     /// `pinyin_guess_candidates` prepends them.
     pub(crate) fn discard_composition(&mut self) {
-        self.reset_composition();
         self.input.clear();
         self.record.clear();
         self.constraints.clear();
-    }
-
-    /// The parse-path reset: resets the lookup state (the candidate list).
-    /// The retained parse is replaced by `reparse()`; the raw input, the
-    /// selection record, the constraint store and the n-best rows stay.
-    ///
-    /// `pinyin_parse_more_full_pinyins` replaces the input buffer — the
-    /// frontend re-sends the whole buffer every keystroke — and never
-    /// touches upstream's instance-level `m_constraints` or the chosen
-    /// cursor (`pinyin.cpp:1497-1533`); the next `guess_sentence`
-    /// re-validates the surviving forcings against the new matrix. This
-    /// is that split's engine half: the L2 lifetime rule. The parse leaves
-    /// `m_nbest_results` alone too (`pinyin.cpp:1497-1524`; only
-    /// `pinyin_reset` clears it, `:2700`), so the sentence rows survive
-    /// until the next `guess_sentence` replaces them.
-    ///
-    /// The raw buffer is NOT cleared here: a cleared raw with a surviving
-    /// cursor would leave `consumed > raw.len()` observable, and every
-    /// `raw[consumed..]` slice would panic — the constitution forbids that
-    /// window. Input replacement is atomic
-    /// in [`Session::replace_raw`], which clears, refills, clamps, and
-    /// refreshes in one call, so this reset alone always leaves a
-    /// consistent session.
-    pub(crate) fn reset_composition(&mut self) {
-        self.lookup.reset();
     }
 
     // pinyin_parse_more_full_pinyins, pinyin.cpp:1497–1524. Full-pinyin prefix consumption
@@ -257,33 +220,16 @@ where
     ///
     /// # Errors
     ///
-    /// A parse, reconciliation or refresh error can leave the new input visible.
+    /// A parse or reconciliation error can leave the new input visible.
     pub(crate) fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
-        self.replace_raw_with_physical_separators(text, true)
-    }
-
-    /// Replaces the whole input and records whether its apostrophes were typed. Pass `false`
-    /// for separators inserted between canonical syllables. The trellis uses this
-    /// distinction.
-    ///
-    /// # Errors
-    ///
-    /// Propagates parse, selection-reconciliation and refresh errors after the new input and
-    /// separator mode have been stored.
-    pub(crate) fn replace_raw_with_physical_separators(
-        &mut self,
-        text: &str,
-        physical_separators: bool,
-    ) -> Result<(), EngineError> {
         self.input.clear_exact();
         let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
-        self.input.set_physical_separators(physical_separators);
         self.reparse()?;
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
-        self.refresh_after_parse()
+        Ok(())
     }
 
     /// Replaces the raw input with `text` parsed into exactly
@@ -301,8 +247,8 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when the refresh under the new input hits
-    /// a backend failure.
+    /// Returns [`EngineError`] when the parse or the reconciliation under
+    /// the new input hits a backend failure.
     pub(crate) fn replace_raw_exact(
         &mut self,
         text: &str,
@@ -315,7 +261,7 @@ where
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
-        self.refresh_after_parse()
+        Ok(())
     }
 
     /// Replaces input with the typed full pinyin `text` and the keys an
@@ -328,7 +274,7 @@ where
     /// `text`; a segment reaching past its end is dropped.
     ///
     /// # Errors
-    /// Returns [`EngineError`] if refreshing the new input fails.
+    /// Returns [`EngineError`] if the parse or the reconciliation of the new input fails.
     pub(crate) fn replace_raw_full_pinyin(
         &mut self,
         text: &str,
@@ -341,7 +287,7 @@ where
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
-        self.refresh_after_parse()
+        Ok(())
     }
 
     /// Reconciles the selection record to the new input without changing
@@ -394,33 +340,6 @@ where
         state.record.clamp_consumed(state.input.as_str());
     }
 
-    // pinyin_set_options stores the word and nothing else, pinyin.cpp:1299–1307 (the table
-    // forwards are under #if 0). Existing matrix reads are at pinyin.cpp:1373–1386,2184–2190.
-    /// Replaces the option word and refreshes an active composition. The current matrix
-    /// retains the options used for its parse. New spelling and matrix options take effect at
-    /// the next parse.
-    ///
-    /// Under `Session::set_defer_list_builds` a change leaves the list stale instead and
-    /// searches no table, as `set_sort_options` does: the pin's option store reads nothing.
-    ///
-    /// # Errors
-    ///
-    /// A refresh error leaves the new option word in effect.
-    pub fn set_options(&mut self, options: OptionBits) -> Result<(), EngineError> {
-        if self.options == options {
-            return Ok(());
-        }
-        self.options = options;
-        if self.input.is_empty() {
-            return Ok(());
-        }
-        if self.defer_list_builds {
-            self.lookup.stale = true;
-            return Ok(());
-        }
-        self.refresh()
-    }
-
     /// Apply the candidate-surface sort-option word — `m_sort_option`
     /// (`pinyin.cpp:2203` at the pin), re-stored by every
     /// `pinyin_guess_candidates` and read by `pinyin_choose_candidate`.
@@ -435,33 +354,15 @@ where
     /// key compares equal, so its ties fall to the keys after it and then
     /// to the collection order).
     ///
-    /// Refreshes a composing session, exactly `set_options`'s contract:
-    /// the cached list's order and LONGER row are functions of the word.
-    /// Under `Session::set_defer_list_builds` a change leaves the list
-    /// stale instead, for `Session::refresh_candidates`: the pin takes the
-    /// word as a `pinyin_guess_candidates` argument and builds once under it
-    /// (`pinyin.cpp:2184-2198` at 074a2219), as `Session::candidates_at`
-    /// does.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] when a composing session fails to refresh
-    /// under the new word.
-    pub fn set_sort_options(&mut self, sort_word: u32) -> Result<(), EngineError> {
-        if self.lookup.sort_word == sort_word {
-            return Ok(());
-        }
-        self.lookup.sort_word = sort_word;
-        if self.input.is_empty() {
-            return Ok(());
-        }
-        if self.defer_list_builds {
-            self.lookup.stale = true;
-            return Ok(());
-        }
-        self.refresh()
+    /// The word takes effect at the next candidate window: the pin takes it
+    /// as a `pinyin_guess_candidates` argument and builds once under it
+    /// (`pinyin.cpp:2184-2198` at 074a2219).
+    pub fn set_sort_options(&mut self, sort_word: u32) {
+        self.sort_word = sort_word;
     }
+}
 
+impl SessionState {
     /// Sets the surface's upstream law ([`Law`]). [`Law::Pinyin`] by default.
     ///
     /// Under [`Law::Zhuyin`] the prepended sentence rows collapse onto the
@@ -491,25 +392,5 @@ where
     /// the next sentence lookup.
     pub fn set_law(&mut self, law: Law) {
         self.law = law;
-    }
-
-    /// Selects whether the parse seams ([`Session::replace_raw`] and its
-    /// variants), the sentence guesses ([`Session::guess_sentence`],
-    /// [`Session::guess_sentence_with_prefix`]), an option or sort-word change
-    /// ([`Session::set_options`], [`Session::set_sort_options`]) and a selection
-    /// ([`Session::select_target`]) build the candidate list.
-    ///
-    /// Off by default: each builds it, as the session API always has. On,
-    /// the parse seams and the guesses still build the scan matrix, so its
-    /// errors surface where they did, and all five leave the list stale.
-    /// Reading the cached list (`Session::candidates`) does not rebuild it: the
-    /// caller calls `Session::refresh_candidates` first, and a failure of the
-    /// deferred build then surfaces from that call rather than from the parse or
-    /// the guess. Both are test-only. This is the C facades'
-    /// mode: upstream builds candidates only in `pinyin_guess_candidates`
-    /// (`pinyin.cpp:2184-2308` at 074a2219), which the C ABI answers from
-    /// its own re-anchored window ([`Session::candidates_at_for_abi`]).
-    pub(crate) fn set_defer_list_builds(&mut self, defer: bool) {
-        self.defer_list_builds = defer;
     }
 }

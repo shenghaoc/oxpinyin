@@ -31,34 +31,6 @@ pub enum Selection {
     Completed,
 }
 
-/// Sets the incomplete-pinyin option for a new [`Session`]. Construction enables the
-/// divided and resplit tables. [`Session::set_options`] replaces the option word.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SessionSettings {
-    /// Whether initial-only keys are admitted (`PINYIN_INCOMPLETE`).
-    /// On by default.
-    pub(crate) incomplete_pinyin: bool,
-}
-
-impl Default for SessionSettings {
-    fn default() -> Self {
-        Self {
-            incomplete_pinyin: true,
-        }
-    }
-}
-
-impl SessionSettings {
-    /// The option word a session opens under: `PINYIN_INCOMPLETE |
-    /// USE_DIVIDED_TABLE | USE_RESPLIT_TABLE` unless told otherwise. The
-    /// table bits are always on, and incomplete pinyin follows the settings.
-    fn options(self) -> OptionBits {
-        let mut options = OptionBits::USE_DIVIDED_TABLE | OptionBits::USE_RESPLIT_TABLE;
-        options.set(OptionBits::PINYIN_INCOMPLETE, self.incomplete_pinyin);
-        options
-    }
-}
-
 /// One input context.
 ///
 /// Swapping fixture adapters for table-backed loaders is a change of `D` and
@@ -66,10 +38,14 @@ impl SessionSettings {
 ///
 #[derive(Clone, Debug)]
 pub struct Session<D, L, S = SessionState> {
-    // Backends and configuration. Read at construction (and, for the
-    // options, remasked live); never composition state.
+    // Backends and configuration for one operation; never composition state.
     dictionary: D,
     model: L,
+    /// The context's option word, read when the operation binds. The pin's
+    /// instance keeps no word of its own: every parse and guess reads
+    /// `instance->m_context->m_options` (074a2219 `pinyin.cpp:1500`,
+    /// `:2189`; `zhuyin.cpp:1020`, `:1464`).
+    options: OptionBits,
     state: S,
 }
 
@@ -77,20 +53,10 @@ pub struct Session<D, L, S = SessionState> {
 /// A facade retains this state and borrows its storage anew for each operation.
 #[derive(Clone, Debug)]
 pub struct SessionState {
-    /// The session's option word.
-    options: OptionBits,
-    /// The surface's upstream law ([`Law`]), set via [`Session::set_law`];
+    /// The surface's upstream law ([`Law`]), set via [`SessionState::set_law`];
     /// [`Law::Pinyin`] by default. Surface config, set once and surviving
     /// every reset — not part of [`Self::sentence`].
     law: Law,
-    /// Whether the parse, sentence-guess and selection paths leave the
-    /// candidate list to its next reader instead of building it — the C facades' mode,
-    /// set via [`Session::set_defer_list_builds`]; off (the session API's
-    /// eager list) by default. Upstream builds candidates only in
-    /// `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219), whose
-    /// C-ABI port re-anchors its own window. Surface config, like
-    /// [`Self::law`].
-    defer_list_builds: bool,
 
     // Composition state, decomposed into types that own their invariants.
     // Each groups the fields that move together, so an operation cannot
@@ -106,13 +72,16 @@ pub struct SessionState {
     record: SelectionRecord,
     /// The §3 constraint store — one cell per raw-buffer byte position,
     /// the coordinate space the scan matrix and the choose cursor share.
-    /// Survives `reset_composition` (the parse path) exactly as
+    /// Survives every parse exactly as
     /// upstream's instance-level `m_constraints` survive
     /// `pinyin_parse_more_full_pinyins`; cleared only by the full
     /// [`Session::reset`] (`pinyin_reset`'s rule).
     constraints: crate::engine::constraint::ConstraintStore,
-    /// The candidate list — the output of one [`Session::refresh`].
-    lookup: Lookup,
+    /// The last sort-option word applied — upstream's `m_sort_option`
+    /// (`pinyin.cpp:2203`), which `pinyin_guess_candidates` re-stores on
+    /// every call and `pinyin_choose_candidate` later reads. A full reset
+    /// keeps it: the pin's `pinyin_reset` does not clear it.
+    sort_word: u32,
     /// The last sentence lookup's decoded rows and what a chosen row needs
     /// — the `m_nbest_results` surface.
     sentence: SentenceState,
@@ -123,11 +92,6 @@ pub struct SessionState {
     /// Reused scan buffers, threaded through one window scan and handed
     /// straight back — allocation reuse, never observable state.
     scratch: Scratch,
-    /// Whether the scan in progress (or the last one) met a token of a
-    /// loaded library whose item cannot be read; set by the lookups of that
-    /// scan alone and read back into the [`CandidateList`] it built.
-    #[cfg(test)]
-    scan_unreadable: usize,
 }
 
 impl<D, L, S: std::borrow::Borrow<SessionState>> std::ops::Deref for Session<D, L, S> {
@@ -145,20 +109,29 @@ impl<D, L, S: std::borrow::BorrowMut<SessionState>> std::ops::DerefMut for Sessi
 }
 
 impl SessionState {
-    /// Borrow the composition and storage without allowing composition changes.
-    pub fn read<D, L>(&self, dictionary: D, model: L) -> Session<D, L, &Self> {
+    /// Borrow the composition and storage without allowing composition
+    /// changes, under the context's option word.
+    pub fn read<D, L>(&self, dictionary: D, model: L, options: OptionBits) -> Session<D, L, &Self> {
         Session {
             dictionary,
             model,
+            options,
             state: self,
         }
     }
 
-    /// Borrow this composition for an operation over the supplied readers.
-    pub fn bind<D, L>(&mut self, dictionary: D, model: L) -> Session<D, L, &mut Self> {
+    /// Borrow this composition for an operation over the supplied readers,
+    /// under the context's option word.
+    pub fn bind<D, L>(
+        &mut self,
+        dictionary: D,
+        model: L,
+        options: OptionBits,
+    ) -> Session<D, L, &mut Self> {
         Session {
             dictionary,
             model,
+            options,
             state: self,
         }
     }
@@ -174,60 +147,11 @@ impl SessionState {
     }
 }
 
-impl<D, L> Session<D, L> {
-    /// Retain only composition state after an operation's readers are dropped.
-    #[must_use]
-    pub(crate) fn into_state(self) -> SessionState {
-        self.state
-    }
-}
-
-/// The candidate list — the output of one [`Session::refresh`], anchored
-/// at the composition offset.
-#[derive(Clone, Debug)]
-struct Lookup {
-    /// The current candidates, in rank order; sentence rows are prepended
-    /// once [`Session::guess_sentence`] has run for the composition.
-    candidates: CandidateList,
-    /// Whether a deferred parse or sentence guess changed the input behind
-    /// [`Self::candidates`] without rebuilding them; the next
-    /// [`Session::refresh`] does.
-    stale: bool,
-    /// The last sort-option word applied — upstream's `m_sort_option`
-    /// (`pinyin.cpp:2203`), which `pinyin_guess_candidates` re-stores on
-    /// every call and `pinyin_choose_candidate` later reads. `0x1e` (all
-    /// three sort keys, longer candidates suppressed) is the word the
-    /// pre-§9 surface always behaved as.
-    sort_word: u32,
-}
-
-impl Lookup {
-    /// The pre-§9 parity word: all three sort keys, longer candidates
-    /// suppressed — what every surface behaved as before the sort word
-    /// became an input, so a session that never stores one keeps the
-    /// recorded behavior.
-    const PARITY_SORT_WORD: u32 = 0x1e;
-
-    /// Empties the candidate list — the
-    /// parse-path reset (`reset_composition`). The sort word survives:
-    /// upstream's `m_sort_option` is instance state that lives until the
-    /// instance is freed (`pinyin_reset` does not clear it), and the next
-    /// guess re-stores its own word anyway.
-    fn reset(&mut self) {
-        self.candidates = CandidateList::default();
-        self.stale = false;
-    }
-}
-
-impl Default for Lookup {
-    fn default() -> Self {
-        Self {
-            candidates: CandidateList::default(),
-            stale: false,
-            sort_word: Self::PARITY_SORT_WORD,
-        }
-    }
-}
+/// The pre-§9 parity word: all three sort keys, longer candidates
+/// suppressed — what every surface behaved as before the sort word became
+/// an input, so a session that never stores one keeps the recorded
+/// behavior.
+const PARITY_SORT_WORD: u32 = 0x1e;
 
 /// The window scan's reusable buffers. Taken out of the session for the
 /// duration of one scan so the scan can borrow `&self.input` while it
@@ -280,11 +204,11 @@ mod lookup;
 mod offsets;
 mod selection;
 
-pub use selection::{BEFORE_CURSOR_ANCHOR, RowText, SelectionTarget};
+pub use selection::{BEFORE_CURSOR_ANCHOR, RowText};
 mod state;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// Pushes the phrases one key-path search returned.
 fn append_scan_entries(
@@ -464,8 +388,6 @@ struct ScanScratch<'a> {
     entries: &'a mut Vec<PhraseEntry>,
     row: &'a mut Vec<u8>,
     window_addon: &'a mut Vec<Candidate>,
-    /// Which scan this is ([`Scan`]).
-    scan: Scan,
 }
 
 struct ScanBuf<'a> {
@@ -480,8 +402,6 @@ struct ScanBuf<'a> {
     unreadable: &'a mut usize,
     entries: &'a mut Vec<PhraseEntry>,
     row: &'a mut Vec<u8>,
-    /// As [`ScanScratch::scan`].
-    scan: Scan,
 }
 
 /// One key of the scan matrix at its byte position, with the byte position
@@ -916,25 +836,12 @@ fn dynamic_adjust_bigram_possibility(
     Ok(freq as f32 / total as f32)
 }
 
-/// Which scan builds a candidate list. Only an explicit guess is the pin's
-/// own `pinyin_guess_candidates` search, so only it dies where the pin
-/// asserts: on a toned incomplete key (`abort_toned_incomplete`), on an
-/// overlong suggestion row, and on a user gram the pin cannot read. An
-/// eager refresh, which the pin never runs, skips those reads instead.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Scan {
-    /// The session's own list build after a parse or a choice.
-    EagerRefresh,
-    /// The pin's candidate guess.
-    ExplicitGuess,
-}
-
 /// Which upstream library's law a surface follows. A session's law is
 /// surface config, set once and surviving every reset; it picks three
 /// behaviours together:
 ///
 /// - the sentence rows: pinyin prepends one row per n-best sentence, while
-///   zhuyin collapses them onto the 1-best row ([`Session::set_law`]);
+///   zhuyin collapses them onto the 1-best row ([`SessionState::set_law`]);
 /// - the candidate comparator: the pinyin facade's sort word, or libzhuyin's
 ///   `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`):
 ///   phrase length, then frequency, whatever the sort word;

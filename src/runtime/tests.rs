@@ -272,7 +272,6 @@ fn structure_fixture_has_valid_format_and_candidate_types() {
 }
 
 mod backend_files {
-    use crate::engine::SessionSettings;
     use crate::runtime::{OpenError, Runtime, TableConfError};
     use crate::user::{FIRST_USER_TOKEN, PinyinKey};
     use crate::vocab::SENTENCE_START;
@@ -790,12 +789,18 @@ mod backend_files {
         let tmp = scratch_dir("oxpinyin-guess-memo-");
         let dir = tmp.path().to_path_buf();
         let mut runtime = Runtime::open(&system_dir(), Some(&dir)).unwrap();
-        let mut session = runtime.new_session(SessionSettings::default());
-        runtime.session(&mut session).replace_raw("nihao").unwrap();
+        let mut session = crate::engine::SessionState::default();
+        runtime
+            .session(&mut session, crate::engine::session::tests::TEST_OPTIONS)
+            .replace_raw("nihao")
+            .unwrap();
         let mut guess = |runtime: &Runtime| {
-            runtime.session(&mut session).guess_sentence().unwrap();
             runtime
-                .session(&mut session)
+                .session(&mut session, crate::engine::session::tests::TEST_OPTIONS)
+                .guess_sentence()
+                .unwrap();
+            runtime
+                .session(&mut session, crate::engine::session::tests::TEST_OPTIONS)
                 .sentence_text(0)
                 .unwrap()
                 .to_owned()
@@ -1008,8 +1013,6 @@ mod pin_data {
         vocab::SyllableKey,
     };
 
-    use crate::engine::SessionSettings;
-
     use crate::runtime::Runtime;
 
     fn syllables(text: &str) -> Vec<SyllableKey> {
@@ -1121,11 +1124,11 @@ mod pin_data {
             .expect("addon lookup");
         assert!(art.iter().any(|entry| entry.text() == "二簧"), "{art:?}");
 
-        let mut session = runtime.new_session(SessionSettings::default());
-        let mut session = runtime.session(&mut session);
+        let mut session = crate::engine::SessionState::default();
+        let mut session =
+            runtime.session(&mut session, crate::engine::session::tests::TEST_OPTIONS);
         session.replace_raw("nihao").expect("typing");
-        let first = session
-            .candidates()
+        let first = crate::engine::session::tests::window(&mut session)
             .iter()
             .next()
             .expect("candidates")
@@ -1141,7 +1144,7 @@ mod pin_data {
 mod candidate_surface {
     use super::{candidate_fixture, contract_data, repo_root};
 
-    use crate::engine::{Candidate, CandidateKind, Session, SessionSettings};
+    use crate::engine::{Candidate, CandidateKind, Session};
 
     use crate::runtime::Runtime;
 
@@ -1174,7 +1177,11 @@ mod candidate_surface {
 
         let dir = contract_data::contract_data_dir();
         let runtime = Runtime::open(&dir, None).expect("the pinned data directory opens");
-        let mut session = Session::new(SessionSettings::default(), runtime.dict(), runtime.lm());
+        let mut session = Session::new(
+            runtime.dict(),
+            runtime.lm(),
+            crate::engine::session::tests::TEST_OPTIONS,
+        );
 
         let mut rows = 0_usize;
         let mut compared = 0_usize;
@@ -1182,15 +1189,14 @@ mod candidate_surface {
         for (input, theirs) in &expected {
             session.reset();
             let _ = session.replace_raw(input);
-            let ours: Vec<_> = session
-                .candidates()
+            let ours: Vec<_> = crate::engine::session::tests::window(&mut session)
                 .iter()
                 .take(CAPTURE_DEPTH)
                 .map(|candidate| {
                     (
                         candidate.text().as_str().unwrap_or_default().to_owned(),
                         candidate_type(candidate),
-                        candidate.nbest_row(),
+                        crate::engine::session::tests::nbest_rank(candidate),
                     )
                 })
                 .collect();
@@ -1288,13 +1294,9 @@ mod sentence_surface_parity {
     fn sentence_surface_matches_supplementary_tie_order() {
         let cases = sentence_fixture::load_tie_cases(&sentence_fixture::repo_root());
         let mut owner = open_session();
+        owner.options = crate::OptionBits::from_bits_retain(0x18a);
         let mut session = owner.session();
-        session
-            .set_options(crate::OptionBits::from_bits_retain(0x18a))
-            .expect("capture options must apply");
-        session
-            .set_sort_options(0x1e)
-            .expect("capture sort must apply");
+        session.set_sort_options(0x1e);
         let (mut pin_equal, mut residuals) = (0, 0);
         let mut moved = Vec::new();
         for (ordinal, case) in cases.iter().enumerate() {
@@ -1314,13 +1316,13 @@ mod sentence_surface_parity {
                             .map(str::to_owned)
                     })
                     .collect(),
-                rows: session
-                    .candidates()
+                rows: crate::engine::session::tests::window(&mut session)
                     .iter()
                     .filter(|candidate| candidate.kind() == crate::engine::CandidateKind::Sentence)
                     .map(|candidate| {
                         (
-                            candidate.nbest_row().expect("NBEST rank"),
+                            crate::engine::session::tests::nbest_rank(candidate)
+                                .expect("NBEST rank"),
                             candidate.text().as_str().unwrap_or_default().to_owned(),
                         )
                     })
@@ -1363,12 +1365,24 @@ use native_fixture::{
     TempUserDir, craft_hash, craft_tree, gram_bytes, set_phrase_table_row, system_dir,
 };
 
-fn native_session(runtime: &Runtime, options: OptionBits) -> crate::engine::SessionState {
-    let mut state = runtime.new_session(SessionSettings::default());
-    let mut session = runtime.session(&mut state);
-    session.set_defer_list_builds(true);
-    session.set_options(options).unwrap();
-    state
+/// A fresh composition and the option word its operations bind under.
+struct NativeState {
+    state: crate::engine::SessionState,
+    options: OptionBits,
+}
+
+impl NativeState {
+    /// Binds the composition to `runtime`'s readers under the word.
+    fn bind<'a>(&'a mut self, runtime: &'a Runtime) -> super::RuntimeSession<'a> {
+        runtime.session(&mut self.state, self.options)
+    }
+}
+
+fn native_session(options: OptionBits) -> NativeState {
+    NativeState {
+        state: crate::engine::SessionState::default(),
+        options,
+    }
 }
 fn native_keys(reading: &str) -> Vec<crate::user::PinyinKey> {
     if !reading.is_ascii() {
@@ -1409,9 +1423,9 @@ fn import_rows(runtime: &mut Runtime, library: u8, rows: &[(&str, &str, u64)]) {
     runtime.user_store_mut().compact_libraries();
     runtime.user_store_mut().mark_modified();
 }
-fn normal_texts(runtime: &Runtime, state: &mut crate::engine::SessionState) -> Vec<String> {
-    runtime
-        .session(state)
+fn normal_texts(runtime: &Runtime, state: &mut NativeState) -> Vec<String> {
+    state
+        .bind(runtime)
         .candidates_at_for_abi(0, false)
         .unwrap()
         .iter()
@@ -1470,22 +1484,22 @@ fn repeated_prefix_tokens_keep_duplicate_sentence_rows() {
     set_phrase_table_row(&user.path, "丙", &[0x0100_0003]);
 
     let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("ba1").unwrap();
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("ba1").unwrap();
     let prefixes = runtime
         .dict()
         .tokens_for_ucs4(&"丙".chars().map(u32::from).collect::<Vec<_>>());
     assert_eq!(prefixes.to_vec(), [0x0100_0003, 0x0100_0003]);
     assert!(
-        runtime
-            .session(&mut state)
+        state
+            .bind(&runtime)
             .guess_sentence_with_prefix(&prefixes)
             .unwrap()
     );
     for (index, text) in [(0, "甲"), (1, "甲"), (2, "乙")] {
         assert_eq!(
-            runtime
-                .session(&mut state)
+            state
+                .bind(&runtime)
                 .sentence_text(index)
                 .and_then(|text| text.as_str()),
             Some(text)
@@ -1505,10 +1519,10 @@ fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
         library,
         &[("甲", "ba4", 3), ("甲", "da4", 9), ("乙", "da4", 2)],
     );
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("ba4").unwrap();
-    let candidate = runtime
-        .session(&mut state)
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("ba4").unwrap();
+    let candidate = state
+        .bind(&runtime)
         .candidates_at_for_abi(0, false)
         .unwrap()
         .iter()
@@ -1516,18 +1530,13 @@ fn an_unranged_onestep_token_still_produces_a_sentence(#[case] library: u8) {
         .unwrap()
         .clone();
     assert_eq!(candidate.consumed_bytes(), 3);
-    runtime
-        .session(&mut state)
-        .select_target(&crate::engine::SelectionTarget::of_candidate(
-            &candidate, 0, None,
-        ))
-        .unwrap();
-    runtime.session(&mut state).replace_raw("da4").unwrap();
+    crate::engine::session::tests::choose(&mut state.bind(&runtime), &candidate, 0).unwrap();
+    state.bind(&runtime).replace_raw("da4").unwrap();
     let rows = normal_texts(&runtime, &mut state);
     assert!(rows.iter().any(|row| row == "乙"));
     assert!(!rows.iter().any(|row| row == "甲"));
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "甲");
+    assert!(state.bind(&runtime).guess_sentence().unwrap());
+    assert_eq!(state.bind(&runtime).sentence_text(0).unwrap(), "甲");
 }
 
 // Basis: phonetic_lookup.h:588-599 at 074a2219.
@@ -1554,19 +1563,13 @@ fn a_later_span_reads_the_sentence_start_gram_again() {
     );
     let user = TempUserDir::new("start-gram-reread");
     let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("ba1da1").unwrap();
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    assert_eq!(
-        runtime.session(&mut state).sentence_text(0).unwrap(),
-        "丙丁"
-    );
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("ba1da1").unwrap();
+    assert!(state.bind(&runtime).guess_sentence().unwrap());
+    assert_eq!(state.bind(&runtime).sentence_text(0).unwrap(), "丙丁");
     crate::store::fail_point_read_of(&sentence_start, 1);
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    assert_eq!(
-        runtime.session(&mut state).sentence_text(0).unwrap(),
-        "甲乙"
-    );
+    assert!(state.bind(&runtime).guess_sentence().unwrap());
+    assert_eq!(state.bind(&runtime).sentence_text(0).unwrap(), "甲乙");
 }
 
 // Basis: phrase_lookup.cpp:288-344 at 074a2219.
@@ -1604,7 +1607,7 @@ fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] in
 
     let user = TempUserDir::new("segment-ieee");
     let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let mut state = native_session(OptionBits::USE_TONE);
     let tokens = |text: &str| {
         runtime
             .dict()
@@ -1622,10 +1625,7 @@ fn nonfinite_segment_scores_keep_the_token_path(#[case] lambda: &str, #[case] in
         ("你你", [NI, NI])
     };
 
-    let (matched, tokens) = runtime
-        .session(&mut state)
-        .phrase_segment(sentence)
-        .unwrap();
+    let (matched, tokens) = state.bind(&runtime).phrase_segment(sentence).unwrap();
     assert!(matched);
     assert_eq!(tokens.to_vec(), expected);
 }
@@ -1646,11 +1646,8 @@ fn the_segmenter_reads_an_unsorted_user_gram_as_stored() {
     );
     native_fixture::write_user_conf(&user.path, &contract_data::contract_data_dir());
     let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    let (matched, path) = runtime
-        .session(&mut state)
-        .phrase_segment("今天天气很好")
-        .unwrap();
+    let mut state = native_session(OptionBits::USE_TONE);
+    let (matched, path) = state.bind(&runtime).phrase_segment("今天天气很好").unwrap();
     assert!(matched);
     let tokens: Vec<_> = path.to_vec();
     assert_eq!(
@@ -1681,12 +1678,12 @@ fn a_step_prices_readings_with_the_query_tone(
             ("乙", query, counts[2]),
         ],
     );
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw(query).unwrap();
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    assert_eq!(runtime.session(&mut state).sentence_text(0).unwrap(), "乙");
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw(query).unwrap();
+    assert!(state.bind(&runtime).guess_sentence().unwrap());
+    assert_eq!(state.bind(&runtime).sentence_text(0).unwrap(), "乙");
     if let Some(second) = unindexed {
-        runtime.session(&mut state).replace_raw(second).unwrap();
+        state.bind(&runtime).replace_raw(second).unwrap();
         assert!(
             !normal_texts(&runtime, &mut state)
                 .iter()
@@ -1706,8 +1703,8 @@ fn a_missing_candidate_table_row_keeps_searching_longer_spans() {
         .unwrap()
         .to_packed();
     let runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("nihao").unwrap();
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("nihao").unwrap();
     let before = normal_texts(&runtime, &mut state);
     assert!(before.iter().any(|text| text == "你"));
     assert!(before.iter().any(|text| text == "你好"));
@@ -1729,8 +1726,8 @@ fn a_missing_candidate_table_row_keeps_searching_longer_spans() {
     drop(store);
     native_fixture::craft_tree(&index, &rows);
     let runtime = Runtime::open(&system, Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("nihao").unwrap();
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("nihao").unwrap();
     let after = normal_texts(&runtime, &mut state);
     assert!(!after.iter().any(|text| text == "你"));
     assert!(after.iter().any(|text| text == "你好"));
@@ -1773,12 +1770,12 @@ fn addon_candidate_continuation_uses_its_row_read() {
     let user = TempUserDir::new("addon-read-continuation");
     let mut runtime = Runtime::open(&system, Some(&user.path)).unwrap();
     assert!(runtime.load_system_addon_reporting(4).unwrap());
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("bama").unwrap();
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("bama").unwrap();
     let reads = if cfg!(feature = "kyotocabinet") { 3 } else { 2 };
     crate::store::fail_point_read_of(&short[0].to_le_bytes(), reads);
-    let rows = runtime
-        .session(&mut state)
+    let rows = state
+        .bind(&runtime)
         .candidates_at_for_abi(0, false)
         .unwrap();
     for expected in ["甲", "乙丙"] {
@@ -1790,26 +1787,9 @@ fn addon_candidate_continuation_uses_its_row_read() {
     }
 }
 
-fn native_chewing(runtime: &Runtime, state: &mut crate::engine::SessionState, input: &str) {
-    let options = OptionBits::USE_TONE | OptionBits::FORCE_TONE;
-    let parsed = crate::parser::ZhuyinParser::with_scheme(crate::parser::ZhuyinScheme::Standard)
-        .parse_with_options(input.as_bytes(), options);
-    assert_eq!(parsed.consumed(), input.len());
-    let segments: Vec<_> = parsed
-        .keys()
-        .iter()
-        .map(|key| crate::graph::ExactSegment::new(key.start(), key.end(), key.key(), key.tone()))
-        .collect();
-    runtime.session(state).set_law(crate::engine::Law::Zhuyin);
-    runtime
-        .session(state)
-        .replace_raw_exact(input, &segments)
-        .unwrap();
-}
-
-fn gbk_tokens(runtime: &Runtime, state: &mut crate::engine::SessionState) -> Vec<u32> {
-    runtime
-        .session(state)
+fn gbk_tokens(runtime: &Runtime, state: &mut NativeState) -> Vec<u32> {
+    state
+        .bind(runtime)
         .candidates_at_for_abi(0, false)
         .unwrap()
         .iter()
@@ -1823,8 +1803,8 @@ fn gbk_tokens(runtime: &Runtime, state: &mut crate::engine::SessionState) -> Vec
 fn an_unload_hides_its_rows_without_a_reparse() {
     let user = TempUserDir::new("row54-unload");
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("ni").unwrap();
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("ni").unwrap();
     assert!(!gbk_tokens(&runtime, &mut state).is_empty());
     assert!(runtime.unload_library(2));
     assert!(gbk_tokens(&runtime, &mut state).is_empty());
@@ -1841,12 +1821,12 @@ fn an_unindexed_second_reading_dilutes_the_sentence_score() {
         1,
         &[("测侧", "ce'ce", 1_000_000), ("侧测", "ce'ce", 600_000)],
     );
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    let sentence = |runtime: &Runtime, state: &mut crate::engine::SessionState| {
-        runtime.session(state).replace_raw("cece").unwrap();
-        assert!(runtime.session(state).guess_sentence().unwrap());
-        let text = runtime.session(state).sentence_text(0).unwrap().clone();
-        runtime.session(state).reset();
+    let mut state = native_session(OptionBits::USE_TONE);
+    let sentence = |runtime: &Runtime, state: &mut NativeState| {
+        state.bind(runtime).replace_raw("cece").unwrap();
+        assert!(state.bind(runtime).guess_sentence().unwrap());
+        let text = state.bind(runtime).sentence_text(0).unwrap().clone();
+        state.bind(runtime).reset();
         text
     };
     assert_eq!(sentence(&runtime, &mut state), "测侧");
@@ -1878,11 +1858,11 @@ fn user_rows_for_an_incomplete_key_follow_the_stored_key_order() {
         .map(|&(text, reading)| (text, reading, 1))
         .collect();
     import_rows(&mut runtime, 7, &rows);
-    let mut state = native_session(&runtime, OptionBits::from_bits_retain(0x18a));
-    runtime.session(&mut state).replace_raw("n").unwrap();
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    let user: Vec<_> = runtime
-        .session(&mut state)
+    let mut state = native_session(OptionBits::from_bits_retain(0x18a));
+    state.bind(&runtime).replace_raw("n").unwrap();
+    assert!(state.bind(&runtime).guess_sentence().unwrap());
+    let user: Vec<_> = state
+        .bind(&runtime)
         .candidates_at_for_abi(0, false)
         .unwrap()
         .iter()
@@ -1951,8 +1931,8 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
                 .to_vec(),
             [token]
         );
-        let mut state = native_session(&runtime, OptionBits::USE_TONE);
-        let (matched, tokens) = runtime.session(&mut state).phrase_segment("龘").unwrap();
+        let mut state = native_session(OptionBits::USE_TONE);
+        let (matched, tokens) = state.bind(&runtime).phrase_segment("龘").unwrap();
         assert_eq!(
             (matched, tokens.to_vec()),
             (present, vec![if present { token } else { 0 }])
@@ -1960,10 +1940,10 @@ fn a_user_file_token_without_its_item_is_skipped_and_a_zero_item_is_not() {
         if present {
             assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(0));
         }
-        runtime.session(&mut state).replace_raw("ni").unwrap();
-        assert!(runtime.session(&mut state).guess_sentence().unwrap());
+        state.bind(&runtime).replace_raw("ni").unwrap();
+        assert!(state.bind(&runtime).guess_sentence().unwrap());
         assert_eq!(
-            runtime.session(&mut state).sentence_text(0).unwrap(),
+            state.bind(&runtime).sentence_text(0).unwrap(),
             if present { "龘" } else { "你" }
         );
     }
@@ -2053,10 +2033,10 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
 
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
     let base = runtime.lm().unigram_freq(&token).unwrap().unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw("dada").unwrap();
-    let candidate = runtime
-        .session(&mut state)
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw("dada").unwrap();
+    let candidate = state
+        .bind(&runtime)
         .candidates_at_for_abi(0, false)
         .unwrap()
         .iter()
@@ -2065,14 +2045,9 @@ fn a_candidate_under_high_bits_is_listed_and_trains_its_item() {
         })
         .unwrap()
         .clone();
-    runtime
-        .session(&mut state)
-        .select_target(&crate::engine::SelectionTarget::of_candidate(
-            &candidate, 0, None,
-        ))
-        .unwrap();
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
-    assert!(runtime.train_session(&state, 0).unwrap());
+    crate::engine::session::tests::choose(&mut state.bind(&runtime), &candidate, 0).unwrap();
+    assert!(state.bind(&runtime).guess_sentence().unwrap());
+    assert!(runtime.train_session(&state.state, 0).unwrap());
     assert_eq!(runtime.lm().unigram_freq(&token).unwrap(), Some(base + 483));
     assert_eq!(
         runtime.user_store().bigram_successors(1).unwrap(),
@@ -2088,22 +2063,22 @@ fn train_session_aborts_past_the_nonempty_results() {
         || {
             let user = TempUserDir::new("train-abort-index");
             let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-            let mut state = native_session(&runtime, OptionBits::USE_TONE);
-            runtime.session(&mut state).replace_raw("nihao").unwrap();
-            assert!(runtime.session(&mut state).guess_sentence().unwrap());
-            let _ = runtime.train_session(&state, 9);
+            let mut state = native_session(OptionBits::USE_TONE);
+            state.bind(&runtime).replace_raw("nihao").unwrap();
+            assert!(state.bind(&runtime).guess_sentence().unwrap());
+            let _ = runtime.train_session(&state.state, 9);
         },
     );
 }
 
 /// Chooses 你 and then 好 over `nihao` and guesses again, so both phrases are
 /// forced and train; answers the token 你 was chosen as.
-fn choose_ni_hao(runtime: &Runtime, state: &mut crate::engine::SessionState) -> u32 {
-    runtime.session(state).replace_raw("nihao").unwrap();
+fn choose_ni_hao(runtime: &Runtime, state: &mut NativeState) -> u32 {
+    state.bind(runtime).replace_raw("nihao").unwrap();
     let mut tokens = Vec::new();
     for (offset, text) in [(0, "你"), (2, "好")] {
-        let row = runtime
-            .session(state)
+        let row = state
+            .bind(runtime)
             .candidates_at_for_abi(offset, false)
             .unwrap()
             .iter()
@@ -2114,14 +2089,9 @@ fn choose_ni_hao(runtime: &Runtime, state: &mut crate::engine::SessionState) -> 
             .unwrap()
             .clone();
         tokens.push(row.token().unwrap());
-        runtime
-            .session(state)
-            .select_target(&crate::engine::SelectionTarget::of_candidate(
-                &row, offset, None,
-            ))
-            .unwrap();
+        crate::engine::session::tests::choose(&mut state.bind(runtime), &row, offset).unwrap();
     }
-    assert!(runtime.session(state).guess_sentence().unwrap());
+    assert!(state.bind(runtime).guess_sentence().unwrap());
     tokens[0]
 }
 
@@ -2132,7 +2102,7 @@ fn choose_ni_hao(runtime: &Runtime, state: &mut crate::engine::SessionState) -> 
 fn a_partial_tail_at_a_later_step_keeps_the_earlier_steps() {
     let user = TempUserDir::new("train-partial-later");
     let mut runtime = Runtime::open(&system_dir(), Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let mut state = native_session(OptionBits::USE_TONE);
     let ni = choose_ni_hao(&runtime, &mut state);
     // A guess refuses a partial predecessor (register row 98), so the gram
     // the second step loads turns partial after the guess.
@@ -2142,7 +2112,7 @@ fn a_partial_tail_at_a_later_step_keeps_the_earlier_steps() {
     value.extend_from_slice(&[0xa5, 0x5a, 0x01]);
     runtime.user_store_mut().plant_gram(ni, &value);
     assert!(!runtime.user_store().is_modified());
-    let result = runtime.train_session(&state, 0);
+    let result = runtime.train_session(&state.state, 0);
     assert!(
         matches!(
             result,
@@ -2255,10 +2225,10 @@ fn a_journal_removed_item_adds_no_candidate() {
 
     let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
     assert!(runtime.dict().token_phrase(token).is_none());
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    runtime.session(&mut state).replace_raw(&reading).unwrap();
-    assert_eq!(runtime.session(&mut state).full_parsed_len(), reading.len());
-    assert!(runtime.session(&mut state).guess_sentence().unwrap());
+    let mut state = native_session(OptionBits::USE_TONE);
+    state.bind(&runtime).replace_raw(&reading).unwrap();
+    assert_eq!(state.bind(&runtime).full_parsed_len(), reading.len());
+    assert!(state.bind(&runtime).guess_sentence().unwrap());
     assert!(
         !normal_texts(&runtime, &mut state)
             .iter()
@@ -2269,12 +2239,12 @@ fn a_journal_removed_item_adds_no_candidate() {
 #[cfg(feature = "tkrzw")]
 fn native_rows(
     runtime: &Runtime,
-    state: &mut crate::engine::SessionState,
+    state: &mut NativeState,
     offset: usize,
 ) -> Vec<(crate::engine::CandidateKind, String, Option<u8>)> {
-    runtime.session(state).set_sort_options(0x1e).unwrap();
-    runtime
-        .session(state)
+    state.bind(runtime).set_sort_options(0x1e);
+    state
+        .bind(runtime)
         .candidates_at_for_abi(offset, false)
         .unwrap()
         .iter()
@@ -2282,34 +2252,27 @@ fn native_rows(
             (
                 row.kind(),
                 row.text().as_str().unwrap().to_owned(),
-                row.nbest_row(),
+                crate::engine::session::tests::nbest_rank(row),
             )
         })
         .collect()
 }
 #[cfg(feature = "tkrzw")]
-fn choose_native(
-    runtime: &Runtime,
-    state: &mut crate::engine::SessionState,
-    offset: usize,
-    index: usize,
-) -> usize {
-    runtime.session(state).set_sort_options(0x1e).unwrap();
-    let row = runtime
-        .session(state)
+fn choose_native(runtime: &Runtime, state: &mut NativeState, offset: usize, index: usize) -> usize {
+    state.bind(runtime).set_sort_options(0x1e);
+    let row = state
+        .bind(runtime)
         .candidates_at_for_abi(offset, false)
         .unwrap()
         .iter()
         .nth(index)
         .unwrap()
         .clone();
-    let target = crate::engine::SelectionTarget::of_candidate(&row, offset, None);
-    let end = target.span_end;
     assert_ne!(
-        runtime.session(state).select_target(&target).unwrap(),
+        crate::engine::session::tests::choose(&mut state.bind(runtime), &row, offset).unwrap(),
         crate::engine::Selection::Refused
     );
-    end
+    row.span_end_at(offset)
 }
 
 #[cfg(feature = "tkrzw")]
@@ -2334,15 +2297,15 @@ fn dynamic_adjust_ranks_the_window_after_a_chosen_token() {
     ] {
         let user = TempUserDir::new("dynamic-chosen-de");
         let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
-        let mut state = native_session(&runtime, OptionBits::from_bits_retain(options));
-        runtime.session(&mut state).replace_raw("deyi").unwrap();
-        assert_eq!(runtime.session(&mut state).full_parsed_len(), 4);
-        assert!(runtime.session(&mut state).guess_sentence().unwrap());
+        let mut state = native_session(OptionBits::from_bits_retain(options));
+        state.bind(&runtime).replace_raw("deyi").unwrap();
+        assert_eq!(state.bind(&runtime).full_parsed_len(), 4);
+        assert!(state.bind(&runtime).guess_sentence().unwrap());
         let initial = native_rows(&runtime, &mut state, 0);
         assert_eq!(initial.len(), 33);
         assert_eq!(initial[6], row(NORMAL, "的", None));
         assert_eq!(choose_native(&runtime, &mut state, 0, 6), 2);
-        assert!(runtime.session(&mut state).guess_sentence().unwrap());
+        assert!(state.bind(&runtime).guess_sentence().unwrap());
         let rows = native_rows(&runtime, &mut state, 2);
         assert_eq!(rows.len(), 599);
         assert_eq!(
@@ -2374,10 +2337,10 @@ fn ordinary_training_reorders_the_nbest_rows() {
     let row = |kind, text: &str, rank| (kind, text.to_owned(), rank);
     let user = TempUserDir::new("pinned-nbest-train");
     let mut runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
-    let surface = |runtime: &Runtime, state: &mut crate::engine::SessionState| {
-        runtime.session(state).replace_raw("nihao").unwrap();
-        assert!(runtime.session(state).guess_sentence().unwrap());
+    let mut state = native_session(OptionBits::USE_TONE);
+    let surface = |runtime: &Runtime, state: &mut NativeState| {
+        state.bind(runtime).replace_raw("nihao").unwrap();
+        assert!(state.bind(runtime).guess_sentence().unwrap());
         let rows = native_rows(runtime, state, 0);
         let mut indexes: Vec<_> = rows.iter().filter_map(|row| row.2).collect();
         indexes.sort_unstable();
@@ -2385,8 +2348,8 @@ fn ordinary_training_reorders_the_nbest_rows() {
             .iter()
             .take(3)
             .map(|&index| {
-                runtime
-                    .session(state)
+                state
+                    .bind(runtime)
                     .sentence_text(index)
                     .unwrap()
                     .as_str()
@@ -2394,29 +2357,26 @@ fn ordinary_training_reorders_the_nbest_rows() {
                     .to_owned()
             })
             .collect();
-        runtime.session(state).reset();
+        state.bind(runtime).reset();
         (
             rows.len(),
             rows.into_iter().take(8).collect::<Vec<_>>(),
             sentences,
         )
     };
-    let train = |runtime: &mut Runtime,
-                 state: &mut crate::engine::SessionState,
-                 first: &str,
-                 second: &str| {
-        runtime.session(state).replace_raw("nihao").unwrap();
-        assert!(runtime.session(state).guess_sentence().unwrap());
+    let train = |runtime: &mut Runtime, state: &mut NativeState, first: &str, second: &str| {
+        state.bind(runtime).replace_raw("nihao").unwrap();
+        assert!(state.bind(runtime).guess_sentence().unwrap());
         for (offset, text, end) in [(0, first, 2), (2, second, 5)] {
             let index = native_rows(runtime, state, offset)
                 .iter()
                 .position(|row| row.1 == text)
                 .unwrap();
             assert_eq!(choose_native(runtime, state, offset, index), end);
-            assert!(runtime.session(state).guess_sentence().unwrap());
+            assert!(state.bind(runtime).guess_sentence().unwrap());
         }
-        assert!(runtime.train_session(state, 0).unwrap());
-        runtime.session(state).reset();
+        assert!(runtime.train_session(&state.state, 0).unwrap());
+        state.bind(runtime).reset();
     };
     let normal = |texts: &[&str]| {
         texts
@@ -2457,65 +2417,12 @@ fn ordinary_training_reorders_the_nbest_rows() {
     runtime.user_store_mut().save_reporting().unwrap();
     drop(runtime);
     let runtime = Runtime::open(&contract_data::contract_data_dir(), Some(&user.path)).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE);
+    let mut state = native_session(OptionBits::USE_TONE);
     assert_eq!(
         surface(&runtime, &mut state),
         trained,
         "after a save and reopen"
     );
-}
-
-use crate::data::support as chunk_fixture;
-#[path = "../../tests/support/unreadable_fixture.rs"]
-mod unreadable_fixture;
-
-// Basis: Register row 80, unreadable candidate item.
-#[test]
-fn a_user_table_fallback_reports_its_unreadable_row() {
-    let (system, user) = unreadable_fixture::dirs(unreadable_fixture::Case::Fallback);
-    let runtime =
-        Runtime::open_with_law(system.path(), Some(user.path()), UserConfLaw::Zhuyin).unwrap();
-    let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
-    native_chewing(&runtime, &mut state, "su3");
-    runtime
-        .session(&mut state)
-        .set_law(crate::engine::Law::Zhuyin);
-    let rows = runtime
-        .session(&mut state)
-        .candidates_at_for_abi(0, false)
-        .unwrap();
-    assert_eq!(rows.len(), 1);
-    assert!(rows.had_unreadable_item());
-    assert!(rows.iter().all(|row| row.token().is_none()));
-    assert!(runtime.dict().token_phrase(0x0100_0010).is_none());
-}
-
-// Basis: Rust contract: extension lookup reaches only visible library rows.
-#[test]
-fn a_library_mask_does_not_read_extension_rows() {
-    for (unload, expected) in [(false, 1), (true, 0)] {
-        let (system, user) = unreadable_fixture::dirs(unreadable_fixture::Case::MaskedExtension);
-        let mut runtime =
-            Runtime::open_with_law(system.path(), Some(user.path()), UserConfLaw::Zhuyin).unwrap();
-        if unload {
-            assert!(runtime.unload_library(2));
-        }
-        let mut state = native_session(&runtime, OptionBits::USE_TONE | OptionBits::FORCE_TONE);
-        native_chewing(&runtime, &mut state, "su3");
-        runtime
-            .session(&mut state)
-            .set_law(crate::engine::Law::Zhuyin);
-        let rows = runtime
-            .session(&mut state)
-            .candidates_at_for_abi(0, false)
-            .unwrap();
-        assert_eq!(
-            usize::from(rows.had_unreadable_item()),
-            expected,
-            "unload {unload}"
-        );
-        assert!(rows.iter().all(|row| row.token().is_none()));
-    }
 }
 
 fn ucs4_bytes(text: &str) -> Vec<u8> {

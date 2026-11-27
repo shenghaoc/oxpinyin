@@ -16,7 +16,7 @@ The supported external interfaces are the C APIs/ABIs alone (`oxpinyin-capi`, `o
 The parser, engine and concrete models have internal Rust interfaces.
 
 The engine receives its inputs as data.
-`Session::new` takes a `SessionSettings` value, a dictionary and a language model.
+`Session::new` takes a dictionary, a language model and the context's option word.
 `Session::replace_raw` takes the raw input as text.
 The engine has no key dispatch, no display model and no path discovery.
 
@@ -26,7 +26,7 @@ Each item below is a place where a portable API usually leaks:
 
 - **No keys.** The engine has no key type and no key dispatch.
   A caller supplies raw input text.
-- **No GSettings, no dconf, no registry.** Settings arrive as a `SessionSettings` value.
+- **No GSettings, no dconf, no registry.** Settings arrive as the context's option word.
   A settings store is a shell concern outside the engine.
 - **No path discovery.** The engine never calls `dirs`, `XDG_*`, `%APPDATA%` or `NSSearchPathForDirectoriesInDomains`.
   The caller supplies the system directory to `Runtime` as data, and `Runtime` holds it.
@@ -44,7 +44,7 @@ pub struct CandidateList { /* ordered, deterministic */ }
 ```
 
 `CandidateList` supports `len`, `is_empty` and `iter`.
-It has no index accessor, and the session selects a row it is given (`Session::select_target`), never an index.
+It has no index accessor, and the session selects what the row carries (its token span or its n-best rank), never an index.
 A candidate handle is therefore a C ABI case. The C choose reads the row's own scalars and selects on the instance it is passed, whichever instance published it, as the pin does (`tests/it/foreign_candidates.rs`, both C facades). A pointer that is not a row of a live published list is a caller precondition violation ([register entry](upstream-divergences.md#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list)).
 
 `consumed_bytes` states how much of the composition a candidate would absorb.
@@ -52,14 +52,10 @@ A shell can then render partial acceptance without re-deriving it.
 
 ## Storage and configuration
 
-```rust
-pub struct SessionSettings { pub incomplete_pinyin: bool }   // Default: true
-```
-
-A session opens under `PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE`, with `PINYIN_INCOMPLETE` taken from `incomplete_pinyin`.
-Every other option bit arrives through `Session::set_options` from the C ABI's option word.
+The session keeps no option word of its own.
+The C facades bind each operation under the context's current word, as the pin's instance reads `instance->m_context->m_options` in every parse and guess (`pinyin.cpp:1500`, `:2189`; `zhuyin.cpp:1020`, `:1464` at 074a2219).
+`pinyin_set_options` only stores the word (`pinyin.cpp:1299-1307`), so a change reaches every instance at its next operation.
 There is no keyed configuration source or layered configuration: the ibus-libpinyin defaults do not belong in oxpinyin (maintainer ruling).
-The settings value does not change the session's default options, each C facade's initial option word, or the point at which an option change reaches existing instances.
 
 ## Session
 
@@ -68,14 +64,13 @@ The settings value does not change the session's default options, each C facade'
 
 | Operation | Methods |
 |---|---|
-| Open | `Session::new(settings, dictionary, model) -> Self`; it cannot fail |
+| Open | `Session::new(dictionary, model, options) -> Self`, or `SessionState::default()` bound per operation with `SessionState::bind(dictionary, model, options)`; neither can fail |
 | Supply input | `replace_raw(&str)`, which replaces the whole raw input; `replace_raw_exact` and `replace_raw_full_pinyin` for the facade parse paths |
-| Read | `raw_input`, `candidates`, `candidates_at`, `is_composing`, `composition_offset`, `selected_text`, `selected_tokens` |
-| Select | `select_target(&SelectionTarget) -> Result<Selection, EngineError>`, with `SelectionTarget::of_candidate` for a listed row |
-| Reset | `reset`, `reset_composition` |
-| Options | `set_options`, `set_sort_options`, `set_law` |
+| Read | `raw_input`, `candidates_at_for_abi`, `candidates_ending_at_for_abi`, `is_composing`, `composition_offset`, `selected_text`, `selected_tokens` |
+| Select | `select_row(start, end, token, text)` for a token row, `select_nbest_row(rank)` for an n-best row, `choose_tokenless()` for a row without a token; `Candidate::span_end_at` places a listed row's span end |
+| Reset | `reset`, `discard_composition` |
+| Options | the word at `SessionState::bind`, `set_sort_options`, `set_law` |
 | Sentences | `guess_sentence`, `sentence_lookup_active`, `sentence_text` ([sentence-surface.md](sentence-surface.md)) |
-| Deferred list | `set_defer_list_builds`, `refresh_candidates` ([below](#deferred-candidate-list)) |
 | Training | `SessionState::train`: each step checked, then trained |
 
 `Selection` is `Refused`, `Continued` or `Completed`.
@@ -92,21 +87,18 @@ To replace the fixture adapters with the table-backed loaders, change the two ty
 - `replace_raw` replaces the raw input and passes every byte to the decoder; it does not filter characters.
 - `reset` discards the input, the selection record, the sentence rows and the constraints.
 - The session has no input length limit ([The full-pinyin parse's 16-bit steps](upstream-divergences.md#the-full-pinyin-parses-16-bit-steps)).
-- `select_target` appends the chosen candidate to the selected prefix and advances over the bytes that it consumed.
+- `select_row` forces the chosen token over its span and advances over the bytes that it consumed.
   It returns `Completed` when nothing is left.
 - A composition with no dictionary result still offers one candidate: the remaining raw input, as `CandidateKind::Fallback`.
-  This keeps `select_target` meaningful in every state.
+  It has no token, so choosing it runs `choose_tokenless`, which forces nothing.
 - Every method is deterministic for the same (input, state, config).
 
-`SessionSettings::default()` serves callers that have no settings of their own: incomplete pinyin on, with the divided and resplit tables.
+### Candidate windows
 
-### Deferred candidate list
-
-The default keeps the eager list, its parse length and the errors that the parse seams and sentence guesses return.
-The C facades turn on `set_defer_list_builds`, because the pin builds candidates only in `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219).
-The C ABI answers from the window that it re-anchors there.
-So in that mode, a sort-word change on a composing session (`set_sort_options`) also leaves the list stale: the pin takes the word as an argument of that call (`pinyin.cpp:2198`).
-An option change (`set_options`) leaves it stale too and searches no table: `pinyin_set_options` only stores the word (`pinyin.cpp:1299-1307`).
+The session keeps no candidate list.
+Each list is a window that `candidates_at_for_abi` or `candidates_ending_at_for_abi` builds at a lookup offset, because the pin builds candidates only in `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219).
+A parse, a sentence guess, a selection and an option or sort-word change build no list and search no table.
+`pinyin_set_options` only stores the word (`pinyin.cpp:1299-1307`), and the pin takes the sort word as an argument of the guess (`pinyin.cpp:2198`).
 
 ## Errors
 

@@ -36,13 +36,16 @@ mod fixture {
         MaskedExtension,
         #[cfg(unix)]
         Zero,
+        /// [`Case::MaskedExtension`] with a zero facade total.
+        #[cfg(unix)]
+        MaskedZero,
     }
 
     pub(super) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         let user = tempfile::tempdir().unwrap();
         let total = match case {
             #[cfg(unix)]
-            Case::Zero => 0,
+            Case::Zero | Case::MaskedZero => 0,
             Case::Single | Case::Pair | Case::Mixed | Case::MaskedExtension => 1,
         };
         let dir = tempfile::tempdir().unwrap();
@@ -91,11 +94,11 @@ mod fixture {
 
     /// Write the case's rows into the system pinyin index in `dir`.
     fn write_index(dir: &Path, case: Case, key: ChewingKey) {
-        let token = if matches!(case, Case::MaskedExtension) {
-            0x0200_0001
-        } else {
-            0x0100_0010
-        };
+        #[cfg(unix)]
+        let masked = matches!(case, Case::MaskedExtension | Case::MaskedZero);
+        #[cfg(not(unix))]
+        let masked = matches!(case, Case::MaskedExtension);
+        let token = if masked { 0x0200_0001 } else { 0x0100_0010 };
         let mut value = encode_item(token, &[key.with_tone(3)]);
         if matches!(case, Case::Pair | Case::Mixed) {
             value.extend(encode_item(0x0100_0011, &[key.with_tone(3)]));
@@ -104,7 +107,7 @@ mod fixture {
         let key = encode_complete_key(&[key]);
         let index = DefaultStore::create(&dir.join("pinyin_index.bin")).unwrap();
         index.set_raw(&key, &value).unwrap();
-        if matches!(case, Case::MaskedExtension) {
+        if masked {
             // Too short for one record: only a decode of this
             // row fails.
             index.set_raw(&extension, &[1, 2, 3]).unwrap();
@@ -201,6 +204,34 @@ fn a_library_mask_does_not_read_extension_rows() {
         unsafe { pinyin_free_instance(instance) };
         unsafe { pinyin_fini(context) };
     }
+}
+
+/// At a zero facade total the guess dies on any searched row it ranks,
+/// and on a row whose item cannot be read (`zero_total_aborts_after_cursor`).
+/// A token of an unloaded library is neither: the pin frees that
+/// sub-index (`phrase_index.cpp:260-268` at 074a2219), so its row drops
+/// out before the ranking and the guess answers an empty list.
+#[cfg(unix)]
+#[test]
+fn a_zero_total_guess_skips_an_unloaded_librarys_token() {
+    let (system, user) = fixture::dirs(fixture::Case::MaskedZero);
+    let user_path = CString::new(user.path().as_os_str().as_encoded_bytes()).unwrap();
+    let path = CString::new(system.path().as_os_str().as_encoded_bytes()).unwrap();
+    let context = unsafe { pinyin_init(path.as_ptr(), user_path.as_ptr()) };
+    assert!(!context.is_null());
+    assert!(unsafe { pinyin_unload_phrase_library(context, 2) });
+    let instance = unsafe { pinyin_alloc_instance(context) };
+    assert!(!instance.is_null());
+    assert_eq!(
+        unsafe { pinyin_parse_more_full_pinyins(instance, c"ni".as_ptr()) },
+        2
+    );
+    assert!(unsafe { pinyin_guess_candidates(instance, 0, 0x1f) });
+    let mut count = u32::MAX;
+    assert!(unsafe { pinyin_get_n_candidate(instance, &raw mut count) });
+    assert_eq!(count, 0);
+    unsafe { pinyin_free_instance(instance) };
+    unsafe { pinyin_fini(context) };
 }
 
 #[cfg(unix)]

@@ -118,7 +118,7 @@ segment (`pinyin_phrase_segment`, `:423`) and save (`pinyin_save`,
 
 oxpinyin's `Session` (`oxpinyin`) carries the same operations as
 methods — `replace_raw` and its variants for parse, `guess_sentence`
-and `candidates_at` for guess, `select` and `clear_constraint` for
+and `candidates_at_for_abi` for guess, `select` and `clear_constraint` for
 select, `SessionState::train` for training, `phrase_segment` — with save on
 `ContextCore::save_user` (`oxpinyin`). Both C ABIs drive only
 these.
@@ -531,8 +531,7 @@ The LONGER search evaluates each path at its DFS leaf. The matrix walk reads
 only immutable in-memory state; moving evaluation into it preserves the
 order of dictionary and model calls, including failures. Library priority
 still breaks unigram ties before path order (`pinyin.cpp:1904-1917`,
-`phrase_large_table3.h:77-97`). Explicit guesses retain their abort gates;
-refreshes retain their skip rules.
+`phrase_large_table3.h:77-97`). The guesses retain their abort gates.
 
 Let E be the number of visited DFS entries, P the leaf count and L the maximum
 path length, bounded by min(16, 2·prefix_len). The previous path collection

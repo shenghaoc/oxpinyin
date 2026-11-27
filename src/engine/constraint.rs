@@ -11,7 +11,7 @@
 //! clear at any offset inside a forced run finds the run's start. The
 //! store survives `parse_more` (the frontend re-sends the whole buffer
 //! every keystroke, and only `pinyin_reset` clears upstream's
-//! `m_constraints`) — see `Session::reset_composition` for the split.
+//! `m_constraints`) — see `Session::discard_composition` for the split.
 //!
 use std::ops::Range;
 

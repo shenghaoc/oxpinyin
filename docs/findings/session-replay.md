@@ -17,7 +17,7 @@ Every candidate asserted here is one that the pinned oracle emitted, taken from 
 ## Harness
 
 The `session_replay` module of `src/engine/session/selection/tests.rs` holds the scenarios inline and reads no scenario file; the robustness tests are in the `session_replay` module of `src/engine/session/tests.rs`.
-It opens each session with `Session::new` and `SessionSettings::default()`.
+It opens each session with `Session::new` under the tests' option word: incomplete pinyin and both split tables.
 The dictionary and the language model are fixture doubles over `fixtures/w4/mini-vocab.txt` and `fixtures/w4/mini-bigram.txt`.
 
 | Operation | Use in the test |

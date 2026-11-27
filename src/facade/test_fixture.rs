@@ -137,9 +137,7 @@ pub(crate) fn native_window(
 ) -> Vec<crate::engine::Candidate> {
     let offset = native_offset(context, instance, offset);
     let mut view = instance.bind(&context.runtime);
-    let options = view.options();
-    view.session.set_options(options).unwrap();
-    view.session.set_sort_options(0x1e).unwrap();
+    view.session.set_sort_options(0x1e);
     view.session
         .candidates_at_for_abi(offset, false)
         .unwrap()
@@ -181,16 +179,12 @@ pub(crate) fn published(
         .iter()
         .find(|row| row.kind() == CandidateKind::Phrase && row.text().as_str() == Some(text))
         .expect("normal row");
-    let target = crate::engine::SelectionTarget::of_candidate(
-        row,
-        native_offset(context, instance, offset),
-        None,
-    );
+    let end = row.span_end_at(native_offset(context, instance, offset));
     let mapper = instance.bind(&context.runtime).publication_bound_mapper();
     crate::facade::PublishedRow {
         begin: u16::try_from(offset).unwrap(),
-        end: u16::try_from(mapper(target.span_end)).unwrap(),
-        token: target.token.unwrap(),
+        end: u16::try_from(mapper(end)).unwrap(),
+        token: row.token().unwrap(),
         text: RowText::Resolve,
     }
 }

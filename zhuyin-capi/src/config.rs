@@ -111,7 +111,7 @@ pub unsafe extern "C" fn zhuyin_set_options(
     options: PinyinOptionT,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    // The shared set_options law (stored word and incomplete setting);
+    // The shared set_options law (the stored word, `pinyin.cpp:1299-1307`);
     // the pinyin facade's setter runs the same body. Bits without a flag are kept.
     ctx.core
         .set_options(oxpinyin::OptionBits::from_bits_retain(options));

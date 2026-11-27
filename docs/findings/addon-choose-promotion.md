@@ -90,7 +90,7 @@ too:
 - `pinyin_choose_candidate` (`capi/src/candidates.rs`) runs
   the promotion for an `ADDON` candidate before selecting, rewrites the
   snapshot candidate to `NORMAL_CANDIDATE` at the promoted token, and selects
-  the row with that token through `Session::select_target`
+  the row with that token through `Session::select_row`
   (`src/engine/session/selection.rs`); a later choose of the
   same handle forces it again.
 

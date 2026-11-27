@@ -56,7 +56,7 @@ where
     ///
     /// # Errors
     ///
-    /// Propagates validation, lookup and refresh errors after clearing the previous results.
+    /// Propagates validation and lookup errors after clearing the previous results.
     pub(crate) fn guess_sentence(&mut self) -> Result<bool, EngineError> {
         self.guess_sentence_with_prefix(&[])
     }
@@ -69,7 +69,7 @@ where
     ///
     /// # Errors
     ///
-    /// Propagates validation, lookup and refresh errors. The previous prefixes and rows have
+    /// Propagates validation and lookup errors. The previous prefixes and rows have
     /// already been replaced.
     pub(crate) fn guess_sentence_with_prefix(
         &mut self,
@@ -106,7 +106,6 @@ where
             Some(&self.constraints),
             self.law.nbest_shape(),
         )?;
-        self.refresh_after_parse()?;
         Ok(true)
     }
 }

@@ -189,6 +189,22 @@ fn zero_total_aborts_after_cursor() {
     );
 }
 
+/// The user-table twin of `zero_total_aborts_after_cursor`: the item the
+/// guess cannot read is in a user pinyin-index row. The pin searches the
+/// user table after the system one in the same call (074a2219
+/// `facade_chewing_table2.h:109-128`), so the unreadable item counts the
+/// same way and the zero-total guess dies on it.
+#[cfg(unix)]
+#[test]
+fn zero_total_aborts_on_an_unreadable_user_row() {
+    let _ = crate::support::assert_aborts(
+        "unreadable_candidates::zero_total_aborts_on_an_unreadable_user_row",
+        || {
+            check_row(fixture::Case::UserZero, false);
+        },
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn zero_total_aborts_before_cursor() {

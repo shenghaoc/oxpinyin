@@ -47,9 +47,6 @@ pub(super) struct InputBuffer {
     /// The last parse of `raw`. A mutation below leaves it as it was; the
     /// parse seam that made the mutation refills it.
     pub(super) parsed: Parsed,
-    /// Whether apostrophes came from canonical formatting rather than typing.
-    /// Used only by trellis generation, never by the ordinary scan or graph.
-    formatting_separators: bool,
     /// Pre-parsed exact syllables over `raw` — the scheme-parse seams
     /// (zhuyin, double pinyin, and the Luoma and secondary-zhuyin index
     /// parses). Empty is the full-pinyin mode, where the scan parses `raw`
@@ -110,7 +107,6 @@ impl InputBuffer {
         self.raw.clear();
         self.exact.clear();
         self.parsed_full_pinyin = false;
-        self.formatting_separators = false;
     }
 
     /// Exits exact mode without touching `raw` — the plain replace seam,
@@ -118,20 +114,14 @@ impl InputBuffer {
     pub(super) fn clear_exact(&mut self) {
         self.exact.clear();
         self.parsed_full_pinyin = false;
-        self.formatting_separators = false;
     }
 
     /// Whether a `'` in `raw` is a typed separator with its own zero-key
-    /// column: plain and index-parsed full pinyin, unless the replace seam
-    /// said the apostrophes were formatting. The zhuyin and double-pinyin
-    /// chains join their keys with apostrophes the input never had.
+    /// column: plain and index-parsed full pinyin. The zhuyin and
+    /// double-pinyin chains join their keys with apostrophes the input never
+    /// had.
     pub(super) fn physical_separators(&self) -> bool {
-        !self.formatting_separators && self.full_pinyin()
-    }
-
-    /// Stores separator provenance for the private trellis generation view.
-    pub(super) fn set_physical_separators(&mut self, physical: bool) {
-        self.formatting_separators = !physical;
+        self.full_pinyin()
     }
 
     /// Replaces `raw` with `text`. Does not touch the exact chain: the
@@ -145,7 +135,6 @@ impl InputBuffer {
     /// the buffer end so `end() <= raw.len()` stays an
     /// invariant of the stored segments.
     pub(super) fn set_exact(&mut self, segments: &[ExactSegment]) {
-        self.formatting_separators = false;
         self.parsed_full_pinyin = false;
         let raw_len = self.raw.len();
         self.exact = segments

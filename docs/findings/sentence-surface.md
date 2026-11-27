@@ -167,15 +167,14 @@ Current scoring and selection:
   (`pinyin.cpp:698-743`). A matched share of 0 skips the step. The
   candidate scan never reads the field.
 - Engine: the `nbest.rs` trellis and `Session::guess_sentence` /
-  `sentence_text`. `refresh` prepends the stored rows and merges them by
-  the §1 rules. `reset` clears the rows, as `pinyin_reset` does.
+  `sentence_text`. Each candidate window prepends the stored rows and
+  merges them by the §1 rules. `reset` clears the rows, as `pinyin_reset` does.
   `Candidate::nbest_index` carries the tail rank.
-- A chosen row is identified by its own tail rank through
-  `Candidate::nbest_row()` (`Option<u8>`), never by list position (§8).
-  `None` marks every non-row candidate, so a fallback sentence candidate
-  records nothing. Choosing a row records **all** of its token path, as
-  `pinyin_train` walks the chosen `MatchResult`: `Session::select_target` extends
-  `history` with the tokens of the row.
+- A chosen row is identified by its own tail rank, which only a
+  `Sentence` candidate carries, never by list position (§8). Choosing a
+  row records **all** of its token path, as `pinyin_train` walks the
+  chosen `MatchResult`: `Session::select_nbest_row` replaces `history`
+  with the tokens of the row.
 - C ABI: `pinyin_guess_sentence` fills the rows and marks the lookup
   active (`Session::sentence_lookup_active`; only `reset` clears it).
   While a lookup is active, `pinyin_get_sentence` answers the decoded row
@@ -238,9 +237,9 @@ the instance (`pinyin.cpp:2511-2519`), and train walks that result.
 **Implementation.** `Candidate` stores `Some(rank)` on row-origin
 candidates only and `None` on every other candidate, including fallback
 sentence candidates. `Candidate::nbest_index()` still answers `u8` for
-the C ABI (`pinyin_get_candidate_nbest_index`). `Candidate::nbest_row()`
-is the origin marker that the selection record reads. A row-origin
-candidate looks up the stored row at its rank, bounded by `get`.
+the C ABI (`pinyin_get_candidate_nbest_index`), and the C choose reads it
+from an `NBEST_MATCH_CANDIDATE` row only. The choose looks up the stored
+row at that rank, bounded by `get`.
 
 **Test.** `a_shifted_row_records_its_own_rank_not_its_position` builds
 rows `[好, 好, 浩]` and asserts that the 浩 row, at position 1 with rank 2,
@@ -396,10 +395,9 @@ and that merge; no Rust sort takes the cyclic trellis comparator. The
 remaining generation sort orders integer library identifiers only. See
 `src/engine/nbest.rs` (`loses_to`, `heap_push`,
 `heap_adjust`, `heap_pop`, `heap_make`, `tail_compare`, `tail_merge`,
-`GenerationView`) and `session/guess.rs` (private separator provenance).
-Canonical formatting carries its separator provenance through
-`Session::replace_raw_with_physical_separators`; ordinary lookup, matrix
-construction, ScanKey and the exact graph are unchanged.
+`GenerationView`). A `'` is a physical separator in plain and
+index-parsed full pinyin only (`InputBuffer::physical_separators`); ordinary
+lookup, matrix construction, ScanKey and the exact graph are unchanged.
 
 The sentence score is not visible at the C API, so no test reads it.
 A score change that moves no sentence leaves the C behaviour unchanged.
@@ -829,8 +827,8 @@ relative order on both sides; no other row moves.
 ### N-best choose after a reparse
 
 The only production path to `ConstraintStore::diff_result` is the NBEST
-branch of `pinyin_choose_candidate`, through `select_published` and
-`select_target`. Zhuyin publishes no n-best rank to that path.
+branch of `pinyin_choose_candidate`, through `select_nbest_rank` and
+`select_nbest_row`. Zhuyin publishes no n-best rank to that path.
 The n-best branch does not validate or resize constraints at choose time
 (`pinyin.cpp:2515-2520`). Guess-time validation sizes the store
 (`phonetic_lookup.cpp:120-138`), including the unconstrained guess path.

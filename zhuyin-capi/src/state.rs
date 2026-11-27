@@ -51,11 +51,8 @@ impl CapiContext {
         // `zhuyin_get_sentence` (always the 1-best), the lists sort with
         // `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`),
         // and the trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`) — see
-        // `Session::set_law`.
-        self.core
-            .runtime()
-            .session(core.session_mut())
-            .set_law(oxpinyin::facade::Law::Zhuyin);
+        // `SessionState::set_law`.
+        core.session_mut().set_law(oxpinyin::facade::Law::Zhuyin);
         CapiInstance {
             owner,
             core,

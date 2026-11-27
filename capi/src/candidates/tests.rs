@@ -637,7 +637,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
     let user_dir = TempUserDir::new("c2-reanchor-choose");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
     // The composition is anchored at 0 after a parse. Guessing at offset 2
-    // BEFORE any choose re-anchors the window there (no cached list at 2),
+    // BEFORE any choose re-anchors the window there,
     // so the rows the caller sees come from the offset-2 window.
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let _ = unsafe { candidate(instance, "nihao", 0) };
@@ -697,7 +697,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
     }
     // The chosen row's span is anchor-relative (hao covers raw 2..5). With
     // the fix the composition advances from the ANCHOR (2 + 3 = 5);
-    // resolving the index against the composition-anchored cached list
+    // resolving the index against the window at the composition offset
     // instead would select a different row and answer a different cursor.
     // add_constraint refuses end > matrix.size(); Pinyin returns offset + 0
     // (074a2219 phonetic_lookup.cpp:61-65; pinyin.cpp:2581-2589).

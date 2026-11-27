@@ -1,10 +1,10 @@
 //! Session state, candidate selection, constraints, training plans, and decoding.
 //!
 //! [`Session`] operates on dictionary and language-model views from [`crate::model`].
-//! [`SessionState`] retains parse and result state; [`SessionSettings`] supplies
-//! the option word, schemes and candidate ranking.
+//! [`SessionState`] retains parse and result state; each operation binds it
+//! under the context's option word.
 //!
-//! Session settings and backend handles arrive as data. The engine has no
+//! The option word and backend handles arrive as data. The engine has no
 //! frontend key dispatch, display model or platform path discovery.
 
 mod candidate;
@@ -30,8 +30,8 @@ pub(crate) use error::{TrainingStop, abort_toned_incomplete};
 pub use nbest::NbestShape;
 pub(crate) use session::SentencePart;
 pub use session::{
-    BEFORE_CURSOR_ANCHOR, Law, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection,
-    SelectionTarget, Session, SessionSettings, SessionState, amplified_frequency,
+    BEFORE_CURSOR_ANCHOR, Law, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection, Session,
+    SessionState, amplified_frequency,
 };
 
 pub(crate) use session::{check_lookup_offset_range, normalize_lookup_offset, parse_time_keys};
