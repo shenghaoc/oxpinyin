@@ -429,19 +429,22 @@ impl PhraseLibraries {
         let item = library.item(token)?;
         let mut out = Vec::new();
         for view in item.pronunciations() {
-            let mut syllables = Vec::new();
-            let mut ok = true;
-            for pair in view.keys.as_chunks::<2>().0.iter() {
-                let packed = u16::from_le_bytes(*pair);
-                let key = ChewingKey::from_packed(packed);
-                let spelling = key.pinyin_spelling();
-                if spelling.is_empty() {
-                    ok = false;
-                    break;
-                }
-                syllables.push(spelling);
-            }
-            if ok && view.keys.len().is_multiple_of(CHEWING_KEY_SIZE) && !syllables.is_empty() {
+            // A key with no spelling drops the whole reading.
+            let syllables = view
+                .keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| {
+                    let spelling =
+                        ChewingKey::from_packed(u16::from_le_bytes(*pair)).pinyin_spelling();
+                    (!spelling.is_empty()).then_some(spelling)
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(syllables) = syllables
+                && view.keys.len().is_multiple_of(CHEWING_KEY_SIZE)
+                && !syllables.is_empty()
+            {
                 out.push(LibraryPronunciation {
                     spelling: syllables.join("'"),
                     freq: u64::from(view.freq),

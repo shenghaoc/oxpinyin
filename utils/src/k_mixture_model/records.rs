@@ -67,14 +67,8 @@ fn record_error(what: &str, bytes: usize, expected: usize) -> StoreError {
 }
 
 fn words<const N: usize>(bytes: &[u8]) -> [u32; N] {
-    let mut out = [0_u32; N];
-    for (index, word) in out.iter_mut().enumerate() {
-        let at = index * 4;
-        let mut field = [0_u8; 4];
-        field.copy_from_slice(&bytes[at..at + 4]);
-        *word = u32::from_ne_bytes(field);
-    }
-    out
+    let words = bytes.as_chunks::<4>().0;
+    std::array::from_fn(|index| u32::from_ne_bytes(words[index]))
 }
 
 impl FixedRecord for KMixtureModelMagicHeader {

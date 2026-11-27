@@ -79,8 +79,11 @@ pub(crate) fn runtime_version() -> String {
 /// risk taken at write.
 pub(crate) fn check_runtime_version() -> Result<(), StoreError> {
     let version = runtime_version();
-    let major_minor: String = version.split('.').take(2).collect::<Vec<_>>().join(".");
-    if major_minor == SUPPORTED {
+    // The major.minor prefix, then the end or a further `.` component.
+    if version
+        .strip_prefix(SUPPORTED)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+    {
         return Ok(());
     }
     Err(StoreError::Backend(
@@ -238,12 +241,8 @@ impl Sink<'_> {
                 **key_len = key.len();
             }
             Self::Records(records) => {
-                let mut bytes = Vec::new();
-                bytes.reserve_exact(key.len() + value.len());
-                bytes.extend_from_slice(key);
-                bytes.extend_from_slice(value);
                 records.push(Record {
-                    bytes: bytes.into_boxed_slice(),
+                    bytes: [key, value].concat().into_boxed_slice(),
                     key_len: key.len(),
                 });
             }

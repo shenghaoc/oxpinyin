@@ -208,9 +208,10 @@ fn lookup_pinyin(spelling: &str) -> Option<SyllableKey> {
         return Some(key);
     }
 
-    if matches!(spelling, "lue" | "nue") {
-        let corrected = format!("{}ve", &spelling[..1]);
-        return SyllableKey::from_text(&corrected);
+    match spelling {
+        "lue" => return SyllableKey::from_text("lve"),
+        "nue" => return SyllableKey::from_text("nve"),
+        _ => {}
     }
 
     let first = spelling.as_bytes().first().copied()?;
@@ -708,17 +709,21 @@ pub fn parse_zhuyin_direct(input: &str, options: OptionBits) -> Vec<(SyllableKey
 #[must_use]
 pub fn parse_zhuyin_direct_key(segment: &str, options: OptionBits) -> Option<(SyllableKey, u8)> {
     let options = options - OptionBits::PINYIN_AMB_ALL;
-    let last = segment.chars().last()?;
-    let mut tone = 1_u8;
-    let mut body = segment;
-    if options.contains(OptionBits::USE_TONE) {
-        let mut buffer = [0_u8; 4];
-        let last = last.encode_utf8(&mut buffer);
-        if let Some(found) = (1..=5).find(|&t| tone_symbol(t) == last) {
-            tone = found;
-            body = &segment[..segment.len() - last.len()];
-        }
+    if segment.is_empty() {
+        return None;
     }
+    // A trailing tone mark is the tone; a segment without one is tone 1.
+    let (body, tone) = if options.contains(OptionBits::USE_TONE) {
+        (1..=5)
+            .find_map(|tone| {
+                segment
+                    .strip_suffix(tone_symbol(tone))
+                    .map(|body| (body, tone))
+            })
+            .unwrap_or((segment, 1))
+    } else {
+        (segment, 1)
+    };
     if body.is_empty() {
         return None;
     }
@@ -1139,11 +1144,10 @@ fn parse_one_zhuyin_key(
         return None;
     }
 
-    let mut zhuyin = String::new();
-    for byte in &input[..symbol_len] {
-        let symbol = tables.symbol(*byte)?;
-        zhuyin.push_str(symbol);
-    }
+    let zhuyin = input[..symbol_len]
+        .iter()
+        .map(|&byte| tables.symbol(byte))
+        .collect::<Option<String>>()?;
     let key = search_zhuyin_index(tables.index, &zhuyin, options)?;
     Some((key, tone))
 }
@@ -1207,10 +1211,7 @@ fn parse_one_discrete_key(
         return None;
     }
 
-    let mut zhuyin = String::with_capacity(initial.len() + middle.len() + final_.len());
-    zhuyin.push_str(initial);
-    zhuyin.push_str(middle);
-    zhuyin.push_str(final_);
+    let zhuyin = [initial, middle, final_].concat();
 
     let key = search_zhuyin_index(tables.index, &zhuyin, options)?;
     Some((key, tone))
@@ -1354,10 +1355,7 @@ fn parse_one_cp26_key(
         return None;
     }
 
-    let mut zhuyin = String::with_capacity(initial.len() + middle.len() + final_.len());
-    zhuyin.push_str(initial);
-    zhuyin.push_str(middle);
-    zhuyin.push_str(final_);
+    let zhuyin = [initial, middle, final_].concat();
     let key = search_zhuyin_index(crate::zhuyin_map::zhuyin_pinyin_map(), &zhuyin, options)?;
     Some((key, tone))
 }
