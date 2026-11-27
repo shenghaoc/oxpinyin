@@ -704,20 +704,22 @@ impl<'a> LogReader<'a> {
 
     fn step(&self) -> ReadStep<'a> {
         let mut offset = self.offset;
+        // The tag decodes before the token reads, so an unknown type stops
+        // the walk ahead of a truncated token.
         let log_type = Self::u32_field(&self.bytes[offset..])
-            .filter(|tag| matches!(tag, 1..=4))
+            .and_then(LogType::from_tag)
             .ok_or(LogStop::End(LogEnd::UnknownType))?;
         offset += LOG_TYPE_SIZE;
         let token =
             Self::u32_field(&self.bytes[offset..]).ok_or(LogStop::End(LogEnd::Truncated))?;
         offset += 4;
         let record = match log_type {
-            1 | 2 => {
+            LogType::Add | LogType::Remove => {
                 let len = self.length_at(offset)?;
                 offset += 2;
                 let payload = self.payload_at(offset, len)?;
                 offset += len;
-                if log_type == 1 {
+                if log_type == LogType::Add {
                     LogRecord::Add {
                         token,
                         new_item: payload,
@@ -729,7 +731,7 @@ impl<'a> LogReader<'a> {
                     }
                 }
             }
-            3 => {
+            LogType::Modify => {
                 let old_len = self.length_at(offset)?;
                 let new_len = self.length_at(offset + 2)?;
                 offset += 4;
@@ -743,8 +745,7 @@ impl<'a> LogReader<'a> {
                     new_item,
                 }
             }
-            4 => return self.header_step(token, offset),
-            _ => return Err(LogStop::End(LogEnd::UnknownType)),
+            LogType::ModifyHeader => return self.header_step(token, offset),
         };
         Ok((Some(record), offset))
     }
@@ -752,6 +753,31 @@ impl<'a> LogReader<'a> {
 
 /// `sizeof(LOG_TYPE)` — the unscoped enum's underlying `int`.
 const LOG_TYPE_SIZE: usize = 4;
+
+/// The journal's `LOG_TYPE` (`phrase_index_logger.h`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LogType {
+    /// `LOG_ADD_RECORD`.
+    Add = 1,
+    /// `LOG_REMOVE_RECORD`.
+    Remove = 2,
+    /// `LOG_MODIFY_RECORD`.
+    Modify = 3,
+    /// `LOG_MODIFY_HEADER`.
+    ModifyHeader = 4,
+}
+
+impl LogType {
+    const fn from_tag(tag: u32) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Add),
+            2 => Some(Self::Remove),
+            3 => Some(Self::Modify),
+            4 => Some(Self::ModifyHeader),
+            _ => None,
+        }
+    }
+}
 
 /// Encodes a record stream (`PhraseIndexLogger::append_record`'s
 /// layout). Records are written in the given order — the diff's walk
@@ -774,19 +800,19 @@ pub(crate) fn append_log_record(
     out: &mut Vec<u8>,
     record: &LogRecord<impl AsRef<[u8]>>,
 ) -> Option<()> {
-    let push_head = |log_type: u32, token: u32, out: &mut Vec<u8>| {
-        out.extend_from_slice(&log_type.to_le_bytes());
+    let push_head = |log_type: LogType, token: u32, out: &mut Vec<u8>| {
+        out.extend_from_slice(&(log_type as u32).to_le_bytes());
         out.extend_from_slice(&token.to_le_bytes());
     };
     match record {
         LogRecord::Add { token, new_item } => {
-            push_head(1, *token, out);
+            push_head(LogType::Add, *token, out);
             let new_item = new_item.as_ref();
             out.extend_from_slice(&u16::try_from(new_item.len()).ok()?.to_le_bytes());
             out.extend_from_slice(new_item);
         }
         LogRecord::Remove { token, old_item } => {
-            push_head(2, *token, out);
+            push_head(LogType::Remove, *token, out);
             let old_item = old_item.as_ref();
             out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
             out.extend_from_slice(old_item);
@@ -796,7 +822,7 @@ pub(crate) fn append_log_record(
             old_item,
             new_item,
         } => {
-            push_head(3, *token, out);
+            push_head(LogType::Modify, *token, out);
             let old_item = old_item.as_ref();
             let new_item = new_item.as_ref();
             out.extend_from_slice(&u16::try_from(old_item.len()).ok()?.to_le_bytes());
@@ -808,7 +834,7 @@ pub(crate) fn append_log_record(
             old_total,
             new_total,
         } => {
-            push_head(4, 0, out);
+            push_head(LogType::ModifyHeader, crate::vocab::NULL_TOKEN, out);
             // Upstream's MODIFY_HEADER carries the payload length
             // once, then two runs of it — the diff appends a 4-byte
             // old-header chunk and a 4-byte new-header chunk, so each
