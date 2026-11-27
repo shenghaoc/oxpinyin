@@ -149,6 +149,22 @@ phrases, cursors, call returns, the list after FIRST and the final sentence. `wi
 window's total and per-iteration `elapsed_ns` and, with `PERF_HW`, `hw_instructions`.
 `--perf-typing-sequence` reads its sort from `PERF_SORT` (default `0x1e`).
 
+With `PERF_KEYS=1`, each observation of `--perf-typing-sequence` also holds the figures of its
+key, from the span that the totals add: `elapsed_ns`, `hw_instructions` and `major_faults`.
+`hw_instructions` is `null` without `PERF_HW`, or when the counter gives no sample.
+`major_faults` comes from `getrusage` and is `null` on Windows.
+Without `PERF_KEYS` the output does not change, so the observations of fresh processes stay equal.
+
+`PERF_PAGE_OUT=1` sets `PERF_KEYS`. It works on Linux only; on other targets the driver exits
+with the usage status before it loads the library. After the reset of each iteration after the
+first, immediately before the first key, the driver pages out in its own process. It calls
+`madvise(MADV_PAGEOUT)` on each mapping of the library and of each file directly in DATA, then
+`posix_fadvise(POSIX_FADV_DONTNEED)` on that file. The key's observation records `page_out`:
+the number of mappings, and the bytes of the library's and of the data's mappings.
+The kernel does not page out a file page that the process can neither write nor own, so the
+library and the data must be the caller's own copies. `major_faults` shows whether the page-out
+took effect.
+
 ## Callgrind debug-info control
 
 Both campaign arms use the unchanged shipping Cargo profile. The profiled arm
@@ -537,9 +553,11 @@ They use the `bisect` driver, gdb and `perf_event_open`, and no Valgrind.
 - Each sample is a fresh process on one CPU (`taskset`). The arms alternate round by round.
 - An unmeasured run of each arm warms the page cache before each figure and before each gdb run.
 - The libraries are copies at private paths of equal length.
-  The data is a private copy of the package's data, because the first-key figure evicts it.
+  The data is a private copy of the package's data: the first-key figure evicts it, and the
+  page-out reaches only the caller's own files.
 - Typing figures set `PERF_SORT=0x1c`, ibus-libpinyin's default sort.
-- gdb sets each breakpoint with `hbreak` after `starti`.
+- Only the idle-memory figures and the start-up instructions use gdb.
+  gdb sets each breakpoint with `hbreak` after `starti`.
   A count from gdb comes from a user-space instruction counter that gdb opens on the process
   with `perf_event_open`.
 
@@ -547,8 +565,8 @@ They use the `bisect` driver, gdb and `perf_event_open`, and no Valgrind.
 | --- | --- |
 | Idle memory | `/proc/<pid>/smaps` at two gdb stops. The first stop is the entry of the first `bisect_typing_unit` of `--perf-typing-sequence SO DATA nihaozhongguo 1`: init, options and one instance, nothing typed. The second is the entry of `bisect_save_unit` of `--perf-choose SO DATA nihaozhongguo 你好 中国 1`: the whole input parsed and guessed, both phrases chosen and the instance trained, before the save. The totals add every row. The stack row is `[stack]`; the text row is the library's executable mapping. |
 | Start-up | Instructions: the counter from the entry of `pinyin_init` to the return of the first `bisect_typing_unit` of `--perf-typing-sequence SO DATA n 1`. Wall time, without gdb: `init_ns` plus `alloc_ns` of `--perf` with `PERF_CYCLES=1`, plus `elapsed_ns` of `--perf-typing-sequence SO DATA n 1`. |
-| First key after idle | `--perf-typing-sequence SO DATA nihaozhongguo 2`. At the second `pinyin_reset`, gdb calls `madvise(MADV_PAGEOUT)` on each mapping of the library and of the data files, then `posix_fadvise(POSIX_FADV_DONTNEED)` on those files. The latency, the counter and the major faults (`/proc/<pid>/stat`) run from the entry of the next `bisect_typing_unit` to its return. The latency includes one gdb resume and one stop; the same run without the page-out gives the warm figure. |
-| Per key | `--perf-typing-sequence SO DATA nihaozhongguo N` under gdb. Breakpoints whose stop handler returns without stopping record the time and the counter at the entry of each `bisect_typing_unit` and at its return address, and the time at the next instruction. The time from the return address to the next instruction is the cost of one gdb resume and one stop, and is subtracted. The first sequence of each process is a warm-up. Each key takes the median of its samples; the median key and the worst key are over the 13 keys. The whole sequence is `hw_instructions` and `elapsed_ns` of the same command with `PERF_HW=1` and no gdb, divided by N. |
+| First key after idle | `PERF_HW=1 PERF_PAGE_OUT=1 bisect --perf-typing-sequence SO DATA nihaozhongguo 2`. The figure is the first observation of the second iteration: its `elapsed_ns`, `hw_instructions` and `major_faults`. The driver pages out after the second `pinyin_reset`, immediately before that key. The warm figure is the same observation with `PERF_KEYS=1` in place of `PERF_PAGE_OUT=1`. |
+| Per key | `PERF_HW=1 PERF_KEYS=1 bisect --perf-typing-sequence SO DATA nihaozhongguo 50`. The first iteration of each process is a warm-up. Each key takes the median of its `elapsed_ns` and of its `hw_instructions` over the other 49 iterations of each round. The median key and the worst key are over the 13 keys. The whole sequence is `hw_instructions` and `elapsed_ns` of the same command without `PERF_KEYS`, divided by 50. |
 | Selection | `--perf-choose SO DATA nihaozhongguo 你好 中国 N` with `PERF_HW=1`: the total of each window divided by N. |
 | Sentence | `--perf-sentence SO DATA nihaozhongguo N` with `PERF_HW=1`: the total divided by N. |
 | Size | The shared library after dh_strip's command, `strip --remove-section=.comment --remove-section=.note --strip-unneeded`. The package's file is already stripped. |

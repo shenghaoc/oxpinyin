@@ -44,17 +44,17 @@ A per-key figure is the median of all its samples in the 7 rounds, 343 for each 
 | Instructions | 9,256,270 | 11,057,626 | 0.84 |
 | Wall time, warm | 3.56 ms | 3.74 ms | 0.95 |
 | **First key after idle: library and data paged out** | | | |
-| Latency | 33.3 ms (25.9–50.3) | 31.2 ms (23.5–39.8) | 1.07 |
-| Major faults | 106 | 103 | 1.03 |
-| Instructions | 7,158,160 | 7,200,281 | 0.99 |
-| Latency without the page-out | 1.71 ms (1.63–1.93) | 2.05 ms (1.90–2.47) | 0.83 |
+| Latency | 26.2 ms (24.9–30.1) | 27.8 ms (24.6–34.1) | 0.94 |
+| Major faults | 106 | 106 | 1.00 |
+| Instructions | 7,157,162 | 7,206,553 | 0.99 |
+| Latency without the page-out | 1.68 ms (1.49–1.79) | 2.00 ms (1.47–2.04) | 0.84 |
 | **Typing: each prefix of `nihaozhongguo`** | | | |
-| Median key, instructions | 3,203,348 | 3,730,913 | 0.86 |
-| Median key, wall time | 1.54 ms | 1.61 ms | 0.95 |
-| Worst key (`nihaozhon`), instructions | 7,442,529 | 8,428,815 | 0.88 |
-| Worst key (`nihaozhon`), wall time | 2.14 ms | 2.42 ms | 0.88 |
-| Whole sequence, instructions | 45,728,683 | 51,695,107 | 0.88 |
-| Whole sequence, wall time | 17.8 ms (16.4–18.5) | 20.7 ms (18.3–21.5) | 0.86 |
+| Median key, instructions | 3,203,027 | 3,729,798 | 0.86 |
+| Median key, wall time | 1.45 ms | 1.62 ms | 0.90 |
+| Worst key (`nihaozhon`), instructions | 7,442,346 | 8,428,035 | 0.88 |
+| Worst key (`nihaozhon`), wall time | 2.03 ms | 2.46 ms | 0.83 |
+| Whole sequence, instructions | 45,748,212 | 51,713,391 | 0.88 |
+| Whole sequence, wall time | 16.5 ms (16.2–22.5) | 20.5 ms (18.6–21.3) | 0.80 |
 | **Selection (`--perf-choose`)** | | | |
 | Choose and redraw, instructions | 1,512,480 | 1,554,493 | 0.97 |
 | Choose and redraw, wall time | 335 µs (322–365) | 376 µs (350–402) | 0.89 |
