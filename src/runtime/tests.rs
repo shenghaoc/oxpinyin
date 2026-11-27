@@ -2669,8 +2669,10 @@ mod step_item {
     /// the item the text read does.
     fn price(runtime: &Runtime, spelling: &str, token: u32) -> Option<u32> {
         let path = path(runtime, spelling);
-        let old = runtime.dict().priced_on_path(&path, token, true);
-        let new = runtime.dict().priced(&path, token, true);
+        let old = runtime
+            .dict()
+            .priced_on_path(&path, token, super::StepText::Build);
+        let new = runtime.dict().priced(&path, token, super::StepText::Build);
         assert_eq!(
             old.as_ref()
                 .map(|p| (p.item.chars, p.item.pronunciation, p.text.clone())),
@@ -2744,11 +2746,11 @@ mod step_item {
         }
         let ni = runtime
             .dict()
-            .priced(&path(&runtime, "ni"), token, false)
+            .priced(&path(&runtime, "ni"), token, super::StepText::Skip)
             .unwrap();
         let hao = runtime
             .dict()
-            .priced(&path(&runtime, "hao"), token, false)
+            .priced(&path(&runtime, "hao"), token, super::StepText::Skip)
             .unwrap();
         assert_ne!(ni.item.pronunciation, hao.item.pronunciation);
     }
