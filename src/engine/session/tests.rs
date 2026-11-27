@@ -1297,7 +1297,13 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     ];
     let mut frequencies = vec![7; 5];
     session
-        .candidate_frequencies(&collected, None, true, false, &mut frequencies)
+        .candidate_frequencies(
+            &collected,
+            None,
+            super::Scan::ExplicitGuess,
+            false,
+            &mut frequencies,
+        )
         .expect("frequency reads cannot fail here");
     assert_eq!(
         frequencies,
@@ -3132,7 +3138,7 @@ fn longer_unigram_ties_follow_library_order_before_matrix_path_order() {
         );
         session.replace_raw("xian").expect("parse");
         let (_, candidate) = session
-            .longer_candidate(false)
+            .longer_candidate(super::Scan::EagerRefresh)
             .expect("lookup")
             .expect("row");
         assert_eq!(candidate.text(), expected);

@@ -471,11 +471,8 @@ struct ScanScratch<'a> {
     entries: &'a mut Vec<PhraseEntry>,
     row: &'a mut Vec<u8>,
     window_addon: &'a mut Vec<Candidate>,
-    /// An explicit guess: the scan is the pin's `pinyin_guess_candidates`
-    /// search, so its table searches die where the pin's assert
-    /// (`abort_toned_incomplete`); an eager refresh, which the pin never
-    /// runs, does not.
-    explicit: bool,
+    /// Which scan this is ([`Scan`]).
+    scan: Scan,
 }
 
 struct ScanBuf<'a> {
@@ -490,8 +487,8 @@ struct ScanBuf<'a> {
     unreadable: &'a mut usize,
     entries: &'a mut Vec<PhraseEntry>,
     row: &'a mut Vec<u8>,
-    /// As [`ScanScratch::explicit`].
-    explicit: bool,
+    /// As [`ScanScratch::scan`].
+    scan: Scan,
 }
 
 /// One key of the scan matrix at its byte position, with the byte position
@@ -924,6 +921,19 @@ fn dynamic_adjust_bigram_possibility(
         return Ok(0.0);
     }
     Ok(freq as f32 / total as f32)
+}
+
+/// Which scan builds a candidate list. Only an explicit guess is the pin's
+/// own `pinyin_guess_candidates` search, so only it dies where the pin
+/// asserts: on a toned incomplete key (`abort_toned_incomplete`), on an
+/// overlong suggestion row, and on a user gram the pin cannot read. An
+/// eager refresh, which the pin never runs, skips those reads instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Scan {
+    /// The session's own list build after a parse or a choice.
+    EagerRefresh,
+    /// The pin's candidate guess.
+    ExplicitGuess,
 }
 
 /// Which upstream library's law a surface follows. A session's law is
