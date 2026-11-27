@@ -1,5 +1,3 @@
-use super::*;
-
 // 074a2219 pinyin.cpp:338 writes the filename with %s.
 #[test]
 fn a_name_is_written_up_to_its_first_nul() {
@@ -16,6 +14,6 @@ fn a_name_is_written_up_to_its_first_nul() {
 #[cfg(unix)]
 fn paths_are_written_as_their_bytes() {
     use std::os::unix::ffi::OsStrExt as _;
-    let path = Path::new(std::ffi::OsStr::from_bytes(b"/d\xffir"));
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/d\xffir"));
     assert_eq!(crate::input::path_to_bytes(path), b"/d\xffir");
 }
