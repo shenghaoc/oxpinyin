@@ -93,6 +93,9 @@ pub(crate) fn build_c_string(dir: Option<&Path>, name: Option<&str>) -> CString 
 }
 
 /// `path` as a C string, cut at a NUL as the pin's `%s` input would be.
+// Out of line: once per file operation; inlined, it expands to about 100
+// bytes at each of its 18 call sites.
+#[inline(never)]
 #[must_use]
 pub(crate) fn c_string(path: &OsStr) -> CString {
     let bytes = path_to_bytes(Path::new(path));

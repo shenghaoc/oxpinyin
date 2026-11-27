@@ -114,6 +114,9 @@ impl ChewingKey {
     }
 
     /// One display field of the key (empty for the zero and invalid keys).
+    // Out of line: inlined, the table lookup expands to about 180 bytes at
+    // each of its 23 call sites.
+    #[inline(never)]
     fn content_string(self, field: usize) -> &'static str {
         content_strings()
             .field(self.table_index(), field)

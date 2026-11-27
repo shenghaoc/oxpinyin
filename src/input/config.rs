@@ -47,6 +47,9 @@ impl<T> Scanned<T> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct OpenFailed;
 
+// Out of line: init only; inlined, the NUL search expands to about 900
+// bytes in each reader.
+#[inline(never)]
 fn scanned_word(count: c_int, bytes: &[u8; WORD_SIZE]) -> Scanned<&CStr> {
     match count {
         1 => CStr::from_bytes_until_nul(bytes).map_or(Scanned::Unassigned, Scanned::Assigned),
