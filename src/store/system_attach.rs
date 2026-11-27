@@ -56,14 +56,12 @@ impl SystemAttachment {
     /// Returns failures before the native open. A failed native open returns
     /// [`Self::Unopened`].
     pub fn attach(path: &Path, kind: DbmKind, access: AccessMode) -> Result<Self, StoreError> {
-        let hash = kind == DbmKind::Hash;
-        let read_only = access == AccessMode::ReadOnly;
         #[cfg(feature = "bdb")]
-        let store = crate::store::bdb::open_system(path, hash, read_only)?;
+        let store = crate::store::bdb::open_system(path, kind, access)?;
         #[cfg(feature = "kyotocabinet")]
-        let store = crate::store::kyotocabinet::open_system(path, hash, read_only)?;
+        let store = crate::store::kyotocabinet::open_system(path, kind, access)?;
         #[cfg(feature = "tkrzw")]
-        let store = crate::store::tkrzw::open_system(path, hash, read_only)?;
+        let store = crate::store::tkrzw::open_system(path, kind, access)?;
         Ok(store.map_or(Self::Unopened, Self::Open))
     }
 }

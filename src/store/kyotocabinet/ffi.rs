@@ -794,14 +794,14 @@ impl Cursor<'_> {
     /// `Ok(false)` at the end of the database. The record stays readable
     /// through [`Cursor::key`] and [`Cursor::value`] until the next read.
     pub(crate) fn next(&mut self) -> Result<bool, StoreError> {
-        self.read(true, true)
+        self.read(true)
     }
 
     /// [`Cursor::next`] without the value: [`Cursor::value`] is empty after
     /// it.
     #[cfg(test)]
     pub(crate) fn next_key(&mut self) -> Result<bool, StoreError> {
-        self.read(false, true)
+        self.read(false)
     }
 
     /// The key of the last record read.
@@ -814,13 +814,16 @@ impl Cursor<'_> {
         &self.bytes[self.key_len..]
     }
 
-    fn read(&mut self, with_value: bool, step: bool) -> Result<bool, StoreError> {
+    /// Reads the record at the cursor, with its value when `with_value`,
+    /// and steps past it: every cursor walk steps, so `accept`'s step
+    /// argument is always true.
+    fn read(&mut self, with_value: bool) -> Result<bool, StoreError> {
         let mut sink = Sink::Record {
             bytes: &mut self.bytes,
             key_len: &mut self.key_len,
             with_value,
         };
-        if sys::cursor_accept(self.cursor.pin_mut(), &mut sink, step) {
+        if sys::cursor_accept(self.cursor.pin_mut(), &mut sink, true) {
             return Ok(true);
         }
         // A false return is the end of the database as well as a failure;

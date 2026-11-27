@@ -565,9 +565,11 @@ fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
 /// Returns the failures before the native open: a path containing NUL.
 pub(crate) fn open_system(
     path: &Path,
-    hash: bool,
-    read_only: bool,
+    kind: crate::store::DbmKind,
+    access: crate::store::AccessMode,
 ) -> Result<Option<TkrzwStore>, StoreError> {
+    let hash = kind == crate::store::DbmKind::Hash;
+    let read_only = access == crate::store::AccessMode::ReadOnly;
     let mut store = TkrzwStore::allocate_native(hash, read_only);
     if !store.try_open_native(path, !read_only)? {
         return Ok(None);

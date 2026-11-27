@@ -2,6 +2,7 @@ use super::{
     Class, Db, OPEN_DEFAULT, OPEN_NO_CREATE, STATUS_SUCCESS, TkrzwStore, TkrzwUserBigramDb,
     copy_tkrzwdb, open_hash, open_hash_create, open_system,
 };
+use crate::store::{AccessMode, DbmKind};
 use crate::store::{GramReadOwned, RawReadOwned, StoreError, UserBigramDb, WriteStore};
 
 fn reset_syncs() -> usize {
@@ -229,14 +230,26 @@ fn a_system_tree_synchronizes_before_close_and_a_hash_does_not() {
     open_hash_create(&hash).unwrap();
 
     let before = reset_syncs();
-    drop(open_system(&tree, false, true).unwrap().unwrap());
+    drop(
+        open_system(&tree, DbmKind::Tree, AccessMode::ReadOnly)
+            .unwrap()
+            .unwrap(),
+    );
     assert_eq!(reset_syncs(), before + 1);
-    drop(open_system(&hash, true, true).unwrap().unwrap());
+    drop(
+        open_system(&hash, DbmKind::Hash, AccessMode::ReadOnly)
+            .unwrap()
+            .unwrap(),
+    );
     assert_eq!(reset_syncs(), before + 1);
     assert!(
-        open_system(&dir.path().join("missing.bin"), false, true)
-            .unwrap()
-            .is_none()
+        open_system(
+            &dir.path().join("missing.bin"),
+            DbmKind::Tree,
+            AccessMode::ReadOnly,
+        )
+        .unwrap()
+        .is_none()
     );
     assert_eq!(reset_syncs(), before + 1);
 }
