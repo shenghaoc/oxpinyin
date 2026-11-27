@@ -47,24 +47,11 @@ impl FullPinyinParser {
     /// option bit is set. Initials alone require [`OptionBits::PINYIN_INCOMPLETE`].
     /// An unmatched spelling returns [`None`].
     #[must_use]
-    pub fn parse_one_key(options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
-        if input.contains(&b'\'') {
+    pub fn parse_one_key(options: OptionBits, input: &str) -> Option<ChewingKey> {
+        if input.contains('\'') {
             return None;
         }
-        let mut tone = CHEWING_ZERO_TONE;
-        let mut core = input;
-        if options.contains(OptionBits::USE_TONE) {
-            if let Some((&last, rest)) = input.split_last()
-                && (b'1'..=b'5').contains(&last)
-            {
-                tone = last - b'0';
-                core = rest;
-            }
-            if options.contains(OptionBits::FORCE_TONE) && tone == CHEWING_ZERO_TONE {
-                return None;
-            }
-        }
-        let text = core::str::from_utf8(core).ok()?;
+        let (text, tone) = split_tone(options, input)?;
         let syllable = SyllableKey::from_option_text(text, options)?;
         // `check_pinyin_options` (`pinyin_parser2.cpp:38-58` at 074a2219):
         // an index row flagged `PINYIN_INCOMPLETE` — an initial-only
@@ -78,6 +65,23 @@ impl FullPinyinParser {
         let mut key = ChewingKey::from_pinyin(syllable.text())?;
         key.tone = tone;
         Some(key)
+    }
+}
+
+// FullPinyinParser2::parse_one_key, pinyin_parser2.cpp:176–190 at 074a2219.
+/// The tone half of a one-key parse: under [`OptionBits::USE_TONE`] a final
+/// ASCII digit from 1 to 5 is the tone, and [`OptionBits::FORCE_TONE`] then
+/// requires it. Returns the spelling without the digit, or [`None`] when a
+/// required tone is absent.
+pub(crate) fn split_tone(options: OptionBits, input: &str) -> Option<(&str, u8)> {
+    if !options.contains(OptionBits::USE_TONE) {
+        return Some((input, CHEWING_ZERO_TONE));
+    }
+    match input.bytes().last() {
+        // An ASCII byte ends a character, so the slice stays on a boundary.
+        Some(digit @ b'1'..=b'5') => Some((&input[..input.len() - 1], digit - b'0')),
+        _ if options.contains(OptionBits::FORCE_TONE) => None,
+        _ => Some((input, CHEWING_ZERO_TONE)),
     }
 }
 

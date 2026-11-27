@@ -468,7 +468,8 @@ fn emit_edges(
             }
             let text = &input[syllable_start..syllable_start + length];
             let (core, tone) = tone_split(text, use_tone, force_tone)?;
-            key_for_spelling(core, options).map(|(key, distance)| (key, tone, distance))
+            SyllableKey::from_option_text_with_distance(core, options)
+                .map(|(key, distance)| (key, tone, distance))
         });
     let longest_complete = parsed_spans
         .iter()
@@ -527,7 +528,7 @@ fn emit_edges(
 /// same `USE_TONE` branch (`pinyin_parser2.cpp:185-189`): a span without a
 /// tone digit does not parse at all. Dead without `USE_TONE` — the caller
 /// derives it as `use_tone && FORCE_TONE`.
-fn tone_split(text: &[u8], use_tone: bool, force_tone: bool) -> Option<(&[u8], u8)> {
+fn tone_split(text: &[u8], use_tone: bool, force_tone: bool) -> Option<(&str, u8)> {
     let (core, tone) = match text.last().copied() {
         Some(digit @ b'1'..=b'5') if use_tone => (&text[..text.len() - 1], digit - b'0'),
         _ => (text, 0),
@@ -541,11 +542,10 @@ fn tone_split(text: &[u8], use_tone: bool, force_tone: bool) -> Option<(&[u8], u
         .iter()
         .position(|&byte| byte == 0)
         .unwrap_or(core.len())];
-    if !core.is_empty() && core.iter().all(u8::is_ascii_lowercase) {
-        Some((core, tone))
-    } else {
-        None
-    }
+    // Only lowercase ASCII spells a key; any other byte, a non-UTF-8 one
+    // included, fails the lookup.
+    let core = core::str::from_utf8(core).ok()?;
+    (!core.is_empty() && core.bytes().all(|byte| byte.is_ascii_lowercase())).then_some((core, tone))
 }
 
 /// Where a key may begin for an edge leaving `node`, or `None` if none can.
@@ -572,12 +572,6 @@ fn key_start(input: &[u8], node: usize, run_end: &mut usize) -> Option<usize> {
         return (*run_end < input.len()).then_some(*run_end);
     }
     Some(node)
-}
-
-fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<(SyllableKey, u8)> {
-    core::str::from_utf8(text)
-        .ok()
-        .and_then(|spelling| SyllableKey::from_option_text_with_distance(spelling, options))
 }
 
 #[cfg(test)]
