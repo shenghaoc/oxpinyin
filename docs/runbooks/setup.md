@@ -1,6 +1,9 @@
-# Native contributor setup
+# Native setup
 
-This procedure sets up native development on Linux, macOS or Windows.
+This guide is for integrators and packagers who build and test oxpinyin from source.
+
+oxpinyin builds and runs natively on Linux x86_64, macOS arm64 and Windows x86_64.
+This procedure sets up native development on each of them.
 It starts from [CONTRIBUTING](../../CONTRIBUTING.md). These instructions build
 and test local files. They do not install an input method or replace your
 system libpinyin. A failed command stops the setup; that command and its full
@@ -92,7 +95,7 @@ sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config gl
 The build discovers tkrzw and Kyoto Cabinet through `pkg-config tkrzw` and
 `pkg-config kyotocabinet`; the distribution's libraries are on the default loader path, so
 no path export is needed. GLib stays on the system package manager; the [macOS](#macos) and
-[Windows](#windows) sections name those platforms' tkrzw installation, and
+[Windows](#native-windows) sections name those platforms' tkrzw installation, and
 Windows alone uses vcpkg. Check the backend with `just test`, which runs tkrzw on Linux:
 
 ```bash
@@ -498,10 +501,10 @@ keeps its existing sanitizer commands and paths.
 
 ### Nightly macOS and Windows jobs
 
-The macOS and Windows workspace jobs are `test-macos` and `test-windows` in
+The macOS arm64 and Windows x86_64 workspace jobs are `test-macos` and `test-windows` in
 `verify-nightly.yml`. Their schedule and merge status are in
 [verification rule 10](verification.md#10-ci-merge-conditions); pull-request CI
-tests Linux only. A failure on one platform is reproduced by dispatching the
+tests Linux x86_64 only. A failure on one platform is reproduced by dispatching the
 workflow on a branch with `macos_only` or `windows_only` set:
 
 ```bash

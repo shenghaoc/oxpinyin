@@ -529,6 +529,30 @@ keystroke cycle and cold open), the flagged pin divided by the package must be w
 1/1.02 and 1.02. Outside that band, the flags are not the package's, and the comparison
 against the package is not reported.
 
+### Resource figures
+
+The [performance page](../performance.md) reports these figures for the package and oxpinyin.
+They use the `bisect` driver, gdb and `perf_event_open`, and no Valgrind.
+
+- Each sample is a fresh process on one CPU (`taskset`). The arms alternate round by round.
+- An unmeasured run of each arm warms the page cache before each figure and before each gdb run.
+- The libraries are copies at private paths of equal length.
+  The data is a private copy of the package's data, because the first-key figure evicts it.
+- Typing figures set `PERF_SORT=0x1c`, ibus-libpinyin's default sort.
+- gdb sets each breakpoint with `hbreak` after `starti`.
+  A count from gdb comes from a user-space instruction counter that gdb opens on the process
+  with `perf_event_open`.
+
+| Figure | How it is measured |
+| --- | --- |
+| Idle memory | `/proc/<pid>/smaps` at two gdb stops. The first stop is the entry of the first `bisect_typing_unit` of `--perf-typing-sequence SO DATA nihaozhongguo 1`: init, options and one instance, nothing typed. The second is the entry of `bisect_save_unit` of `--perf-choose SO DATA nihaozhongguo 你好 中国 1`: the whole input parsed and guessed, both phrases chosen and the instance trained, before the save. The totals add every row. The stack row is `[stack]`; the text row is the library's executable mapping. |
+| Start-up | Instructions: the counter from the entry of `pinyin_init` to the return of the first `bisect_typing_unit` of `--perf-typing-sequence SO DATA n 1`. Wall time, without gdb: `init_ns` plus `alloc_ns` of `--perf` with `PERF_CYCLES=1`, plus `elapsed_ns` of `--perf-typing-sequence SO DATA n 1`. |
+| First key after idle | `--perf-typing-sequence SO DATA nihaozhongguo 2`. At the second `pinyin_reset`, gdb calls `madvise(MADV_PAGEOUT)` on each mapping of the library and of the data files, then `posix_fadvise(POSIX_FADV_DONTNEED)` on those files. The latency, the counter and the major faults (`/proc/<pid>/stat`) run from the entry of the next `bisect_typing_unit` to its return. The latency includes one gdb resume and one stop; the same run without the page-out gives the warm figure. |
+| Per key | `--perf-typing-sequence SO DATA nihaozhongguo N` under gdb. Breakpoints whose stop handler returns without stopping record the time and the counter at the entry of each `bisect_typing_unit` and at its return address, and the time at the next instruction. The time from the return address to the next instruction is the cost of one gdb resume and one stop, and is subtracted. The first sequence of each process is a warm-up. Each key takes the median of its samples; the median key and the worst key are over the 13 keys. The whole sequence is `hw_instructions` and `elapsed_ns` of the same command with `PERF_HW=1` and no gdb, divided by N. |
+| Selection | `--perf-choose SO DATA nihaozhongguo 你好 中国 N` with `PERF_HW=1`: the total of each window divided by N. |
+| Sentence | `--perf-sentence SO DATA nihaozhongguo N` with `PERF_HW=1`: the total divided by N. |
+| Size | The shared library after dh_strip's command, `strip --remove-section=.comment --remove-section=.note --strip-unneeded`. The package's file is already stripped. |
+
 ## Writing it up
 
 A write-up follows the [verification reporting rules](verification.md#7-proportionate-verification) and the

@@ -1,5 +1,7 @@
 # Architecture
 
+This page is for contributors: it states which crate owns each behaviour and what each crate may depend on.
+
 ## Crates
 
 Three workspace crates are published. The core library holds the engine and the two C crates expose the C interfaces. The three private crates supply the command-line tools.
@@ -24,6 +26,32 @@ identity, and Windows process counters, file and dependency identity.
 Only module declarations select platforms.
 
 Every product crate links GLib, because the library links it ([native libraries](#native-libraries-and-unsafe-code)).
+
+### Running the utilities and the REPL
+
+To run or test a utility, select its Cargo package, for example
+`cargo run --locked -p oxpinyin-utils --bin ngseg -- --help`.
+
+`oxpinyin-repl` is an interactive shell for the library's test modes, such as `pinyin` and `parser2`.
+Run `just repl pinyin` (or `just repl parser2 -- --parser zhuyin`).
+Each invocation copies `fixtures/w3` to a temporary directory; training and other writes are discarded on exit.
+Select a backend with `--backend bdb` or `--backend kyotocabinet`.
+The two text-table modes also stage the authored `fixtures/datagen-toned` text tables.
+
+## Repository layout
+
+| Path | What |
+|---|---|
+| `src/`, `capi/`, `zhuyin-capi/`, `utils/`, `repl/`, `tool-support/` | The workspace packages in the [crate table](#crates) |
+| [`ROADMAP.md`](../ROADMAP.md) | Current stage, pin and open work |
+| [`docs/constitution.md`](constitution.md) | Project rules and supported external interfaces |
+| [`docs/source-policy.md`](source-policy.md) | Source-reading method, compatibility decisions and stage rules |
+| [`docs/runbooks/`](runbooks/README.md) | How to: backends, the oracle and differentials, Callgrind and Massif recipes, goldens and pins, releases |
+| [`docs/findings/`](findings/README.md) | Decisions and divergence records, indexed with a status for each file |
+| [`docs/testing/`](testing/README.md) | Corpus pipeline, oracle environment, fixture formats |
+| [`docs/packaging.md`](packaging.md) | cargo-c packaging and installed-tree layout |
+| [`docs/performance.md`](performance.md) | Measured resource use |
+| `tools/oracle/` | Pin build recipe ([oracle runbook](runbooks/oracle.md)) |
 
 ## Library modules
 
