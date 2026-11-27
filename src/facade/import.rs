@@ -73,7 +73,7 @@ impl ContextCore {
     ) -> bool {
         let dict = self.runtime.dict();
         let is_system = dict.is_system_library(index);
-        if is_system && !dict.library_visible(u32::from(index)) {
+        if is_system && !dict.library_visible(index) {
             return false;
         }
         let user = self.user_store_mut();

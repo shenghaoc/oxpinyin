@@ -634,7 +634,7 @@ mod backend_files {
                 .expect("live item")
         };
         let shipped = [live(&runtime, tokens[0]), live(&runtime, tokens[1])];
-        assert!(runtime.add_unigram_delta(tokens[0], u64::from(remaining)));
+        assert!(runtime.add_unigram_delta(tokens[0], remaining));
         assert_eq!(
             live(&runtime, tokens[0]),
             shipped[0].wrapping_add(remaining)
@@ -744,7 +744,7 @@ mod backend_files {
             .user_store_mut()
             .add_phrase(&"坐坐坐".into(), &[key; 3], Some(5))
             .unwrap();
-        let user_library = u32::from(crate::vocab::phrase_index_library_index(user_token));
+        let user_library = crate::vocab::phrase_index_library_index(user_token);
         let zuo3 = &["zuo", "zuo", "zuo"][..];
         let mut scratch = Vec::new();
         // Each unload stays for the later cases.
@@ -2838,10 +2838,7 @@ mod step_item {
             Fallback::Unloaded => {
                 let mut runtime = opened();
                 let token = token(&runtime);
-                assert!(
-                    runtime
-                        .unload_library(u32::from(crate::vocab::phrase_index_library_index(token)))
-                );
+                assert!(runtime.unload_library(crate::vocab::phrase_index_library_index(token)));
                 fallback(&runtime, token);
             }
             Fallback::User | Fallback::Imported => {

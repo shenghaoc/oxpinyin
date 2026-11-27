@@ -197,7 +197,7 @@ impl<'a> RuntimeDict<'a> {
             tones,
             out,
             row,
-            |token| self.library_visible(u32::from(phrase_index_library_index(token))),
+            |token| self.library_visible(phrase_index_library_index(token)),
             |token| {
                 self.live_items()
                     .read(token, |item| {
@@ -215,7 +215,7 @@ impl<'a> RuntimeDict<'a> {
         self.user_lookup()
             .lookup_resolving_missing(&query, out, |token| {
                 if !self.system.library_loaded(token)
-                    || !self.library_visible(u32::from(phrase_index_library_index(token)))
+                    || !self.library_visible(phrase_index_library_index(token))
                 {
                     return None;
                 }
@@ -264,8 +264,7 @@ impl<'a> RuntimeDict<'a> {
     /// test-only [`Self::trellis_ranges`] keeps.
     #[cfg(test)]
     fn token_ranged(&self, token: u32) -> bool {
-        self.system.library_loaded(token)
-            && self.library_visible(u32::from(phrase_index_library_index(token)))
+        self.system.library_loaded(token) && self.library_visible(phrase_index_library_index(token))
     }
 
     /// The user table's `convert` call of the trellis table search: the
@@ -537,12 +536,8 @@ impl<'a> RuntimeDict<'a> {
     /// this to keep the shift and the `mask == 0` shortcut in one
     /// place.
     #[must_use]
-    pub fn library_visible(&self, nibble: u32) -> bool {
-        let mask = self.library_mask;
-        if mask == 0 || nibble >= 32 {
-            return true;
-        }
-        mask & (1u32 << nibble) == 0
+    pub const fn library_visible(&self, nibble: u8) -> bool {
+        crate::data::library_visible(self.library_mask, nibble)
     }
 
     /// Whether the token's item is readable, for entry-level filters: its
@@ -567,7 +562,7 @@ impl<'a> RuntimeDict<'a> {
         // `add_index` files a token under its masked library
         // (074a2219 phrase_large_table3.cpp:42, novel_types.h:44).
         let library = phrase_index_library_index(token);
-        self.library_visible(u32::from(library))
+        self.library_visible(library)
             && (self.system.library_loaded(token) || self.user.has_user_library(library))
     }
 
@@ -583,7 +578,7 @@ impl<'a> RuntimeDict<'a> {
         if self.is_system_library(phrase_index_library_index(token)) {
             return self.live_items().pronunciation_count(token).found();
         }
-        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
+        if !self.library_visible(phrase_index_library_index(token)) {
             return None;
         }
         self.user.user_pronunciation_count(token)
@@ -601,7 +596,7 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .flatten();
         }
-        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
+        if !self.library_visible(phrase_index_library_index(token)) {
             return None;
         }
         self.user
@@ -618,7 +613,7 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .unwrap_or(false);
         }
-        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
+        if !self.library_visible(phrase_index_library_index(token)) {
             return false;
         }
         self.user
@@ -663,7 +658,7 @@ impl<'a> RuntimeDict<'a> {
         if items.is_system_library(library) {
             return items.phrase_words(token);
         }
-        if !self.library_visible(u32::from(library)) {
+        if !self.library_visible(library) {
             return None;
         }
         self.user
@@ -687,7 +682,7 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .flatten();
         }
-        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
+        if !self.library_visible(phrase_index_library_index(token)) {
             return None;
         }
         self.user.with_user_item(token, read).flatten()
@@ -706,8 +701,7 @@ impl<'a> RuntimeDict<'a> {
                 .found()
                 .is_some();
         }
-        self.library_visible(u32::from(phrase_index_library_index(token)))
-            && self.user.phrase_exists(token)
+        self.library_visible(phrase_index_library_index(token)) && self.user.phrase_exists(token)
     }
 
     /// Read only the nth insertion-ordered key list and the stored length of
@@ -755,7 +749,7 @@ impl<'a> RuntimeDict<'a> {
         read: impl FnOnce(usize, Option<&[u8]>) -> R,
     ) -> Option<R> {
         if self.is_system_library(phrase_index_library_index(token))
-            || !self.library_visible(u32::from(phrase_index_library_index(token)))
+            || !self.library_visible(phrase_index_library_index(token))
         {
             return None;
         }
@@ -869,8 +863,7 @@ impl RuntimeDict<'_> {
         // The user table's search of this path (#785); the pin makes one
         // per `FacadeChewingTable2::search`, and a repeat is idempotent.
         self.note_user_search(syllables);
-        let visible =
-            |token: u32| self.library_visible(u32::from(phrase_index_library_index(token)));
+        let visible = |token: u32| self.library_visible(phrase_index_library_index(token));
         self.system
             .trellis_ranges_with(syllables, tones, ranges, visible)?;
         let tokens = self.user_lookup().search_toned(&query);
@@ -1113,9 +1106,7 @@ impl Dictionary for RuntimeDict<'_> {
             .note_pinyin_suggestion(|| chewing_query(syllables));
         tokens.extend(user.suggest_extensions(syllables));
         if self.library_mask != 0 {
-            tokens.retain(|token| {
-                self.library_visible(u32::from(phrase_index_library_index(*token)))
-            });
+            tokens.retain(|token| self.library_visible(phrase_index_library_index(*token)));
         }
         crate::model::sort_tokens_by_library(&mut tokens);
         Ok(Some(tokens))
@@ -1155,7 +1146,7 @@ impl Dictionary for RuntimeDict<'_> {
                 .read(token, |item| item.phrase_length())
                 .found();
         }
-        if !self.library_visible(u32::from(phrase_index_library_index(token))) {
+        if !self.library_visible(phrase_index_library_index(token)) {
             return None;
         }
         self.user.phrase_length(token)
@@ -1736,7 +1727,7 @@ impl Runtime {
 
     /// Apply a unigram increment with exclusive access to the storage owner.
     #[must_use]
-    pub fn add_unigram_delta(&mut self, token: u32, delta: u64) -> bool {
+    pub fn add_unigram_delta(&mut self, token: u32, delta: u32) -> bool {
         self.add_unigram_outcome(token, delta).is_accepted()
     }
 
@@ -1746,19 +1737,16 @@ impl Runtime {
     /// from an unloaded library or a missing item, which are
     /// [`UnigramAdd::Missing`].
     #[must_use]
-    pub fn add_unigram_outcome(&mut self, token: u32, delta: u64) -> UnigramAdd {
+    pub fn add_unigram_outcome(&mut self, token: u32, delta: u32) -> UnigramAdd {
         // PHRASE_INDEX_LIBRARY_INDEX and PHRASE_MASK ignore the tag nibble
         // (074a2219 novel_types.h:41-44, phrase_index.cpp:154).
         let token = token & (crate::vocab::PHRASE_INDEX_LIBRARY_MASK | crate::vocab::PHRASE_MASK);
         if !self
             .dict()
-            .library_visible(u32::from(phrase_index_library_index(token)))
+            .library_visible(phrase_index_library_index(token))
         {
             return UnigramAdd::Missing;
         }
-        let Ok(delta) = u32::try_from(delta) else {
-            return UnigramAdd::Missing;
-        };
         self.user.add_unigram_outcome(token, delta)
     }
 
@@ -1848,7 +1836,7 @@ impl Runtime {
             if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
                 || (!walk.reload
                     && (row.user.is_none()
-                        || !self.dict().library_visible(u32::from(index))
+                        || !self.dict().library_visible(index)
                         || !libraries.is_loaded(index)))
             {
                 continue;
@@ -1899,14 +1887,14 @@ impl Runtime {
     /// Loads default library `index` — the GBK-reload path after an
     /// unload; `false` when already visible.
     #[must_use]
-    pub(crate) fn load_library(&mut self, index: u32) -> bool {
-        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
+    pub(crate) fn load_library(&mut self, index: u8) -> bool {
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
         let bit = 1u32 << index;
         let was_set = self.library_mask & bit != 0;
         self.library_mask &= !bit;
-        self.user.set_library_loaded(index as u8, true);
+        self.user.set_library_loaded(index, true);
         was_set
     }
 
@@ -1915,12 +1903,12 @@ impl Runtime {
     /// `unload` returns, `pinyin.cpp:473-474`). Which indices a facade lets
     /// through is the C ABI's rule.
     #[must_use]
-    pub fn unload_library(&mut self, index: u32) -> bool {
-        if index >= u32::from(PHRASE_INDEX_LIBRARY_COUNT) {
+    pub fn unload_library(&mut self, index: u8) -> bool {
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
         self.library_mask |= 1u32 << index;
-        self.user.set_library_loaded(index as u8, false);
+        self.user.set_library_loaded(index, false);
         true
     }
 }

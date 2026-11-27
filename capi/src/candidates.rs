@@ -547,7 +547,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(
             token,
-            u64::from(oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED)),
+            oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED),
         ));
     }
     let mut token = row.token;
@@ -582,7 +582,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
         return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(
             token,
-            u64::from(oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED)),
+            oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED),
         ));
     }
     choose_phrase_row(&mut inst, offset, &row, token, text)
@@ -802,7 +802,7 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
             let ctx = unsafe { crate::state::instance_context_mut(instance) };
             let _ = ctx.core.runtime.add_unigram_delta(
                 token,
-                u64::from(oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED)),
+                oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED),
             );
         }
         return true;

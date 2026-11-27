@@ -49,6 +49,7 @@ pub use c_stderr::{path_bytes, table_conf_load_failed};
 pub use dict::{AddonDictionary, DictError, SystemDictionary, SystemTables};
 pub(crate) use dict::{SearchQuery, toned_query};
 
+pub(crate) use lm::library_visible;
 pub use lm::{BigramLanguageModel, BigramTables, LmError, merge_bigram};
 
 pub use phrase_libraries::{LibraryPronunciation, PhraseLibraries};

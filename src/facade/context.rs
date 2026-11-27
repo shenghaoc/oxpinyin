@@ -611,12 +611,9 @@ impl ContextCore {
     /// # Aborts
     /// An in-range row with the wrong file type, or a library header read
     /// that fails, aborts at the pin's assertion.
-    pub fn load_phrase_library(&mut self, index: u32) -> Result<bool, LibraryLoadFault> {
+    pub fn load_phrase_library(&mut self, index: u8) -> Result<bool, LibraryLoadFault> {
         let runtime = &self.runtime;
-        let Ok(row_index) = u8::try_from(index) else {
-            return Ok(false);
-        };
-        let Some(row) = runtime.table_conf().default_row(row_index) else {
+        let Some(row) = runtime.table_conf().default_row(index) else {
             // Out of the sixteen sub-indices: the pin's first guard.
             return Ok(false);
         };
@@ -647,7 +644,7 @@ impl ContextCore {
         // 108, `pinyin.cpp:276`, `zhuyin.cpp:219`): that is returned with
         // nothing replaced and the library still unloaded.
         let user_file = matches!(row.file_type, FileType::UserFile);
-        let mut walk = runtime.begin_library_reload(row_index);
+        let mut walk = runtime.begin_library_reload(index);
         match runtime.remap_next(&mut walk) {
             Some(RemapStep::Directory) => std::process::abort(),
             Some(RemapStep::Unmappable(path)) => {
@@ -661,9 +658,9 @@ impl ContextCore {
         let store = self.user_store_mut();
         let replay = {
             if user_file {
-                store.load_user_library(row_index);
+                store.load_user_library(index);
                 Ok(())
-            } else if store.is_system_library(row_index) {
+            } else if store.is_system_library(index) {
                 store.load_system_libraries_retaining(&mut originals)
             } else {
                 // A row that names no user file has no journal in the
@@ -736,8 +733,8 @@ impl ContextCore {
             .table_conf()
             .default_row(index)
             .is_some_and(|row| matches!(row.file_type, FileType::UserFile))
-            && runtime.dict().library_visible(u32::from(index));
-        let system_file = runtime.dict().library_visible(u32::from(index))
+            && runtime.dict().library_visible(index);
+        let system_file = runtime.dict().library_visible(index)
             && runtime.dict().system().libraries().is_loaded(index);
         {
             let store = self.user_store_mut();
@@ -747,7 +744,7 @@ impl ContextCore {
                 store.reset_system_library(index);
             }
         }
-        self.runtime.unload_library(u32::from(index))
+        self.runtime.unload_library(index)
     }
 
     /// Borrow the context's user store for one read operation.

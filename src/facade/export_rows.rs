@@ -353,7 +353,7 @@ impl PhraseExportRead<'_> {
         self.refresh();
         if self.user.originals().get(&self.index).is_some() {
             self.probe_system(start);
-        } else if self.system.library_visible(u32::from(self.index)) {
+        } else if self.system.library_visible(self.index) {
             self.probe_user(start);
         }
     }
@@ -364,7 +364,7 @@ impl PhraseExportRead<'_> {
     /// probe. An unloaded library is `ERROR_NO_SUB_PHRASE_INDEX`: no token.
     fn probe_system(&mut self, start: u32) {
         let dict = &self.system;
-        if !dict.library_visible(u32::from(self.index)) {
+        if !dict.library_visible(self.index) {
             return;
         }
         let live = dict.live_items_ignoring_mask();
