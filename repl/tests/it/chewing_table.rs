@@ -22,24 +22,6 @@ const OPEN_GB_TABLE_FAILED: &[u8] = b"open gb.table failed!\n";
         files: &[],
     },
 )]
-// chewing-table-invalid-text: tests/storage/test_chewing_table.cpp;
-// tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
-// src/storage/chewing_large_table2.cpp:112-198 at 074a2219.
-// Class (b), memory safety (docs/findings/compatibility-policy.md, row 115): the pin is not
-// run, and the expectation is the prescribed result.
-#[case::chewing_table_invalid_text(
-    table_config(),
-    &[],
-    b"quit\n",
-    &[],
-    &[("data/gb.table", b"ni3 \xff 16777217 100\n".as_slice())],
-    Run {
-        status: Exit(22),
-        stdout: Exact(b""),
-        stderr: b"",
-        files: &[],
-    },
-)]
 // chewing-table-missing-text: tests/storage/test_chewing_table.cpp;
 // tests/tests_helper.h:51-133; src/storage/phrase_large_table3.cpp:29-139;
 // src/storage/chewing_large_table2.cpp:112-198 at 074a2219.

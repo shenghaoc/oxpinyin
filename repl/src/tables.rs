@@ -156,7 +156,10 @@ pub fn phrase_main(data: &Path) {
         );
         let length = tool::utf8_strlen(&line);
         let (words, _) = tool::utf8_to_ucs4(&line);
-        let words = words.unwrap_or_else(|| tool::exit(tool::EINVAL));
+        // The pin searches the failed conversion as it is
+        // (`tests/storage/test_phrase_table.cpp:45-70`), which is undefined;
+        // here it is the empty phrase, which finds nothing.
+        let words = words.unwrap_or_default();
         if length == 0 {
             continue;
         }

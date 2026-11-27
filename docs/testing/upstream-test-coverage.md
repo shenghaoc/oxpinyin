@@ -70,11 +70,8 @@ assertions.
 Punctuation removal (`punct_table.cpp:117-145`, `:169-177`) is library code with no
 oxpinyin caller, so no test writes a post-removal row.
 
-The REPL selects strict text loading. In `oxpinyin-utils`,
-`storage::gen_binary_files::tests::invalid_text_for_a_new_item_is_refused_at_the_table_reader`
-checks the three EINVAL paths in `read_phrase_items`.
-`storage::gen_binary_files::tests::phrase_table_invalid_text` checks the
-refusal in `load_phrase_table`.
+The REPL loads text tables as the pin's test programs do
+(`tests/tests_helper.h:74-80`), with no refusal (policy row 115).
 
 ### Interactive modes
 
