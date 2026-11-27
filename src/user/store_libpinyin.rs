@@ -36,7 +36,7 @@
 //!   training updates them in place, which lookup, export and save all
 //!   observe.
 
-use std::cell::{Cell, Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 #[cfg(test)]
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -295,9 +295,9 @@ impl UserStore {
             .with_totals(seeded_totals.totals, seeded_totals.facade_extra);
 
         let inner = StoreInner {
-            has_system_items: Cell::new(has_system_items),
-            system_items: RefCell::new(system_items),
-            offsets: RefCell::new(library_offsets),
+            has_system_items,
+            system_items,
+            offsets: library_offsets,
             dirty: false,
             write_generation: 0,
             has_user_data,

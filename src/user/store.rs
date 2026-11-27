@@ -14,7 +14,6 @@
 //! gate and the persistence point behind `pinyin_save`.
 
 use crate::phrase_item::PhraseItemView;
-use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::fmt;
 use std::rc::Rc;
 
@@ -518,11 +517,15 @@ fn phrase_fits_keys(words: &[u32], keys: &[PinyinKey]) -> bool {
 pub(crate) type Offsets = crate::user::LibraryTable<u32>;
 
 /// One session's state, owned by its [`UserStore`].
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The system-item gate, the dirty mark, the user-data gate and the failed-container record are independent session properties"
+)]
 pub struct StoreInner {
-    pub(crate) has_system_items: Cell<bool>,
-    pub(crate) system_items: RefCell<crate::user::system_items::SystemItems>,
+    pub(crate) has_system_items: bool,
+    pub(crate) system_items: crate::user::system_items::SystemItems,
     /// The user libraries' stored-total differences ([`Offsets`]).
-    pub(crate) offsets: RefCell<Offsets>,
+    pub(crate) offsets: Offsets,
     pub(crate) dirty: bool,
     /// Revision observed by the phrase export iterator.
     pub(crate) write_generation: u64,
@@ -621,17 +624,6 @@ impl UserStore {
     /// Borrow the init baselines exclusively for a library transition.
     pub(crate) fn originals_mut(&mut self) -> &mut crate::user::SystemOriginals {
         &mut self.originals
-    }
-
-    /// Borrows the session's offsets.
-    /// See the [double borrows convention](https://github.com/shenghaoc/oxpinyin/blob/main/docs/rust-conventions.md#double-borrows).
-    pub(crate) fn offsets(&self) -> Ref<'_, Offsets> {
-        self.inner.offsets.borrow()
-    }
-
-    /// Borrows the session's offsets for a change.
-    pub(crate) fn offsets_mut(&self) -> RefMut<'_, Offsets> {
-        self.inner.offsets.borrow_mut()
     }
 
     /// The user pinyin index's readings past `MAX_PHRASE_LENGTH` syllables,
@@ -1022,7 +1014,7 @@ impl UserStore {
     /// sub-index did not take). `0` for an empty store.
     #[must_use]
     pub fn unigram_total(&self) -> u64 {
-        self.inner.system_items.borrow().facade_extra()
+        self.inner.system_items.facade_extra()
     }
 
     /// What a session's facade total holds beyond the stored totals of the
@@ -1031,7 +1023,7 @@ impl UserStore {
     /// wrapping `guint32` the model adds to those stored totals.
     #[must_use]
     pub(crate) fn unigram_total_over(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        let items = self.inner.system_items.borrow();
+        let items = &self.inner.system_items;
         let mut extra = items.facade_extra();
         for (&library, original) in self.originals.iter() {
             if !visible(library) {
@@ -1053,13 +1045,13 @@ impl UserStore {
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
     pub fn compact_libraries(&mut self) {
-        let target = Rc::clone(&self.inner.libpinyin);
+        let target = &self.inner.libpinyin;
         // Each system library's total becomes the sum of its live readable
         // items; the facade total keeps what the libraries held, so the
         // difference moves to the facade's extra.
         let mut rebased = Vec::new();
         {
-            let mut items = self.inner.system_items.borrow_mut();
+            let items = &mut self.inner.system_items;
             for (&library, original) in self.originals.iter() {
                 // An unloaded library has no sub-index to compact: the pin's
                 // loop skips it (`phrase_index.cpp:651-652`) and its total
@@ -1099,7 +1091,7 @@ impl UserStore {
         for (library, total) in rebased {
             self.originals.set_total(library, total);
         }
-        let mut offsets = self.offsets_mut();
+        let offsets = &mut self.inner.offsets;
         offsets.clear();
         for library in target.phrases_mut().libraries.values_mut() {
             library.compact();
@@ -1389,7 +1381,7 @@ impl UserStore {
     #[must_use]
     pub fn addon_promotion_range_end(&self) -> Option<PhraseToken> {
         if let Some(original) = self.originals.get(&ADDON_DICTIONARY) {
-            let items = self.inner.system_items.borrow();
+            let items = &self.inner.system_items;
             return Some(crate::vocab::phrase_index_make_token(
                 ADDON_DICTIONARY,
                 items.range_end(ADDON_DICTIONARY, original),
@@ -1690,7 +1682,7 @@ impl UserStore {
         let originals = &self.originals;
         let bigram_db = self.container();
         let phrases = target.phrases();
-        let live = self.inner.system_items.borrow();
+        let live = &self.inner.system_items;
         {
             let mut reporting = crate::user::SaveReporting {
                 versions: &target.versions,
@@ -1704,7 +1696,7 @@ impl UserStore {
                 crate::user::SaveSource {
                     libraries: &phrases,
                     compacted,
-                    live: &live,
+                    live,
                 },
                 originals,
                 &mut reporting,
@@ -1959,13 +1951,13 @@ impl UserStore {
     /// Replaces the live state of each library in `libraries`, in nibble
     /// order, with its replay or its total.
     fn apply_system_libraries(
-        &self,
+        &mut self,
         libraries: &[u8],
         mut replayed: crate::user::LibraryTable<crate::user::replay::ReplayedLibrary>,
         library_totals: &crate::user::LibraryTable<u32>,
     ) -> bool {
-        let target = Rc::clone(&self.inner.libpinyin);
-        let mut offsets = self.offsets_mut();
+        let target = &self.inner.libpinyin;
+        let offsets = &mut self.inner.offsets;
         // A reloaded library has no stored total difference any more: its
         // total is the one its replay left, held in the live scalar below.
         for nibble in libraries {
@@ -1985,7 +1977,7 @@ impl UserStore {
                 .libraries
                 .iter()
                 .any(|(library, items)| (1..=4).contains(library) && !items.is_empty());
-            let mut items = self.inner.system_items.borrow_mut();
+            let items = &mut self.inner.system_items;
             // `FacadePhraseIndex::load` and `merge_with_mask` swap the old
             // sub-index for the new one (`phrase_index.cpp:237-248`,
             // `:301-332`): the library's live buffer and total go, and the
@@ -2002,9 +1994,7 @@ impl UserStore {
                     }
                 }
             }
-            self.inner
-                .has_system_items
-                .set(!items.is_empty() || arena_has_system_items);
+            self.inner.has_system_items = !items.is_empty() || arena_has_system_items;
         }
         let arena_live = target.phrases().has_items();
         // A session's grams are user data too.
@@ -2079,7 +2069,7 @@ impl UserStore {
         value: PhraseToken,
     ) -> Result<(), UserStoreError> {
         let MaskCheck { container_keys } = checked;
-        let target = Rc::clone(&self.inner.libpinyin);
+        let target = &self.inner.libpinyin;
         // The pin's mask walk edits every record of the user pinyin index,
         // in its native container.
         {
@@ -2119,13 +2109,13 @@ impl UserStore {
         originals: &crate::user::SystemOriginals,
     ) -> std::collections::BTreeMap<PhraseToken, Option<crate::data::phrase_library::ChunkItem>>
     {
-        self.inner.system_items.borrow().changed_items(originals)
+        self.inner.system_items.changed_items(originals)
     }
 
     /// Whether this session carries system-item payloads from imports or logs.
     #[must_use]
     pub(crate) fn has_system_items(&self) -> bool {
-        self.inner.has_system_items.get()
+        self.inner.has_system_items
     }
 
     /// Whether a journal REMOVE took the item behind system `token` out of
@@ -2135,7 +2125,7 @@ impl UserStore {
     /// the chunk holds one.
     #[must_use]
     pub(crate) fn system_item_removed(&self, token: PhraseToken) -> bool {
-        self.inner.system_items.borrow().is_removed(token)
+        self.inner.system_items.is_removed(token)
     }
 
     #[cfg(test)]
@@ -2174,17 +2164,14 @@ impl UserStore {
             return None;
         }
         let read = read?;
-        self.inner.system_items.borrow().read_complete(token, read)
+        self.inner.system_items.read_complete(token, read)
     }
 
     /// The live sub-index's range end for the export probe. A promotion can
     /// create a sub-index with no original (074a2219 phrase_index.h:663-670).
     pub(crate) fn system_range_end(&self, library: u8) -> Option<PhraseToken> {
         let end = if let Some(original) = self.originals.get(&library) {
-            self.inner
-                .system_items
-                .borrow()
-                .range_end(library, original)
+            self.inner.system_items.range_end(library, original)
         } else {
             let phrases = self.inner.libpinyin.phrases();
             phrases
@@ -2226,7 +2213,7 @@ impl UserStore {
         if !self.has_system_items() {
             return None;
         }
-        let items = self.inner.system_items.borrow();
+        let items = &self.inner.system_items;
         items.get(&token).map(|item| read(&item))
     }
 
@@ -2240,7 +2227,7 @@ impl UserStore {
         if !self.has_system_items() {
             return None;
         }
-        self.inner.system_items.borrow().with_live(token, read)
+        self.inner.system_items.with_live(token, read)
     }
 
     /// Reads the complete item a system library's live buffer holds under
@@ -2253,7 +2240,7 @@ impl UserStore {
         token: PhraseToken,
         read: impl FnOnce(&[u8]) -> R,
     ) -> crate::user::system_items::LiveItemFields<R> {
-        self.inner.system_items.borrow().read_live(token, read)
+        self.inner.system_items.read_live(token, read)
     }
 
     /// [`crate::user::system_items::SystemItems::live_words`] while the
@@ -2268,7 +2255,7 @@ impl UserStore {
         if !self.has_system_items() {
             return crate::user::system_items::LiveItemFields::NoLiveLibrary;
         }
-        self.inner.system_items.borrow().live_words(token)
+        self.inner.system_items.live_words(token)
     }
 
     pub(crate) fn with_live_item_fields<R>(
@@ -2279,10 +2266,7 @@ impl UserStore {
         if !self.has_system_items() {
             return crate::user::system_items::LiveItemFields::NoLiveLibrary;
         }
-        self.inner
-            .system_items
-            .borrow()
-            .with_live_fields(token, read)
+        self.inner.system_items.with_live_fields(token, read)
     }
 
     /// The stored reading count of the item fields a system library's live
@@ -2294,7 +2278,6 @@ impl UserStore {
     ) -> crate::user::system_items::LiveItemFields<Option<u32>> {
         self.inner
             .system_items
-            .borrow()
             .with_live_fields(token, |bytes| bytes.get(1).copied().map(u32::from))
     }
 
@@ -2374,7 +2357,7 @@ impl UserStore {
             packed: &packed,
             delta,
         };
-        let mut items = self.inner.system_items.borrow_mut();
+        let items = &mut self.inner.system_items;
         let mut item = items
             .get(&token)
             .or_else(|| original.item(token & PHRASE_MASK))
@@ -2399,8 +2382,7 @@ impl UserStore {
                 total.wrapping_sub(crate::user::replay::raw_unigram(&bytes)),
             );
         }
-        drop(items);
-        self.inner.has_system_items.set(true);
+        self.inner.has_system_items = true;
         self.mark_committed_write(true);
         Ok(token)
     }
@@ -2418,7 +2400,7 @@ impl UserStore {
         for (key, value) in &state.bigram {
             self.container().store(key, value).expect("store a gram");
         }
-        let target = Rc::clone(&self.inner.libpinyin);
+        let target = &self.inner.libpinyin;
         let mut phrases = target.phrases_mut();
         for (&nibble, items) in &state.libraries {
             for (&slot, item) in items {
@@ -2445,7 +2427,7 @@ impl UserStore {
                     .map(|item| encode_phrase_item(item).expect("item"));
                 match self.originals.get(&nibble) {
                     Some(original) => {
-                        let mut items = self.inner.system_items.borrow_mut();
+                        let items = &mut self.inner.system_items;
                         items.remove_item(original, token);
                         if let Some(bytes) = &bytes {
                             items.add_item(original, token, bytes);
@@ -2465,7 +2447,7 @@ impl UserStore {
             }
         }
         drop(phrases);
-        self.inner.has_system_items.set(true);
+        self.inner.has_system_items = true;
         self.mark_committed_write(true);
     }
 }

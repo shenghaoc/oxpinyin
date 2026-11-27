@@ -113,7 +113,6 @@ impl UserStore {
             return self
                 .inner
                 .system_items
-                .borrow()
                 .library_total(library, Some(original))
                 .unwrap_or(original.total);
         }
@@ -130,16 +129,20 @@ impl UserStore {
     /// tests.
     #[cfg(test)]
     pub(crate) fn library_total_for_test(&self, library: u8) -> u32 {
-        let offsets = self.offsets();
+        let offsets = &self.inner.offsets;
         let phrases = self.inner.libpinyin.phrases();
-        self.library_total_of(&offsets, &phrases, library)
+        self.library_total_of(offsets, &phrases, library)
     }
 
     /// `FacadePhraseIndex::remove_phrase_item` (`phrase_index.h:691`): the
     /// facade and the library's totals lose the item's unigram.
-    fn take_item_out(&self, library: u8, unigram: u32) {
-        let mut items = self.inner.system_items.borrow_mut();
-        match self.originals.get(&library) {
+    fn take_item_out(
+        items: &mut crate::user::system_items::SystemItems,
+        originals: &crate::user::persistence::SystemOriginals,
+        library: u8,
+        unigram: u32,
+    ) {
+        match originals.get(&library) {
             Some(original) => {
                 let total = items
                     .library_total(library, Some(original))
@@ -156,7 +159,7 @@ impl UserStore {
     /// session's state is process memory, so this cannot fail, as
     /// `FacadePhraseIndex::load` and `unload` cannot.
     pub(super) fn replace_user_arena(&mut self, nibble: u8, library: Option<UserLibrary>) {
-        let mut offsets = self.offsets_mut();
+        let offsets = &mut self.inner.offsets;
         let mut phrases = self.inner.libpinyin.phrases_mut();
         let sum = |library: &UserLibrary| {
             library.items().fold(0_u64, |sum, (_, item)| {
@@ -179,7 +182,6 @@ impl UserStore {
         // out (`phrase_index.cpp:237-248`).
         self.inner
             .system_items
-            .borrow_mut()
             .add_facade_extra(after.wrapping_sub(before).wrapping_add(u64::from(moved)));
         phrases.libraries.remove(&nibble);
         if let Some(library) = library {
@@ -190,7 +192,6 @@ impl UserStore {
         }
         let arena_live = phrases.has_items();
         drop(phrases);
-        drop(offsets);
         let grams_live = self.container().keys().is_ok_and(|keys| !keys.is_empty());
         self.mark_committed_write(arena_live || grams_live);
     }
@@ -214,7 +215,7 @@ impl UserStore {
             .phrase_codes()
             .collect::<Option<_>>()
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let offsets = self.offsets();
+        let offsets = &self.inner.offsets;
         let mut phrases = target.phrases_mut();
         // The pin's promote reaches `phrase_table->add_index`
         // (`pinyin.cpp:2557` at 074a2219) before it changes anything it
@@ -231,7 +232,7 @@ impl UserStore {
             // A system chunk's sub-index: the item goes to its live buffer
             // and its total takes the unigram (`phrase_index.h:669-670`,
             // `phrase_index.cpp:208-217`).
-            let mut items = self.inner.system_items.borrow_mut();
+            let items = &mut self.inner.system_items;
             // An unloaded library's slot is NULL and the pin makes a new,
             // empty sub-index there (`phrase_index.h:665-668`). The session
             // has no buffer to stand for it.
@@ -239,8 +240,7 @@ impl UserStore {
                 return Err(UserStoreError::InvalidPhrase);
             }
             items.add_item(original, token, bytes);
-            drop(items);
-            self.inner.has_system_items.set(true);
+            self.inner.has_system_items = true;
         } else {
             // A user library's sub-index, or the one `add_phrase_item`
             // makes for a library that had none (`phrase_index.h:665-668`).
@@ -250,10 +250,7 @@ impl UserStore {
                 .ok_or(UserStoreError::InvalidPhrase)?
                 .add(token & PHRASE_MASK, bytes)
                 .ok_or(UserStoreError::Persistence)?;
-            self.inner
-                .system_items
-                .borrow_mut()
-                .add_facade_extra(u64::from(unigram));
+            self.inner.system_items.add_facade_extra(u64::from(unigram));
         }
         phrases
             .phrase_table
@@ -270,7 +267,6 @@ impl UserStore {
             phrases.index.add(&keys, token);
         }
         drop(phrases);
-        drop(offsets);
         self.mark_committed_write(true);
         Ok(())
     }
@@ -307,16 +303,15 @@ impl UserStore {
         drop(phrases);
         // Any system item is trained in place in its library's live buffer; a
         // removed one answers no item there and is left alone.
-        let mut items = self.inner.system_items.borrow_mut();
+        let items = &mut self.inner.system_items;
         if items.train_live(
             self.originals.get(&phrase_index_library_index(token)),
             token,
             readings,
             delta,
         ) {
-            self.inner.has_system_items.set(true);
+            self.inner.has_system_items = true;
         }
-        drop(items);
         self.mark_committed_write(true);
     }
 
@@ -395,7 +390,7 @@ impl UserStore {
         if arena == ArenaProbe::First && self.inner.libpinyin.phrases().item(token).is_some() {
             return None;
         }
-        self.inner.system_items.borrow().read_ordinary(token, read)
+        self.inner.system_items.read_ordinary(token, read)
     }
 
     /// Reads the item a system library's live buffer holds under `token` and
@@ -416,7 +411,6 @@ impl UserStore {
             return self
                 .inner
                 .system_items
-                .borrow()
                 .with_added(token, |bytes| PhraseItemView::from_bytes(bytes).map(read))
                 .flatten();
         }
@@ -441,7 +435,7 @@ impl UserStore {
         }
         let target = &self.inner.libpinyin;
         let packed = packed(keys)?;
-        let offsets = self.offsets();
+        let offsets = &self.inner.offsets;
         let mut phrases = target.phrases_mut();
         let existing = existing_phrase_token(&phrases.phrase_table, library, words, selected)?;
         if let Some(token) = existing {
@@ -459,7 +453,6 @@ impl UserStore {
                 .add_reading(token & PHRASE_MASK, &packed, delta)
                 .ok_or(UserStoreError::Persistence)?;
             drop(phrases);
-            drop(offsets);
             self.mark_committed_write(true);
             return Ok(token);
         }
@@ -475,7 +468,7 @@ impl UserStore {
         let token = crate::user::add_phrase_token(library, end);
         let increment = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
         let accepted = self
-            .library_total_of(&offsets, &phrases, library)
+            .library_total_of(offsets, &phrases, library)
             .checked_add(increment)
             .is_some();
         let bytes = encoded(&ChunkItem {
@@ -491,7 +484,6 @@ impl UserStore {
             .ok_or(UserStoreError::Persistence)?;
         self.inner
             .system_items
-            .borrow_mut()
             .add_facade_extra(u64::from(increment));
         {
             phrases
@@ -506,9 +498,8 @@ impl UserStore {
             phrases.index.add(&chewing, token);
         }
         drop(phrases);
-        drop(offsets);
         if (1..=4).contains(&library) {
-            self.inner.has_system_items.set(true);
+            self.inner.has_system_items = true;
         }
         self.mark_committed_write(true);
         Ok(token)
@@ -537,19 +528,18 @@ impl UserStore {
         let packed = packed(keys)?;
         let mut phrases = target.phrases_mut();
         let existing = existing_phrase_token(&phrases.phrase_table, library, words, selected)?;
-        let mut items = self.inner.system_items.borrow_mut();
+        let items = &mut self.inner.system_items;
         // An unloaded library has no sub-index: `get_range` fails and
         // `_add_phrase` adds nothing (`pinyin.cpp:589-591`).
         if items.lacks_sub_index(library, original) {
             return Err(UserStoreError::InvalidPhrase);
         }
         if let Some(token) = existing {
-            let merged = merged_live_item(&items, original, token, words, &packed, delta)?;
+            let merged = merged_live_item(items, original, token, words, &packed, delta)?;
             items.remove_item(original, token);
             items.add_item(original, token, &merged);
-            drop(items);
             drop(phrases);
-            self.inner.has_system_items.set(true);
+            self.inner.has_system_items = true;
             self.mark_committed_write(true);
             return Ok(token);
         }
@@ -569,7 +559,6 @@ impl UserStore {
         if !outcome.is_accepted() {
             items.add_facade_extra(u64::from(increment));
         }
-        drop(items);
         phrases
             .phrase_table
             .add(words, token)
@@ -581,12 +570,12 @@ impl UserStore {
             .collect();
         phrases.index.add(&chewing, token);
         drop(phrases);
-        self.inner.has_system_items.set(true);
+        self.inner.has_system_items = true;
         self.mark_committed_write(true);
         Ok(token)
     }
 
-    pub(super) fn arena_add_unigram(&self, token: PhraseToken, delta: u32) -> bool {
+    pub(super) fn arena_add_unigram(&mut self, token: PhraseToken, delta: u32) -> bool {
         // Only the sub-index's overflow is the pin's `ERROR_INTEGER_OVERFLOW`;
         // a missing item answers another error that callers do not act on.
         self.arena_add_unigram_outcome(token, delta).0 != UnigramAdd::Refused
@@ -600,7 +589,7 @@ impl UserStore {
     /// sub-index that does not take it leaves the delta in the facade's extra.
     /// The second result reports whether the facade total received the delta.
     pub(super) fn arena_add_unigram_outcome(
-        &self,
+        &mut self,
         token: PhraseToken,
         delta: u32,
     ) -> (UnigramAdd, bool) {
@@ -611,7 +600,7 @@ impl UserStore {
             return (UnigramAdd::Missing, false);
         }
         let original = self.originals.get(&library);
-        let mut items = self.inner.system_items.borrow_mut();
+        let items = &mut self.inner.system_items;
         if original.is_some() {
             // An unloaded library has no sub-index: the pin answers
             // `ERROR_NO_SUB_PHRASE_INDEX` before the facade total moves
@@ -625,14 +614,13 @@ impl UserStore {
                 .add_unigram(original, token, delta)
                 .unwrap_or(UnigramAdd::Missing);
             if outcome.is_accepted() {
-                self.inner.has_system_items.set(true);
+                self.inner.has_system_items = true;
             } else {
                 items.add_facade_extra(u64::from(delta));
             }
             return (outcome, true);
         }
         items.add_facade_extra(u64::from(delta));
-        drop(items);
         let slot = token & PHRASE_MASK;
         let Some(library) = phrases.item_mut(token) else {
             return (UnigramAdd::Missing, true);
@@ -682,7 +670,12 @@ impl UserStore {
         if let Some(fault) = bigram_fault {
             return Err(fault);
         }
-        self.take_item_out(phrase_index_library_index(token), item.unigram);
+        Self::take_item_out(
+            &mut self.inner.system_items,
+            &self.originals,
+            phrase_index_library_index(token),
+            item.unigram,
+        );
         phrases
             .phrase_table
             .remove(&item.phrase, token)
@@ -707,7 +700,7 @@ impl UserStore {
         Ok(true)
     }
 
-    pub(super) fn mask_arena(&self, mask: PhraseToken, value: PhraseToken) {
+    pub(super) fn mask_arena(&mut self, mask: PhraseToken, value: PhraseToken) {
         let mut phrases = self.inner.libpinyin.phrases_mut();
         for (&nibble, library) in &mut phrases.libraries {
             // `FacadePhraseIndex::mask_out` tests the library through the
@@ -723,13 +716,17 @@ impl UserStore {
             // `FacadePhraseIndex::mask_out` takes the old sub-index total out
             // of the facade and the new one in (`phrase_index.cpp:699-718`):
             // each removed item's frequency leaves the totals.
-            let removed: Vec<u32> = library
+            let removed = library
                 .items()
                 .filter(|&(slot, _)| selected(slot))
-                .map(|(_, item)| item.unigram())
-                .collect();
+                .map(|(_, item)| item.unigram());
             for unigram in removed {
-                self.take_item_out(nibble, unigram);
+                Self::take_item_out(
+                    &mut self.inner.system_items,
+                    &self.originals,
+                    nibble,
+                    unigram,
+                );
             }
             library.remove_matching(selected);
         }

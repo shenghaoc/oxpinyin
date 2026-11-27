@@ -280,11 +280,8 @@ impl<'a> LiveSystemItems<'a> {
     /// library; other libraries answer [`Lookup::Absent`].
     ///
     /// The session's item wins over the shipped one: the library's live
-    /// buffer holds it. `read` runs at most once, inside the borrow. For a
-    /// live-buffer item, the callback runs while a store cell is borrowed. Do
-    /// not call store accessors from the callback; copy out what is needed
-    /// and query the store after it returns. A callback borrowing the shipped
-    /// chunk directly runs after those borrows have ended. Consumers: pricing
+    /// buffer holds it. `read` runs at most once, over a shared borrow of the
+    /// store, so the callback may read the store too. Consumers: pricing
     /// (`effective_possibility`), `token_text`, the export probe and row
     /// reads.
     pub fn read<R>(&self, token: PhraseToken, read: impl FnOnce(SystemItem<'_>) -> R) -> Lookup<R> {
