@@ -641,9 +641,9 @@ impl<'a> RuntimeDict<'a> {
 
     /// Resolves `token` as [`Dictionary::phrase_text_for_token`] reads its
     /// text: through the library gate to [`Self::read_text_item`]'s item,
-    /// answered by `item`; where that answers none, the full read of the
-    /// shipped item, then the user store's phrase, answered by `text`. The
-    /// text, its presence and its length share this one chain.
+    /// answered by `item`; where that answers none, [`Self::full_phrase_text`],
+    /// answered by `text`. The text, its presence and its length share this
+    /// one chain.
     fn resolve_phrase_text<R>(
         &self,
         token: u32,
@@ -656,14 +656,17 @@ impl<'a> RuntimeDict<'a> {
         if let Some(found) = self.read_text_item(token, item) {
             return Some(found);
         }
-        self.system
-            .phrase_text(token)
-            .or_else(|| {
-                self.user
-                    .phrase(token)
-                    .and_then(|phrase| phrase.phrase_text())
-            })
-            .map(text)
+        self.full_phrase_text(token).map(text)
+    }
+
+    /// The full read of the shipped item, then the user store's phrase:
+    /// the text where [`Self::read_text_item`]'s item answers none.
+    fn full_phrase_text(&self, token: u32) -> Option<PhraseText> {
+        self.system.phrase_text(token).or_else(|| {
+            self.user
+                .phrase(token)
+                .and_then(|phrase| phrase.phrase_text())
+        })
     }
 
     /// The stored length and text of the token's item, as the C token
@@ -1144,8 +1147,17 @@ impl Dictionary for RuntimeDict<'_> {
     /// text, else the user store's phrase text (the user library's
     /// items live there). The library mask hides an unloaded library's
     /// token, matching the pin's freed sub-index.
+    ///
+    /// This is `resolve_phrase_text`'s chain with [`Self::token_text`] as
+    /// the first source. The item read then has one
+    /// copy in the library, shared with `token_text`'s other callers,
+    /// instead of one more for this method's own closure.
     fn phrase_text_for_token(&self, token: u32) -> Option<PhraseText> {
-        self.resolve_phrase_text(token, |item| item.phrase_text(), |text| text)
+        if !self.library_visible_token(token) {
+            return None;
+        }
+        self.token_text(token)
+            .or_else(|| self.full_phrase_text(token))
     }
 
     /// The first source [`Self::phrase_text_for_token`] reads, checked
