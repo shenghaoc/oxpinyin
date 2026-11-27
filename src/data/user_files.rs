@@ -16,7 +16,7 @@ use crate::data::chunk_format::chunk_checksum;
 use crate::input::chunk::HeaderFault;
 use std::ffi::CString;
 
-use crate::data::FileName;
+use crate::data::{DatabaseFormat, FileName};
 use crate::input::config::{
     Scanned, UserTableInfoFields, UserTableInfoReader, save_user_table_info,
 };
@@ -300,21 +300,15 @@ pub struct UserTableInfo {
     pub model_data_version: u32,
     /// `database format:` — `None` when the third directive ran off the
     /// end of the file before it converted anything (`UNKNOWN_FORMAT`).
-    /// Upstream recognises exactly `UPSTREAM_DB_FORMATS`; any other
+    /// Upstream recognises exactly the [`DatabaseFormat`] tokens; any other
     /// token reaches `to_table_database_format_type`'s `abort()`, which
     /// [`UserTableInfo::load`] aborts at the converter.
-    pub database_format: Option<String>,
+    pub database_format: Option<DatabaseFormat>,
     /// `open counter:` — upstream's `int m_open_counter`
     /// (`table_info.h:102`), negative whenever `%d` reads a negative
     /// value.
     pub open_counter: i32,
 }
-
-/// The `database format:` tokens upstream recognises
-/// (`to_table_database_format_type`, `table_info.cpp:122-133`); any other
-/// token reaches its `abort()` (`:132`). `UNKNOWN_FORMAT` is only the
-/// initial value a missing directive leaves.
-const UPSTREAM_DB_FORMATS: [&str; 3] = ["BerkeleyDB", "KyotoCabinet", "Tkrzw"];
 
 impl UserTableInfo {
     /// A fresh, conform marker for `versions` with a zero open counter —
@@ -325,7 +319,7 @@ impl UserTableInfo {
         Self {
             binary_format_version: versions.binary_format_version,
             model_data_version: versions.model_data_version,
-            database_format: Some(versions.database_format.to_owned()),
+            database_format: DatabaseFormat::from_token(versions.database_format),
             open_counter: 0,
         }
     }
@@ -361,12 +355,14 @@ impl UserTableInfo {
         let database_format = match input.database_format() {
             Scanned::Eof => None,
             Scanned::Unassigned => std::process::abort(),
+            // `to_table_database_format_type` (`table_info.cpp:122-133`):
+            // any other token reaches its `abort()` (`:132`).
             Scanned::Assigned(token) => Some(
-                UPSTREAM_DB_FORMATS
-                    .into_iter()
-                    .find(|known| known.as_bytes() == token.to_bytes())
-                    .unwrap_or_else(|| std::process::abort())
-                    .to_owned(),
+                token
+                    .to_str()
+                    .ok()
+                    .and_then(DatabaseFormat::from_token)
+                    .unwrap_or_else(|| std::process::abort()),
             ),
         };
         let open_counter = input.open_counter().assigned().unwrap_or(0);
@@ -404,8 +400,7 @@ impl UserTableInfo {
     pub fn save(&self, filename: &(impl crate::input::FileName + ?Sized)) -> bool {
         let Some(database_format) = self
             .database_format
-            .as_deref()
-            .and_then(|token| CString::new(token).ok())
+            .and_then(|format| CString::new(format.token()).ok())
         else {
             return false;
         };
@@ -439,10 +434,10 @@ impl UserTableInfo {
         if self.model_data_version != versions.model_data_version {
             return false;
         }
-        let Some(format) = self.database_format.as_deref() else {
+        let Some(format) = self.database_format else {
             return false;
         };
-        if format != versions.database_format {
+        if format.token() != versions.database_format {
             return false;
         }
         self.open_counter <= OPEN_COUNTER_LIMIT

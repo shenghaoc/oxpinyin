@@ -85,9 +85,9 @@ fn user_conf_round_trips_and_conforms() {
 
     let mut other = conform.clone();
     if DEFAULT_STORE_DB_FORMAT == "KyotoCabinet" {
-        other.database_format = Some("Tkrzw".to_owned());
+        other.database_format = Some(crate::data::DatabaseFormat::Tkrzw);
     } else {
-        other.database_format = Some("KyotoCabinet".to_owned());
+        other.database_format = Some(crate::data::DatabaseFormat::KyotoCabinet);
     }
     assert!(!other.is_conform(&versions));
 
@@ -153,7 +153,9 @@ fn a_fresh_zero_version_marker_requires_conformance() {
     assert!(conformed.save(&filename));
     let reloaded = UserTableInfo::load(&filename).unwrap();
     assert_eq!(
-        reloaded.database_format.as_deref(),
+        reloaded
+            .database_format
+            .map(crate::data::DatabaseFormat::token),
         Some(DEFAULT_STORE_DB_FORMAT)
     );
     assert!(reloaded.is_conform(&versions));
@@ -185,9 +187,8 @@ fn marker_fields_follow_the_scanner() {
     assert_eq!(
         parse(good.replace("BerkeleyDB", "BerkeleyDB\0suffix").as_bytes())
             .unwrap()
-            .database_format
-            .as_deref(),
-        Some("BerkeleyDB")
+            .database_format,
+        Some(crate::data::DatabaseFormat::BerkeleyDb)
     );
     let missing = good.replace("open counter:3\n", "");
     assert_eq!(parse(missing.as_bytes()).unwrap().open_counter, 0);
