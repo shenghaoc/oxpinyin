@@ -1,7 +1,6 @@
 use crate::Result;
 use std::ffi::{CStr, CString, OsStr};
 use std::io::{Read, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -335,13 +334,9 @@ impl PageOut {
         }
         let file = std::fs::File::open(path)
             .map_err(|error| format!("PERF_PAGE_OUT: {}: {error}", path.display()))?;
-        // SAFETY: file is open for the call; offset 0 and length 0 cover the whole file.
-        let status =
-            unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
-        if status != 0 {
-            let error = std::io::Error::from_raw_os_error(status);
-            return Err(format!("PERF_PAGE_OUT: posix_fadvise {}: {error}", path.display()).into());
-        }
+        // No length: the advice covers the whole file.
+        rustix::fs::fadvise(&file, 0, None, rustix::fs::Advice::DontNeed)
+            .map_err(|error| format!("PERF_PAGE_OUT: posix_fadvise {}: {error}", path.display()))?;
         paged.mappings += 1;
         if library {
             paged.library_bytes += bytes as u64;
