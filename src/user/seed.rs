@@ -10,7 +10,7 @@
 //! provenance visible.
 
 /// First-selection seed: the increment applied the first time a token is
-/// recorded after a given predecessor. `23 * 3` in the pinned source (§2).
+/// recorded after a given predecessor. `23 * 3` in the pinned source.
 pub const INITIAL_SEED: u32 = 23 * 3; // 69
 
 /// Multiplier applied to the prior stored count on each reselection (§2).

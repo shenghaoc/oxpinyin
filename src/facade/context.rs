@@ -103,7 +103,7 @@ pub enum MaskOutOutcome {
     ChunkHeaderRead,
     /// A loaded system library's user `.dbin`, reloaded through
     /// `merge_with_mask` after the user tables were masked, reached a pin
-    /// assertion (`JournalFault`, rows 91, 92, 97 and 108). The pin dies
+    /// assertion (`JournalFault`). The pin dies
     /// there; the C adapters abort.
     Journal(JournalFault),
 }
@@ -217,7 +217,7 @@ pub enum LibraryRowAssert {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LibraryLoadFault {
     /// The reloaded system library's `.dbin` merge reached a pin assertion
-    /// (`JournalFault`, rows 91 and 108; `pinyin.cpp:276`,
+    /// (`JournalFault`; `pinyin.cpp:276`,
     /// `zhuyin.cpp:219`). The library stays unloaded; the C adapters abort.
     Journal(JournalFault),
 }
@@ -246,7 +246,7 @@ fn null_chunk_refused(dir: &Path) {
 /// instances read their context through `m_context`.
 ///
 /// Both C-ABI facades carry the same fields; the seed word differs
-/// per facade and is the caller's choice at `ContextCore::open`.
+/// per facade and is the caller's choice at [`ContextCore::try_open`].
 #[derive(Clone)]
 pub struct LiveOptions(Rc<LiveOptionsInner>);
 
@@ -332,7 +332,7 @@ impl LiveOptions {
 /// the user store it opened makes the
 /// fini-time `user.conf` write of the law it was opened under —
 /// libpinyin lowers the open counter its init raised, libzhuyin writes
-/// nothing (`crate::user::fini`). A context that is never
+/// nothing. A context that is never
 /// finalised, like a process that dies before its `pinyin_fini`, leaves the
 /// raised counter on disk. Drop also finalises a store that was not explicitly
 /// finished; a later drop never repeats the marker write.
@@ -443,8 +443,7 @@ impl ContextCore {
     }
 
     /// Allocates one instance's orchestration state over this context's
-    /// assembly. `Runtime::new_session`
-    /// cannot fail.
+    /// assembly. It cannot fail.
     #[must_use]
     pub fn alloc_instance(&self) -> crate::facade::instance::InstanceCore {
         let runtime = &self.runtime;
@@ -548,7 +547,7 @@ impl ContextCore {
     ///
     /// Then, in the pin's order, each loaded `SYSTEM_FILE`/`DICTIONARY`
     /// library is mapped again and takes its user `.dbin` through
-    /// `merge_with_mask` (`UserStore::reload_system_libraries`); the first
+    /// `merge_with_mask`; the first
     /// pin assertion a log reaches answers [`MaskOutOutcome::Journal`], after
     /// the user tables were masked and the libraries before it reloaded.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
@@ -823,12 +822,20 @@ impl ContextCore {
         user.mark_modified();
     }
 
-    /// Trains a retained composition against the current context storage. See
-    /// `runtime::Runtime::train_session` for its refusal cases and partial updates.
+    /// Trains a retained composition at sentence row `index` against the current context
+    /// storage (`pinyin_train`, `pinyin.cpp:2670-2690`; `zhuyin.cpp:1696-1715`). A context
+    /// without a user directory, or a composition without a training plan, answers
+    /// `Ok(false)`.
     ///
     /// # Errors
     ///
     /// Propagates the training error after any preceding observations have been applied.
+    ///
+    /// # Aborts
+    ///
+    /// Terminates where the pin's own training abort fires: the index past nonempty results
+    /// (`pinyin.cpp:2684` at 074a2219), a stale forced token (`phonetic_lookup.h:868`) or a
+    /// stale span (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`).
     pub fn train(
         &mut self,
         instance: &crate::facade::InstanceCore,

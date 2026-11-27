@@ -170,10 +170,9 @@ impl UserStore {
     /// that the library loop fills as it walks `rows`. When the loop
     /// completes, the session takes the filled originals and `originals`
     /// holds an empty set. The loop reads the profile under `law` into the
-    /// session's state in process memory, and
-    /// `UserStore::save_reporting` writes the pin's files back. Dropping
-    /// the returned owner is the facade's fini: it makes the law's fini-time
-    /// `user.conf` write (`user::fini`).
+    /// session's state in process memory, and a save writes the pin's files
+    /// back. Dropping the returned owner is the facade's fini: it makes the
+    /// law's fini-time `user.conf` write.
     ///
     /// Every open is a session of its own, as every `pinyin_init` /
     /// `zhuyin_init` is a context of its own upstream: nothing is held per

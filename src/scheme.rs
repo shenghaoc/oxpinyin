@@ -94,7 +94,7 @@ pub enum FullPinyinScheme {
 
 impl FullPinyinScheme {
     /// Returns the exact spelling index for Luoma or secondary Zhuyin. Hanyu uses
-    /// [`crate::parser::FullPinyinParser`] and has no alternate index.
+    /// the full-pinyin parser and has no alternate index.
     #[must_use]
     pub const fn index(self) -> Option<crate::parser::FullPinyinIndex> {
         match self {
@@ -106,7 +106,7 @@ impl FullPinyinScheme {
 }
 
 // DoublePinyinScheme, pinyin_custom2.h:108–117.
-/// Selects the two-key keyboard mapping for [`DoublePinyinParser`].
+/// Selects the two-key keyboard mapping for double-pinyin input.
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
 )]
@@ -432,7 +432,7 @@ fn parse_fallback(input: &[u8], tables: SchemeTables) -> Option<SyllableKey> {
 
 // ZhuyinScheme, pinyin_custom2.h:122–133. StandardDvorak has no mapping in the pin
 // (zhuyin_parser2.cpp:291–295, compatibility-policy row 5c).
-/// Selects a Zhuyin keyboard for [`ZhuyinParser`]. The default is [`Self::Standard`].
+/// Selects a Zhuyin keyboard. The default is [`Self::Standard`].
 #[derive(
     Clone, Copy, Debug, Default, Eq, PartialEq, num_enum::TryFromPrimitive, num_enum::IntoPrimitive,
 )]

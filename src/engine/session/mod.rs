@@ -392,10 +392,9 @@ const PIN_LAMBDA_F32: f32 = 0.312_699;
 /// (`pinyin.cpp:1862-1866`; `DYNAMIC_ADJUST` clear ⇒ bigram term zero).
 ///
 /// Truncation collapses near-ties into equal comparator keys. The stable
-/// sort resolves those ties by collection order. Evaluation order
-/// mirrors the C expression left-to-right (`f32` throughout, the three
-/// `* 256` factors kept as written); any `f64` intermediate or a
-/// pre-combined `* 2²⁴` risks drifting off the tie boundary.
+/// sort resolves those ties by collection order. The expression is
+/// evaluated left to right in `f32`, as the C expression is, so the
+/// truncated value matches the pin's.
 ///
 /// The predicted-candidate path (`pinyin.cpp:1811-1824`) stores the same
 /// expression, so `oxpinyin-capi` calls this function for its rows.

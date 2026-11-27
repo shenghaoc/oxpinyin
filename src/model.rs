@@ -53,8 +53,7 @@ pub struct UnreadableRows {
     pub(crate) count: usize,
 }
 
-/// Read-only seam the engine reads dictionaries through
-/// (`docs/findings/core-trait-seam.md`).
+/// Read-only seam the engine reads dictionaries through.
 ///
 /// Every method is one the engine calls, and every method is required: a
 /// dictionary answers each one itself. A dictionary that only lists

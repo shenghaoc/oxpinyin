@@ -9,8 +9,7 @@ bitflags::bitflags! {
     /// The default set is empty. [`Self::from_bits_retain`] preserves unnamed bits from a
     /// C option word. See the starting words for the
     /// [`pinyin`](crate::facade::PINYIN_DEFAULT_OPTION_WORD) and
-    /// [`Zhuyin`](crate::facade::ZHUYIN_DEFAULT_OPTION_WORD) facades, and
-    /// [`crate::engine::SessionSettings`] for the engine defaults.
+    /// [`Zhuyin`](crate::facade::ZHUYIN_DEFAULT_OPTION_WORD) facades.
     #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
     pub struct OptionBits: u32 {
         // pinyin_custom2.h:34.
@@ -27,10 +26,10 @@ bitflags::bitflags! {
 
         // pinyin_custom2.h:37 (full pinyin: pinyin_parser2.cpp:176–190; double: 403–451; Zhuyin:
         // zhuyin_parser2.cpp:162–179,335–388,595–604).
-        /// Requires an explicit tone according to the rules of
-        /// [`crate::parser::FullPinyinParser::parse_one_key`],
-        /// [`crate::parser::DoublePinyinParser::parse_one_key`] or
-        /// [`crate::parser::ZhuyinParser::parse_one_key`].
+        /// Requires an explicit tone. Full pinyin requires a tone digit only under
+        /// [`Self::USE_TONE`]. Double pinyin requires a three-byte key, whose tone digit
+        /// needs [`Self::USE_TONE`]. The simple Zhuyin keyboards and Dachen CP26 require a
+        /// tone only under [`Self::USE_TONE`]; the discrete Zhuyin keyboards always do.
         const FORCE_TONE = 1 << 6;
 
         // pinyin_custom2.h:38 and phonetic_key_matrix.cpp:169–172.

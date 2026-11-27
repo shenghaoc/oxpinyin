@@ -184,7 +184,7 @@ impl<R: SnapshotRow> CandidateSnapshot<R> {
     /// Appends `bytes` and a terminator to the text buffer.
     ///
     /// `None` when `bytes` carry an interior NUL — the input `CString::new`
-    /// refuses, and the row the caller drops as before — or when the buffer
+    /// refuses, whose row the caller drops — or when the buffer
     /// would outgrow the span's offsets. Rows already held are pointed at
     /// the buffer again if it moved.
     pub fn intern(&mut self, bytes: &[u8]) -> Option<TextSpan> {

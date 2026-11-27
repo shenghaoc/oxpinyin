@@ -54,7 +54,7 @@ pub enum UserStoreError {
     #[error("store error: {0}")]
     Store(#[source] StoreError),
     /// Phrase text is empty, too long, or its key count does not match its
-    /// Unicode scalar length (`docs/findings/user-store.md` §3.1–3.2).
+    /// Unicode scalar length.
     #[error("invalid phrase (empty, too long, or key count mismatch)")]
     InvalidPhrase,
     /// The libpinyin user-dir persistence failed (I/O, container, or a
@@ -124,7 +124,7 @@ pub enum UserStoreError {
     /// mask changes anything; the C adapters abort.
     #[error("masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)")]
     ResidualUserBigramGram,
-    /// Init's library loop died at a row (`user::LibraryLoopStop`).
+    /// Init's library loop stopped at a row.
     #[error("library loop: {0}")]
     LibraryLoop(#[source] crate::user::LibraryLoopStop),
     /// A training step's `set_freq` misses the item its `insert_freq` just
@@ -150,8 +150,7 @@ pub enum UserStoreError {
     )]
     SessionSeed,
     /// A training step would store its gram in the failed Berkeley DB user
-    /// bigram container (`crate::store::UserBigramDb::is_failed`): its
-    /// `store` answers false and the pin's
+    /// bigram container: its `store` answers false and the pin's
     /// `check_result(m_user_bigram->store(last_token, user))` dies
     /// (`phonetic_lookup.h:904`). Returned before anything is stored; the
     /// C adapters abort.
@@ -1132,7 +1131,7 @@ impl UserStore {
     }
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
-    /// path, §2). Returns the seed applied.
+    /// path). Returns the seed applied.
     ///
     /// # Errors
     ///
@@ -1162,7 +1161,7 @@ impl UserStore {
     }
 
     /// Record an accepted *predicted* candidate `cur` after `last` (the
-    /// `pinyin_choose_predicted_candidate` path, §2). Returns the seed
+    /// `pinyin_choose_predicted_candidate` path). Returns the seed
     /// applied.
     ///
     /// # Errors
@@ -1559,7 +1558,7 @@ impl UserStore {
         self.write_generation()
     }
 
-    /// `m_modified` (§4).
+    /// Whether the session has unsaved changes: the pin's `m_modified`.
     #[must_use]
     pub fn is_modified(&self) -> bool {
         self.inner.dirty
@@ -2089,7 +2088,7 @@ impl UserStore {
         Ok(())
     }
 
-    /// `pinyin_remove_user_candidate`'s store side (§3.4).
+    /// `pinyin_remove_user_candidate`'s store side.
     ///
     /// # Errors
     ///
