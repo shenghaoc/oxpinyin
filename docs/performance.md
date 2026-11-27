@@ -66,9 +66,9 @@ A per-key figure is the median of all its samples in the 7 rounds, 343 for each 
 | Instructions | 1,185,549 | 1,342,189 | 0.88 |
 | Wall time | 1.12 ms (1.08–1.17) | 1.22 ms (1.13–1.27) | 0.92 |
 | **Size** | | | |
-| Stripped `libpinyin.so.15` | 1,122,736 B | 927,824 B | 1.21 |
+| Stripped `libpinyin.so.15` | 1,114,544 B | 927,824 B | 1.20 |
 
-The size row is measured on [#2328](https://github.com/shenghaoc/oxpinyin/pull/2328), with the same build; the other oxpinyin rows are measured at `c6b8e1e23`.
+The size row is measured on [#2330](https://github.com/shenghaoc/oxpinyin/pull/2330), with the same build; the other oxpinyin rows are measured at `c6b8e1e23`.
 
 The first-key-after-idle difference is within the run-to-run variation: the ranges of the two latencies overlap.
 
@@ -79,6 +79,7 @@ Its "total memory" is PSS.
 
 Measured at #2327 with [`just measure compare`](runbooks/benches.md#native-macos-source-revisions), except the `leaks --atExit` row, which is from `b221f3312`.
 The loop uses sort `0x1e`, the driver's default. The two `0x1c` rows are from #2329, with `PERF_SORT=0x1c`.
+The stripped dylib, `__TEXT` and `__text` rows are from #2330.
 
 | Measure | oxpinyin |
 | --- | ---: |
@@ -89,9 +90,9 @@ The loop uses sort `0x1e`, the driver's default. The two `0x1c` rows are from #2
 | Footprint at loop end | 7,373,316 B |
 | Lifetime peak footprint | 15,753,696 B |
 | Peak RSS | 21,725,184 B |
-| Stripped (`strip -x`) `libpinyin.15.0.0.dylib` | 955,304 B |
+| Stripped (`strip -x`) `libpinyin.15.0.0.dylib` | 955,288 B |
 | `__TEXT` segment of the stripped dylib (`size -m`) | 868,352 B |
-| `__text` section of the stripped dylib (`size -m`) | 726,360 B |
+| `__text` section of the stripped dylib (`size -m`) | 712,440 B |
 | `leaks --atExit` | 0 leaks |
 
 Host: Mac17,2, Apple M5, 16 GB, macOS 27.2.1 (26B131), Xcode 27.2, tkrzw 1.0.34 (Homebrew), rustc 1.98.1.
