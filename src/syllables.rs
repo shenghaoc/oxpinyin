@@ -18,11 +18,11 @@ include!(concat!(env!("OUT_DIR"), "/syllable_maps.rs"));
 fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
     FULL_PINYIN_SYLLABLE_MAP
         .get(text)
-        .and_then(|&index| full_pinyin_syllable(index as usize))
+        .and_then(|&index| full_pinyin_syllable(usize::from(index)))
         .or_else(|| {
             OPTION_ONLY_COMPLETE_SYLLABLE_MAP
                 .get(text)
-                .map(|&index| OPTION_ONLY_COMPLETE_SYLLABLES[index as usize])
+                .map(|&index| OPTION_ONLY_COMPLETE_SYLLABLES[usize::from(index)])
         })
 }
 

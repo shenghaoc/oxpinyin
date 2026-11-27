@@ -545,7 +545,10 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         // SAFETY: no instance view is live; this serialized C operation
         // exclusively borrows the retained owner for the unigram write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token, 483));
+        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(
+            token,
+            oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED),
+        ));
     }
     let mut token = row.token;
     let mut text = oxpinyin::engine::RowText::Resolve;
@@ -577,7 +580,10 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         // operation exclusively borrows its retained owner for the unigram
         // write.
         let ctx = unsafe { crate::state::instance_context_mut(instance) };
-        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(token, 483));
+        return unigram_leg_answer(ctx.core.runtime.add_unigram_outcome(
+            token,
+            oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED),
+        ));
     }
     choose_phrase_row(&mut inst, offset, &row, token, text)
 }
@@ -794,7 +800,10 @@ pub unsafe extern "C" fn pinyin_choose_predicted_candidate(
             // SAFETY: the read view is no longer used; the retained owner is
             // exclusively borrowed for this serialized unigram mutation.
             let ctx = unsafe { crate::state::instance_context_mut(instance) };
-            let _ = ctx.core.runtime.add_unigram_delta(token, 483);
+            let _ = ctx.core.runtime.add_unigram_delta(
+                token,
+                oxpinyin::user::unigram_delta(oxpinyin::user::INITIAL_SEED),
+            );
         }
         return true;
     }

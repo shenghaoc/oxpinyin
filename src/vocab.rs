@@ -45,10 +45,10 @@ impl SyllableKey {
         FULL_PINYIN_SYLLABLE_MAP.get(text).map_or_else(
             || {
                 INCOMPLETE_PINYIN_KEY_MAP.get(text).and_then(|&index| {
-                    Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index as usize)
+                    Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + usize::from(index))
                 })
             },
-            |&index| Self::from_index(index as usize),
+            |&index| Self::from_index(usize::from(index)),
         )
     }
 
@@ -60,19 +60,19 @@ impl SyllableKey {
     #[must_use]
     pub fn from_canonical_text(text: &str) -> Option<Self> {
         if let Some(&index) = FULL_PINYIN_SYLLABLE_MAP.get(text) {
-            return Self::from_index(index as usize);
+            return Self::from_index(usize::from(index));
         }
         if let Some(&index) = INCOMPLETE_PINYIN_KEY_MAP.get(text) {
-            return Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + index as usize);
+            return Self::from_index(FULL_PINYIN_SYLLABLE_COUNT + usize::from(index));
         }
         let option_start = FULL_PINYIN_SYLLABLE_COUNT + INCOMPLETE_PINYIN_KEY_COUNT;
         if let Some(&index) = OPTION_ONLY_COMPLETE_SYLLABLE_MAP.get(text) {
-            return Self::from_index(option_start + index as usize);
+            return Self::from_index(option_start + usize::from(index));
         }
         let zhuyin_start = option_start + OPTION_ONLY_COMPLETE_SYLLABLE_COUNT;
         ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP
             .get(text)
-            .and_then(|&index| Self::from_index(zhuyin_start + index as usize))
+            .and_then(|&index| Self::from_index(zhuyin_start + usize::from(index)))
     }
 
     /// The key a stored [`ChewingKey`] names, decoded from its initial,

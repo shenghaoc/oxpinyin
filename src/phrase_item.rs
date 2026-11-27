@@ -74,13 +74,13 @@ impl PhraseItemView<'_> {
     /// `PhraseItem::get_phrase_length`.
     #[must_use]
     pub fn phrase_length(&self) -> usize {
-        self.bytes.first().copied().unwrap_or(0) as usize
+        usize::from(self.bytes.first().copied().unwrap_or(0))
     }
 
     /// `PhraseItem::get_n_pronunciation`.
     #[must_use]
     pub fn n_pronunciations(&self) -> usize {
-        self.bytes.get(1).copied().unwrap_or(0) as usize
+        usize::from(self.bytes.get(1).copied().unwrap_or(0))
     }
 
     /// `PhraseItem::get_unigram_frequency` — the item's stored unigram
