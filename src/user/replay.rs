@@ -450,17 +450,27 @@ pub(crate) fn place(content: &mut Vec<u8>, bytes: &[u8]) -> u32 {
 struct ShippedSlots(Vec<u64>);
 
 impl ShippedSlots {
+    /// An empty set for `slots` slots.
+    fn with_slots(slots: usize) -> Self {
+        Self(vec![0_u64; slots.div_ceil(64)])
+    }
+
+    /// Marks `slot` shipped; a slot past the set is ignored.
+    fn insert(&mut self, slot: usize) {
+        if let Some(chunk) = self.0.get_mut(slot / 64) {
+            *chunk |= 1 << (slot % 64);
+        }
+    }
+
     fn of(offsets: &[u8]) -> Self {
         let words = offsets.as_chunks::<4>().0;
-        let mut bits = vec![0_u64; words.len().div_ceil(64)];
+        let mut shipped = Self::with_slots(words.len());
         for (slot, word) in words.iter().enumerate() {
-            if *word != [0; 4]
-                && let Some(chunk) = bits.get_mut(slot / 64)
-            {
-                *chunk |= 1 << (slot % 64);
+            if *word != [0; 4] {
+                shipped.insert(slot);
             }
         }
-        Self(bits)
+        shipped
     }
 
     fn contains(&self, slot: u32) -> bool {
@@ -895,17 +905,16 @@ impl ReplayedLibrary {
         let mut shipped = self
             .shipped
             .is_none()
-            .then(|| vec![0_u64; words.len().div_ceil(64)]);
+            .then(|| ShippedSlots::with_slots(words.len()));
         let mut offsets = Vec::with_capacity(end * 4);
         let mut content = Vec::with_capacity(source.len().max(FIRST_OFFSET));
         let mut total = 0_u32;
         for (slot, word) in words.iter().enumerate() {
             let word = u32::from_le_bytes(*word);
             if word != 0
-                && let Some(bits) = &mut shipped
-                && let Some(chunk) = bits.get_mut(slot / 64)
+                && let Some(shipped) = &mut shipped
             {
-                *chunk |= 1 << (slot % 64);
+                shipped.insert(slot);
             }
             if slot >= end {
                 continue;
@@ -926,8 +935,8 @@ impl ReplayedLibrary {
             offsets.extend_from_slice(&moved.to_le_bytes());
         }
         offsets.resize(end * 4, 0);
-        if let Some(bits) = shipped {
-            self.shipped = Some(ShippedSlots(bits));
+        if let Some(shipped) = shipped {
+            self.shipped = Some(shipped);
         }
         self.offsets = Some(offsets);
         self.content = Some(content);
