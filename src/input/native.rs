@@ -532,13 +532,6 @@ pub(crate) fn report_mmap_failed(filename: &CStr) {
     }
 }
 
-/// The result of `MemoryChunk::save`'s native calls.
-pub(crate) enum ChunkWrite {
-    Saved,
-    Open(std::io::Error),
-    Payload(std::io::Error),
-}
-
 /// `g_build_filename(dir, name, NULL)` with the pin's C arguments.
 pub(crate) fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> std::ffi::CString {
     let dir = dir.map_or(core::ptr::null(), CStr::as_ptr);
@@ -613,7 +606,7 @@ pub(crate) fn unlink(path: &std::path::Path) {
 
 /// `MemoryChunk::save`'s calls on Unix.
 #[cfg(unix)]
-pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
+pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> std::io::Result<()> {
     // SAFETY: the path is NUL-terminated and outlives the call; the flags and
     // mode are the pin's (`memory_chunk.h:536-537`); `O_BINARY` is absent
     // on Unix and the pin's header defines it as zero there.
@@ -626,7 +619,7 @@ pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
         )
     };
     if fd < 0 {
-        return ChunkWrite::Open(std::io::Error::last_os_error());
+        return Err(std::io::Error::last_os_error());
     }
     let split = bytes.len().min(8);
     let (header, payload) = bytes.split_at(split);
@@ -635,7 +628,7 @@ pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
     write_chunk_word(fd, checksum);
     if let Err(source) = write_chunk_payload(fd, payload) {
         close(fd);
-        return ChunkWrite::Payload(source);
+        return Err(source);
     }
     // GLib 2.84.4 glib/gstdio.h:60,82 makes g_fsync a macro for fsync on
     // ordinary Unix builds. The 074a2219 tkrzw linux/amd64 objects from
@@ -648,7 +641,7 @@ pub(crate) fn save_chunk(path: &CStr, bytes: &[u8]) -> ChunkWrite {
         let _ = libc::fsync(fd);
     }
     close(fd);
-    ChunkWrite::Saved
+    Ok(())
 }
 
 /// `write(fd, word, sizeof(word))` for one header word.
@@ -696,7 +689,7 @@ fn short_write(expected: usize, written: isize, part: &str) -> std::io::Error {
 /// `MemoryChunk::save`'s calls on Windows, where the pin's plain
 /// `open`/`write` are the CRT's and its `g_fsync` is `_commit`.
 #[cfg(windows)]
-pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
+pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     let path = wide_path(path);
     clear_crt_os_error();
     // SAFETY: path is NUL-terminated and lives through _wopen. Flags and
@@ -709,7 +702,7 @@ pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
         )
     };
     if fd < 0 {
-        return ChunkWrite::Open(crt_error());
+        return Err(crt_error());
     }
     // ReadChunk owns a CRT descriptor and closes it on every exit.
     let _owner = ReadChunk(fd);
@@ -733,7 +726,7 @@ pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
         libc::write(fd, payload.as_ptr().cast(), payload.len() as u32)
     };
     if written as isize != payload.len() as isize {
-        return ChunkWrite::Payload(if written < 0 {
+        return Err(if written < 0 {
             crt_error()
         } else {
             short_write(payload.len(), written as isize, "payload")
@@ -743,7 +736,7 @@ pub(crate) fn save_chunk(path: &std::path::Path, bytes: &[u8]) -> ChunkWrite {
     unsafe {
         let _ = libc::commit(fd);
     }
-    ChunkWrite::Saved
+    Ok(())
 }
 
 #[cfg(all(test, windows))]
