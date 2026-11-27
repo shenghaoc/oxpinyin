@@ -605,6 +605,9 @@ where
     /// from the surviving forcings. Upstream keeps no such record — the
     /// frontend tracks its own cursor — so the store is the engine's
     /// single source once forcings exist.
+    // Out of line: inlined, the rebuild expands to about 320 bytes at each
+    // of its 7 call sites.
+    #[inline(never)]
     pub(super) fn rebuild_selection_from_constraints(&mut self) {
         let runs = self.constraints.runs();
         let state = self.state.borrow_mut();

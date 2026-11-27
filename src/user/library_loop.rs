@@ -79,6 +79,9 @@ impl<'a> LibraryLoopRows<'a> {
 }
 
 /// Walks `rows` in order and stops at the first fault.
+// Out of line: init only; inlined, the loop expands to about 1,200 bytes at
+// each call site.
+#[inline(never)]
 pub(crate) fn run(
     rows: &[(u8, DefaultRowStep<'_>)],
     system_dir: &Path,
