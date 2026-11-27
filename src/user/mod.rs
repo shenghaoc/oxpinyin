@@ -44,8 +44,9 @@ mod user_index;
 mod user_library;
 mod user_phrase_table;
 
+pub use crate::data::LibrarySet;
 pub use library_loop::{LibraryLoopRows, LibraryLoopStop};
-pub use library_table::{LibrarySet, LibraryTable};
+pub use library_table::LibraryTable;
 pub(crate) use live_system::StepLibraries;
 pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys, SystemItem};
 pub use lookup::UserLookup;

@@ -253,10 +253,10 @@ impl<'a> RuntimeDict<'a> {
     /// unreadable item stays ranged, and the step's item read fails for it,
     /// as `get_phrase_item` fails in the pin's step
     /// (`phonetic_lookup.h:646,674`).
-    fn ranged_libraries(&self) -> u16 {
-        // The mask's bits past the sixteen libraries name no library.
-        let unloaded = (self.library_mask & u32::from(u16::MAX)) as u16;
-        self.system.loaded_libraries() & !unloaded
+    fn ranged_libraries(&self) -> crate::data::LibrarySet {
+        self.system
+            .loaded_libraries()
+            .without_mask(self.library_mask)
     }
 
     /// Whether the trellis table search files `token`, tested token by
@@ -273,14 +273,14 @@ impl<'a> RuntimeDict<'a> {
     fn user_trellis_ranges(
         &self,
         query: &[crate::parser::ChewingKey],
-        ranged: u16,
+        ranged: crate::data::LibrarySet,
         ranges: &mut PhraseIndexRanges<()>,
     ) {
         let tokens = self.user_lookup().search_toned(query);
         ranges.convert(
             tokens
                 .into_iter()
-                .filter(|&token| crate::data::library_in(ranged, token))
+                .filter(|&token| ranged.contains(&phrase_index_library_index(token)))
                 .map(|token| (token, Some(()))),
         );
     }

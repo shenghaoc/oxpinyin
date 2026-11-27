@@ -153,7 +153,7 @@ pub fn lookup_tables(path: &Path, phonetic: bool) -> Result<SystemTables, DictEr
     Ok(SystemTables::new(
         ChewingTable::new(pinyin),
         PhraseTable::new(phrase),
-        0,
+        oxpinyin::data::LibrarySet::new(),
     ))
 }
 

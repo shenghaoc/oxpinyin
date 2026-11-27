@@ -15,7 +15,7 @@ pub(crate) fn open_dictionary_parts(
     };
     let pinyin = ChewingTable::new(RawChewingDbm::new(open(SystemDbm::PinyinIndex)?));
     let phrase = PhraseTable::new(RawChewingDbm::new(open(SystemDbm::PhraseIndex)?));
-    let tables = SystemTables::new(pinyin, phrase, 0);
+    let tables = SystemTables::new(pinyin, phrase, crate::data::LibrarySet::new());
     let libraries =
         PhraseLibraries::open(system_dir, SYSTEM_LIBRARY_FILES).map_err(DictError::Library)?;
     Ok((tables, libraries))
