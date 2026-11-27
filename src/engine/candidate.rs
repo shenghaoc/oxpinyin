@@ -82,10 +82,9 @@ pub enum CandidateKind {
 
 /// One offered conversion.
 ///
-/// Sized to need (48 bytes): the three span counts are `u32`, the width of
-/// the segment graph's positions
-/// (`MAX_GRAPH_POSITION`), since
-/// a key is at least one byte; and the n-best rank is an `Option<u8>`, the
+/// Sized to need (48 bytes): the byte count and the span start are `u32`,
+/// the width of the segment graph's positions (`MAX_GRAPH_POSITION`); and
+/// the n-best rank is an `Option<u8>`, the
 /// pin's own `gint8 m_nbest_index` width (`pinyin.cpp:102` at 074a2219)
 /// plus its absent state. A window of a
 /// hundred-odd rows is retained per instance, so each byte here is a
@@ -94,7 +93,6 @@ pub enum CandidateKind {
 pub struct Candidate {
     text: PhraseText,
     token: Option<PhraseToken>,
-    consumed_keys: u32,
     consumed_bytes: u32,
     /// Tail rank of the n-best sentence row this candidate represents, or
     /// `None` for a non-row candidate. The rank is the *original* tail
@@ -130,7 +128,6 @@ impl Candidate {
     pub(crate) fn new(
         text: impl Into<PhraseText>,
         kind: CandidateKind,
-        consumed_keys: usize,
         consumed_bytes: usize,
         token: Option<PhraseToken>,
         nbest_index: Option<u8>,
@@ -138,7 +135,6 @@ impl Candidate {
         Self {
             text: text.into(),
             token,
-            consumed_keys: narrow(consumed_keys),
             consumed_bytes: narrow(consumed_bytes),
             nbest_index,
             span_start: 0,
@@ -190,19 +186,6 @@ impl Candidate {
     #[must_use]
     pub const fn kind(&self) -> CandidateKind {
         self.kind
-    }
-
-    /// How many pinyin keys the candidate absorbs.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "one test reads it; the stored count has no other reader, and removing it reaches into the n-best key accounting"
-        )
-    )]
-    #[must_use]
-    pub(crate) const fn consumed_keys(&self) -> usize {
-        self.consumed_keys as usize
     }
 
     /// How many bytes of the raw input the candidate absorbs.

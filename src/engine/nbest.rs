@@ -92,8 +92,6 @@ pub struct NbestRow {
     /// walk read. Walk-local coordinates; `Session::guess_sentence`
     /// absolutizes them when it stores the rows.
     pub spans: Vec<PhraseSpan>,
-    /// Keys the sentence covers.
-    pub(crate) keys: usize,
     /// Bytes of the input the sentence spans.
     pub span: usize,
 }
@@ -118,8 +116,6 @@ struct Value {
     sub: u32,
     /// Accumulated phrase characters (`m_sentence_length`, `gint32`).
     length: u32,
-    /// Accumulated keys covered (the candidate's `consumed_keys`).
-    keys: u32,
     /// Accumulated log possibility, rounded to f32 after every step.
     poss: f32,
 }
@@ -132,7 +128,6 @@ impl Value {
             from: SEED_STEP,
             sub: 0,
             length: 0,
-            keys: 0,
             poss: 0.0,
         }
     }
@@ -981,7 +976,6 @@ where
         rows.push(NbestRow {
             text,
             spans: phrase_spans,
-            keys: tail.keys as usize,
             span,
         });
     }
@@ -1594,7 +1588,6 @@ fn expand_one<L: LanguageModel>(
             from,
             sub: predecessor.slot,
             length: predecessor.value.length.saturating_add(chars),
-            keys: predecessor.value.keys.saturating_add(entry.keys),
             poss,
         },
     );

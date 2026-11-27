@@ -495,7 +495,6 @@ fn train_observes_each_recorded_token_after_its_prefix() {
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("\u{4f60}".into()),
         spans: Vec::new(),
-        keys: 1,
         span: 2,
     }];
     let mut recorder = Recorder {
@@ -695,7 +694,6 @@ fn a_stored_phrase_trains_with_its_stored_length() {
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
         spans,
-        keys: 1,
         span: 2,
     }];
     let mut model = Readings(Vec::new());
@@ -731,7 +729,6 @@ fn train_reports_a_failing_user_model() {
     session.sentence.rows = vec![crate::engine::nbest::NbestRow {
         text: Some("你".into()),
         spans: Vec::new(),
-        keys: 1,
         span: 2,
     }];
     assert_eq!(
@@ -757,7 +754,6 @@ fn a_row_records_its_whole_token_path() {
             token: 9,
             phrase_length: 1,
         }],
-        keys: 1,
         span: 2,
     }];
     session.refresh().expect("refresh cannot fail");
@@ -789,7 +785,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
                 token: 0x100,
                 phrase_length: 1,
             }],
-            keys: 1,
             span: 3,
         },
         NbestRow {
@@ -799,7 +794,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
                 token: 0x101,
                 phrase_length: 1,
             }],
-            keys: 1,
             span: 3,
         },
         NbestRow {
@@ -809,7 +803,6 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
                 token: 0x102,
                 phrase_length: 1,
             }],
-            keys: 1,
             span: 3,
         },
     ];
@@ -1142,7 +1135,6 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
         Candidate::new(
             compact_str::CompactString::from("狗狗"),
             CandidateKind::Phrase,
-            2,
             4,
             Some(0x0300_16df),
             None,
@@ -1150,7 +1142,6 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
         Candidate::new(
             compact_str::CompactString::from("沟谷"),
             CandidateKind::Phrase,
-            2,
             4,
             Some(0x0100_4c41),
             None,
@@ -1158,8 +1149,7 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
         Candidate::new(
             compact_str::CompactString::from("沟谷"),
             CandidateKind::Phrase,
-            1,
-            4,
+            3,
             Some(0x0100_4c41),
             None,
         ),
@@ -1169,14 +1159,14 @@ fn window_flush_is_token_ascending_and_one_row_per_token() {
     let tokens: Vec<u32> = into.iter().filter_map(|c| c.token()).collect();
     assert_eq!(tokens, [0x0100_4c41, 0x0300_16df]);
     assert_eq!(
-        into[0].consumed_keys(),
-        2,
+        into[0].consumed_bytes(),
+        4,
         "the first collected row of a duplicated token is the one kept"
     );
 }
 
 fn window_row(text: &str, token: Option<u32>) -> crate::engine::candidate::Candidate {
-    crate::engine::candidate::Candidate::new(text, super::CandidateKind::Phrase, 1, 2, token, None)
+    crate::engine::candidate::Candidate::new(text, super::CandidateKind::Phrase, 2, token, None)
 }
 
 // Basis: Rust candidate window batching and reuse contracts.
@@ -1281,7 +1271,6 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
         Candidate::new(
             compact_str::CompactString::from("股"),
             CandidateKind::Phrase,
-            1,
             3,
             Some(1),
             None,
@@ -1289,7 +1278,6 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
         Candidate::new(
             compact_str::CompactString::from("附"),
             CandidateKind::Addon,
-            1,
             3,
             Some(2),
             None,
@@ -1975,7 +1963,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
                 token: 0x100,
                 phrase_length: 1,
             }],
-            keys: 1,
             span: 3,
         },
         crate::engine::nbest::NbestRow {
@@ -1985,7 +1972,6 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
                 token: 0x102,
                 phrase_length: 1,
             }],
-            keys: 1,
             span: 3,
         },
     ];
@@ -2115,7 +2101,6 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
     session.sentence.rows = vec![NbestRow {
         text: Some("你好世界".into()),
         spans: Vec::new(),
-        keys: 3,
         span: 11,
     }];
     session.refresh().expect("refresh cannot fail");
@@ -2146,7 +2131,6 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     let row = |text: &str| NbestRow {
         text: Some(text.into()),
         spans: Vec::new(),
-        keys: 2,
         span: 5,
     };
 
@@ -2261,7 +2245,6 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     session.sentence.rows = vec![NbestRow {
         text: Some("你好".into()),
         spans: Vec::new(),
-        keys: 2,
         span: 5,
     }];
     session.set_law(crate::engine::Law::Zhuyin);
@@ -2741,7 +2724,7 @@ fn candidate_rank_sort_keeps_equal_keys_and_aligns_dedup_frequencies() {
     use crate::engine::candidate::{Candidate, CandidateKind};
     let mut rows: Vec<_> = ["first", "long", "second", "short"]
         .into_iter()
-        .map(|text| Candidate::new(text, CandidateKind::Phrase, 1, 1, None, None))
+        .map(|text| Candidate::new(text, CandidateKind::Phrase, 1, None, None))
         .collect();
     let mut keys: Vec<_> = [(2, 7), (3, 5), (2, 9), (1, 11)]
         .into_iter()
@@ -2785,7 +2768,7 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
             frequency: 0,
             m_freq,
         };
-        (key, Candidate::new(text, kind, 2, 6, None, None))
+        (key, Candidate::new(text, kind, 6, None, None))
     };
     let (keys, mut ranked): (Vec<_>, Vec<_>) = [
         row("书学", CandidateKind::Phrase, 3),

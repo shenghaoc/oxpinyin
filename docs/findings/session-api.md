@@ -47,7 +47,7 @@ pub struct CandidateList { /* ordered, deterministic */ }
 It has no index accessor, and the session selects a row it is given (`Session::select_target`), never an index.
 A candidate handle is therefore a C ABI case. The C choose reads the row's own scalars and selects on the instance it is passed, whichever instance published it, as the pin does (`tests/it/foreign_candidates.rs`, both C facades). A pointer that is not a row of a live published list is a caller precondition violation ([register entry](upstream-divergences.md#a-candidate-pointer-that-is-not-a-row-of-a-live-published-list)).
 
-`consumed_keys` and `consumed_bytes` state how much of the composition a candidate would absorb.
+`consumed_bytes` states how much of the composition a candidate would absorb.
 A shell can then render partial acceptance without re-deriving it.
 
 ## Storage and configuration

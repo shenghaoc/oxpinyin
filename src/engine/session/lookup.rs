@@ -180,7 +180,7 @@ where
         );
         Ok(Some((
             key,
-            Candidate::new(text, CandidateKind::Phrase, 0, 0, Some(token), None),
+            Candidate::new(text, CandidateKind::Phrase, 0, Some(token), None),
         )))
     }
 
@@ -670,24 +670,12 @@ where
             .map_err(|_| EngineError::Failure)?;
         **unreadable += failed_item.count;
         **continued |= extends;
-        append_scan_entries(
-            entries.drain(..),
-            path.len(),
-            end,
-            CandidateKind::Phrase,
-            system,
-        );
+        append_scan_entries(entries.drain(..), end, CandidateKind::Phrase, system);
         **continued |= self
             .dictionary
             .search_addon_into(path, entries, row)
             .map_err(|_| EngineError::Failure)?;
-        append_scan_entries(
-            entries.drain(..),
-            path.len(),
-            end,
-            CandidateKind::Addon,
-            addon,
-        );
+        append_scan_entries(entries.drain(..), end, CandidateKind::Addon, addon);
         Ok(())
     }
 }
@@ -925,7 +913,6 @@ where
             collected.push(Candidate::new(
                 compact_str::CompactString::from(remaining),
                 CandidateKind::Fallback,
-                0,
                 remaining.len(),
                 None,
                 None,
@@ -1005,7 +992,6 @@ where
                 items.push(Candidate::new(
                     compact_str::CompactString::from(&session.input.as_str()[offset..]),
                     CandidateKind::Fallback,
-                    0,
                     session.input.len() - offset,
                     None,
                     None,
@@ -1284,7 +1270,6 @@ where
             Some(Candidate::new(
                 text.clone(),
                 CandidateKind::Sentence,
-                row.keys,
                 row.span,
                 None,
                 Some(u8::try_from(index).unwrap_or(u8::MAX)),

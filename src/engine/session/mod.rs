@@ -289,7 +289,6 @@ mod tests;
 /// Pushes the phrases one key-path search returned.
 fn append_scan_entries(
     entries: impl IntoIterator<Item = PhraseEntry>,
-    keys: usize,
     end: usize,
     kind: CandidateKind,
     into: &mut Vec<Candidate>,
@@ -299,7 +298,6 @@ fn append_scan_entries(
         into.push(Candidate::new(
             entry.into_text(),
             kind,
-            keys,
             end,
             Some(token),
             None,
