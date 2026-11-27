@@ -163,8 +163,8 @@ impl SessionState {
         }
     }
 
-    /// Takes back a window list from [`Session::candidates_at`] or
-    /// [`Session::candidates_ending_at`] that its holder has replaced, so
+    /// Takes back a window list from [`Session::candidates_at_for_abi`] or
+    /// [`Session::candidates_ending_at_for_abi`] that its holder has replaced, so
     /// the next window is built in its storage. Its rows are dropped here;
     /// only the capacity is kept.
     pub(crate) fn recycle_candidates(&mut self, list: CandidateList) {
@@ -191,7 +191,7 @@ struct Lookup {
     candidates: CandidateList,
     /// Whether a deferred parse or sentence guess changed the input behind
     /// [`Self::candidates`] without rebuilding them; the next
-    /// [`Session::refresh_candidates`] does.
+    /// [`Session::refresh`] does.
     stale: bool,
     /// The last sort-option word applied — upstream's `m_sort_option`
     /// (`pinyin.cpp:2203`), which `pinyin_guess_candidates` re-stores on

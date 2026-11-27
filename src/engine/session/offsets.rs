@@ -28,7 +28,7 @@ where
     /// bigram merge is silently skipped and ranking quietly degrades
     /// (C++ libpinyin 2.11.92 still does; libpinyin@412f88e3 feeds the
     /// normalized offset instead). oxpinyin's counterpart is the selection
-    /// history — [`Session::selected_tokens`]' tail seeds `rank_phrases`
+    /// history — whose tail seeds `rank_phrases`
     /// and the n-best trellis — which no lookup offset ever indexes, so
     /// that degradation cannot occur here; any future offset-indexed
     /// context lookup must take this method's normalized offset (#99

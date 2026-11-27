@@ -27,7 +27,8 @@ fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
 }
 
 /// Returns the canonical spelling of an enabled correction or parser ambiguity alias.
-/// [`crate::vocab::fuzzy_chewing_alternatives`] supplies matrix-level substitutions.
+/// [`crate::vocab::fuzzy::fuzzy_chewing_initials`] and
+/// [`crate::vocab::fuzzy::fuzzy_chewing_finals`] supply matrix-level substitutions.
 #[must_use]
 pub(crate) fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
     // Most parser option words enable neither spelling corrections nor

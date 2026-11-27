@@ -325,7 +325,7 @@ impl<'a> RuntimeDict<'a> {
         (matched, total)
     }
 
-    /// What [`Self::priced_token`] reads of `syllables` whatever the
+    /// What a step's pricing reads of `syllables` whatever the
     /// token: the user table's lookup and the path's toned keys. The pin
     /// prices a step with the matrix keys, tones included
     /// (`phonetic_key_matrix.cpp:562,575` at 074a2219), and a nonzero
@@ -357,7 +357,7 @@ impl<'a> RuntimeDict<'a> {
         self.priced_on_path(&self.path_pricing(syllables, tones), token, text)
     }
 
-    /// [`Self::priced_token`] over a non-empty path's [`PathPricing`].
+    /// The item a step prices for `token` over a non-empty path's [`PathPricing`].
     fn priced_on_path(
         &self,
         path: &PathPricing,
@@ -1512,7 +1512,10 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// As [`Runtime::open`].
+    /// Returns [`OpenError`] when `table.conf` is missing or
+    /// `SystemTableInfo2::load` refuses it, or when a required file is missing
+    /// or a DBM or chunk file cannot be opened, and [`OpenError::UserSession`]
+    /// where the user session cannot be built.
     pub(crate) fn open_with_law_reporting(
         system_dir: &Path,
         user_dir: Option<&Path>,
