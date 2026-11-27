@@ -245,7 +245,7 @@ impl SystemItems {
             .replayed
             .get(&crate::vocab::phrase_index_library_index(token))?;
         let bytes = library.item_bytes(token & PHRASE_MASK)?;
-        Some(read(&bytes))
+        Some(read(bytes))
     }
 
     /// [`Self::with_live`] that also tells a library without a live buffer
@@ -264,7 +264,7 @@ impl SystemItems {
             return LiveItemFields::NoLiveLibrary;
         };
         match library.item_bytes(token & PHRASE_MASK) {
-            Some(bytes) => LiveItemFields::Read(read(&bytes)),
+            Some(bytes) => LiveItemFields::Read(read(bytes)),
             None => LiveItemFields::NoReadableItem,
         }
     }
@@ -329,7 +329,7 @@ impl SystemItems {
             return LiveItemFields::NoLiveLibrary;
         };
         match library.item_field_bytes(token & PHRASE_MASK) {
-            Some(bytes) => LiveItemFields::Read(read(&bytes)),
+            Some(bytes) => LiveItemFields::Read(read(bytes)),
             None => LiveItemFields::NoReadableItem,
         }
     }
@@ -386,7 +386,7 @@ impl SystemItems {
             return None;
         }
         let bytes = library.item_bytes(slot)?;
-        Some(read(&bytes))
+        Some(read(bytes))
     }
 
     /// The items each live buffer holds that differ from its original's, as

@@ -129,7 +129,7 @@ impl<R: BufRead> Converter<'_, R> {
             match self.model.line_type {
                 GRAM_1_ITEM_LINE => {
                     let token = self.model.token(0) as u32;
-                    let word = self.model.phrase(1).to_owned();
+                    let word = self.model.phrase(1);
                     if !self
                         .phrases
                         .validate_token_with_string(token, word.to_bytes())
@@ -218,7 +218,7 @@ impl<R: BufRead> Converter<'_, R> {
     /// differs from `T`, aborts, as the pin's asserts do.
     fn bigram_item(&self) -> (u32, u32, KMixtureModelArrayItem) {
         let token1 = self.model.token(0) as u32;
-        let word1 = self.model.phrase(1).to_owned();
+        let word1 = self.model.phrase(1);
         if !self
             .phrases
             .validate_token_with_string(token1, word1.to_bytes())
@@ -226,7 +226,7 @@ impl<R: BufRead> Converter<'_, R> {
             std::process::abort();
         }
         let token2 = self.model.token(2) as u32;
-        let word2 = self.model.phrase(3).to_owned();
+        let word2 = self.model.phrase(3);
         if !self
             .phrases
             .validate_token_with_string(token2, word2.to_bytes())

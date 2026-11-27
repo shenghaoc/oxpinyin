@@ -744,14 +744,14 @@ fn range_end_gives_back_trailing_removals_and_keeps_incomplete_slots() {
     assert!(live.item_field_bytes(4).is_none());
     // The rebuild keeps every read and every slot.
     let before: Vec<_> = (0..6)
-        .map(|slot| live.item_field_bytes(slot).map(Cow::into_owned))
+        .map(|slot| live.item_field_bytes(slot).map(<[u8]>::to_vec))
         .collect();
     // It answers the readable sum the slot walk finds, and again unchanged.
     let sum = live.readable_unigram_sum();
     assert_eq!(live.compact(), sum);
     assert_eq!(live.compact(), sum);
     let after: Vec<_> = (0..6)
-        .map(|slot| live.item_field_bytes(slot).map(Cow::into_owned))
+        .map(|slot| live.item_field_bytes(slot).map(<[u8]>::to_vec))
         .collect();
     assert_eq!(after, before);
     assert_eq!(live.range_end(), 6);
