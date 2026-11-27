@@ -13,6 +13,7 @@
 #[cfg(test)]
 use crate::data::chunk_format::CHUNK_HEADER_SIZE;
 use crate::data::chunk_format::chunk_checksum;
+use crate::input::chunk::HeaderFault;
 use std::ffi::CString;
 
 use crate::data::FileName;
@@ -60,7 +61,7 @@ pub(crate) fn read_chunk_payload(bytes: &[u8]) -> Option<&[u8]> {
 /// # Aborts
 /// A failed header word read aborts at the pin's assertion.
 pub(crate) fn load_chunk_payload(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-    match chunk_payload(path, false) {
+    match chunk_payload(path, HeaderFault::Abort) {
         Ok(bytes) => Ok(bytes),
         Err(ChunkPayloadError::Load(error)) => Err(error),
         Err(ChunkPayloadError::HeaderRead) => std::process::abort(),
@@ -76,19 +77,18 @@ pub(crate) enum ChunkPayloadError {
 /// The mask walk must replay earlier libraries before acting on a failed
 /// header read (`pinyin.cpp:1281-1285`, `memory_chunk.h:434-438`).
 pub(crate) fn try_load_chunk_payload(path: &std::path::Path) -> Result<Vec<u8>, ChunkPayloadError> {
-    chunk_payload(path, true)
+    chunk_payload(path, HeaderFault::Defer)
 }
 
 fn chunk_payload(
     path: &std::path::Path,
-    defer_header_fault: bool,
+    header_fault: HeaderFault,
 ) -> Result<Vec<u8>, ChunkPayloadError> {
     use crate::input::chunk::{ChunkLoadError, load, load_for_mask_prefetch};
     let invalid = || ChunkPayloadError::Load(std::io::ErrorKind::InvalidData.into());
-    let loaded = if defer_header_fault {
-        load_for_mask_prefetch(path)
-    } else {
-        load(path)
+    let loaded = match header_fault {
+        HeaderFault::Abort => load(path),
+        HeaderFault::Defer => load_for_mask_prefetch(path),
     };
     let chunk = loaded.map_err(|error| match error {
         ChunkLoadError::Io(error) => ChunkPayloadError::Load(error),

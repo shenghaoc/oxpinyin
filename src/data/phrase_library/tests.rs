@@ -1,3 +1,4 @@
+use crate::input::chunk::HeaderFault;
 use std::path::Path;
 
 use super::{LibraryError, PhraseLibrary, RowFault, map_header};
@@ -12,18 +13,18 @@ fn mapping_header_size_and_read_failure_follow_pin() {
         Err(std::io::ErrorKind::Other.into())
     };
     assert!(matches!(
-        map_header(path, 7, true, read),
+        map_header(path, 7, HeaderFault::Defer, read),
         Err(LibraryError::Unmappable { .. })
     ));
     assert_eq!(calls.get(), 0);
     assert!(matches!(
-        map_header(path, 8, true, read),
+        map_header(path, 8, HeaderFault::Defer, read),
         Err(LibraryError::Row(RowFault::ChunkHeaderRead))
     ));
     assert_eq!(calls.get(), 1);
     let mut reads = 0;
     assert!(matches!(
-        map_header(path, 8, true, || {
+        map_header(path, 8, HeaderFault::Defer, || {
             reads += 1;
             if reads == 1 {
                 Ok([0; 4])
@@ -34,7 +35,7 @@ fn mapping_header_size_and_read_failure_follow_pin() {
         Err(LibraryError::Row(RowFault::ChunkHeaderRead))
     ));
     assert_eq!(reads, 2);
-    assert!(map_header(path, 8, true, || Ok([0; 4])).is_ok());
+    assert!(map_header(path, 8, HeaderFault::Defer, || Ok([0; 4])).is_ok());
 }
 
 // 074a2219 memory_chunk.h:492-497 asserts on either failed header read.
@@ -46,7 +47,7 @@ fn mapped_header_read_aborts(#[case] failed_read: usize) {
     let name = thread.name().expect("libtest case name");
     crate::store::death_test::assert_aborts(name, || {
         let mut reads = 0;
-        let _ = map_header(Path::new("chunk"), 8, false, || {
+        let _ = map_header(Path::new("chunk"), 8, HeaderFault::Abort, || {
             reads += 1;
             if reads == failed_read {
                 Err(std::io::ErrorKind::Other.into())
@@ -106,7 +107,7 @@ mod sparse_mapping_tests {
         file.set_len((1_u64 << 32) + 8).expect("sparse length");
         file.write_all(&[0_u8; 8]).expect("header");
         drop(file);
-        let mapped = map_chunk(&path, false).expect("map");
+        let mapped = map_chunk(&path, crate::input::chunk::HeaderFault::Abort).expect("map");
         assert_eq!(
             mapped.as_slice().len(),
             (1_usize << 32) + 8,
