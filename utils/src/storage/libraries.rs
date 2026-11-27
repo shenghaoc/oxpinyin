@@ -265,29 +265,30 @@ pub(crate) fn token_to_string(libraries: &Libraries, token: u32) -> Option<CStri
 pub(crate) fn items_of(
     library: &PhraseLibrary,
 ) -> Option<BTreeMap<u32, oxpinyin::data::phrase_library::ChunkItem>> {
-    let mut items = BTreeMap::new();
-    for (slot, view) in library.items() {
-        items.insert(slot, item_of(&view)?);
-    }
-    Some(items)
+    library
+        .items()
+        .map(|(slot, view)| Some((slot, item_of(&view)?)))
+        .collect()
 }
 
 /// One loaded item as a chunk item.
 fn item_of(view: &PhraseItemView<'_>) -> Option<oxpinyin::data::phrase_library::ChunkItem> {
-    let phrase: Option<Vec<u32>> = view.phrase_codes().collect();
-    let mut prons = Vec::new();
-    for pronunciation in view.pronunciations() {
-        let keys: Vec<u16> = pronunciation
-            .keys
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|bytes| u16::from_le_bytes(*bytes))
-            .collect();
-        prons.push((keys, pronunciation.freq));
-    }
+    let phrase: Vec<u32> = view.phrase_codes().collect::<Option<_>>()?;
+    let prons = view
+        .pronunciations()
+        .map(|pronunciation| {
+            let keys: Vec<u16> = pronunciation
+                .keys
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|bytes| u16::from_le_bytes(*bytes))
+                .collect();
+            (keys, pronunciation.freq)
+        })
+        .collect();
     Some(oxpinyin::data::phrase_library::ChunkItem {
-        phrase: phrase?,
+        phrase,
         unigram: view.unigram(),
         prons,
     })

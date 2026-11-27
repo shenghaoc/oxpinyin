@@ -297,16 +297,16 @@ pub fn read_phrase_items(
         if refuse_invalid && phrase.is_none() && (cur_token == 0 || cur_token != record.token) {
             tool::exit(tool::EINVAL);
         }
-        let phrase = phrase.unwrap_or_default();
+        let mut phrase = phrase.unwrap_or_default();
         // `set_phrase_string(written, phrase)`: the guint8 `written` field
         // and that many words.
-        let length = usize::try_from(written).unwrap_or(0) % 256;
-        let phrase: Vec<u32> = phrase.into_iter().take(length).collect();
+        phrase.truncate(usize::try_from(written).unwrap_or(0) % 256);
+        // The first record starts the first item; a new token closes the
+        // item before it and starts its own.
         if cur_token == 0 {
             cur_token = record.token;
-            item.phrase = phrase.clone();
-        }
-        if cur_token != record.token {
+            item.phrase = phrase;
+        } else if cur_token != record.token {
             items.insert(cur_token & PHRASE_MASK, item);
             item = fresh_item();
             cur_token = record.token;
