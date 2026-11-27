@@ -13,6 +13,11 @@
     reason = "Loads the measured C ABI and borrows its returned strings"
 )]
 mod abi;
+#[expect(
+    unsafe_code,
+    reason = "Stable profiling anchor symbols use unsafe no_mangle attributes"
+)]
+mod choose;
 #[forbid(unsafe_code)]
 mod import;
 #[forbid(unsafe_code)]
@@ -45,8 +50,9 @@ pub fn bisect() -> i32 {
         match mode {
             Some("--perf") => perf::run(&args),
             Some("--perf-sentence" | "--perf-typing-sequence") => sentence::run(&args),
+            Some("--perf-choose") => choose::run(&args),
             Some("--measure") => platform::native(&args),
-            _ => Err(format!("Usage: {} --perf <path-to-so> <systemdir>\n       {} --perf-sentence|--perf-typing-sequence ...", args[0], args[0]).into()),
+            _ => Err(format!("Usage: {} --perf <path-to-so> <systemdir>\n       {} --perf-sentence|--perf-typing-sequence|--perf-choose ...", args[0], args[0]).into()),
         }
     };
     finish(result)

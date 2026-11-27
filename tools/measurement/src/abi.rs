@@ -60,9 +60,13 @@ impl Guess {
         }
     }
     pub(crate) fn call(&self, instance: Handle) -> bool {
+        self.at(instance, 0, 0x1e)
+    }
+    /// Candidates at `offset`; the zhuyin facade takes no sort option.
+    pub(crate) fn at(&self, instance: Handle, offset: usize, sort: u32) -> bool {
         match self {
-            Self::Pinyin(f) => f(instance, 0, 0x1e),
-            Self::Zhuyin(f) => f(instance, 0),
+            Self::Pinyin(f) => f(instance, offset, sort),
+            Self::Zhuyin(f) => f(instance, offset),
         }
     }
 }
@@ -79,6 +83,15 @@ table!(Training {
     parsed: (Handle) -> usize = "get_parsed_input_length",
     train: (Handle, u8) -> bool = "train",
     choose: (Handle, usize, Handle) -> i32 = "choose_candidate",
+});
+// The calls a frontend makes after a choose to move the lookup cursor and redraw.
+table!(Redraw {
+    key_rest: (Handle, usize, *mut Handle) -> bool = "get_pinyin_key_rest",
+    rest_positions: (Handle, Handle, *mut u16, *mut u16) -> bool = "get_pinyin_key_rest_positions",
+    user: (Handle, Handle) -> bool = "is_user_candidate",
+    pinyin_offset: (Handle, usize, *mut usize) -> bool = "get_pinyin_offset",
+    character_offset: (Handle, *const c_char, usize, *mut usize) -> bool = "get_character_offset",
+    auxiliary: (Handle, usize, *mut *mut c_char) -> bool = "get_full_pinyin_auxiliary_text",
 });
 table!(Import {
     begin: (Handle, u8) -> Handle = "begin_add_phrases",
@@ -161,6 +174,10 @@ impl StringValue {
     }
     pub(crate) fn text(&self) -> Result<Option<&str>> {
         text(self.pointer)
+    }
+    /// The subject-owned string, or null, for a call that reads it back.
+    pub(crate) fn pointer(&self) -> *const c_char {
+        self.pointer
     }
 }
 impl Drop for StringValue {

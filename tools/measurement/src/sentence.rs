@@ -24,12 +24,26 @@ fn bisect_typing_unit(
     sentence: &abi::Sentence,
     instance: abi::Handle,
     input: &CStr,
+    sort: u32,
 ) -> Step {
     let _collection = platform::Collection::new();
     Step {
         parsed: (typing.parse)(instance, input.as_ptr()),
         sentence: (sentence.guess)(instance),
-        candidates: guess.call(instance),
+        candidates: guess.at(instance, 0, sort),
+    }
+}
+
+/// The typing sequence's candidate sort: `PERF_SORT` as decimal or `0x` hexadecimal,
+/// otherwise `0x1e`.
+fn sort_option() -> Result<u32> {
+    match std::env::var("PERF_SORT").ok().filter(|s| !s.is_empty()) {
+        None => Ok(0x1e),
+        Some(value) => match value.strip_prefix("0x") {
+            Some(hex) => u32::from_str_radix(hex, 16),
+            None => value.parse(),
+        }
+        .map_err(|_| Usage("PERF_SORT must be a decimal or 0x hexadecimal u32".into()).into()),
     }
 }
 
@@ -59,6 +73,8 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
     }
     let iterations = iterations.unwrap_or(0);
     let is_typing = args[1] == "--perf-typing-sequence";
+    // Only the typing sequence guesses candidates, so only it reads `PERF_SORT`.
+    let sort = if is_typing { sort_option()? } else { 0x1e };
     let user = abi::UserDir::temporary("bisect-sentence-")?;
     let library = abi::Library::open(&args[2])?;
     let core = abi::Core::load(&library, "pinyin")?;
@@ -120,7 +136,8 @@ pub(crate) fn run(args: &[String]) -> Result<()> {
             }
             let start = platform::now_ns();
             if is_typing {
-                step = bisect_typing_unit(&typing, &guess, &sentence, instance.handle, prefix);
+                step =
+                    bisect_typing_unit(&typing, &guess, &sentence, instance.handle, prefix, sort);
             } else {
                 step.sentence = bisect_sentence_unit(&sentence, instance.handle);
             }
