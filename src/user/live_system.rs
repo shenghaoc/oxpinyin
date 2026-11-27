@@ -59,12 +59,6 @@ impl<'a> ReadingKeys<'a> {
         self.0.len() / CHEWING_KEY_SIZE
     }
 
-    /// Whether the reading has no keys.
-    #[must_use]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// The packed keys in stored order.
     pub(crate) fn iter(&self) -> impl Iterator<Item = u16> + '_ {
         self.0
@@ -104,6 +98,7 @@ impl<'a> SystemItem<'a> {
     /// The item's bytes, borrowed only for this callback. Under
     /// `LiveSystemItems::read_fields` a shipped item's bytes can end at the
     /// content end, before the item's header-derived length.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn as_bytes(&self) -> &'a [u8] {
         self.view().as_bytes()

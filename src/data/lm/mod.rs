@@ -200,15 +200,6 @@ impl BigramLanguageModel<'_> {
         library_visible(self.library_mask, nibble)
     }
 
-    /// Whether unigram counts are available for interpolation: some
-    /// visible library holds items. Decided by the tables, not by the
-    /// facade total, which a `guint32` can wrap to zero while they stand.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn has_unigrams(&self) -> bool {
-        self.libraries().has_items_unloaded(self.library_mask)
-    }
-
     /// `PhraseItem::get_unigram_frequency` for `token`: the stored item
     /// field, `gen_unigram`'s `+1` included, so a phrase the n-gram corpus
     /// never saw answers `Some(1)`.

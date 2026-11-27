@@ -1,7 +1,8 @@
 //! Raw bigram operations on a predecessor's row. A row is a four-byte little-endian
 //! total, then eight-byte records. Each record is a four-byte little-endian token
-//! followed by a four-byte little-endian frequency. Searches that start at
-//! [`lower_bound`] need whole records sorted by token. Updates keep the stored order.
+//! followed by a four-byte little-endian frequency. A search starts at the first
+//! record whose token is not below the one it looks for, so it needs whole records
+//! sorted by token. Updates keep the stored order.
 
 // SingleGram, src/storage/ngram.cpp. The pin asserts on a short total at
 // memory_chunk.h:390 and can read past a partial record (compatibility rows 85, 98 and
@@ -70,6 +71,7 @@ pub(crate) fn set_total_freq(gram: &mut Vec<u8>, total: u32) {
 /// Partition the stored items by `item.token < token`, returning the item
 /// index. On unpartitioned input the result is unspecified, as for
 /// [`slice::partition_point`]; the stored bytes are never reordered.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn lower_bound(gram: &[u8], token: u32) -> usize {
     let Some((records, _)) = records(gram) else {
@@ -83,7 +85,7 @@ fn lower_bound_records(records: &[[u8; ITEM_LEN]], token: u32) -> usize {
 }
 
 /// The walk `get_freq` and `set_freq` share: from
-/// [`lower_bound`], stop at the first item above `token` (a miss) or the
+/// [`lower_bound_records`], stop at the first item above `token` (a miss) or the
 /// first equal one (a hit).
 fn find(gram: &[u8], token: u32) -> Option<usize> {
     let records = whole_records(gram);
@@ -96,7 +98,7 @@ fn find(gram: &[u8], token: u32) -> Option<usize> {
 }
 
 /// `SingleGram::get_freq` (`ngram.cpp:231-250`): the first match walking
-/// from [`lower_bound`].
+/// from [`lower_bound_records`].
 #[must_use]
 pub(crate) fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
     find(gram, token).map(|index| record_freq(&whole_records(gram)[index]))

@@ -1,7 +1,7 @@
-//! A fault point in the point reads of the read-only stores, for other
-//! crates' tests: no input makes an attached system file fail one chosen
-//! read after an earlier read of the same row succeeded. Test-only: the
-//! module exists in core tests and with `test-hooks` for dependent tests.
+//! A fault point in the point reads of the read-only stores, for the
+//! tests: no input makes an attached system file fail one chosen
+//! read after an earlier read of the same row succeeded. The module
+//! exists only in the library's own tests.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};

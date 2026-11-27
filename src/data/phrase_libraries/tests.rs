@@ -74,7 +74,6 @@ fn a_header_only_chunk_loads_the_pins_empty_sub_index() {
     let library = libs.library(0x0400_0000).expect("loaded");
     assert!(library.is_layout_failed());
     assert_eq!(library.token_range(), 1..1);
-    assert!(!library.has_items());
     assert_eq!(library.total_freq(), 0);
 }
 

@@ -121,7 +121,6 @@ mod language_model {
         assert_eq!(lm.unigram_count(GBK), Some(3));
         assert_eq!(lm.unigram_count(0x0300_0001), None, "no such library");
         assert_eq!(lm.unigram_total(), 16 + 3, "Σ item over both chunks");
-        assert!(lm.has_unigrams());
         assert_eq!(LanguageModel::unigram_freq(&lm, &NI).unwrap(), Some(10));
         assert_eq!(LanguageModel::unigram_total(&lm).unwrap(), Some(19));
     }
@@ -310,18 +309,12 @@ mod language_model {
         gb.add(0x11, 5, "好", vec![(vec![0, 0], 1)]);
         gb.add(0x99, 1, "你好", vec![(vec![0, 0, 0, 0], 1)]);
         std::fs::write(fix.dir.path().join("gb_char.bin"), gb.build()).unwrap();
-        let mut model = fix.open();
+        let model = fix.open();
         let lm = model.model();
         assert_eq!(
             lm.unigram_total(),
             0,
             "gb_char's total plus gbk_char's 3 wraps"
-        );
-        assert!(lm.has_unigrams());
-        model.mask = (1 << 1) | (1 << 2);
-        assert!(
-            !model.model().has_unigrams(),
-            "no visible library holds an item"
         );
     }
 

@@ -17,12 +17,6 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
-// Making the modules private exposed items that only tests use. The dead-code
-// change at the top of this stack removes them and this line.
-#![allow(
-    dead_code,
-    reason = "temporary: the items are removed together with their tests"
-)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
 // making failure unreachable; see docs/rust-conventions.md.

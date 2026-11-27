@@ -465,12 +465,6 @@ impl<'a> MatrixKeys<'a> {
         self.keys.len()
     }
 
-    /// Whether the matrix holds no key.
-    #[must_use]
-    pub(crate) const fn is_empty(self) -> bool {
-        self.keys.is_empty()
-    }
-
     /// Returns the key at `index` in column order.
     ///
     /// # Panics

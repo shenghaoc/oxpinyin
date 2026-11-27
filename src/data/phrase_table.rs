@@ -24,10 +24,10 @@ use crate::data::chewing_table::{DefaultDbm, prefix_upper_bound};
 // The key and value layouts this reader shares with
 // `gen_binary_files`'s writer: one written copy (`crate::data::row_format`).
 #[cfg(test)]
+use crate::data::row_format::phrase_index::encode_ucs4_key;
+#[cfg(test)]
 use crate::data::row_format::phrase_index::test_encode_tokens as encode_tokens;
-use crate::data::row_format::phrase_index::{
-    decode_tokens, encode_ucs4_key, encode_ucs4_key_scalars,
-};
+use crate::data::row_format::phrase_index::{decode_tokens, encode_ucs4_key_scalars};
 
 // ── PhraseTable ──────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ impl PhraseTable {
     /// - Key not found → empty
     /// - Key found, empty value → empty (prefix marker)
     /// - Key found, non-empty → decoded tokens
+    #[cfg(test)]
     pub(crate) fn search(&self, text: &str) -> Result<Vec<u32>, DictError> {
         if text.is_empty() {
             return Ok(Vec::new());
@@ -75,9 +76,12 @@ impl PhraseTable {
         self.search_key(&encode_ucs4_key(text))
     }
 
-    /// [`Self::search`] over raw UCS-4 words, including surrogate or
-    /// above-Unicode values. The key is compared as stored, without
-    /// building a `char` or `str` from a non-scalar.
+    /// Looks up the tokens for an exact phrase given as raw UCS-4 words,
+    /// including surrogate or above-Unicode values (`PhraseLargeTable3::search`,
+    /// `phrase_large_table3_tkrzwdb.cpp:28-52`). A missing key and a key with
+    /// an empty value, the prefix marker, both answer no token. The key is
+    /// compared as stored, without building a `char` or `str` from a
+    /// non-scalar.
     pub(crate) fn search_ucs4(&self, words: &[u32]) -> Result<Vec<u32>, DictError> {
         if words.is_empty() {
             return Ok(Vec::new());

@@ -783,6 +783,7 @@ impl LogType {
 ///
 /// Returns `None` when an item exceeds the journal's `u16` length field
 /// (`phrase_index_logger.h:248-270`). Such an item can fit a library chunk.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn encode_log_records(records: &[LogRecord]) -> Option<Vec<u8>> {
     let mut out = Vec::new();

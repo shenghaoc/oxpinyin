@@ -188,10 +188,6 @@ mod system_dictionary {
         assert_eq!(dict.phrase_text(0x0200_0010), None, "unloaded library");
         assert_eq!(dict.phrase_text(0xFFFF_FFFF), None);
         assert_eq!(dict.unigram_count(0x0100_0010), Some(5));
-        let prons = dict.pronunciations(0x0100_0010);
-        assert_eq!(prons.len(), 2);
-        assert_eq!(prons[0], ("ni".to_owned(), 5));
-        assert_eq!(prons[1], ("ni".to_owned(), 3));
     }
 
     // Rust The read-only fixture requires the phrase index.

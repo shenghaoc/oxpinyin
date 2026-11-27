@@ -672,7 +672,7 @@ impl crate::store::RawReadStore for TkrzwStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.read_only {
             crate::store::read_faults::point_read(key)?;
         }
@@ -680,7 +680,7 @@ impl crate::store::RawReadStore for TkrzwStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.read_only {
             crate::store::read_faults::point_read(key)?;
         }
@@ -693,7 +693,7 @@ impl crate::store::RawReadStore for TkrzwStore {
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         let visit = {
             crate::store::read_faults::scan_start(self.read_only, lo)?;
             crate::store::read_faults::scan_visitor(self.read_only, visit)

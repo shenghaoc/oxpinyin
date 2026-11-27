@@ -303,6 +303,7 @@ pub(crate) fn directory_size_reads_as_a_chunk(size: std::io::Result<u64>) -> boo
 ///
 /// # Aborts
 /// A failed header word read aborts at the pin's assertion.
+#[cfg(test)]
 pub(crate) fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
     map_chunk(path, HeaderFault::Abort).map(drop)
 }
@@ -619,15 +620,6 @@ impl PhraseLibrary {
             })
             .map_or(1, |slot| slot + 1);
         1..u32::try_from(end).unwrap_or(u32::MAX)
-    }
-
-    /// Whether the library stores any item content, without walking its
-    /// slots. Every chunk the pin writes is compacted first, so its
-    /// content holds only items its index points at (074a2219
-    /// `phrase_index.cpp:648-675`, `pinyin.cpp:1139`).
-    #[must_use]
-    pub(crate) const fn has_items(&self) -> bool {
-        self.content.start < self.content.end
     }
 
     /// The offset-array entry of a slot, or `None` outside the array.

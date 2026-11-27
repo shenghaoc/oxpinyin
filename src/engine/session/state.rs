@@ -27,8 +27,8 @@ where
                 sentence: SentenceState::default(),
                 candidate_prefixes: Vec::new(),
                 scratch: Scratch::default(),
+                #[cfg(test)]
                 scan_unreadable: 0,
-                scan_ranked_phrase: false,
             },
         }
     }

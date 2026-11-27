@@ -1,15 +1,8 @@
-//! Emits library diagnostics on the C standard error stream. [`path_bytes`] supplies the
-//! path bytes used by the filename diagnostic.
+//! Emits library diagnostics on the C standard error stream.
 
 // The diagnostics use the pin's fprintf(stderr, …) call through crate::input.
 
 use std::path::Path;
-
-/// A path's bytes as they are, which is what `%s` writes.
-#[must_use]
-pub(crate) fn path_bytes(path: &Path) -> &[u8] {
-    crate::input::path_to_bytes(path)
-}
 
 /// The init's `load %s failed!` for a `table.conf` that
 /// `SystemTableInfo2::load` refused (074a2219 `pinyin.cpp:338`,

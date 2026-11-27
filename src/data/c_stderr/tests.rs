@@ -11,11 +11,11 @@ fn a_name_is_written_up_to_its_first_nul() {
     }
 }
 
-// Rust path_bytes contract preserves Unix filename bytes.
+// The `%s` argument is the path's own bytes: `path_to_bytes` keeps Unix filename bytes.
 #[test]
 #[cfg(unix)]
 fn paths_are_written_as_their_bytes() {
     use std::os::unix::ffi::OsStrExt as _;
     let path = Path::new(std::ffi::OsStr::from_bytes(b"/d\xffir"));
-    assert_eq!(path_bytes(path), b"/d\xffir");
+    assert_eq!(crate::input::path_to_bytes(path), b"/d\xffir");
 }
