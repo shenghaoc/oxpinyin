@@ -66,7 +66,9 @@ A per-key figure is the median of all its samples in the 7 rounds, 343 for each 
 | Instructions | 1,185,549 | 1,342,189 | 0.88 |
 | Wall time | 1.12 ms (1.08–1.17) | 1.22 ms (1.13–1.27) | 0.92 |
 | **Size** | | | |
-| Stripped `libpinyin.so.15` | 1,135,024 B | 927,824 B | 1.22 |
+| Stripped `libpinyin.so.15` | 1,122,736 B | 927,824 B | 1.21 |
+
+The size row is measured on [#2328](https://github.com/shenghaoc/oxpinyin/pull/2328), with the same build; the other oxpinyin rows are measured at `c6b8e1e23`.
 
 The first-key-after-idle difference is within the run-to-run variation: the ranges of the two latencies overlap.
 
