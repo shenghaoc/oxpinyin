@@ -506,7 +506,7 @@ pub(crate) fn native_unigram(store: &UserStore, token: u32) -> Option<u32> {
 
 pub(crate) fn native_exports(store: &UserStore, library: u8) -> Vec<(String, String, u64)> {
     if store.is_system_library(library) {
-        return (1..(store.system_range_end(library).unwrap() & 0x00ff_ffff))
+        return (1..(store.system_range_end(library).unwrap() & crate::vocab::PHRASE_MASK))
             .flat_map(|slot| {
                 let token = crate::vocab::phrase_index_make_token(library, slot);
                 store

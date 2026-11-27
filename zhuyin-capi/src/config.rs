@@ -40,7 +40,9 @@ pub unsafe extern "C" fn zhuyin_set_chewing_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
+    if oxpinyin::facade::zhuyin_scheme(scheme)
+        .is_none_or(|scheme| scheme == oxpinyin::parser::ZhuyinScheme::StandardDvorak)
+    {
         // Register rows 5c and 5d: the dvorak slot (7) falls through to
         // `zhuyin_parser2.cpp:295`, every out-of-enum value to
         // `zhuyin.cpp:736`, both `abort()`, with the old parser already
@@ -77,7 +79,7 @@ pub unsafe extern "C" fn zhuyin_set_full_pinyin_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    if !matches!(scheme, 1..=3) {
+    if oxpinyin::facade::full_scheme(scheme).is_none() {
         // Register row 5d, `pinyin_parser2.cpp:398`: `abort()` in
         // `FullPinyinParser2::set_scheme`, after `zhuyin.cpp:703` stored the
         // scheme in memory.

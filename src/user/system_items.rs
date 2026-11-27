@@ -4,7 +4,7 @@ use crate::data::phrase_library::{ChunkItem, PhraseItemView};
 
 use crate::user::SystemLibraryRef;
 use crate::user::replay::{ReplayedLibrary, UnigramAdd};
-use crate::vocab::PhraseToken;
+use crate::vocab::{PHRASE_MASK, PhraseToken};
 
 /// The live buffer of `token`'s system library, made from `original` the
 /// first time with the total a reload left. The library is the pin's
@@ -188,7 +188,7 @@ impl SystemItems {
         payload: &[u8],
     ) {
         if let Some(library) = library_of(&mut self.replayed, &mut self.totals, token, original) {
-            library.add_item(token & 0x00ff_ffff, payload);
+            library.add_item(token & PHRASE_MASK, payload);
         }
     }
 
@@ -200,11 +200,11 @@ impl SystemItems {
         token: PhraseToken,
     ) -> bool {
         library_of(&mut self.replayed, &mut self.totals, token, original)
-            .is_some_and(|library| library.remove_item(token & 0x00ff_ffff))
+            .is_some_and(|library| library.remove_item(token & PHRASE_MASK))
     }
 
     pub(crate) fn is_removed(&self, token: PhraseToken) -> bool {
-        let slot = token & 0x00ff_ffff;
+        let slot = token & PHRASE_MASK;
         self.replayed
             .get(&crate::vocab::phrase_index_library_index(token))
             .is_some_and(|library| library.item_bytes(slot).is_none())
@@ -221,7 +221,7 @@ impl SystemItems {
         delta: u32,
     ) -> Option<UnigramAdd> {
         let original = original?;
-        let slot = token & 0x00ff_ffff;
+        let slot = token & PHRASE_MASK;
         let library = library_of(&mut self.replayed, &mut self.totals, token, original)?;
         Some(library.add_unigram(slot, delta))
     }
@@ -231,7 +231,7 @@ impl SystemItems {
     pub(crate) fn get(&self, token: &PhraseToken) -> Option<ChunkItem> {
         self.replayed
             .get(&crate::vocab::phrase_index_library_index(*token))?
-            .item(*token & 0x00ff_ffff)
+            .item(*token & PHRASE_MASK)
     }
 
     /// Reads the item the live buffer of `token`'s library holds under its
@@ -244,7 +244,7 @@ impl SystemItems {
         let library = self
             .replayed
             .get(&crate::vocab::phrase_index_library_index(token))?;
-        let bytes = library.item_bytes(token & 0x00ff_ffff)?;
+        let bytes = library.item_bytes(token & PHRASE_MASK)?;
         Some(read(&bytes))
     }
 
@@ -263,7 +263,7 @@ impl SystemItems {
         else {
             return LiveItemFields::NoLiveLibrary;
         };
-        match library.item_bytes(token & 0x00ff_ffff) {
+        match library.item_bytes(token & PHRASE_MASK) {
             Some(bytes) => LiveItemFields::Read(read(&bytes)),
             None => LiveItemFields::NoReadableItem,
         }
@@ -279,7 +279,7 @@ impl SystemItems {
     ) -> Option<R> {
         self.replayed
             .get(&crate::vocab::phrase_index_library_index(token))?
-            .ordinary_item(token & 0x00ff_ffff)
+            .ordinary_item(token & PHRASE_MASK)
             .map(read)
     }
 
@@ -293,7 +293,7 @@ impl SystemItems {
         let library = self
             .replayed
             .get(&crate::vocab::phrase_index_library_index(token))?;
-        library.complete_item(token & 0x00ff_ffff).map(read)
+        library.complete_item(token & PHRASE_MASK).map(read)
     }
 
     /// The words of the item `token`'s live library holds under its slot
@@ -310,7 +310,7 @@ impl SystemItems {
         else {
             return LiveItemFields::NoLiveLibrary;
         };
-        match library.field_view(token & 0x00ff_ffff) {
+        match library.field_view(token & PHRASE_MASK) {
             Some(item) => LiveItemFields::Read(item.stored_words()),
             None => LiveItemFields::NoReadableItem,
         }
@@ -328,7 +328,7 @@ impl SystemItems {
         else {
             return LiveItemFields::NoLiveLibrary;
         };
-        match library.item_field_bytes(token & 0x00ff_ffff) {
+        match library.item_field_bytes(token & PHRASE_MASK) {
             Some(bytes) => LiveItemFields::Read(read(&bytes)),
             None => LiveItemFields::NoReadableItem,
         }
@@ -346,7 +346,7 @@ impl SystemItems {
     ) -> bool {
         // `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
         let nibble = crate::vocab::phrase_index_library_index(token);
-        let slot = token & 0x00ff_ffff;
+        let slot = token & PHRASE_MASK;
         if !self.replayed.contains_key(&nibble) {
             let Some(original) = original.filter(|library| library.contains_item(slot)) else {
                 return false;
@@ -368,7 +368,7 @@ impl SystemItems {
     pub(crate) fn is_added(&self, token: PhraseToken) -> bool {
         self.replayed
             .get(&crate::vocab::phrase_index_library_index(token))
-            .is_some_and(|library| library.is_added_slot(token & 0x00ff_ffff))
+            .is_some_and(|library| library.is_added_slot(token & PHRASE_MASK))
     }
 
     /// Reads the item under `token` where it is one its library's loaded
@@ -381,7 +381,7 @@ impl SystemItems {
         let library = self
             .replayed
             .get(&crate::vocab::phrase_index_library_index(token))?;
-        let slot = token & 0x00ff_ffff;
+        let slot = token & PHRASE_MASK;
         if !library.is_added_slot(slot) {
             return None;
         }
