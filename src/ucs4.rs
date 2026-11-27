@@ -153,6 +153,9 @@ impl PhraseText {
     /// Returns the scalar text's character count. For stored words, returns
     /// the nonzero declared count, or the number of stored words when the
     /// declared count is zero.
+    // Out of line: inlined, `chars().count()` expands to about 800 bytes at
+    // each call site.
+    #[inline(never)]
     #[must_use]
     pub fn phrase_length(&self) -> usize {
         match &self.0 {
