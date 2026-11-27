@@ -17,20 +17,21 @@ pub(crate) mod phrase;
 pub(crate) mod session;
 
 pub use candidate::{Candidate, CandidateKind, CandidateList, rank_by_frequency};
-pub use char_offset::{
-    CharacterOffset, MatrixColumns, character_offset_walk, key_pronounced_by, matrix_columns,
-    remember_walk,
-};
-pub use cursor::{
-    KeySpans, MatrixKey, MatrixKeys, left_word_offset_over_spans, lookup_offset_over_spans,
-    right_word_offset_over_spans,
+pub(crate) use char_offset::matrix_columns;
+pub use char_offset::{CharacterOffset, key_pronounced_by, remember_walk};
+pub(crate) use char_offset::{MatrixColumns, character_offset_walk};
+pub use cursor::MatrixKey;
+pub(crate) use cursor::lookup_offset_over_spans;
+pub(crate) use cursor::{
+    KeySpans, MatrixKeys, left_word_offset_over_spans, right_word_offset_over_spans,
 };
 pub use error::EngineError;
 pub(crate) use error::{TrainingStop, abort_toned_incomplete};
 pub use nbest::NbestShape;
+pub(crate) use session::SentencePart;
 pub use session::{
     BEFORE_CURSOR_ANCHOR, Law, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection,
-    SelectionTarget, SentencePart, Session, SessionSettings, SessionState, amplified_frequency,
+    SelectionTarget, Session, SessionSettings, SessionState, amplified_frequency,
 };
 
 pub(crate) use session::{check_lookup_offset_range, normalize_lookup_offset, parse_time_keys};

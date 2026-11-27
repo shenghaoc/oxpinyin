@@ -74,7 +74,7 @@ fn load_user_conf(filename: &Path) -> Option<UserTableInfo> {
 /// libzhuyin read and write the same marker through the same
 /// `UserTableInfo`, but at different points and with different counters,
 /// so the facade that opens a profile names its law and every write below
-/// follows it (the load, the reporting save's counter, [`fini`]).
+/// follows it (the load, the reporting save's counter, `fini`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserConfLaw {
     /// libpinyin: every `pinyin_init` raises the open counter and writes
@@ -101,19 +101,19 @@ pub struct SystemLibrary<
     I = BTreeMap<u32, ChunkItem>,
 > {
     /// The chunk's `total_freq`.
-    pub total: u32,
+    pub(crate) total: u32,
     /// The pin's trimmed allocation range end (phrase_index.cpp:624-646).
-    pub range_end: u32,
+    pub(crate) range_end: u32,
     /// Items by slot (`token & PHRASE_MASK`).
-    pub items: I,
+    pub(crate) items: I,
     /// The baseline mapping; read interfaces borrow it for one operation.
-    pub mapped: Option<M>,
+    pub(crate) mapped: Option<M>,
 }
 
 /// What a save's current-on-disk remap says about one selected system
 /// library. The save always diffs the live sub-index against the file as it
 /// is on disk now, never against the chunk the session loaded.
-pub enum SaveBaseline {
+pub(crate) enum SaveBaseline {
     /// There is no file to map again (a transient or fixture session): the
     /// retained library stands for the file.
     Keep,
@@ -246,7 +246,7 @@ impl SystemLibrary {
 }
 
 /// One operation's borrowed baseline metadata and bytes.
-pub type SystemLibraryRef<'a> =
+pub(crate) type SystemLibraryRef<'a> =
     SystemLibrary<&'a crate::data::phrase_library::PhraseLibrary, &'a BTreeMap<u32, ChunkItem>>;
 
 impl<
@@ -391,7 +391,7 @@ impl SystemOriginals {
     }
 
     /// The uniquely owned baseline mappings, borrowed by dictionary and LM reads.
-    pub const fn phrase_libraries(&self) -> &PhraseLibraries {
+    pub(crate) const fn phrase_libraries(&self) -> &PhraseLibraries {
         &self.mapped
     }
 
@@ -531,7 +531,7 @@ impl SystemOriginals {
 
     /// The user dir's file layout.
     #[must_use]
-    pub const fn layout(&self) -> &UserFileLayout {
+    pub(crate) const fn layout(&self) -> &UserFileLayout {
         &self.layout
     }
 }
@@ -567,7 +567,10 @@ impl From<crate::user::LibraryTable<SystemLibrary>> for SystemOriginals {
 /// phrases and pronunciations is deferred to a touched slot's [`SystemLibrary`].
 /// A fresh profile therefore pays no full-item pass (#588).
 #[must_use]
-pub fn system_originals(libraries: PhraseLibraries, layout: UserFileLayout) -> SystemOriginals {
+pub(crate) fn system_originals(
+    libraries: PhraseLibraries,
+    layout: UserFileLayout,
+) -> SystemOriginals {
     let out = layout
         .system_logs()
         .iter()
@@ -594,7 +597,7 @@ fn library_metadata(libraries: &PhraseLibraries, nibble: u8) -> Option<SystemLib
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
 #[derive(Debug, thiserror::Error)]
-pub enum PersistenceError {
+pub(crate) enum PersistenceError {
     /// Filesystem failure.
     #[error("user file io: {0}")]
     Io(std::io::Error),
@@ -636,10 +639,10 @@ impl From<StoreError> for PersistenceError {
 
 /// What the library loop reads of a profile, beside the session's own structures.
 #[derive(Clone, Debug, Default)]
-pub struct Loaded {
+pub(crate) struct Loaded {
     /// The decoded fixture state (empty on a fresh or wiped profile).
     #[cfg(test)]
-    pub state: crate::user::UserState,
+    pub(crate) state: crate::user::UserState,
     /// The open counter every later `user.conf` write of this session
     /// starts from: under [`UserConfLaw::Pinyin`] the value the load
     /// raised and wrote, which the reporting save writes back and [`fini`] lowers;
@@ -647,23 +650,23 @@ pub struct Loaded {
     /// `UserTableInfo` libzhuyin's `mark_version` saves. Upstream's `int`
     /// (`table_info.h:102`), so a negative marker raises to a negative
     /// value.
-    pub open_counter: i32,
+    pub(crate) open_counter: i32,
     /// A non-conform profile was found and its files removed —
     /// `check_format`'s `_clean_user_files`, the ecosystem's own
     /// mechanism for "backend or model change discards user data".
     #[cfg(test)]
-    pub wiped: bool,
+    pub(crate) wiped: bool,
     /// Files whose bytes failed to parse; the profile continues without
     /// them (upstream's own degrade — `chunk->load` failure leaves an
     /// empty library, never a failed init).
     #[cfg(test)]
-    pub skipped: Vec<String>,
+    pub(crate) skipped: Vec<String>,
     /// The pin assertion a `SYSTEM_FILE` library's `.dbin` replay reached,
     /// in library order: the first library whose log reaches one, after the
     /// libraries before it replayed. The pin dies there
     /// ([`JournalFault`]); the session open returns it and the C adapters
     /// abort. No later library is replayed.
-    pub journal_fault: Option<JournalFault>,
+    pub(crate) journal_fault: Option<JournalFault>,
     /// The total each library the profile filled holds once loaded, as the
     /// pin keeps it: a `USER_FILE` library's is the total stored in its
     /// file (074a2219 `phrase_index.cpp:345`), not a sum of its items; a
@@ -1033,7 +1036,7 @@ impl SessionProfile<'_> {
 /// floored at 0 — `counter > 1 ? counter - 1 : 0`. A raised 7 therefore
 /// reads 0 and lowers to 0, not to 6; a negative counter lowers to 0.
 #[must_use]
-pub const fn lowered_open_counter(open_counter: i32) -> i32 {
+pub(crate) const fn lowered_open_counter(open_counter: i32) -> i32 {
     let counter = get_open_counter(open_counter);
     if counter > 1 { counter - 1 } else { 0 }
 }
@@ -1042,7 +1045,12 @@ pub const fn lowered_open_counter(open_counter: i32) -> i32 {
 /// Applies the facade's final profile-marker policy. Pinyin lowers the open counter and
 /// attempts the marker write even if no save preceded it. With no directory it attempts
 /// the empty filename. Zhuyin skips the write. The write result is ignored.
-pub fn fini(dir: Option<&Path>, versions: &SystemVersions, law: UserConfLaw, open_counter: i32) {
+pub(crate) fn fini(
+    dir: Option<&Path>,
+    versions: &SystemVersions,
+    law: UserConfLaw,
+    open_counter: i32,
+) {
     if law == UserConfLaw::Pinyin {
         let counter = lowered_open_counter(open_counter);
         let _ = match dir {
@@ -1056,7 +1064,7 @@ pub fn fini(dir: Option<&Path>, versions: &SystemVersions, law: UserConfLaw, ope
 // zhuyin.cpp:130–132.
 /// Checks the empty marker filename for a context opened without a user directory. The
 /// pinyin policy also attempts to write that marker.
-pub fn check_format_unnamed(versions: &SystemVersions, law: UserConfLaw) {
+pub(crate) fn check_format_unnamed(versions: &SystemVersions, law: UserConfLaw) {
     let _ = UserTableInfo::load(c"");
     if law == UserConfLaw::Pinyin {
         let _ = write_unnamed_marker(versions, get_open_counter(0) + 1);
@@ -1394,7 +1402,7 @@ pub(crate) enum MaskStop {
 /// library slots (sub-index 0 is never remapped), one `Vec` each. The pin
 /// holds the same bytes, one library at a time, in `MemoryChunk::load`.
 #[derive(Default)]
-pub struct MaskLogs(crate::user::LibraryTable<Result<Vec<u8>, ChunkPayloadError>>);
+pub(crate) struct MaskLogs(crate::user::LibraryTable<Result<Vec<u8>, ChunkPayloadError>>);
 
 /// Read library `nibble`'s saved log once into `logs` and return the header
 /// fault `merge_with_mask` reaches in it, without touching any state:

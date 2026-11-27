@@ -10,17 +10,17 @@
 mod bigram_table;
 mod c_stderr;
 pub(crate) mod chewing_table;
-pub mod chunk_format;
+pub(crate) mod chunk_format;
 mod dict;
 #[cfg(test)]
 pub(crate) use dict::tests as dict_tests;
 mod library_set;
 mod lm;
 mod phrase_libraries;
-pub mod phrase_library;
+pub(crate) mod phrase_library;
 pub(crate) mod phrase_table;
 mod punct;
-pub mod row_format;
+pub(crate) mod row_format;
 #[cfg(test)]
 #[path = "../../tests/support/mod.rs"]
 pub(crate) mod support;
@@ -29,9 +29,8 @@ mod table;
 #[cfg(test)]
 mod table_entries;
 mod table_info;
-pub mod user_files;
+pub(crate) mod user_files;
 
-pub use crate::model::UserCountDelta;
 // The compiled-in backend's native-table extension and `database format:`
 // token. This module reads the DBMs through `crate::store` directly; the
 // re-export lets the consumers above it (`runtime`, the C crates, tests and
@@ -44,30 +43,31 @@ pub use chewing_table::index_key as chewing_index_key;
 pub use bigram_table::BigramTable;
 pub use library_set::LibrarySet;
 
-pub use c_stderr::{path_bytes, table_conf_load_failed};
+pub use c_stderr::table_conf_load_failed;
 
-pub use dict::{AddonDictionary, DictError, SystemDictionary, SystemTables};
+pub(crate) use dict::{AddonDictionary, SystemDictionary};
+pub use dict::{DictError, SystemTables};
 pub(crate) use dict::{SearchQuery, toned_query};
 
-pub(crate) use lm::library_visible;
-pub use lm::{BigramLanguageModel, BigramTables, LmError, merge_bigram};
+pub use lm::BigramTables;
+pub(crate) use lm::{BigramLanguageModel, LmError, library_visible};
 
-pub use phrase_libraries::{LibraryPronunciation, PhraseLibraries};
+pub use phrase_libraries::PhraseLibraries;
 
 pub use punct::PunctTable;
 
-pub use system_files::{ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_NAMES, SystemDbm};
+pub(crate) use system_files::{ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_NAMES, SystemDbm};
 
 pub use table::TableError;
 
+pub(crate) use table_info::DatabaseFormat;
 pub use table_info::{
-    DatabaseFormat, FileName, FileType, PhoneticType, TableConf, TableConfError, TableConfSite,
-    TableRow,
+    FileName, FileType, PhoneticType, TableConf, TableConfError, TableConfSite, TableRow,
 };
 
 pub(crate) use c_stderr::{mmap_failed, rename_failed};
 #[cfg(test)]
-pub use system_files::{ADDON_LIBRARY_FILES, SYSTEM_LIBRARY_FILES};
+pub(crate) use system_files::SYSTEM_LIBRARY_FILES;
 #[cfg(test)]
 pub(crate) use table_entries::{phrase_index_entries, pinyin_index_entries};
 

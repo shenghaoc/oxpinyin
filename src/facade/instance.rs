@@ -336,7 +336,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// each token resolved through the live phrase index now, as the pin's
     /// `convert_to_utf8` does when the caller reads the sentence
     /// (`src/lookup/lookup.cpp:37-48` at 074a2219). A resolved token's part
-    /// is its item's stored words ([`crate::runtime::RuntimeDict::token_words`]).
+    /// is its item's stored words (`runtime::RuntimeDict::token_words`).
     ///
     /// The pin ignores the result of `get_phrase_item` (`:45`), and a failed
     /// read leaves the item as it was (`SubPhraseIndex::get_phrase_item`,

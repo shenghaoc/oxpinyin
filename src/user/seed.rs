@@ -14,13 +14,13 @@
 pub const INITIAL_SEED: u32 = 23 * 3; // 69
 
 /// Multiplier applied to the prior stored count on each reselection (§2).
-pub const EXPAND_FACTOR: u32 = 2;
+pub(crate) const EXPAND_FACTOR: u32 = 2;
 
 /// Upper bound on a single reselection seed. `23 * 15 * 64` in the source (§2).
 pub const CEILING_SEED: u32 = 23 * 15 * 64; // 22080
 
 /// Multiplier turning a bigram seed into the phrase-index unigram delta (§2).
-pub const UNIGRAM_FACTOR: u32 = 7;
+pub(crate) const UNIGRAM_FACTOR: u32 = 7;
 
 /// Training seed for a `(last_token -> token)` selection (the `pinyin_train`
 /// path, §2).
@@ -36,7 +36,7 @@ pub const UNIGRAM_FACTOR: u32 = 7;
 /// `prev_count`, exactly as §2 specifies. Seeds run 69, 138, 414, 1242, …,
 /// clamping to 22080.
 #[must_use]
-pub fn training_seed(prev_count: Option<u32>) -> u32 {
+pub(crate) fn training_seed(prev_count: Option<u32>) -> u32 {
     prev_count.map_or(INITIAL_SEED, |freq| {
         freq.max(INITIAL_SEED)
             .wrapping_mul(EXPAND_FACTOR)
@@ -48,11 +48,11 @@ pub fn training_seed(prev_count: Option<u32>) -> u32 {
 /// `pinyin_choose_predicted_candidate` path, §2): always [`INITIAL_SEED`],
 /// never the reselection expansion.
 #[must_use]
-pub const fn predicted_seed() -> u32 {
+pub(crate) const fn predicted_seed() -> u32 {
     INITIAL_SEED
 }
 
-/// Multiplies the seed by [`UNIGRAM_FACTOR`]. Every seed is at most
+/// Multiplies the seed by `UNIGRAM_FACTOR`. Every seed is at most
 /// [`CEILING_SEED`], so the product (at most 154560) fits.
 #[must_use]
 pub const fn unigram_delta(seed: u32) -> u32 {

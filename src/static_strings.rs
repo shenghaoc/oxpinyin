@@ -2,7 +2,7 @@
 
 /// A UTF-8 string's byte offset and length in a generated string blob.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StringSpan {
+pub(crate) struct StringSpan {
     offset: u16,
     length: u16,
 }
@@ -10,7 +10,7 @@ pub struct StringSpan {
 impl StringSpan {
     /// Constructs a span for generated table storage.
     #[must_use]
-    pub const fn new(offset: u16, length: u16) -> Self {
+    pub(crate) const fn new(offset: u16, length: u16) -> Self {
         Self { offset, length }
     }
 
@@ -26,7 +26,7 @@ impl StringSpan {
 /// not repeated in each stored row. Invalid spans resolve to an empty string;
 /// generated tables validate all spans and preserve their original contents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StringTable<const N: usize> {
+pub(crate) struct StringTable<const N: usize> {
     blob: &'static str,
     rows: &'static [[StringSpan; N]],
 }
@@ -34,7 +34,7 @@ pub struct StringTable<const N: usize> {
 impl<const N: usize> StringTable<N> {
     /// Constructs a view over generated storage.
     #[must_use]
-    pub const fn new(blob: &'static str, rows: &'static [[StringSpan; N]]) -> Self {
+    pub(crate) const fn new(blob: &'static str, rows: &'static [[StringSpan; N]]) -> Self {
         Self { blob, rows }
     }
 
@@ -44,7 +44,7 @@ impl<const N: usize> StringTable<N> {
 
     /// Resolves one field without decoding the other strings in its row.
     #[must_use]
-    pub fn field(self, row: usize, column: usize) -> Option<&'static str> {
+    pub(crate) fn field(self, row: usize, column: usize) -> Option<&'static str> {
         Some(self.resolve(*self.rows.get(row)?.get(column)?))
     }
 
@@ -53,7 +53,7 @@ impl<const N: usize> StringTable<N> {
     /// The probes compare byte slices: UTF-8 byte order is the `str` order,
     /// and a byte slice needs no char-boundary check per probe.
     #[must_use]
-    pub fn position(self, spelling: &str) -> Option<usize> {
+    pub(crate) fn position(self, spelling: &str) -> Option<usize> {
         let blob = self.blob.as_bytes();
         let key = spelling.as_bytes();
         let position = self.rows.partition_point(|row| {

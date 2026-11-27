@@ -17,13 +17,13 @@ use oxpinyin::facade::{Candidate, CandidateKind};
 use super::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};
 
 /// The concrete port session the measurement drives.
-pub struct PortSession {
+pub(crate) struct PortSession {
     runtime: Runtime,
     state: oxpinyin::facade::SessionState,
 }
 
 /// One operation over the retained composition and the runtime's tables.
-pub type PortRead<'a> =
+pub(crate) type PortRead<'a> =
     Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut oxpinyin::facade::SessionState>;
 
 impl PortSession {
@@ -31,7 +31,7 @@ impl PortSession {
     ///
     /// # Errors
     /// Returns the existing runtime-open or session-construction error.
-    pub fn open(dir: &Path) -> Result<Self, String> {
+    pub(crate) fn open(dir: &Path) -> Result<Self, String> {
         let runtime = Runtime::open(dir, None)
             .map_err(|error| format!("cannot open the runtime: {error}"))?;
         let state = runtime.new_session(SessionSettings::default());
@@ -39,7 +39,7 @@ impl PortSession {
     }
 
     /// Re-borrow the current tables for an operation on retained composition.
-    pub fn session(&mut self) -> PortRead<'_> {
+    pub(crate) fn session(&mut self) -> PortRead<'_> {
         self.state.bind(self.runtime.dict(), self.runtime.lm())
     }
 }
@@ -170,7 +170,7 @@ fn phrase_rows(rows: &[String]) -> Vec<String> {
 /// oracle fixture, at the three named strictnesses plus the residual
 /// breakdown. Every count is over [`Self::comparable`] inputs.
 #[derive(Clone, Debug, Default)]
-pub struct SentenceTailReport {
+pub(crate) struct SentenceTailReport {
     /// Exact residual surfaces in the fixture; every other input must match pin.
     pub declared_residuals: usize,
     /// Complete surfaces that moved from their pin or recorded residual.
@@ -219,7 +219,7 @@ pub struct SentenceTailReport {
 impl SentenceTailReport {
     /// Distinct-set agreement: order- and duplicate-insensitive.
     #[must_use]
-    pub const fn distinct_set_match(&self) -> usize {
+    pub(crate) const fn distinct_set_match(&self) -> usize {
         self.list_ordered_match + self.list_distinct_extra
     }
 
@@ -323,7 +323,10 @@ impl SentenceTailReport {
 /// # Errors
 ///
 /// Returns a message when the fixture is unreadable or a port call fails.
-pub fn measure(session: &mut PortSession, root: &Path) -> Result<SentenceTailReport, String> {
+pub(crate) fn measure(
+    session: &mut PortSession,
+    root: &Path,
+) -> Result<SentenceTailReport, String> {
     let fixture = load_fixture(&root.join(SENTENCE_FIXTURE))?;
     let residuals = load_residuals(root, &fixture)?;
     let mut report = SentenceTailReport {

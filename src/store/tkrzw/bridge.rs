@@ -53,6 +53,10 @@
     unsafe_code,
     reason = "the cxx bridge declares the adapter's functions safe to call; the claims are in the backend module"
 )]
+#![expect(
+    unreachable_pub,
+    reason = "CXX generates the bridge's items as `pub`; the module is private to the backend"
+)]
 
 #[cxx::bridge(namespace = "oxpinyin::tkrzw")]
 pub(super) mod ffi {

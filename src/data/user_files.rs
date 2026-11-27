@@ -113,7 +113,7 @@ impl UserDbm {
     /// The file's base name without any extension.
     #[cfg(test)]
     #[must_use]
-    pub const fn stem(self) -> &'static str {
+    pub(crate) const fn stem(self) -> &'static str {
         match self {
             Self::Bigram => "user_bigram",
             Self::PinyinIndex => "user_pinyin_index",
@@ -136,7 +136,7 @@ impl UserDbm {
     /// `HashDB` / tkrzw `HashDBM`; the two index files are trees).
     #[cfg(test)]
     #[must_use]
-    pub const fn is_hash(self) -> bool {
+    pub(crate) const fn is_hash(self) -> bool {
         matches!(self, Self::Bigram)
     }
 }
@@ -167,7 +167,7 @@ impl UserFileLayout {
     /// An installed `table.conf` can name different files;
     /// [`Self::from_conf`] builds the layout for that configuration.
     #[must_use]
-    pub fn stock() -> Self {
+    pub(crate) fn stock() -> Self {
         Self::from_conf(&crate::data::TableConf::stock(0.312_699))
     }
 
@@ -239,7 +239,10 @@ impl SystemVersions {
     /// it opens, paired with its own backend token.
     #[cfg(test)]
     #[must_use]
-    pub const fn for_this_build(binary_format_version: u32, model_data_version: u32) -> Self {
+    pub(crate) const fn for_this_build(
+        binary_format_version: u32,
+        model_data_version: u32,
+    ) -> Self {
         Self {
             binary_format_version,
             model_data_version,
@@ -295,15 +298,15 @@ pub(crate) const fn get_open_counter(open_counter: i32) -> i32 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserTableInfo {
     /// `binary format version:`.
-    pub binary_format_version: u32,
+    pub(crate) binary_format_version: u32,
     /// `model data version:`.
-    pub model_data_version: u32,
+    pub(crate) model_data_version: u32,
     /// `database format:` — `None` when the third directive ran off the
     /// end of the file before it converted anything (`UNKNOWN_FORMAT`).
     /// Upstream recognises exactly the [`DatabaseFormat`] tokens; any other
     /// token reaches `to_table_database_format_type`'s `abort()`, which
     /// [`UserTableInfo::load`] aborts at the converter.
-    pub database_format: Option<DatabaseFormat>,
+    pub(crate) database_format: Option<DatabaseFormat>,
     /// `open counter:` — upstream's `int m_open_counter`
     /// (`table_info.h:102`), negative whenever `%d` reads a negative
     /// value.
@@ -464,7 +467,7 @@ pub enum UserConfError {
 /// native-endian (`u32` `LOG_TYPE`/token, `u16` lengths) and each record
 /// carries whole `PhraseItem` chunks as its payloads.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LogRecord<P = Vec<u8>> {
+pub(crate) enum LogRecord<P = Vec<u8>> {
     /// `LOG_ADD_RECORD` — a phrase item the system chunk lacks.
     Add {
         /// The record's token.
@@ -504,7 +507,7 @@ impl LogRecord<&[u8]> {
     /// Copy a borrowed record's payloads into an owned record.
     #[cfg(test)]
     #[must_use]
-    pub fn into_owned(self) -> LogRecord {
+    pub(crate) fn into_owned(self) -> LogRecord {
         match self {
             Self::Add { token, new_item } => LogRecord::Add {
                 token,
@@ -611,7 +614,7 @@ impl LogReader<'_> {
     /// Why the walk ended, once it has: `None` while it can still yield, and
     /// after a [`LogFault::HeaderToken`] (the pin's assert).
     #[must_use]
-    pub const fn end(&self) -> Option<LogEnd> {
+    pub(crate) const fn end(&self) -> Option<LogEnd> {
         self.end
     }
 }
@@ -781,7 +784,7 @@ impl LogType {
 /// Returns `None` when an item exceeds the journal's `u16` length field
 /// (`phrase_index_logger.h:248-270`). Such an item can fit a library chunk.
 #[must_use]
-pub fn encode_log_records(records: &[LogRecord]) -> Option<Vec<u8>> {
+pub(crate) fn encode_log_records(records: &[LogRecord]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     for record in records {
         append_log_record(&mut out, record)?;

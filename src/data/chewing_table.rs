@@ -26,7 +26,7 @@ use crate::data::DictError;
 // emission there cannot drift (`crate::data::row_format`).
 #[cfg(test)]
 use crate::data::row_format::pinyin_index::encode_items;
-pub use crate::data::row_format::pinyin_index::{
+pub(crate) use crate::data::row_format::pinyin_index::{
     PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key,
 };
 
@@ -37,7 +37,7 @@ pub use crate::data::row_format::pinyin_index::{
 /// keys starting with `prefix`. `None` when no such bound exists (every
 /// byte is `0xFF`), which callers read as "to the end".
 #[must_use]
-pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     let last = prefix.iter().rposition(|&byte| byte != 0xFF)?;
     let mut bound = prefix[..=last].to_vec();
     bound[last] = bound[last].wrapping_add(1);
@@ -427,7 +427,7 @@ impl ChewingTable {
 /// `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`): a syllable with
 /// neither middle nor final is an initial-only (incomplete) key.
 #[must_use]
-pub fn contains_incomplete(keys: &[ChewingKey]) -> bool {
+pub(crate) fn contains_incomplete(keys: &[ChewingKey]) -> bool {
     keys.iter().any(|key| key.middle == 0 && key.final_ == 0)
 }
 
@@ -472,7 +472,7 @@ fn with_index_key<R>(keys: &[ChewingKey], read: impl FnOnce(&[u8]) -> R) -> R {
 /// `chewing_large_table2.h`), the comparison the suggestion path applies
 /// to longer records.
 #[must_use]
-pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
+pub(crate) fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
     if stored.len() < query.len() {
         return false;
     }
@@ -501,7 +501,7 @@ pub fn visit_matching_items(
 ///
 /// # Errors
 /// Returns a row-decoding error.
-pub fn matching_items<'v>(
+pub(crate) fn matching_items<'v>(
     keys: &'v [ChewingKey],
     value: &'v [u8],
 ) -> Result<impl Iterator<Item = u32> + 'v, DictError> {

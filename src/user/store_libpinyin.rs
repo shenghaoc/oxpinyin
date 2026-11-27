@@ -58,7 +58,7 @@ use crate::user::{self as persistence, PersistenceError, SystemOriginals, UserCo
 /// triple, and the `user.conf` law and open counter the session's saves
 /// and its fini write.
 #[derive(Debug)]
-pub struct Target {
+pub(crate) struct Target {
     /// The user directory holding the profile.
     pub(crate) dir: Option<PathBuf>,
     /// Live item arenas and independent pinyin-index membership.
@@ -68,7 +68,7 @@ pub struct Target {
     /// Whose `user.conf` lifecycle the profile follows.
     pub(crate) law: UserConfLaw,
     /// The open counter the session's `user.conf` writes start from
-    /// ([`persistence::Loaded::open_counter`]).
+    /// ([`crate::user::persistence::Loaded::open_counter`]).
     pub(crate) open_counter: i32,
     /// The user pinyin index's readings past `MAX_PHRASE_LENGTH` syllables
     /// (`user_pinyin_index.bin`), as packed `ChewingKey` words — the pin's
@@ -173,7 +173,7 @@ impl UserStore {
     /// session's state in process memory, and
     /// `UserStore::save_reporting` writes the pin's files back. Dropping
     /// the returned owner is the facade's fini: it makes the law's fini-time
-    /// `user.conf` write ([`crate::user::fini`]).
+    /// `user.conf` write (`user::fini`).
     ///
     /// Every open is a session of its own, as every `pinyin_init` /
     /// `zhuyin_init` is a context of its own upstream: nothing is held per
@@ -426,7 +426,7 @@ fn seed_totals(
 /// export half of the value mapping, `UserStore::save_reporting`'s — with
 /// the live system items as values, for the tests.
 #[cfg(test)]
-pub fn export_state(
+pub(crate) fn export_state(
     store: &UserStore,
     originals: &crate::user::SystemOriginals,
 ) -> Result<UserState, UserStoreError> {

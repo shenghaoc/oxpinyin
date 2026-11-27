@@ -12,7 +12,7 @@
 
 /// One of the six DBM files of a system data directory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SystemDbm {
+pub(crate) enum SystemDbm {
     /// `ChewingLargeTable2` over the system libraries (`pinyin_index.bin`).
     PinyinIndex,
     /// `PhraseLargeTable3` over the system libraries (`phrase_index.bin`).
@@ -33,7 +33,7 @@ impl SystemDbm {
     /// The file name: libpinyin's own, the same on Kyoto Cabinet, tkrzw and
     /// Berkeley DB (`pinyin_internal.h:57-66` does not vary with the DBM).
     #[must_use]
-    pub const fn file_name(self) -> &'static str {
+    pub(crate) const fn file_name(self) -> &'static str {
         match self {
             Self::PinyinIndex => "pinyin_index.bin",
             Self::PhraseIndex => "phrase_index.bin",
@@ -48,7 +48,7 @@ impl SystemDbm {
 // Default SYSTEM_FILE entries, data/table.conf.in:8–28.
 /// Stock system-library indices and base names. An installed configuration can select
 /// other rows.
-pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
+pub(crate) const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
     (1, "gb_char"),
     (2, "gbk_char"),
     (3, "opengram"),
@@ -58,7 +58,7 @@ pub const SYSTEM_LIBRARY_NAMES: &[(u8, &str)] = &[
 // Addon rows, data/table.conf.in:8–28.
 /// Stock addon-library indices and base names. See [`SYSTEM_LIBRARY_NAMES`] for the
 /// default dictionary's stock libraries.
-pub const ADDON_LIBRARY_NAMES: &[(u8, &str)] = &[
+pub(crate) const ADDON_LIBRARY_NAMES: &[(u8, &str)] = &[
     (4, "art"),
     (5, "culture"),
     (6, "economy"),
@@ -79,7 +79,7 @@ pub const ADDON_LIBRARY_NAMES: &[(u8, &str)] = &[
 /// `<name>.bin` for each of [`SYSTEM_LIBRARY_NAMES`], spelled out because
 /// a `const` cannot concatenate; the test below holds the two in step.
 #[cfg(test)]
-pub const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
+pub(crate) const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
     (1, "gb_char.bin"),
     (2, "gbk_char.bin"),
     (3, "opengram.bin"),
@@ -96,7 +96,7 @@ pub const SYSTEM_LIBRARY_FILES: &[(u8, &str)] = &[
 /// `<name>.bin` for each of [`ADDON_LIBRARY_NAMES`], spelled out because
 /// a `const` cannot concatenate; the test below holds the two in step.
 #[cfg(test)]
-pub const ADDON_LIBRARY_FILES: &[(u8, &str)] = &[
+pub(crate) const ADDON_LIBRARY_FILES: &[(u8, &str)] = &[
     (4, "art.bin"),
     (5, "culture.bin"),
     (6, "economy.bin"),

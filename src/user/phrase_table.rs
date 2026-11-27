@@ -10,13 +10,13 @@ use crate::store::StoreError;
 /// Encode raw UCS-4 words as the pin's little-endian key. No `char` or
 /// `str` is built, so a surrogate or above-Unicode word survives.
 #[must_use]
-pub fn key_ucs4(words: &[u32]) -> Vec<u8> {
+pub(crate) fn key_ucs4(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|word| word.to_le_bytes()).collect()
 }
 
 /// A raw token-array entry, without sorting or deduplication.
 #[derive(Debug, Default)]
-pub struct PhraseTableEntry {
+pub(crate) struct PhraseTableEntry {
     bytes: Vec<u8>,
 }
 
@@ -25,7 +25,7 @@ impl PhraseTableEntry {
     ///
     /// # Errors
     /// Rejects incomplete tokens, whose pointer traversal is undefined in pin.
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, StoreError> {
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Result<Self, StoreError> {
         validate(&bytes)?;
         Ok(Self { bytes })
     }
@@ -37,7 +37,7 @@ impl PhraseTableEntry {
 
     /// Stored bytes, including duplicate tokens.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub(crate) fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
 
@@ -45,7 +45,7 @@ impl PhraseTableEntry {
     /// point ends the scan without insertion (`ERROR_INSERT_ITEM_EXISTS`).
     /// Insertion corresponds to `ERROR_OK` (`novel_types.h:78-79`,
     /// `phrase_large_table3.cpp:56-71`).
-    pub fn add_index(&mut self, token: u32) {
+    pub(crate) fn add_index(&mut self, token: u32) {
         let mut offset = self.bytes.len();
         for (index, existing) in self.bytes.as_chunks::<4>().0.iter().map(decode).enumerate() {
             if existing == token {
@@ -62,7 +62,7 @@ impl PhraseTableEntry {
     /// Remove the first occurrence (`ERROR_OK`). Return early if the token is
     /// absent (`ERROR_REMOVE_ITEM_DONOT_EXISTS`, `novel_types.h:78-80`,
     /// `phrase_large_table3.cpp:73-89`).
-    pub fn remove_index(&mut self, token: u32) {
+    pub(crate) fn remove_index(&mut self, token: u32) {
         let Some(index) = self
             .bytes
             .as_chunks::<4>()
@@ -77,7 +77,7 @@ impl PhraseTableEntry {
     }
 
     /// Remove all matching tokens, preserving survivor order.
-    pub fn mask_out(&mut self, mask: u32, value: u32) {
+    pub(crate) fn mask_out(&mut self, mask: u32, value: u32) {
         crate::packed_records::retain_records(&mut self.bytes, 0, 4, |record| {
             decode(&record.as_chunks::<4>().0[0]) & mask != value
         });
@@ -100,7 +100,7 @@ impl PhraseTableEntry {
 ///
 /// # Errors
 /// Rejects incomplete tokens, as [`PhraseTableEntry::from_bytes`] does.
-pub fn search_bytes(
+pub(crate) fn search_bytes(
     bytes: &[u8],
     tokens: &mut Vec<u32>,
     enabled: impl FnMut(u32) -> bool,

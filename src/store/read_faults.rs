@@ -20,7 +20,7 @@ static READS: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// at its lower bound and at each record it reads. The in-memory
 /// containers are not affected. A process arms one key; a second call
 /// changes only the count.
-pub fn fail_point_read_of(key: &[u8], reads: usize) {
+pub(crate) fn fail_point_read_of(key: &[u8], reads: usize) {
     let _ = KEY.set(key.to_vec());
     READS.store(reads, Ordering::SeqCst);
 }

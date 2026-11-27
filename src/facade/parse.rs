@@ -67,7 +67,7 @@ pub fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
 /// tests read this.
 #[cfg(test)]
 #[must_use]
-pub fn double_scheme(value: i32) -> Option<crate::parser::DoublePinyinScheme> {
+pub(crate) fn double_scheme(value: i32) -> Option<crate::parser::DoublePinyinScheme> {
     use crate::parser::DoublePinyinScheme;
     DoublePinyinScheme::try_from(value)
         .ok()
@@ -76,7 +76,7 @@ pub fn double_scheme(value: i32) -> Option<crate::parser::DoublePinyinScheme> {
 
 /// The per-key view [`exact_input`] needs: the resolved syllable and its
 /// tone.
-pub trait ExactKey {
+pub(crate) trait ExactKey {
     /// The full-pinyin key this scheme key resolved to.
     fn key(&self) -> SyllableKey;
     /// The tone consumed with the key, `0` when toneless.
@@ -109,7 +109,7 @@ impl ExactKey for DoublePinyinKey {
 /// decoder receives the parser's `ChewingKey`s;
 /// `docs/findings/bopomofo-spec.md`).
 #[must_use]
-pub fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
+pub(crate) fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
     let mut text = String::new();
     let mut segments = Vec::with_capacity(keys.len());
     for key in keys {

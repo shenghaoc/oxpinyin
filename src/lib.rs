@@ -16,6 +16,13 @@
 //! - [Upstream pin](https://github.com/shenghaoc/oxpinyin/blob/main/tools/oracle/oracle-pin.txt)
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
+#![warn(unreachable_pub)]
+// Making the modules private exposed items that only tests use. The dead-code
+// change at the top of this stack removes them and this line.
+#![allow(
+    dead_code,
+    reason = "temporary: the items are removed together with their tests"
+)]
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant
 // making failure unreachable; see docs/rust-conventions.md.
@@ -41,11 +48,11 @@ mod chewing_key;
 #[forbid(unsafe_code)]
 mod chewing_key_data;
 #[forbid(unsafe_code)]
-pub mod data;
+mod data;
 #[forbid(unsafe_code)]
 mod direct;
 #[forbid(unsafe_code)]
-pub mod engine;
+mod engine;
 #[forbid(unsafe_code)]
 pub mod facade;
 #[cfg(test)]
@@ -55,35 +62,35 @@ mod fixture_doubles;
 #[forbid(unsafe_code)]
 mod full_pinyin_index;
 #[forbid(unsafe_code)]
-pub mod graph;
-pub mod input;
+mod graph;
+mod input;
 #[forbid(unsafe_code)]
-pub mod marshal;
+mod marshal;
 #[forbid(unsafe_code)]
-pub mod model;
+mod model;
 #[forbid(unsafe_code)]
 mod options;
 #[forbid(unsafe_code)]
 mod packed_records;
 #[forbid(unsafe_code)]
-pub mod parser;
+mod parser;
 #[forbid(unsafe_code)]
 mod phrase_item;
 #[forbid(unsafe_code)]
-pub mod runtime;
+mod runtime;
 #[forbid(unsafe_code)]
 mod scheme;
 #[forbid(unsafe_code)]
-pub mod single_gram;
+mod single_gram;
 #[forbid(unsafe_code)]
 mod stable_sort;
 #[forbid(unsafe_code)]
 mod static_strings;
-pub mod store;
+mod store;
 #[forbid(unsafe_code)]
 mod ucs4;
 #[forbid(unsafe_code)]
-pub mod user;
+mod user;
 #[forbid(unsafe_code)]
 mod string_tables {
     use crate::options::table_row::{
@@ -94,7 +101,7 @@ mod string_tables {
 #[forbid(unsafe_code)]
 mod syllables;
 #[forbid(unsafe_code)]
-pub mod vocab;
+mod vocab;
 #[forbid(unsafe_code)]
 mod zhuyin_map;
 

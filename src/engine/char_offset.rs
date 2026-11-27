@@ -141,7 +141,7 @@ pub struct MatrixColumns {
 /// `phonetic_key_matrix.cpp:34-38`). Arguments as
 /// [`character_offset_walk`].
 #[must_use]
-pub fn matrix_columns(
+pub(crate) fn matrix_columns(
     input: &[u8],
     parsed_len: usize,
     keys: impl IntoIterator<Item = MatrixKey>,
@@ -324,7 +324,7 @@ where
 /// (the pin's asserts); [`EngineError::PinAssert`] for the two
 /// recursion asserts; the dictionary's backend failure as
 /// [`EngineError::Failure`].
-pub fn character_offset_walk<D>(
+pub(crate) fn character_offset_walk<D>(
     columns: Option<&MatrixColumns>,
     dictionary: &D,
     phrase: &crate::vocab::PhraseText,
@@ -369,7 +369,7 @@ where
         .map_or(CharacterOffset::NoPath, CharacterOffset::Found))
 }
 
-/// What [`character_offset_walk`] answered.
+/// What `character_offset_walk` answered.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CharacterOffset {
     /// The pin's early `false`, before its walk ran: the empty matrix, an

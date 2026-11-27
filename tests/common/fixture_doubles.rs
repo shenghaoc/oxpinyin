@@ -26,7 +26,7 @@ use oxpinyin::facade::{ChewingKey, PhraseText, PhraseToken, SyllableKey};
 
 /// Why a fixture could not be read.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum FixtureError {
+pub(crate) enum FixtureError {
     /// A record is missing a required field.
     MissingField {
         /// One-based line number.
@@ -197,7 +197,7 @@ fn number(fields: &[(&str, &str)], name: &'static str, line: usize) -> Result<u6
 /// captured candidate order, so lookups are deterministic and reproduce the
 /// pin's relative ranking where the capture states one.
 #[derive(Clone, Debug, Default)]
-pub struct FixtureDictionary {
+pub(crate) struct FixtureDictionary {
     entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>>,
     /// Each token's phrase item: one pronunciation per record that spells
     /// it, toneless, with frequency 1.
@@ -236,7 +236,7 @@ impl FixtureDictionary {
     /// # Errors
     ///
     /// Returns [`FixtureError`] for a malformed record.
-    pub fn parse(text: &str) -> Result<Self, FixtureError> {
+    pub(crate) fn parse(text: &str) -> Result<Self, FixtureError> {
         let records = parse_vocab(text)?;
         let mut entries: BTreeMap<Vec<SyllableKey>, Vec<PhraseEntry>> = BTreeMap::new();
         let mut items: BTreeMap<PhraseToken, Vec<(Vec<ChewingKey>, u32)>> = BTreeMap::new();
@@ -350,7 +350,7 @@ fn keys_match(query: &[SyllableKey], stored: &[SyllableKey]) -> bool {
 
 /// An in-memory unigram model read from fixtures.
 #[derive(Clone, Debug, Default)]
-pub struct FixtureLanguageModel {
+pub(crate) struct FixtureLanguageModel {
     unigrams: BTreeMap<PhraseToken, u64>,
     unigram_total: u64,
 }
@@ -363,7 +363,7 @@ impl FixtureLanguageModel {
     ///
     /// Returns [`FixtureError`] for a malformed record, or for a bigram naming
     /// a token the vocabulary does not define.
-    pub fn parse(vocab: &str, bigrams: &str) -> Result<Self, FixtureError> {
+    pub(crate) fn parse(vocab: &str, bigrams: &str) -> Result<Self, FixtureError> {
         let mut unigrams = BTreeMap::new();
         let mut unigram_total = 0_u64;
         for record in parse_vocab(vocab)? {
@@ -409,14 +409,14 @@ impl LanguageModel for FixtureLanguageModel {
 /// [`FixtureLanguageModel`] itself answers neither query, so every candidate
 /// ranks at frequency zero under it.
 #[derive(Clone, Debug)]
-pub struct FrequencyFixtureModel {
+pub(crate) struct FrequencyFixtureModel {
     inner: FixtureLanguageModel,
 }
 
 impl FrequencyFixtureModel {
     /// Wraps an existing [`FixtureLanguageModel`].
     #[must_use]
-    pub fn new(inner: FixtureLanguageModel) -> Self {
+    pub(crate) fn new(inner: FixtureLanguageModel) -> Self {
         Self { inner }
     }
 
@@ -427,7 +427,7 @@ impl FrequencyFixtureModel {
     /// # Errors
     ///
     /// Returns [`FixtureError`] for a malformed record.
-    pub fn parse(vocab: &str, bigrams: &str) -> Result<Self, FixtureError> {
+    pub(crate) fn parse(vocab: &str, bigrams: &str) -> Result<Self, FixtureError> {
         FixtureLanguageModel::parse(vocab, bigrams).map(Self::new)
     }
 }

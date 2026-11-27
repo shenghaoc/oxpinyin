@@ -28,12 +28,13 @@ Every product crate links GLib, because the library links it ([native libraries]
 ## Library modules
 
 The library is one crate. Its top-level modules divide the behaviour.
+`facade` is the only public module; `__internal` is public and hidden from Rustdoc. Every other module is private to the crate.
 Each row names what the module owns.
 The next section states which modules it may depend on.
 
 | Module | Owns |
 |---|---|
-| `options`, `static_strings`, `string_tables`, `ucs4`, `direct`, `chewing_key`, `chewing_key_data`, `full_pinyin_index`, `syllables`, `vocab`, `zhuyin_map`, `scheme`, `parser` | The parser layer: option bits, the frozen string and content tables, UCS-4 phrase text, the packed `ChewingKey` and its renderers, the syllable inventory and the full-pinyin, double-pinyin and zhuyin parsers. `vocab` also holds the one definition of the pin's `novel_types.h` types and constants: `PhraseToken`, the alias of `phrase_token_t` (`typedef guint32`), the token masks, the library count and library ids, `null_token`, `sentence_start`, `MAX_PHRASE_LENGTH`, and `PHRASE_INDEX_LIBRARY_INDEX` and `PHRASE_INDEX_MAKE_TOKEN`. The public `vocab` module owns these names and exposes phrase text from the private `ucs4` implementation. The public `parser` module exposes the phonetic keys and parser types from their private implementation files. The only item re-exported at the crate root is `OptionBits`. |
+| `options`, `static_strings`, `string_tables`, `ucs4`, `direct`, `chewing_key`, `chewing_key_data`, `full_pinyin_index`, `syllables`, `vocab`, `zhuyin_map`, `scheme`, `parser` | The parser layer: option bits, the frozen string and content tables, UCS-4 phrase text, the packed `ChewingKey` and its renderers, the syllable inventory and the full-pinyin, double-pinyin and zhuyin parsers. `vocab` also holds the one definition of the pin's `novel_types.h` types and constants: `PhraseToken`, the alias of `phrase_token_t` (`typedef guint32`), the token masks, the library count and library ids, `null_token`, `sentence_start`, `MAX_PHRASE_LENGTH`, and `PHRASE_INDEX_LIBRARY_INDEX` and `PHRASE_INDEX_MAKE_TOKEN`. The `vocab` module owns these names and exposes phrase text from the `ucs4` implementation. The `parser` module exposes the phonetic keys and parser types from their implementation files. The only item re-exported at the crate root is `OptionBits`. |
 | `graph` | The weighted segment graph and the decoder over it. |
 | `model`, `single_gram`, `phrase_item` | The dictionary and language-model contracts, the `SingleGram` value layout and operations, and the `PhraseItem` view that every layer reads an item through. |
 | `engine` | Session state, candidate construction, selection, constraints, training plans and decoding. It is storage-free: it reads the system and user models only through the `model` traits. |
@@ -50,7 +51,7 @@ The next section states which modules it may depend on.
 ### Module dependencies
 
 The base is the parser layer with `graph`, `model`, `single_gram` and `phrase_item`.
-Base modules may depend on each other. Callers name each item through its owning module; `OptionBits` is available at the crate root.
+Base modules may depend on each other. Inside the crate, callers name each item through its owning module; `OptionBits` is available at the crate root.
 Every other module may depend on the base and on the modules that this table names.
 The table states the rule for production code.
 
@@ -68,20 +69,22 @@ The table states the rule for production code.
 
 The rules that follow from the table:
 
-- No module depends on `facade`. The C crates depend on `facade` and on the modules below it.
+- No module depends on `facade`. The C crates import from `facade` and the crate root only; `facade` re-exports the items of the modules below it that they name.
 - No module below `runtime` depends on `runtime`.
 - `engine` depends on no storage module: not on `store`, `data`, `user` or `runtime`.
-- Only `data` and `user` name `store` directly. `runtime`, `facade` and the C crates reach the backend through them.
+- Only `data` and `user` name `store` directly. `runtime` and `facade` reach the backend through them, and the C crates reach it through `facade`.
 - `store` and `input` depend on no other module, so the native bindings stay below every behaviour.
 
 Tests may cross these edges to share fixtures. For example, the `data` tests open the fixture directories that `user`'s test support builds.
 
 The data generators in `oxpinyin-utils` use `data::chunk_format` for the `MemoryChunk` header and checksum and `data::phrase_library` for the `SubPhraseIndex` payload.
 They use `data::row_format` for DBM keys and index and punctuation values, `single_gram` for bigram values, and `data` for library names.
+They reach these modules through `oxpinyin::__internal`, which re-exports each item under its owning module's path.
 Readers and writers share one layout definition per format.
-Implementation files are private by default. Owners re-export the items callers need. Public submodules name subsystems, formats, backends or command boundaries.
 
-The private tool-support crate calls shared engine, storage and native I/O operations through `oxpinyin::__internal`. Rustdoc hides this unsupported workspace interface. Any Rust crate can still import it. The split follows libpinyin’s separation of internal archives and utility code.
+Items are `pub(crate)` or private by default, and the crate warns on `unreachable_pub`. An item is `pub` only when `facade`, `__internal` or the crate root exports it, or when an exported item's signature names it. Owners re-export the items that other modules need. A struct field is public only on a plain value that outside callers build or read by field.
+
+The tools, the fuzz targets and the test fixtures call shared engine, storage and native I/O operations through `oxpinyin::__internal`; they take an item from `facade` when `facade` exports it. Rustdoc hides this unsupported workspace interface. Any Rust crate can still import it. The split follows libpinyin’s separation of internal archives and utility code. Code that only the tools use and that needs no library internals belongs in `oxpinyin-tool-support`.
 
 The fixture `Dictionary`/`LanguageModel` doubles are one source file, `tests/common/fixture_doubles.rs`.
 Each test target that needs them includes the file with `#[path]`, so no shared test crate can close a dependency cycle through the library.

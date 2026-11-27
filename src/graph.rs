@@ -27,7 +27,7 @@ use crate::vocab::SyllableKey;
 /// lengths are `int`s (`pinyin_parser2.h:131` at 074a2219). No product
 /// rule bounds the input
 /// (`docs/findings/upstream-divergences.md#the-full-pinyin-parses-16-bit-steps`).
-pub const MAX_GRAPH_POSITION: usize = u32::MAX as usize - 1;
+pub(crate) const MAX_GRAPH_POSITION: usize = u32::MAX as usize - 1;
 
 /// The edge vector's starting capacity: one edge per node, at most this
 /// many. It bounds the reservation made before any edge exists, not the
@@ -38,7 +38,7 @@ const INITIAL_EDGE_CAPACITY: usize = 4_096;
 /// A pre-parsed syllable, its tone and the byte span of its text. A separating apostrophe
 /// run belongs to the following graph edge and is excluded from this span.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ExactSegment {
+pub(crate) struct ExactSegment {
     start: usize,
     end: usize,
     key: SyllableKey,
@@ -49,7 +49,7 @@ impl ExactSegment {
     /// Stores the byte span `start..end`, key and tone without validation. Supply nonempty,
     /// ordered, nonoverlapping spans inside the input, with only apostrophes in the gaps.
     #[must_use]
-    pub const fn new(start: usize, end: usize, key: SyllableKey, tone: u8) -> Self {
+    pub(crate) const fn new(start: usize, end: usize, key: SyllableKey, tone: u8) -> Self {
         Self {
             start,
             end,
@@ -60,20 +60,20 @@ impl ExactSegment {
 
     /// Byte offset where the key's own text begins.
     #[must_use]
-    pub const fn start(&self) -> usize {
+    pub(crate) const fn start(&self) -> usize {
         self.start
     }
 
     /// Byte offset one past the key's own text.
     #[must_use]
-    pub const fn end(&self) -> usize {
+    pub(crate) const fn end(&self) -> usize {
         self.end
     }
 
     /// The tone consumed with the key (`0` when toneless).
     #[cfg(test)]
     #[must_use]
-    pub const fn tone(&self) -> u8 {
+    pub(crate) const fn tone(&self) -> u8 {
         self.tone
     }
 }
@@ -148,7 +148,7 @@ impl Edge {
     /// 0 otherwise ([`SyllableKey::from_option_text_with_distance`]).
     /// Pre-parsed edges (`SegmentGraph::build_exact`) are 0.
     #[must_use]
-    pub const fn distance(&self) -> u8 {
+    pub(crate) const fn distance(&self) -> u8 {
         self.distance
     }
 
@@ -179,7 +179,7 @@ impl SegmentGraph {
     /// edges. [`Self::fewest_keys`] filters them when selecting a path. Matrix-level fuzzy
     /// alternatives are added by the engine.
     ///
-    /// Returns `None` if the input exceeds [`MAX_GRAPH_POSITION`].
+    /// Returns `None` if the input exceeds `MAX_GRAPH_POSITION`.
     /// Unrecognized bytes can leave the graph with no reachable keys.
     #[must_use]
     pub fn build_with_options(input: &[u8], options: OptionBits) -> Option<Self> {
@@ -322,7 +322,7 @@ impl SegmentGraph {
     /// Number of nodes: one per input byte, plus the end node.
     #[cfg(test)]
     #[must_use]
-    pub const fn node_count(&self) -> usize {
+    pub(crate) const fn node_count(&self) -> usize {
         self.starts.len() - 1
     }
 
@@ -330,7 +330,7 @@ impl SegmentGraph {
     /// descending.
     #[cfg(test)]
     #[must_use]
-    pub fn edges(&self) -> &[Edge] {
+    pub(crate) fn edges(&self) -> &[Edge] {
         &self.edges
     }
 
@@ -338,7 +338,7 @@ impl SegmentGraph {
     ///
     /// An out-of-range node has no edges rather than panicking.
     #[must_use]
-    pub fn outgoing(&self, node: usize) -> &[Edge] {
+    pub(crate) fn outgoing(&self, node: usize) -> &[Edge] {
         let Some(start) = self.starts.get(node) else {
             return &[];
         };
@@ -365,7 +365,7 @@ impl SegmentGraph {
     // FullPinyinParser2::final_step, pinyin_parser2.cpp:237–251,291,305–309,346–380;
     // docs/findings/candidate-construction.md §8.1.
     /// Selects a path covering the longest byte prefix. Among these paths it prefers fewer
-    /// keys, then smaller total [`Edge::distance`], then the first path found. Initial-only
+    /// keys, then smaller total `Edge::distance`, then the first path found. Initial-only
     /// edges participate when `options` holds [`OptionBits::PINYIN_INCOMPLETE`]. Separators
     /// contribute to the consumed prefix without emitting a key.
     #[must_use]

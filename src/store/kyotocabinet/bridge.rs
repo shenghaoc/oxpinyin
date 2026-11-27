@@ -61,6 +61,10 @@
     unsafe_code,
     reason = "the cxx bridge declares the adapter's functions; the claims are in the ffi module"
 )]
+#![expect(
+    unreachable_pub,
+    reason = "CXX generates the bridge's items as `pub`; the module is private to the backend"
+)]
 
 use super::ffi::Sink;
 

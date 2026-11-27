@@ -18,7 +18,7 @@ pub struct FullPinyinIndex(StringTable<2>);
 impl FullPinyinIndex {
     /// Canonical pinyin for an exact input spelling.
     #[must_use]
-    pub fn canonical(self, spelling: &str) -> Option<&'static str> {
+    pub(crate) fn canonical(self, spelling: &str) -> Option<&'static str> {
         self.0.field(self.0.position(spelling)?, 1)
     }
 }

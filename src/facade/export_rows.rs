@@ -162,7 +162,7 @@ impl ExportRow<'_> {
     /// The length of [`Self::with_text_bytes`]'s bytes, read from the item's
     /// stored words with no intermediate text, or `None` where the pin's
     /// `g_ucs4_to_utf8` hands the caller a NULL phrase (`pinyin.cpp:715-716`):
-    /// [`crate::marshal::stored_words_utf8_len`].
+    /// `marshal::stored_words_utf8_len`.
     #[must_use]
     pub fn text_utf8_len(&self) -> Option<usize> {
         stored_words_utf8_len(self.item.phrase_codes())
@@ -170,7 +170,7 @@ impl ExportRow<'_> {
 
     /// Hands [`Self::with_text_bytes`]'s bytes to `emit` straight from the
     /// item's stored words, one word at a time:
-    /// [`crate::marshal::for_each_stored_word_utf8`]. Together they are
+    /// `marshal::for_each_stored_word_utf8`. Together they are
     /// [`Self::text_utf8_len`] bytes.
     pub fn for_each_text_utf8(&self, emit: impl FnMut(&[u8])) {
         for_each_stored_word_utf8(self.item.phrase_codes(), emit)
@@ -288,7 +288,10 @@ impl PhraseExportRead<'_> {
     /// (`:742-767`). The call meets the pin's assert sites in the pin's
     /// order ([`ExportAssert`]) and answers the first one it hits with the
     /// cursor unmoved. The reads cannot fail, as the pin's cannot.
-    pub fn get_next_with<R>(&mut self, read: impl FnOnce(&ExportRow<'_>) -> R) -> ExportStep<R> {
+    pub(crate) fn get_next_with<R>(
+        &mut self,
+        read: impl FnOnce(&ExportRow<'_>) -> R,
+    ) -> ExportStep<R> {
         let token = self.next_token;
         if token == NULL_TOKEN {
             return ExportStep::Assert(ExportAssert::Item);

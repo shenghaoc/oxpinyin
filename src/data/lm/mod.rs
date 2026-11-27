@@ -80,7 +80,7 @@ const fn merge_bigram_counts(system: u64, user: u64) -> u64 {
 /// arguments are zero. A nonzero user argument can produce a present row with
 /// two zero fields after narrowing.
 #[must_use]
-pub fn merge_bigram(
+pub(crate) fn merge_bigram(
     system: Option<(u32, u32)>,
     user_count: u64,
     user_total: u64,
@@ -186,7 +186,7 @@ impl BigramTables {
 impl BigramLanguageModel<'_> {
     /// The facade's phrase libraries this model reads unigrams from.
     #[must_use]
-    pub fn libraries(&self) -> &PhraseLibraries {
+    pub(crate) fn libraries(&self) -> &PhraseLibraries {
         self.libraries
     }
 
@@ -205,7 +205,7 @@ impl BigramLanguageModel<'_> {
     /// facade total, which a `guint32` can wrap to zero while they stand.
     #[cfg(test)]
     #[must_use]
-    pub fn has_unigrams(&self) -> bool {
+    pub(crate) fn has_unigrams(&self) -> bool {
         self.libraries().has_items_unloaded(self.library_mask)
     }
 
@@ -227,7 +227,7 @@ impl BigramLanguageModel<'_> {
     /// libraries: their stored totals, a wrapping `guint32`
     /// (074a2219 `phrase_index.h:440`, `phrase_index.cpp:237-248`).
     #[must_use]
-    pub fn unigram_total(&self) -> u32 {
+    pub(crate) fn unigram_total(&self) -> u32 {
         self.libraries().unigram_total_unloaded(self.library_mask)
     }
 
@@ -237,7 +237,7 @@ impl BigramLanguageModel<'_> {
     /// user side and `add_unigram_frequency` added to it. The pin keeps one
     /// `guint32` and adds to it with no overflow check, so the sum wraps.
     #[must_use]
-    pub fn facade_total(&self, extra: u64) -> u64 {
+    pub(crate) fn facade_total(&self, extra: u64) -> u64 {
         u64::from(self.unigram_total().wrapping_add(extra as u32))
     }
 

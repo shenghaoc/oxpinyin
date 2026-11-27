@@ -14,12 +14,12 @@ use crate::vocab::{
 use crate::vocab::PhraseToken;
 
 /// `count` used when the caller passes "default" (`pinyin.cpp:521`; §3.2).
-pub const DEFAULT_PHRASE_COUNT: u64 = 5;
+pub(crate) const DEFAULT_PHRASE_COUNT: u64 = 5;
 
 /// Unigram seed factor on a *new* user phrase (`pinyin.cpp:522`; §3.2).
-/// Distinct from [`crate::user::UNIGRAM_FACTOR`] (7), which is the *training*
+/// Distinct from [`crate::user::seed::UNIGRAM_FACTOR`] (7), which is the *training*
 /// path.
-pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
+pub(crate) const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
 
 // PhraseItem::add_pronunciation copies tones with the parsed keys
 // (phrase_index.cpp:56–91). Import reads tone under USE_TONE (pinyin.cpp:630).
@@ -32,7 +32,7 @@ pub type PinyinKey = u16;
 pub const KEY_TONE_SHIFT: u32 = 13;
 
 /// The syllable-index bits of a [`PinyinKey`].
-pub const KEY_SYLLABLE_MASK: PinyinKey = (1 << KEY_TONE_SHIFT) - 1;
+pub(crate) const KEY_SYLLABLE_MASK: PinyinKey = (1 << KEY_TONE_SHIFT) - 1;
 
 /// `CHEWING_NUMBER_OF_TONES` less one: the highest tone a key carries
 /// (`chewing_enum.h`, tones 0..=5).
@@ -89,13 +89,13 @@ pub(crate) fn key_chewing(key: PinyinKey) -> Option<crate::parser::ChewingKey> {
 /// The syllable index of `key`, tone stripped.
 #[cfg(test)]
 #[must_use]
-pub const fn key_syllable(key: PinyinKey) -> usize {
+pub(crate) const fn key_syllable(key: PinyinKey) -> usize {
     (key & KEY_SYLLABLE_MASK) as usize
 }
 
 /// The tone of `key` (0 = zero tone).
 #[must_use]
-pub const fn key_tone(key: PinyinKey) -> u8 {
+pub(crate) const fn key_tone(key: PinyinKey) -> u8 {
     (key >> KEY_TONE_SHIFT) as u8
 }
 
@@ -128,7 +128,7 @@ pub const fn is_user_token(token: PhraseToken) -> bool {
 /// because the low 24 bits are already non-zero. Starting `range_end` at 0
 /// would hit the bump and land on the same token.
 #[cfg(test)]
-pub const FIRST_USER_TOKEN: PhraseToken = phrase_index_make_token(USER_DICTIONARY, 1);
+pub(crate) const FIRST_USER_TOKEN: PhraseToken = phrase_index_make_token(USER_DICTIONARY, 1);
 
 /// The token `_add_phrase` allocates from a sub-index whose `get_range` end
 /// is `end` (`pinyin.cpp:589-594` at 074a2219). `FacadePhraseIndex::get_range`

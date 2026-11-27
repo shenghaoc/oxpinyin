@@ -20,7 +20,10 @@ where
     /// # Errors
     ///
     /// Propagates the model's step-cost failures.
-    pub fn phrase_segment(&self, sentence: &str) -> Result<(bool, Vec<PhraseToken>), EngineError> {
+    pub(crate) fn phrase_segment(
+        &self,
+        sentence: &str,
+    ) -> Result<(bool, Vec<PhraseToken>), EngineError> {
         crate::engine::phrase::phrase_segment(&self.dictionary, &self.model, sentence)
     }
 
@@ -68,7 +71,7 @@ where
     ///
     /// Propagates validation, lookup and refresh errors. The previous prefixes and rows have
     /// already been replaced.
-    pub fn guess_sentence_with_prefix(
+    pub(crate) fn guess_sentence_with_prefix(
         &mut self,
         prefix_tokens: &[PhraseToken],
     ) -> Result<bool, EngineError> {

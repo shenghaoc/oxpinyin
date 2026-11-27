@@ -15,29 +15,29 @@ use crate::vocab::{
 /// identity — `system.saturating_add(0) == system` — so an empty store is
 /// indistinguishable from no store.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct UserCountDelta {
+pub(crate) struct UserCountDelta {
     /// User bigram count for `(prev → token)`.
-    pub bigram_count: u64,
+    pub(crate) bigram_count: u64,
     /// User bigram total mass after `prev`.
-    pub bigram_total: u64,
+    pub(crate) bigram_total: u64,
     /// User phrase-index unigram delta for `token`.
-    pub unigram_delta: u64,
+    pub(crate) unigram_delta: u64,
     /// What the user side and `add_unigram_frequency` added to the
     /// facade's unigram total. The facade total is a `guint32`, so the
     /// model adds this to it wrapping.
-    pub unigram_total_delta: u64,
+    pub(crate) unigram_total_delta: u64,
     /// The live `guint32` unigram field of the item the pin reads for the
     /// token (`get_phrase_item`, then `PhraseItem::get_unigram_frequency`):
     /// a system item the user side holds, or a `USER_FILE` library's user
     /// item. `Some` is the item's frequency, zero included: the model takes
     /// it instead of the library's stored value plus `unigram_delta`.
     /// A `USER_FILE` token with `None` has no item, and the model skips it.
-    pub unigram_live: Option<u32>,
+    pub(crate) unigram_live: Option<u32>,
 }
 
 impl UserCountDelta {
     /// No user data: the additive merge is a no-op.
-    pub const ZERO: Self = Self {
+    pub(crate) const ZERO: Self = Self {
         bigram_count: 0,
         bigram_total: 0,
         unigram_delta: 0,
@@ -50,7 +50,7 @@ impl UserCountDelta {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct UnreadableRows {
     /// Number of unreadable rows encountered.
-    pub count: usize,
+    pub(crate) count: usize,
 }
 
 /// Read-only seam the engine reads dictionaries through
@@ -656,15 +656,15 @@ pub(crate) fn sort_tokens_by_library(tokens: &mut [u32]) {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrellisItem {
     /// The phrase's length in characters.
-    pub chars: u32,
+    pub(crate) chars: u32,
     /// The pronunciation possibility, where the item counts one.
-    pub pronunciation: Option<(u64, u64)>,
+    pub(crate) pronunciation: Option<(u64, u64)>,
     /// The live unigram field of the item the step read, where that item is
     /// the token's ordinary live item: the step reads its unigram from the
     /// same item as its length and pronunciation (`phonetic_lookup.h:646-651`,
     /// `:674-679`). `None` leaves the token's costs to
     /// [`LanguageModel::nbest_token_costs`].
-    pub unigram: Option<u32>,
+    pub(crate) unigram: Option<u32>,
 }
 
 /// A value a dictionary works out once per trellis key path and keeps for
@@ -700,7 +700,7 @@ impl<T> TrellisPathMemo<T> {
 /// One `PhraseIndexRange`: the consecutive tokens `first..=last` of one
 /// library that one table search met back to back.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PhraseIndexRange {
+pub(crate) struct PhraseIndexRange {
     first: u32,
     last: u32,
     /// Index of `first`'s slot; token `t` sits at `slot + (t - first)`.
@@ -711,13 +711,13 @@ pub struct PhraseIndexRange {
 impl PhraseIndexRange {
     /// The first token of the range.
     #[must_use]
-    pub const fn first(&self) -> u32 {
+    pub(crate) const fn first(&self) -> u32 {
         self.first
     }
 
     /// The last token of the range (the pin's `m_range_end - 1`).
     #[must_use]
-    pub const fn last(&self) -> u32 {
+    pub(crate) const fn last(&self) -> u32 {
         self.last
     }
 }
@@ -747,12 +747,12 @@ impl<E> Default for PhraseIndexRanges<E> {
 impl<E> PhraseIndexRanges<E> {
     /// Empty ranges.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Empties every array, keeping capacity.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         for ranges in &mut self.libraries {
             ranges.clear();
         }
@@ -768,7 +768,7 @@ impl<E> PhraseIndexRanges<E> {
     ///
     /// The pin skips an item whose library is not loaded without closing
     /// the open range; callers drop those items before this call.
-    pub fn convert(&mut self, items: impl IntoIterator<Item = (u32, Option<E>)>) {
+    pub(crate) fn convert(&mut self, items: impl IntoIterator<Item = (u32, Option<E>)>) {
         let mut cursor: Option<PhraseIndexRange> = None;
         for (token, entry) in items {
             let slot = u32::try_from(self.slots.len()).unwrap_or(u32::MAX);
@@ -810,13 +810,13 @@ impl<E> PhraseIndexRanges<E> {
     /// Library `library`'s ranges in append order; empty past the last library.
     #[cfg(test)]
     #[must_use]
-    pub fn ranges(&self, library: usize) -> &[PhraseIndexRange] {
+    pub(crate) fn ranges(&self, library: usize) -> &[PhraseIndexRange] {
         self.libraries.get(library).map_or(&[], Vec::as_slice)
     }
 
     /// Every range, libraries `0..16` then append order — the n-best
     /// walk's order (`phonetic_lookup.h:560-572`, `:615-632`).
-    pub fn iter(&self) -> impl Iterator<Item = &PhraseIndexRange> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &PhraseIndexRange> {
         self.libraries.iter().flatten()
     }
 
@@ -826,7 +826,7 @@ impl<E> PhraseIndexRanges<E> {
     /// [`Self::clear`], or draining the collection through `append_from`, invalidates
     /// previously obtained ranges.
     #[must_use]
-    pub fn entry(&self, range: &PhraseIndexRange, token: u32) -> Option<&E> {
+    pub(crate) fn entry(&self, range: &PhraseIndexRange, token: u32) -> Option<&E> {
         if token < range.first || token > range.last {
             return None;
         }
@@ -868,7 +868,7 @@ impl<E> PhraseIndexRanges<E> {
 /// Implementations are deterministic for the same explicit input and state,
 /// do not consult hidden process-global state, and do not panic on caller
 /// input.
-pub trait UserModel {
+pub(crate) trait UserModel {
     /// Observation failure reported by this model.
     type Error;
 
@@ -906,7 +906,7 @@ pub trait UserModel {
 /// The readings of a trained span, each lent until the next call, as the
 /// pin hands its one `cached_keys` buffer to the item at each complete
 /// path (074a2219 `phonetic_key_matrix.cpp:603-621`).
-pub trait ReadingWalk {
+pub(crate) trait ReadingWalk {
     /// The next reading, or `None` when the walk has ended.
     fn next_reading(&mut self) -> Option<&[ChewingKey]>;
 }
@@ -982,7 +982,7 @@ impl MergedGram {
     /// its original bytes. For a two-sided merge, supply a header followed by whole records
     /// in ascending token order.
     #[must_use]
-    pub fn merge(system: Option<Vec<u8>>, user: Option<Vec<u8>>) -> Option<Self> {
+    pub(crate) fn merge(system: Option<Vec<u8>>, user: Option<Vec<u8>>) -> Option<Self> {
         match (system, user) {
             (None, None) => None,
             (Some(chunk), None) | (None, Some(chunk)) => Some(Self::chunk(chunk)),
@@ -1003,7 +1003,7 @@ impl MergedGram {
 
     /// The fault the merge met, if any.
     #[must_use]
-    pub const fn fault(&self) -> Option<GramFault> {
+    pub(crate) const fn fault(&self) -> Option<GramFault> {
         self.fault
     }
 
@@ -1012,7 +1012,7 @@ impl MergedGram {
     /// # Errors
     /// The merge's fault, or [`GramFault::Short`] for a value shorter than
     /// its total.
-    pub fn total(&self) -> Result<u32, GramFault> {
+    pub(crate) fn total(&self) -> Result<u32, GramFault> {
         if let Some(fault) = self.fault {
             return Err(fault);
         }
@@ -1025,7 +1025,7 @@ impl MergedGram {
     /// # Errors
     /// The merge's fault, or [`GramFault::OverRead`] where the pin's walk
     /// leaves the value (see [`single_gram::checked_get_freq`]).
-    pub fn get_freq(&self, token: u32) -> Result<Option<u32>, GramFault> {
+    pub(crate) fn get_freq(&self, token: u32) -> Result<Option<u32>, GramFault> {
         if let Some(fault) = self.fault {
             return Err(fault);
         }
@@ -1216,7 +1216,7 @@ pub trait LanguageModel {
     }
 
     /// [`Self::nbest_token_costs`] of a token whose step read its item:
-    /// `unigram` is that item's [`TrellisItem::unigram`]. `total` holds what
+    /// `unigram` is that item's `TrellisItem::unigram`. `total` holds what
     /// the model reads of the facade unigram total for one guess: a guess
     /// makes no write, so the model reads it at most once and keeps it
     /// there. The default ignores both.
@@ -1234,7 +1234,7 @@ pub trait LanguageModel {
 
     /// The part of `token`'s step costs that no predecessor changes: its
     /// unigram possibility and the two weights. A step from a predecessor's
-    /// merged row applies [`NbestTokenCosts::costs`] to the row's item
+    /// merged row applies `NbestTokenCosts::costs` to the row's item
     /// (`phonetic_lookup.h:646-697`, `phrase_lookup.cpp:310-336` at
     /// 074a2219). The n-best search asks at each step, as the pin's step
     /// reads the unigram and the facade total (`phonetic_lookup.h:650-651`,
@@ -1248,7 +1248,7 @@ pub trait LanguageModel {
     }
 
     /// The merged row of one n-best predecessor, owned by this step.
-    /// [`NbestSuccessors::Miss`] is a loaded miss of both grams; `None`
+    /// `NbestSuccessors::Miss` is a loaded miss of both grams; `None`
     /// is a model that reads no rows. In both cases the predecessor takes
     /// no bigram step.
     ///
@@ -1287,13 +1287,13 @@ pub trait LanguageModel {
 pub struct NbestStepCosts {
     /// Weighted blend before pronunciation and log; absent only below
     /// the pin's combined bigram/unigram epsilon gate or without an item.
-    pub blended: Option<f64>,
+    pub(crate) blended: Option<f64>,
     /// Unweighted f64 frequency/total; absent below DBL_EPSILON or
     /// without a visible phrase item. NaN passes the pin's `<` gate.
-    pub unigram: Option<f64>,
+    pub(crate) unigram: Option<f64>,
     /// `(1.0_f64 - lambda_f32 as f64) as f32`. Kept separate so the
     /// engine evaluates `(elem_poss * pinyin_poss) * unigram_lambda`.
-    pub unigram_lambda: f32,
+    pub(crate) unigram_lambda: f32,
 }
 
 impl Default for NbestStepCosts {
@@ -1315,16 +1315,16 @@ pub struct NbestTokenCosts {
     /// Unweighted f64 `unigram_frequency / total`, IEEE division included.
     /// `None` when the token has no visible phrase item: neither branch
     /// steps (the pin's failing `get_phrase_item`).
-    pub elem: Option<f64>,
+    pub(crate) elem: Option<f64>,
     /// The f32 bigram weight λ.
-    pub lambda: f32,
+    pub(crate) lambda: f32,
     /// `(1.0_f64 - lambda as f64) as f32`, the unigram weight.
-    pub unigram_lambda: f32,
+    pub(crate) unigram_lambda: f32,
 }
 
 impl NbestTokenCosts {
     /// A token the model does not price.
-    pub const ABSENT: Self = Self {
+    pub(crate) const ABSENT: Self = Self {
         elem: None,
         lambda: 0.0,
         unigram_lambda: 1.0,
@@ -1333,7 +1333,7 @@ impl NbestTokenCosts {
     /// The unigram branch: `elem`, absent below `DBL_EPSILON`
     /// (`phonetic_lookup.h:652`). NaN passes the `<` gate.
     #[must_use]
-    pub fn unigram(&self) -> Option<f64> {
+    pub(crate) fn unigram(&self) -> Option<f64> {
         let elem = self.elem?;
         if elem < f64::EPSILON {
             None
@@ -1347,7 +1347,7 @@ impl NbestTokenCosts {
     /// when both possibilities are below their epsilons
     /// (`phonetic_lookup.h:680-693`).
     #[must_use]
-    pub fn blended(&self, freq: u64, total: u64) -> Option<f64> {
+    pub(crate) fn blended(&self, freq: u64, total: u64) -> Option<f64> {
         let elem = self.elem?;
         let bigram = freq as f32 / total as f32;
         if bigram < f32::EPSILON && elem < f64::EPSILON {
@@ -1361,7 +1361,7 @@ impl NbestTokenCosts {
     /// Both branches for one present transition `(freq, total)`; an absent
     /// one leaves the unigram branch alone. No branch answers the default.
     #[must_use]
-    pub fn costs(&self, transition: Option<(u64, u64)>) -> NbestStepCosts {
+    pub(crate) fn costs(&self, transition: Option<(u64, u64)>) -> NbestStepCosts {
         if self.elem.is_none() {
             return NbestStepCosts::default();
         }

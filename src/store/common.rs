@@ -21,7 +21,7 @@ pub(crate) type Row = (Vec<u8>, Vec<u8>);
 /// special case here: `key >= []` holds for every key, and `key <= []`
 /// for none but the empty key, which is what the shared read suite pins
 /// (`empty_bounds_never_match_or_error`).
-pub fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
+pub(crate) fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
     let above_lo = match lo {
         Bound::Unbounded => true,
         Bound::Included(bound) => key >= bound,
@@ -41,7 +41,7 @@ pub fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
 ///
 /// [`StoreError::InvalidInput`] when the path contains a NUL byte.
 #[cfg(feature = "tkrzw")]
-pub fn validate_path(path: &Path) -> Result<(), StoreError> {
+pub(crate) fn validate_path(path: &Path) -> Result<(), StoreError> {
     if path.as_os_str().as_encoded_bytes().contains(&0) {
         return Err(StoreError::InvalidInput("path contains NUL"));
     }

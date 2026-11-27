@@ -17,8 +17,7 @@ use crate::data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary, SystemTables,
 };
-pub(crate) use crate::data::{FileType, TableConfSite};
-pub(crate) use crate::data::{TableConf, TableConfError};
+pub(crate) use crate::data::{FileType, TableConf, TableConfError, TableConfSite};
 use crate::engine::{EngineError, Session, SessionSettings};
 use crate::user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, UnigramAdd, UserConfLaw,
@@ -509,7 +508,7 @@ impl<'a> RuntimeDict<'a> {
 
     /// Whether the configured default row is a system library.
     #[must_use]
-    pub fn is_system_library(&self, index: u8) -> bool {
+    pub(crate) fn is_system_library(&self, index: u8) -> bool {
         self.live_items().is_system_library(index)
     }
 
@@ -536,7 +535,7 @@ impl<'a> RuntimeDict<'a> {
     /// this to keep the shift and the `mask == 0` shortcut in one
     /// place.
     #[must_use]
-    pub const fn library_visible(&self, nibble: u8) -> bool {
+    pub(crate) const fn library_visible(&self, nibble: u8) -> bool {
         crate::data::library_visible(self.library_mask, nibble)
     }
 
@@ -546,7 +545,7 @@ impl<'a> RuntimeDict<'a> {
     /// `phrase_index.cpp:180-206`). The phrase table still holds the token
     /// either way ([`Self::phrase_table_token_enabled`]).
     #[must_use]
-    pub fn library_visible_token(&self, token: u32) -> bool {
+    pub(crate) fn library_visible_token(&self, token: u32) -> bool {
         let live = self.live_items();
         if live.is_system_library(phrase_index_library_index(token)) {
             return live.read(token, |_| ()).found().is_some();
@@ -640,7 +639,7 @@ impl<'a> RuntimeDict<'a> {
     /// [`Self::token_phrase`] resolves the item: the words `convert_to_utf8`
     /// copies with `get_phrase_string` (074a2219 `lookup/lookup.cpp:45-47`).
     #[must_use]
-    pub fn token_words(&self, token: u32) -> Option<crate::marshal::SentencePhrase> {
+    pub(crate) fn token_words(&self, token: u32) -> Option<crate::marshal::SentencePhrase> {
         self.words_for_token(token)
             .map(crate::marshal::SentencePhrase::Words)
     }
@@ -823,7 +822,7 @@ impl RuntimeDict<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn trellis_records(
+    pub(crate) fn trellis_records(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -853,7 +852,7 @@ impl RuntimeDict<'_> {
     /// table's, each its own `convert` call. Tokens only, as the pin's
     /// `convert` files them; [`Self::trellis_item`] prices one on demand.
     #[cfg(test)]
-    pub fn trellis_ranges(
+    pub(crate) fn trellis_ranges(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -881,7 +880,7 @@ impl RuntimeDict<'_> {
     /// item there.
     #[cfg(test)]
     #[must_use]
-    pub fn trellis_item(
+    pub(crate) fn trellis_item(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -894,7 +893,7 @@ impl RuntimeDict<'_> {
     /// [`Self::trellis_item`], reading the user lookup and the keys once
     /// per path.
     #[cfg(test)]
-    pub fn trellis_item_on_path(
+    pub(crate) fn trellis_item_on_path(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -917,7 +916,7 @@ impl RuntimeDict<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn lookup_into(
+    pub(crate) fn lookup_into(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
@@ -932,7 +931,7 @@ impl RuntimeDict<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn lookup_into_flagged(
+    pub(crate) fn lookup_into_flagged(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
@@ -968,7 +967,10 @@ impl RuntimeDict<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn lookup_addon(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
+    pub(crate) fn lookup_addon(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.search_addon_into(syllables, &mut entries, &mut Vec::new())?;
         Ok(entries)
@@ -1364,7 +1366,7 @@ impl LanguageModel for RuntimeLm<'_> {
 // ── Runtime ─────────────────────────────────────────────────────────────
 
 /// A [`Session`] over this crate's concrete backends.
-pub type RuntimeSession<'a> =
+pub(crate) type RuntimeSession<'a> =
     Session<RuntimeDict<'a>, RuntimeLm<'a>, &'a mut crate::engine::SessionState>;
 
 /// One opened engine: configuration-independent wiring for the converted
@@ -1411,7 +1413,7 @@ impl Runtime {
     /// Whether [`Self::finish`] has closed every native file attachment.
     #[cfg(test)]
     #[must_use]
-    pub fn attachments_finished(&self) -> bool {
+    pub(crate) fn attachments_finished(&self) -> bool {
         self.system.attachments_finished()
             && self.model.attachment_finished()
             && self.addons.attachments_finished()
@@ -1421,7 +1423,7 @@ impl Runtime {
     /// Whether the main pinyin index failed to open.
     #[cfg(test)]
     #[must_use]
-    pub fn pinyin_attachment_failed(&self) -> bool {
+    pub(crate) fn pinyin_attachment_failed(&self) -> bool {
         self.system.pinyin_attachment_failed()
     }
 }
@@ -1703,7 +1705,7 @@ impl Runtime {
     /// token (`phonetic_lookup.h:868`) or a stale span
     /// (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`). The abort
     /// precedes the modified mark, as the pin's abort precedes its save.
-    pub fn train_session(
+    pub(crate) fn train_session(
         &mut self,
         state: &crate::engine::SessionState,
         index: u8,
@@ -1784,7 +1786,7 @@ impl Runtime {
     /// sub-indices that are loaded: an unloaded library has no sub-index to
     /// compact (`phrase_index.cpp:651-652`). Returns the compacted nibbles.
     #[must_use]
-    pub fn compact_layout_failed(&mut self) -> Vec<u8> {
+    pub(crate) fn compact_layout_failed(&mut self) -> Vec<u8> {
         let unloaded = self.unloaded_libraries();
         self.originals_mut()
             .phrase_libraries_mut()

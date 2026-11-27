@@ -8,14 +8,14 @@
 // 100).
 
 /// Bytes of the `guint32` `total_freq` header.
-pub const TOTAL_LEN: usize = 4;
+pub(crate) const TOTAL_LEN: usize = 4;
 
 /// Bytes of one `SingleGramItem`.
-pub const ITEM_LEN: usize = 8;
+pub(crate) const ITEM_LEN: usize = 8;
 
 /// `SingleGram::get_length`: the number of whole items after the total.
 #[must_use]
-pub const fn get_length(gram: &[u8]) -> usize {
+pub(crate) const fn get_length(gram: &[u8]) -> usize {
     gram.len().saturating_sub(TOTAL_LEN) / ITEM_LEN
 }
 
@@ -71,7 +71,7 @@ pub(crate) fn set_total_freq(gram: &mut Vec<u8>, total: u32) {
 /// index. On unpartitioned input the result is unspecified, as for
 /// [`slice::partition_point`]; the stored bytes are never reordered.
 #[must_use]
-pub fn lower_bound(gram: &[u8], token: u32) -> usize {
+pub(crate) fn lower_bound(gram: &[u8], token: u32) -> usize {
     let Some((records, _)) = records(gram) else {
         return 0;
     };
@@ -98,7 +98,7 @@ fn find(gram: &[u8], token: u32) -> Option<usize> {
 /// `SingleGram::get_freq` (`ngram.cpp:231-250`): the first match walking
 /// from [`lower_bound`].
 #[must_use]
-pub fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
+pub(crate) fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
     find(gram, token).map(|index| record_freq(&whole_records(gram)[index]))
 }
 
@@ -120,15 +120,15 @@ pub(crate) const fn has_partial_tail(gram: &[u8]) -> bool {
     gram.len() >= TOTAL_LEN && !(gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
 }
 
-/// [`get_freq`] where the pin's walk can leave the value
+/// `get_freq` where the pin's walk can leave the value
 /// (`ngram.cpp:231-250`): `lower_bound` over the whole items, then
 /// `cur_item != end`, which an `end` off the item grid never meets. A
 /// walk that returns before the last whole item is the pin's answer; one
 /// that runs past it, or starts past a value shorter than its total
-/// (`begin` four bytes in, beyond `end`), is [`GramFault::OverRead`].
+/// (`begin` four bytes in, beyond `end`), is `GramFault::OverRead`.
 ///
 /// # Errors
-/// [`GramFault::OverRead`] where the pin reads past the value.
+/// `GramFault::OverRead` where the pin reads past the value.
 pub fn checked_get_freq(gram: &[u8], token: u32) -> Result<Option<u32>, GramFault> {
     let Some((records, tail)) = records(gram) else {
         return Err(GramFault::OverRead);
@@ -158,7 +158,7 @@ pub fn checked_get_freq(gram: &[u8], token: u32) -> Result<Option<u32>, GramFaul
 ///
 /// A header read or a record read can fail with [`GramFault`]. Entries already appended
 /// remain in `out` on error.
-pub fn checked_search(
+pub(crate) fn checked_search(
     gram: &[u8],
     begin: u32,
     end: u32,
@@ -186,7 +186,7 @@ pub fn checked_search(
 // SingleGram::set_freq, ngram.cpp:252–271.
 /// Replaces the first matching token's frequency and leaves the row total unchanged.
 /// Returns `false` when the sorted row has no such token.
-pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
+pub(crate) fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
     let Some(index) = find(gram, token) else {
         return false;
     };
@@ -197,7 +197,7 @@ pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
 // SingleGram::insert_freq, ngram.cpp:178–205.
 /// Inserts a token and frequency into a sorted row and leaves the row total unchanged. An
 /// existing token is refused.
-pub fn insert_freq(gram: &mut Vec<u8>, token: u32, freq: u32) -> bool {
+pub(crate) fn insert_freq(gram: &mut Vec<u8>, token: u32, freq: u32) -> bool {
     let mut record = [0_u8; ITEM_LEN];
     record[..4].copy_from_slice(&token.to_le_bytes());
     record[4..].copy_from_slice(&freq.to_le_bytes());
@@ -224,7 +224,7 @@ pub fn insert_freq(gram: &mut Vec<u8>, token: u32, freq: u32) -> bool {
 // SingleGram::mask_out, ngram.cpp:76–103.
 /// Removes records for which `(token & mask) == value` and returns the number removed.
 /// Each removed frequency is subtracted from the stored total using 32-bit wrapping arithmetic.
-pub fn mask_out(gram: &mut Vec<u8>, mask: u32, value: u32) -> u32 {
+pub(crate) fn mask_out(gram: &mut Vec<u8>, mask: u32, value: u32) -> u32 {
     let Some(mut total) = get_total_freq(gram) else {
         return 0;
     };
@@ -252,7 +252,7 @@ pub fn retrieve_all(gram: &[u8]) -> impl Iterator<Item = (u32, u32)> + '_ {
 /// A fresh `SingleGram`: the four zero bytes of an empty total
 /// (`ngram.cpp:36-39`).
 #[must_use]
-pub fn new_gram() -> Vec<u8> {
+pub(crate) fn new_gram() -> Vec<u8> {
     vec![0; TOTAL_LEN]
 }
 

@@ -84,7 +84,7 @@ pub enum CandidateKind {
 ///
 /// Sized to need (48 bytes): the three span counts are `u32`, the width of
 /// the segment graph's positions
-/// ([`MAX_GRAPH_POSITION`](crate::graph::MAX_GRAPH_POSITION)), since
+/// (`MAX_GRAPH_POSITION`), since
 /// a key is at least one byte; and the n-best rank is an `Option<u8>`, the
 /// pin's own `gint8 m_nbest_index` width (`pinyin.cpp:102` at 074a2219)
 /// plus its absent state. A window of a
@@ -193,7 +193,7 @@ impl Candidate {
 
     /// How many pinyin keys the candidate absorbs.
     #[must_use]
-    pub const fn consumed_keys(&self) -> usize {
+    pub(crate) const fn consumed_keys(&self) -> usize {
         self.consumed_keys as usize
     }
 
@@ -275,7 +275,7 @@ impl CandidateList {
     /// dedup later removes it from the list. A window of prepended or
     /// fallback rows alone has none.
     #[must_use]
-    pub const fn ranked_phrase_row(&self) -> bool {
+    pub(crate) const fn ranked_phrase_row(&self) -> bool {
         self.ranked_phrase_row
     }
 
@@ -283,7 +283,7 @@ impl CandidateList {
     /// library whose item cannot be read. The readable candidates remain
     /// available separately from that search metadata.
     #[must_use]
-    pub const fn had_unreadable_item(&self) -> bool {
+    pub(crate) const fn had_unreadable_item(&self) -> bool {
         self.unreadable_count != 0
     }
 

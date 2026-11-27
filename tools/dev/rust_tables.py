@@ -204,12 +204,12 @@ def string(value):
     return json.dumps(value, ensure_ascii=False)
 
 
-def array(name, type_, values, *, visibility='pub ', kind='static'):
+def array(name, type_, values, *, visibility='pub(crate) ', kind='static'):
     return f'#[rustfmt::skip]\n{visibility}{kind} {name}: {type_} = [\n' + ''.join(f'    {v},\n' for v in values) + '];\n'
 
 
 def count(name, number, description='Number of entries in the pinned inventory.'):
-    return f'/// {description}\npub const {name}: usize = {number};\n'
+    return f'/// {description}\npub(crate) const {name}: usize = {number};\n'
 
 
 def literal_declarations(text):
@@ -285,9 +285,9 @@ def render(source=SOURCE):
         output[CORE + 'chewing_key_tables.rs'] = text
 
         fields = ('pinyin', 'shengmu', 'yunmu', 'zhuyin', 'luoma', 'secondary')
-        text = '/// One pinned content-table row.\n#[derive(Debug, Clone, Copy, Eq, PartialEq)]\npub struct ContentItem {\n'
-        text += ''.join(f'    pub {field}: &\'static str,\n' for field in fields)
-        text += '    pub initial: u8,\n    pub middle: u8,\n    pub final_: u8,\n}\n'
+        text = '/// One pinned content-table row.\n#[derive(Debug, Clone, Copy, Eq, PartialEq)]\npub(crate) struct ContentItem {\n'
+        text += ''.join(f'    pub(crate) {field}: &\'static str,\n' for field in fields)
+        text += '    pub(crate) initial: u8,\n    pub(crate) middle: u8,\n    pub(crate) final_: u8,\n}\n'
         values = ['ContentItem {\n' + ''.join(f'        {field}: {string(value)},\n' for field, value in zip(fields, row[:6], strict=True))
                   + ''.join(f'        {field}: {value},\n' for field, value in zip(('initial', 'middle', 'final_'), row[6], strict=True)) + '    }' for row in content]
         output[CORE + 'content_table_source.rs'] = text + array('CONTENT_TABLE', f'[ContentItem; {len(content)}]', values)
@@ -301,7 +301,7 @@ def render(source=SOURCE):
         inventory = syllables + incomplete + option_only + zhuyin_only
         output[CORE + 'table_data/full_pinyin_syllables.rs'] = count('FULL_PINYIN_SYLLABLE_COUNT', len(syllables)) + array('FULL_PINYIN_SYLLABLES', '[&str; FULL_PINYIN_SYLLABLE_COUNT]', map(string, syllables))
         text = count('FULL_PINYIN_SYLLABLE_COUNT', len(syllables), 'Number of complete full-pinyin spellings.')
-        text += '/// Longest complete full-pinyin spelling in bytes.\n' + f'pub const MAX_SYLLABLE_LEN: usize = {max(map(len, syllables))};\n'
+        text += '/// Longest complete full-pinyin spelling in bytes.\n' + f'pub(crate) const MAX_SYLLABLE_LEN: usize = {max(map(len, syllables))};\n'
         for name, values, size, description in [
             ('INCOMPLETE_PINYIN_KEYS', incomplete, 'INCOMPLETE_PINYIN_KEY_COUNT', 'Number of initial-only pinyin keys.'),
             ('OPTION_ONLY_COMPLETE_SYLLABLES', option_only, 'OPTION_ONLY_COMPLETE_SYLLABLE_COUNT', 'Number of complete syllables available only as correction targets.'),
@@ -374,11 +374,11 @@ def render(source=SOURCE):
         tone_function = ("const fn tone_symbol(tone: u8) -> &'static str {\n    match tone {\n"
             + ''.join(f'        {i} => {string(value)},\n' for i, value in enumerate(tones) if i)
             + '        _ => "",\n    }\n}\n')
-        output[CORE + 'tone_symbols.rs'] = (f'/// The pinned zero-tone enum value.\npub const CHEWING_ZERO_TONE: u8 = {enums["CHEWING_ZERO_TONE"]};\n'
+        output[CORE + 'tone_symbols.rs'] = (f'/// The pinned zero-tone enum value.\npub(crate) const CHEWING_ZERO_TONE: u8 = {enums["CHEWING_ZERO_TONE"]};\n'
             + tone_function)
         output[CORE + 'table_data/tone_symbols.rs'] = (
             '/// The pinned Zhuyin tone symbol; empty outside tones 1 through 5.\n'
-            '#[must_use]\npub ' + tone_function)
+            '#[must_use]\npub(crate) ' + tone_function)
 
         text = ''
         for name in ('RESPLIT', 'DIVIDED'):

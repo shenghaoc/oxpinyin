@@ -99,7 +99,7 @@ pub struct SpanSource<'a> {
     /// The parse's consumed byte count.
     pub parsed: usize,
     /// The parse's keys, read in place in input order; their
-    /// [`KeySpans`] are the original-coordinate spans.
+    /// `KeySpans` are the original-coordinate spans.
     pub spans: ModeKeys<'a>,
     /// Whether `'` is a zero-key separator column in this mode.
     pub separators: bool,
@@ -411,7 +411,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// Lookup byte offset → character count within `phrase` in the
     /// instance's active parse mode — the `pinyin_get_character_offset` /
     /// `zhuyin_get_character_offset` law
-    /// ([`crate::engine::character_offset_walk`]) over
+    /// (`engine::character_offset_walk`) over
     /// [`Self::mode_input`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
     /// over the stored original input. The first result is the character

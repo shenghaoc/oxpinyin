@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The pin's surface for the sampled inputs, relative to the repository root.
-pub const SENTENCE_FIXTURE: &str = "fixtures/w4/oracle-sentence-surface.txt";
+pub(crate) const SENTENCE_FIXTURE: &str = "fixtures/w4/oracle-sentence-surface.txt";
 
 /// Exact subject surfaces admitted by sentence-surface.md §12, in the same
 /// four-column format as the unchanged pin fixture.
@@ -14,13 +14,13 @@ const RESIDUAL_FIXTURE: &str = "tests/fixtures/sentence-surface/residuals.txt";
 
 /// Repository root, from this crate's manifest directory.
 #[must_use]
-pub fn repo_root() -> PathBuf {
+pub(crate) fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 /// One frozen oracle line: the ibus surface for one sampled input.
 #[derive(Debug, PartialEq, Eq)]
-pub struct OracleLine {
+pub(crate) struct OracleLine {
     pub input: String,
     pub guessed: bool,
     /// `pinyin_get_sentence(0..=proven)`; `-` marks a `None` read.
@@ -29,7 +29,7 @@ pub struct OracleLine {
     pub rows: Vec<String>,
 }
 
-pub fn load_fixture(path: &Path) -> Result<Vec<OracleLine>, String> {
+pub(crate) fn load_fixture(path: &Path) -> Result<Vec<OracleLine>, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|error| format!("cannot read fixture {}: {error}", path.display()))?;
     let mut lines = Vec::new();
@@ -59,7 +59,7 @@ pub fn load_fixture(path: &Path) -> Result<Vec<OracleLine>, String> {
     Ok(lines)
 }
 
-pub fn load_residuals(
+pub(crate) fn load_residuals(
     root: &Path,
     pin: &[OracleLine],
 ) -> Result<BTreeMap<String, OracleLine>, String> {
@@ -127,13 +127,13 @@ fn declared_sentence_residuals(root: &std::path::Path) -> std::collections::BTre
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct TieSurface {
+pub(crate) struct TieSurface {
     pub indexed: Vec<String>,
     // Every row has NBEST type 1; keep its original tail index and text.
     pub rows: Vec<(u8, String)>,
 }
 
-pub struct TieCase {
+pub(crate) struct TieCase {
     pub input: String,
     pub guessed: bool,
     pub pin: TieSurface,
@@ -176,7 +176,7 @@ fn decode_tie_surface(pool: &[&str], indexed: &str, rows: &str) -> TieSurface {
     TieSurface { indexed, rows }
 }
 
-pub fn load_tie_cases(root: &std::path::Path) -> Vec<TieCase> {
+pub(crate) fn load_tie_cases(root: &std::path::Path) -> Vec<TieCase> {
     let raw = std::fs::read_to_string(root.join("fixtures/w4/oracle-sentence-tie-order.txt"))
         .expect("the supplementary tie fixture must be present");
     assert!(

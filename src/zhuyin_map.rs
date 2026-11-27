@@ -111,7 +111,7 @@ pub(crate) mod reference {
     };
     macro_rules! zhuyin_index {
         ($name:ident; $count:ident; $rows:expr) => {
-            pub static $name: [(&str, &str, &str, u32); $count] = $rows;
+            pub(crate) static $name: [(&str, &str, &str, u32); $count] = $rows;
         };
     }
     include!("table_data/zhuyin_indexes.rs");

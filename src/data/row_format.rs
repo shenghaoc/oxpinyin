@@ -61,7 +61,7 @@ fn append_u32_le(buf: &mut Vec<u8>, words: impl Iterator<Item = u32>) {
 ///
 /// `docs/findings/data-formats.md` §4,
 /// `chewing_large_table2_tkrzwdb.cpp:133-296`.
-pub mod pinyin_index {
+pub(crate) mod pinyin_index {
     use crate::parser::ChewingKey;
 
     use crate::data::DictError;
@@ -136,7 +136,7 @@ pub mod pinyin_index {
 
     /// One validated record, borrowing its packed pronunciation from the row.
     pub(crate) struct PinyinIndexItemView<'a> {
-        pub token: u32,
+        pub(crate) token: u32,
         keys: &'a [u8],
     }
 
@@ -247,7 +247,7 @@ pub mod pinyin_index {
 ///
 /// `docs/findings/data-formats.md` §5,
 /// `phrase_large_table3_tkrzwdb.cpp`.
-pub mod phrase_index {
+pub(crate) mod phrase_index {
     use crate::data::DictError;
 
     use super::append_u32_le;
@@ -314,7 +314,7 @@ pub mod phrase_index {
 /// `PunctTableEntry::escape`'s layout (`punct_table.cpp:40-54`) — each
 /// punctuation's UCS-4 code points followed by a `u32` zero terminator,
 /// successive punctuations concatenated.
-pub mod punct {
+pub(crate) mod punct {
     use crate::vocab::PhraseText;
 
     /// Decodes a punctuation value as the pin walks it: the stored words

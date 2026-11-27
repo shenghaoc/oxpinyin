@@ -45,7 +45,7 @@ pub fn phrase_text_len(text: &PhraseText) -> usize {
 /// refused and the pin's conversion answers NULL: a word the item's bytes
 /// do not hold, or a word at or above `0x8000_0000` before the first zero.
 #[must_use]
-pub fn stored_words_utf8_len(words: impl IntoIterator<Item = Option<u32>>) -> Option<usize> {
+pub(crate) fn stored_words_utf8_len(words: impl IntoIterator<Item = Option<u32>>) -> Option<usize> {
     let mut len = 0_usize;
     let mut past_zero = false;
     for word in words {
@@ -68,7 +68,7 @@ pub fn stored_words_utf8_len(words: impl IntoIterator<Item = Option<u32>>) -> Op
 /// a time and with no intermediate text: each word before the first zero
 /// in `g_unichar_to_utf8`'s form. For words that length refuses, the bytes
 /// up to the refused word. None of the bytes is NUL.
-pub fn for_each_stored_word_utf8(
+pub(crate) fn for_each_stored_word_utf8(
     words: impl IntoIterator<Item = Option<u32>>,
     mut emit: impl FnMut(&[u8]),
 ) {
@@ -96,7 +96,7 @@ pub enum SentencePhrase {
 
 impl SentencePhrase {
     /// The length of the phrase's `g_ucs4_to_utf8` bytes (`:58`), or `None`
-    /// where that conversion answers NULL: [`stored_words_utf8_len`] for
+    /// where that conversion answers NULL: `stored_words_utf8_len` for
     /// stored words, [`phrase_text_len`] for text.
     #[must_use]
     pub fn utf8_len(&self) -> Option<usize> {
@@ -107,7 +107,7 @@ impl SentencePhrase {
     }
 
     /// Hands the [`Self::utf8_len`] bytes to `emit`, with no intermediate
-    /// text: [`for_each_stored_word_utf8`] for stored words,
+    /// text: `for_each_stored_word_utf8` for stored words,
     /// [`phrase_text_bytes`] for text.
     pub fn for_each_utf8(&self, mut emit: impl FnMut(&[u8])) {
         match self {

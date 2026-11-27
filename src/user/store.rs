@@ -124,7 +124,7 @@ pub enum UserStoreError {
     /// mask changes anything; the C adapters abort.
     #[error("masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)")]
     ResidualUserBigramGram,
-    /// Init's library loop died at a row ([`crate::user::LibraryLoopStop`]).
+    /// Init's library loop died at a row (`user::LibraryLoopStop`).
     #[error("library loop: {0}")]
     LibraryLoop(#[source] crate::user::LibraryLoopStop),
     /// A training step's `set_freq` misses the item its `insert_freq` just
@@ -520,7 +520,7 @@ pub(crate) type Offsets = crate::user::LibraryTable<u32>;
     clippy::struct_excessive_bools,
     reason = "The system-item gate, the dirty mark, the user-data gate and the failed-container record are independent session properties"
 )]
-pub struct StoreInner {
+pub(crate) struct StoreInner {
     pub(crate) has_system_items: bool,
     pub(crate) system_items: crate::user::system_items::SystemItems,
     /// The user libraries' stored-total differences ([`Offsets`]).
@@ -567,7 +567,7 @@ pub struct UserStore {
 
 /// What `UserStore::check_mask_out` found fit to mask: the user bigram's
 /// keys from the one `get_all_items` walk, for `UserStore::apply_mask_out`.
-pub struct MaskCheck {
+pub(crate) struct MaskCheck {
     container_keys: Result<Vec<Option<PhraseToken>>, StoreError>,
 }
 
@@ -602,7 +602,7 @@ impl fmt::Debug for UserStore {
 
 impl UserStore {
     /// Borrow the uniquely owned init baselines for a read operation.
-    pub const fn originals(&self) -> &crate::user::SystemOriginals {
+    pub(crate) const fn originals(&self) -> &crate::user::SystemOriginals {
         &self.originals
     }
 
@@ -640,7 +640,7 @@ impl UserStore {
     /// `pinyin_mask_out` / `zhuyin_mask_out` walk every record, so any such
     /// key aborts the whole mask (`chewing_large_table2_bdb.cpp:529`).
     #[must_use]
-    pub fn has_overlong_index_key(&self) -> bool {
+    pub(crate) fn has_overlong_index_key(&self) -> bool {
         !self.overlong_index_readings().is_empty()
     }
 
@@ -984,7 +984,7 @@ impl UserStore {
     /// can. The caller checks library visibility. This does not mark the
     /// context dirty (`pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
     #[cfg(test)]
-    pub fn add_system_unigram_frequency(&mut self, token: PhraseToken, delta: u32) -> bool {
+    pub(crate) fn add_system_unigram_frequency(&mut self, token: PhraseToken, delta: u32) -> bool {
         self.add_unigram_outcome(token, delta).is_accepted()
     }
 
@@ -1043,7 +1043,7 @@ impl UserStore {
     /// at the end of an import and at the end of a mask_out
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
-    pub fn compact_libraries(&mut self) {
+    pub(crate) fn compact_libraries(&mut self) {
         let target = &self.inner.libpinyin;
         // Each system library's total becomes the sum of its live readable
         // items; the facade total keeps what the libraries held, so the
@@ -1758,7 +1758,7 @@ impl UserStore {
     /// # Errors
     /// The same journal fault as `Self::reload_system_libraries`.
     #[cfg(test)]
-    pub fn reload_system_libraries_retaining(
+    pub(crate) fn reload_system_libraries_retaining(
         &mut self,
         originals: &mut crate::user::SystemOriginals,
         mask: PhraseToken,
@@ -1845,7 +1845,7 @@ impl UserStore {
     /// entries. In memory, as the pin's: nothing is written to disk, and a
     /// save skips the library while it is unloaded (`pinyin.cpp:928-933`).
     #[cfg(test)]
-    pub fn unload_system_libraries(&mut self, originals: crate::user::SystemOriginals) {
+    pub(crate) fn unload_system_libraries(&mut self, originals: crate::user::SystemOriginals) {
         let unloaded: Vec<_> = originals.keys().copied().collect();
         self.replace_system_libraries(
             originals,
@@ -2292,7 +2292,10 @@ impl UserStore {
     /// Returns [`UserStoreError`] when the cursor cannot be read, or
     /// `InvalidPhrase` for a system library.
     #[cfg(test)]
-    pub fn user_library_token_end(&self, library: u8) -> Result<PhraseToken, UserStoreError> {
+    pub(crate) fn user_library_token_end(
+        &self,
+        library: u8,
+    ) -> Result<PhraseToken, UserStoreError> {
         if self.is_system_library(library) {
             return Err(UserStoreError::InvalidPhrase);
         }
