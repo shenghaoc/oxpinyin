@@ -258,10 +258,19 @@ pub trait Dictionary {
     }
 
     /// The `phrase_length` of the text [`Self::phrase_text_for_token`]
-    /// answers, without building it where the dictionary can.
-    fn phrase_text_length_for_token(&self, token: u32) -> Option<usize> {
+    /// answers, without building it where the dictionary can, and the
+    /// unigram field of the item that text comes from where the dictionary
+    /// shows it equal to what its paired [`LanguageModel::unigram_freq`]
+    /// answers for `token`. The unigram is read only for a phrase of at most
+    /// `ranked_length` characters, the ones the caller ranks. `None` in the
+    /// second field: the caller reads the model.
+    fn phrase_length_and_item_unigram(
+        &self,
+        token: u32,
+        _ranked_length: usize,
+    ) -> Option<(usize, Option<u32>)> {
         self.phrase_text_for_token(token)
-            .map(|text| text.phrase_length())
+            .map(|text| (text.phrase_length(), None))
     }
 
     /// The current phrase item's stored length, or `None` for a missing or

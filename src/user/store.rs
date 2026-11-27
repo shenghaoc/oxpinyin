@@ -1329,6 +1329,17 @@ impl UserStore {
         self.originals.layout().has_user_library(library)
     }
 
+    /// Whether the session's user arena of `library` holds any item.
+    #[must_use]
+    pub(crate) fn has_arena_items(&self, library: u8) -> bool {
+        self.inner
+            .libpinyin
+            .phrases()
+            .libraries
+            .get(&library)
+            .is_some_and(|items| !items.is_empty())
+    }
+
     /// Borrows the session's canonical tables.
     #[must_use]
     pub fn lookup(&self) -> crate::user::UserLookup<'_> {

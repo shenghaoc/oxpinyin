@@ -218,10 +218,13 @@ where
             // than `prefix_len * 2 + 1` characters is skipped
             // (`pinyin.cpp:1899-1902`).
             // The length alone decides the cap, so no text is built here.
-            let Some(phrase_length) = self.dictionary.phrase_text_length_for_token(token) else {
+            let cap = prefix_len * 2 + 1;
+            let Some((phrase_length, item_unigram)) =
+                self.dictionary.phrase_length_and_item_unigram(token, cap)
+            else {
                 continue;
             };
-            if phrase_length > prefix_len * 2 + 1 {
+            if phrase_length > cap {
                 continue;
             }
             // The winner law: the first survivor initializes; a
@@ -230,15 +233,20 @@ where
             // libraries first (`phrase_large_table3.h:77-97`), so an
             // equal unigram from an earlier library wins even when
             // reached through a later path. Within a library the
-            // path walk order stays unchanged. The unigram read carries
-            // the user/training overlay (`add_unigram_frequency` writes
-            // the facade item), which the model's `unigram_freq`
-            // already merges.
-            let unigram = self
-                .model
-                .unigram_freq(&token)
-                .map_err(|_| EngineError::Failure)?
-                .unwrap_or(0);
+            // path walk order stays unchanged. The unigram carries the
+            // user/training overlay (`add_unigram_frequency` writes the
+            // facade item). The pin reads it from the item it fetched
+            // (`:1904-1911`); the dictionary answers that field where it
+            // equals the model's `unigram_freq`, and the model answers
+            // every other token.
+            let unigram = match item_unigram {
+                Some(unigram) => u64::from(unigram),
+                None => self
+                    .model
+                    .unigram_freq(&token)
+                    .map_err(|_| EngineError::Failure)?
+                    .unwrap_or(0),
+            };
             if winner.as_ref().is_none_or(|(best_token, best)| {
                 beats_longer_winner(token, unigram, *best_token, *best)
             }) {

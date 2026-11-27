@@ -612,6 +612,33 @@ impl<'a> RuntimeDict<'a> {
         self.user.with_user_item(token, read).flatten()
     }
 
+    /// Whether the item [`Self::read_text_item`] reads for `token` holds
+    /// the unigram [`RuntimeLm`]'s `unigram_freq` answers for it, for any
+    /// `table.conf` layout. Two kinds of library are covered:
+    ///
+    /// - A library with a store original and no user arena items. The text
+    ///   path reads the live buffer's item, or the shipped one where there
+    ///   is no buffer. `UserStore::system_unigram` reads the same slot: no
+    ///   arena item comes first, an appended item is the live buffer's, and
+    ///   without a buffer the original view reads the current mapping
+    ///   (`SystemOriginals::get`). A library's own mapping slot holds
+    ///   another file only after a refused replay, which aborts in both C
+    ///   ABIs, as the pin's merge assertion does (`pinyin.cpp:276`, `:1285`).
+    ///   The overlay flag is set whenever a live buffer exists.
+    /// - A user library: no original, not a system library, and no shipped
+    ///   chunk for its nibble. The text path reads the user item, and the
+    ///   model answers a shipped count of zero plus that item's unigram.
+    ///
+    /// Any other library, such as one with a shipped chunk and no original,
+    /// is answered by the model.
+    fn item_unigram_is_model_unigram(&self, token: u32) -> bool {
+        let library = phrase_index_library_index(token);
+        if self.user.originals().get(&library).is_some() {
+            return !self.user.has_arena_items(library);
+        }
+        !self.is_system_library(library) && self.system.libraries().library(token).is_none()
+    }
+
     /// Resolves `token` as [`Dictionary::phrase_text_for_token`] reads its
     /// text: through the library gate to [`Self::read_text_item`]'s item,
     /// answered by `item`; where that answers none, the full read of the
@@ -1137,12 +1164,33 @@ impl Dictionary for RuntimeDict<'_> {
     /// declared character (`PhraseText::from_stored_words` over
     /// `phrase_codes`), so its `phrase_length` is the item's. Any other
     /// answer takes the full read.
-    fn phrase_text_length_for_token(&self, token: u32) -> Option<usize> {
+    ///
+    /// The first source also answers the item's unigram field where
+    /// `item_unigram_is_model_unigram` covers the token's library.
+    /// The pin reads both from the one item `get_phrase_item` returns
+    /// (074a2219 `pinyin.cpp:1899-1911`, `:1627-1646`). A fallback answer
+    /// carries no unigram, and the caller reads the model.
+    fn phrase_length_and_item_unigram(
+        &self,
+        token: u32,
+        ranked_length: usize,
+    ) -> Option<(usize, Option<u32>)> {
         self.resolve_phrase_text(
             token,
-            |item| item.phrase_text_converts().then(|| item.phrase_length()),
-            |text| text.phrase_length(),
+            |item| {
+                item.phrase_text_converts().then(|| {
+                    let length = item.phrase_length();
+                    (length, (length <= ranked_length).then(|| item.unigram()))
+                })
+            },
+            |text| (text.phrase_length(), None),
         )
+        .map(|(length, unigram)| {
+            (
+                length,
+                unigram.filter(|_| self.item_unigram_is_model_unigram(token)),
+            )
+        })
     }
 
     fn phrase_length_for_token(&self, token: u32) -> Option<usize> {
