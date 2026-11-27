@@ -28,6 +28,17 @@ pub(crate) const fn opens_directories() -> bool {
 }
 
 pub(crate) use read::{ChunkLoadError, load, load_for_mask_prefetch};
+
+/// What a failed chunk header read does. `MemoryChunk::load` asserts on it
+/// (`memory_chunk.h:433-438`); a mask walk that must first replay the
+/// libraries before this one defers it to an error instead.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeaderFault {
+    /// The pin's assert: the process aborts.
+    Abort,
+    /// An error the caller raises after its earlier work.
+    Defer,
+}
 #[cfg(test)]
 use read::{load_header, load_with};
 
@@ -78,26 +89,26 @@ pub(crate) mod read {
     /// Returns a short-header error when the file has fewer than eight bytes.
     /// Also returns open, seek, allocation, or payload read failures.
     pub fn load(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
-        load_with(path, false, |source, payload| {
+        load_with(path, super::HeaderFault::Abort, |source, payload| {
             source.read_payload(payload, None)
         })
     }
 
     /// Prefetch for a mask walk whose caller must first replay preceding libraries.
     pub(crate) fn load_for_mask_prefetch(path: &Path) -> Result<LoadedChunk, ChunkLoadError> {
-        load_with(path, true, |source, payload| {
+        load_with(path, super::HeaderFault::Defer, |source, payload| {
             source.read_payload(payload, None)
         })
     }
 
     pub(super) fn load_with(
         path: &Path,
-        defer_header_fault: bool,
+        header_fault: super::HeaderFault,
         read_payload: impl FnOnce(&mut native::ReadChunk, &mut Vec<u8>) -> io::Result<usize>,
     ) -> Result<LoadedChunk, ChunkLoadError> {
         let mut source = MappingSource::open(path).map_err(ChunkLoadError::Io)?;
         let file_size = source.file_size();
-        let (length, checksum) = load_header(file_size, defer_header_fault, || source.read_word())?;
+        let (length, checksum) = load_header(file_size, header_fault, || source.read_word())?;
         let available = available_payload_length(file_size);
         let declared = u32::from_le_bytes(length);
         if declared != available {
@@ -120,7 +131,7 @@ pub(crate) mod read {
 
     pub(super) fn load_header(
         file_size: u64,
-        defer_header_fault: bool,
+        header_fault: super::HeaderFault,
         mut read_word: impl FnMut() -> io::Result<[u8; 4]>,
     ) -> Result<([u8; 4], [u8; 4]), ChunkLoadError> {
         if file_size < 8 {
@@ -129,7 +140,7 @@ pub(crate) mod read {
         // MemoryChunk::load asserts on a failed header read (memory_chunk.h:433-438).
         let mut read = || match read_word() {
             Ok(word) => Ok(word),
-            Err(_) if defer_header_fault => Err(ChunkLoadError::Header),
+            Err(_) if header_fault == super::HeaderFault::Defer => Err(ChunkLoadError::Header),
             Err(_) => std::process::abort(),
         };
         let length = read()?;

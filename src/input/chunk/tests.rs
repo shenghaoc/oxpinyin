@@ -1,4 +1,5 @@
 use super::*;
+use crate::input::chunk::HeaderFault;
 
 // 074a2219 memory_chunk.h:426–438 checks size before the two reads; mask prefetch defers read faults.
 #[test]
@@ -10,7 +11,7 @@ fn header_size_and_read_failure_follow_pin_load() {
         (8, None, 2, Ok(())),
     ] {
         let mut reads = 0;
-        let result = load_header(size, true, || {
+        let result = load_header(size, HeaderFault::Defer, || {
             reads += 1;
             if failed_read == Some(reads) {
                 Err(io::ErrorKind::Other.into())
@@ -36,7 +37,7 @@ fn length_read_aborts_at_load_header() {
     crate::store::death_test::assert_aborts(
         "input::chunk::tests::length_read_aborts_at_load_header",
         || {
-            let _ = load_header(8, false, || Err(io::ErrorKind::Other.into()));
+            let _ = load_header(8, HeaderFault::Abort, || Err(io::ErrorKind::Other.into()));
         },
     );
 }
@@ -49,7 +50,7 @@ fn short_payload_is_checksummed_at_the_returned_length() {
     for (checksum, expected) in [(1, Some(vec![1])), (2, None)] {
         std::fs::write(&path, [4, 0, 0, 0, checksum, 0, 0, 0, 1, 2, 3, 4]).unwrap();
         let calls = std::cell::Cell::new(0);
-        let chunk = load_with(&path, false, |source, buffer| {
+        let chunk = load_with(&path, HeaderFault::Abort, |source, buffer| {
             calls.set(calls.get() + 1);
             source.read_payload(buffer, Some(1))
         })
@@ -66,7 +67,7 @@ fn interrupted_payload_read_is_not_retried() {
     let path = dir.path().join("chunk");
     std::fs::write(&path, [4, 0, 0, 0, 1, 2, 3, 4, 1, 2, 3, 4]).unwrap();
     let calls = std::cell::Cell::new(0);
-    let Err(ChunkLoadError::Io(error)) = load_with(&path, false, |_, _| {
+    let Err(ChunkLoadError::Io(error)) = load_with(&path, HeaderFault::Abort, |_, _| {
         calls.set(calls.get() + 1);
         Err(io::ErrorKind::Interrupted.into())
     }) else {
@@ -91,7 +92,7 @@ fn file_size_is_narrowed_before_length_comparison() {
     std::fs::write(&path, [4, 0, 0, 0, 4, 2, 3, 4, 1, 2, 3, 4, 5]).unwrap();
     let called = std::cell::Cell::new(false);
     assert!(matches!(
-        load_with(&path, false, |_, _| {
+        load_with(&path, HeaderFault::Abort, |_, _| {
             called.set(true);
             Ok(0)
         }),
