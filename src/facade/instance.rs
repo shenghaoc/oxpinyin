@@ -417,7 +417,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         let nibble = crate::vocab::phrase_index_library_index(token);
         if self.dict.is_system_library(nibble) {
             self.dict.live_items().effective_unigram(token)
-        } else if self.dict.library_visible(u32::from(nibble)) {
+        } else if self.dict.library_visible(nibble) {
             // Any other sub-index the pin holds is a `USER_FILE` row's
             // (`pinyin.cpp:303-321`); one it does not hold has no item.
             self.user.user_unigram_frequency(token)

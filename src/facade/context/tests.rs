@@ -269,9 +269,9 @@ fn unload_then_save_leaves_the_unloaded_librarys_log_alone() {
         saved_gb,
         "the loaded library is saved"
     );
-    assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+    assert_eq!(ctx.load_phrase_library(GBK), Ok(true));
     assert_eq!(readings(&ctx, gbk), with_unsaved - 1);
-    assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(false));
+    assert_eq!(ctx.load_phrase_library(GBK), Ok(false));
 }
 
 // Rust contract: reloading a saved library restores its live readings.
@@ -286,8 +286,8 @@ fn unload_then_reload_restores_the_saved_library() {
     assert!(saved > 0);
     for _ in 0..2 {
         assert!(ctx.unload_phrase_library(GBK));
-        assert!(!ctx.runtime.dict().library_visible(u32::from(GBK)));
-        assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+        assert!(!ctx.runtime.dict().library_visible(GBK));
+        assert_eq!(ctx.load_phrase_library(GBK), Ok(true));
         assert_eq!(readings(&ctx, gbk), saved);
     }
 }
@@ -309,7 +309,7 @@ fn reload_after_an_unreadable_log_loads_the_system_chunk_alone() {
             None => std::fs::remove_file(&log).expect("remove log"),
             Some(bytes) => std::fs::write(&log, bytes).expect("short log"),
         }
-        assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+        assert_eq!(ctx.load_phrase_library(GBK), Ok(true));
         assert_eq!(
             readings(&ctx, gbk),
             original_readings,
@@ -349,7 +349,7 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
     let scratch = tempfile::tempdir().expect("scratch");
     let system = system_with_gbk_naming_no_user_file(scratch.path());
     let mut ctx = ContextCore::open(&system, None, WORD, UserConfLaw::Pinyin).expect("opens");
-    let visible = |ctx: &ContextCore| ctx.runtime.dict().library_visible(u32::from(GBK));
+    let visible = |ctx: &ContextCore| ctx.runtime.dict().library_visible(GBK);
     let mapped_total = |ctx: &ContextCore| {
         ctx.runtime
             .dict()
@@ -376,7 +376,7 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
 
     let chunk = system.join("gbk_char.bin");
     std::fs::remove_file(&chunk).expect("remove the system file");
-    assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+    assert_eq!(ctx.load_phrase_library(GBK), Ok(true));
     assert!(!visible(&ctx), "the remap mapped nothing, so nothing shows");
     assert_eq!(mapped_total(&ctx), Some(shipped));
 
@@ -389,7 +389,7 @@ fn a_reload_maps_a_system_row_that_names_no_user_file() {
         )],
     };
     std::fs::write(&chunk, build_chunk(&[(1, &item)]).expect("chunk")).expect("repair");
-    assert_eq!(ctx.load_phrase_library(u32::from(GBK)), Ok(true));
+    assert_eq!(ctx.load_phrase_library(GBK), Ok(true));
     assert!(visible(&ctx));
     assert_eq!(mapped_total(&ctx), Some(7), "the repaired chunk was mapped");
 }
@@ -899,9 +899,9 @@ mod native {
             let mut context = ContextCore::open(&system_dir(), None, super::WORD, law).unwrap();
             assert!(context.unload_phrase_library(index));
             CHUNK_OPENS.set(0);
-            assert_eq!(context.load_phrase_library(u32::from(index)), Ok(true));
+            assert_eq!(context.load_phrase_library(index), Ok(true));
             assert_eq!(CHUNK_OPENS.get(), 1, "{law:?}");
-            assert_eq!(context.load_phrase_library(u32::from(index)), Ok(false));
+            assert_eq!(context.load_phrase_library(index), Ok(false));
             assert_eq!(CHUNK_OPENS.get(), 1, "{law:?}");
         }
     }

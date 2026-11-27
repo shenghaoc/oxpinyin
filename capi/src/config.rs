@@ -267,7 +267,7 @@ pub unsafe extern "C" fn pinyin_load_phrase_library(
     // is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more answers
     // `false` first, `:448`); which rows are is the context's `table.conf`.
     // The facade checks the row before it maps or logs anything.
-    match ctx.core.load_phrase_library(u32::from(index)) {
+    match ctx.core.load_phrase_library(index) {
         Ok(loaded) => loaded,
         // Register rows 91 and 108: the reloaded library's saved `.dbin`
         // merge reached a pin assertion (`pinyin.cpp:276`, then

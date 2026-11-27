@@ -231,7 +231,7 @@ pub unsafe extern "C" fn zhuyin_load_phrase_library(
     // `false` first, `:362-363`); which rows are is the context's
     // `table.conf`. The facade answers that before it maps or logs
     // anything, and the process aborts (register rows 66 and 79).
-    match ctx.core.load_phrase_library(u32::from(index)) {
+    match ctx.core.load_phrase_library(index) {
         Ok(loaded) => loaded,
         // Register rows 91 and 108: the reloaded library's saved `.dbin`
         // merge reached a pin assertion (`zhuyin.cpp:219`, then
