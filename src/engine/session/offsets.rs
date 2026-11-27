@@ -190,10 +190,6 @@ where
     /// practice; it exists so a future input character class cannot turn a
     /// byte count into a slicing panic.
     pub(super) fn next_boundary(&self, offset: usize) -> usize {
-        let mut offset = offset.min(self.input.len());
-        while !self.input.is_char_boundary(offset) {
-            offset += 1;
-        }
-        offset
+        self.input.as_str().ceil_char_boundary(offset)
     }
 }

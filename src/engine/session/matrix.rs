@@ -153,22 +153,18 @@ impl ParsedMatrix {
             if physical && key.crosses_separator {
                 // A preceding real key is required: fill_matrix never fills
                 // before the first key, even for several leading separators.
-                if first.is_some_and(|start| key.from >= start) {
-                    for zero in zeros
-                        .iter_mut()
-                        .take(key.syllable_start.min(bound))
-                        .skip(key.from)
-                    {
-                        *zero = true;
-                    }
+                let end = key.syllable_start.min(bound).min(zeros.len());
+                if first.is_some_and(|start| key.from >= start)
+                    && let Some(run) = zeros.get_mut(key.from..end)
+                {
+                    run.fill(true);
                 }
             }
             last_end = last_end.max(key.to);
         }
-        if physical {
-            for zero in zeros.iter_mut().take(bound + 1).skip(last_end) {
-                *zero = true;
-            }
+        let end = (bound + 1).min(zeros.len());
+        if physical && let Some(tail) = zeros.get_mut(last_end..end) {
+            tail.fill(true);
         }
         // fill_matrix always installs its reserved zero-key end slot,
         // including exact-key schemes without physical separators

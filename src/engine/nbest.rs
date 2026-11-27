@@ -871,16 +871,13 @@ where
         dictionary,
         model,
     };
-    let mut position = 0_usize;
-    while position < bound {
+    for position in 0..bound {
         if matches!(cell_at(position), Some(Cell::NoSearch { .. })) {
             // The interior of a forced run: nothing may start here.
-            position += 1;
             continue;
         }
         let beam = trellis.beam(position);
         if beam.is_empty() {
-            position += 1;
             continue;
         }
 
@@ -893,7 +890,6 @@ where
                 let span = position..end;
                 expand_forced_span(&env, token, span, &beam, &mut scratch, &mut trellis)?;
             }
-            position += 1;
             continue;
         }
 
@@ -905,7 +901,6 @@ where
             &mut scratch,
             &mut trellis,
         )?;
-        position += 1;
     }
 
     nbest_rows(&mut trellis, dictionary, bound)
@@ -1178,16 +1173,14 @@ where
     L: LanguageModel,
 {
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
-    let mut end = position + 1;
-    let mut widening = true;
     let mut found = SpanRanges::default();
-    while end <= env.bound && widening {
+    for end in position + 1..=env.bound {
         if matches!(cell_at(end), Some(Cell::NoSearch { .. })) {
             // A span may not end inside a forced run.
             break;
         }
         found.clear();
-        widening = env
+        let widening = env
             .generation
             .search(position, end, env.dictionary, scratch, &mut found)?;
         let pricing = Pricing {
@@ -1200,7 +1193,9 @@ where
             span: position..end,
         };
         expand_entries(&pricing, beam, position..end, env.model, trellis, None)?;
-        end += 1;
+        if !widening {
+            break;
+        }
     }
     Ok(())
 }

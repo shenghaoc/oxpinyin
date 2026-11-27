@@ -433,13 +433,13 @@ pub trait PhraseList {
     /// The default converts only an all-scalar span to text; a span with a
     /// non-scalar is empty.
     fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
-        let mut text = String::with_capacity(ucs4.len());
-        for &word in ucs4 {
-            let Some(character) = char::from_u32(word) else {
-                return Vec::new();
-            };
-            text.push(character);
-        }
+        let Some(text) = ucs4
+            .iter()
+            .map(|&word| char::from_u32(word))
+            .collect::<Option<String>>()
+        else {
+            return Vec::new();
+        };
         self.tokens_for_text(&text)
     }
 

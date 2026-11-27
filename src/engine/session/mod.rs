@@ -381,17 +381,11 @@ fn sort_dedup_window_tail(into: &mut Vec<Candidate>, start: usize) {
     // the set's own (unspecified) iteration order is never observed.
     let mut seen: FxHashSet<u32> =
         FxHashSet::with_capacity_and_hasher(into.len() - start, Default::default());
-    let mut write = start;
-    for read in start..into.len() {
-        if let Some(token) = into[read].token()
-            && !seen.insert(token)
-        {
-            continue;
-        }
-        into.swap(write, read);
-        write += 1;
-    }
-    into.truncate(write);
+    // `extract_if` keeps the survivors in order, as the swap compaction did.
+    into.extract_if(start.., |candidate| {
+        candidate.token().is_some_and(|token| !seen.insert(token))
+    })
+    .for_each(drop);
 }
 
 /// Interpolation weight supplied by the model fixture.

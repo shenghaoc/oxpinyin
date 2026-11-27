@@ -421,10 +421,10 @@ impl SegmentGraph {
 
         // `consumed()` includes incomplete edges. Reconstruct from the
         // furthest node the *filtered* DP reached (`final_step`).
-        let mut node = bound;
-        while node > 0 && steps[node].is_none() {
-            node -= 1;
-        }
+        let mut node = steps[1..=bound]
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |index| index + 1);
 
         let mut path = Vec::new();
         while node > 0 {
