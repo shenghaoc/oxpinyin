@@ -171,7 +171,10 @@ mod native {
     fn luoma_xian() -> (ContextCore, InstanceCore) {
         let mut context = open_context(crate::facade::PINYIN_DEFAULT_OPTION_WORD);
         context.set_options(OptionBits::from_bits_retain(0x88));
-        context.live.full_scheme.set(2);
+        context
+            .live
+            .full_scheme
+            .set(crate::parser::FullPinyinScheme::try_from(2).unwrap());
         let mut instance = context.alloc_instance();
         assert_eq!(instance.bind(&context.runtime).parse_full_more("sian"), 4);
         (context, instance)
@@ -198,8 +201,14 @@ mod native {
             [true]
         );
         context.set_options(OptionBits::from_bits_retain(0x8 | 1 << 15));
-        context.live.double_scheme.set(2);
-        context.live.zhuyin_scheme.set(1);
+        context
+            .live
+            .double_scheme
+            .set(crate::parser::DoublePinyinScheme::try_from(2).unwrap());
+        context
+            .live
+            .zhuyin_scheme
+            .set(crate::parser::ZhuyinScheme::try_from(1).unwrap());
         let mut instance = native_instance(&context, law);
         let consumed = if double {
             instance.bind(&context.runtime).parse_double_more(input)
@@ -270,7 +279,10 @@ mod native {
             [true]
         );
         context.set_options(OptionBits::from_bits_retain(0x108));
-        context.live.full_scheme.set(scheme);
+        context
+            .live
+            .full_scheme
+            .set(crate::parser::FullPinyinScheme::try_from(scheme).unwrap());
         let mut instance = context.alloc_instance();
         assert_eq!(instance.bind(&context.runtime).parse_full_more("fangan"), 6);
         assert!(
@@ -292,7 +304,10 @@ mod native {
     ) {
         for (probe, expected) in [2, 3].into_iter().zip(cleared) {
             let (context, mut instance) = pinyin_instance();
-            context.live.full_scheme.set(scheme);
+            context
+                .live
+                .full_scheme
+                .set(crate::parser::FullPinyinScheme::try_from(scheme).unwrap());
             assert_eq!(instance.bind(&context.runtime).parse_full_more(input), 6);
             let row = published(&context, &mut instance, offset, "好");
             assert_eq!(row.end, 6);
@@ -312,7 +327,10 @@ mod native {
         let mut context = native_context(&system_dir(), &user.path, UserConfLaw::Pinyin);
         assert_eq!(import_native(&mut context, 7, &[("安", "an", 1)]), [true]);
         context.set_options(OptionBits::from_bits_retain(0x88));
-        context.live.full_scheme.set(scheme);
+        context
+            .live
+            .full_scheme
+            .set(crate::parser::FullPinyinScheme::try_from(scheme).unwrap());
         let mut instance = context.alloc_instance();
         assert_eq!(instance.bind(&context.runtime).parse_full_more(input), 4);
         native_window(&context, &mut instance, 2)
@@ -332,7 +350,10 @@ mod native {
     #[test]
     fn a_double_pinyin_lookup_identifies_mid_key_columns() {
         let (context, mut instance) = pinyin_instance();
-        context.live.double_scheme.set(2);
+        context
+            .live
+            .double_scheme
+            .set(crate::parser::DoublePinyinScheme::try_from(2).unwrap());
         assert_eq!(instance.bind(&context.runtime).parse_double_more("nihk"), 4);
         assert!(guess(&context, &mut instance));
         for offset in [0, 2] {

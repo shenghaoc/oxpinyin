@@ -186,12 +186,10 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
             .live
             .full_scheme
             .get();
-        match oxpinyin::facade::full_scheme(scheme) {
-            Some(oxpinyin::parser::FullPinyinScheme::Luoma) => core.luoma_pinyin_text(),
-            Some(oxpinyin::parser::FullPinyinScheme::SecondaryZhuyin) => {
-                core.secondary_zhuyin_text()
-            }
-            Some(oxpinyin::parser::FullPinyinScheme::Hanyu) | None => core.pinyin_text(),
+        match scheme {
+            oxpinyin::parser::FullPinyinScheme::Luoma => core.luoma_pinyin_text(),
+            oxpinyin::parser::FullPinyinScheme::SecondaryZhuyin => core.secondary_zhuyin_text(),
+            oxpinyin::parser::FullPinyinScheme::Hanyu => core.pinyin_text(),
         }
     };
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
