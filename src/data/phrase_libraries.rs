@@ -67,10 +67,6 @@ pub struct PhraseLibraries {
     /// with no overflow check (`phrase_index.cpp:237-248`, `:261-269`).
     /// A `guint32`, so it wraps.
     total: u32,
-    /// Bit `n` set when library `n` is loaded and holds at least one
-    /// item: whether a frequency table is there to price with, which the
-    /// wrapping [`Self::total`] cannot tell when it lands on zero.
-    stocked: u32,
 }
 
 impl PhraseLibraries {
@@ -80,7 +76,6 @@ impl PhraseLibraries {
         Self {
             by_nibble: Default::default(),
             total: 0,
-            stocked: 0,
         }
     }
 
@@ -186,9 +181,6 @@ impl PhraseLibraries {
             let total = &mut self.total;
             *total = total.wrapping_add(library.total_freq());
         }
-        if library.has_items() {
-            self.stocked |= 1 << nibble;
-        }
         *slot = Some(Loaded {
             library,
             path: path.to_path_buf(),
@@ -208,7 +200,6 @@ impl PhraseLibraries {
         };
         let total = &mut self.total;
         *total = total.wrapping_sub(loaded.library.total_freq());
-        self.stocked &= !(1 << nibble);
         true
     }
 
@@ -225,11 +216,6 @@ impl PhraseLibraries {
         if !library.is_layout_failed() {
             self.total = self.total.wrapping_add(library.total_freq());
         }
-        if library.has_items() {
-            self.stocked |= 1 << nibble;
-        } else {
-            self.stocked &= !(1 << nibble);
-        }
         *slot = Some(Loaded { library, path });
     }
 
@@ -237,7 +223,6 @@ impl PhraseLibraries {
     pub(crate) fn take_mapping(&mut self, nibble: u8) -> Option<(PathBuf, PhraseLibrary)> {
         let loaded = self.by_nibble.get_mut(usize::from(nibble))?.take()?;
         self.total = self.total.wrapping_sub(loaded.library.total_freq());
-        self.stocked &= !(1 << nibble);
         Some((loaded.path, loaded.library))
     }
 
@@ -371,7 +356,12 @@ impl PhraseLibraries {
     #[cfg(test)]
     #[must_use]
     pub fn has_items_unloaded(&self, unloaded: u32) -> bool {
-        self.stocked & !unloaded != 0
+        self.by_nibble.iter().enumerate().any(|(nibble, loaded)| {
+            unloaded & (1 << nibble) == 0
+                && loaded
+                    .as_ref()
+                    .is_some_and(|loaded| loaded.library.has_items())
+        })
     }
 
     /// [`Self::unigram_total`] with the libraries whose bit `unloaded`

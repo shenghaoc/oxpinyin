@@ -27,8 +27,12 @@ use crate::user::persistence::journal_item_bytes;
 
 /// Why the merge ended at a record.
 pub(crate) enum Stop {
-    /// `merge`'s `return false` at a REMOVE, MODIFY or header record.
-    Mismatch(&'static str, u32),
+    /// `merge`'s `return false` at a header record.
+    HeaderMismatch,
+    /// `merge`'s `return false` at the REMOVE of this token.
+    RemoveMismatch(u32),
+    /// `merge`'s `return false` at the MODIFY of this token.
+    ModifyMismatch(u32),
     /// An ADD payload shorter than the unigram `add_phrase_item` reads:
     /// the pin's `get_unigram_frequency` asserts (`memory_chunk.h:390`,
     /// reached from `phrase_index.cpp:457` through `:215`). The
@@ -239,7 +243,7 @@ impl Merge {
                 new_total,
             } => {
                 if self.live.total != old_total {
-                    return Err(Stop::Mismatch("header", 0));
+                    return Err(Stop::HeaderMismatch);
                 }
                 self.live.total = new_total;
                 Ok(())
@@ -252,13 +256,13 @@ impl Merge {
         if self.live.total == 0 {
             Ok(())
         } else {
-            Err(Stop::Mismatch("header", 0))
+            Err(Stop::HeaderMismatch)
         }
     }
 
     fn remove(&mut self, token: u32, old_item: &[u8]) -> Result<(), Stop> {
         let slot = token & PHRASE_MASK;
-        let mismatch = Stop::Mismatch("REMOVE", token);
+        let mismatch = Stop::RemoveMismatch(token);
         let Some(bytes) = self.live.complete_item(slot).map(|item| item.as_bytes()) else {
             // The class (b) result for an absent token is a no-op for a
             // readable old item. A removal that would read an incomplete
@@ -283,7 +287,7 @@ impl Merge {
             .complete_item(slot)
             .map(|item| item.as_bytes())
             .filter(|&bytes| bytes == old_item)
-            .ok_or(Stop::Mismatch("MODIFY", token))?
+            .ok_or(Stop::ModifyMismatch(token))?
             .len();
         self.live.touch(slot);
         // The journal's total accounts for MODIFY records of the same size

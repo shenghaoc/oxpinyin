@@ -189,7 +189,7 @@ fn a_failed_remove_keeps_the_removal_and_stops() {
         },
     ];
     let (outcome, total, overrides) = merge_of(&library(), records);
-    assert!(matches!(outcome, Err(Stop::Mismatch("REMOVE", 1))));
+    assert!(matches!(outcome, Err(Stop::RemoveMismatch(1))));
     assert_eq!(total, Some(50));
     assert_eq!(overrides, BTreeMap::from([(1, None)]));
 }
@@ -201,7 +201,7 @@ fn a_trailing_byte_makes_an_old_chunk_differ() {
     trailing.push(0);
     let (outcome, total, overrides) =
         merge_of(&library(), vec![modify(1, trailing, with_last(one(), 9))]);
-    assert!(matches!(outcome, Err(Stop::Mismatch("MODIFY", 1))));
+    assert!(matches!(outcome, Err(Stop::ModifyMismatch(1))));
     assert_eq!((total, overrides), (Some(150), BTreeMap::new()));
 }
 
@@ -231,7 +231,7 @@ fn a_replacement_ignores_bytes_after_its_declared_item() {
             modify(1, grown, with_freq(visible, 7)),
         ],
     );
-    assert!(matches!(outcome, Err(Stop::Mismatch("MODIFY", 1))));
+    assert!(matches!(outcome, Err(Stop::ModifyMismatch(1))));
 }
 
 /// Basis: `074a2219 phrase_index.cpp:486-500` (a replacement no larger than the item is edited in place).
@@ -272,7 +272,7 @@ fn an_absent_modify_stops_with_the_previous_item_intact() {
             },
         ],
     );
-    assert!(matches!(outcome, Err(Stop::Mismatch("MODIFY", 9))));
+    assert!(matches!(outcome, Err(Stop::ModifyMismatch(9))));
     assert_eq!(total, Some(150));
     assert_eq!(
         overrides[&2].as_ref().expect("item").prons,
@@ -323,7 +323,7 @@ fn a_stored_header_past_the_buffer_stops_a_later_read() {
             modify(1, one(), with_freq(one(), 9)),
         ],
     );
-    assert!(matches!(outcome, Err(Stop::Mismatch("MODIFY", 1))));
+    assert!(matches!(outcome, Err(Stop::ModifyMismatch(1))));
 }
 
 /// Basis: `074a2219 phrase_index.cpp:453-457` (ADD stores the payload unread); policy row 107 (the later read stops).
@@ -353,7 +353,7 @@ fn an_add_payload_shorter_than_its_header_is_stored_and_stops_a_later_read() {
             },
         ],
     );
-    assert!(matches!(outcome, Err(Stop::Mismatch("REMOVE", 5))));
+    assert!(matches!(outcome, Err(Stop::RemoveMismatch(5))));
 }
 
 /// Basis: policy row 108 (`memory_chunk.h:390` aborts on the short ADD after the records before it).

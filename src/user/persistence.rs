@@ -1663,13 +1663,18 @@ where
         if let Err(stop) = outcome {
             match stop {
                 Stop::ShortAdd(token) => return Err(JournalFault::ShortAdd { library, token }),
-                Stop::Mismatch("header", _) => {
+                Stop::HeaderMismatch => {
                     record_skip(
                         skipped,
                         format_args!("{name}: replay stopped at a mismatched header"),
                     );
                 }
-                Stop::Mismatch(kind, token) => {
+                Stop::RemoveMismatch(token) | Stop::ModifyMismatch(token) => {
+                    let kind = if matches!(stop, Stop::RemoveMismatch(_)) {
+                        "REMOVE"
+                    } else {
+                        "MODIFY"
+                    };
                     record_skip(
                         skipped,
                         format_args!(
