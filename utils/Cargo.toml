@@ -1,3 +1,28 @@
+# The programs have no tests: build no test harness for them.
+bin = [
+    { name = "estimate_interpolation", test = false },
+    { name = "estimate_k_mixture_model", test = false },
+    { name = "eval_correction_rate", test = false },
+    { name = "export_interpolation", test = false },
+    { name = "export_k_mixture_model", test = false },
+    { name = "gen_binary_files", test = false },
+    { name = "gen_deleted_ngram", test = false },
+    { name = "gen_k_mixture_model", test = false },
+    { name = "gen_ngram", test = false },
+    { name = "gen_pinyin_table", test = false },
+    { name = "gen_unigram", test = false },
+    { name = "gen_zhuyin_table", test = false },
+    { name = "import_interpolation", test = false },
+    { name = "import_k_mixture_model", test = false },
+    { name = "k_mixture_model_to_interpolation", test = false },
+    { name = "merge_k_mixture_model", test = false },
+    { name = "mergeseq", test = false },
+    { name = "ngseg", test = false },
+    { name = "prune_k_mixture_model", test = false },
+    { name = "spseg", test = false },
+    { name = "validate_k_mixture_model", test = false },
+]
+
 [package]
 name = "oxpinyin-utils"
 version.workspace = true
