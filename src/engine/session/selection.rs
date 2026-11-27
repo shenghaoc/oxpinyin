@@ -492,7 +492,7 @@ where
     ///
     /// # Errors
     /// Returns a lookup error from either constraint validation.
-    pub fn choose_tokenless(&mut self) -> Result<(), EngineError> {
+    pub(crate) fn choose_tokenless(&mut self) -> Result<(), EngineError> {
         self.validate_selection_constraints()?;
         if self.constraints.choose_tokenless() {
             self.rebuild_selection_from_constraints();
@@ -602,7 +602,7 @@ where
     /// # Errors
     ///
     /// [`EngineError`] from either validation.
-    pub fn refuse_selection(&mut self) -> Result<Selection, EngineError> {
+    pub(crate) fn refuse_selection(&mut self) -> Result<Selection, EngineError> {
         self.validate_selection_constraints()?;
         self.validate_selection_constraints()?;
         Ok(Selection::Refused)

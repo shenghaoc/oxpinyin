@@ -358,7 +358,7 @@ impl SegmentGraph {
     /// A separator after that segment is not counted. For example, `b"ni'"` with one
     /// segment `0..2` gives 2.
     #[must_use]
-    pub const fn consumed(&self) -> usize {
+    pub(crate) const fn consumed(&self) -> usize {
         self.consumed
     }
 

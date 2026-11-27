@@ -382,13 +382,13 @@ impl PhraseEntry {
     /// value.
     #[cfg(test)]
     #[must_use]
-    pub fn text_str(&self) -> Option<&str> {
+    pub(crate) fn text_str(&self) -> Option<&str> {
         self.text.as_str()
     }
 
     /// The item's stored character count, from the text's own hint.
     #[must_use]
-    pub fn phrase_length(&self) -> usize {
+    pub(crate) fn phrase_length(&self) -> usize {
         self.text.phrase_length()
     }
 

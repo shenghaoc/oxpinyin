@@ -570,7 +570,7 @@ impl<'a> RuntimeDict<'a> {
     /// `phrase_index.cpp:180-205`, `pinyin.cpp:2786-2798`,
     /// `zhuyin.cpp:1778-1790`). This path skips the introspection view.
     #[must_use]
-    pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
+    pub(crate) fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
         // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
         // (074a2219 novel_types.h:42-44).
         let token = token & (crate::vocab::PHRASE_INDEX_LIBRARY_MASK | crate::vocab::PHRASE_MASK);
@@ -626,7 +626,7 @@ impl<'a> RuntimeDict<'a> {
     /// for a shipped item whose text passes the content end instead. A shipped item is read through its header-bounded
     /// view, so readings that pass the content end do not hide its text.
     #[must_use]
-    pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
+    pub(crate) fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
         self.with_token_item(token, |item| {
             item.phrase_words_present().then(|| TokenPhrase {
                 phrase_length: item.phrase_length(),
@@ -808,7 +808,7 @@ impl RuntimeDict<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
+    pub(crate) fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.lookup_into(syllables, &mut entries)?;
         Ok(entries)
@@ -944,7 +944,7 @@ impl RuntimeDict<'_> {
     /// `syllables`.
     #[cfg(test)]
     #[must_use]
-    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
+    pub(crate) fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
         // `SEARCH_CONTINUED` comes from the pinyin table's DB get alone, before
         // any token or library check (`chewing_large_table2_tkrzwdb.cpp:146-152`,
         // `chewing_large_table2_bdb.cpp:182-187`,
@@ -1399,7 +1399,7 @@ impl Runtime {
     // row 42 covers surviving handles.
     /// Applies the facade's final marker policy and closes each native attachment once.
     /// Repeated calls are inert. In-memory state remains available to surviving handles.
-    pub fn finish(&mut self) {
+    pub(crate) fn finish(&mut self) {
         // pinyin.cpp:1200 writes the marker before deleting the tables.
         self.user.finish();
         // Close open files in member order (pinyin.cpp:1205-1215 and
@@ -1656,7 +1656,7 @@ impl Runtime {
 
     /// Borrow the merged dictionary for one operation.
     #[must_use]
-    pub fn dict(&self) -> RuntimeDict<'_> {
+    pub(crate) fn dict(&self) -> RuntimeDict<'_> {
         RuntimeDict {
             system: self.system.read(self.libraries()),
             user: &self.user,
@@ -1668,7 +1668,7 @@ impl Runtime {
 
     /// Borrow the overlaid language model for one operation.
     #[must_use]
-    pub fn lm(&self) -> RuntimeLm<'_> {
+    pub(crate) fn lm(&self) -> RuntimeLm<'_> {
         RuntimeLm {
             inner: self.model.read(self.libraries(), self.library_mask),
             user: &self.user,
@@ -1683,7 +1683,7 @@ impl Runtime {
 
     /// Borrow the learning store without retaining an independent owner.
     #[must_use]
-    pub fn user_store(&self) -> &UserStore {
+    pub(crate) fn user_store(&self) -> &UserStore {
         &self.user
     }
 

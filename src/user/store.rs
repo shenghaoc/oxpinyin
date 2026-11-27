@@ -574,7 +574,7 @@ pub(crate) struct MaskCheck {
 impl UserStore {
     /// Run the context's fini marker write once, while retaining its live data
     /// for handles that outlive the public context.
-    pub fn finish(&mut self) {
+    pub(crate) fn finish(&mut self) {
         self._fini.finish();
     }
 
@@ -665,7 +665,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the read fails.
-    pub fn bigram_row(&self, prev: PhraseToken) -> Result<Option<Vec<u8>>, UserStoreError> {
+    pub(crate) fn bigram_row(&self, prev: PhraseToken) -> Result<Option<Vec<u8>>, UserStoreError> {
         // Every gram write sets the flag and a mask recomputes it from the
         // grams it leaves, so a store without user data holds no gram.
         if !self.has_user_data() {
@@ -994,7 +994,7 @@ impl UserStore {
     /// `phrase_index.h:628-635`). Only [`UnigramAdd::Refused`] is
     /// `ERROR_INTEGER_OVERFLOW` (`pinyin.cpp:2528`).
     #[must_use]
-    pub fn add_unigram_outcome(&mut self, token: PhraseToken, delta: u32) -> UnigramAdd {
+    pub(crate) fn add_unigram_outcome(&mut self, token: PhraseToken, delta: u32) -> UnigramAdd {
         let library = phrase_index_library_index(token);
         if self.originals.get(&library).is_none() && !self.has_user_library(library) {
             return UnigramAdd::Missing;
@@ -1447,7 +1447,7 @@ impl UserStore {
 
     /// The stored word count without copying or decoding the phrase text.
     #[must_use]
-    pub fn phrase_length(&self, token: PhraseToken) -> Option<usize> {
+    pub(crate) fn phrase_length(&self, token: PhraseToken) -> Option<usize> {
         self.with_user_item(token, |item| item.phrase_length())
     }
 
@@ -1811,7 +1811,7 @@ impl UserStore {
     /// # Errors
     /// The [`JournalFault`](crate::user::JournalFault) where the merge reaches a pin assertion, with nothing replaced.
     #[cfg(test)]
-    pub fn load_system_libraries(
+    pub(crate) fn load_system_libraries(
         &mut self,
         mut originals: crate::user::SystemOriginals,
     ) -> Result<(), crate::user::JournalFault> {

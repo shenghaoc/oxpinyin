@@ -106,7 +106,7 @@ where
     /// return `false` in that case (`pinyin.cpp:1470-1471`,
     /// `zhuyin.cpp:988-989`).
     #[must_use]
-    pub fn sentence_lookup_active(&self) -> bool {
+    pub(crate) fn sentence_lookup_active(&self) -> bool {
         self.sentence.active()
     }
 
@@ -118,7 +118,10 @@ where
     /// the sentence. `None` when fewer rows exist. A NULL or empty string
     /// still has a row (`lookup/lookup.cpp:27-70`).
     #[must_use]
-    pub fn sentence_phrases(&self, index: u8) -> Option<impl Iterator<Item = SentencePart> + '_> {
+    pub(crate) fn sentence_phrases(
+        &self,
+        index: u8,
+    ) -> Option<impl Iterator<Item = SentencePart> + '_> {
         let row = self.sentence.rows.get(usize::from(index))?;
         Some(SentenceState::parts(row))
     }
@@ -135,7 +138,7 @@ where
     /// row is absent or its string is NULL.
     #[cfg(test)]
     #[must_use]
-    pub fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
+    pub(crate) fn sentence_text(&self, index: u8) -> Option<&PhraseText> {
         self.sentence
             .rows
             .get(usize::from(index))
@@ -255,7 +258,7 @@ where
     /// # Errors
     ///
     /// A parse, reconciliation or refresh error can leave the new input visible.
-    pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
+    pub(crate) fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
         self.replace_raw_with_physical_separators(text, true)
     }
 

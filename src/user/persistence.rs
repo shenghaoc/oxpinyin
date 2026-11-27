@@ -519,7 +519,7 @@ impl SystemOriginals {
     }
 
     /// Transfer the selected baselines after replay, without cloning byte owners.
-    pub fn append(&mut self, mut incoming: Self) {
+    pub(crate) fn append(&mut self, mut incoming: Self) {
         for (nibble, library) in incoming.libraries {
             self.mapped.unload(nibble);
             if let Some((path, mapping)) = incoming.mapped.take_mapping(nibble) {

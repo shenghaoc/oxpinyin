@@ -119,7 +119,7 @@ where
     /// Borrows the last parse's matrix keys and their raw byte spans in column order. Cursor
     /// operations read these same spans through [`crate::engine::KeySpans`].
     #[must_use]
-    pub fn matrix_keys(&self) -> crate::engine::cursor::MatrixKeys<'_> {
+    pub(crate) fn matrix_keys(&self) -> crate::engine::cursor::MatrixKeys<'_> {
         crate::engine::cursor::MatrixKeys::new(self.retained_parse().scan.keys())
     }
 
