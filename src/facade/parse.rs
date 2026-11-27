@@ -131,28 +131,13 @@ pub(crate) fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>)
 /// canonical syllable with that tone.
 fn parse_one_scheme_key(
     options: OptionBits,
-    input: &[u8],
+    input: &str,
     index: crate::parser::FullPinyinIndex,
 ) -> Option<ChewingKey> {
-    if input.contains(&b'\'') {
+    if input.contains('\'') {
         return None;
     }
-    let use_tone = options.contains(OptionBits::USE_TONE);
-    let force_tone = options.contains(OptionBits::FORCE_TONE);
-    let mut tone = crate::chewing_key::CHEWING_ZERO_TONE;
-    let mut spelling = input;
-    if use_tone {
-        if let Some((&last, rest)) = input.split_last()
-            && (b'1'..=b'5').contains(&last)
-        {
-            tone = last - b'0';
-            spelling = rest;
-        }
-        if force_tone && tone == crate::chewing_key::CHEWING_ZERO_TONE {
-            return None;
-        }
-    }
-    let spelling = core::str::from_utf8(spelling).ok()?;
+    let (spelling, tone) = crate::parser::split_tone(options, input)?;
     let canonical = index.canonical(spelling)?;
     let mut key = ChewingKey::from_pinyin(canonical)?;
     key.tone = tone;
@@ -182,9 +167,9 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         // looked up in that scheme's table — plain rows, no option gating
         // — and the key is the canonical syllable's (issue #547).
         if let Some(index) = self.live.full_scheme.get().index() {
-            return parse_one_scheme_key(options, text.as_bytes(), index);
+            return parse_one_scheme_key(options, text, index);
         }
-        FullPinyinParser::parse_one_key(options, text.as_bytes())
+        FullPinyinParser::parse_one_key(options, text)
     }
 
     /// The live double-pinyin parser: the live scheme, with its fallback

@@ -21,7 +21,7 @@ fn full_pinyin_one_key_law() {
         ("ni3", use_tone, Some(("ni", 3))),
         ("ni", use_tone, Some(("ni", 0))),
     ] {
-        let parsed = FullPinyinParser::parse_one_key(options, input.as_bytes());
+        let parsed = FullPinyinParser::parse_one_key(options, input);
         assert_eq!(
             parsed.map(|key| (key.pinyin_spelling(), key.tone)),
             expected,

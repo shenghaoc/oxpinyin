@@ -70,7 +70,7 @@ pub fn parse_direct(
                 )?;
                 ChewingKey::from_pinyin(key.text()).map(|key| key.with_tone(tone))
             } else {
-                FullPinyinParser::parse_one_key(options, segment)
+                FullPinyinParser::parse_one_key(options, core::str::from_utf8(segment).ok()?)
             }
         },
         |key, span| keys.push(Key { key, span }),
