@@ -214,6 +214,7 @@ pub(crate) fn refusal(_mode: Option<&str>) -> Option<&'static str> {
 }
 
 pub(crate) fn native(args: &[String]) -> Result<()> {
+    let sort = workload::sort_option()?;
     let (library, core) = open_subject(args)?;
     let cycles = super::strict_cycles()?;
     let typing = abi::Typing::load(&library, "pinyin")?;
@@ -230,6 +231,7 @@ pub(crate) fn native(args: &[String]) -> Result<()> {
         typing: &typing,
         guess: &guess,
         instance: instance.handle,
+        sort,
         operations: 0,
         failed: false,
     };

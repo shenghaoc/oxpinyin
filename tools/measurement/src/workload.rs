@@ -1,5 +1,6 @@
 //! The frozen keystroke corpus, checksum and profiler collection boundaries.
 use crate::abi::{Guess, Handle, Typing};
+use crate::{Result, Usage};
 
 pub(crate) const CYCLE_INPUTS: &[&str] = &[
     "ni",
@@ -30,6 +31,7 @@ pub(crate) struct Cycle<'a> {
     pub(crate) typing: &'a Typing,
     pub(crate) guess: &'a Guess,
     pub(crate) instance: Handle,
+    pub(crate) sort: u32,
     pub(crate) operations: u64,
     pub(crate) failed: bool,
 }
@@ -45,7 +47,7 @@ impl Cycle<'_> {
             for (j, byte) in input.bytes().enumerate() {
                 prefix[j] = byte;
                 let parsed = (self.typing.parse)(self.instance, prefix.as_ptr().cast());
-                let guessed = self.guess.call(self.instance);
+                let guessed = self.guess.at(self.instance, 0, self.sort);
                 let mut count = 0;
                 let counted = (self.typing.count)(self.instance, &mut count);
                 self.operations += 1;
@@ -94,6 +96,19 @@ pub(crate) fn bisect_perf_steady_unit(cycle: &mut Cycle<'_>, repeats: usize) -> 
 
 pub(crate) fn operations() -> u64 {
     CYCLE_INPUTS.iter().map(|s| s.len() as u64).sum()
+}
+
+/// The candidate sort of every `bisect` loop: `PERF_SORT` as decimal or `0x` hexadecimal,
+/// otherwise `0x1e`.
+pub(crate) fn sort_option() -> Result<u32> {
+    match std::env::var("PERF_SORT").ok().filter(|s| !s.is_empty()) {
+        None => Ok(0x1e),
+        Some(value) => match value.strip_prefix("0x") {
+            Some(hex) => u32::from_str_radix(hex, 16),
+            None => value.parse(),
+        }
+        .map_err(|_| Usage("PERF_SORT must be a decimal or 0x hexadecimal u32".into()).into()),
+    }
 }
 
 pub(crate) fn count(name: &str, fallback: usize) -> usize {
