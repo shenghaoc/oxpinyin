@@ -145,7 +145,12 @@ where
         let mut path = SuggestionPath::default();
         let mut winner = None;
         self.search_longer_paths(0, end, prefix_len, &mut path, &mut winner)?;
-        let Some((token, unigram, text)) = winner else {
+        let Some((token, unigram)) = winner else {
+            return Ok(None);
+        };
+        // The winner's text, built once: the length the cap read came from
+        // the same lookup, so the text is present.
+        let Some(text) = self.dictionary.phrase_text_for_token(token) else {
             return Ok(None);
         };
         let total = self
@@ -187,7 +192,7 @@ where
         &self,
         path: &SuggestionPath,
         prefix_len: usize,
-        winner: &mut Option<(PhraseToken, u64, PhraseText)>,
+        winner: &mut Option<(PhraseToken, u64)>,
     ) -> Result<(), EngineError> {
         let SuggestionPath { keys, tones } = path;
         // `search_suggestion` asserts on a toned first initial-only key
@@ -212,10 +217,10 @@ where
             // `get_phrase_item` + the char-length cap: a phrase longer
             // than `prefix_len * 2 + 1` characters is skipped
             // (`pinyin.cpp:1899-1902`).
-            let Some(text) = self.dictionary.phrase_text_for_token(token) else {
+            // The length alone decides the cap, so no text is built here.
+            let Some(phrase_length) = self.dictionary.phrase_text_length_for_token(token) else {
                 continue;
             };
-            let phrase_length = text.phrase_length();
             if phrase_length > prefix_len * 2 + 1 {
                 continue;
             }
@@ -234,10 +239,10 @@ where
                 .unigram_freq(&token)
                 .map_err(|_| EngineError::Failure)?
                 .unwrap_or(0);
-            if winner.as_ref().is_none_or(|(best_token, best, _)| {
+            if winner.as_ref().is_none_or(|(best_token, best)| {
                 beats_longer_winner(token, unigram, *best_token, *best)
             }) {
-                *winner = Some((token, unigram, text));
+                *winner = Some((token, unigram));
             }
         }
         Ok(())
@@ -252,7 +257,7 @@ where
         end: usize,
         prefix_len: usize,
         path: &mut SuggestionPath,
-        winner: &mut Option<(PhraseToken, u64, PhraseText)>,
+        winner: &mut Option<(PhraseToken, u64)>,
     ) -> Result<(), EngineError> {
         let Some(column) = self.retained_parse().scan.get(node) else {
             return Ok(());

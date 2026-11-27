@@ -25,9 +25,10 @@ use crate::data::DictError;
 // `gen_binary_files`'s writer: one written copy, so a probe here and an
 // emission there cannot drift (`crate::data::row_format`).
 #[cfg(test)]
-use crate::data::row_format::pinyin_index::encode_items;
+use crate::data::row_format::pinyin_index::{PinyinIndexItem, encode_items};
+use crate::data::row_format::pinyin_index::{PinyinIndexItemView, item_views};
 pub(crate) use crate::data::row_format::pinyin_index::{
-    PinyinIndexItem, decode_items, encode_complete_key, encode_incomplete_key,
+    encode_complete_key, encode_incomplete_key,
 };
 
 // ── ChewingTable ─────────────────────────────────────────────────
@@ -395,12 +396,18 @@ impl ChewingTable {
     }
 
     /// The suggestion lookup and range walk, checking raw key lengths
-    /// before empty/odd rows are skipped or their values decoded. Returns
-    /// `true` at the pin's overlong-key abort, stopping the store scan.
+    /// before empty/odd rows are skipped or their values read. Each row's
+    /// records reach `visit` as views over the stored value, in stored order:
+    /// the pin's `convert_suggestion` reads the chunk in place
+    /// (`chewing_large_table2.h:155-179` at 074a2219), and so does this walk.
+    /// Returns `true` at the pin's overlong-key abort, stopping the store scan.
     pub(crate) fn walk_suggestions(
         &self,
         keys: &[ChewingKey],
-        mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
+        mut visit: impl FnMut(
+            usize,
+            &mut dyn Iterator<Item = PinyinIndexItemView<'_>>,
+        ) -> Result<bool, DictError>,
     ) -> Result<bool, DictError> {
         if !self.key_exists(keys) {
             return Ok(false);
@@ -417,8 +424,8 @@ impl ChewingTable {
                 return Ok(false);
             }
             let length = key.len() / CHEWING_KEY_SIZE;
-            let items = decode_items(value, length)?;
-            visit(length, &items)
+            let mut items = item_views(value, length)?;
+            visit(length, &mut items)
         })?;
         Ok(overlong)
     }
@@ -470,16 +477,19 @@ fn with_index_key<R>(keys: &[ChewingKey], read: impl FnOnce(&[u8]) -> R) -> R {
 /// position) over the first `query.len()` syllables of `stored` —
 /// `prefix_compare_with_tones` (`PrefixLessThanWithTones`,
 /// `chewing_large_table2.h`), the comparison the suggestion path applies
-/// to longer records.
+/// to longer records. `stored` is a record's keys, read in place.
 #[must_use]
-pub(crate) fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
+pub(crate) fn prefix_keys_match(
+    query: &[ChewingKey],
+    stored: impl ExactSizeIterator<Item = ChewingKey>,
+) -> bool {
     if stored.len() < query.len() {
         return false;
     }
     query
         .iter()
         .zip(stored)
-        .all(|(q, s)| q.matches_with_tones(*s))
+        .all(|(q, s)| q.matches_with_tones(s))
 }
 
 /// Visits matching token records in stored order.

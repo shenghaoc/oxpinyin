@@ -373,8 +373,7 @@ impl SystemDictionary<'_> {
             if length > keys.len() {
                 tokens.extend(
                     items
-                        .iter()
-                        .filter(|item| prefix_keys_match(&keys, &item.keys))
+                        .filter(|item| prefix_keys_match(&keys, item.keys()))
                         .map(|item| item.token),
                 );
             }
