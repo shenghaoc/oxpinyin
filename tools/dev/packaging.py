@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -623,16 +624,13 @@ def relink(argv, tools, *, require_destination=True):
     glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
     flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
     flags += backend_flags(backend, tools, '-lstdc++', 'linux')
-    # Linux GNU targets pack their relative relocations, as the cargo cdylibs do
-    # (capi/build.rs; docs/packaging.md#build-and-runtime-dependencies).
-    if '-linux-gnu' in tools.text([cc, '-dumpmachine']):
-        flags.append('-Wl,-z,pack-relative-relocs')
+    ldflags = environment_ldflags(tools)
     destination = Path(dest)
     # As mktemp ${DEST%.so*}.relink.XXXXXX: scratch stays beside the object,
     # so the verified replacement is atomic and its symlinks keep resolving.
     temporary = tools.text(['mktemp', str(destination).rsplit('.so', 1)[0] + '.relink.XXXXXX'])
     try:
-        link_and_verify(cc, temporary, ver, soname, archive, flags, tools)
+        link_and_verify(cc, temporary, ver, soname, archive, ldflags, flags, tools)
         # mktemp gives 0600 and the linker adds only execute bits. The pin installs
         # its shared libraries with install(1) under libtool, whose default mode is 0755.
         os.chmod(temporary, 0o755)
@@ -676,9 +674,38 @@ def linux_exports(text: str, node: str) -> list[str]:
     return [name.partition('@')[0] for name in linux_symbol_names(text, node)]
 
 
-def link_and_verify(cc, temporary, ver, soname, archive, flags, tools):
+def glibc_target(cc, tools):
+    """Whether CC compiles for glibc: its <features.h> defines __GLIBC__.
+
+    The target triple is not enough: Fedora's gcc reports x86_64-redhat-linux, with no `-gnu`.
+    """
+    done = tools.capture([cc, '-dM', '-E', '-x', 'c', '-'], input=b'#include <features.h>\n')
+    return done.status == 0 and b'#define __GLIBC__ ' in done.stdout
+
+
+def environment_ldflags(tools):
+    """The build environment's LDFLAGS, split as the shell splits make's $(LDFLAGS); [] when unset.
+
+    The distribution supplies its linker hardening here (on Debian, dpkg-buildflags);
+    the relink adds no hardening flag of its own.
+    """
+    text = tools.env.get('LDFLAGS') or ''
+    try:
+        return shlex.split(text)
+    except ValueError as error:
+        fail(f'error: cannot split LDFLAGS {text!r}: {error}', 2)
+
+
+def link_and_verify(cc, temporary, ver, soname, archive, ldflags, flags, tools):
+    # glibc targets pack their relative relocations, as the cargo cdylibs of a
+    # `gnu` target do (capi/build.rs; docs/packaging.md#build-and-runtime-dependencies).
+    relocs = ['-Wl,-z,pack-relative-relocs'] if glibc_target(cc, tools) else []
+    # As automake's $(AM_LDFLAGS) $(LDFLAGS): the environment's flags follow the
+    # relink's own, so they can override one (-z nopack-relative-relocs), and
+    # precede the inputs, so --as-needed reaches the libraries.
+    # The checks below still hold the SONAME and the export set.
     tools.heavy([cc, '-shared', '-o', temporary, '-Wl,-z,defs', f'-Wl,-soname,{soname}',
-                 f'-Wl,--version-script={ver}', '-Wl,--gc-sections', '-Wl,--whole-archive', archive,
+                 f'-Wl,--version-script={ver}', '-Wl,--gc-sections', *relocs, *ldflags, '-Wl,--whole-archive', archive,
                  '-Wl,--no-whole-archive', *flags, '-lpthread', '-ldl', '-lm'])
     node, expected = version_exports(ver)
     raw = tools.text(['nm', '-D', '--defined-only', temporary])
