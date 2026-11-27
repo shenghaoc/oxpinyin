@@ -267,33 +267,20 @@ impl Mapping {
     }
 }
 
-/// A failed chunk save after an open or payload write. Header writes abort.
-#[derive(Debug)]
-pub enum ChunkSaveError {
-    /// The open or the payload write failed; MemoryChunk::save answers
-    /// false and its callers ignore that answer.
-    Io(io::Error),
-}
-
 /// MemoryChunk::save(filename) over path with the chunk's complete bytes.
 ///
 /// # Errors
 ///
-/// [`ChunkSaveError`] when the open or payload write fails.
+/// The open's or the payload write's error: MemoryChunk::save answers false
+/// there, and its callers ignore that answer.
 ///
 /// # Aborts
 /// A failed write of either header word aborts at the pin's assertion.
-pub fn save(path: &Path, bytes: &[u8]) -> Result<(), ChunkSaveError> {
+pub fn save(path: &Path, bytes: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
-    let result = native::save_chunk(&path::c_string(path.as_os_str()), bytes);
+    return native::save_chunk(&path::c_string(path.as_os_str()), bytes);
     #[cfg(windows)]
-    let result = native::save_chunk(path, bytes);
-    match result {
-        native::ChunkWrite::Saved => Ok(()),
-        native::ChunkWrite::Open(error) | native::ChunkWrite::Payload(error) => {
-            Err(ChunkSaveError::Io(error))
-        }
-    }
+    return native::save_chunk(path, bytes);
 }
 
 #[cfg(test)]

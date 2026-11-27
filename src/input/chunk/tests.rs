@@ -157,10 +157,7 @@ fn framed_chunk_replaces_an_old_file_and_reads_through_heap_and_map() {
     assert_eq!(mapped.as_slice(), file.as_slice());
     drop(mapped);
 
-    assert!(matches!(
-        save(dir.path(), &file),
-        Err(ChunkSaveError::Io(_))
-    ));
+    assert!(save(dir.path(), &file).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), file);
 }
 
@@ -177,7 +174,7 @@ fn saving_over_a_read_only_file_is_permission_denied() {
     std::fs::set_permissions(&path, permissions).unwrap();
     let result = save(&path, &[1, 0, 0, 0, 0, 0, 0, 0, 0]);
     std::fs::set_permissions(&path, original).unwrap();
-    let Err(ChunkSaveError::Io(error)) = result else {
+    let Err(error) = result else {
         panic!("expected an I/O error")
     };
     assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);

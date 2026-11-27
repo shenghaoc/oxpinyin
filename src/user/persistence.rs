@@ -2307,8 +2307,7 @@ fn stage_chunk(
 /// `assert`s on; the open and a short payload write are
 /// the pin's soft `false`, carried as `Io`.
 fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
-    crate::input::chunk::save(path, bytes)
-        .map_err(|crate::input::chunk::ChunkSaveError::Io(error)| PersistenceError::Io(error))
+    crate::input::chunk::save(path, bytes).map_err(PersistenceError::Io)
 }
 
 #[cfg(test)]
