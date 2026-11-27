@@ -155,7 +155,7 @@ impl crate::store::RawReadStore for KcStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::store::StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.db.is_read_only() {
             crate::store::read_faults::point_read(key)?;
         }
@@ -169,7 +169,7 @@ impl crate::store::RawReadStore for KcStore {
     ) -> Result<bool, crate::store::StoreError> {
         // A failed size check is the pin's silent miss
         // (`ngram_kyotodb.cpp:131-134` at 074a2219).
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.db.is_read_only() && crate::store::read_faults::point_read(key).is_err() {
             value.clear();
             return Ok(false);
@@ -183,7 +183,7 @@ impl crate::store::RawReadStore for KcStore {
         value: &mut Vec<u8>,
     ) -> Result<bool, crate::store::StoreError> {
         value.clear();
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.db.is_read_only() && crate::store::read_faults::point_read(key).is_err() {
             return Ok(false);
         }
@@ -197,7 +197,7 @@ impl crate::store::RawReadStore for KcStore {
         if size == 0 {
             return Ok(true);
         }
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.db.is_read_only() && crate::store::read_faults::point_read(key).is_err() {
             return Err(crate::store::StoreError::ReadAfterCheck);
         }
@@ -209,7 +209,7 @@ impl crate::store::RawReadStore for KcStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, crate::store::StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.db.is_read_only() {
             crate::store::read_faults::point_read(key)?;
         }
@@ -222,7 +222,7 @@ impl crate::store::RawReadStore for KcStore {
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, crate::store::StoreError>,
     ) -> Result<(), crate::store::StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         let visit = {
             crate::store::read_faults::scan_start(self.db.is_read_only(), lo)?;
             crate::store::read_faults::scan_visitor(self.db.is_read_only(), visit)

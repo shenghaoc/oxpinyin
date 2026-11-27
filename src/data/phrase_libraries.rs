@@ -27,20 +27,6 @@ use crate::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary};
 #[cfg(test)]
 pub(crate) use crate::data::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
-/// One pronunciation of a library item.
-///
-/// The joined pinyin spelling and the pronunciation frequency — the
-/// rendering surface the export and token-introspection paths need
-/// (`FacadePhraseIndex::get_phrase_item` over
-/// `PhraseItem::get_nth_pronunciation`).
-pub(crate) struct LibraryPronunciation {
-    /// `'`-joined pinyin spelling, tone digits dropped (the consumers
-    /// resolve it back to tone-less syllable keys).
-    pub(crate) spelling: String,
-    /// The pronunciation's stored count.
-    pub(crate) freq: u64,
-}
-
 /// A loaded library and the file it came from.
 #[derive(Debug)]
 struct Loaded {
@@ -352,20 +338,6 @@ impl PhraseLibraries {
         compacted
     }
 
-    /// Whether a loaded library outside the `unloaded` bits holds an
-    /// item: there is a unigram table to price with, whatever the
-    /// wrapping total adds up to.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn has_items_unloaded(&self, unloaded: u32) -> bool {
-        self.by_nibble.iter().enumerate().any(|(nibble, loaded)| {
-            unloaded & (1 << nibble) == 0
-                && loaded
-                    .as_ref()
-                    .is_some_and(|loaded| loaded.library.has_items())
-        })
-    }
-
     /// [`Self::unigram_total`] with the libraries whose bit `unloaded`
     /// sets taken out — the facade total after `unload` freed those
     /// sub-indexes (`phrase_index.cpp:261-269`). Only the set bits are
@@ -418,40 +390,6 @@ impl PhraseLibraries {
             pronunciation: Some(item_possibility(&item, query)),
             unigram: None,
         })
-    }
-
-    /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
-    /// order — `get_nth_pronunciation` rendered through the chewing key
-    /// tables (syllables `'`-joined, no tone digits).
-    #[must_use]
-    pub(crate) fn pronunciations(&self, token: u32) -> Option<Vec<LibraryPronunciation>> {
-        let library = self.library(token)?;
-        let item = library.item(token)?;
-        let mut out = Vec::new();
-        for view in item.pronunciations() {
-            // A key with no spelling drops the whole reading.
-            let syllables = view
-                .keys
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| {
-                    let spelling =
-                        ChewingKey::from_packed(u16::from_le_bytes(*pair)).pinyin_spelling();
-                    (!spelling.is_empty()).then_some(spelling)
-                })
-                .collect::<Option<Vec<_>>>();
-            if let Some(syllables) = syllables
-                && view.keys.len().is_multiple_of(CHEWING_KEY_SIZE)
-                && !syllables.is_empty()
-            {
-                out.push(LibraryPronunciation {
-                    spelling: syllables.join("'"),
-                    freq: u64::from(view.freq),
-                });
-            }
-        }
-        Some(out)
     }
 }
 

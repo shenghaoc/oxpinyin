@@ -64,6 +64,7 @@ pub(super) mod faults {
     /// Lets the next `writes` destination writes of every later copy in
     /// this process through, then fails each write after them, as a native
     /// `Set` or `put` that reports an error does.
+    #[cfg(feature = "test-hooks")]
     pub fn fail_destination_write_after(writes: usize) {
         DESTINATION_WRITES.store(writes, Ordering::SeqCst);
     }

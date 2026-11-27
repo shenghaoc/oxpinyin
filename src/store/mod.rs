@@ -657,17 +657,14 @@ mod common;
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 mod copy;
 /// The copy's fault points for other crates' death tests.
-#[cfg(all(
-    any(test, feature = "test-hooks"),
-    any(feature = "tkrzw", feature = "bdb")
-))]
+#[cfg(all(feature = "test-hooks", any(feature = "tkrzw", feature = "bdb")))]
 pub use copy::faults::fail_destination_write_after;
 #[cfg(all(test, any(feature = "tkrzw", feature = "bdb")))]
 pub(crate) use copy::faults::{fail_iterator_creation_after, fail_source_read_after};
 #[cfg(test)]
 pub(crate) mod death_test;
 /// The read-only stores' point-read fault point for the tests.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 mod read_faults;
 #[cfg(test)]
 pub(crate) use read_faults::fail_point_read_of;

@@ -919,6 +919,7 @@ impl ZhuyinParser {
 
     /// Reports whether the current keyboard maps `key` to a symbol. Set `use_tone` to admit
     /// bytes that map only to a tone.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn in_scheme(&self, key: u8, use_tone: bool) -> bool {
         self.scheme

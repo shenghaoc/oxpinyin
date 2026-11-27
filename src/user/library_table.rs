@@ -103,12 +103,6 @@ impl<T> LibraryTable<T> {
         self.slots.iter().all(Option::is_none)
     }
 
-    /// How many libraries are present.
-    #[must_use]
-    pub(crate) fn len(&self) -> usize {
-        self.slots.iter().flatten().count()
-    }
-
     /// The present libraries with their values, in ascending library order.
     #[must_use]
     pub(crate) fn iter(&self) -> Iter<'_, T> {

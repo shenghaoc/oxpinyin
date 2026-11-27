@@ -2834,7 +2834,7 @@ fn an_option_change_reaches_the_matrix_at_the_next_parse() {
 
     session.replace_raw("sh").expect("parse under the new word");
     assert_eq!(session.full_parsed_len(), 0);
-    assert!(session.matrix_keys().is_empty());
+    assert_eq!(session.matrix_keys().len(), 0);
 
     session.reset();
     assert_eq!(session.full_parsed_len(), 0);
@@ -3036,66 +3036,6 @@ fn an_overrunning_forcing_whose_item_read_fails_is_cleared() {
             assert!(!session.constraints.is_one_step_at(0));
         }
     }
-}
-
-/// One phrase for one key: its searched row and the decoded sentence share
-/// a text.
-const ONE_PHRASE_VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n";
-
-// Basis: pinyin.cpp:1678–1709,2128–2138 at 074a2219 and the Rust rank-key alignment contract.
-#[test]
-fn a_searched_row_the_dedup_removes_is_still_a_ranked_row() {
-    let mut session = Session::new(
-        SessionSettings::default(),
-        FixtureDictionary::parse(ONE_PHRASE_VOCAB).expect("authored fixture"),
-        FrequencyFixtureModel::parse(ONE_PHRASE_VOCAB, "").expect("authored fixture"),
-    );
-    session.replace_raw("ni").expect("typing cannot fail");
-    session.sentence.rows = vec![crate::engine::nbest::NbestRow {
-        text: Some("你".into()),
-        spans: Vec::new(),
-        keys: 1,
-        span: 2,
-    }];
-
-    let after = session.candidates_at(0).expect("offset 0 is in range");
-    assert!(
-        after
-            .iter()
-            .all(|candidate| candidate.kind() == crate::engine::CandidateKind::Sentence),
-        "the dedup leaves the sentence row alone: {:?}",
-        after
-            .iter()
-            .map(|c| (c.text().to_string(), c.kind()))
-            .collect::<Vec<_>>()
-    );
-    assert!(after.ranked_phrase_row(), "the searched 你 row was ranked");
-
-    let before = session
-        .candidates_ending_at(2)
-        .expect("offset 2 is in range");
-    assert!(
-        before
-            .iter()
-            .all(|candidate| candidate.kind() == crate::engine::CandidateKind::Sentence)
-    );
-    assert!(
-        before.ranked_phrase_row(),
-        "the before-cursor slice was ranked"
-    );
-
-    assert!(
-        !session
-            .candidates_at(2)
-            .expect("in range")
-            .ranked_phrase_row()
-    );
-    assert!(
-        !session
-            .candidates_ending_at(0)
-            .expect("in range")
-            .ranked_phrase_row()
-    );
 }
 
 /// Chooses row `index` of the session's cached list at the composition

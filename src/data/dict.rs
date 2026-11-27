@@ -317,33 +317,19 @@ impl SystemDictionary<'_> {
         u64::from(self.libraries().unigram_total())
     }
 
-    /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
-    /// order.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn pronunciations(&self, token: u32) -> Vec<(String, u64)> {
-        self.libraries()
-            .pronunciations(token)
-            .map(|prons| {
-                prons
-                    .into_iter()
-                    .map(|pron| (pron.spelling, pron.freq))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     /// Tokens whose phrase text is exactly `text` — `PhraseLargeTable3::search`.
     ///
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or the value decode fails.
+    #[cfg(test)]
     pub(crate) fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
         self.phrase.search(text)
     }
 
-    /// Tokens whose raw UCS-4 span is exactly `words` — the non-scalar
-    /// counterpart of [`Self::tokens_for_text`], compared as stored keys.
+    /// Tokens whose raw UCS-4 span is exactly `words`, compared as stored
+    /// keys: `PhraseLargeTable3::search` over words that need not be scalar
+    /// values.
     ///
     /// # Errors
     ///

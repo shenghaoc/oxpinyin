@@ -666,6 +666,7 @@ pub(crate) struct Loaded {
     /// libraries before it replayed. The pin dies there
     /// ([`JournalFault`]); the session open returns it and the C adapters
     /// abort. No later library is replayed.
+    #[cfg(test)]
     pub(crate) journal_fault: Option<JournalFault>,
     /// The total each library the profile filled holds once loaded, as the
     /// pin keeps it: a `USER_FILE` library's is the total stored in its

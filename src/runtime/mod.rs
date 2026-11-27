@@ -890,26 +890,6 @@ impl RuntimeDict<'_> {
             .map(|priced| priced.item)
     }
 
-    /// [`Self::trellis_item`], reading the user lookup and the keys once
-    /// per path.
-    #[cfg(test)]
-    pub(crate) fn trellis_item_on_path(
-        &self,
-        syllables: &[SyllableKey],
-        tones: &[u8],
-        token: u32,
-        memo: &TrellisPathMemo<PathPricing>,
-    ) -> Result<Option<TrellisItem>, DictError> {
-        if syllables.is_empty() {
-            return Ok(None);
-        }
-        let path =
-            memo.get_or_try_init(|| Ok::<_, DictError>(self.path_pricing(syllables, tones)))?;
-        Ok(self
-            .priced_on_path(path, token, StepText::Skip)
-            .map(|priced| priced.item))
-    }
-
     /// [`Self::lookup`] into a caller-owned buffer.
     ///
     /// # Errors
@@ -966,7 +946,7 @@ impl RuntimeDict<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "tkrzw"))]
     pub(crate) fn lookup_addon(
         &self,
         syllables: &[SyllableKey],

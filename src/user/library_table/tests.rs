@@ -7,7 +7,6 @@ fn a_table_walks_its_present_libraries_in_ascending_order() {
     let mut table: LibraryTable<&str> =
         [(7, "user"), (1, "gb"), (15, "last")].into_iter().collect();
     assert_eq!(table.insert(1, "gb again"), Some("gb"));
-    assert_eq!(table.len(), 3);
     assert_eq!(
         table.iter().collect::<Vec<_>>(),
         [(&1, &"gb again"), (&7, &"user"), (&15, &"last")]

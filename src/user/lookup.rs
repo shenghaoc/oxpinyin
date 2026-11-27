@@ -100,17 +100,6 @@ impl<'a> UserLookup<'a> {
         session_text(&self.phrases.borrow(), self.items, token)
     }
 
-    /// Tokens whose stored UCS-4 key is exactly `words`, non-scalar words
-    /// included.
-    #[must_use]
-    pub(crate) fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
-        self.phrases
-            .borrow()
-            .phrase_table
-            .tokens(&crate::user::phrase_key_ucs4(words))
-            .unwrap_or_default()
-    }
-
     /// `ChewingLargeTable2::search_suggestion` over the user seam — the
     /// user chewing table `_add_phrase` populates
     /// (`pinyin.cpp:599-601` at the pin writes `m_pinyin_table->add_index`,

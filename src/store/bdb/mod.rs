@@ -249,7 +249,7 @@ impl RawReadStore for BdbStore {
     }
 
     fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.db.is_read_only() {
             crate::store::read_faults::point_read(key)?;
         }
@@ -267,7 +267,7 @@ impl RawReadStore for BdbStore {
     }
 
     fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.db.is_read_only() {
             crate::store::read_faults::point_read(key)?;
         }
@@ -280,7 +280,7 @@ impl RawReadStore for BdbStore {
         hi: Bound<&[u8]>,
         visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         let visit = {
             crate::store::read_faults::scan_start(self.db.is_read_only(), lo)?;
             crate::store::read_faults::scan_visitor(self.db.is_read_only(), visit)

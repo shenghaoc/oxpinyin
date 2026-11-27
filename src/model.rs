@@ -948,7 +948,7 @@ impl<I: Iterator<Item = Vec<ChewingKey>>> ReadingWalk for Lent<I> {
 // pinyin_guess_candidates loads it before the candidate loop;
 // _compute_frequency_of_items reads get_freq inside the loop.
 /// A predecessor's bigram row after applying the user overlay. Supply whole records
-/// ordered by token so that [`single_gram::lower_bound`] can locate the requested range.
+/// ordered by token so that [`single_gram::checked_search`] can locate the requested range.
 /// Merging keeps record order and does not deduplicate a single input. With one input,
 /// its bytes are retained for later reads. With two, the merge reads both headers and
 /// walks both record lists.

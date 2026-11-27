@@ -866,19 +866,11 @@ where
             if abort_on_rank && unreadable != 0 {
                 return abort_unreadable_ranking(gram.as_ref());
             }
-            self.scan_unreadable = unreadable;
+            #[cfg(test)]
+            {
+                self.scan_unreadable = unreadable;
+            }
         }
-        // The rows the pin's `_compute_frequency_of_items` runs on: the
-        // freshly searched list, before its sort, the LONGER and
-        // sentence prepends and `_remove_duplicated_items_by_phrase_string`
-        // (`pinyin.cpp:2283` against `:2300`, `zhuyin.cpp:1526` against
-        // `:1537`). Its `0 < total_freq` assert (`pinyin.cpp:1859`,
-        // `zhuyin.cpp:1261`) runs for every row but an addon or predicted
-        // prefix row (`pinyin.cpp:1812-1840`); libzhuyin skips none.
-        self.scan_ranked_phrase = collected
-            .iter()
-            .any(|candidate| candidate.kind() == CandidateKind::Phrase);
-
         // The scan's result stands even when it found nothing. Tokens the
         // table lacks rank as zero rather than falling back.
         self.candidate_frequencies(collected, gram.as_ref(), scan, abort_on_rank, frequencies)?;
@@ -1033,17 +1025,20 @@ where
         &mut self,
         build: impl FnOnce(&mut Self, &mut Vec<Candidate>) -> Result<(), EngineError>,
     ) -> Result<CandidateList, EngineError> {
-        self.scan_unreadable = 0;
-        self.scan_ranked_phrase = false;
+        #[cfg(test)]
+        {
+            self.scan_unreadable = 0;
+        }
         let mut items = core::mem::take(&mut self.scratch.window_items);
         if let Err(error) = build(self, &mut items) {
             items.clear();
             self.scratch.window_items = items;
             return Err(error);
         }
-        Ok(CandidateList::from_vec(items)
-            .with_unreadable_count(self.scan_unreadable)
-            .with_ranked_phrase_row(self.scan_ranked_phrase))
+        let list = CandidateList::from_vec(items);
+        #[cfg(test)]
+        let list = list.with_unreadable_count(self.scan_unreadable);
+        Ok(list)
     }
 
     /// Builds the candidate window over spans ENDING at byte `offset` in the
@@ -1162,7 +1157,6 @@ where
         // keys as it appends the rows.
         rank_keys.clear();
         let mut unreadable = 0;
-        let mut ranked_phrase = false;
 
         for start in 0..bound {
             // The pin ranks each `len` slice on its own, with the previous
@@ -1204,11 +1198,6 @@ where
             if group.is_empty() {
                 continue;
             }
-            // Each `len` slice's rows are scored before the final dedup
-            // (`zhuyin.cpp:1607` against `:1630`).
-            ranked_phrase |= group
-                .iter()
-                .any(|candidate| candidate.kind() == CandidateKind::Phrase);
             // Every row of this slice spans `[start, offset)` — the pin's
             // `template_item.m_begin = start; m_end = offset`
             // (`zhuyin.cpp:1595`). The retained matrix's coordinates are
@@ -1250,8 +1239,10 @@ where
         // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
         dedup_ranked_by_text(out, rank_keys);
 
-        self.scan_unreadable = unreadable;
-        self.scan_ranked_phrase = ranked_phrase;
+        #[cfg(test)]
+        {
+            self.scan_unreadable = unreadable;
+        }
         self.prepend_nbest_rows(out);
         Ok(())
     }
