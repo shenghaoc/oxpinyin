@@ -41,7 +41,7 @@ pub unsafe extern "C" fn zhuyin_parse_full_pinyin(
     onekey: *mut ChewingKey,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false, onepinyin, onekey);
-    let text = oxpinyin::marshal::scalar_text(
+    let text = oxpinyin::facade::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onepinyin) },
@@ -94,7 +94,7 @@ pub unsafe extern "C" fn zhuyin_parse_chewing(
     onekey: *mut ChewingKey,
 ) -> bool {
     let inst = borrow_or_return!(instance, instance_ref, false, onechewing, onekey);
-    let text = oxpinyin::marshal::scalar_text(
+    let text = oxpinyin::facade::scalar_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(onechewing) },
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_string(
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
     // aligned and writable, and a non-NULL key is valid for reads. Access must not conflict
     // with live borrows.
-    unsafe { display_string_getter(key, utf8_str, oxpinyin::parser::ChewingKey::zhuyin_text) }
+    unsafe { display_string_getter(key, utf8_str, oxpinyin::facade::ChewingKey::zhuyin_text) }
 }
 
 // zhuyin.cpp:1743-1766.
@@ -177,7 +177,7 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
     }
     // The scheme lives in the context's shared live options, read through the
     // instance; pass it into the closure so the shared getter can dispatch.
-    let render = |core: oxpinyin::parser::ChewingKey| {
+    let render = |core: oxpinyin::facade::ChewingKey| {
         // SAFETY: Handles guarantees the NULL-checked instance is live.
         // Serial calls excludes mutation; no other view is held while
         // this closure reads the scheme.
@@ -187,9 +187,9 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
             .full_scheme
             .get();
         match scheme {
-            oxpinyin::parser::FullPinyinScheme::Luoma => core.luoma_pinyin_text(),
-            oxpinyin::parser::FullPinyinScheme::SecondaryZhuyin => core.secondary_zhuyin_text(),
-            oxpinyin::parser::FullPinyinScheme::Hanyu => core.pinyin_text(),
+            oxpinyin::facade::FullPinyinScheme::Luoma => core.luoma_pinyin_text(),
+            oxpinyin::facade::FullPinyinScheme::SecondaryZhuyin => core.secondary_zhuyin_text(),
+            oxpinyin::facade::FullPinyinScheme::Hanyu => core.pinyin_text(),
         }
     };
     // SAFETY: The entry point guarantees Out-parameters and Borrowed objects: a non-NULL output is
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn zhuyin_get_pinyin_string(
 unsafe fn display_string_getter(
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
-    render: impl FnOnce(oxpinyin::parser::ChewingKey) -> oxpinyin::parser::KeyText,
+    render: impl FnOnce(oxpinyin::facade::ChewingKey) -> oxpinyin::facade::KeyText,
 ) -> bool {
     // Guard both pointers before the first output write (row 41).
     if key.is_null() || utf8_str.is_null() {

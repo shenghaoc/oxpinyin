@@ -6,7 +6,7 @@ use std::mem::MaybeUninit;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 
-use oxpinyin::parser::KeyText;
+use oxpinyin::facade::KeyText;
 
 // `void *malloc(size_t)` and `void free(void *)` from the host's libc. The
 // C consumer links GLib, which itself links libc, so these symbols are already
@@ -218,7 +218,7 @@ pub(crate) fn symbol_vector(items: &[impl AsRef<str>]) -> *mut *mut c_char {
 /// result are then freed (`:66-67`). GLib aborts if its own allocation
 /// fails. NULL when every conversion failed.
 pub(crate) fn sentence_text(
-    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<oxpinyin::marshal::SentencePhrase>>,
+    phrases: impl IntoIterator<Item = impl core::borrow::Borrow<oxpinyin::facade::SentencePhrase>>,
 ) -> *mut c_char {
     let mut result: *mut c_char = ptr::null_mut();
     for phrase in phrases {
@@ -266,7 +266,7 @@ pub(crate) fn sentence_text(
 /// with no warning and no abort; it also answers NULL when `fill` wrote
 /// another length. `fill` writes each of the `len` bytes into the
 /// uninitialized buffer, none of them NUL: every caller writes phrase text,
-/// whose bytes hold no NUL (`oxpinyin::marshal::phrase_text_bytes`,
+/// whose bytes hold no NUL (`oxpinyin::facade::phrase_text_bytes`,
 /// `write_stored_words_utf8`). The buffer is neither zeroed nor scanned.
 /// The caller frees the result with `g_free`.
 pub(crate) fn malloc_cstr_with(

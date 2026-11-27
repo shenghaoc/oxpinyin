@@ -13,11 +13,9 @@
 //! 4-value candidate-type enum), and this facade's distinguishing
 //! seeds and sentence-row display law.
 
-use oxpinyin::facade::InstanceCore;
+use oxpinyin::facade::{ContextCore, InstanceCore, OpenFailure};
 use std::path::Path;
 use std::{cell::UnsafeCell, rc::Rc};
-
-use oxpinyin::facade::{ContextCore, OpenFailure};
 
 use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
@@ -42,7 +40,7 @@ impl CapiContext {
                 system_dir,
                 user_dir,
                 oxpinyin::facade::ZHUYIN_DEFAULT_OPTION_WORD,
-                oxpinyin::user::UserConfLaw::Zhuyin,
+                oxpinyin::facade::UserConfLaw::Zhuyin,
             )?,
         })
     }
@@ -57,7 +55,7 @@ impl CapiContext {
         self.core
             .runtime
             .session(&mut core.session)
-            .set_law(oxpinyin::engine::Law::Zhuyin);
+            .set_law(oxpinyin::facade::Law::Zhuyin);
         CapiInstance {
             owner,
             core,
@@ -96,7 +94,7 @@ pub(crate) struct CapiCandidate {
     /// also returned when reparsing makes the span refuse.
     pub(crate) span_end: u16,
     /// The row's scoring token, `m_token`, which a choose forces.
-    pub(crate) token: Option<oxpinyin::vocab::PhraseToken>,
+    pub(crate) token: Option<oxpinyin::facade::PhraseToken>,
 }
 
 // The row width the doc above claims; a field that grows it shows up here.
@@ -154,7 +152,7 @@ pub(crate) type CapiInstanceMut<'a> =
 
 impl<
     S: std::borrow::Borrow<oxpinyin::facade::InstanceState>,
-    E: std::borrow::Borrow<oxpinyin::engine::SessionState>,
+    E: std::borrow::Borrow<oxpinyin::facade::SessionState>,
     V: std::borrow::Borrow<CapiInstanceState>,
     O: std::borrow::Borrow<ContextOwner>,
 > CapiInstance<oxpinyin::facade::InstanceView<'_, S, E>, V, O>
@@ -276,7 +274,7 @@ pub(crate) unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceM
 pub(crate) unsafe fn train_instance(
     ptr: *mut ZhuyinInstance,
     index: u8,
-) -> Result<bool, oxpinyin::engine::EngineError> {
+) -> Result<bool, oxpinyin::facade::EngineError> {
     // SAFETY: the caller grants this operation exclusive access to the live instance.
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the owner retains the allocation; serialized C calls exclude other readers.

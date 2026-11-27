@@ -7,14 +7,10 @@
 //! and the punctuation prefix of
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
-use oxpinyin::marshal::phrase_text_bytes;
+use oxpinyin::facade::{PhraseText, UserStore, phrase_text_bytes};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::Cell;
 use std::os::raw::c_char;
-
-use oxpinyin::single_gram;
-use oxpinyin::user::UserStore;
-use oxpinyin::vocab::{PhraseText, PhraseToken};
 
 use crate::ffi::borrow_or_return;
 use crate::state::{CapiCandidate, SharedDict, instance_mut};
@@ -36,50 +32,6 @@ struct Predicted {
     token: u32,
     candidate_type: lookup_candidate_type_t,
     frequency: u32,
-}
-
-/// `_compute_predicted_bigram_candidates`'s gram walk (`pinyin.cpp:2321-2341`
-/// at the pin `074a2219`): for the prefixes from last to first, `load` the
-/// prefix's user gram and `merge_single_gram(merged, NULL, user)` — a copy
-/// of it, or, when the prefix has no gram, the previous copy kept — and
-/// stop at the first whose `get_length` is not zero; then `retrieve_all`.
-/// Answers the items in stored order, duplicates included, or the one
-/// warning a call refuses with where the pin reads past a partial item
-/// tail after a whole item (`retrieve_all`, `ngram.cpp:143`). Where the pin asserts, the process aborts at the same
-/// point of the walk: a value too short for its total (`get_length` reads
-/// it, `memory_chunk.h:390`) and a gram with no whole item
-/// and a total left over (`ngram.cpp:70` via `pinyin.cpp:2332`).
-/// Only the prefixes the walk loads are read; a fault under any other token
-/// is never reached.
-fn predicted_bigram_items(
-    user: &UserStore,
-    prefixes: &[PhraseToken],
-) -> Result<Vec<(u32, u32)>, &'static str> {
-    let mut merged = single_gram::new_gram();
-    for prev in prefixes.iter().rev() {
-        if let Ok(Some(row)) = user.bigram_row(*prev) {
-            // The one-sided merge copies every byte without inspecting the row
-            // (single_gram::merge_single_gram; 074a2219 ngram.cpp:286-290).
-            merged = row;
-        }
-        if single_gram::get_length(&merged) != 0 {
-            break;
-        }
-        match single_gram::get_total_freq(&merged) {
-            Some(0) => {}
-            None | Some(_) => std::process::abort(),
-        }
-    }
-    if single_gram::get_length(&merged) == 0 {
-        return Ok(Vec::new());
-    }
-    if !(merged.len() - single_gram::TOTAL_LEN).is_multiple_of(single_gram::ITEM_LEN) {
-        return Err(
-            "pinyin_guess_predicted_candidates: a user bigram value has a partial item tail \
-             (upstream reads past it, ngram.cpp:143)",
-        );
-    }
-    Ok(single_gram::retrieve_all(&merged).collect())
 }
 
 /// Fill the candidate snapshot, returning false for a missing prefix.
@@ -112,7 +64,7 @@ fn guess_predicted_result(
     // gram the pin reads past in its walk is refused here: one warning and
     // `false`, with the candidate list left empty in both APIs (the short
     // and the residual-total grams abort inside the walk).
-    let successors = predicted_bigram_items(inst.core.user, prefixes)?;
+    let successors = oxpinyin::facade::predicted_bigram_items(inst.core.user, prefixes)?;
 
     let mut items = Vec::new();
     append_predicted_bigrams(&inst.core.dict, &successors, &mut items);
@@ -160,7 +112,7 @@ fn guess_predicted_result(
 /// Stably rank predicted rows by phrase length and guarded wrapping frequency
 /// (`pinyin.cpp:2440-2445`). Prediction has no pinyin-span key.
 fn sort_predicted(items: &mut [Predicted]) {
-    oxpinyin::engine::rank_by_frequency(items, |row| (row.phrase_length, 0, row.frequency));
+    oxpinyin::facade::rank_by_frequency(items, |row| (row.phrase_length, 0, row.frequency));
 }
 
 /// Whether `prefix` is one of the instance's own candidate strings; if so,
@@ -223,7 +175,7 @@ pub unsafe extern "C" fn pinyin_guess_predicted_candidates(
     if clear_borrowed_prefix(&mut inst, prefix) {
         return false;
     }
-    let prefix = oxpinyin::marshal::prefix_text(
+    let prefix = oxpinyin::facade::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -381,7 +333,7 @@ fn score_predictions(
         {
             std::process::abort();
         }
-        item.frequency = oxpinyin::engine::amplified_frequency(unigram, total, lambda);
+        item.frequency = oxpinyin::facade::amplified_frequency(unigram, total, lambda);
     }
 }
 

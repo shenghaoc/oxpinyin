@@ -9,7 +9,7 @@
 
 use std::os::raw::c_char;
 
-use oxpinyin::engine::CharacterOffset;
+use oxpinyin::facade::CharacterOffset;
 
 use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{instance_mut, instance_ref};
@@ -39,7 +39,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) ->
 
 /// Logs one warning for a lookup that would read past a predecessor's system
 /// or user bigram value. Returns `true` when it logs the warning.
-pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::engine::EngineError) -> bool {
+pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::facade::EngineError) -> bool {
     oxpinyin::facade::refuse_lookup_gram(name, error, crate::ffi::log_warning)
 }
 
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn zhuyin_guess_sentence_with_prefix(
     let mut inst = borrow_or_return!(instance, instance_mut, false);
     // `m_prefixes` becomes `[sentence_start]` and the prefix adds what it
     // converts to (`zhuyin.cpp:949-953`); `None` adds nothing.
-    let prefix = oxpinyin::marshal::prefix_text(
+    let prefix = oxpinyin::facade::prefix_text(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(prefix) },
@@ -207,7 +207,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
     if columns > 0 && offset >= columns {
         std::process::abort();
     }
-    let text = oxpinyin::marshal::utf8_to_ucs4(
+    let text = oxpinyin::facade::utf8_to_ucs4(
         // SAFETY: Strings guarantees valid, unchanged storage.
         // The borrow ends in this statement.
         unsafe { crate::ffi::borrow_c_string(phrase) },
@@ -215,7 +215,7 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
     .unwrap_or_default();
     let char_count = match inst
         .core
-        .character_offset(&text, offset, oxpinyin::engine::Law::Zhuyin)
+        .character_offset(&text, offset, oxpinyin::facade::Law::Zhuyin)
     {
         Ok(CharacterOffset::Found(char_count)) => char_count,
         // The walk's own `false` still stores the length it reached
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn zhuyin_guess_candidates_before_cursor(
 
 #[derive(Clone, Copy)]
 enum CandidateGuessRefusal {
-    Lookup(oxpinyin::engine::EngineError),
+    Lookup(oxpinyin::facade::EngineError),
 }
 
 /// Emit a refused lookup's diagnostic after its instance view is gone.
@@ -332,7 +332,7 @@ fn lookup_window(
     session_offset: usize,
     before_cursor: bool,
     abort_on_rank: bool,
-) -> Result<oxpinyin::engine::CandidateList, CandidateGuessRefusal> {
+) -> Result<oxpinyin::facade::CandidateList, CandidateGuessRefusal> {
     let looked_up = if before_cursor {
         inst.core
             .session
@@ -347,16 +347,16 @@ fn lookup_window(
         // The engine terminates where the pin's toned-initial and
         // short-total asserts fire during the guess; the Kyoto Cabinet
         // read that fails after its size check still arrives here.
-        Err(oxpinyin::engine::EngineError::ReadAfterCheck) => std::process::abort(),
+        Err(oxpinyin::facade::EngineError::ReadAfterCheck) => std::process::abort(),
         Err(
-            error @ (oxpinyin::engine::EngineError::LookupOffsetOutOfRange { .. }
-            | oxpinyin::engine::EngineError::Failure
-            | oxpinyin::engine::EngineError::ZeroKeyOffsetCheck
-            | oxpinyin::engine::EngineError::PinAssert
-            | oxpinyin::engine::EngineError::UnsafeTrainingPredecessor
-            | oxpinyin::engine::EngineError::TrainingAbort
-            | oxpinyin::engine::EngineError::UnsafeLookupPredecessor
-            | oxpinyin::engine::EngineError::UserModel),
+            error @ (oxpinyin::facade::EngineError::LookupOffsetOutOfRange { .. }
+            | oxpinyin::facade::EngineError::Failure
+            | oxpinyin::facade::EngineError::ZeroKeyOffsetCheck
+            | oxpinyin::facade::EngineError::PinAssert
+            | oxpinyin::facade::EngineError::UnsafeTrainingPredecessor
+            | oxpinyin::facade::EngineError::TrainingAbort
+            | oxpinyin::facade::EngineError::UnsafeLookupPredecessor
+            | oxpinyin::facade::EngineError::UserModel),
         ) => {
             inst.state.candidates.clear();
             return Err(CandidateGuessRefusal::Lookup(error));
@@ -389,7 +389,7 @@ fn guess_candidates_result(
     // register row 66).
     let normalized = inst
         .core
-        .abi_candidate_offset(offset, oxpinyin::engine::Law::Zhuyin)
+        .abi_candidate_offset(offset, oxpinyin::facade::Law::Zhuyin)
         .unwrap_or_else(|_| std::process::abort());
     // The before-cursor entry searches the spans ENDING at the offset
     // (the engine's backward-anchored window builder, the pin's
@@ -430,7 +430,7 @@ fn guess_candidates_result(
     // general, and the caller would commit a row it never displayed. The
     // anchor is the buffer start rather than the lookup offset because the
     // ending-at window is END-anchored; see
-    // `oxpinyin::engine::BEFORE_CURSOR_ANCHOR`.
+    // `oxpinyin::facade::BEFORE_CURSOR_ANCHOR`.
     let searched_here = !sentence_rows_only
         && (!before_cursor
             || inst.core.zhuyin_parse().is_none_or(|parse| {
@@ -445,7 +445,7 @@ fn guess_candidates_result(
     // later `zhuyin_choose_candidate` selects; the window's storage then
     // goes back to the session.
     let window_anchor = if before_cursor {
-        oxpinyin::engine::BEFORE_CURSOR_ANCHOR
+        oxpinyin::facade::BEFORE_CURSOR_ANCHOR
     } else {
         session_offset
     };

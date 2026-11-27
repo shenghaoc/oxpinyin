@@ -6,7 +6,7 @@
 //! [`zhuyin_unload_phrase_library`]. [`zhuyin_mask_out`] removes matching
 //! user data.
 
-use oxpinyin::vocab::{PHRASE_INDEX_LIBRARY_COUNT, TSI_DICTIONARY};
+use oxpinyin::facade::{PHRASE_INDEX_LIBRARY_COUNT, TSI_DICTIONARY};
 use std::os::raw::c_int;
 
 use crate::ffi::borrow_or_return;
@@ -41,7 +41,7 @@ pub unsafe extern "C" fn zhuyin_set_chewing_scheme(
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
     let Some(scheme) = oxpinyin::facade::zhuyin_scheme(scheme)
-        .filter(|scheme| *scheme != oxpinyin::parser::ZhuyinScheme::StandardDvorak)
+        .filter(|scheme| *scheme != oxpinyin::facade::ZhuyinScheme::StandardDvorak)
     else {
         // Register rows 5c and 5d: the dvorak slot (7) falls through to
         // `zhuyin_parser2.cpp:295`, every out-of-enum value to

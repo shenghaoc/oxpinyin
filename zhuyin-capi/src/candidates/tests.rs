@@ -7,7 +7,7 @@ use crate::candidates::{
     zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate, zhuyin_get_n_candidate,
     zhuyin_train,
 };
-use oxpinyin::model::Dictionary as _;
+use oxpinyin::facade::Dictionary as _;
 
 use crate::context::{zhuyin_fini, zhuyin_save};
 
@@ -370,7 +370,8 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
             .join(oxpinyin::data::user_files::UserDbm::Bigram.file_name())
             .is_file()
     );
-    let conf = oxpinyin::data::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
+    let conf =
+        oxpinyin::facade::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let marker =
         oxpinyin::data::user_files::UserTableInfo::load_path(&user_dir.path.join("user.conf"))
             .expect("saved user.conf");

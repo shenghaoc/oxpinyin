@@ -686,7 +686,7 @@ pub(crate) unsafe fn take_exported_row(
 
 /// The packed key of `spelling` at `tone`, as an addon item stores it.
 pub(crate) fn packed_key(spelling: &str, tone: u8) -> u16 {
-    oxpinyin::parser::ChewingKey::from_pinyin(spelling)
+    oxpinyin::facade::ChewingKey::from_pinyin(spelling)
         .expect("frozen syllable")
         .with_tone(tone)
         .to_packed()

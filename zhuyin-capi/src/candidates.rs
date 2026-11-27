@@ -13,10 +13,8 @@
 //! [`lookup_candidate_type_t`].
 //! Its discriminants differ from the pinyin candidate enum.
 
-use oxpinyin::marshal::{phrase_text_bytes, phrase_text_len};
+use oxpinyin::facade::{CandidateKind, phrase_text_bytes, phrase_text_len};
 use std::os::raw::c_int;
-
-use oxpinyin::engine::CandidateKind;
 
 use crate::ffi::{borrow_or_return, write_if_nonnull};
 use crate::state::{CapiCandidate, candidate_ptr, candidate_ref, instance_mut, instance_ref};
@@ -229,7 +227,7 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
             begin,
             end,
             token,
-            text: oxpinyin::engine::RowText::Resolve,
+            text: oxpinyin::facade::RowText::Resolve,
         }),
         None => inst.core.refuse_selection(),
     };
@@ -299,7 +297,7 @@ pub unsafe extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 
 /// `zhuyin_train`'s answer for its training result: the process aborts where the
 /// pin dies, and a refused over-read is `false` with one warning.
-fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
+fn train_answer(result: Result<bool, oxpinyin::facade::EngineError>) -> bool {
     use oxpinyin::facade::TrainingRefusal;
     match oxpinyin::facade::training_answer(result) {
         Ok(trained) => trained,
@@ -322,13 +320,13 @@ fn train_answer(result: Result<bool, oxpinyin::engine::EngineError>) -> bool {
 /// law. `None` keeps every candidate (the after-cursor window). `anchor` is
 /// the session-coordinate origin the window's rows are measured from (the
 /// lookup offset, the composition offset, or
-/// [`oxpinyin::engine::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
+/// [`oxpinyin::facade::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
 /// start is `anchor + span_start()`. `sentence_rows_only` keeps the
 /// sentence rows and nothing else — the after-cursor window at a mid-key
 /// offset, where the pin's matrix column is empty (issue #577).
 pub(crate) fn snapshot_candidates(
     inst: &mut crate::state::CapiInstanceMut<'_>,
-    window: &oxpinyin::engine::CandidateList,
+    window: &oxpinyin::facade::CandidateList,
     before_cursor: bool,
     before_end: Option<usize>,
     anchor: usize,

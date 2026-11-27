@@ -124,7 +124,7 @@ pub(crate) fn ucs4(text: &str) -> Vec<u8> {
 pub(crate) mod contract_data;
 
 use crate::types::lookup_candidate_type_t;
-use oxpinyin::user::UserStore;
+use oxpinyin::facade::UserStore;
 use std::ptr;
 
 /// Read the live store for one assertion; no storage reference escapes.
@@ -155,7 +155,7 @@ pub(crate) unsafe fn with_store<R>(
 /// As [`with_store`].
 pub(crate) unsafe fn with_dict<R>(
     instance: *mut PinyinInstance,
-    read: impl FnOnce(&oxpinyin::runtime::RuntimeDict<'_>) -> R,
+    read: impl FnOnce(&oxpinyin::facade::RuntimeDict<'_>) -> R,
 ) -> R {
     // SAFETY: as `with_store`'s: a live instance, between serialized C
     // operations. The closure cannot return a borrow into the dictionary.

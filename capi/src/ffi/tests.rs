@@ -1,5 +1,5 @@
 use super::*;
-use oxpinyin::vocab::PhraseText;
+use oxpinyin::facade::PhraseText;
 
 #[test]
 fn ffi_output_helpers_preserve_ownership_and_bytes() {
@@ -25,7 +25,7 @@ fn ffi_output_helpers_preserve_ownership_and_bytes() {
     assert!(symbol_vector(&[] as &[&str]).is_null());
 
     let sentence = sentence_text(
-        ["你", "好"].map(|text| oxpinyin::marshal::SentencePhrase::Text(PhraseText::from(text))),
+        ["你", "好"].map(|text| oxpinyin::facade::SentencePhrase::Text(PhraseText::from(text))),
     );
     // SAFETY: The helper returned a NUL-terminated GLib string.
     let sentence_bytes = unsafe { CStr::from_ptr(sentence) }.to_bytes();

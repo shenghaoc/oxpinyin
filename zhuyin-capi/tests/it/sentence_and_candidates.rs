@@ -113,7 +113,7 @@ fn an_nbest_row_with_no_converted_phrase_answers_true_with_null() {
     let scratch = tempfile::tempdir().expect("scratch");
     let system = private_system(scratch.path());
     let token = 0x0100_0001;
-    let keys = [oxpinyin::parser::ChewingKey::from_packed(0x1081)];
+    let keys = [oxpinyin::facade::ChewingKey::from_packed(0x1081)];
     let items = [(
         1,
         &ChunkItem {

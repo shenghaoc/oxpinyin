@@ -87,7 +87,7 @@ fn remember_stores_a_fuzzy_final_alternate_with_no_table_row() {
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     let token = unsafe { lookup(instance, "甲") }
         .into_iter()
-        .find(|&token| oxpinyin::user::is_user_token(token))
+        .find(|&token| oxpinyin::facade::is_user_token(token))
         .expect("the remembered library-7 token");
     assert_eq!(
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.

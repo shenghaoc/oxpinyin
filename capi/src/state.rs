@@ -19,12 +19,12 @@ use std::{
 };
 
 use oxpinyin::OptionBits;
-use oxpinyin::vocab::{PHRASE_INDEX_LIBRARY_COUNT, PhraseToken};
+use oxpinyin::facade::{
+    CandidateSnapshot, ContextCore, OpenFailure, PHRASE_INDEX_LIBRARY_COUNT, PhraseToken,
+    SnapshotRow, TextSpan,
+};
 
-pub(crate) use oxpinyin::facade::InstanceCore;
-use oxpinyin::facade::{CandidateSnapshot, SnapshotRow, TextSpan};
-use oxpinyin::facade::{ContextCore, OpenFailure};
-pub(crate) use oxpinyin::runtime::RuntimeDict as SharedDict;
+pub(crate) use oxpinyin::facade::{InstanceCore, RuntimeDict as SharedDict};
 
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
@@ -59,7 +59,7 @@ impl CapiContext {
             system_dir,
             user_dir,
             oxpinyin::facade::PINYIN_DEFAULT_OPTION_WORD,
-            oxpinyin::user::UserConfLaw::Pinyin,
+            oxpinyin::facade::UserConfLaw::Pinyin,
         )?;
         // Use the `gfloat` scanned by `table_info.cpp:220` directly.
         let predicted_lambda = core.runtime.table_conf().lambda_f32();
@@ -111,7 +111,7 @@ impl CapiContext {
                 std::process::abort()
             }
             Err(oxpinyin::facade::LibraryRowAssert::NullChunkName) => {
-                Err(oxpinyin::data::TableConfSite::NullSystemFile.warning())
+                Err(oxpinyin::facade::TableConfSite::NullSystemFile.warning())
             }
         }
     }
@@ -244,7 +244,7 @@ pub(crate) type CapiInstanceMut<'a> =
 
 impl<
     S: std::borrow::Borrow<oxpinyin::facade::InstanceState>,
-    E: std::borrow::Borrow<oxpinyin::engine::SessionState>,
+    E: std::borrow::Borrow<oxpinyin::facade::SessionState>,
     V: std::borrow::Borrow<CapiInstanceState>,
     O: std::borrow::Borrow<ContextOwner>,
 > CapiInstance<oxpinyin::facade::InstanceView<'_, S, E>, V, O>
@@ -369,7 +369,7 @@ pub(crate) unsafe fn instance_mut<'a>(ptr: *mut PinyinInstance) -> CapiInstanceM
 pub(crate) unsafe fn train_instance(
     ptr: *mut PinyinInstance,
     index: u8,
-) -> Result<bool, oxpinyin::engine::EngineError> {
+) -> Result<bool, oxpinyin::facade::EngineError> {
     // SAFETY: the caller grants this operation exclusive access to the live instance.
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the owner retains the allocation; serialized C calls exclude other readers.

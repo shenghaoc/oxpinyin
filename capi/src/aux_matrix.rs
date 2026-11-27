@@ -21,8 +21,7 @@
 //! renderers return `None`, and the entry points abort the process before
 //! rendering where the pin does (`text.rs`).
 
-use oxpinyin::facade::KeyAt;
-use oxpinyin::parser::ChewingKey;
+use oxpinyin::facade::{ChewingKey, KeyAt};
 
 /// Which spelling the prefix and postfix keys take.
 #[derive(Clone, Copy, PartialEq, Eq)]

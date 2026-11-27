@@ -4,7 +4,7 @@
 )]
 
 use crate::test_support::{Fixture, n_candidate};
-use oxpinyin::model::Dictionary as _;
+use oxpinyin::facade::{Dictionary as _, PhraseText};
 
 use crate::test_support::{alloc, open_at, parse, wrap_facade_total_to_zero};
 
@@ -23,7 +23,6 @@ use crate::test_support::{TempUserDir, assert_aborts, cstr, open};
 use crate::types::PinyinInstance;
 
 use oxpinyin::OptionBits;
-use oxpinyin::vocab::PhraseText;
 
 /// With the facade total wrapped to zero, the candidate guess aborts in
 /// the scorer.
@@ -90,7 +89,7 @@ fn the_character_offset_after_a_separator_aborts() {
             // uses it.
             let walk = unsafe { crate::state::instance_ref(fixture.instance()) }
                 .core
-                .character_offset(&"你好".into(), 3, oxpinyin::engine::Law::Pinyin);
+                .character_offset(&"你好".into(), 3, oxpinyin::facade::Law::Pinyin);
             // Not `eprintln!`: libtest captures it and the abort drops it.
             writeln!(std::io::stderr(), "walk: {walk:?}").expect("write to stderr");
             let mut length = 0;
@@ -121,7 +120,7 @@ fn a_read_failure_after_the_size_check_aborts() {
     crate::test_support::assert_aborts(
         "sentence::tests::a_read_failure_after_the_size_check_aborts",
         || {
-            let error = oxpinyin::engine::EngineError::ReadAfterCheck;
+            let error = oxpinyin::facade::EngineError::ReadAfterCheck;
             crate::sentence::refuse_lookup_gram("pinyin_phrase_segment", &error);
         },
     );
@@ -133,7 +132,7 @@ fn a_read_failure_after_the_size_check_aborts() {
 /// pin's NULL.
 #[test]
 fn the_chain_joins_each_phrase_and_no_phrase_is_null() {
-    use oxpinyin::marshal::SentencePhrase;
+    use oxpinyin::facade::SentencePhrase;
     // Item words `g_ucs4_to_utf8` refuses: a word at or above 0x8000_0000
     // before the first zero.
     let null = || SentencePhrase::Words([0x4f60, 0x8000_0000].into_iter().collect());

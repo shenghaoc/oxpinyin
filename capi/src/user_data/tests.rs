@@ -20,8 +20,7 @@ use crate::types::PinyinInstance;
 
 use crate::user_data::pinyin_remember_user_input;
 
-use oxpinyin::user::UserStore;
-use oxpinyin::vocab::{USER_DICTIONARY, phrase_index_make_token};
+use oxpinyin::facade::{USER_DICTIONARY, UserStore, phrase_index_make_token};
 
 const FIRST_USER_TOKEN: u32 = phrase_index_make_token(USER_DICTIONARY, 1);
 
@@ -60,10 +59,10 @@ unsafe fn import_readings(
 /// The readings of the item the dictionary resolves for `token`, as packed
 /// keys and frequencies in stored order.
 fn item_readings(
-    dict: &oxpinyin::runtime::RuntimeDict<'_>,
+    dict: &oxpinyin::facade::RuntimeDict<'_>,
     token: u32,
 ) -> Option<Vec<(Vec<u16>, u32)>> {
-    oxpinyin::model::Dictionary::read_phrase_item(dict, token, |item| {
+    oxpinyin::facade::Dictionary::read_phrase_item(dict, token, |item| {
         item.pronunciations()
             .map(|reading| {
                 let keys = reading.keys.as_chunks::<2>().0;
@@ -105,7 +104,7 @@ fn remember_user_input_keeps_the_double_pinyin_tone() {
     use crate::config::pinyin_set_double_pinyin_scheme;
     use crate::parse::pinyin_parse_more_double_pinyins;
 
-    let ni3 = oxpinyin::parser::ChewingKey::from_pinyin("ni")
+    let ni3 = oxpinyin::facade::ChewingKey::from_pinyin("ni")
         .expect("ni is a key")
         .with_tone(3)
         .to_packed();
@@ -208,7 +207,7 @@ fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
         2
     );
 
-    for length in [0, oxpinyin::vocab::MAX_PHRASE_LENGTH, 65_536] {
+    for length in [0, oxpinyin::facade::MAX_PHRASE_LENGTH, 65_536] {
         assert!(!unsafe {
             pinyin_remember_user_input(instance, cstr("你".repeat(length)).as_ptr(), 1)
         });

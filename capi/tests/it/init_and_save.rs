@@ -467,7 +467,7 @@ fn utf8_c_api_paths_open_cjk_directories_and_files() {
     unsafe {
         pinyin_end_add_phrases(pinyin_begin_add_phrases(
             context,
-            oxpinyin::vocab::USER_DICTIONARY,
+            oxpinyin::facade::USER_DICTIONARY,
         ))
     };
     assert!(unsafe { pinyin_save(context) });

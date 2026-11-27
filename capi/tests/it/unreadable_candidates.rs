@@ -24,7 +24,7 @@ mod chunk_fixture;
 
 mod fixture {
     use oxpinyin::data::row_format::pinyin_index::{encode_complete_key, encode_item};
-    use oxpinyin::parser::ChewingKey;
+    use oxpinyin::facade::ChewingKey;
     use oxpinyin::store::{DefaultStore, WriteStore};
     use std::{fs, path::Path};
 
