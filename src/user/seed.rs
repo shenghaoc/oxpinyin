@@ -11,24 +11,24 @@
 
 /// First-selection seed: the increment applied the first time a token is
 /// recorded after a given predecessor. `23 * 3` in the pinned source (§2).
-pub const INITIAL_SEED: u64 = 23 * 3; // 69
+pub const INITIAL_SEED: u32 = 23 * 3; // 69
 
 /// Multiplier applied to the prior stored count on each reselection (§2).
-pub const EXPAND_FACTOR: u64 = 2;
+pub const EXPAND_FACTOR: u32 = 2;
 
 /// Upper bound on a single reselection seed. `23 * 15 * 64` in the source (§2).
-pub const CEILING_SEED: u64 = 23 * 15 * 64; // 22080
+pub const CEILING_SEED: u32 = 23 * 15 * 64; // 22080
 
 /// Multiplier turning a bigram seed into the phrase-index unigram delta (§2).
-pub const UNIGRAM_FACTOR: u64 = 7;
+pub const UNIGRAM_FACTOR: u32 = 7;
 
 /// Training seed for a `(last_token -> token)` selection (the `pinyin_train`
 /// path, §2).
 ///
-/// An absent count uses [`INITIAL_SEED`]. For a recorded pair, narrows the
-/// previous count to `u32`, applies the initial-seed minimum, doubles with
-/// wrapping `u32` arithmetic, and caps the result at [`CEILING_SEED`].
-/// Returns the widened result (`074a2219 phonetic_lookup.h:892-894`).
+/// An absent count uses [`INITIAL_SEED`]. For a recorded pair, applies the
+/// initial-seed minimum to the previous `guint32` count, doubles it with
+/// wrapping `u32` arithmetic, and caps the result at [`CEILING_SEED`]
+/// (`074a2219 phonetic_lookup.h:892-894`).
 ///
 /// Note the growth is not a literal doubling of the *count*: because the store
 /// adds this seed to `prev_count`, the stored count roughly triples per
@@ -36,14 +36,11 @@ pub const UNIGRAM_FACTOR: u64 = 7;
 /// `prev_count`, exactly as §2 specifies. Seeds run 69, 138, 414, 1242, …,
 /// clamping to 22080.
 #[must_use]
-pub fn training_seed(prev_count: Option<u64>) -> u64 {
+pub fn training_seed(prev_count: Option<u32>) -> u32 {
     prev_count.map_or(INITIAL_SEED, |freq| {
-        u64::from(
-            (freq as u32)
-                .max(INITIAL_SEED as u32)
-                .wrapping_mul(EXPAND_FACTOR as u32)
-                .min(CEILING_SEED as u32),
-        )
+        freq.max(INITIAL_SEED)
+            .wrapping_mul(EXPAND_FACTOR)
+            .min(CEILING_SEED)
     })
 }
 
@@ -51,14 +48,15 @@ pub fn training_seed(prev_count: Option<u64>) -> u64 {
 /// `pinyin_choose_predicted_candidate` path, §2): always [`INITIAL_SEED`],
 /// never the reselection expansion.
 #[must_use]
-pub const fn predicted_seed() -> u64 {
+pub const fn predicted_seed() -> u32 {
     INITIAL_SEED
 }
 
-/// Multiplies the seed by [`UNIGRAM_FACTOR`], saturating at `u64::MAX`.
+/// Multiplies the seed by [`UNIGRAM_FACTOR`]. Every seed is at most
+/// [`CEILING_SEED`], so the product (at most 154560) fits.
 #[must_use]
-pub const fn unigram_delta(seed: u64) -> u64 {
-    seed.saturating_mul(UNIGRAM_FACTOR)
+pub const fn unigram_delta(seed: u32) -> u32 {
+    seed * UNIGRAM_FACTOR
 }
 
 #[cfg(test)]

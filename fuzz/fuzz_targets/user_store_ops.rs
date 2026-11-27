@@ -332,11 +332,15 @@ fn observe_selection(store: &mut UserStore, prev: u32, cur: u32) {
         .expect("selection observation");
     let after = Row::read(store, prev);
     assert!(
-        seed <= CEILING_SEED,
+        seed <= u64::from(CEILING_SEED),
         "a training seed is at most CEILING_SEED, not {seed}"
     );
     let Some(count) = before.count(cur) else {
-        assert_eq!(seed, INITIAL_SEED, "an absent pair trains the initial seed");
+        assert_eq!(
+            seed,
+            u64::from(INITIAL_SEED),
+            "an absent pair trains the initial seed"
+        );
         if before.total + seed > U32_MAX {
             assert_eq!(after, before, "a refused training changes nothing");
         } else {
@@ -371,7 +375,11 @@ fn observe_predicted(store: &mut UserStore, law: &mut Law, prev: u32, cur: u32) 
     let before = Row::read(store, prev);
     match store.observe_predicted(prev, cur) {
         Ok(seed) => {
-            assert_eq!(seed, INITIAL_SEED, "a prediction trains the flat seed");
+            assert_eq!(
+                seed,
+                u64::from(INITIAL_SEED),
+                "a prediction trains the flat seed"
+            );
             let after = Row::read(store, prev);
             let wrap = |value: u64| (value + seed) % (U32_MAX + 1);
             assert_eq!(

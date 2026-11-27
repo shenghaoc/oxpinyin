@@ -11,7 +11,7 @@ use super::*;
 #[case::below_the_wrap(Some(0x7fff_ffff), 22080)]
 #[case::on_the_wrap(Some(0x8000_0000), 0)]
 #[case::above_the_wrap(Some(0x8000_0001), 2)]
-#[case::u32_max(Some(u64::from(u32::MAX)), 22080)]
-fn training_seed_follows_the_pinned_formula(#[case] prev: Option<u64>, #[case] seed: u64) {
+#[case::u32_max(Some(u32::MAX), 22080)]
+fn training_seed_follows_the_pinned_formula(#[case] prev: Option<u32>, #[case] seed: u32) {
     assert_eq!(training_seed(prev), seed);
 }
