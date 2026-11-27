@@ -28,7 +28,7 @@ use crate::engine::nbest::NbestRow;
 /// as a token and resolved at read time. A fallback row without decoded
 /// spans keeps its typed text.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SentencePart {
+pub(crate) enum SentencePart {
     /// A phrase token, resolved through the live phrase index on each read.
     Token(PhraseToken),
     /// Text that has no token: a typed but unselected gap.

@@ -173,7 +173,7 @@ impl Candidate {
 
     /// The text as `str`, when every stored word was a scalar value.
     #[must_use]
-    pub fn text_str(&self) -> Option<&str> {
+    pub(crate) fn text_str(&self) -> Option<&str> {
         self.text.as_str()
     }
 
@@ -181,7 +181,7 @@ impl Candidate {
     /// (`_compute_phrase_length` at the pin): a zero or a non-scalar word
     /// leaves it unchanged.
     #[must_use]
-    pub fn phrase_length(&self) -> usize {
+    pub(crate) fn phrase_length(&self) -> usize {
         self.text.phrase_length()
     }
 
@@ -233,7 +233,7 @@ impl Candidate {
     /// The selection record indexes `Session`'s n-best rows by this rank —
     /// never by list position, which the NBEST-wins dedup can shift.
     #[must_use]
-    pub const fn nbest_row(&self) -> Option<u8> {
+    pub(crate) const fn nbest_row(&self) -> Option<u8> {
         self.nbest_index
     }
 }

@@ -322,7 +322,7 @@ impl DoublePinyinParser {
     /// bytes. The two-letter lookup supplies its own spelling corrections and ignores the
     /// caller's pinyin correction and ambiguity bits.
     #[must_use]
-    pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
+    pub(crate) fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         let options = options - (OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_AMB_ALL);
         let (syllable, tone) = probe_one_key(input, options, self.tables()?)?;
         Some(ChewingKey::from_pinyin(syllable.text())?.with_tone(tone))
@@ -1057,7 +1057,7 @@ impl ZhuyinParser {
     /// with [`OptionBits::USE_TONE`]. The discrete keyboards require a tone whenever forced
     /// tone is set.
     #[must_use]
-    pub fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
+    pub(crate) fn parse_one_key(&self, options: OptionBits, input: &[u8]) -> Option<ChewingKey> {
         // The probe takes this path's own option word, not the batch parse's.
         let options = options - OptionBits::PINYIN_AMB_ALL;
         let probe = KeyProbe {

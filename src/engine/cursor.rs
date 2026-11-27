@@ -375,7 +375,7 @@ pub(crate) fn right_word_offset_over_spans(
 /// The C ABI's `ChewingKey` / `ChewingKeyRest` pair, in engine terms:
 /// [`MatrixKey::key`] and [`MatrixKey::tone`] are what
 /// `pinyin_get_pinyin_string` and its siblings render, and
-/// [`MatrixKey::syllable_start`] / [`MatrixKey::end`] are the pin's
+/// `MatrixKey::syllable_start` / [`MatrixKey::end`] are the pin's
 /// `ChewingKeyRest::m_raw_begin` / `m_raw_end`.
 ///
 /// The start is the key's own syllable start, NOT the graph node it
@@ -429,7 +429,7 @@ impl MatrixKey {
     /// Byte offset where the key's own text begins — the pin's
     /// `ChewingKeyRest::m_raw_begin`.
     #[must_use]
-    pub const fn syllable_start(self) -> usize {
+    pub(crate) const fn syllable_start(self) -> usize {
         self.syllable_start
     }
 

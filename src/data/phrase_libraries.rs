@@ -33,7 +33,7 @@ pub(crate) use crate::data::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 /// rendering surface the export and token-introspection paths need
 /// (`FacadePhraseIndex::get_phrase_item` over
 /// `PhraseItem::get_nth_pronunciation`).
-pub struct LibraryPronunciation {
+pub(crate) struct LibraryPronunciation {
     /// `'`-joined pinyin spelling, tone digits dropped (the consumers
     /// resolve it back to tone-less syllable keys).
     pub(crate) spelling: String,
@@ -190,7 +190,7 @@ impl PhraseLibraries {
 
     /// Drops library `nibble` — `FacadePhraseIndex::unload`. `true` when
     /// a library was loaded there.
-    pub fn unload(&mut self, nibble: u8) -> bool {
+    pub(crate) fn unload(&mut self, nibble: u8) -> bool {
         let Some(loaded) = self
             .by_nibble
             .get_mut(usize::from(nibble))
@@ -300,7 +300,7 @@ impl PhraseLibraries {
     /// (`lookup/lookup.cpp:39-68` at 074a2219): `Some` for a present item
     /// whose text does not convert, with `text` `None`.
     #[must_use]
-    pub fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
+    pub(crate) fn token_phrase(&self, token: u32) -> Option<TokenPhrase> {
         let item = self.library(token)?.item(token)?;
         Some(TokenPhrase {
             phrase_length: item.phrase_length(),
@@ -424,7 +424,7 @@ impl PhraseLibraries {
     /// order — `get_nth_pronunciation` rendered through the chewing key
     /// tables (syllables `'`-joined, no tone digits).
     #[must_use]
-    pub fn pronunciations(&self, token: u32) -> Option<Vec<LibraryPronunciation>> {
+    pub(crate) fn pronunciations(&self, token: u32) -> Option<Vec<LibraryPronunciation>> {
         let library = self.library(token)?;
         let item = library.item(token)?;
         let mut out = Vec::new();

@@ -57,7 +57,7 @@ where
     /// # Errors
     ///
     /// Propagates validation, lookup and refresh errors after clearing the previous results.
-    pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
+    pub(crate) fn guess_sentence(&mut self) -> Result<bool, EngineError> {
         self.guess_sentence_with_prefix(&[])
     }
 

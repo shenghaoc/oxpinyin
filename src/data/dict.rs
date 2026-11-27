@@ -321,7 +321,7 @@ impl SystemDictionary<'_> {
     /// order.
     #[cfg(test)]
     #[must_use]
-    pub fn pronunciations(&self, token: u32) -> Vec<(String, u64)> {
+    pub(crate) fn pronunciations(&self, token: u32) -> Vec<(String, u64)> {
         self.libraries()
             .pronunciations(token)
             .map(|prons| {
@@ -539,7 +539,7 @@ impl SystemDictionary<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
+    pub(crate) fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
         self.fill_lookup(syllables, &mut entries)?;
         Ok(entries)
@@ -599,7 +599,7 @@ impl SystemDictionary<'_> {
     /// record decode (the bit is set whenever the key exists).
     #[cfg(test)]
     #[must_use]
-    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
+    pub(crate) fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
         if syllables.is_empty() {
             return true;
         }
