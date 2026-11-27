@@ -50,9 +50,9 @@ unsafe fn export_an_unspellable_reading(page: *mut u8) {
             .expect("a reading the engine spells");
         // One past `MAX_KEY_TONE`: the add checks lengths only.
         let past_the_tones =
-            oxpinyin::facade::toned_key(syllable("hao"), oxpinyin::user::MAX_KEY_TONE)
+            oxpinyin::facade::toned_key(syllable("hao"), oxpinyin::__internal::user::MAX_KEY_TONE)
                 .expect("key")
-                + (1 << oxpinyin::user::KEY_TONE_SHIFT);
+                + (1 << oxpinyin::__internal::user::KEY_TONE_SHIFT);
         store
             .add_phrase_in(USER_DICTIONARY, &"好".into(), &[past_the_tones], Some(3))
             .expect("stored unchecked");

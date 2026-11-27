@@ -2,7 +2,7 @@ use super::*;
 use std::path::Path;
 
 fn open_table(path: &Path) -> TableFile {
-    let name = oxpinyin::input::c_path(path).unwrap();
+    let name = oxpinyin_tool_support::input::c_path(path).unwrap();
     TableFile::open(&name).unwrap()
 }
 
@@ -32,8 +32,8 @@ fn the_native_chunk_keeps_long_text_and_same_token_readings() {
         .iter()
         .map(|(&slot, item)| (slot, item))
         .collect();
-    let frame = oxpinyin::data::phrase_library::build_chunk(&items).unwrap();
-    oxpinyin::input::chunk::save(&chunk, &frame).unwrap();
+    let frame = oxpinyin::__internal::data::phrase_library::build_chunk(&items).unwrap();
+    oxpinyin::__internal::input::chunk::save(&chunk, &frame).unwrap();
     let library = oxpinyin_tool_support::data::load_heap(&chunk).unwrap();
     let single = library.item(16777222).unwrap();
     assert_eq!(single.phrase_text().unwrap(), "你");

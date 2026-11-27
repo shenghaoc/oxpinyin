@@ -19,11 +19,11 @@ use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxpinyin::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin::data::{DictError, PhraseLibraries};
-use oxpinyin::model::PhraseList;
-use oxpinyin::parser::ChewingKey;
-use oxpinyin::vocab::{NULL_TOKEN, PhraseEntry, PhraseToken, phrase_index_library_index};
+use oxpinyin::__internal::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin::__internal::data::{DictError, PhraseLibraries};
+use oxpinyin::__internal::model::PhraseList;
+use oxpinyin::__internal::vocab::{PhraseEntry, phrase_index_library_index};
+use oxpinyin::facade::{ChewingKey, NULL_TOKEN, PhraseToken};
 use oxpinyin_tool_support::data::PinyinIndexTable;
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::LineReader;
@@ -63,7 +63,7 @@ pub fn main(_args: impl IntoIterator<Item = OsString>) {
             | LibraryError::Unmappable { .. }
             | LibraryError::Row(RowFault::NullChunkName),
         )) => {
-            let c_name = oxpinyin::input::c_path(Path::new(name.as_ref()));
+            let c_name = oxpinyin_tool_support::input::c_path(Path::new(name.as_ref()));
             tool::storage::report_load_failed(c_name.as_deref());
             tool::exit(tool::ENOENT);
         }

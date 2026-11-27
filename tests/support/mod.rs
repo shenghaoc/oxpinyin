@@ -16,9 +16,9 @@ use std::path::Path;
 // The chunk header, section offsets and checksum come from the crate's
 // own shared format module — the fixtures are built with the layout
 // under test, not a second copy of it.
-use oxpinyin::data::chunk_format::chunk_checksum;
-use oxpinyin::data::phrase_library::{FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR};
-use oxpinyin::store::WriteStore;
+use oxpinyin::__internal::data::chunk_format::chunk_checksum;
+use oxpinyin::__internal::data::phrase_library::{FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR};
+use oxpinyin::__internal::store::WriteStore;
 
 /// Builds one phrase-library chunk file from slot → item entries.
 /// One item's pieces: `(unigram, text, pronunciations as (packed

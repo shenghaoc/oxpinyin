@@ -18,7 +18,7 @@
 //! [`KmmGram`] its `KMixtureModelSingleGram`. The `KMMP` magic number is
 //! the pin's `K_MIXTURE_MODEL_MAGIC_NUMBER` (`k_mixture_model.h:115`).
 
-use oxpinyin::store::{BackendError, StoreError};
+use oxpinyin::__internal::store::{BackendError, StoreError};
 use oxpinyin_tool_support::flexible_ngram::{FlexibleBigram, SpecGram};
 
 pub use oxpinyin_tool_support::flexible_ngram::{

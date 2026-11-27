@@ -21,19 +21,18 @@
 //! possibility`, `phrase_index.h:136-164`); it is what keeps a rare
 //! reading (红 read `gong`) from outranking the common phrase.
 //!
-//! It deliberately does not reuse `oxpinyin::engine`'s sentence decode:
+//! It deliberately does not reuse `oxpinyin::__internal::engine`'s sentence decode:
 //! an earlier decode ranked through typing heuristics (segmentation
 //! penalties, phrase bonuses, integer costs), which are not the pin's
 //! probabilities, and the live `eval_correction_rate` gate showed the
 //! difference (0.52 vs 0.88 on a 25-sentence corpus).
 
-use oxpinyin::data::PhraseLibraries;
-use oxpinyin::vocab::{MAX_PHRASE_LENGTH, NULL_TOKEN, SENTENCE_START};
+use oxpinyin::__internal::data::PhraseLibraries;
+use oxpinyin::__internal::vocab::{PhraseEntry, SENTENCE_START};
+use oxpinyin::facade::{ChewingKey, MAX_PHRASE_LENGTH, NULL_TOKEN, PhraseToken};
 use rustc_hash::FxHashMap;
 
-use oxpinyin::model::PhraseList;
-use oxpinyin::parser::ChewingKey;
-use oxpinyin::vocab::{PhraseEntry, PhraseToken};
+use oxpinyin::__internal::model::PhraseList;
 
 use super::model::EvalLanguageModel;
 

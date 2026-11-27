@@ -11,8 +11,8 @@
 
 use std::io::Write;
 
-use oxpinyin::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
-use oxpinyin::data::phrase_library::PhraseLibrary;
+use oxpinyin::__internal::data::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
+use oxpinyin::__internal::data::phrase_library::PhraseLibrary;
 
 /// Writes the chunk to a new file, which is removed when the result drops.
 fn write_chunk(payload: &[u8]) -> tempfile::NamedTempFile {

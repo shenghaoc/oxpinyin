@@ -8,7 +8,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use oxpinyin::vocab::{PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token};
+use oxpinyin::facade::{PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token};
 use oxpinyin_tool_support::data::decode_single_gram;
 use oxpinyin_tool_support::input as tool;
 use oxpinyin_tool_support::input::OutputStream;
@@ -79,7 +79,7 @@ fn gen_unigram(output: &OutputStream, libraries: &Libraries) {
 fn walked_items(
     index: u8,
     library: &Library,
-) -> impl Iterator<Item = (u32, &oxpinyin::data::phrase_library::ChunkItem)> {
+) -> impl Iterator<Item = (u32, &oxpinyin::__internal::data::phrase_library::ChunkItem)> {
     let end = library.range_end & PHRASE_MASK;
     (end > 1)
         .then(|| library.items.range(1..end))

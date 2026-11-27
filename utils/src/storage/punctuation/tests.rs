@@ -1,6 +1,7 @@
 use super::*;
-use oxpinyin::data::{PunctTable, row_format::punct::decode_puncts};
-use oxpinyin::store::{DefaultStore, RawReadStore, WriteStore};
+use oxpinyin::__internal::data::PunctTable;
+use oxpinyin::__internal::data::row_format::punct::decode_puncts;
+use oxpinyin::__internal::store::{DefaultStore, RawReadStore, WriteStore};
 use std::ops::Bound;
 
 #[test]

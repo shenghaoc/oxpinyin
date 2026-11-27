@@ -1,7 +1,6 @@
 //! Builds filenames, converts path encodings, and renames or unlinks files.
 //! [`path_from_bytes`] preserves Unix path bytes and replaces malformed UTF-8 on Windows.
-//! [`crate::input::c_path`]
-//! rejects an interior NUL. [`c_string`] stops at it.
+//! [`c_string`] stops at an interior NUL.
 
 // The native calls are g_build_filename, g_rename and unlink. On Unix g_rename maps to
 // rename; the Windows implementation calls MoveFileExW.

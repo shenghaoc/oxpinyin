@@ -1,5 +1,5 @@
 //! Output allocation and diagnostics for the exposed C boundary.
-//! Input conversion is shared by `oxpinyin::marshal`.
+//! Input conversion is shared by `oxpinyin::__internal::marshal`.
 
 use std::ffi::{CStr, CString};
 use std::mem::MaybeUninit;

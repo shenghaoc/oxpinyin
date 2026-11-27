@@ -20,7 +20,8 @@ use crate::segment::phrase::PhraseSearch;
 use crate::segment::{abort_on_pin_assert, c_string};
 use crate::training::parse_segmented_line;
 use crate::utils_helper::tag_token_text;
-use oxpinyin::vocab::{MAX_PHRASE_LENGTH, NULL_TOKEN, phrase_index_library_index};
+use oxpinyin::__internal::vocab::phrase_index_library_index;
+use oxpinyin::facade::{MAX_PHRASE_LENGTH, NULL_TOKEN};
 
 /// A queued token and its length in characters (`TokenInfo`).
 #[derive(Clone, Copy)]

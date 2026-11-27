@@ -404,7 +404,7 @@ pub(crate) fn snapshot_candidates(
             (0, 0)
         } else {
             // The span ends at a raw-buffer position, which a segment-graph
-            // position bounds (`oxpinyin::graph::MAX_GRAPH_POSITION`).
+            // position bounds (`oxpinyin::__internal::graph::MAX_GRAPH_POSITION`).
             let selection =
                 oxpinyin::facade::SelectionTarget::of_candidate(cand, frame.session_offset, None);
             (

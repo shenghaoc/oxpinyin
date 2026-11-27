@@ -450,7 +450,7 @@ fn an_addon_row_promotes_into_the_receivers_context(#[values(true, false)] same_
         // into it.
         (unsafe { lookup(instance, &text) })
             .into_iter()
-            .filter(|&token| oxpinyin::vocab::phrase_index_library_index(token) == 5)
+            .filter(|&token| oxpinyin::__internal::vocab::phrase_index_library_index(token) == 5)
             .count()
     };
     assert_eq!(promoted(receiver), 0);

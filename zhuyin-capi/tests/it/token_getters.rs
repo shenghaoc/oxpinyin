@@ -65,7 +65,7 @@ fn take_cleared() -> Vec<u32> {
 /// (`zhuyin.cpp:1104-1113`).
 #[test]
 fn a_phrase_glib_cannot_convert_answers_its_length_and_null() {
-    use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
+    use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
 
     let user = TempUserDir::new("user-file-null-text");
     write_user_conf(&user.path, &system_dir());
@@ -121,7 +121,7 @@ fn a_stored_key_word_reads_back_verbatim() {
     payload[at..at + 2].copy_from_slice(&0x8000_u16.to_le_bytes());
     std::fs::write(
         &path,
-        oxpinyin::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        oxpinyin::__internal::data::chunk_format::build_memory_chunk(&payload).expect("frame"),
     )
     .expect("write user.bin");
     let (context, instance) = open_with_user(&user_dir.path);

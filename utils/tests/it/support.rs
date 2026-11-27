@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 #[path = "support/expected.rs"]
 pub mod expected;
-use oxpinyin::store::{DefaultStore, RawReadStore as _};
+use oxpinyin::__internal::store::{DefaultStore, RawReadStore as _};
 use regex::bytes::Regex;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

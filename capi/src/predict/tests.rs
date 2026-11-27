@@ -30,7 +30,7 @@ use crate::test_support::{
 
 use crate::types::lookup_candidate_type_t;
 
-use oxpinyin::vocab::phrase_index_library_index;
+use oxpinyin::__internal::vocab::phrase_index_library_index;
 
 /// Predicted bigram rows on a zero facade total abort in the scorer.
 #[test]

@@ -66,7 +66,7 @@ fn user_conf_round_trips_and_conforms() {
 
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("user.conf");
-    let filename = crate::input::c_path(&path).expect("c path");
+    let filename = std::ffi::CString::new(crate::input::path_to_bytes(&path)).expect("c path");
     assert!(conform.save(&filename));
     let newline = crate::__internal::TEXT_NEWLINE;
     let expected = format!(
@@ -140,7 +140,7 @@ fn user_conf_round_trips_and_conforms() {
 fn a_fresh_zero_version_marker_requires_conformance() {
     let dir = tempfile::tempdir().unwrap();
     let profile = dir.path().join("user.conf");
-    let filename = crate::input::c_path(&profile).unwrap();
+    let filename = std::ffi::CString::new(crate::input::path_to_bytes(&profile)).unwrap();
     let versions = SystemVersions::for_this_build(0, 0);
     let fresh = UserTableInfo {
         binary_format_version: 0,
@@ -160,7 +160,7 @@ fn a_fresh_zero_version_marker_requires_conformance() {
     );
     assert!(reloaded.is_conform(&versions));
     assert_eq!(reloaded, conformed);
-    let directory = crate::input::c_path(dir.path()).unwrap();
+    let directory = std::ffi::CString::new(crate::input::path_to_bytes(dir.path())).unwrap();
     assert!(!UserTableInfo::load(&filename).unwrap().save(&directory));
     assert!(profile.is_file());
 }

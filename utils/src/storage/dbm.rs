@@ -9,12 +9,12 @@
 
 use std::path::Path;
 
-use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::single_gram::encode_single_gram;
+use oxpinyin::__internal::data::row_format::encode_token_key;
+use oxpinyin::__internal::single_gram::encode_single_gram;
 use oxpinyin_tool_support::data::decode_single_gram;
 use oxpinyin_tool_support::input as tool;
 
-use oxpinyin::store::{
+use oxpinyin::__internal::store::{
     AccessMode, DbmKind, DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore,
 };
 

@@ -6,7 +6,7 @@ fn direct_spans_keep_skipped_separators_and_partial_failure() {
     let parsed = parse_direct(
         b"ni3'' hao3  invalid",
         OptionBits::USE_TONE,
-        oxpinyin::engine::Law::Pinyin,
+        oxpinyin::facade::Law::Pinyin,
     );
     assert_eq!(parsed.consumed, 12);
     assert_eq!(
@@ -21,7 +21,7 @@ fn direct_spans_keep_skipped_separators_and_partial_failure() {
     let corrected = parse_direct(
         b"bagn n",
         OptionBits::USE_TONE | OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_INCOMPLETE,
-        oxpinyin::engine::Law::Pinyin,
+        oxpinyin::facade::Law::Pinyin,
     );
     assert_eq!(corrected.consumed, 6);
     assert_eq!(corrected.keys[0].key.pinyin_string(), "bang");
@@ -34,7 +34,7 @@ fn zhuyin_spans_are_utf8_bytes_from_the_shipping_key_parser() {
     let parsed = parse_direct(
         input.as_bytes(),
         OptionBits::USE_TONE,
-        oxpinyin::engine::Law::Zhuyin,
+        oxpinyin::facade::Law::Zhuyin,
     );
     assert_eq!(parsed.consumed, 20);
     assert_eq!(
@@ -45,7 +45,7 @@ fn zhuyin_spans_are_utf8_bytes_from_the_shipping_key_parser() {
             .collect::<Vec<_>>(),
         [0..8, 10..18]
     );
-    let shipping = oxpinyin::parser::parse_zhuyin_direct(input, OptionBits::USE_TONE);
+    let shipping = oxpinyin::facade::parse_zhuyin_direct(input, OptionBits::USE_TONE);
     assert_eq!(shipping.len(), parsed.keys.len());
     for ((key, tone), with_span) in shipping.iter().zip(parsed.keys) {
         assert_eq!(

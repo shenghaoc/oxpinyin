@@ -2,11 +2,9 @@
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
 
+use oxpinyin::__internal::data::{BigramTables, PhraseLibraries, SystemTables};
 use oxpinyin::OptionBits;
-use oxpinyin::data::{BigramTables, PhraseLibraries, SystemTables, TableConf};
-use oxpinyin::engine::EngineError;
-use oxpinyin::parser::ChewingKey;
-use oxpinyin::vocab::{PhraseText, PhraseToken, SyllableKey};
+use oxpinyin::facade::{ChewingKey, EngineError, PhraseText, PhraseToken, SyllableKey, TableConf};
 use oxpinyin_tool_support::input::{self as tool, lookup_tests as output};
 use oxpinyin_tool_support::lookup::{
     LookupRow, PreparedLookup, lookup, phrase_lookup, prepare_lookup,
@@ -24,7 +22,10 @@ fn check(value: bool) {
 fn load(data: &Path, phonetic: bool, bigram: bool) -> Lookup {
     let conf = conf(data);
     Lookup::open(data, &conf, phonetic, bigram).unwrap_or_else(|error| {
-        let name = error.name.as_deref().and_then(oxpinyin::input::c_path);
+        let name = error
+            .name
+            .as_deref()
+            .and_then(oxpinyin_tool_support::input::c_path);
         tool::phrase_tests::open_failed(name.as_deref());
         tool::exit(tool::ENOENT);
     })

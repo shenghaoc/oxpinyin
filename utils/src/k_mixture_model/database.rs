@@ -13,7 +13,7 @@
 use std::ffi::CStr;
 use std::path::PathBuf;
 
-use oxpinyin::store::StoreError;
+use oxpinyin::__internal::store::StoreError;
 use oxpinyin_tool_support::flexible_ngram::{AttachMode, LoadError};
 
 use super::records::{KMixtureModelArrayHeader, KMixtureModelMagicHeader, KmmBigram, KmmGram};

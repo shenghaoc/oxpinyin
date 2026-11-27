@@ -3,7 +3,7 @@
 //! numbering are shared with `gen_pinyin_table` (:90-98, :197-237, :241-334).
 use crate::gen_pinyin_table::{Table, entries};
 use oxpinyin::OptionBits;
-use oxpinyin::parser::{ChewingKey, parse_zhuyin_direct};
+use oxpinyin::facade::{ChewingKey, parse_zhuyin_direct};
 use oxpinyin_tool_support::input::gen_pinyin_table as common;
 use oxpinyin_tool_support::input::gen_zhuyin_table as edge;
 use oxpinyin_tool_support::input::{self as tool, LineReader, OutputStream};

@@ -10,7 +10,7 @@
 //! aborts (`:103-256`, `:307-312`). The header's three `atol` values are
 //! assigned to `guint32` fields, and an empty input is `ENODATA`.
 
-use oxpinyin::vocab::NULL_TOKEN;
+use oxpinyin::facade::NULL_TOKEN;
 use std::ffi::CStr;
 use std::io::BufRead;
 

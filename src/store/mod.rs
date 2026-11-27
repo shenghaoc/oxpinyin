@@ -608,12 +608,8 @@ mod user_bigram {
     pub type DefaultUserBigramDb = super::BdbUserBigramDb;
 }
 
-// Downstream C-ABI fixtures use the native container only with test hooks.
-#[cfg(feature = "test-hooks")]
-#[doc(hidden)]
+// The C crates' fixtures build the native container through `__internal`.
 pub use user_bigram::{DefaultUserBigramDb, UserBigramDb};
-#[cfg(not(feature = "test-hooks"))]
-pub(crate) use user_bigram::{DefaultUserBigramDb, UserBigramDb};
 
 /// Removes `path`; absence is not an error — libpinyin's
 /// `unlink`-before-create, which ignores `ENOENT`.

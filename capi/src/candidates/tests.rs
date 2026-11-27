@@ -45,7 +45,7 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candid
 
 use crate::test_support::promotion_system;
 
-use oxpinyin::vocab::SENTENCE_START;
+use oxpinyin::__internal::vocab::SENTENCE_START;
 
 use std::cell::Cell;
 
@@ -362,7 +362,7 @@ impl Open {
             .system()
             .libraries()
             .library(u32::from(library) << 24)
-            .map(oxpinyin::data::phrase_library::PhraseLibrary::total_freq)
+            .map(oxpinyin::__internal::data::phrase_library::PhraseLibrary::total_freq)
             .expect("the library is mapped")
     }
 
@@ -943,7 +943,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
             .get()
             .expect("promoted candidate carries a token");
         assert_eq!(
-            oxpinyin::vocab::phrase_index_library_index(token),
+            oxpinyin::__internal::vocab::phrase_index_library_index(token),
             oxpinyin::facade::ADDON_DICTIONARY,
             "promoted token lives in default nibble 5"
         );
@@ -1141,7 +1141,7 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
             .expect("art addon offers an ADDON candidate for erhuang");
         let token = cand.token.get().expect("addon token");
         let item = inst.core.dict.addon_phrase_item(token).expect("addon item");
-        let view = oxpinyin::data::phrase_library::PhraseItemView::from_bytes(&item)
+        let view = oxpinyin::__internal::data::phrase_library::PhraseItemView::from_bytes(&item)
             .expect("addon item bytes");
         let keys: Vec<_> = view
             .pronunciation(0)
@@ -1470,7 +1470,7 @@ fn a_promoted_addon_item_keeps_every_toned_reading() {
     let user = TempUserDir::new("addon-promote-toned");
     let (context, instance, promoted) = choose_addon_row(&system, &user.path, "erhuang");
     assert_eq!(
-        oxpinyin::vocab::phrase_index_library_index(promoted),
+        oxpinyin::__internal::vocab::phrase_index_library_index(promoted),
         oxpinyin::facade::ADDON_DICTIONARY
     );
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.

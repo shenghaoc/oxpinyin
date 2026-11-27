@@ -84,15 +84,13 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use oxpinyin::data::TableConf;
-use oxpinyin::data::user_files::{SystemVersions, UserFileLayout};
-use oxpinyin::user::{
-    CEILING_SEED, INITIAL_SEED, LibraryLoopRows, PinyinKey, SystemOriginals, UserConfLaw,
-    UserStore, UserStoreError,
-};
-use oxpinyin::vocab::{
-    NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseText, SyllableKey,
-    USER_DICTIONARY, phrase_index_library_index, phrase_index_make_token,
+use oxpinyin::__internal::data::user_files::{SystemVersions, UserFileLayout};
+use oxpinyin::__internal::user::{CEILING_SEED, LibraryLoopRows, SystemOriginals};
+use oxpinyin::__internal::vocab::phrase_index_library_index;
+use oxpinyin::facade::{
+    INITIAL_SEED, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PhraseText,
+    PinyinKey, SyllableKey, TableConf, USER_DICTIONARY, UserConfLaw, UserStore, UserStoreError,
+    phrase_index_make_token,
 };
 
 const FIRST_USER_TOKEN: u32 = phrase_index_make_token(USER_DICTIONARY, 1);
@@ -238,7 +236,7 @@ fn open_session(dir: &Path) -> UserStore {
     let versions = SystemVersions {
         binary_format_version: 7,
         model_data_version: 14,
-        database_format: oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
+        database_format: oxpinyin::__internal::store::DEFAULT_STORE_DB_FORMAT,
     };
     let check = UserStore::check_profile(dir, &versions, &layout, UserConfLaw::Pinyin);
     let rows = LibraryLoopRows::new(system, conf, Some(dir));

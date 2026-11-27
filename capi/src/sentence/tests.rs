@@ -176,7 +176,7 @@ fn dynamic_ranking_uses_the_longest_retained_prefix(#[values(false, true)] predi
     crate::test_support::plant_bigram(
         &user.path,
         &[
-            (oxpinyin::vocab::SENTENCE_START, hao),
+            (oxpinyin::__internal::vocab::SENTENCE_START, hao),
             (short, hao),
             (long, number),
         ]
@@ -314,7 +314,9 @@ fn corrupt_start_gram_system(scratch: &std::path::Path, value: Vec<u8>) -> std::
     craft_hash(
         &system.join("bigram.db"),
         &[(
-            oxpinyin::vocab::SENTENCE_START.to_le_bytes().to_vec(),
+            oxpinyin::__internal::vocab::SENTENCE_START
+                .to_le_bytes()
+                .to_vec(),
             value,
         )],
     );
@@ -336,7 +338,9 @@ fn a_short_system_gram_merged_with_a_user_gram_aborts_the_segment() {
             crate::test_support::plant_bigram(
                 &user.path,
                 &[(
-                    oxpinyin::vocab::SENTENCE_START.to_le_bytes().to_vec(),
+                    oxpinyin::__internal::vocab::SENTENCE_START
+                        .to_le_bytes()
+                        .to_vec(),
                     crate::test_support::gram_bytes(1, &[(0x0100_0001, 1)]),
                 )],
             );

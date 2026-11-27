@@ -1,9 +1,9 @@
 use super::EvalLanguageModel;
 use crate::storage::Hash;
-use oxpinyin::data::PhraseLibraries;
-use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
-use oxpinyin::data::row_format::encode_token_key;
-use oxpinyin::single_gram::encode_single_gram;
+use oxpinyin::__internal::data::PhraseLibraries;
+use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
+use oxpinyin::__internal::data::row_format::encode_token_key;
+use oxpinyin::__internal::single_gram::encode_single_gram;
 
 #[test]
 fn the_float_probabilities_are_the_stored_ratios() {

@@ -186,7 +186,7 @@ mod frozen {
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n\
                  addon 0 NULL NULL NULL NOT_USED\n\
                  addon 1 source.table addon.bin NULL DICTIONARY\n",
-                    oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
+                    oxpinyin::__internal::store::DEFAULT_STORE_DB_FORMAT,
                 ))
                 .expect("configuration");
             directory
@@ -200,7 +200,7 @@ mod frozen {
                 .success()
                 .stdout("")
                 .stderr("");
-            let expected = oxpinyin::parser::ChewingKey::from_pinyin("ni")
+            let expected = oxpinyin::facade::ChewingKey::from_pinyin("ni")
                 .expect("ni")
                 .with_tone(3)
                 .to_packed()
@@ -230,7 +230,7 @@ mod frozen {
                  default RESERVED NULL NULL NULL NOT_USED\n\
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n\
                  default GBK_DICTIONARY other.table gbk_char.bin NULL DICTIONARY\n",
-                    oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
+                    oxpinyin::__internal::store::DEFAULT_STORE_DB_FORMAT,
                 ))
                 .expect("configuration");
             let rows = [
@@ -282,7 +282,7 @@ mod frozen {
                  source table format:pinyin\ndatabase format:{}\n\
                  default RESERVED NULL NULL NULL NOT_USED\n\
                  default GB_DICTIONARY source.table gb_char.bin NULL SYSTEM_FILE\n",
-                    oxpinyin::store::DEFAULT_STORE_DB_FORMAT,
+                    oxpinyin::__internal::store::DEFAULT_STORE_DB_FORMAT,
                 ))
                 .expect("configuration");
             directory

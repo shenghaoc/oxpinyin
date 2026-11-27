@@ -16,7 +16,7 @@ use crate::segment::data;
 use crate::segment::input::Input;
 use crate::segment::phrase::PhraseSearch;
 use crate::segment::{segment_lines, text_of};
-use oxpinyin::vocab::NULL_TOKEN;
+use oxpinyin::facade::NULL_TOKEN;
 
 /// One `SegmentStep` (`spseg.cpp:65-81`).
 #[derive(Clone, Copy)]

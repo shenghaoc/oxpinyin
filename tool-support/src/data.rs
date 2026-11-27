@@ -1,17 +1,19 @@
 //! Data adapters for the standalone lookup, table, and training commands.
 
+use oxpinyin::__internal::data::chunk_format::chunk_checksum;
+use oxpinyin::__internal::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
+use oxpinyin::__internal::data::{
+    BigramTable, DictError, PhraseLibraries, SystemTables, TableError,
+};
+use oxpinyin::__internal::single_gram::{SingleGramRecord, get_total_freq, retrieve_all};
+use oxpinyin::__internal::store::{
+    AccessMode, DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore,
+};
 use oxpinyin::__internal::{
     ChewingTable, ChunkLoadError, DefaultDbm, LibraryBytes, PhraseTable, RawChewingDbm,
     is_complete, load_chunk, visit_matching_items,
 };
-use oxpinyin::data::chunk_format::chunk_checksum;
-use oxpinyin::data::phrase_library::{LibraryError, PhraseLibrary, RowFault};
-use oxpinyin::data::{BigramTable, DictError, PhraseLibraries, SystemTables, TableError};
-use oxpinyin::parser::ChewingKey;
-use oxpinyin::single_gram::{SingleGramRecord, get_total_freq, retrieve_all};
-use oxpinyin::store::{
-    AccessMode, DefaultStore, RawReadStore, StoreError, SystemAttachment, WriteStore,
-};
+use oxpinyin::facade::ChewingKey;
 use std::path::Path;
 
 fn open_tree(path: &Path) -> Result<ChewingTable, DictError> {
@@ -62,7 +64,8 @@ impl PhraseIndexTable {
         if words.is_empty() {
             return Ok(None);
         }
-        let key = oxpinyin::data::row_format::phrase_index::encode_ucs4_key_scalars(words);
+        let key =
+            oxpinyin::__internal::data::row_format::phrase_index::encode_ucs4_key_scalars(words);
         let Some(value) = self.phrase.present_key(&key)? else {
             return Ok(None);
         };
@@ -140,7 +143,7 @@ pub fn system_key_exists(tables: &SystemTables, keys: &[ChewingKey]) -> Result<b
 /// # Errors
 /// Returns a native DBM construction error.
 pub fn lookup_tables(path: &Path, phonetic: bool) -> Result<SystemTables, DictError> {
-    let attached = DefaultDbm::attach(path, oxpinyin::store::DbmKind::Tree)?;
+    let attached = DefaultDbm::attach(path, oxpinyin::__internal::store::DbmKind::Tree)?;
     let empty = DefaultDbm::new(
         <DefaultStore as WriteStore>::create_in_memory()
             .map_err(|error| DictError::Table(error.into()))?,
@@ -153,7 +156,7 @@ pub fn lookup_tables(path: &Path, phonetic: bool) -> Result<SystemTables, DictEr
     Ok(SystemTables::new(
         ChewingTable::new(pinyin),
         PhraseTable::new(phrase),
-        oxpinyin::data::LibrarySet::new(),
+        oxpinyin::__internal::data::LibrarySet::new(),
     ))
 }
 

@@ -1,8 +1,8 @@
 use super::super::tests::FixtureDictionary;
 use super::{EvalLanguageModel, LibraryPhraseSource, correction_rate};
-use oxpinyin::data::PhraseLibraries;
-use oxpinyin::data::phrase_library::{ChunkItem, build_chunk};
-use oxpinyin::parser::ChewingKey;
+use oxpinyin::__internal::data::PhraseLibraries;
+use oxpinyin::__internal::data::phrase_library::{ChunkItem, build_chunk};
+use oxpinyin::facade::ChewingKey;
 
 // The hand-computable homophone fixture in eval/tests.rs exercises the
 // full decode. These tests cover the error paths.

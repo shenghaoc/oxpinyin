@@ -42,7 +42,7 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
         // SAFETY: `instance` is live and the store borrow ends before close.
         let phrases = unsafe { with_store(instance, |store| store.phrases()) };
         let mut rows = phrases.iter().filter(|row| {
-            oxpinyin::vocab::phrase_index_library_index(row.token()) == USER_DICTIONARY
+            oxpinyin::__internal::vocab::phrase_index_library_index(row.token()) == USER_DICTIONARY
         });
         if added {
             let row = rows.next().expect("stored phrase");
@@ -56,7 +56,7 @@ fn the_import_parser_skips_separator_runs_and_refuses_a_leading_one() {
             let keys: Vec<_> = reading
                 .keys()
                 .iter()
-                .map(|&key| oxpinyin::user::key_pinyin_string(key).expect("stored key"))
+                .map(|&key| oxpinyin::__internal::user::key_pinyin_string(key).expect("stored key"))
                 .collect();
             assert_eq!(keys, ["ni3", "hao3"]);
             assert_eq!(reading.count(), 5);

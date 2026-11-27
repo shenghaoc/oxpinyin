@@ -87,10 +87,10 @@ fn a_file_opens_and_a_missing_one_does_not() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("in.txt");
     std::fs::write(&path, b"x\n").unwrap();
-    let mut input = LineReader::open(&oxpinyin::input::c_path(&path).unwrap());
+    let mut input = LineReader::open(&crate::input::c_path(&path).unwrap());
     assert!(input.is_open() && input.getline());
     assert_eq!(input.line(), b"x");
-    let missing = LineReader::open(&oxpinyin::input::c_path(&dir.path().join("absent")).unwrap());
+    let missing = LineReader::open(&crate::input::c_path(&dir.path().join("absent")).unwrap());
     assert!(!missing.is_open());
 }
 
@@ -220,7 +220,7 @@ fn invalid_utf8_in_a_tool_path_follows_the_platform() {
     #[cfg(unix)]
     assert_eq!(
         path_from_bytes_checked(bytes),
-        Some(oxpinyin::input::path_from_bytes(bytes))
+        Some(oxpinyin::__internal::input::path_from_bytes(bytes))
     );
     #[cfg(not(unix))]
     assert_eq!(path_from_bytes_checked(bytes), None);

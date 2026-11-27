@@ -16,10 +16,9 @@ use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, OsString, c_int};
 
 use oxpinyin::OptionBits;
-use oxpinyin::graph::SegmentGraph;
-use oxpinyin::parser::ChewingKey;
-use oxpinyin::vocab::{
-    MAX_PHRASE_LENGTH, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, phrase_index_make_token,
+use oxpinyin::facade::{
+    ChewingKey, MAX_PHRASE_LENGTH, PHRASE_INDEX_LIBRARY_COUNT, PHRASE_MASK, SegmentGraph,
+    phrase_index_make_token,
 };
 use oxpinyin_tool_support::data::exact_compare2;
 use oxpinyin_tool_support::input::gen_pinyin_table::{self as edge, TableInput};

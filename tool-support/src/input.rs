@@ -667,7 +667,9 @@ impl OutputStream {
 
     /// `fopen(filename, "w")` (`ngseg.cpp:122`); `None` for NULL.
     #[must_use]
-    pub fn open_write(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
+    pub fn open_write(
+        filename: &(impl oxpinyin::__internal::input::FileName + ?Sized),
+    ) -> Option<Self> {
         // SAFETY: `filename` and the mode are NUL-terminated and outlive the
         // call.
         oxpinyin::__internal::fopen(filename, c"w").map(|stream| Self {
@@ -742,7 +744,7 @@ impl LineReader<BufReader<std::fs::File>> {
     /// Opens an input file and returns a reader in its failed state if the open fails.
     /// [`Self::is_open`] distinguishes that state.
     #[must_use]
-    pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Self {
+    pub fn open(filename: &(impl oxpinyin::__internal::input::FileName + ?Sized)) -> Self {
         let (file, open_errno) = match std::fs::File::open(filename.as_path()) {
             Ok(file) => (Some(file), None),
             Err(error) => (None, error.raw_os_error()),
@@ -919,7 +921,9 @@ pub mod gen_pinyin_table {
     impl TableInput {
         /// `fopen(filename, "r")` (`:138`); `None` for NULL.
         #[must_use]
-        pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
+        pub fn open(
+            filename: &(impl oxpinyin::__internal::input::FileName + ?Sized),
+        ) -> Option<Self> {
             // SAFETY: `filename` and the mode are NUL-terminated and outlive
             // the call.
             oxpinyin::__internal::fopen(filename, c"r").map(|stream| Self {
@@ -1345,7 +1349,9 @@ pub mod storage {
     impl TableFile {
         /// `fopen(filename, "r")` (`gen_binary_files.cpp:61`, `:97`).
         #[must_use]
-        pub fn open(filename: &(impl oxpinyin::input::FileName + ?Sized)) -> Option<Self> {
+        pub fn open(
+            filename: &(impl oxpinyin::__internal::input::FileName + ?Sized),
+        ) -> Option<Self> {
             // SAFETY: `filename` and the mode literal are NUL-terminated and
             // outlive the call.
             oxpinyin::__internal::fopen(filename, c"r").map(|stream| Self { stream })
@@ -1524,7 +1530,7 @@ pub mod storage {
     #[cfg(all(test, windows))]
     #[must_use]
     pub fn save_chunk(
-        filename: &(impl oxpinyin::input::FileName + ?Sized),
+        filename: &(impl oxpinyin::__internal::input::FileName + ?Sized),
         length: u32,
         checksum: u32,
         payload: &[u8],
@@ -2493,6 +2499,13 @@ pub mod lookup_tests {
     }
 }
 
+/// `path` as the C string `fopen` receives: its bytes as the platform
+/// encodes them, or `None` when they hold a NUL, which no C path can.
+#[must_use]
+pub fn c_path(path: &std::path::Path) -> Option<CString> {
+    CString::new(oxpinyin::__internal::input::path_to_bytes(path)).ok()
+}
+
 /// A pin byte path as the Rust path that opens it, `None` where the
 /// platform cannot represent the bytes.
 ///
@@ -2511,7 +2524,7 @@ pub mod lookup_tests {
 pub fn path_from_bytes_checked(bytes: &[u8]) -> Option<PathBuf> {
     #[cfg(unix)]
     {
-        Some(oxpinyin::input::path_from_bytes(bytes))
+        Some(oxpinyin::__internal::input::path_from_bytes(bytes))
     }
     #[cfg(not(unix))]
     {

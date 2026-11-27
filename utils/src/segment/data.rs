@@ -14,9 +14,9 @@
 use std::path::Path;
 
 use crate::utils_helper::SystemLibraryError;
-use oxpinyin::data::phrase_library::{LibraryError, RowFault};
-use oxpinyin::data::{BigramTable, PhraseLibraries};
-use oxpinyin::data::{TableConf, TableConfError};
+use oxpinyin::__internal::data::phrase_library::{LibraryError, RowFault};
+use oxpinyin::__internal::data::{BigramTable, PhraseLibraries, TableConfError};
+use oxpinyin::facade::TableConf;
 use oxpinyin_tool_support::data::PhraseIndexTable;
 use oxpinyin_tool_support::input as tool;
 
@@ -83,7 +83,7 @@ pub(crate) fn load_or_exit(gram: Gram) -> Tables {
             tool::exit(tool::ENOENT);
         }
         Err(SystemLibraryError::Chunk(name, _)) => {
-            let name = oxpinyin::input::c_path(Path::new(name.as_ref()));
+            let name = oxpinyin_tool_support::input::c_path(Path::new(name.as_ref()));
             tool::segmentation::report_load_failed(name.as_deref());
             tool::exit(tool::ENOENT);
         }

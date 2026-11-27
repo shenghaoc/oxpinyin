@@ -12,8 +12,9 @@
 //! reaching at least past the last span. A finding is any abort, panic,
 //! or sanitizer report, or a violated invariant here.
 
+use oxpinyin::__internal::parser::ZhuyinParser;
 use oxpinyin::OptionBits;
-use oxpinyin::parser::{ZhuyinParser, ZhuyinScheme};
+use oxpinyin::facade::ZhuyinScheme;
 
 /// Every zhuyin keyboard except the `StandardDvorak` abort slot (upstream's
 /// setter aborts on it; `ZhuyinParser` reports `false` and keeps the current

@@ -140,7 +140,7 @@ pub(crate) const NL: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 pub(crate) fn write_log(user: &Path, name: &str, payload: &[u8]) {
     std::fs::write(
         user.join(name),
-        oxpinyin::data::chunk_format::build_memory_chunk(payload).expect("frame"),
+        oxpinyin::__internal::data::chunk_format::build_memory_chunk(payload).expect("frame"),
     )
     .expect("write the log");
 }

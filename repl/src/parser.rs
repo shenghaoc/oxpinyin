@@ -2,8 +2,9 @@
 
 use std::ffi::{CString, OsString};
 
+use oxpinyin::__internal::parser::{DoublePinyinParser, ZhuyinParser};
 use oxpinyin::OptionBits;
-use oxpinyin::parser::{DoublePinyinParser, ZhuyinParser, ZhuyinScheme};
+use oxpinyin::facade::ZhuyinScheme;
 use oxpinyin_tool_support::input::{self as tool, OptionArg, OptionEntry};
 use oxpinyin_tool_support::parser::{Key, Parse, parse_direct};
 
@@ -11,7 +12,7 @@ enum Parser {
     Full,
     Double,
     Zhuyin(ZhuyinScheme),
-    Direct(oxpinyin::engine::Law),
+    Direct(oxpinyin::facade::Law),
 }
 
 impl Parser {
@@ -91,8 +92,8 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
             b"dachen26" => Parser::Zhuyin(ZhuyinScheme::DachenCp26),
             _ => Parser::Full,
         },
-        b"pinyindirect" => Parser::Direct(oxpinyin::engine::Law::Pinyin),
-        b"zhuyindirect" => Parser::Direct(oxpinyin::engine::Law::Zhuyin),
+        b"pinyindirect" => Parser::Direct(oxpinyin::facade::Law::Pinyin),
+        b"zhuyindirect" => Parser::Direct(oxpinyin::facade::Law::Zhuyin),
         _ => Parser::Full,
     };
     let mut options =
