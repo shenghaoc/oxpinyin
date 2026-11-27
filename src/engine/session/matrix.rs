@@ -219,7 +219,7 @@ where
     /// [`EngineError::Failure`] when the buffer cannot be built into a graph.
     pub(super) fn build_parse(&self) -> Result<Parsed, EngineError> {
         let graph = self.build_graph()?;
-        let edges = graph.fewest_keys(self.options.contains(OptionBits::PINYIN_INCOMPLETE));
+        let edges = graph.fewest_keys(self.options);
         let parsed_len =
             apostrophe_extended(self.input.as_bytes(), edges.last().map_or(0, Edge::to));
         // The two facades have different full-pinyin parse orders:

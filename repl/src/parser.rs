@@ -128,7 +128,7 @@ pub(crate) fn parse_full(input: &[u8], options: OptionBits) -> Parse {
     let Some((input, graph)) = oxpinyin_tool_support::lookup::full_graph(input, options) else {
         return Parse::default();
     };
-    let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
+    let path = graph.fewest_keys(options);
     oxpinyin_tool_support::lookup::selected_parse(&input, &path)
 }
 

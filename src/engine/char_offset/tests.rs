@@ -6,7 +6,7 @@ fn full_matrix(input: &str, options: OptionBits) -> Vec<MatrixKey> {
     let graph = SegmentGraph::build_with_options(input.as_bytes(), options).unwrap();
     assert_eq!(graph.consumed(), input.len());
     let keys: Vec<_> = graph
-        .fewest_keys(true)
+        .fewest_keys(OptionBits::PINYIN_INCOMPLETE)
         .iter()
         .map(|edge| MatrixKey::new(edge.key(), edge.tone(), edge.syllable_start(), edge.to()))
         .collect();

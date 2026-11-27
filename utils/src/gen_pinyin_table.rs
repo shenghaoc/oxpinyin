@@ -119,7 +119,7 @@ fn parse_keys(pinyin: &[u8]) -> Vec<ChewingKey> {
         return Vec::new();
     };
     graph
-        .fewest_keys(false)
+        .fewest_keys(options)
         .iter()
         .map(|edge| {
             ChewingKey::from_pinyin(edge.key().text()).map(|key| key.with_tone(edge.tone()))

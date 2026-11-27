@@ -119,7 +119,7 @@ fn full_aux_text(
     let parsed = &raw[..parsed_len.min(raw.len())];
     let cursor = cursor.min(parsed.len());
     let graph = SegmentGraph::build_with_options(parsed.as_bytes(), options)?;
-    let keys = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
+    let keys = graph.fewest_keys(options);
     if keys.first()?.syllable_start() != 0 {
         // A leading separator leaves the first column empty. The pin's
         // prefix walk asserts there (074a2219 pinyin.cpp:3307-3311).

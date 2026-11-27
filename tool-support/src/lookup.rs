@@ -80,7 +80,7 @@ pub fn prepare_lookup(
 ) -> Result<PreparedLookup, oxpinyin::engine::EngineError> {
     let (input, graph) =
         full_graph(input, options).ok_or(oxpinyin::engine::EngineError::Failure)?;
-    let path = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
+    let path = graph.fewest_keys(options);
     let parsed = selected_parse(input.as_ref(), &path);
     let scan = oxpinyin::__internal::ScanMatrix::from_columns(
         oxpinyin::__internal::build_scan_matrix_over(&graph, &path, options, false),
