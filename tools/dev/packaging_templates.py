@@ -62,7 +62,7 @@ Provides: libpinyin15 (= $PCVER), libzhuyin15 (= $PCVER)
 Conflicts: libpinyin15, libzhuyin15
 Replaces: libpinyin15, libzhuyin15
 Description: library to deal with PinYin - oxpinyin drop-in ($BACKEND store)
- oxpinyin is a portable Rust re-expression of libpinyin. This package
+ oxpinyin is an idiomatic Rust rewrite of libpinyin. This package
  installs libpinyin.so.15 and libzhuyin.so.15 built against the $BACKEND
  store backend, replacing libpinyin15 and libzhuyin15 in their entirety.
  .
@@ -78,13 +78,14 @@ Priority: optional
 Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
 Depends: $BASE (= $DEBVER), libglib2.0-dev
-Provides: libpinyin15-dev (= $PCVER), libzhuyin-dev (= $PCVER)
-Conflicts: libpinyin15-dev, libzhuyin-dev
-Replaces: libpinyin15-dev, libzhuyin-dev
+Provides: libpinyin15-dev (= $PCVER), libzhuyin-dev (= $PCVER), libpinyin-common-dev (= $PCVER)
+Conflicts: libpinyin15-dev, libzhuyin-dev, libpinyin-common-dev
+Replaces: libpinyin15-dev, libzhuyin-dev, libpinyin-common-dev
 Description: development files for oxpinyin ($BACKEND store)
  Headers, pkg-config files, linker symlinks and static archives for the
  oxpinyin drop-in libpinyin.so.15 / libzhuyin.so.15. Replaces
- libpinyin15-dev and libzhuyin-dev in their entirety.
+ libpinyin15-dev, libzhuyin-dev and libpinyin-common-dev in their
+ entirety.
 '''
 
 RPM_SPEC = r'''%define debug_package %{nil}
@@ -96,11 +97,16 @@ License:        GPL-3.0-or-later
 URL:            https://github.com/shenghaoc/oxpinyin
 Source0:        staged-tree.tar.gz
 Requires:       libpinyin-data%{?_isa} >= 2.8.1-5.fc39
-Obsoletes:      libpinyin libzhuyin
-Provides:       libpinyin = $PCVER libzhuyin = $PCVER
+# Fedora's form for a package that replaces another: a versioned Obsoletes and
+# Provides. The bound is one release past the pin version's first Fedora release,
+# so the Fedora builds of the pin version are obsoleted. The Provides has no
+# release, so it still satisfies libpinyin-data's Requires on libpinyin's exact
+# version and release.
+Obsoletes:      libpinyin < $PCVER-2, libzhuyin < $PCVER-2
+Provides:       libpinyin = $PCVER, libzhuyin = $PCVER
 
 %description
-oxpinyin is a portable Rust re-expression of libpinyin. This package installs
+oxpinyin is an idiomatic Rust rewrite of libpinyin. This package installs
 libpinyin.so.15 and libzhuyin.so.15 built against the $BACKEND store backend,
 replacing libpinyin and libzhuyin in their entirety. It carries no data of its
 own: the model files remain those of the installed libpinyin-data package.
@@ -109,12 +115,12 @@ own: the model files remain those of the installed libpinyin-data package.
 Summary:        Development files for oxpinyin ($BACKEND store)
 License:        GPL-3.0-or-later
 Requires:       %{name} = %{version}-%{release}
-Obsoletes:      libpinyin-devel libzhuyin-devel
-Provides:       libpinyin-devel = $PCVER libzhuyin-devel = $PCVER
+Obsoletes:      libpinyin-devel < $PCVER-2, libzhuyin-devel < $PCVER-2
+Provides:       libpinyin-devel = $PCVER, libzhuyin-devel = $PCVER
 
 %description devel
-Headers, pkg-config files, linker symlinks and static archives for the
-oxpinyin drop-in libpinyin.so.15 / libzhuyin.so.15.
+Headers, pkg-config files and linker symlinks for the oxpinyin drop-in
+libpinyin.so.15 / libzhuyin.so.15.
 
 %prep
 %setup -q -c -n stage
@@ -127,6 +133,9 @@ mkdir -p %{buildroot}
 # %setup -c unpacks INSIDE stage/, which is also the build subdirectory
 # %install runs from — copy from the explicit builddir path, not "stage/usr".
 cp -a %{_builddir}/stage/usr %{buildroot}/
+# Fedora's libpinyin-devel ships no static archives: its spec configures with
+# --disable-static. Remove them by name, so any other unpackaged file still fails.
+rm -- %{buildroot}%{_libdir}/libpinyin.a %{buildroot}%{_libdir}/libzhuyin.a
 
 %files
 %{_libdir}/libpinyin.so.15*
@@ -136,13 +145,11 @@ cp -a %{_builddir}/stage/usr %{buildroot}/
 %{_includedir}/libpinyin-$PCVER/
 %{_libdir}/libpinyin.so
 %{_libdir}/libzhuyin.so
-%{_libdir}/libpinyin.a
-%{_libdir}/libzhuyin.a
 %{_libdir}/pkgconfig/libpinyin.pc
 %{_libdir}/pkgconfig/libzhuyin.pc
 
 %changelog
-* Sat Sep 06 2026 Shenghao Chen <shenghaoc@outlook.com> - $VERSION-1
+* Sun Sep 06 2026 Shenghao Chen <shenghaoc@outlook.com> - $VERSION-1
 - Release build of the oxpinyin drop-in ($BACKEND store backend);
   replaces libpinyin/libzhuyin in their entirety.
 '''

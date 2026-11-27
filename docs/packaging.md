@@ -145,13 +145,18 @@ The [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ) t
   Users who want to keep their phrases can use the dictionary export and import of their frontend (ibus-libpinyin's Import/Export).
   These use libpinyin's ordinary ABI, which carries the user phrase dictionary but not the trained bigram.
 
-## Static library decision: ship it
+## Static libraries
 
 cargo-c always builds a `.a` for a `staticlib` crate and has **no** metadata setting to suppress it.
-Debian's guidance notes that packagers would otherwise need a "not-installed" rule to drop it.
-Decision: **ship the static library**.
-It adds negligible install size, is the cargo-c default, and removes variance between packagers: every packager produces the same artifact set.
-It installs as `libpinyin.a` beside the `.so`.
+`just packaging install` and `just packaging release-stage` therefore install `libpinyin.a` and `libzhuyin.a` beside the `.so`.
+Each release package then follows the distribution package that it replaces:
+
+- **Debian:** the `-dev` package ships both archives.
+  Debian's `libpinyin15-dev` and `libzhuyin-dev` 2.11.92-1 do the same: their `.install` files list `usr/lib/*/libpinyin.a` and `usr/lib/*/libzhuyin.a`.
+- **Fedora:** the RPM's `%install` removes both archives by name, so `-devel` ships none.
+  Fedora's `libpinyin-devel` 2.11.92-1 ships none either: its spec configures with `--disable-static`, and it has no `-static` subpackage.
+- **Arch:** makepkg's default `!staticlibs` option removes both archives when it builds the package, so the package ships none.
+  Arch's libpinyin 2.10.3-2 is built with the same option: its `.BUILDINFO` lists `!staticlibs`.
 
 The `.pc` files mirror the pin's and have no `Libs.private`.
 A static link against `libpinyin.a` must pass the platform libraries itself (`-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc`), plus the selected backend library.
@@ -486,6 +491,8 @@ Every package takes over the distribution's libpinyin and libzhuyin **in their e
 The makers are:
 
 - `just packaging release-deb`: `oxpinyin-libpinyin15-<backend>` and `-dev`, which correspond to libpinyin15 and libzhuyin15 and their -dev packages.
+  The `-dev` package also takes the place of `libpinyin-common-dev`, which holds only `novel_types.h` and `pinyin_custom2.h` (`debian/libpinyin-common-dev.install` of libpinyin 2.11.92-1).
+  `-dev` ships both headers, so it conflicts with, replaces and provides that package too.
   Depends is computed from the DT_NEEDED entries of the shipped ELF through ldconfig and `dpkg -S`.
   t64-era names (`libglib2.0-0t64`, `libtkrzw1t64`) therefore resolve on the suite that the build runs on.
   Depends also has a `libc6 (>= N)` floor, taken from the highest `GLIBC_*` symbol version referenced.
@@ -493,6 +500,7 @@ The makers are:
 - `just packaging release-rpm`: `oxpinyin-libpinyin-<backend>` and `-devel`, which correspond to libpinyin and libpinyin-devel.
   rpm's dependency generator emits the soname Provides (`libpinyin.so.15()(64bit)`) and the backend Requires automatically.
   Obsoletes performs the swap; Conflicts cannot, because a package may not conflict with a name it provides.
+  `-devel` carries no static archives ([static libraries](#static-libraries)).
 - `just packaging release-arch`: one `oxpinyin-libpinyin-<backend>` package, because Arch ships libpinyin undivided.
   It has soname Provides in pacman's form (`libpinyin.so=15-64`).
   With `--data=DIR`, it installs the model directory as `/usr/lib/libpinyin/data`.
