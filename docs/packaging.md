@@ -197,6 +197,8 @@ BuildRequires: cargo-c
 This recipe has the shape that Fedora documents.
 A real package build must run `just packaging install <libpinyin|libzhuyin> --prefix=/usr …` instead of the bare `cargo cinstall`, or run it again afterwards.
 The reason is that cargo-c's own `.pc` lacks the variables that consumers read ([Locating the model data](#locating-the-model-data-pkgdatadir)).
+Fedora's rpm macros export the distribution's build flags in `%install`, `LDFLAGS` and `CC=gcc` included, so `just packaging install` there relinks with Fedora's `LDFLAGS` ([export gate](#export-gate)).
+The recipe sets no flag itself.
 The release packages that `release-packages.yml` builds go through exactly that wrapper ([Release artifacts](#release-artifacts-release-packagesyml)).
 
 ## Debian recipe
@@ -208,6 +210,10 @@ Build-Depends: cargo-c:native, just:native
 
 ```makefile
 # debian/rules
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
 override_dh_auto_build:
 
 override_dh_auto_install:
@@ -224,6 +230,13 @@ The install step builds the libraries: the build step has nothing to do.
 `libpinyin.so.15` then exports the 79 `pinyin_*` symbols under the `LIBPINYIN` version node, and no `cxxbridge1$*` symbol.
 The step also writes the complete `.pc` files.
 A plain `cargo cinstall` shared library has no symbol versions and exports the cxx runtime, so the recipe does not install it.
+
+The link passes the environment's `LDFLAGS` ([export gate](#export-gate)), and cc-rs reads `CFLAGS` and `CXXFLAGS` when it compiles the C++ bridges.
+dpkg-buildpackage has not exported these flags since dpkg 1.16.1, so the recipe exports them itself: `buildflags.mk` with `DPKG_EXPORT_BUILDFLAGS` exports the values that dpkg-buildflags gives.
+`hardening=+all` is the option that Debian's libpinyin package sets.
+dpkg-buildflags omits `-Wl,-z,now` by default, so without that option the library has no `BIND_NOW`.
+The recipe names no flag itself.
+
 `just packaging install` needs uv beside `just` and cargo-c ([installing uv and cargo-c](runbooks/setup.md#installing-uv-and-cargo-c)).
 
 ## Build and runtime dependencies
@@ -244,6 +257,8 @@ are already dependencies of libkyotocabinet.
 
 On Linux GNU targets, the cargo cdylib links and the [versioned relink](#export-gate) pass
 `-Wl,-z,pack-relative-relocs`, which packs the relative relocations into `DT_RELR`.
+The relink decides by the C compiler, not by its target triple: it passes the option when the compiler's `<features.h>` defines `__GLIBC__`.
+Fedora's gcc, for example, reports `x86_64-redhat-linux`, a triple without `-gnu`.
 The packed library needs glibc 2.36 or later at run time: it requires the `GLIBC_ABI_DT_RELR` version of `libc.so.6`.
 GNU ld packs them from binutils 2.38 on x86_64.
 An older GNU ld, and GNU ld 2.42 for arm64, ignore the option with a warning and link without `DT_RELR`.
@@ -356,7 +371,9 @@ rustc's anonymous version script cannot override that visibility, and the capi c
 When cargo-c enables `capi`, the build scripts emit only the `DT_RELR` link argument ([build and runtime dependencies](#build-and-runtime-dependencies)).
 
 On Linux, `just packaging install` requests only the staticlib from cargo-c.
-It relinks the shared object from that archive with the crate's `.ver` script, `-Wl,-z,defs` and, on Linux GNU targets, `-Wl,-z,pack-relative-relocs` (`just packaging relink-versioned`).
+It relinks the shared object from that archive with the crate's `.ver` script, `-Wl,-z,defs` and, for a glibc C compiler, `-Wl,-z,pack-relative-relocs` (`just packaging relink-versioned`).
+The link also passes the environment's `LDFLAGS`, split as a shell splits them, after its own flags and before the archive and the libraries, as automake orders `$(AM_LDFLAGS) $(LDFLAGS)`.
+The distribution supplies its linker hardening there; the relink adds none. Because `LDFLAGS` follow the relink's own options, they can override one, as `-Wl,-z,nopack-relative-relocs` does.
 The shipped library therefore carries the pin's symbol versioning, and the script's `local: *` excludes every other symbol.
 The relink verifies the exact export set and each export's version tag against the `.ver` list before installing the shared object.
 The wrapper then creates `lib<name>.so` and `lib<name>.so.15` as symlinks to `lib<name>.so.15.0.0`.
@@ -453,6 +470,7 @@ cargo-c's ordinary `--no-default-features --features <backend>` selects the back
 cargo-c forwards both flags to `cargo build`, because its subcommands register cargo's full set of feature arguments.
 See [Installing uv and cargo-c](runbooks/setup.md#installing-uv-and-cargo-c) for host setup.
 Rustc and Cargo come from `rust-toolchain.toml`.
+Each lane builds with its distribution's own build flags (dpkg-buildflags with `hardening=+all`, the rpm `%{build_cflags}`, `%{build_cxxflags}` and `%{build_ldflags}` macros with `CC=gcc`, and `/etc/makepkg.conf`), and its install gate fails when the installed `libpinyin.so.15` or `libzhuyin.so.15` has no `BIND_NOW`.
 
 The script then strips the shared objects and checks the tree again before any packaging runs.
 The checks are the fixed file list of `docs/findings/installed-naming.md`, the SONAME, the five pkg-config reads that real consumers perform, and a C compile/link/run.
