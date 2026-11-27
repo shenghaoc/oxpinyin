@@ -18,7 +18,7 @@ use crate::data::{
     SystemDictionary, SystemTables,
 };
 pub(crate) use crate::data::{FileType, TableConf, TableConfError, TableConfSite};
-use crate::engine::{EngineError, Session, SessionSettings};
+use crate::engine::{EngineError, Session};
 use crate::user::{
     ItemOrigin, LibraryLoopRows, LibraryLoopStop, LiveSystemItems, UnigramAdd, UserConfLaw,
     UserLookup, UserStore, UserStoreError,
@@ -1355,7 +1355,7 @@ pub(crate) type RuntimeSession<'a> =
 ///
 /// Storage has one owner. [`Runtime::dict`], [`Runtime::lm`] and
 /// [`Runtime::user_store`] borrow it for an operation; writers require
-/// exclusive access. `Runtime::new_session` retains composition only.
+/// exclusive access. A `SessionState` retains composition only.
 /// Every successful open owns a store, including when the user directory
 /// is absent: that store is transient, and its directory flag controls
 /// training and saving.
@@ -1624,19 +1624,6 @@ impl Runtime {
         &self.conf
     }
 
-    /// Builds retained composition state for this backend set. Operations
-    /// bind it to current readers through [`Self::session`].
-    ///
-    /// Settings arrive per call (the facade passes its context's; simple
-    /// embedders pass [`SessionSettings::default`]), because the session
-    /// reads them once at construction.
-    ///
-    /// Construction cannot fail: [`Session::new`] reads no dictionary or
-    /// model record.
-    pub(crate) fn new_session(&self, settings: SessionSettings) -> crate::engine::SessionState {
-        Session::new(settings, self.dict(), self.lm()).into_state()
-    }
-
     /// Borrow the merged dictionary for one operation.
     #[must_use]
     pub(crate) fn dict(&self) -> RuntimeDict<'_> {
@@ -1659,9 +1646,14 @@ impl Runtime {
         }
     }
 
-    /// Borrow composition and phrase storage for one operation.
-    pub fn session<'a>(&'a self, state: &'a mut crate::engine::SessionState) -> RuntimeSession<'a> {
-        state.bind(self.dict(), self.lm())
+    /// Borrow composition and phrase storage for one operation under the
+    /// context's option word.
+    pub fn session<'a>(
+        &'a self,
+        state: &'a mut crate::engine::SessionState,
+        options: crate::OptionBits,
+    ) -> RuntimeSession<'a> {
+        state.bind(self.dict(), self.lm(), options)
     }
 
     /// Borrow the learning store without retaining an independent owner.

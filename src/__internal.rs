@@ -63,7 +63,7 @@ pub mod data {
     }
 }
 pub mod engine {
-    pub use crate::engine::{NbestShape, Session, SessionSettings};
+    pub use crate::engine::{NbestShape, Session, SessionState};
 }
 pub mod graph {
     pub use crate::graph::Edge;

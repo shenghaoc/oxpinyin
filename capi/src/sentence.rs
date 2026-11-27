@@ -301,7 +301,7 @@ impl GuessFrame {
     fn of(inst: &crate::state::CapiInstanceMut<'_>, offset: usize, normalized: usize) -> Self {
         // Search on every guess, including the composition offset: library
         // visibility can change without a parse (074a2219 pinyin.cpp:2193,
-        // :2224-2262). The session's cached list predates such a change.
+        // :2224-2262).
         //
         // The caller's offset lives in the active parse mode's ORIGINAL input
         // coordinates — the pin's matrix keeps each key at its key rest's
@@ -450,8 +450,8 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     // so every `false` below leaves an empty list.
     inst.state.candidates.clear();
     // The keyless check reads the keys of the matrix the last parse
-    // filled; the borrow ends before the option and sort-word mutations
-    // below. `set_options` stores the word and does not re-parse.
+    // filled; the borrow ends before the sort-word store below. The
+    // session reads the context's option word (`pinyin.cpp:2189`).
     //
     // The pin answers `false` for a matrix without a step before it
     // stores the sort word (`pinyin.cpp:2195-2198`); a keyless parse is
@@ -459,30 +459,14 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     if !inst.core.mode_has_keys() {
         return false;
     }
-    let options = inst.core.options();
-    if inst.core.session_mut().set_options(options).is_err() {
-        return false;
-    }
     // §9: the whole sort word, re-stored per call exactly as the pin's
     // `instance->m_sort_option = sort_option` (`pinyin.cpp:2203`) — the
     // engine's sort keys, the LONGER gate and the snapshot's LONGER row
-    // are all functions of it. A word that changes the list refreshes a
-    // composing session; the same word is a no-op here. The lookup below
-    // still searches the live dictionary on every call.
-    //
-    // The refresh builds the LONGER row, but it is not a surface of the
-    // over-long-index gate: the pin reaches its abort only inside
-    // `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`), which a parse
-    // never runs, so this refresh cannot fail on an over-long key. The
-    // re-anchored lookup below applies the gate instead.
-    if inst
-        .core
-        .session_mut()
-        .set_sort_options(sort_option)
-        .is_err()
-    {
-        return false;
-    }
+    // are all functions of it. The lookup below searches the live
+    // dictionary on every call and applies the over-long-index gate, which
+    // the pin reaches only inside `_prepend_longer_candidates`
+    // (`pinyin.cpp:2292-2293`).
+    inst.core.session_mut().set_sort_options(sort_option);
     if !inst.core.session().is_composing() {
         return false;
     }
@@ -499,12 +483,9 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
         Err(oxpinyin::facade::CursorFault::Unreadable) => return false,
     };
     let frame = GuessFrame::of(&inst, offset, normalized);
-    // Publish each row of the re-anchored window with its own span: a
-    // session's selection records against the cached (composition-anchored)
-    // list, but the row the caller saw came from the offset-anchored window
-    // — an index into the cached list would select a different row whenever
-    // the two differ. A later `pinyin_choose_candidate` selects the row's
-    // span, as the pin's reads `m_begin` and `m_end` off the row.
+    // Publish each row of the re-anchored window with its own span. A later
+    // `pinyin_choose_candidate` selects the row's span, as the pin's reads
+    // `m_begin` and `m_end` off the row.
     let Some(window) = lookup_window(&mut inst, &frame) else {
         return false;
     };

@@ -37,11 +37,6 @@ impl SelectionRecord {
         self.consumed = raw.floor_char_boundary(self.consumed);
     }
 
-    /// Appends one token to the record.
-    pub(super) fn push_token(&mut self, token: PhraseToken) {
-        self.history.push(token);
-    }
-
     /// Replaces the history with a chosen n-best row's whole token path.
     pub(super) fn replace_history(&mut self, tokens: impl Iterator<Item = PhraseToken>) {
         self.history.clear();

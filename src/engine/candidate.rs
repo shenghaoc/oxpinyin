@@ -190,6 +190,17 @@ impl Candidate {
         self.consumed_bytes as usize
     }
 
+    /// Where this row's span ends in store coordinates (the pin's `m_end`,
+    /// before the separator walk) when its window is anchored at `anchor`:
+    /// the lookup offset for an after-cursor window, whose rows measure
+    /// `consumed_bytes` from it, and
+    /// [`BEFORE_CURSOR_ANCHOR`](crate::engine::BEFORE_CURSOR_ANCHOR) for a
+    /// before-cursor window, whose rows carry their absolute end.
+    #[must_use]
+    pub const fn span_end_at(&self, anchor: usize) -> usize {
+        anchor.saturating_add(self.consumed_bytes())
+    }
+
     /// The scoring token behind this candidate, when it is one phrase.
     ///
     /// The session uses it as the bigram history for the next input. A
@@ -212,60 +223,22 @@ impl Candidate {
             None => 0,
         }
     }
-
-    /// The tail rank of the n-best row this candidate is, or `None` when it
-    /// is not a row.
-    ///
-    /// The selection record indexes `Session`'s n-best rows by this rank —
-    /// never by list position, which the NBEST-wins dedup can shift.
-    #[must_use]
-    pub(crate) const fn nbest_row(&self) -> Option<u8> {
-        self.nbest_index
-    }
 }
 
 /// An ordered, deterministic candidate list.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CandidateList {
     items: Vec<Candidate>,
-    /// The unreadable items the building scan met, for the tests.
-    #[cfg(test)]
-    unreadable_count: usize,
 }
 
 impl CandidateList {
     pub(crate) const fn from_vec(items: Vec<Candidate>) -> Self {
-        Self {
-            items,
-            #[cfg(test)]
-            unreadable_count: 0,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn with_unreadable_count(mut self, unreadable_count: usize) -> Self {
-        self.unreadable_count = unreadable_count;
-        self
-    }
-
-    /// Whether the lookups that built this list met a token of a loaded
-    /// library whose item cannot be read. The readable candidates remain
-    /// available separately from that search metadata.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) const fn had_unreadable_item(&self) -> bool {
-        self.unreadable_count != 0
+        Self { items }
     }
 
     /// The rows, for their storage to be reused.
     pub(crate) fn into_items(self) -> Vec<Candidate> {
         self.items
-    }
-
-    /// Swap the live list with `items`, returning the previous buffer so
-    /// the session can keep its capacity across keystrokes.
-    pub(crate) const fn swap_items(&mut self, items: &mut Vec<Candidate>) {
-        core::mem::swap(&mut self.items, items);
     }
 
     /// Number of candidates.

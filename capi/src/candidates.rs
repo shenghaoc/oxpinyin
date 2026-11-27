@@ -405,11 +405,9 @@ pub(crate) fn snapshot_candidates(
         } else {
             // The span ends at a raw-buffer position, which a segment-graph
             // position bounds (`oxpinyin::__internal::graph::MAX_GRAPH_POSITION`).
-            let selection =
-                oxpinyin::facade::SelectionTarget::of_candidate(cand, frame.session_offset, None);
             (
                 frame.offset as u16,
-                published_bound(selection.span_end()) as u16,
+                published_bound(cand.span_end_at(frame.session_offset)) as u16,
             )
         };
         if cand.text().outward_bytes().is_none() {
@@ -532,9 +530,7 @@ pub unsafe extern "C" fn pinyin_choose_candidate(
         if !inst.core.has_nbest_rank(row.nbest_index) {
             std::process::abort();
         }
-        if inst.core.select_nbest_rank(row.nbest_index).is_err() {
-            return -1;
-        }
+        inst.core.select_nbest_rank(row.nbest_index);
         return c_int::try_from(inst.core.pin_matrix_columns())
             .map_or(c_int::MAX, |columns| columns - 1);
     }

@@ -7,7 +7,6 @@ use std::rc::Rc;
 
 use crate::OptionBits;
 use crate::data;
-use crate::engine::SessionSettings;
 use crate::parser::{DoublePinyinScheme, FullPinyinScheme, ZhuyinScheme};
 use crate::runtime::{
     FileType, OpenError, RemapStep, RowFault, Runtime, TableConfError, TableConfSite,
@@ -337,9 +336,6 @@ impl LiveOptions {
 /// raised counter on disk. Drop also finalises a store that was not explicitly
 /// finished; a later drop never repeats the marker write.
 pub struct ContextCore {
-    /// The settings instances are opened with: incomplete pinyin on until
-    /// the first `set_options`, then that word's bit.
-    pub(crate) settings: SessionSettings,
     /// The shared concrete assembly and the context's sole user store;
     /// instances borrow it per operation. `pinyin_init` answers NULL when
     /// the system tables do not load (`pinyin.cpp:337-339`), so every
@@ -427,18 +423,15 @@ impl ContextCore {
         })
         .map_err(OpenFailure::Runtime)?;
         Ok(Self {
-            settings: SessionSettings::default(),
             runtime,
             live: LiveOptions::new(option_word),
         })
     }
 
-    /// `set_options`'s law: the word is stored, and the incomplete-pinyin
-    /// setting follows the word so sessions opened later agree with
-    /// sessions already allocated. The parsers read the option bits off
-    /// the stored word.
+    /// `set_options`'s law: the word is stored (074a2219
+    /// `pinyin.cpp:1299-1307`). Every instance reads it when an operation
+    /// binds.
     pub fn set_options(&mut self, options: OptionBits) {
-        self.settings.incomplete_pinyin = options.contains(OptionBits::PINYIN_INCOMPLETE);
         self.live.options.set(options);
     }
 
@@ -446,10 +439,10 @@ impl ContextCore {
     /// assembly. It cannot fail.
     #[must_use]
     pub fn alloc_instance(&self) -> crate::facade::instance::InstanceCore {
-        let runtime = &self.runtime;
-        let mut session = runtime.new_session(self.settings);
-        runtime.session(&mut session).set_defer_list_builds(true);
-        crate::facade::instance::InstanceCore::new(session, self.live.clone())
+        crate::facade::instance::InstanceCore::new(
+            crate::engine::SessionState::default(),
+            self.live.clone(),
+        )
     }
 
     // _write_files and _rename_files, pinyin.cpp:933–1130, table_info.cpp:382.

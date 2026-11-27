@@ -37,8 +37,7 @@ use crate::{
     vocab::{PhraseEntry, PhraseToken, SyllableKey},
 };
 
-use super::{Selection, SelectionTarget, Session};
-use crate::engine::SessionSettings;
+use super::{Selection, Session};
 use crate::engine::error::{EngineError, TrainingStop};
 use crate::fixture_doubles::{
     FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
@@ -66,7 +65,7 @@ impl LanguageModel for Silent {
 }
 
 fn session() -> Session<Silent, Silent> {
-    Session::new(SessionSettings::default(), Silent, Silent)
+    crate::engine::session::tests::session_over(Silent, Silent)
 }
 
 fn type_text(session: &mut Session<Silent, Silent>, text: &str) {
@@ -96,20 +95,20 @@ fn replace_raw_keeps_the_bytes_the_pin_stops_at() {
 
 // Basis: Rust selection record contract and pinyin.cpp:2501–2588 at 074a2219.
 #[test]
-fn a_refused_choose_after_a_fallback_selection_keeps_the_record() {
-    let mut session = session();
-    type_text(&mut session, "nihao");
-    assert_eq!(
-        select_row(&mut session, 0).expect("the fallback exists"),
-        Selection::Completed
-    );
-    assert!(session.selected_tokens().is_empty());
-    assert!(session.candidates().is_empty());
+fn a_refused_choose_after_a_constraint_free_selection_keeps_the_record() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("typing cannot fail");
+    assert!(session.guess_sentence().expect("guess cannot fail"));
+    // A row-0 n-best choose records the row and forces nothing
+    // (`pinyin.cpp:2515-2520`).
+    assert_eq!(session.select_nbest_row(0), Selection::Completed);
+    let recorded = session.selected_tokens().to_vec();
+    assert!(!session.constraints.is_active());
 
     assert_eq!(session.refuse_selection().unwrap(), Selection::Refused);
     assert!(!session.constraints.is_active());
     assert_eq!(session.composition_offset(), 5);
-    assert!(session.selected_tokens().is_empty());
+    assert_eq!(session.selected_tokens(), recorded);
 
     session.guess_sentence().expect("the guess runs");
     assert_eq!(session.composition_offset(), 5);
@@ -142,7 +141,7 @@ fn candidates_come_from_keys_past_the_pins_gint16_bound() {
         .expect("no failure");
     assert_eq!(session.full_parsed_len(), 33_000);
     let window = session
-        .candidates_at(32_768)
+        .candidates_at_for_abi(32_768, false)
         .expect("a syllable start is in range");
     assert!(window.iter().any(|candidate| {
         candidate.kind() != CandidateKind::Fallback && candidate.token() == Some(1)
@@ -170,9 +169,7 @@ fn sort_word_defaults_to_parity_and_sets_cleanly() {
         SORT_PARITY,
         "the engine default is the parity word"
     );
-    session
-        .set_sort_options(SORT_IBUS_DEFAULT)
-        .expect("set cannot fail");
+    session.set_sort_options(SORT_IBUS_DEFAULT);
     assert_eq!(session.sort_options(), SORT_IBUS_DEFAULT);
     type_text(&mut session, "fang");
     assert_eq!(session.sort_options(), SORT_IBUS_DEFAULT);
@@ -181,130 +178,27 @@ fn sort_word_defaults_to_parity_and_sets_cleanly() {
 // Basis: pinyin.cpp:1870–1933,2292–2300 at 074a2219.
 #[test]
 fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     );
     session.replace_raw("fang").expect("typing cannot fail");
-    session
-        .set_sort_options(SORT_IBUS_DEFAULT)
-        .expect("set cannot fail");
+    session.set_sort_options(SORT_IBUS_DEFAULT);
     session.guess_sentence().expect("guess cannot fail");
-    let longer = session
-        .candidates()
+    let list = window(&mut session);
+    let longer = list
         .iter()
         .find(|candidate| candidate.token().is_some() && candidate.consumed_bytes() == 0)
         .expect("the LONGER row is offered at 0x1c");
     assert_eq!(longer.text(), "方面");
     assert_eq!(longer.span_start(), 0);
-    session
-        .set_sort_options(SORT_PARITY)
-        .expect("set cannot fail");
+    session.set_sort_options(SORT_PARITY);
     assert!(
-        session
-            .candidates()
+        window(&mut session)
             .iter()
             .all(|candidate| !(candidate.token().is_some() && candidate.consumed_bytes() == 0)),
         "no LONGER row at the parity word"
     );
-}
-
-/// A session over the §9 vocabulary that builds its candidate list
-/// eagerly or, as the C facades do, defers it to the first reader.
-fn longer_session(defer: bool) -> Session<FixtureDictionary, FrequencyFixtureModel> {
-    let mut session = Session::new(
-        SessionSettings::default(),
-        FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
-        FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
-    );
-    session.set_defer_list_builds(defer);
-    session
-}
-
-// Basis: Rust session API contract and pinyin.cpp:2184–2203,2578–2590 at 074a2219.
-#[test]
-fn a_deferred_list_is_the_eager_list_at_every_read() {
-    let mut eager = longer_session(false);
-    let mut deferred = longer_session(true);
-    eager.replace_raw("fangmian").expect("parse");
-    deferred.replace_raw("fangmian").expect("parse");
-    assert!(deferred.candidates().is_empty());
-    assert!(!eager.candidates().is_empty());
-    deferred.refresh_candidates().expect("deferred build");
-    assert_eq!(deferred.candidates(), eager.candidates());
-    assert_eq!(deferred.full_parsed_len(), eager.full_parsed_len());
-
-    assert!(eager.guess_sentence().expect("guess"));
-    assert!(deferred.guess_sentence().expect("guess"));
-    assert_eq!(
-        select_row(&mut deferred, 0).expect("the row is live"),
-        select_row(&mut eager, 0).expect("the row is live")
-    );
-    assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
-    // The pin's choose writes no list (pinyin.cpp:2578-2590): the deferred
-    // session keeps the list it built before the selection until a reader.
-    assert_ne!(deferred.candidates(), eager.candidates());
-    deferred.refresh_candidates().expect("deferred build");
-    assert_eq!(deferred.candidates(), eager.candidates());
-
-    eager.reset();
-    deferred.reset();
-    eager.replace_raw("fang").expect("parse");
-    deferred.replace_raw("fang").expect("parse");
-    assert_eq!(
-        select_row(&mut deferred, 0).expect("select"),
-        select_row(&mut eager, 0).expect("select")
-    );
-    assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
-
-    eager.reset();
-    deferred.reset();
-    eager.replace_raw("fang").expect("parse");
-    deferred.replace_raw("fang").expect("parse");
-    deferred.refresh_candidates().expect("deferred build");
-
-    eager.set_sort_options(SORT_IBUS_DEFAULT).expect("sort");
-    deferred.set_sort_options(SORT_IBUS_DEFAULT).expect("sort");
-    assert_eq!(deferred.sort_options(), eager.sort_options());
-    assert_ne!(deferred.candidates(), eager.candidates());
-    deferred.refresh_candidates().expect("deferred build");
-    assert_eq!(deferred.candidates(), eager.candidates());
-}
-
-/// A [`FixtureDictionary`] whose next `failures` lookups fail and whose
-/// later ones serve the fixture: a backend that recovers.
-struct Flaky {
-    inner: FixtureDictionary,
-    failures: core::cell::Cell<u32>,
-}
-
-impl PhraseList for Flaky {
-    type Error = FixtureError;
-    type Syllable = SyllableKey;
-
-    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
-        let failures = self.failures.get();
-        if failures > 0 {
-            self.failures.set(failures - 1);
-            return Err(FixtureError::MissingField {
-                line: 0,
-                field: "flaky",
-            });
-        }
-        self.inner.lookup(syllables)
-    }
-
-    fn suggest_extension_tokens(
-        &self,
-        syllables: &[SyllableKey],
-    ) -> Result<Vec<PhraseToken>, Self::Error> {
-        self.inner.suggest_extension_tokens(syllables)
-    }
-
-    fn phrase_text_for_token(&self, token: u32) -> Option<crate::vocab::PhraseText> {
-        PhraseList::phrase_text_for_token(&self.inner, token)
-    }
 }
 
 /// A [`FixtureDictionary`] whose `unloaded` token has no readable item, as a
@@ -337,8 +231,7 @@ impl PhraseList for UnloadedToken {
 #[test]
 fn an_unreadable_prefix_is_not_the_predecessor() {
     let predecessor = |unloaded: u32, prefixes: &[u32]| {
-        let mut session = Session::new(
-            SessionSettings::default(),
+        let mut session = crate::engine::session::tests::session_over(
             UnloadedToken {
                 inner: FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
                 unloaded,
@@ -361,55 +254,20 @@ fn an_unreadable_prefix_is_not_the_predecessor() {
     );
 }
 
-// Basis: Rust session API contract and pinyin.cpp:2184–2203 at 074a2219.
-#[test]
-fn a_failed_deferred_build_stays_stale_and_is_retried() {
-    let open = |defer: bool| {
-        let mut session = Session::new(
-            SessionSettings::default(),
-            Flaky {
-                inner: FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
-                failures: core::cell::Cell::new(0),
-            },
-            FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
-        );
-        session.set_defer_list_builds(defer);
-        session
-    };
-    let mut eager = open(false);
-    let mut deferred = open(true);
-    eager.replace_raw("fangmian").expect("parse");
-    deferred.replace_raw("fangmian").expect("parse");
-
-    deferred.dictionary().failures.set(1);
-    deferred
-        .refresh_candidates()
-        .expect_err("the first scan fails");
-    assert_eq!(deferred.dictionary().failures.get(), 0);
-
-    deferred.refresh_candidates().expect("the retry succeeds");
-    assert!(!eager.candidates().is_empty());
-    assert_eq!(deferred.candidates(), eager.candidates());
-    assert_eq!(deferred.full_parsed_len(), eager.full_parsed_len());
-}
-
 // Basis: pinyin.cpp:1870–1933,2292–2300 at 074a2219.
 #[test]
 fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
         FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
     );
     session.replace_raw("fang").expect("typing cannot fail");
-    session
-        .set_sort_options(SORT_IBUS_DEFAULT)
-        .expect("set cannot fail");
+    session.set_sort_options(SORT_IBUS_DEFAULT);
     session.guess_sentence().expect("guess cannot fail");
 
     for offset in [3usize, 4] {
         let window = session
-            .candidates_at(offset)
+            .candidates_at_for_abi(offset, false)
             .expect("every one of these offsets is in range");
         let longer = window
             .iter()
@@ -439,8 +297,7 @@ impl UserModel for Recorder {
 }
 
 fn train_session() -> Session<FixtureDictionary, FixtureLanguageModel> {
-    Session::new(
-        SessionSettings::default(),
+    crate::engine::session::tests::session_over(
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(TRAIN_VOCAB, "").expect("authored fixture"),
     )
@@ -476,8 +333,7 @@ fn type_and_select(
         typed.push(character);
         session.replace_raw(&typed).expect("typing cannot fail");
     }
-    let index = session
-        .candidates()
+    let index = window(session)
         .iter()
         .position(|candidate| candidate.token() == Some(token))
         .expect("the fixture candidate is offered");
@@ -552,8 +408,7 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
     const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
                          token=2\tkeys=hao\ttext=好\tunigram=900\n\
                          token=3\tkeys=ma\ttext=吗\tunigram=800\n";
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         FixtureDictionary::parse(VOCAB).expect("authored fixture"),
         TrellisModel {
             blended: 0.5,
@@ -561,18 +416,19 @@ fn train_after_a_reparse_and_a_choose_stops_the_walk_at_the_store_length() {
         },
     );
     let choose = |session: &mut Session<FixtureDictionary, TrellisModel>, offset, token| {
-        let window = session.candidates_at(offset).expect("offset in range");
+        let window = session
+            .candidates_at_for_abi(offset, false)
+            .expect("offset in range");
         let index = window
             .iter()
             .position(|candidate| candidate.token() == Some(token))
             .expect("the fixture candidate is offered");
-        session
-            .select_target(&SelectionTarget::of_candidate(
-                window.iter().nth(index).expect("the row is in the window"),
-                offset,
-                None,
-            ))
-            .expect("selection cannot fail");
+        choose(
+            session,
+            window.iter().nth(index).expect("the row is in the window"),
+            offset,
+        )
+        .expect("selection cannot fail");
     };
     session.replace_raw("nihaoma").expect("initial parse");
     assert!(session.guess_sentence().expect("guess"));
@@ -756,7 +612,6 @@ fn a_row_records_its_whole_token_path() {
         }],
         span: 2,
     }];
-    session.refresh().expect("refresh cannot fail");
     assert!(
         !session.sentence_lookup_active(),
         "only guess_sentence activates the lookup"
@@ -807,12 +662,10 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
         },
     ];
     session.constraints.resize(6);
-    session.refresh().expect("refresh cannot fail");
 
-    let hao = session
-        .candidates()
+    let hao = window(&mut session)
         .iter()
-        .position(|candidate| candidate.nbest_row() == Some(2))
+        .position(|candidate| nbest_rank(candidate) == Some(2))
         .expect("the 浩 row survived the dedup");
     assert_eq!(
         hao, 1,
@@ -1016,8 +869,7 @@ fn dynamic_adjust_run(
             )
         })
         .collect();
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         SystemPhrases(phrases),
         CountingBigrams {
             unigrams: FixedUnigrams {
@@ -1033,17 +885,14 @@ fn dynamic_adjust_run(
     );
     // Both arms set the same word apart from the one bit, so nothing
     // else about the parse can differ between them.
-    session
-        .set_options(if dynamic {
-            OptionBits::PINYIN_INCOMPLETE | OptionBits::DYNAMIC_ADJUST
-        } else {
-            OptionBits::PINYIN_INCOMPLETE
-        })
-        .expect("set_options");
+    session.options = if dynamic {
+        OptionBits::PINYIN_INCOMPLETE | OptionBits::DYNAMIC_ADJUST
+    } else {
+        OptionBits::PINYIN_INCOMPLETE
+    };
     session.replace_raw("a").expect("typing cannot fail");
     DynamicAdjustRun {
-        texts: session
-            .candidates()
+        texts: window(&mut session)
             .iter()
             .filter_map(|candidate| candidate.text_str())
             .map(str::to_owned)
@@ -1257,8 +1106,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     use super::CandidateKind;
     use crate::engine::candidate::Candidate;
 
-    let session = Session::new(
-        SessionSettings::default(),
+    let session = crate::engine::session::tests::session_over(
         Silent,
         FixedUnigrams {
             system: 14,
@@ -1285,13 +1133,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
     ];
     let mut frequencies = vec![7; 5];
     session
-        .candidate_frequencies(
-            &collected,
-            None,
-            super::Scan::ExplicitGuess,
-            false,
-            &mut frequencies,
-        )
+        .candidate_frequencies(&collected, None, false, &mut frequencies)
         .expect("frequency reads cannot fail here");
     assert_eq!(
         frequencies,
@@ -1331,8 +1173,7 @@ fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
     let row = MergedGram::merge(Some(whole), Some(partial));
 
     let build = || {
-        let mut session = Session::new(
-            SessionSettings::default(),
+        let mut session = crate::engine::session::tests::session_over(
             TwoFacadeDict {
                 system: PhraseEntry::new(DYNAMIC_ADJUST_FIRST, "系"),
                 addon: PhraseEntry::new(0x0500_0002, "附"),
@@ -1349,19 +1190,20 @@ fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
                 asked_about: Default::default(),
             },
         );
-        session.set_defer_list_builds(true);
-        session
-            .set_options(OptionBits::DYNAMIC_ADJUST)
-            .expect("set options");
+        session.options = OptionBits::DYNAMIC_ADJUST;
         session.replace_raw("a").expect("parse");
         session
     };
 
     for before_cursor in [false, true] {
         let guess = if before_cursor {
-            |session: &mut Session<TwoFacadeDict, CountingBigrams>| session.candidates_ending_at(1)
+            |session: &mut Session<TwoFacadeDict, CountingBigrams>| {
+                session.candidates_ending_at_for_abi(1, false)
+            }
         } else {
-            |session: &mut Session<TwoFacadeDict, CountingBigrams>| session.candidates_at(0)
+            |session: &mut Session<TwoFacadeDict, CountingBigrams>| {
+                session.candidates_at_for_abi(0, false)
+            }
         };
         let mut session = build();
         let window = guess(&mut session).expect("warm scan");
@@ -1387,8 +1229,7 @@ fn a_refused_partial_predecessor_scan_leaves_the_next_window_as_a_fresh_one() {
 // Basis: pinyin.cpp:1772–1788,1794–1866,2224–2286 at 074a2219.
 #[test]
 fn window_scan_emits_system_candidates_before_addon_candidates() {
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         TwoFacadeDict {
             system: PhraseEntry::new(0x0100_0001, "系".to_owned()),
             addon: PhraseEntry::new(0x0500_0002, "附".to_owned()),
@@ -1401,8 +1242,8 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
         },
     );
     session.replace_raw("a").expect("typing cannot fail");
-    let texts: Vec<&str> = session
-        .candidates()
+    let list = window(&mut session);
+    let texts: Vec<&str> = list
         .iter()
         .filter_map(super::super::candidate::Candidate::text_str)
         .collect();
@@ -1446,8 +1287,7 @@ fn a_window_ranked_after_a_training_write_reads_the_rewritten_counts() {
     }
 
     let counts = std::rc::Rc::new(std::cell::Cell::new((5_000_000, 10_000_000)));
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         FixtureDictionary::parse(
             "token=16777217\tkeys=a\ttext=一\tunigram=1\n\
              token=16777218\tkeys=a\ttext=二\tunigram=1\n",
@@ -1459,53 +1299,16 @@ fn a_window_ranked_after_a_training_write_reads_the_rewritten_counts() {
     );
     session.replace_raw("a").expect("typing cannot fail");
     assert_eq!(
-        texts(session.candidates()),
+        texts(&window(&mut session)),
         ["二", "一"],
         "the larger count ranks first"
     );
 
     counts.set((5_000_000, 1));
     assert_eq!(
-        texts(session.candidates()),
-        ["二", "一"],
-        "the retained list is not ranked again"
-    );
-    let window = session.candidates_at(0).expect("window at 0");
-    assert_eq!(
-        texts(&window),
+        texts(&window(&mut session)),
         ["一", "二"],
         "a new window reads the new counts"
-    );
-}
-
-// Basis: pinyin.cpp:1635–1637,2053 at 074a2219 and the Rust unreadable-row contract.
-#[test]
-fn a_window_whose_lookup_met_an_unreadable_item_says_so() {
-    struct UnreadableDict;
-    impl PhraseList for UnreadableDict {
-        type Error = EngineError;
-        type Syllable = SyllableKey;
-
-        fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
-            Ok(vec![PhraseEntry::new(0x0100_0001, "你")])
-        }
-
-        fn lookup_into_flagged(
-            &self,
-            syllables: &[SyllableKey],
-            out: &mut Vec<PhraseEntry>,
-        ) -> Result<bool, EngineError> {
-            *out = self.lookup(syllables)?;
-            Ok(true)
-        }
-    }
-    let mut session = Session::new(SessionSettings::default(), UnreadableDict, Silent);
-    session.replace_raw("ni").expect("typing cannot fail");
-    let window = session.candidates_at(0).expect("window at 0");
-    assert!(window.had_unreadable_item());
-    assert!(
-        window.iter().any(|row| row.text_str() == Some("你")),
-        "the readable rows stay listed"
     );
 }
 
@@ -1672,8 +1475,7 @@ impl LanguageModel for TrellisModel {
 }
 
 fn trellis_session() -> Session<FixtureDictionary, TrellisModel> {
-    Session::new(
-        SessionSettings::default(),
+    crate::engine::session::tests::session_over(
         FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
         TrellisModel {
             blended: 0.5,
@@ -1693,8 +1495,7 @@ where
         typed.push(character);
         session.replace_raw(&typed).expect("typing cannot fail");
     }
-    let index = session
-        .candidates()
+    let index = window(session)
         .iter()
         .position(|candidate| candidate.token() == Some(token))
         .expect("the fixture candidate is offered");
@@ -1763,32 +1564,22 @@ fn clear_constraint_unforces_the_run_and_rebuilds_the_record() {
 #[test]
 fn clearing_a_tail_forcing_reopens_a_committed_composition() {
     let mut session = trellis_session();
-    session
-        .replace_raw("nihaoshijie")
-        .expect("typing cannot fail");
+    session.replace_raw("nihao").expect("typing cannot fail");
     let select_token = |session: &mut Session<FixtureDictionary, TrellisModel>, token| {
-        let index = session
-            .candidates()
+        let index = window(session)
             .iter()
             .position(|candidate| candidate.token() == Some(token))
             .expect("the fixture candidate is offered");
-        select_row(session, index).expect("selection cannot fail");
+        select_row(session, index).expect("selection cannot fail")
     };
-    select_token(&mut session, 1); // 你 over [0,2)
-    select_token(&mut session, 2); // 好 over [2,5)
-    let index = session
-        .candidates()
-        .iter()
-        .position(|candidate| candidate.kind() == crate::engine::CandidateKind::Fallback)
-        .expect("the fallback covers the remainder");
-    select_row(&mut session, index).expect("selection cannot fail");
+    assert_eq!(select_token(&mut session, 1), Selection::Continued); // 你 over [0,2)
+    assert_eq!(select_token(&mut session, 2), Selection::Completed); // 好 over [2,5)
 
     assert!(session.clear_constraint(2));
     assert_eq!(session.selected_tokens(), [1]);
+    assert_eq!(session.composition_offset(), 2, "the composition reopens");
 
-    session
-        .replace_raw("nihaoshijies")
-        .expect("typing cannot fail");
+    session.replace_raw("nihaos").expect("typing cannot fail");
     assert!(
         session.guess_sentence().expect("guess cannot fail"),
         "the walk runs"
@@ -1807,12 +1598,11 @@ fn a_shrinking_reparse_reconciles_a_constraint_free_row_selection() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("typing cannot fail");
     assert!(session.guess_sentence().expect("guess cannot fail"));
-    let row0 = session
-        .candidates()
+    let row0 = window(&mut session)
         .iter()
         .position(|candidate| {
             candidate.kind() == crate::engine::CandidateKind::Sentence
-                && candidate.nbest_row() == Some(0)
+                && nbest_rank(candidate) == Some(0)
         })
         .expect("the row-0 sentence is offered");
     assert_eq!(
@@ -1844,8 +1634,7 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
     let mut session = trellis_session();
     session.replace_raw("nihao").expect("typing cannot fail");
     for token in [1_u32, 2] {
-        let index = session
-            .candidates()
+        let index = window(&mut session)
             .iter()
             .position(|candidate| candidate.token() == Some(token))
             .expect("the fixture candidate is offered");
@@ -1873,8 +1662,7 @@ fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
         for validate in [false, true] {
             let mut session = trellis_session();
             session.replace_raw("nihao").expect("initial parse");
-            let index = session
-                .candidates()
+            let index = window(&mut session)
                 .iter()
                 .position(|candidate| candidate.token() == Some(1))
                 .expect("the fixture offers 你");
@@ -1906,8 +1694,7 @@ fn the_forcing_survives_the_shrinking_parse_and_retype() {
     session
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
-    let index = session
-        .candidates()
+    let index = window(&mut session)
         .iter()
         .position(|candidate| candidate.token() == Some(1))
         .expect("the fixture candidate is offered");
@@ -1975,17 +1762,13 @@ fn a_shorter_reparse_keeps_the_guessed_store_for_a_differing_row_write() {
             span: 3,
         },
     ];
-    session.refresh().expect("refresh cannot fail");
-    let index = session
-        .candidates()
+    let index = window(&mut session)
         .iter()
-        .position(|candidate| candidate.nbest_row() == Some(1))
+        .position(|candidate| nbest_rank(candidate) == Some(1))
         .expect("the rank-1 row is offered");
-    let chosen = session.candidates().iter().nth(index).expect("row").clone();
+    let chosen = window(&mut session).iter().nth(index).expect("row").clone();
     session.replace_raw("ni").expect("shorter parse");
-    session
-        .select_target(&SelectionTarget::of_candidate(&chosen, 0, None))
-        .expect("the retained row is choosable");
+    choose(&mut session, &chosen, 0).expect("the retained row is choosable");
     assert!(matches!(
         session.constraints.cell(0),
         Some(crate::engine::constraint::Cell::OneStep { end: 3, .. })
@@ -2005,10 +1788,9 @@ fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
         session.guess_sentence().expect("guess cannot fail"),
         "rows exist before the choose"
     );
-    let row = session
-        .candidates()
+    let row = window(&mut session)
         .iter()
-        .position(|candidate| candidate.nbest_row() == Some(0))
+        .position(|candidate| nbest_rank(candidate) == Some(0))
         .expect("the rank-0 row is offered at the head");
     select_row(&mut session, row).expect("the row is choosable");
     assert!(
@@ -2051,9 +1833,13 @@ fn a_decoded_continuation_trains_through_the_constraint_walk() {
 // Basis: Rust raw-buffer and lookup offset UTF-8 boundary contracts.
 #[test]
 fn replace_raw_walks_consumed_back_to_a_char_boundary() {
-    let mut session = session();
-    session.replace_raw("a").expect("cannot fail");
-    select_row(&mut session, 0).expect("the fallback row selects");
+    let mut session = trellis_session();
+    session.replace_raw("ni").expect("cannot fail");
+    assert!(session.guess_sentence().expect("guess cannot fail"));
+    // A row-0 n-best choose moves the record and forces nothing, so only
+    // the clamp decides where a replacement leaves it.
+    assert_eq!(session.select_nbest_row(0), Selection::Completed);
+    assert_eq!(session.composition_offset(), 2);
     session.replace_raw("\u{ff0c}").expect("cannot fail");
     assert_eq!(session.composition_offset(), 0);
 }
@@ -2065,11 +1851,17 @@ fn candidates_at_rejects_mid_character_offsets() {
     session.replace_raw("\u{ff0c}nihao").expect("cannot fail");
     for offset in [1, 2] {
         assert!(
-            matches!(session.candidates_at(offset), Err(EngineError::Failure)),
+            matches!(
+                session.candidates_at_for_abi(offset, false),
+                Err(EngineError::Failure)
+            ),
             "offset {offset} is inside the character and must be refused"
         );
     }
-    assert!(session.candidates_at(3).is_ok(), "offset 3 is a boundary");
+    assert!(
+        session.candidates_at_for_abi(3, false).is_ok(),
+        "offset 3 is a boundary"
+    );
 }
 
 // Basis: pinyin.cpp:2184–2308 at 074a2219 and the Rust fallback contract.
@@ -2084,7 +1876,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         .expect("typing cannot fail");
     assert_eq!(
         session
-            .candidates_at(3)
+            .candidates_at_for_abi(3, false)
             .expect("unsearched empty column")
             .iter()
             .map(|row| row.kind())
@@ -2093,7 +1885,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
     );
     assert!(
         session
-            .candidates_at(2)
+            .candidates_at_for_abi(2, false)
             .expect("live column")
             .iter()
             .any(|row| row.kind() == CandidateKind::Phrase)
@@ -2103,9 +1895,10 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         spans: Vec::new(),
         span: 11,
     }];
-    session.refresh().expect("refresh cannot fail");
 
-    let window = session.candidates_at(3).expect("offset 3 is in range");
+    let window = session
+        .candidates_at_for_abi(3, false)
+        .expect("offset 3 is in range");
     assert!(
         window
             .iter()
@@ -2139,35 +1932,30 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         .replace_raw("nihaoshijie")
         .expect("typing cannot fail");
     session.sentence.rows = vec![row("你好世界"), row("你")];
-
-    session.refresh().expect("refresh cannot fail");
-    let sentences: Vec<&str> = session
-        .candidates()
+    let list = window(&mut session);
+    let sentences: Vec<&str> = list
         .iter()
         .filter(|cand| cand.kind() == CandidateKind::Sentence)
         .filter_map(super::super::candidate::Candidate::text_str)
         .collect();
     assert_eq!(sentences, ["你好世界", "你"]);
     assert!(
-        !session
-            .candidates()
+        !window(&mut session)
             .iter()
             .any(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你"),
         "the phrase colliding with the second row's own text is absorbed"
     );
 
     session.set_law(crate::engine::Law::Zhuyin);
-    session.refresh().expect("refresh cannot fail");
-    let sentences: Vec<&str> = session
-        .candidates()
+    let list = window(&mut session);
+    let sentences: Vec<&str> = list
         .iter()
         .filter(|cand| cand.kind() == CandidateKind::Sentence)
         .filter_map(super::super::candidate::Candidate::text_str)
         .collect();
     assert_eq!(sentences, ["你好世界"]);
     assert!(
-        session
-            .candidates()
+        window(&mut session)
             .iter()
             .any(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你"),
         "the phrase survives the collapsed prepend"
@@ -2183,7 +1971,7 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     let mut session = train_session();
     session.replace_raw("nihao").expect("typing cannot fail");
     let window = session
-        .candidates_ending_at(5)
+        .candidates_ending_at_for_abi(5, false)
         .expect("offset 5 is in range");
     let (index, row) = window
         .iter()
@@ -2192,19 +1980,20 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
         .expect("好 ends at 5 and is offered");
     assert_eq!(row.span_start(), 2, "好 starts where `hao` starts");
     assert_eq!(row.consumed_bytes(), 5, "…and ends at the lookup offset");
-    let after_cursor = session.candidates_at(2).expect("offset 2 is in range");
+    let after_cursor = session
+        .candidates_at_for_abi(2, false)
+        .expect("offset 2 is in range");
     assert!(
         after_cursor.iter().all(|cand| cand.span_start() == 0),
         "an after-cursor window measures every row from its anchor"
     );
 
-    session
-        .select_target(&SelectionTarget::of_candidate(
-            window.iter().nth(index).expect("the row is in the window"),
-            BEFORE_CURSOR_ANCHOR,
-            None,
-        ))
-        .expect("the row is selectable");
+    choose(
+        &mut session,
+        window.iter().nth(index).expect("the row is in the window"),
+        BEFORE_CURSOR_ANCHOR,
+    )
+    .expect("the row is selectable");
     assert_eq!(session.composition_offset(), 5);
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "one forcing: {runs:?}");
@@ -2226,7 +2015,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     session.replace_raw("nihao").expect("typing cannot fail");
 
     let window = session
-        .candidates_ending_at(2)
+        .candidates_ending_at_for_abi(2, false)
         .expect("offset 2 is in range");
     assert!(
         window.iter().any(|cand| cand.text() == "你"),
@@ -2238,7 +2027,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     );
 
     let at_start = session
-        .candidates_ending_at(0)
+        .candidates_ending_at_for_abi(0, false)
         .expect("offset 0 is in range");
     assert!(at_start.is_empty());
 
@@ -2249,7 +2038,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
     }];
     session.set_law(crate::engine::Law::Zhuyin);
     let window = session
-        .candidates_ending_at(2)
+        .candidates_ending_at_for_abi(2, false)
         .expect("offset 2 is in range");
     assert_eq!(
         window
@@ -2270,9 +2059,11 @@ fn candidates_at_the_apostrophe_column_is_transparent() {
     let mut session = train_session();
     session.replace_raw("ni'hao").expect("typing cannot fail");
     let at_separator = session
-        .candidates_at(2)
+        .candidates_at_for_abi(2, false)
         .expect("the separator byte is in range");
-    let at_start = session.candidates_at(3).expect("the hao start is in range");
+    let at_start = session
+        .candidates_at_for_abi(3, false)
+        .expect("the hao start is in range");
     assert_eq!(
         at_separator
             .iter()
@@ -2290,7 +2081,9 @@ fn candidates_at_the_apostrophe_column_is_transparent() {
     );
 
     session.replace_raw("ni,'hao").expect("parse");
-    let outside = session.candidates_at(3).expect("byte 3 is in range");
+    let outside = session
+        .candidates_at_for_abi(3, false)
+        .expect("byte 3 is in range");
     assert_eq!(
         outside.iter().map(|row| row.kind()).collect::<Vec<_>>(),
         [CandidateKind::Fallback]
@@ -2312,15 +2105,16 @@ fn candidates_at_a_divided_split_column_answers_the_split_window() {
         ),
         (OptionBits::PINYIN_INCOMPLETE, None),
     ] {
-        let mut session = Session::new(
-            SessionSettings::default(),
+        let mut session = crate::engine::session::tests::session_over(
             FixtureDictionary::parse(SPLIT_VOCAB).expect("authored fixture"),
             FixtureLanguageModel::parse(SPLIT_VOCAB, "").expect("authored fixture"),
         );
-        session.set_options(options).expect("set split options");
+        session.options = options;
         session.replace_raw("nihaoshijie").expect("parse");
         assert_eq!(session.spans_a_matrix_key(10), expected.is_some());
-        let window = session.candidates_at(10).expect("byte 10 is in range");
+        let window = session
+            .candidates_at_for_abi(10, false)
+            .expect("byte 10 is in range");
         assert_eq!(
             window
                 .iter()
@@ -2339,33 +2133,32 @@ fn choosing_behind_the_composition_moves_the_record_back() {
     const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
                          token=2\tkeys=hao\ttext=好\tunigram=900\n\
                          token=3\tkeys=ni,hao\ttext=你好\tunigram=800\n";
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         FixtureDictionary::parse(VOCAB).expect("authored fixture"),
         FixtureLanguageModel::parse(VOCAB, "").expect("authored fixture"),
     );
     session.replace_raw("nihao").expect("typing cannot fail");
-    let whole = session
-        .candidates()
+    let whole = window(&mut session)
         .iter()
         .position(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你好")
         .expect("你好 is offered at 0");
     select_row(&mut session, whole).expect("你好 is selectable");
     assert_eq!(session.composition_offset(), 5);
 
-    let window = session.candidates_at(0).expect("offset 0 is in range");
+    let window = session
+        .candidates_at_for_abi(0, false)
+        .expect("offset 0 is in range");
     let (index, row) = window
         .iter()
         .enumerate()
         .find(|(_, cand)| cand.kind() == CandidateKind::Phrase && cand.text() == "你")
         .expect("你 is offered at 0");
-    session
-        .select_target(&SelectionTarget::of_candidate(
-            window.iter().nth(index).expect("the row is in the window"),
-            0,
-            None,
-        ))
-        .expect("a choose behind the composition is a selection, not a refusal");
+    choose(
+        &mut session,
+        window.iter().nth(index).expect("the row is in the window"),
+        0,
+    )
+    .expect("a choose behind the composition is a selection, not a refusal");
     assert_eq!(session.composition_offset(), 2, "the record moves back");
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "你好 was overlapped and cleared: {runs:?}");
@@ -2421,8 +2214,7 @@ impl PhraseList for StoredTone3 {
 #[test]
 fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
     let texts = |input: &str| -> Vec<String> {
-        let mut session = Session::new(
-            SessionSettings::default(),
+        let mut session = crate::engine::session::tests::session_over(
             StoredTone3,
             FixedUnigrams {
                 system: 14,
@@ -2431,12 +2223,9 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
                 addon_total: 25_525_916,
             },
         );
-        session
-            .set_options(crate::OptionBits::from_bits_retain(0x1aa))
-            .expect("options apply");
+        session.options = crate::OptionBits::from_bits_retain(0x1aa);
         session.replace_raw(input).expect("typing cannot fail");
-        session
-            .candidates()
+        window(&mut session)
             .iter()
             .filter_map(|candidate| candidate.text_str())
             .map(str::to_owned)
@@ -2452,9 +2241,7 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
 fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input() {
     use crate::graph::ExactSegment;
     let mut session = session();
-    session
-        .set_options(crate::OptionBits::USE_TONE)
-        .expect("options");
+    session.options = crate::OptionBits::USE_TONE;
     let sh = SyllableKey::from_canonical_text("sh").expect("initial");
     session
         .replace_raw_full_pinyin("sh", &[ExactSegment::new(0, 2, sh, 0)])
@@ -2470,9 +2257,7 @@ fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input(
 fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
     use crate::graph::ExactSegment;
     let mut session = session();
-    session
-        .set_options(crate::OptionBits::USE_TONE)
-        .expect("options");
+    session.options = crate::OptionBits::USE_TONE;
     let segments: Vec<_> = [(0, 2, "li"), (3, 5, "sh"), (6, 8, "ba"), (9, 12, "kua")]
         .into_iter()
         .map(|(start, end, text)| {
@@ -2543,8 +2328,7 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
     const HALF_VOCAB: &str = "token=1\tkeys=an\ttext=安\tunigram=1000\n\
                               token=2\tkeys=ang\ttext=昂\tunigram=900\n";
     for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
-        let mut session = Session::new(
-            SessionSettings::default(),
+        let mut session = crate::engine::session::tests::session_over(
             FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
             FixedUnigrams {
                 system: 1000,
@@ -2553,14 +2337,12 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
                 addon_total: 1,
             },
         );
-        session
-            .set_options(OptionBits::from_bits_retain(0x18a))
-            .expect("options");
+        session.options = OptionBits::from_bits_retain(0x18a);
         session.set_law(crate::engine::Law::Zhuyin);
         session.replace_raw(raw).expect("full pinyin parse");
         assert!(
             !session
-                .candidates_at(offset)
+                .candidates_at_for_abi(offset, false)
                 .expect("zhuyin window")
                 .iter()
                 .any(|row| row.text() == wanted),
@@ -2570,14 +2352,16 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
         session.set_law(crate::engine::Law::Pinyin);
         assert!(
             !session
-                .candidates_at(offset)
+                .candidates_at_for_abi(offset, false)
                 .expect("unparsed window")
                 .iter()
                 .any(|row| row.text() == wanted),
             "the mode alone does not re-parse"
         );
         session.replace_raw(raw).expect("pinyin parse");
-        let rows = session.candidates_at(offset).expect("pinyin window");
+        let rows = session
+            .candidates_at_for_abi(offset, false)
+            .expect("pinyin window");
         let row = rows.iter().find(|row| row.text() == wanted).expect(wanted);
         assert_eq!(row.consumed_bytes(), end - offset);
         assert_eq!(session.raw_input(), raw);
@@ -2586,7 +2370,7 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
         session.replace_raw(raw).expect("zhuyin parse");
         assert!(
             !session
-                .candidates_at(offset)
+                .candidates_at_for_abi(offset, false)
                 .expect("rebuilt zhuyin window")
                 .iter()
                 .any(|row| row.text() == wanted),
@@ -2601,9 +2385,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     use crate::OptionBits;
 
     let mut session = session();
-    session
-        .set_options(OptionBits::from_bits_retain(0x18a))
-        .expect("options");
+    session.options = OptionBits::from_bits_retain(0x18a);
     let spans = |session: &Session<Silent, Silent>| {
         let keys: Vec<_> = session.matrix_keys().iter().collect();
         let parsed = session.input.parsed.retained.matrix.bound;
@@ -2646,8 +2428,7 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
     const EXACT_VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
                                token=2\tkeys=hao\ttext=好\tunigram=900\n";
 
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         FixtureDictionary::parse(EXACT_VOCAB).expect("fixture"),
         FixedUnigrams {
             system: 1000,
@@ -2672,7 +2453,7 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
     ];
     session.replace_raw_exact("nihk", &segments).expect("parse");
     assert!(session.input.parsed.retained.matrix.zeros[4]);
-    let rows = session.candidates_at(2).expect("hao window");
+    let rows = session.candidates_at_for_abi(2, false).expect("hao window");
     assert!(rows.iter().any(|row| row.text() == "好"));
 }
 
@@ -2811,7 +2592,7 @@ fn an_option_change_reaches_the_matrix_at_the_next_parse() {
     assert_eq!((keys.len(), parsed), (1, 2));
 
     let options = session.options - crate::OptionBits::PINYIN_INCOMPLETE;
-    session.set_options(options).expect("options");
+    session.options = options;
     assert_eq!(session.full_parsed_len(), 2, "no re-parse");
     assert_eq!(session.input.parsed.retained.matrix.bound, 2);
 
@@ -2830,9 +2611,7 @@ fn the_matrix_keys_are_the_parse_in_column_order() {
     use crate::engine::cursor::KeySpans as _;
 
     let mut session = session();
-    session
-        .set_options(OptionBits::from_bits_retain(0x18a))
-        .expect("options");
+    session.options = OptionBits::from_bits_retain(0x18a);
     session.replace_raw("ni'hao").expect("parse");
     let spans: Vec<_> = session
         .matrix_keys()
@@ -2947,8 +2726,7 @@ fn wide_abbreviation_item() -> Rows {
 /// token 7 forced over all of it and the selection record rebuilt from that
 /// forcing.
 fn wide_abbreviation_session(item: Option<Rows>) -> Session<ItemDictionary, TrellisModel> {
-    let mut session = Session::new(
-        SessionSettings::default(),
+    let mut session = crate::engine::session::tests::session_over(
         ItemDictionary {
             inner: FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
             items: item.into_iter().map(|rows| (7, rows)).collect(),
@@ -2959,9 +2737,7 @@ fn wide_abbreviation_session(item: Option<Rows>) -> Session<ItemDictionary, Trel
             unigram: 0.25,
         },
     );
-    session
-        .set_options(session.options() | crate::OptionBits::PINYIN_INCOMPLETE)
-        .expect("incomplete on");
+    session.options = session.options() | crate::OptionBits::PINYIN_INCOMPLETE;
     session.replace_raw("zhhrm").expect("parse");
     session.constraints.resize(6);
     assert_eq!(session.constraints.add(0, 5, 7), 5);
@@ -3021,8 +2797,50 @@ fn an_overrunning_forcing_whose_item_read_fails_is_cleared() {
     }
 }
 
-/// Chooses row `index` of the session's cached list at the composition
-/// offset, through [`Session::select_target`].
+/// The option word the engine tests open sessions under: incomplete pinyin
+/// and both split tables.
+pub(crate) const TEST_OPTIONS: crate::OptionBits = crate::OptionBits::PINYIN_INCOMPLETE
+    .union(crate::OptionBits::USE_DIVIDED_TABLE)
+    .union(crate::OptionBits::USE_RESPLIT_TABLE);
+
+/// A session over `dictionary` and `model` under [`TEST_OPTIONS`].
+pub(crate) fn session_over<D, L>(dictionary: D, model: L) -> Session<D, L>
+where
+    D: crate::model::Dictionary<Syllable = crate::vocab::SyllableKey>,
+    L: crate::model::LanguageModel,
+{
+    Session::new(dictionary, model, TEST_OPTIONS)
+}
+
+/// [`session_over`] without incomplete pinyin.
+pub(crate) fn session_over_without_incomplete<D, L>(dictionary: D, model: L) -> Session<D, L>
+where
+    D: crate::model::Dictionary<Syllable = crate::vocab::SyllableKey>,
+    L: crate::model::LanguageModel,
+{
+    Session::new(
+        dictionary,
+        model,
+        TEST_OPTIONS - crate::OptionBits::PINYIN_INCOMPLETE,
+    )
+}
+
+/// The after-cursor window at the composition offset: the list the C ABI
+/// publishes for a guess there (`candidates_at_for_abi`).
+pub(crate) fn window<D, L, S>(session: &mut Session<D, L, S>) -> crate::engine::CandidateList
+where
+    D: crate::model::Dictionary<Syllable = crate::vocab::SyllableKey>,
+    L: crate::model::LanguageModel,
+    S: std::borrow::BorrowMut<super::SessionState>,
+{
+    let offset = session.composition_offset();
+    session
+        .candidates_at_for_abi(offset, false)
+        .expect("the window builds")
+}
+
+/// Chooses row `index` of the window at the composition offset, as the C
+/// choose dispatches it ([`choose`]).
 pub(super) fn select_row<D, L>(
     session: &mut Session<D, L>,
     index: usize,
@@ -3031,15 +2849,46 @@ where
     D: crate::model::Dictionary<Syllable = crate::vocab::SyllableKey>,
     L: crate::model::LanguageModel,
 {
-    session.refresh_candidates()?;
-    let candidate = session
-        .candidates()
+    let candidate = window(session)
         .iter()
         .nth(index)
         .cloned()
         .expect("the row is listed");
     let anchor = session.composition_offset();
-    session.select_target(&SelectionTarget::of_candidate(&candidate, anchor, None))
+    choose(session, &candidate, anchor)
+}
+
+/// Chooses `candidate` of a window anchored at `anchor` as the C choose
+/// dispatches it: a sentence row by its n-best rank
+/// (`Session::select_nbest_row`), any other row by its token over its span
+/// (`Session::select_row`).
+pub(crate) fn choose<D, L, S>(
+    session: &mut Session<D, L, S>,
+    candidate: &crate::engine::Candidate,
+    anchor: usize,
+) -> Result<Selection, EngineError>
+where
+    D: crate::model::Dictionary<Syllable = crate::vocab::SyllableKey>,
+    L: crate::model::LanguageModel,
+    S: std::borrow::BorrowMut<super::SessionState>,
+{
+    if let Some(rank) = nbest_rank(candidate) {
+        return Ok(session.select_nbest_row(rank));
+    }
+    let token = candidate
+        .token()
+        .expect("the C choose writes no forcing for a row without a token");
+    session.select_row(
+        anchor + candidate.span_start(),
+        candidate.span_end_at(anchor),
+        token,
+        super::RowText::Resolve,
+    )
+}
+
+/// The n-best rank of a sentence row; `None` for any other row.
+pub(crate) fn nbest_rank(candidate: &crate::engine::Candidate) -> Option<u8> {
+    (candidate.kind() == crate::engine::CandidateKind::Sentence).then(|| candidate.nbest_index())
 }
 
 // Basis: pinyin.cpp:1870–1933,2292–2300 at 074a2219.
@@ -3054,16 +2903,12 @@ fn longer_unigram_ties_follow_library_order_before_matrix_path_order() {
             "token={first_token}\tkeys=xian,hao\ttext=先好\tunigram={first_frequency}\n\
              token=16777217\tkeys=xi,an,hao\ttext=西安好\tunigram=100\n"
         );
-        let mut session = Session::new(
-            SessionSettings::default(),
+        let mut session = crate::engine::session::tests::session_over(
             FixtureDictionary::parse(&vocab).expect("fixture"),
             FrequencyFixtureModel::parse(&vocab, "").expect("fixture"),
         );
         session.replace_raw("xian").expect("parse");
-        let (_, candidate) = session
-            .longer_candidate(super::Scan::EagerRefresh)
-            .expect("lookup")
-            .expect("row");
+        let (_, candidate) = session.longer_candidate().expect("lookup").expect("row");
         assert_eq!(candidate.text(), expected);
     }
 }
@@ -3249,10 +3094,10 @@ fn duplicated_matrix_paths_leave_ordinary_rows_unchanged() {
     session.guess_sentence().unwrap();
     let ordinary = |session: &mut Session<FixtureDictionary, TrellisModel>| {
         session
-            .candidates_at(0)
+            .candidates_at_for_abi(0, false)
             .unwrap()
             .iter()
-            .filter(|c| c.nbest_row().is_none())
+            .filter(|c| nbest_rank(c).is_none())
             .cloned()
             .collect::<Vec<_>>()
     };
@@ -3282,7 +3127,7 @@ pub(super) mod session_lifecycle {
 
     use crate::OptionBits;
 
-    use crate::engine::{Session, SessionSettings};
+    use crate::engine::Session;
     use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
 
     use super::select_row;
@@ -3301,7 +3146,7 @@ pub(super) mod session_lifecycle {
     pub(in crate::engine::session) fn session() -> TestSession {
         let dictionary = FixtureDictionary::parse(VOCAB).expect("committed fixture");
         let model = FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures");
-        Session::new(SessionSettings::default(), dictionary, model)
+        crate::engine::session::tests::session_over(dictionary, model)
     }
 
     // ── libchewing test-reset.c ─────────────────────────────────────────
@@ -3311,9 +3156,7 @@ pub(super) mod session_lifecycle {
     fn reset_clears_the_composition_but_not_the_configuration() {
         let mut session = session();
         assert!(!session.is_composing());
-        session
-            .set_options(session.options() - OptionBits::PINYIN_INCOMPLETE)
-            .expect("the option toggles");
+        session.options = session.options() - OptionBits::PINYIN_INCOMPLETE;
         let options = session.options();
 
         session.replace_raw("nihao").expect("typing");
@@ -3328,12 +3171,15 @@ pub(super) mod session_lifecycle {
         session.replace_raw("n").expect("typing");
         assert_eq!(session.full_parsed_len(), 0);
         let mut fresh_session = self::session();
-        fresh_session.set_options(options).expect("match options");
+        fresh_session.options = options;
         fresh_session.replace_raw("zhong,guo").expect("typing");
         session
             .replace_raw("zhong,guo")
             .expect("typing after reset");
-        assert_eq!(session.candidates(), fresh_session.candidates());
+        assert_eq!(
+            super::window(&mut session),
+            super::window(&mut fresh_session)
+        );
     }
 
     // Basis: Rust option-word and raw-input contracts in the session API.
@@ -3341,14 +3187,9 @@ pub(super) mod session_lifecycle {
     fn an_option_word_with_undefined_bits_is_accepted_and_inert() {
         let undefined_bit = 1 << 0; // bits 0..2 are outside the frozen set
         let mut session = session();
-        session
-            .set_options(
-                OptionBits::PINYIN_INCOMPLETE | OptionBits::from_bits_retain(undefined_bit),
-            )
-            .expect("the option word accepts undefined bits");
-        session
-            .set_options(session.options() | OptionBits::PINYIN_INCOMPLETE)
-            .expect("the option toggles");
+        session.options =
+            OptionBits::PINYIN_INCOMPLETE | OptionBits::from_bits_retain(undefined_bit);
+        session.options = session.options() | OptionBits::PINYIN_INCOMPLETE;
         session.replace_raw("n").expect("typing");
         assert!(
             session.is_composing(),
@@ -3414,7 +3255,7 @@ pub(super) mod session_replay {
 
 /// Decoding tests whose decision is the session's parse and settings.
 mod decoding {
-    use crate::engine::{Candidate, Session, SessionSettings};
+    use crate::engine::Candidate;
     use crate::fixture_doubles::{FixtureDictionary, FrequencyFixtureModel};
 
     use super::session_lifecycle::{BIGRAM, VOCAB};
@@ -3433,8 +3274,7 @@ token=2\tkeys=bing\ttext=并\tunigram=100
     // Basis: pinyin_parser2.cpp:237–328 at 074a2219 and the Rust raw-buffer contract.
     #[test]
     fn replace_raw_b_hash_ing_prefers_bu_family_not_bing() {
-        let mut session = Session::new(
-            SessionSettings::default(),
+        let mut session = crate::engine::session::tests::session_over(
             FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
             FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
         );
@@ -3442,8 +3282,8 @@ token=2\tkeys=bing\ttext=并\tunigram=100
         session.replace_raw("b#ing").expect("parse cannot fail");
         assert_eq!(session.raw_input(), "b#ing");
 
-        let top = session
-            .candidates()
+        let list = super::window(&mut session);
+        let top = list
             .iter()
             .next()
             .map(Candidate::text)
@@ -3453,14 +3293,13 @@ token=2\tkeys=bing\ttext=并\tunigram=100
             "fixture: b#ing rank-1 is 不, not 并; got {top:?}"
         );
 
-        let mut collapsed = Session::new(
-            SessionSettings::default(),
+        let mut collapsed = crate::engine::session::tests::session_over(
             FixtureDictionary::parse(JUNK_VOCAB).expect("junk vocab"),
             FrequencyFixtureModel::parse(JUNK_VOCAB, "").expect("junk unigrams"),
         );
         collapsed.replace_raw("bing").expect("parse cannot fail");
-        let collapsed_top = collapsed
-            .candidates()
+        let list = super::window(&mut collapsed);
+        let collapsed_top = list
             .iter()
             .next()
             .map(Candidate::text)
@@ -3471,21 +3310,15 @@ token=2\tkeys=bing\ttext=并\tunigram=100
     // Basis: pinyin_parser2.cpp:237–328 at 074a2219 and the Rust raw-buffer contract.
     #[test]
     fn turning_incomplete_pinyin_off_stops_at_the_initial() {
-        let mut session = Session::new(
-            SessionSettings {
-                incomplete_pinyin: false,
-            },
+        let mut session = crate::engine::session::tests::session_over_without_incomplete(
             FixtureDictionary::parse(VOCAB).expect("committed fixture"),
             FrequencyFixtureModel::parse(VOCAB, BIGRAM).expect("committed fixtures"),
         );
 
         session.replace_raw("nih").expect("typing cannot fail");
 
-        let texts: Vec<&str> = session
-            .candidates()
-            .iter()
-            .filter_map(Candidate::text_str)
-            .collect();
+        let list = super::window(&mut session);
+        let texts: Vec<&str> = list.iter().filter_map(Candidate::text_str).collect();
         assert_eq!(texts[0], "你", "without the incomplete key, nih is just ni");
         assert!(!texts.contains(&"你好"));
     }

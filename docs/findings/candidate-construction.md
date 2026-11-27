@@ -20,7 +20,7 @@ For `fangan` it lists `方案` (`fang` + `an`) before `反感` (`fan` + `gan`).
 ### 8.1 The contract
 
 1. **Candidate construction is the expanding-window scan.**
-   - `Session::refresh` fixes the start at the composition offset and walks the window end outward over every byte position.
+   - `Session::candidates_at_for_abi` fixes the start at the lookup offset and walks the window end outward over every byte position.
      For each window, it enumerates every key-path through the scan matrix and searches the phrase table on each complete path.
    - The scan matrix is the selected parse plus the resplit and divided additions ([matrix-split-tables.md](matrix-split-tables.md)).
      The selected parse has the fewest keys, then the smaller total correction distance, then is the first found (`pinyin_parser2.cpp:294-309` at 074a2219).

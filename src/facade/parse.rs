@@ -258,9 +258,6 @@ impl<
 
     fn parse_full_more_with_splits(&mut self, text: &str, divided: bool) -> usize {
         self.begin_parse();
-        if self.session.set_options(self.options()).is_err() {
-            return 0;
-        }
         if text.is_empty() {
             // fill_matrix clears the old matrix before testing keys->len
             // (074a2219, phonetic_key_matrix.cpp:34-38). Keep sentence
@@ -336,10 +333,8 @@ impl<
     pub fn parse_chewing_more(&mut self, text: &str, corrections: ChewingCorrections) -> usize {
         self.begin_parse();
         // The pin fills and fuzzes with the live context word before a
-        // sentence guess (pinyin.cpp:1589-1604, zhuyin.cpp:1061-1076).
-        if self.session.set_options(self.options()).is_err() {
-            return 0;
-        }
+        // sentence guess (pinyin.cpp:1589-1604, zhuyin.cpp:1061-1076); the
+        // session binds under that word.
 
         let parser = ZhuyinParser::with_scheme(self.live.zhuyin_scheme.get());
         let parsed = parser.parse_with_options(text.as_bytes(), corrections.apply(self.options()));
@@ -372,11 +367,8 @@ impl<
     #[must_use]
     pub fn parse_double_more(&mut self, text: &str) -> usize {
         self.begin_parse();
-        // Match fill-then-fuzzy under the whole context word, applied once
-        // per parse (pinyin.cpp:1543-1559, pin 074a2219).
-        if self.session.set_options(self.options()).is_err() {
-            return 0;
-        }
+        // Match fill-then-fuzzy under the whole context word, which the
+        // session binds under (pinyin.cpp:1543-1559, pin 074a2219).
 
         let parsed = self
             .live_double_parser()

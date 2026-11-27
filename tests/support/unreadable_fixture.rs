@@ -1,4 +1,4 @@
-//! Native unreadable candidate fixtures shared by the runtime and C tests.
+//! Native unreadable candidate fixtures for the C tests.
 use oxpinyin::__internal::data::row_format::pinyin_index::{encode_complete_key, encode_item};
 use oxpinyin::__internal::store::{DefaultStore, WriteStore};
 use oxpinyin::facade::ChewingKey;
@@ -10,16 +10,19 @@ pub(crate) enum Case {
     Single,
     Pair,
     Mixed,
-    Fallback,
     MaskedExtension,
     #[cfg(unix)]
     Zero,
+    /// [`Case::Zero`] with the row in the user pinyin index instead of the
+    /// system one.
+    #[cfg(unix)]
+    UserZero,
 }
 
 pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
     let user = tempfile::tempdir().unwrap();
     #[cfg(unix)]
-    let total = u32::from(!matches!(case, Case::Zero));
+    let total = u32::from(!matches!(case, Case::Zero | Case::UserZero));
     #[cfg(not(unix))]
     let total = 1_u32;
     let dir = tempfile::tempdir().unwrap();
@@ -61,17 +64,10 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
         fs::write(dir.path().join(name), chunk.build()).unwrap();
     }
 
-    let index_path = if matches!(case, Case::Fallback) {
-        let conf = oxpinyin::facade::TableConf::load_from_dir(dir.path()).unwrap();
-        let versions = oxpinyin::__internal::data::user_files::SystemVersions::from_conf(&conf);
-        assert!(
-            oxpinyin::__internal::data::user_files::UserTableInfo::conform_to(&versions)
-                .save(user.path().join("user.conf").as_path())
-        );
-        user.path().join("user_pinyin_index.bin")
-    } else {
-        dir.path().join("pinyin_index.bin")
-    };
+    #[cfg(unix)]
+    let user_row = matches!(case, Case::UserZero);
+    #[cfg(not(unix))]
+    let user_row = false;
     let token = if matches!(case, Case::MaskedExtension) {
         0x0200_0001
     } else {
@@ -83,16 +79,25 @@ pub(crate) fn dirs(case: Case) -> (tempfile::TempDir, tempfile::TempDir) {
     }
     let extension = encode_complete_key(&[key, ChewingKey::from_pinyin("hao").unwrap()]);
     let key = encode_complete_key(&[key]);
-    if matches!(case, Case::Fallback) {
-        DefaultStore::write_user_index(&index_path, |sink| sink(&key, &value)).unwrap();
-    } else {
-        let index = DefaultStore::create(&index_path).unwrap();
-        index.set_raw(&key, &value).unwrap();
-        if matches!(case, Case::MaskedExtension) {
-            // Too short for one record: only a decode of this
-            // row fails.
-            index.set_raw(&extension, &[1, 2, 3]).unwrap();
-        }
+    if user_row {
+        let conf = oxpinyin::facade::TableConf::load_from_dir(dir.path()).unwrap();
+        let versions = oxpinyin::__internal::data::user_files::SystemVersions::from_conf(&conf);
+        assert!(
+            oxpinyin::__internal::data::user_files::UserTableInfo::conform_to(&versions)
+                .save(user.path().join("user.conf").as_path())
+        );
+        DefaultStore::write_user_index(&user.path().join("user_pinyin_index.bin"), |sink| {
+            sink(&key, &value)
+        })
+        .unwrap();
+        return (dir, user);
+    }
+    let index = DefaultStore::create(&dir.path().join("pinyin_index.bin")).unwrap();
+    index.set_raw(&key, &value).unwrap();
+    if matches!(case, Case::MaskedExtension) {
+        // Too short for one record: only a decode of this
+        // row fails.
+        index.set_raw(&extension, &[1, 2, 3]).unwrap();
     }
     (dir, user)
 }

@@ -377,10 +377,6 @@ fn guess_candidates_result(
     if !matrix_has_keys(&inst.read()) {
         return Ok(false);
     }
-    let options = inst.core.options();
-    if inst.core.session_mut().set_options(options).is_err() {
-        return Ok(false);
-    }
     if !inst.core.session().is_composing() {
         return Ok(false);
     }
@@ -427,11 +423,10 @@ fn guess_candidates_result(
     // The before-cursor window is re-anchored just like the after-cursor
     // one: `snapshot_candidates` records each row's index into THIS list,
     // so a later `zhuyin_choose_candidate` must resolve it here and not
-    // against the composition-anchored cached list — the two differ in
-    // general, and the caller would commit a row it never displayed. The
-    // anchor is the buffer start rather than the lookup offset because the
-    // ending-at window is END-anchored; see
-    // `oxpinyin::facade::BEFORE_CURSOR_ANCHOR`.
+    // against an after-cursor window — the two differ in general, and the
+    // caller would commit a row it never displayed. The anchor is the
+    // buffer start rather than the lookup offset because the ending-at
+    // window is END-anchored; see `oxpinyin::facade::BEFORE_CURSOR_ANCHOR`.
     let searched_here = !sentence_rows_only
         && (!before_cursor
             || inst.core.zhuyin_parse().is_none_or(|parse| {

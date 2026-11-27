@@ -77,8 +77,8 @@ pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 pub use crate::data::{TableConf, TableConfSite, table_conf_load_failed};
 pub use crate::engine::{
     BEFORE_CURSOR_ANCHOR, Candidate, CandidateKind, CandidateList, CharacterOffset, EngineError,
-    Law, MatrixKey, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection, SelectionTarget,
-    SessionState, amplified_frequency, key_pronounced_by, rank_by_frequency, remember_walk,
+    Law, MatrixKey, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection, SessionState,
+    amplified_frequency, key_pronounced_by, rank_by_frequency, remember_walk,
 };
 pub use crate::graph::SegmentGraph;
 pub use crate::input::filename;

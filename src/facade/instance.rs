@@ -249,7 +249,9 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// Re-borrow a composition operation without taking any storage ownership.
     pub fn read(&self) -> InstanceRead<'_> {
         InstanceView {
-            session: self.session.read(self.dict, self.lm),
+            session: self
+                .session
+                .read(self.dict, self.lm, self.session.options()),
             user: self.user,
             dict: self.dict,
             lm: self.lm,
@@ -301,7 +303,9 @@ impl InstanceCore {
     /// Re-borrow storage for a shared operation.
     pub fn read<'a>(&'a self, runtime: &'a Runtime) -> InstanceRead<'a> {
         InstanceView {
-            session: self.session.read(runtime.dict(), runtime.lm()),
+            session: self
+                .session
+                .read(runtime.dict(), runtime.lm(), self.state.live.options.get()),
             user: runtime.user_store(),
             dict: runtime.dict(),
             lm: runtime.lm(),
@@ -312,7 +316,7 @@ impl InstanceCore {
     /// Re-borrow storage while changing only this instance's composition state.
     pub fn bind<'a>(&'a mut self, runtime: &'a Runtime) -> InstanceMut<'a> {
         InstanceView {
-            session: runtime.session(&mut self.session),
+            session: runtime.session(&mut self.session, self.state.live.options.get()),
             user: runtime.user_store(),
             dict: runtime.dict(),
             lm: runtime.lm(),
@@ -514,7 +518,6 @@ impl<
     /// and span rather than an index into the new parse's candidate list
     /// (074a2219, pinyin.cpp:2580-2587, zhuyin.cpp:1646-1666).
     pub fn reset_parse_state(&mut self) {
-        self.session.reset_composition();
         self.parsed_len = 0;
         self.mode_parse = None;
         self.parse_input.clear();
@@ -652,12 +655,9 @@ impl<
 
     /// The pin's NBEST choose on this instance: its own results at `rank`
     /// (074a2219 `pinyin.cpp:2515-2520`). The caller checks
-    /// [`Self::has_nbest_rank`] first.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineError`] from the engine's selection.
-    pub fn select_nbest_rank(&mut self, rank: u8) -> Result<Selection, EngineError> {
+    /// [`Self::has_nbest_rank`] first. It cannot fail: the choose validates
+    /// no constraint.
+    pub fn select_nbest_rank(&mut self, rank: u8) -> Selection {
         self.session.select_nbest_row(rank)
     }
 

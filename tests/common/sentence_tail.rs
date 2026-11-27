@@ -11,7 +11,7 @@
 use std::path::Path;
 
 use crate::runtime::{Runtime, RuntimeDict, RuntimeLm};
-use oxpinyin::__internal::engine::{Session, SessionSettings};
+use oxpinyin::__internal::engine::Session;
 use oxpinyin::facade::{Candidate, CandidateKind};
 
 use super::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_residuals};
@@ -20,6 +20,8 @@ use super::sentence_fixture::{OracleLine, SENTENCE_FIXTURE, load_fixture, load_r
 pub(crate) struct PortSession {
     runtime: Runtime,
     state: oxpinyin::facade::SessionState,
+    /// The option word each operation binds under.
+    pub(crate) options: oxpinyin::OptionBits,
 }
 
 /// One operation over the retained composition and the runtime's tables.
@@ -34,13 +36,17 @@ impl PortSession {
     pub(crate) fn open(dir: &Path) -> Result<Self, String> {
         let runtime = Runtime::open(dir, None)
             .map_err(|error| format!("cannot open the runtime: {error}"))?;
-        let state = runtime.new_session(SessionSettings::default());
-        Ok(Self { runtime, state })
+        Ok(Self {
+            runtime,
+            state: oxpinyin::facade::SessionState::default(),
+            options: crate::engine::session::tests::TEST_OPTIONS,
+        })
     }
 
     /// Re-borrow the current tables for an operation on retained composition.
     pub(crate) fn session(&mut self) -> PortRead<'_> {
-        self.state.bind(self.runtime.dict(), self.runtime.lm())
+        self.state
+            .bind(self.runtime.dict(), self.runtime.lm(), self.options)
     }
 }
 
@@ -71,11 +77,10 @@ fn observe_port(owner: &mut PortSession, input: &str) -> Result<PortSurface, Str
 
     // `proven` mirrors `observe_sentence_surface`: read only the indices a
     // surviving NBEST row proves are in range, clamped to `MAX_INDEX`.
-    let proven = session
-        .candidates()
+    let proven = crate::engine::session::tests::window(&mut session)
         .iter()
         .filter(|cand| cand.kind() == CandidateKind::Sentence)
-        .filter_map(Candidate::nbest_row)
+        .filter_map(crate::engine::session::tests::nbest_rank)
         .max()
         .unwrap_or(0)
         .min(MAX_INDEX);
@@ -88,8 +93,7 @@ fn observe_port(owner: &mut PortSession, input: &str) -> Result<PortSurface, Str
         })
         .collect();
 
-    let rows: Vec<String> = session
-        .candidates()
+    let rows: Vec<String> = crate::engine::session::tests::window(&mut session)
         .iter()
         .take(ROW_DEPTH)
         .map(render_row)
@@ -111,8 +115,7 @@ fn render_row(cand: &Candidate) -> String {
         CandidateKind::Fallback => "f",
     };
     let nbest = match cand.kind() {
-        CandidateKind::Sentence => cand
-            .nbest_row()
+        CandidateKind::Sentence => crate::engine::session::tests::nbest_rank(cand)
             .map_or_else(|| "-".to_owned(), |rank| rank.to_string()),
         CandidateKind::Phrase | CandidateKind::Addon | CandidateKind::Fallback => "-".to_owned(),
     };

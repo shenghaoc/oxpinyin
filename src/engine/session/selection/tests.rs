@@ -82,16 +82,15 @@ fn readings_preserve_span_tones_order_and_multiplicity() {
 mod session_lifecycle {
     use crate::engine::Selection;
 
-    use crate::engine::session::tests::select_row;
     use crate::engine::session::tests::session_lifecycle::session;
+    use crate::engine::session::tests::{select_row, window};
 
     // Basis: pinyin.cpp:2577–2587 at 074a2219 and the Rust selection outcome contract.
     #[test]
     fn a_programmatic_choice_retains_the_chosen_phrase() {
         let mut session = session();
         session.replace_raw("ni,hao").expect("typing");
-        let chosen = session
-            .candidates()
+        let chosen = window(&mut session)
             .iter()
             .next()
             .expect("candidates exist")
@@ -117,15 +116,16 @@ mod session_replay {
 
     use crate::engine::Selection;
 
-    use crate::engine::session::tests::select_row;
     use crate::engine::session::tests::session_replay::session;
+    use crate::engine::session::tests::{select_row, window};
 
     // Basis: Frozen F-A candidate lists and the Rust session replay contract.
     #[test]
     fn recorded_candidate_scenarios_use_direct_operations() {
         let mut session = session();
         session.replace_raw("zhuan").expect("type");
-        let first = session.candidates().iter().next().unwrap();
+        let list = window(&mut session);
+        let first = list.iter().next().unwrap();
         assert_eq!(first.text(), "传");
         let first_token = first.token().expect("phrase token");
         assert_eq!(
@@ -140,7 +140,7 @@ mod session_replay {
 
         let mut session = self::session();
         session.replace_raw("nihaozhongguo").expect("type");
-        let prefix = session.candidates().iter().next().unwrap().token().unwrap();
+        let prefix = window(&mut session).iter().next().unwrap().token().unwrap();
         assert_eq!(
             select_row(&mut session, 0).expect("select prefix"),
             Selection::Continued
@@ -150,8 +150,8 @@ mod session_replay {
             &session.raw_input()[session.composition_offset()..],
             "zhongguo"
         );
-        assert_eq!(session.candidates().iter().next().unwrap().text(), "中国");
-        let tail = session.candidates().iter().next().unwrap().token().unwrap();
+        assert_eq!(window(&mut session).iter().next().unwrap().text(), "中国");
+        let tail = window(&mut session).iter().next().unwrap().token().unwrap();
         assert_eq!(
             select_row(&mut session, 0).expect("select tail"),
             Selection::Completed

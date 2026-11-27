@@ -148,10 +148,8 @@ system point read and the user gram's raw value (`bigram_row`), merged by
 `SingleGram` walks, from `lower_bound` (`ngram.cpp:231-250`), so an
 unsorted or duplicated row answers as it does in the pin; nothing is
 sorted or deduplicated. A user value the pin cannot read refuses the
-guess (register rows 85 and 98). The eager refresh that a parse or an
-option change runs does not refuse it, because the pin's parse merges no
-gram (`pinyin.cpp:1497-1520`); that list leaves the bigram term out
-instead.
+guess (register rows 85 and 98). A parse or an option change reads no
+gram, as the pin's parse merges none (`pinyin.cpp:1497-1520`).
 
 ### Gate 3
 

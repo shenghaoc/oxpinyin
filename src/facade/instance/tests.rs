@@ -266,7 +266,11 @@ mod native {
         let window = native_window(&context, &mut instance, 0);
         let row = window.first().unwrap();
         assert_eq!(
-            (row.kind(), row.text().as_str(), row.nbest_row()),
+            (
+                row.kind(),
+                row.text().as_str(),
+                crate::engine::session::tests::nbest_rank(row)
+            ),
             (CandidateKind::Sentence, Some("你好"), Some(0))
         );
         assert!(guess(&context, &mut instance));
@@ -366,12 +370,12 @@ mod native {
         assert!(guess(&context, &mut instance));
         let decoded = sentence(&context, &instance, 0);
         let window = native_window(&context, &mut instance, 0);
-        let rank = window.iter().find_map(|row| row.nbest_row()).unwrap();
+        let rank = window
+            .iter()
+            .find_map(crate::engine::session::tests::nbest_rank)
+            .unwrap();
         assert_ne!(
-            instance
-                .bind(&context.runtime)
-                .select_nbest_rank(rank)
-                .unwrap(),
+            instance.bind(&context.runtime).select_nbest_rank(rank),
             Selection::Refused
         );
         assert!(guess(&context, &mut instance));
@@ -584,7 +588,13 @@ mod native_full_data {
     ) -> Vec<(CandidateKind, String, Option<u8>)> {
         native_window(context, instance, offset)
             .iter()
-            .map(|item| row(item.kind(), item.text().as_str().unwrap(), item.nbest_row()))
+            .map(|item| {
+                row(
+                    item.kind(),
+                    item.text().as_str().unwrap(),
+                    crate::engine::session::tests::nbest_rank(item),
+                )
+            })
             .collect()
     }
     // Frozen observations: deep-choose/nihao@10 and last-choose/shi.
@@ -692,8 +702,7 @@ mod native_full_data {
         assert_eq!(
             instance
                 .bind(&context.runtime)
-                .select_nbest_rank(after[1].2.unwrap())
-                .unwrap(),
+                .select_nbest_rank(after[1].2.unwrap()),
             Selection::Completed
         );
         assert!(guess(&context, &mut instance));
