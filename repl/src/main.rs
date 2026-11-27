@@ -100,18 +100,13 @@ pub(crate) fn load_text_tables(
         }
         file.rewind();
         if let Some(table) = phrase {
-            oxpinyin_utils::storage::gen_binary_files::load_phrase_table(
-                Some(table),
-                &mut file,
-                true,
-            );
+            oxpinyin_utils::storage::gen_binary_files::load_phrase_table(Some(table), &mut file);
         }
         file.rewind();
         let items = oxpinyin_utils::storage::gen_binary_files::read_phrase_items(
             slot,
             &mut file,
             conf.phonetic_type(),
-            true,
         );
         let mut index = Index::default();
         for (token, item) in items {

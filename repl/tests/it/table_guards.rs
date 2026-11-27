@@ -30,20 +30,6 @@ fn run(mode: &str, input: &[u8]) -> std::process::Output {
     result
 }
 
-/// Refuses the consumed failed conversion at
-/// 074a2219 tests/storage/test_phrase_table.cpp:45-59.
-#[test]
-fn invalid_phrase_query_keeps_the_previous_result() {
-    let newline = oxpinyin::__internal::TEXT_NEWLINE;
-    let result = run("phrase_table", b"\xe4\xbd\xa0\n\xff\n");
-    assert_eq!(result.status.code(), Some(22));
-    assert!(result.stderr.is_empty());
-    assert_eq!(
-        result.stdout,
-        format!("token:16777217\t{newline}").as_bytes()
-    );
-}
-
 /// Refuses the whole-key search before any continuation output
 /// at 074a2219 tests/storage/test_chewing_table.cpp:71-102.
 #[test]

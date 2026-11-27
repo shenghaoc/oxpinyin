@@ -114,7 +114,7 @@ fn generate_binary_files(
         };
         load_chewing(pinyin_table.as_ref(), &mut file, phonetic);
         file.rewind();
-        load_phrase_table(phrase_table.as_ref(), &mut file, false);
+        load_phrase_table(phrase_table.as_ref(), &mut file);
         file.rewind();
         load_phrase_index(index as u8, &mut file, &mut libraries, phonetic);
     }
@@ -223,13 +223,10 @@ fn add_index_space(
 }
 
 /// `PhraseLargeTable3::load_text` (`src/storage/phrase_large_table3.cpp:125-140`).
-pub fn load_phrase_table(table: Option<&Tree>, file: &mut TableFile, refuse_invalid: bool) {
+pub fn load_phrase_table(table: Option<&Tree>, file: &mut TableFile) {
     while let Some(record) = read_pinyin_record(file) {
         let (phrase, _written) = tool::utf8_to_ucs4(&record.phrase);
         let Some(phrase) = phrase else {
-            if refuse_invalid {
-                tool::exit(tool::EINVAL);
-            }
             // gen_binary_files passes a nonempty NULL key to the backend
             // (phrase_large_table3.cpp:131-135, phrase_large_table3_tkrzwdb.cpp:199-202).
             tool::abort();
@@ -274,16 +271,16 @@ fn load_phrase_index(
     libraries: &mut [Option<ChunkMap>; 16],
     phonetic: PhoneticType,
 ) {
-    libraries[usize::from(index)] = Some(read_phrase_items(index, file, phonetic, false));
+    libraries[usize::from(index)] = Some(read_phrase_items(index, file, phonetic));
 }
 
-/// The shared phrase-index text walk. Test programs select their source phonetic
-/// type and refuse an invalid conversion under the input contract.
+/// The shared phrase-index text walk over `phonetic` readings. An invalid
+/// conversion keeps the empty phrase the pin's `g_utf8_to_ucs4` NULL leaves
+/// (`phrase_index.cpp:541-556`).
 pub fn read_phrase_items(
     index: u8,
     file: &mut TableFile,
     phonetic: PhoneticType,
-    refuse_invalid: bool,
 ) -> BTreeMap<u32, ChunkItem> {
     let mut items: ChunkMap = BTreeMap::new();
     let mut cur_token = 0_u32;
@@ -294,9 +291,6 @@ pub fn read_phrase_items(
             tool::abort();
         }
         let (phrase, written) = tool::utf8_to_ucs4(&record.phrase);
-        if refuse_invalid && phrase.is_none() && (cur_token == 0 || cur_token != record.token) {
-            tool::exit(tool::EINVAL);
-        }
         let mut phrase = phrase.unwrap_or_default();
         // `set_phrase_string(written, phrase)`: the guint8 `written` field
         // and that many words.
