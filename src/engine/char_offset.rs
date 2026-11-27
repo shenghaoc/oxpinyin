@@ -35,6 +35,7 @@
 //! refusing, not asserting, on an empty column or a zero key that shares its
 //! column, and in calling the caller's `add` at every complete path.
 
+use crate::engine::Law;
 use crate::model::Dictionary;
 use crate::vocab::{PhraseToken, SyllableKey};
 
@@ -238,7 +239,7 @@ fn walk<D>(
     start: usize,
     offset: usize,
     length: usize,
-    zhuyin: bool,
+    law: Law,
 ) -> Result<Option<usize>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
@@ -255,21 +256,21 @@ where
     if column.real.is_empty() && column.zero_end.is_none() {
         return Err(EngineError::PinAssert);
     }
-    if !zhuyin && let Some(zero_end) = column.zero_end {
+    if law == Law::Pinyin
+        && let Some(zero_end) = column.zero_end
+    {
         // "assume only one key here for "'" or the last key."
         if !column.real.is_empty() {
             return Err(EngineError::PinAssert);
         }
-        return walk(
-            dictionary, columns, tokens, zero_end, offset, length, zhuyin,
-        );
+        return walk(dictionary, columns, tokens, zero_end, offset, length, law);
     }
     let zero_key = column
         .zero_end
         .map(|end| MatrixKey::from_chewing(crate::parser::ChewingKey::default(), start, end));
     for key in column.real.iter().copied().chain(zero_key) {
         if let Some(found) =
-            walk_pronounced_key(dictionary, columns, tokens, key, offset, length, zhuyin)?
+            walk_pronounced_key(dictionary, columns, tokens, key, offset, length, law)?
         {
             return Ok(Some(found));
         }
@@ -284,7 +285,7 @@ fn walk_pronounced_key<D>(
     key: MatrixKey,
     offset: usize,
     length: usize,
-    zhuyin: bool,
+    law: Law,
 ) -> Result<Option<usize>, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
@@ -306,12 +307,12 @@ where
         key.end(),
         offset,
         length + 1,
-        zhuyin,
+        law,
     )
 }
 
 /// The character-offset walk over one parse's columns, `None` for the
-/// empty matrix ([`matrix_columns`]). `zhuyin` selects the walk that tests
+/// empty matrix ([`matrix_columns`]). [`Law::Zhuyin`] selects the walk that tests
 /// zero keys. The answer tells an early refusal, which leaves the caller's
 /// output alone, from a walk that found no path, without rereading the
 /// DBM.
@@ -328,7 +329,7 @@ pub fn character_offset_walk<D>(
     dictionary: &D,
     phrase: &crate::vocab::PhraseText,
     offset: usize,
-    zhuyin: bool,
+    law: Law,
 ) -> Result<CharacterOffset, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey>,
@@ -364,7 +365,7 @@ where
         tokens.push(token);
     }
 
-    Ok(walk(dictionary, columns, &tokens, 0, offset, 0, zhuyin)?
+    Ok(walk(dictionary, columns, &tokens, 0, offset, 0, law)?
         .map_or(CharacterOffset::NoPath, CharacterOffset::Found))
 }
 

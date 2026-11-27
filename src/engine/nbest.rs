@@ -78,11 +78,6 @@ impl NbestShape {
     }
 }
 
-impl Default for NbestShape {
-    fn default() -> Self {
-        Self::PINYIN
-    }
-}
 /// Beam width per step (`nbeam`).
 const NBEAM: usize = 32;
 

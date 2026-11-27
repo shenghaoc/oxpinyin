@@ -233,16 +233,8 @@ mod native {
                 .parse_full_more("nihaoshijie"),
             11
         );
-        assert!(
-            instance
-                .bind(&context.runtime)
-                .clear_abi_constraint(0, true)
-        );
-        assert!(
-            !instance
-                .bind(&context.runtime)
-                .clear_abi_constraint(0, true)
-        );
+        assert!(instance.bind(&context.runtime).clear_abi_constraint(0));
+        assert!(!instance.bind(&context.runtime).clear_abi_constraint(0));
         assert_eq!(
             instance
                 .bind(&context.runtime)
@@ -757,7 +749,14 @@ mod native_full_data {
                 .map(|offset| {
                     instance
                         .read(&context.runtime)
-                        .abi_key_at(offset, zhuyin)
+                        .abi_key_at(
+                            offset,
+                            if zhuyin {
+                                crate::engine::Law::Zhuyin
+                            } else {
+                                crate::engine::Law::Pinyin
+                            },
+                        )
                         .unwrap()
                 })
                 .collect::<Vec<_>>(),

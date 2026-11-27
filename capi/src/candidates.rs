@@ -358,7 +358,7 @@ pub(crate) fn snapshot_candidates(
             .map(|cand| phrase_text_len(cand.text()) + 1)
             .sum(),
     );
-    let published_bound = inst.core.publication_bound_mapper(true);
+    let published_bound = inst.core.publication_bound_mapper();
     for cand in window {
         // The engine's remaining-raw-input `Fallback` row is the
         // session-API affordance (`session-api.md`: it keeps `select`
@@ -449,7 +449,7 @@ fn choose_phrase_row(
         token,
         text,
     };
-    match inst.core.select_published(&published, true) {
+    match inst.core.select_published(&published) {
         // `add_constraint` refused the span: `len = 0` (`phonetic_lookup.cpp:64-65`).
         Ok(oxpinyin::engine::Selection::Refused) => choose_answer(offset, 0),
         // The pin answers the caller's choose offset plus the length
@@ -653,7 +653,7 @@ pub unsafe extern "C" fn pinyin_clear_constraint(
     offset: usize,
 ) -> bool {
     let mut inst = borrow_or_return!(instance, instance_mut, false);
-    inst.core.clear_abi_constraint(offset, true)
+    inst.core.clear_abi_constraint(offset)
 }
 
 /// Promotes the chosen candidate when it is an `ADDON_CANDIDATE`

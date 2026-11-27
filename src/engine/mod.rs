@@ -29,7 +29,7 @@ pub use error::EngineError;
 pub(crate) use error::{TrainingStop, abort_toned_incomplete};
 pub use nbest::NbestShape;
 pub use session::{
-    BEFORE_CURSOR_ANCHOR, CandidateRanking, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection,
+    BEFORE_CURSOR_ANCHOR, Law, RowText, SORT_WITHOUT_SENTENCE_CANDIDATE, Selection,
     SelectionTarget, SentencePart, Session, SessionSettings, SessionState, amplified_frequency,
 };
 

@@ -499,7 +499,7 @@ where
                     std::process::abort();
                 }
                 count.map(|count| {
-                    if self.candidate_ranking == CandidateRanking::LengthThenFrequency {
+                    if self.law == Law::Zhuyin {
                         // zhuyin.cpp:1264-1268 has no libpinyin 0.1
                         // discount (pinyin.cpp:33,1862 at 074a2219).
                         let possibility =
@@ -1259,7 +1259,7 @@ where
     /// rotate keeps `collected`'s allocation — the session scratch on the
     /// scan path, a fresh small vec on the fully-consumed path.
     ///
-    /// Under [`Session::set_collapse_sentence_rows_to_best`] only the 1-best
+    /// Under [`Law::Zhuyin`] only the 1-best
     /// row is prepended — libzhuyin's display law.
     ///
     /// A sort word with `SORT_WITHOUT_SENTENCE_CANDIDATE` set prepends
@@ -1275,7 +1275,7 @@ where
         {
             return;
         }
-        let rows = if self.collapse_sentence_rows_to_best {
+        let rows = if self.law == Law::Zhuyin {
             &self.sentence.rows[..1]
         } else {
             &self.sentence.rows[..]

@@ -73,7 +73,7 @@ The settings value does not change the session's default options, each C facade'
 | Read | `raw_input`, `candidates`, `candidates_at`, `is_composing`, `composition_offset`, `selected_text`, `selected_tokens` |
 | Select | `select_target(&SelectionTarget) -> Result<Selection, EngineError>`, with `SelectionTarget::of_candidate` for a listed row |
 | Reset | `reset`, `reset_composition` |
-| Options | `set_options`, `set_sort_options`, `set_candidate_ranking`, `set_nbest_shape` |
+| Options | `set_options`, `set_sort_options`, `set_law` |
 | Sentences | `guess_sentence`, `sentence_lookup_active`, `sentence_text` ([sentence-surface.md](sentence-surface.md)) |
 | Deferred list | `set_defer_list_builds`, `refresh_candidates` ([below](#deferred-candidate-list)) |
 | Training | `SessionState::train`: each step checked, then trained |

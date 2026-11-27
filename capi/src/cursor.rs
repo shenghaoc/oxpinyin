@@ -97,7 +97,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key_rest(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let Ok(Some(found)) = inst.core.abi_key_at(offset, false) else {
+    let Ok(Some(found)) = inst.core.abi_key_at(offset, oxpinyin::engine::Law::Pinyin) else {
         return false;
     };
     // `m_raw_begin`/`m_raw_end` are `guint16` (`chewing_key.h:102-103`),
@@ -557,7 +557,7 @@ pub unsafe extern "C" fn pinyin_get_pinyin_key(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let Ok(Some(found)) = inst.core.abi_key_at(offset, false) else {
+    let Ok(Some(found)) = inst.core.abi_key_at(offset, oxpinyin::engine::Law::Pinyin) else {
         return false;
     };
     let packed = found.0;

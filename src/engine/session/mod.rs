@@ -79,29 +79,17 @@ pub struct Session<D, L, S = SessionState> {
 pub struct SessionState {
     /// The session's option word.
     options: OptionBits,
-    /// Whether the prepended sentence rows collapse onto the 1-best row —
-    /// libzhuyin's display law, set per surface via
-    /// [`Session::set_collapse_sentence_rows_to_best`]; off (the pinyin
-    /// surface's one-row-per-sentence law) by default. Surface config, set
-    /// once and surviving every reset — not part of [`Self::sentence`].
-    collapse_sentence_rows_to_best: bool,
-    /// Which comparator orders the candidate lists — the pinyin facade's sort
-    /// word by default, libzhuyin's fixed comparator when a zhuyin facade
-    /// sets it ([`Session::set_candidate_ranking`]). Surface config, like
-    /// [`Self::collapse_sentence_rows_to_best`].
-    candidate_ranking: CandidateRanking,
-    /// The n-best trellis's `<nstore, nbest>` — libpinyin's `<2, 3>` by
-    /// default, libzhuyin's `<1, 1>` when a zhuyin facade sets it
-    /// ([`Session::set_nbest_shape`]). Surface config, like
-    /// [`Self::collapse_sentence_rows_to_best`].
-    nbest_shape: crate::engine::nbest::NbestShape,
+    /// The surface's upstream law ([`Law`]), set via [`Session::set_law`];
+    /// [`Law::Pinyin`] by default. Surface config, set once and surviving
+    /// every reset — not part of [`Self::sentence`].
+    law: Law,
     /// Whether the parse, sentence-guess and selection paths leave the
     /// candidate list to its next reader instead of building it — the C facades' mode,
     /// set via [`Session::set_defer_list_builds`]; off (the session API's
     /// eager list) by default. Upstream builds candidates only in
     /// `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219), whose
     /// C-ABI port re-anchors its own window. Surface config, like
-    /// [`Self::collapse_sentence_rows_to_best`].
+    /// [`Self::law`].
     defer_list_builds: bool,
 
     // Composition state, decomposed into types that own their invariants.
@@ -944,17 +932,38 @@ fn dynamic_adjust_bigram_possibility(
     Ok(freq as f32 / total as f32)
 }
 
-/// Which comparator a session's candidate lists are sorted with.
+/// Which upstream library's law a surface follows. A session's law is
+/// surface config, set once and surviving every reset; it picks three
+/// behaviours together:
+///
+/// - the sentence rows: pinyin prepends one row per n-best sentence, while
+///   zhuyin collapses them onto the 1-best row ([`Session::set_law`]);
+/// - the candidate comparator: the pinyin facade's sort word, or libzhuyin's
+///   `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`):
+///   phrase length, then frequency, whatever the sort word;
+/// - the n-best trellis's `<nstore, nbest>`: libpinyin's `<2, 3>`
+///   (`pinyin.cpp:55`) or libzhuyin's `<1, 1>` (`zhuyin.cpp:50`).
+///
+/// The cursor and character-offset walks take it for the same choice of
+/// upstream library.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum CandidateRanking {
-    /// libpinyin's `compare_item_with_sort_option` (`pinyin.cpp:1678-1709`)
-    /// under the stored sort word.
+pub enum Law {
+    /// libpinyin's law.
     #[default]
-    SortWord,
-    /// libzhuyin's `compare_item_with_length_and_frequency`
-    /// (`zhuyin.cpp:1129-1144`): phrase length, then frequency, whatever the
-    /// sort word.
-    LengthThenFrequency,
+    Pinyin,
+    /// libzhuyin's law.
+    Zhuyin,
+}
+
+impl Law {
+    /// The n-best trellis shape this law instantiates.
+    #[must_use]
+    pub const fn nbest_shape(self) -> crate::engine::nbest::NbestShape {
+        match self {
+            Self::Pinyin => crate::engine::nbest::NbestShape::PINYIN,
+            Self::Zhuyin => crate::engine::nbest::NbestShape::ZHUYIN,
+        }
+    }
 }
 
 /// Enabled candidate sort fields, plus the unmodified frequency for dedup.

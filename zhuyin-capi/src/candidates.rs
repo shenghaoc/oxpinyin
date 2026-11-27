@@ -225,15 +225,12 @@ pub unsafe extern "C" fn zhuyin_choose_candidate(
         }
     };
     let outcome = match token {
-        Some(token) => inst.core.select_published(
-            &oxpinyin::facade::PublishedRow {
-                begin,
-                end,
-                token,
-                text: oxpinyin::engine::RowText::Resolve,
-            },
-            false,
-        ),
+        Some(token) => inst.core.select_published(&oxpinyin::facade::PublishedRow {
+            begin,
+            end,
+            token,
+            text: oxpinyin::engine::RowText::Resolve,
+        }),
         None => inst.core.refuse_selection(),
     };
     match outcome {
@@ -263,7 +260,7 @@ pub unsafe extern "C" fn zhuyin_clear_constraint(
     offset: usize,
 ) -> bool {
     let mut inst = borrow_or_return!(instance, instance_mut, false);
-    inst.core.clear_abi_constraint(offset, false)
+    inst.core.clear_abi_constraint(offset)
 }
 
 /// Train the current sentence.

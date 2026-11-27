@@ -142,7 +142,7 @@ where
         &self,
         phrase: &crate::vocab::PhraseText,
         offset: usize,
-        zhuyin: bool,
+        law: Law,
     ) -> Result<crate::engine::CharacterOffset, EngineError> {
         // The retained working matrix, not the parsed-only one `matrix_keys`
         // builds for scheme modes: pre-parsed scheme segments keep their
@@ -159,7 +159,7 @@ where
             &self.dictionary,
             phrase,
             offset,
-            zhuyin,
+            law,
         )
     }
 
