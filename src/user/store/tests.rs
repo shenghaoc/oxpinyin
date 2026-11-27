@@ -963,11 +963,7 @@ fn reporting_save_guards_preserve_unigram_overflow() {
                 UserStore::open_transient(originals(), versions(), law)
             }
             .expect("open");
-            store
-                .inner
-                .system_items
-                .borrow_mut()
-                .set_library_total(1, u32::MAX - 4);
+            store.inner.system_items.set_library_total(1, u32::MAX - 4);
             if !has_dir {
                 store.mark_modified();
             }

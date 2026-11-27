@@ -42,7 +42,7 @@ fn session_lookup_reads_a_tagged_token_through_its_masked_library() {
     phrases.index.add(&keys, token);
     phrases.index.add(&keys, token | 0x8000_0000);
     let phrases = RefCell::new(phrases);
-    let items = RefCell::new(crate::user::system_items::SystemItems::default());
+    let items = crate::user::system_items::SystemItems::default();
     let lookup = UserLookup::session(&phrases, &items);
     assert_eq!(lookup.search_toned(&keys), [token, token | 0x8000_0000]);
     let entries = lookup.lookup(&[key("ni")]);

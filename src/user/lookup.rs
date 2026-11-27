@@ -19,13 +19,13 @@ pub struct UserLookup<'a> {
     phrases: &'a RefCell<SessionPhrases>,
     /// For system libraries with an original, the live buffers that hold
     /// their appended items.
-    items: &'a RefCell<crate::user::system_items::SystemItems>,
+    items: &'a crate::user::system_items::SystemItems,
 }
 
 impl<'a> UserLookup<'a> {
     pub(crate) fn session(
         phrases: &'a RefCell<SessionPhrases>,
-        items: &'a RefCell<crate::user::system_items::SystemItems>,
+        items: &'a crate::user::system_items::SystemItems,
     ) -> Self {
         Self { phrases, items }
     }
@@ -165,7 +165,7 @@ impl<'a> UserLookup<'a> {
 // phrase_index.cpp:186), so a token's high four bits do not take part.
 fn session_text(
     phrases: &SessionPhrases,
-    items: &RefCell<crate::user::system_items::SystemItems>,
+    items: &crate::user::system_items::SystemItems,
     token: u32,
 ) -> Option<PhraseText> {
     if let Some(item) = phrases
@@ -177,7 +177,6 @@ fn session_text(
     }
     // An item a system library's live buffer holds and its chunk lacks.
     items
-        .borrow()
         .with_live(token, |bytes| {
             crate::data::phrase_library::PhraseItemView::from_bytes(bytes)?.phrase_text()
         })
