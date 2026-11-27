@@ -84,26 +84,29 @@ fn tags() -> TagLib {
 #[test]
 fn a_checked_read_refuses_an_unreadable_tag() {
     let tags = tags();
-    let read = |line: &CStr, checked| {
+    let read = |line: &CStr, malformed| {
         tags.read(
             line,
-            checked,
+            malformed,
             &mut 0,
             &mut Vec::new(),
             &mut Required::default(),
         )
     };
     assert_eq!(
-        read(c"\\item 10 \xe7\x94\xb2 \xe2x freq 1", true),
+        read(c"\\item 10 \xe7\x94\xb2 \xe2x freq 1", MalformedTag::Refuse),
         Ok(false)
     );
     assert_eq!(
-        read(c"\\item 10 \xe7\x94\xb2 \xe2x freq 1", false),
+        read(c"\\item 10 \xe7\x94\xb2 \xe2x freq 1", MalformedTag::Read),
         Ok(true)
     );
-    assert_eq!(read(c"\\item 10 \xe7\x94\xb2 freq 1", true), Ok(true));
     assert_eq!(
-        read(c"\\item 10 \xe7\x94\xb2 \xe2", true),
+        read(c"\\item 10 \xe7\x94\xb2 freq 1", MalformedTag::Refuse),
+        Ok(true)
+    );
+    assert_eq!(
+        read(c"\\item 10 \xe7\x94\xb2 \xe2", MalformedTag::Refuse),
         Err(Undefined::PastLineEnd)
     );
 }
@@ -116,7 +119,7 @@ fn read_walks_values_then_pairs() {
     let mut required = Required::default();
     let read = taglib.read(
         c"\\item 10 甲 count 2 freq 3 freq 4",
-        false,
+        MalformedTag::Read,
         &mut line_type,
         &mut values,
         &mut required,
@@ -128,7 +131,7 @@ fn read_walks_values_then_pairs() {
     assert_eq!(
         taglib.read(
             c"\\item 10",
-            false,
+            MalformedTag::Read,
             &mut line_type,
             &mut values,
             &mut required
@@ -138,7 +141,7 @@ fn read_walks_values_then_pairs() {
     assert_eq!(
         taglib.read(
             c"\\other",
-            false,
+            MalformedTag::Read,
             &mut line_type,
             &mut values,
             &mut required
@@ -146,7 +149,13 @@ fn read_walks_values_then_pairs() {
         Ok(false)
     );
     assert_eq!(
-        taglib.read(c"", false, &mut line_type, &mut values, &mut required),
+        taglib.read(
+            c"",
+            MalformedTag::Read,
+            &mut line_type,
+            &mut values,
+            &mut required
+        ),
         Err(Undefined::NoToken)
     );
 }

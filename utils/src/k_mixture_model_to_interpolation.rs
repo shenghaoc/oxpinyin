@@ -77,10 +77,13 @@ struct Converter<'a, R> {
 
 impl<R: BufRead> Converter<'_, R> {
     /// `taglib_read(linebuf, line_type, values, required)`.
-    fn read(&mut self, checked: bool) -> Result<bool, Failure> {
+    fn read(
+        &mut self,
+        malformed: crate::utils_helper::taglib::MalformedTag,
+    ) -> Result<bool, Failure> {
         let line = self.input.c_str();
         self.model
-            .read(line, checked)
+            .read(line, malformed)
             .map_err(|undefined| Failure::Undefined {
                 reason: undefined.reason(),
                 line: line.to_owned(),
@@ -89,7 +92,7 @@ impl<R: BufRead> Converter<'_, R> {
 
     /// `check_result(taglib_read(...))` (`src/include/pinyin_utils.h:26-31`).
     fn check_read(&mut self, final_item_at_eof: bool) -> Result<(), Failure> {
-        match self.read(true) {
+        match self.read(crate::utils_helper::taglib::MalformedTag::Refuse) {
             Ok(true) => Ok(()),
             Ok(false) => Err(Failure::ReadRefused),
             // The section has ended. Its item tag is unavailable at the
@@ -104,7 +107,9 @@ impl<R: BufRead> Converter<'_, R> {
         self.model
             .tags
             .add_tag(BEGIN_LINE, c"\\data", 0, c"model", c"count:N:total_freq");
-        if !self.read(false)? || self.model.value(b"model") != c"k mixture model" {
+        if !self.read(crate::utils_helper::taglib::MalformedTag::Read)?
+            || self.model.value(b"model") != c"k mixture model"
+        {
             return Err(Failure::NotKmm);
         }
         edge::print_header(self.output);
