@@ -54,22 +54,27 @@ struct Node {
 
 /// One DP step: insertion-ordered nodes plus the token → index map
 /// (upstream's `steps_content` array + `steps_index` hash — the array
-/// order is what makes the best-node scan deterministic on ties).
+/// order is what makes the best-node scan deterministic on ties). The index
+/// is a `u32`, as the n-best trellis's step index is.
 #[derive(Clone, Default)]
 struct Step {
     content: Vec<Node>,
-    index: FxHashMap<u32, usize>,
+    index: FxHashMap<u32, u32>,
 }
 
 impl Step {
     fn relax(&mut self, node: Node) {
         if let Some(&position) = self.index.get(&node.token) {
-            let existing = &mut self.content[position];
+            let existing = &mut self.content[position as usize];
             if existing.poss < node.poss {
                 *existing = node;
             }
         } else {
-            self.index.insert(node.token, self.content.len());
+            // One node per distinct `u32` token: the count always fits.
+            let Ok(position) = u32::try_from(self.content.len()) else {
+                return;
+            };
+            self.index.insert(node.token, position);
             self.content.push(node);
         }
     }
@@ -298,7 +303,7 @@ fn backtrack(steps: &[Step], n: usize, mut result: Vec<PhraseToken>) -> (bool, V
         let Some(node) = steps[start]
             .index
             .get(&cursor.prev)
-            .map(|&position| steps[start].content[position].clone())
+            .map(|&position| steps[start].content[position as usize].clone())
         else {
             // A broken chain — upstream returns `false` mid-backtrack
             // with whatever the walk wrote so far.
