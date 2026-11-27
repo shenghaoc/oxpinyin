@@ -254,19 +254,19 @@ pub struct LiveOptions(Rc<LiveOptionsInner>);
 pub struct LiveOptionsInner {
     /// Live double-pinyin scheme. The setter never stores
     /// [`DoublePinyinScheme::Customized`]: the pin aborts there.
-    pub double_scheme: Cell<DoublePinyinScheme>,
+    pub(crate) double_scheme: Cell<DoublePinyinScheme>,
     /// Whether the live double scheme's fallback table is suppressed —
     /// upstream's half-mutation (`pinyin_parser2.cpp:580` + `:614`): the
     /// out-of-enum setter arm sets it, and a valid-scheme store clears it.
-    pub double_fallback_cleared: Cell<bool>,
+    pub(crate) double_fallback_cleared: Cell<bool>,
     /// Live Zhuyin scheme. The setters never store
     /// [`ZhuyinScheme::StandardDvorak`]: the pin aborts there.
-    pub zhuyin_scheme: Cell<ZhuyinScheme>,
+    pub(crate) zhuyin_scheme: Cell<ZhuyinScheme>,
     /// Live full-pinyin scheme.
-    pub full_scheme: Cell<FullPinyinScheme>,
+    pub(crate) full_scheme: Cell<FullPinyinScheme>,
     /// Live option word. The parsers read `FORCE_TONE`, `USE_TONE` and
     /// `PINYIN_INCOMPLETE` off it.
-    pub options: Cell<OptionBits>,
+    pub(crate) options: Cell<OptionBits>,
 }
 
 impl core::ops::Deref for LiveOptions {
@@ -290,6 +290,38 @@ impl LiveOptions {
             options: Cell::new(option_word),
         }))
     }
+
+    /// The live option word.
+    #[must_use]
+    pub fn options(&self) -> OptionBits {
+        self.options.get()
+    }
+
+    /// The selected full-pinyin scheme.
+    #[must_use]
+    pub fn full_scheme(&self) -> FullPinyinScheme {
+        self.full_scheme.get()
+    }
+
+    /// Selects the full-pinyin scheme.
+    pub fn set_full_scheme(&self, scheme: FullPinyinScheme) {
+        self.full_scheme.set(scheme);
+    }
+
+    /// Selects the double-pinyin scheme.
+    pub fn set_double_scheme(&self, scheme: DoublePinyinScheme) {
+        self.double_scheme.set(scheme);
+    }
+
+    /// Records whether an unknown double-pinyin scheme cleared the fallback.
+    pub fn set_double_fallback_cleared(&self, cleared: bool) {
+        self.double_fallback_cleared.set(cleared);
+    }
+
+    /// Selects the Zhuyin scheme.
+    pub fn set_zhuyin_scheme(&self, scheme: ZhuyinScheme) {
+        self.zhuyin_scheme.set(scheme);
+    }
 }
 
 /// State behind a facade's context handle, minus the C parts: the shared
@@ -307,17 +339,34 @@ impl LiveOptions {
 pub struct ContextCore {
     /// The settings instances are opened with: incomplete pinyin on until
     /// the first `set_options`, then that word's bit.
-    pub settings: SessionSettings,
+    pub(crate) settings: SessionSettings,
     /// The shared concrete assembly and the context's sole user store;
     /// instances borrow it per operation. `pinyin_init` answers NULL when
     /// the system tables do not load (`pinyin.cpp:337-339`), so every
     /// context has one.
-    pub runtime: Runtime,
+    pub(crate) runtime: Runtime,
     /// The live option/scheme word, shared with every instance.
-    pub live: LiveOptions,
+    pub(crate) live: LiveOptions,
 }
 
 impl ContextCore {
+    /// The shared assembly and the context's user store.
+    #[must_use]
+    pub const fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+
+    /// The shared assembly and the context's user store, for a change.
+    pub const fn runtime_mut(&mut self) -> &mut Runtime {
+        &mut self.runtime
+    }
+
+    /// The live option and scheme word, shared with every instance.
+    #[must_use]
+    pub const fn live(&self) -> &LiveOptions {
+        &self.live
+    }
+
     /// Run public context fini now; retained C handles may still borrow the
     /// same runtime afterwards. Releasing the last owner does not repeat it.
     pub fn finish(&mut self) {

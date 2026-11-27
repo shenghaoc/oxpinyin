@@ -387,8 +387,8 @@ fn remember_user_input_writes_again_for_an_identical_complete_path() {
     let duplicate = {
         // SAFETY: the live instance is exclusively borrowed before remember.
         let mut inst = unsafe { crate::state::instance_mut(instance) };
-        let first = inst.core.parse_matrix[0];
-        inst.core.parse_matrix.push(first);
+        let first = inst.core.parse_matrix()[0];
+        inst.core.parse_matrix_mut().push(first);
         first.key().to_packed()
     };
     assert!(unsafe { pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3) });

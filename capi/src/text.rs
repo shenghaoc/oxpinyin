@@ -248,7 +248,7 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     // Upstream returns false with an allocated empty string when
     // the matrix is empty — no parse, or a parse that placed no key
     // (`pinyin.cpp:3382-3386`).
-    if inst.core.parsed_len == 0 {
+    if inst.core.parsed_len() == 0 {
         // SAFETY: The entry point guarantees Out-parameters: a non-NULL output is aligned and writable
         // without conflicting with live borrows. Its contents need not be initialized.
         return unsafe { write_aux(aux_text, None) };
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
             return unsafe { write_aux(aux_text, None) };
         }
         abort_on_full_walk(&inst.read(), cursor);
-        Some(full_index_aux_text(&inst.core.parse_input, parse, cursor))
+        Some(full_index_aux_text(inst.core.parse_input(), parse, cursor))
     } else if inst.core.double_parse().is_some() || inst.core.zhuyin_parse().is_some() {
         // A double or chewing parse filled the matrix; the pin renders it
         // all the same.
@@ -270,8 +270,8 @@ pub unsafe extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
         // option write or candidate refresh does not replace those keys
         // (pinyin.cpp:1299-1306, 1497-1524, 3381-3438).
         full_aux_text(
-            inst.core.session.raw_input(),
-            inst.core.parsed_len,
+            inst.core.session().raw_input(),
+            inst.core.parsed_len(),
             cursor,
             inst.state.full_aux_options,
         )
@@ -363,9 +363,9 @@ pub unsafe extern "C" fn pinyin_get_chewing_auxiliary_text(
     }
     let text = match inst.core.zhuyin_parse() {
         Some(parse) => Some(chewing_aux_text(
-            &inst.core.parse_input,
+            inst.core.parse_input(),
             parse,
-            inst.core.parsed_len,
+            inst.core.parsed_len(),
             cursor,
         )),
         // Another parser filled the matrix; the pin renders it all the

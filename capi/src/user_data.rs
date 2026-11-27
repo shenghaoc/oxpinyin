@@ -73,7 +73,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
     // the loaded system and user tables, as lookup_tokens does.
     let mut tokens = Vec::with_capacity(phrase_length);
     for word in phrase.outward_words() {
-        let found = inst.core.dict.tokens_for_ucs4(&[word]);
+        let found = inst.core.dict().tokens_for_ucs4(&[word]);
         match found.first() {
             None => return false,
             Some(_) if found.len() > 4 => std::process::abort(),
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn pinyin_remember_user_input(
         let Some(&token) = tokens.get(index) else {
             return Ok(false);
         };
-        key_pronounced_by(&read.core.dict, key, token)
+        key_pronounced_by(read.core.dict(), key, token)
     };
     let mut add = |path: &[MatrixKey]| -> Result<bool, EngineError> {
         Ok(

@@ -50,7 +50,7 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin::facade::EngineErr
 /// libraries' sum, the user store's deltas and the accepted
 /// `pinyin_token_add_unigram_frequency` deltas, wrapped.
 fn facade_total_is_zero(inst: &crate::state::CapiInstanceRead<'_>) -> bool {
-    inst.core.lm.amplified_total() == 0
+    inst.core.lm().amplified_total() == 0
 }
 
 // pinyin.cpp:1389-1424, pinyin.cpp:1426-1441.
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn pinyin_guess_sentence_with_prefix(
     // `_compute_prefixes` reduces each tail substring's search with the
     // validating `reduce_tokens` (`pinyin.cpp:1415`), which asserts on more
     // than four tokens (`phrase_large_table3.h:95`) before the guess.
-    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(&inst.core.dict, prefix.as_ref()) else {
+    let Ok(prefixes) = oxpinyin::facade::compute_prefixes(inst.core.dict(), prefix.as_ref()) else {
         std::process::abort();
     };
     let matrix_has_keys = inst.core.mode_has_keys();
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn pinyin_get_sentence(
             // index past them is `assert(index < results.size())`, and the
             // process aborts. No rows at all is the pin's own graceful
             // `false` (`:1470-1471`).
-            if index > 0 && inst.core.session.has_nbest_rank(0) {
+            if index > 0 && inst.core.session().has_nbest_rank(0) {
                 std::process::abort();
             }
             false
@@ -351,7 +351,7 @@ fn lookup_window(
 ) -> Option<oxpinyin::facade::CandidateList> {
     let window = match inst
         .core
-        .session
+        .session_mut()
         .candidates_at_for_abi(frame.session_offset, frame.abort_on_rank)
     {
         Ok(window) => window,
@@ -460,7 +460,7 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
         return false;
     }
     let options = inst.core.options();
-    if inst.core.session.set_options(options).is_err() {
+    if inst.core.session_mut().set_options(options).is_err() {
         return false;
     }
     // §9: the whole sort word, re-stored per call exactly as the pin's
@@ -475,10 +475,15 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     // `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`), which a parse
     // never runs, so this refresh cannot fail on an over-long key. The
     // re-anchored lookup below applies the gate instead.
-    if inst.core.session.set_sort_options(sort_option).is_err() {
+    if inst
+        .core
+        .session_mut()
+        .set_sort_options(sort_option)
+        .is_err()
+    {
         return false;
     }
-    if !inst.core.session.is_composing() {
+    if !inst.core.session().is_composing() {
         return false;
     }
     // `_check_offset` reads the column before the offset, unasserted
@@ -511,7 +516,7 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     // parse that produced no keys answers false, not an empty list.
     // A non-empty parse with no candidates (apostrophe-only runs,
     // unmatchable tails) answers true with zero rows.
-    !(inst.state.candidates.is_empty() && inst.core.parsed_len == 0)
+    !(inst.state.candidates.is_empty() && inst.core.parsed_len() == 0)
 }
 
 #[cfg(test)]

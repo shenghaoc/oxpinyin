@@ -70,7 +70,7 @@ fn lookup_tokens_into_a_null_array_logs_the_criticals_before_it_aborts() {
     let loaded = (0..oxpinyin::facade::PHRASE_INDEX_LIBRARY_COUNT)
         .filter(|&library| {
             inst.core
-                .dict
+                .dict()
                 .phrase_table_token_enabled(oxpinyin::facade::phrase_index_make_token(library, 0))
         })
         .count();
@@ -139,7 +139,7 @@ fn null_token_array_keeps_prepared_count_across_reentrant_unload() {
         let inst = unsafe { crate::state::instance_ref(instance) };
         (0..oxpinyin::facade::PHRASE_INDEX_LIBRARY_COUNT)
             .filter(|&library| {
-                inst.core.dict.phrase_table_token_enabled(
+                inst.core.dict().phrase_table_token_enabled(
                     oxpinyin::facade::phrase_index_make_token(library, 0),
                 )
             })

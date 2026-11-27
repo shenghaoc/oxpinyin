@@ -45,7 +45,7 @@ pub unsafe extern "C" fn pinyin_parse_more_full_pinyins(
     // The pin preserves candidate rows and strings across parsing; only a
     // candidate guess, reset or instance destruction invalidates them.
     let parsed = inst.core.parse_full_more(&text);
-    inst.state.full_aux_options = inst.core.session.options();
+    inst.state.full_aux_options = inst.core.session().options();
     parsed
 }
 

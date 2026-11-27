@@ -53,8 +53,8 @@ impl CapiContext {
         // and the trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`) — see
         // `Session::set_law`.
         self.core
-            .runtime
-            .session(&mut core.session)
+            .runtime()
+            .session(core.session_mut())
             .set_law(oxpinyin::facade::Law::Zhuyin);
         CapiInstance {
             owner,
@@ -244,7 +244,7 @@ pub(crate) unsafe fn instance_ref<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceR
     let instance = unsafe { handles::instance_ref(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes concurrent mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let runtime = &context.core.runtime;
+    let runtime = &context.core.runtime();
     CapiInstance {
         owner: &instance.owner,
         core: instance.core.read(runtime),
@@ -260,7 +260,7 @@ pub(crate) unsafe fn instance_mut<'a>(ptr: *mut ZhuyinInstance) -> CapiInstanceM
     let instance = unsafe { handles::instance_mut(ptr) };
     // SAFETY: the instance retains the allocation; the C caller excludes runtime mutation.
     let context = unsafe { owner_ref(&instance.owner) };
-    let runtime = &context.core.runtime;
+    let runtime = &context.core.runtime();
     CapiInstance {
         owner: &instance.owner,
         core: instance.core.bind(runtime),

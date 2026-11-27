@@ -518,7 +518,7 @@ fn a_bigram_row_under_high_bits_is_listed_and_trains_its_item() {
         let inst = unsafe { crate::state::instance_ref(instance) };
         prefixes
             .iter()
-            .map(|prefix| inst.core.user.bigram_successors(*prefix).expect("a gram"))
+            .map(|prefix| inst.core.user().bigram_successors(*prefix).expect("a gram"))
             .filter(|items| *items != [(successor | TAG, 20)])
             .collect()
     };
@@ -628,7 +628,7 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
 
     // SAFETY: live instance immediately after the guess.
     let inst = unsafe { instance_ref(instance) };
-    let total = inst.core.lm.amplified_total();
+    let total = inst.core.lm().amplified_total();
     // (text, length, amplified frequency, library, stored-text key)
     let rows: Vec<(String, usize, u64, usize, Vec<u8>)> = inst
         .state
@@ -639,11 +639,11 @@ fn predicted_tie_groups_keep_library_then_key_order_including_user_rows() {
             let token = c.token.get().expect("a predicted row has a token");
             let baked = inst
                 .core
-                .dict
+                .dict()
                 .live_items()
                 .effective_unigram(token)
                 .unwrap_or(0)
-                + inst.core.user.unigram_delta(token);
+                + inst.core.user().unigram_delta(token);
             let text = c.text_str().expect("candidate text is UTF-8").to_owned();
             // A predicted row shows the phrase after the prefix; the
             // phrase table keys the whole stored phrase.
