@@ -184,20 +184,10 @@ pub(crate) struct StepLibraries {
     /// The system libraries whose chunk is detached into its live buffer
     /// while the session holds system items ([`UserStore::step_libraries`]),
     /// less the ones the mask unloaded ([`LiveSystemItems::step_libraries`]).
-    pub(crate) in_place: u16,
+    pub(crate) in_place: crate::user::LibrarySet,
     /// The libraries the session arena holds: a read asks the arena for the
     /// token first.
-    pub(crate) arena: u16,
-}
-
-impl StepLibraries {
-    /// `token`'s library bit. A library index is below 16
-    /// (`PHRASE_INDEX_LIBRARY_INDEX`, 074a2219 `novel_types.h:44`).
-    fn bit(token: PhraseToken) -> u16 {
-        1_u16
-            .checked_shl(u32::from(crate::vocab::phrase_index_library_index(token)))
-            .unwrap_or(0)
-    }
+    pub(crate) arena: crate::user::LibrarySet,
 }
 
 /// Whether an in-place read asks the session arena for the token before
@@ -330,11 +320,8 @@ impl<'a> LiveSystemItems<'a> {
     #[must_use]
     pub(crate) fn step_libraries(&self) -> StepLibraries {
         let libraries = self.user.step_libraries();
-        // Masks of the sixteen library bits; a mask bit past them names no
-        // library.
-        let unloaded = (self.unloaded & u32::from(u16::MAX)) as u16;
         StepLibraries {
-            in_place: libraries.in_place & !unloaded,
+            in_place: libraries.in_place.without_mask(self.unloaded),
             arena: libraries.arena,
         }
     }
@@ -351,11 +338,13 @@ impl<'a> LiveSystemItems<'a> {
         token: PhraseToken,
         read: impl FnOnce(SystemItem<'_>) -> R,
     ) -> Option<R> {
-        let bit = StepLibraries::bit(token);
-        if libraries.in_place & bit == 0 {
+        // A library index is below 16 (`PHRASE_INDEX_LIBRARY_INDEX`,
+        // 074a2219 `novel_types.h:44`).
+        let library = crate::vocab::phrase_index_library_index(token);
+        if !libraries.in_place.contains(&library) {
             return None;
         }
-        let arena = if libraries.arena & bit != 0 {
+        let arena = if libraries.arena.contains(&library) {
             ArenaProbe::First
         } else {
             ArenaProbe::Skip
