@@ -1009,8 +1009,7 @@ impl SessionProfile<'_> {
             &mut self.profile.loaded,
             index,
             file,
-            None,
-            false,
+            ReplayScope::EveryRow,
             &mut self.profile.replayed,
             None,
         )
@@ -1278,7 +1277,14 @@ pub(crate) fn load_library_logs(
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = crate::user::LibraryTable::new();
-    replay_logs(dir, originals, &mut loaded, None, true, &mut replayed, None)?;
+    replay_logs(
+        dir,
+        originals,
+        &mut loaded,
+        ReplayScope::LoadedOnly,
+        &mut replayed,
+        None,
+    )?;
     Ok((replayed, loaded.library_totals))
 }
 
@@ -1288,7 +1294,14 @@ pub(crate) fn load_library_logs_live(
 ) -> Result<Reloaded, JournalFault> {
     let mut loaded = Loaded::default();
     let mut replayed = originals.take_live_libraries();
-    replay_logs(dir, originals, &mut loaded, None, true, &mut replayed, None)?;
+    replay_logs(
+        dir,
+        originals,
+        &mut loaded,
+        ReplayScope::LoadedOnly,
+        &mut replayed,
+        None,
+    )?;
     Ok((replayed, loaded.library_totals))
 }
 
@@ -1337,8 +1350,7 @@ pub(crate) fn load_masked_logs(
         dir,
         originals,
         &mut loaded,
-        Some((mask, value)),
-        false,
+        ReplayScope::Masked { mask, value },
         &mut replayed,
         None,
     )?;
@@ -1358,8 +1370,7 @@ pub(crate) fn load_masked_logs_live(
         dir,
         originals,
         &mut loaded,
-        Some((mask, value)),
-        false,
+        ReplayScope::Masked { mask, value },
         &mut replayed,
         Some(preread),
     )?;
@@ -1416,15 +1427,28 @@ pub(crate) fn read_mask_log(
     fault
 }
 
+/// Which journal replay a load runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplayScope {
+    /// One library's log, whatever its original: a profile reading its own
+    /// library.
+    EveryRow,
+    /// The pin's merge of every loaded library's log, which skips the
+    /// libraries with no original.
+    LoadedOnly,
+    /// `merge_with_mask`, over the libraries with an original: the pin loads
+    /// each remaining log before it checks the library bits.
+    Masked { mask: u32, value: u32 },
+}
+
 /// The replay of every `SYSTEM_FILE` library's log, in sub-index order: the
-/// pin's merge (or, with `mask`, `merge_with_mask`) per library. The first
-/// assertion ends it.
+/// pin's merge (or, under [`ReplayScope::Masked`], `merge_with_mask`) per
+/// library. The first assertion ends it.
 fn replay_logs(
     dir: &Path,
     originals: &SystemOriginals,
     loaded: &mut Loaded,
-    mask: Option<(u32, u32)>,
-    only_originals: bool,
+    scope: ReplayScope,
     replayed: &mut crate::user::LibraryTable<ReplayedLibrary>,
     mut preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
@@ -1435,8 +1459,7 @@ fn replay_logs(
             loaded,
             *nibble,
             file,
-            mask,
-            only_originals,
+            scope,
             replayed,
             preread.as_deref_mut(),
         )?;
@@ -1512,19 +1535,19 @@ fn replay_log(
     loaded: &mut Loaded,
     nibble: u8,
     file: &FileName,
-    mask: Option<(u32, u32)>,
-    only_originals: bool,
+    scope: ReplayScope,
     replayed: &mut crate::user::LibraryTable<ReplayedLibrary>,
     preread: Option<&mut MaskLogs>,
 ) -> Result<(), JournalFault> {
-    if only_originals && !originals.contains_key(&nibble) {
-        return Ok(());
-    }
     // The pin skips unloaded libraries, but loads each remaining log
     // before merge_with_mask checks the library bits.
-    if mask.is_some() && !originals.contains_key(&nibble) {
+    if scope != ReplayScope::EveryRow && !originals.contains_key(&nibble) {
         return Ok(());
     }
+    let mask = match scope {
+        ReplayScope::EveryRow | ReplayScope::LoadedOnly => None,
+        ReplayScope::Masked { mask, value } => Some((mask, value)),
+    };
     let name = file.display();
     let Some(bytes) = read_log_payload(dir, file, nibble, preread, loaded) else {
         return Ok(());

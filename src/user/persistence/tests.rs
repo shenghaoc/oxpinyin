@@ -1539,8 +1539,10 @@ fn mask_log_cache_keeps_validated_payloads_and_failed_loads() {
             &dir,
             &originals,
             &mut loaded,
-            Some((0x0f00_0000, 0x0100_0000)),
-            false,
+            ReplayScope::Masked {
+                mask: 0x0f00_0000,
+                value: 0x0100_0000,
+            },
             &mut crate::user::LibraryTable::new(),
             Some(&mut cached)
         ),
@@ -1551,8 +1553,10 @@ fn mask_log_cache_keeps_validated_payloads_and_failed_loads() {
             &dir,
             &originals,
             &mut loaded,
-            Some((0x0f00_0000, 0x0100_0000)),
-            false,
+            ReplayScope::Masked {
+                mask: 0x0f00_0000,
+                value: 0x0100_0000,
+            },
             &mut crate::user::LibraryTable::new(),
             None
         ),
