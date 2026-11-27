@@ -46,10 +46,14 @@ pub struct KcStore {
 /// synchronizes before closing.
 pub(crate) fn open_system(
     path: &Path,
-    hash: bool,
-    read_only: bool,
+    kind: crate::store::DbmKind,
+    access: crate::store::AccessMode,
 ) -> Result<Option<KcStore>, StoreError> {
-    let kind = if hash { DbType::Hash } else { DbType::Tree };
+    let kind = match kind {
+        crate::store::DbmKind::Tree => DbType::Tree,
+        crate::store::DbmKind::Hash => DbType::Hash,
+    };
+    let read_only = access == crate::store::AccessMode::ReadOnly;
     let (db, opened) = Db::open_native(path, kind, read_only, !read_only)?;
     Ok(opened.then(|| KcStore {
         db: db.with_reset_sync(),

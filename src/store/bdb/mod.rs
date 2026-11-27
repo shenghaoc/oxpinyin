@@ -95,10 +95,16 @@ pub struct BdbStore {
 
 pub(crate) fn open_system(
     path: &Path,
-    hash: bool,
-    read_only: bool,
+    kind: crate::store::DbmKind,
+    access: crate::store::AccessMode,
 ) -> Result<Option<BdbStore>, StoreError> {
-    BdbStore::try_open_native(path, hash, read_only, !read_only)
+    let read_only = access == crate::store::AccessMode::ReadOnly;
+    BdbStore::try_open_native(
+        path,
+        kind == crate::store::DbmKind::Hash,
+        read_only,
+        !read_only,
+    )
 }
 
 impl BdbStore {
