@@ -30,6 +30,8 @@ libc.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 perf-event = "0.4.9"
+# The safe posix_fadvise of PERF_PAGE_OUT.
+rustix = { version = "1.1.5", features = ["fs"] }
 # Real requests only. Linux builds require Valgrind's development headers.
 valgrind-requests = { version = "1.2.0", default-features = false, features = ["act"] }
 

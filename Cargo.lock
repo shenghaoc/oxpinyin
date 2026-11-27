@@ -627,6 +627,7 @@ dependencies = [
  "libc",
  "libloading",
  "perf-event",
+ "rustix",
  "tempfile",
  "valgrind-requests",
  "windows-sys",
