@@ -72,8 +72,7 @@ The size row is measured on [#2330](https://github.com/shenghaoc/oxpinyin/pull/2
 
 The first-key-after-idle difference is within the run-to-run variation: the ranges of the two latencies overlap.
 
-The [README](../README.md) chart shows the wall times and both idle memory points, with libpinyin = 100.
-Its "total memory" is PSS.
+Anonymous is memory that no file backs, such as the heap and stacks; PSS is the process's proportional share of resident memory, with each shared page divided among the processes that map it.
 
 ## macOS arm64, oxpinyin only
 
