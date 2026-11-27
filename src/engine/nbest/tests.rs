@@ -141,7 +141,6 @@ fn scored(poss: f32, length: u32) -> Value {
         from: super::SEED_STEP,
         sub: 0,
         length,
-        keys: length,
         poss,
     }
 }
@@ -340,8 +339,8 @@ fn selection_batch(size: usize, tied: bool) -> Vec<super::BeamEntry> {
 // Basis: Rust trellis storage layout contract.
 #[test]
 fn float_trellis_storage_shrinks() {
-    assert_eq!(std::mem::size_of::<Value>(), 28);
-    assert_eq!(std::mem::size_of::<super::Node>(), 60);
+    assert_eq!(std::mem::size_of::<Value>(), 24);
+    assert_eq!(std::mem::size_of::<super::Node>(), 52);
     #[cfg(target_pointer_width = "64")]
     assert_eq!(std::mem::size_of::<super::BeamEntry>(), 40);
 }
@@ -1097,7 +1096,6 @@ fn the_trellis_decodes_the_composition_span() {
         Some("你好")
     );
     assert_eq!(rows[0].span, bound);
-    assert_eq!(rows[0].keys, 2);
 }
 
 // Basis: pinyin.cpp:406–409 and zhuyin.cpp:348–351 at 074a2219, with register row 152 for ties.
