@@ -8,6 +8,7 @@
 //! same rows with `SubPhraseIndex::store`, whose bytes
 //! [`oxpinyin::data::phrase_library::build_chunk`] emits.
 
+use crate::utils_helper::TableSet;
 use core::ffi::c_int;
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -74,11 +75,16 @@ impl Libraries {
     /// default row, in sub-index order, with a failed load ending the
     /// program at `ENOENT`.
     pub(crate) fn load(conf: &TableConf) -> Self {
-        Self::load_rows(conf, false, &[FileType::SystemFile], tool::ENOENT)
+        Self::load_rows(
+            conf,
+            TableSet::Default,
+            &[FileType::SystemFile],
+            tool::ENOENT,
+        )
     }
 
     /// The pin's library loop over one `pinyin_table_info_t` array
-    /// (default or addon), keeping the rows whose type is in `types`.
+    /// (default or tables), keeping the rows whose type is in `types`.
     ///
     /// `gen_unigram`'s `generate_unigram` loads both `SYSTEM_FILE` and
     /// `DICTIONARY` rows of the array it is handed
@@ -89,13 +95,13 @@ impl Libraries {
     /// rows (`utils/utils_helper.h:73-95`).
     pub(crate) fn load_rows(
         conf: &TableConf,
-        addon: bool,
+        tables: TableSet,
         types: &[FileType],
         failure_status: c_int,
     ) -> Self {
         let mut by_index: [Option<Library>; 16] = Default::default();
         let mut total = 0_u32;
-        let loaded = load_library_rows(conf, addon, types, |index, name| {
+        let loaded = load_library_rows(conf, tables, types, |index, name| {
             let c_name = name_c_string(name.as_ref());
             let library = oxpinyin_tool_support::data::load_heap(Path::new(name.as_ref()))?;
             if !library.is_layout_failed() {
@@ -202,19 +208,15 @@ impl Libraries {
     /// row's chunk, overwritten with `MemoryChunk::save`. A save failure is
     /// the pin's `save %s failed.` and `exit(ENOENT)`.
     pub(crate) fn save(&mut self, conf: &TableConf) {
-        self.save_rows(conf, false, FileType::SystemFile);
+        self.save_rows(conf, TableSet::Default, FileType::SystemFile);
     }
 
     /// The store loop of `save_phrase_index` (`utils/utils_helper.h:97-120`)
     /// or `save_dictionary` (`:122-145`) over one table array: every row of
     /// `file_type`, in sub-index order.
-    pub(crate) fn save_rows(&mut self, conf: &TableConf, addon: bool, file_type: FileType) {
+    pub(crate) fn save_rows(&mut self, conf: &TableConf, tables: TableSet, file_type: FileType) {
         for index in 0..16_u8 {
-            let row = if addon {
-                conf.addon_row(index)
-            } else {
-                conf.default_row(index)
-            };
+            let row = tables.row(conf, index);
             let Some(row) = row else {
                 continue;
             };
