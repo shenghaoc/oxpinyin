@@ -65,6 +65,15 @@ pub struct TagLib {
     stack: Vec<Vec<TagEntry>>,
 }
 
+/// What a tag read does with a tag name that malformed UTF-8 interrupts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MalformedTag {
+    /// Reads the tag name as its bytes.
+    Read,
+    /// Ends the read with `false`.
+    Refuse,
+}
+
 impl TagLib {
     /// `taglib_init` (`:70-79`): one empty state.
     #[must_use]
@@ -132,8 +141,9 @@ impl TagLib {
     /// `taglib_read(input_line, line_type, values, required)`
     /// (`:171-264`): the pin's answer, after its warnings,
     /// with `values` and `required` as it leaves them. `line_type` is set
-    /// only once a tag matches, as the pin's is. A checked read refuses
-    /// a tag name interrupted by malformed UTF-8.
+    /// only once a tag matches, as the pin's is. Under
+    /// [`MalformedTag::Refuse`] a tag name interrupted by malformed UTF-8
+    /// ends the read.
     ///
     /// # Errors
     ///
@@ -141,7 +151,7 @@ impl TagLib {
     pub fn read(
         &self,
         input_line: &CStr,
-        checked: bool,
+        malformed: MalformedTag,
         line_type: &mut c_int,
         values: &mut Vec<CString>,
         required: &mut Required,
@@ -159,7 +169,7 @@ impl TagLib {
             }
             return Err(Undefined::NoToken);
         };
-        if checked && line_tag.unreadable() {
+        if malformed == MalformedTag::Refuse && line_tag.unreadable() {
             return Ok(false);
         }
         let Some(cur_entry) = tag_array
@@ -182,7 +192,7 @@ impl TagLib {
             &tokens[cur_entry.num_of_values + 1..],
             cur_entry,
             required,
-            checked,
+            malformed,
         ))
     }
 
@@ -190,11 +200,11 @@ impl TagLib {
         tokens: &[Token],
         entry: &TagEntry,
         required: &mut Required,
-        checked: bool,
+        malformed: MalformedTag,
     ) -> bool {
         for pair in tokens.chunks(2) {
             let [name, value @ ..] = pair else { continue };
-            if checked && name.unreadable() {
+            if malformed == MalformedTag::Refuse && name.unreadable() {
                 return false;
             }
             let name_bytes = name.text.to_bytes();
