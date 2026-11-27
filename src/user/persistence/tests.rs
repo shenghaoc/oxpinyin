@@ -509,7 +509,7 @@ fn non_conform_profile_wipes_and_resets() {
     let foreign = UserTableInfo {
         binary_format_version: 7,
         model_data_version: 14,
-        database_format: Some(foreign_token.to_owned()),
+        database_format: crate::data::DatabaseFormat::from_token(foreign_token),
         open_counter: 0,
     };
     assert!(foreign.save(dir.join(USER_CONF).as_path()));
