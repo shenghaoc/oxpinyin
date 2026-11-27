@@ -540,7 +540,7 @@ pub(crate) fn build_scan_matrix(
     options: OptionBits,
     divided: bool,
 ) -> Vec<Vec<ScanKey>> {
-    let selected_edges = graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE));
+    let selected_edges = graph.fewest_keys(options);
     build_scan_matrix_over(graph, &selected_edges, options, divided)
 }
 
@@ -550,7 +550,7 @@ pub(crate) fn build_scan_matrix(
 /// `docs/findings/option-bits.md` for the fuzzy step.
 ///
 /// `selected_edges` is the selected parse the caller already holds: it must be
-/// `graph.fewest_keys(options.contains(OptionBits::PINYIN_INCOMPLETE))`.
+/// `graph.fewest_keys(options)`.
 pub fn build_scan_matrix_over(
     graph: &SegmentGraph,
     selected_edges: &[Edge],

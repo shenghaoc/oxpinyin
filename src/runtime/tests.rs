@@ -1382,7 +1382,7 @@ fn native_keys(reading: &str) -> Vec<crate::user::PinyinKey> {
             .unwrap();
     assert_eq!(graph.consumed(), reading.len());
     graph
-        .fewest_keys(false)
+        .fewest_keys(OptionBits::empty())
         .iter()
         .map(|edge| crate::user::toned_key(edge.key().index(), edge.tone()).unwrap())
         .collect()

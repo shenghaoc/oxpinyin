@@ -482,7 +482,7 @@ pub(crate) fn native_keys(reading: &str) -> Vec<crate::user::PinyinKey> {
     .unwrap();
     assert_eq!(graph.consumed(), reading.len());
     let packed: Vec<_> = graph
-        .fewest_keys(false)
+        .fewest_keys(crate::OptionBits::empty())
         .iter()
         .map(|edge| edge.key().chewing_key().with_tone(edge.tone()).to_packed())
         .collect();

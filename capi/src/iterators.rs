@@ -280,7 +280,7 @@ fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
     let options = OptionBits::PINYIN_CORRECT_ALL | OptionBits::USE_TONE;
     let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options)?;
     graph
-        .fewest_keys(false)
+        .fewest_keys(options)
         .iter()
         .map(|edge| toned_key(edge.key().index(), edge.tone()))
         .collect()

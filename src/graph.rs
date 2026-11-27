@@ -366,10 +366,11 @@ impl SegmentGraph {
     // docs/findings/candidate-construction.md §8.1.
     /// Selects a path covering the longest byte prefix. Among these paths it prefers fewer
     /// keys, then smaller total [`Edge::distance`], then the first path found. Initial-only
-    /// edges participate when `allow_incomplete` is set. Separators contribute to the
-    /// consumed prefix without emitting a key.
+    /// edges participate when `options` holds [`OptionBits::PINYIN_INCOMPLETE`]. Separators
+    /// contribute to the consumed prefix without emitting a key.
     #[must_use]
-    pub fn fewest_keys(&self, allow_incomplete: bool) -> Vec<Edge> {
+    pub fn fewest_keys(&self, options: OptionBits) -> Vec<Edge> {
+        let allow_incomplete = options.contains(OptionBits::PINYIN_INCOMPLETE);
         let bound = self.consumed();
         // A step's rank is (key count, total correction distance) packed into
         // one integer, the count above bit 32: one comparison orders them

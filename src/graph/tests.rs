@@ -55,7 +55,7 @@ fn use_tone_consumes_a_trailing_digit_with_the_span(
     assert_eq!(graph.consumed(), consumed);
     assert_eq!(
         graph
-            .fewest_keys(true)
+            .fewest_keys(OptionBits::PINYIN_INCOMPLETE)
             .iter()
             .map(|edge| (edge.to(), edge.key().text(), edge.tone()))
             .collect::<Vec<_>>(),
@@ -89,7 +89,7 @@ fn use_tone_consumes_a_trailing_digit_with_the_span(
         ),
         "n4" => {
             assert_eq!(edges, ["0-2:n:incomplete:4", "0-1:n:incomplete:0"]);
-            assert!(graph.fewest_keys(false).is_empty());
+            assert!(graph.fewest_keys(OptionBits::empty()).is_empty());
         }
         _ => {}
     }
@@ -104,7 +104,7 @@ fn the_empty_input_is_one_node_and_no_edges() {
     assert_eq!(graph.consumed(), 0);
     assert!(graph.outgoing(0).is_empty());
     assert!(graph.outgoing(99).is_empty());
-    assert!(graph.fewest_keys(false).is_empty());
+    assert!(graph.fewest_keys(OptionBits::empty()).is_empty());
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn an_input_past_the_pins_gint16_steps_is_parsed_whole() {
     let long = b"ni".repeat(40_000);
     let graph = SegmentGraph::build_with_options(&long, OptionBits::default()).unwrap();
     assert_eq!(graph.consumed(), long.len());
-    let path = graph.fewest_keys(false);
+    let path = graph.fewest_keys(OptionBits::empty());
     assert_eq!(path.len(), 40_000);
     assert_eq!(path.last().map(Edge::to), Some(long.len()));
 }
@@ -279,7 +279,7 @@ fn exact_graph_has_one_edge_per_segment_and_no_resplits(
     assert_eq!(graph.consumed(), input.len());
     assert_eq!(
         graph
-            .fewest_keys(false)
+            .fewest_keys(OptionBits::empty())
             .iter()
             .map(|edge| edge.key().text())
             .collect::<Vec<_>>(),
@@ -301,7 +301,7 @@ fn a_leading_apostrophe_run_is_consumed_like_a_separator(
     assert_eq!(graph.consumed(), input.len());
     assert_eq!(
         graph
-            .fewest_keys(false)
+            .fewest_keys(OptionBits::empty())
             .iter()
             .map(|edge| edge.key().text())
             .collect::<Vec<_>>(),
@@ -325,7 +325,11 @@ fn fewest_keys_picks_the_shortest_complete_path(
     let graph = SegmentGraph::build_with_options(input.as_bytes(), OptionBits::default()).unwrap();
     assert_eq!(
         graph
-            .fewest_keys(allow_incomplete)
+            .fewest_keys(if allow_incomplete {
+                OptionBits::PINYIN_INCOMPLETE
+            } else {
+                OptionBits::empty()
+            })
             .iter()
             .map(|edge| edge.key().text())
             .collect::<Vec<_>>(),
@@ -346,7 +350,7 @@ fn fewest_keys_breaks_equal_key_counts_by_correction_distance(
     let graph = SegmentGraph::build_with_options(input.as_bytes(), options).unwrap();
     assert_eq!(
         graph
-            .fewest_keys(false)
+            .fewest_keys(OptionBits::empty())
             .iter()
             .map(|edge| {
                 format!(
@@ -381,7 +385,7 @@ fn a_gated_parser_row_follows_its_option_bit(
             .unwrap();
     assert_eq!(graph.consumed(), 3);
     let found: Vec<_> = graph
-        .fewest_keys(true)
+        .fewest_keys(OptionBits::PINYIN_INCOMPLETE)
         .iter()
         .map(|edge| {
             let key = edge.key().chewing_key().with_tone(edge.tone());
@@ -408,7 +412,7 @@ fn an_import_reading_parses_past_long_separator_runs() {
     assert_eq!(graph.consumed(), reading.len());
     assert_eq!(
         graph
-            .fewest_keys(false)
+            .fewest_keys(OptionBits::empty())
             .iter()
             .map(|edge| {
                 edge.key()
