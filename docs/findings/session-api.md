@@ -106,6 +106,7 @@ The default keeps the eager list, its parse length and the errors that the parse
 The C facades turn on `set_defer_list_builds`, because the pin builds candidates only in `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219).
 The C ABI answers from the window that it re-anchors there.
 So in that mode, a sort-word change on a composing session (`set_sort_options`) also leaves the list stale: the pin takes the word as an argument of that call (`pinyin.cpp:2198`).
+An option change (`set_options`) leaves it stale too and searches no table: `pinyin_set_options` only stores the word (`pinyin.cpp:1299-1307`).
 
 ## Errors
 

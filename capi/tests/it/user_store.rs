@@ -116,6 +116,64 @@ fn guess_candidates_aborts_on_an_overlong_index_key() {
     );
 }
 
+/// An option change during a composition searches no user table, so it
+/// leaves the Kyoto Cabinet and tkrzw mask walk's per-length entry as it
+/// was (#785). `pinyin_set_options` only stores the word (074a2219,
+/// `pinyin.cpp:1299-1307`, the table forwards under `#if 0`), and
+/// `pinyin_parse_more_full_pinyins` reads no table (`:1497-1524`). With
+/// the entry empty, a mask that removes nothing walks the one-syllable
+/// rows in key order and writes each back unchanged. A search of the
+/// longer `ni` row would leave that row in the entry, and the walk would
+/// then write its tail into the shorter `bi` row before it.
+#[test]
+fn an_option_change_during_a_composition_leaves_the_mask_walk_entry() {
+    let system = system_dir();
+    let user = TempUserDir::new("option-change-mask-walk");
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let (bi, ni) = unsafe {
+        (
+            first_key_bytes(context, "bi"),
+            first_key_bytes(context, "ni"),
+        )
+    };
+    unsafe { pinyin_fini(context) };
+    assert!(bi < ni, "the shorter row comes first in the walk");
+    let item = |token: u32, key: &[u8]| [&token.to_le_bytes()[..], key, &[0, 0]].concat();
+    let rows = vec![
+        (bi.clone(), item(0x0100_0001, &bi)),
+        (
+            ni.clone(),
+            [item(0x0100_0002, &ni), item(0x0100_0003, &ni)].concat(),
+        ),
+    ];
+    let index = user.path.join("user_pinyin_index.bin");
+    craft_user_index(&index, &rows);
+    write_user_conf(&user.path, &system);
+
+    let context = init_at(&system, &user.path);
+    assert!(!context.is_null());
+    // SAFETY: `context` was opened above and is not yet freed; only this thread calls into it.
+    let instance = unsafe { alloc(context) };
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { parse(instance, "ni") }, 2);
+    let incomplete = oxpinyin::OptionBits::USE_TONE | oxpinyin::OptionBits::PINYIN_INCOMPLETE;
+    assert!(unsafe { pinyin_set_options(context, incomplete.bits()) });
+    // SAFETY: as above.
+    assert_eq!(unsafe { parse(instance, "ni") }, 2);
+    assert!(unsafe { pinyin_mask_out(context, 0xFFFF_FFFF, 0) });
+    // An empty import batch marks the profile modified and reads no
+    // pinyin table (`pinyin_end_add_phrases`, `pinyin.cpp:655-660`), so
+    // the save writes the walked rows.
+    assert!(unsafe { import_batch(context, 7, &[]) }.is_empty());
+    assert!(unsafe { pinyin_save(context) });
+    unsafe { pinyin_free_instance(instance) };
+    unsafe { pinyin_fini(context) };
+
+    assert_eq!(store_rows(&index, false), rows);
+}
+
 /// `mask_out` asserts on a user bigram key that is not a token (the
 /// facade's `gram_mask_fault_over`).
 #[test]
