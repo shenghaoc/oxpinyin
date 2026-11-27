@@ -18,7 +18,7 @@ pub(crate) fn system_dir() -> PathBuf {
 
 /// W3 under CJK directory and file names, with a fresh CJK user directory.
 #[cfg(windows)]
-pub fn cjk_system_and_user() -> (tempfile::TempDir, PathBuf, PathBuf) {
+pub(crate) fn cjk_system_and_user() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let root = tempfile::tempdir().unwrap();
     let system = root.path().join("系统");
     let user = root.path().join("用户");
