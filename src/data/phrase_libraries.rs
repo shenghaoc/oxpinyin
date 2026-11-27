@@ -239,15 +239,17 @@ impl PhraseLibraries {
             .take_live_content()
     }
 
-    /// The loaded libraries as a bit set, bit `n` for library `n`
-    /// ([`Self::is_loaded`] of each).
+    /// The loaded libraries ([`Self::is_loaded`] of each).
     #[must_use]
-    pub(crate) fn loaded_set(&self) -> u16 {
-        self.by_nibble
-            .iter()
-            .zip(0_u32..)
-            .filter(|(loaded, _)| loaded.is_some())
-            .fold(0, |set, (_, nibble)| set | (1 << nibble))
+    pub(crate) fn loaded_set(&self) -> crate::data::LibrarySet {
+        let mut set = crate::data::LibrarySet::new();
+        set.extend(
+            (0_u8..)
+                .zip(&self.by_nibble)
+                .filter(|(_, loaded)| loaded.is_some())
+                .map(|(nibble, _)| nibble),
+        );
+        set
     }
 
     /// Whether library `nibble` is loaded.

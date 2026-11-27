@@ -1,4 +1,5 @@
-use super::{LibrarySet, LibraryTable};
+use super::LibraryTable;
+use crate::data::LibrarySet;
 
 /// Basis: Rust contract (a table over library indexes 0 to 15, walked in ascending order).
 #[test]

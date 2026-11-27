@@ -19,6 +19,7 @@
 //! surviving token through its library — a token whose library is not
 //! loaded is invisible, upstream's `NULL == head` skip.
 
+use crate::data::LibrarySet;
 use crate::phrase_item::PhraseItemView;
 use crate::vocab::phrase_index_library_index;
 use std::path::Path;
@@ -77,21 +78,10 @@ fn resolve_item(
 }
 
 /// Whether `token`'s library is loaded: a system chunk, or one of the
-/// `user_nibbles` — the pin's non-`NULL` range array.
-fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) -> bool {
+/// `user_libraries` — the pin's non-`NULL` range array.
+fn library_loaded(libraries: &PhraseLibraries, user_libraries: LibrarySet, token: u32) -> bool {
     libraries.library(token).is_some()
-        || 1_u32
-            .checked_shl(u32::from(phrase_index_library_index(token)))
-            .is_some_and(|bit| user_nibbles & bit != 0)
-}
-
-/// Whether the library set `set` (bit `n` for library `n`) holds `token`'s
-/// library. A library index is below 16 (`PHRASE_INDEX_LIBRARY_INDEX`,
-/// 074a2219 `novel_types.h:44`).
-pub(crate) fn library_in(set: u16, token: u32) -> bool {
-    1_u16
-        .checked_shl(u32::from(phrase_index_library_index(token)))
-        .is_some_and(|bit| set & bit != 0)
+        || user_libraries.contains(&phrase_index_library_index(token))
 }
 
 /// A path's toned query keys: each syllable's key with the tone at its
@@ -130,8 +120,8 @@ pub struct SystemTables {
     phrase: PhraseTable,
     /// The default sub-indices `table.conf` types `USER_FILE`: libraries the
     /// pin has loaded (a user chunk, or a fresh empty one) although no
-    /// system chunk backs them, bit `n` for sub-index `n`.
-    user_nibbles: u32,
+    /// system chunk backs them.
+    user_libraries: LibrarySet,
 }
 
 impl std::ops::Deref for SystemDictionary<'_> {
@@ -142,14 +132,18 @@ impl std::ops::Deref for SystemDictionary<'_> {
 }
 
 impl SystemTables {
-    /// Combines the native table handles and the configured user-library bits.
+    /// Combines the native table handles and the configured user libraries.
     #[must_use]
     #[doc(hidden)]
-    pub const fn new(pinyin: ChewingTable, phrase: PhraseTable, user_nibbles: u32) -> Self {
+    pub const fn new(
+        pinyin: ChewingTable,
+        phrase: PhraseTable,
+        user_libraries: LibrarySet,
+    ) -> Self {
         Self {
             pinyin,
             phrase,
-            user_nibbles,
+            user_libraries,
         }
     }
 
@@ -222,15 +216,16 @@ impl SystemTables {
                 ),
                 crate::store::DbmKind::Tree,
             )?),
-            user_nibbles(conf),
+            user_libraries(conf),
         ))
     }
 }
 
-/// The sub-indexes of `conf`'s `USER_FILE` rows, as a bit mask.
-fn user_nibbles(conf: &TableConf) -> u32 {
-    conf.user_libraries()
-        .fold(0, |mask, (index, _)| mask | (1_u32 << index))
+/// The sub-indexes of `conf`'s `USER_FILE` rows.
+fn user_libraries(conf: &TableConf) -> LibrarySet {
+    let mut set = LibrarySet::new();
+    set.extend(conf.user_libraries().map(|(index, _)| index));
+    set
 }
 
 impl SystemDictionary<'_> {
@@ -281,7 +276,7 @@ impl SystemDictionary<'_> {
             };
             if let Some(entry) = entry {
                 out.push(entry);
-            } else if library_loaded(self.libraries(), self.user_nibbles, token) {
+            } else if library_loaded(self.libraries(), self.user_libraries, token) {
                 unreadable.count += 1;
             }
         })?;
@@ -293,7 +288,7 @@ impl SystemDictionary<'_> {
     /// non-`NULL` `PhraseIndexRanges` array for it.
     #[must_use]
     pub(crate) fn library_loaded(&self, token: u32) -> bool {
-        library_loaded(self.libraries(), self.user_nibbles, token)
+        library_loaded(self.libraries(), self.user_libraries, token)
     }
 
     /// The facade's phrase libraries, shared with the language model
@@ -467,7 +462,7 @@ impl SystemDictionary<'_> {
         &self,
         query: &[ChewingKey],
         ranges: &mut PhraseIndexRanges<()>,
-        ranged: u16,
+        ranged: LibrarySet,
         scratch: &mut Vec<u8>,
     ) -> Result<bool, DictError> {
         if query.is_empty() {
@@ -477,7 +472,7 @@ impl SystemDictionary<'_> {
         if continued {
             ranges.convert(
                 crate::data::chewing_table::matching_items(query, scratch)?
-                    .filter(|&token| library_in(ranged, token))
+                    .filter(|&token| ranged.contains(&phrase_index_library_index(token)))
                     .map(|token| (token, Some(()))),
             );
         }
@@ -485,14 +480,13 @@ impl SystemDictionary<'_> {
     }
 
     /// The libraries whose tokens a table search files: a loaded system
-    /// chunk or a `USER_FILE` sub-index ([`Self::library_loaded`]), as a bit
-    /// set, bit `n` for library `n`. The pin prepares one range array for
+    /// chunk or a `USER_FILE` sub-index ([`Self::library_loaded`]). The pin
+    /// prepares one range array for
     /// each loaded sub-index (074a2219 `phrase_index.h:703-711`,
     /// `phonetic_lookup.h:757`).
     #[must_use]
-    pub(crate) fn loaded_libraries(&self) -> u16 {
-        let user = (self.user_nibbles & u32::from(u16::MAX)) as u16;
-        self.libraries.loaded_set() | user
+    pub(crate) fn loaded_libraries(&self) -> LibrarySet {
+        self.libraries.loaded_set().union(self.user_libraries)
     }
 
     /// What a step prices of `token` over `syllables`: its character count

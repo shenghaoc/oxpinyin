@@ -14,6 +14,7 @@ pub mod chunk_format;
 mod dict;
 #[cfg(test)]
 pub(crate) use dict::tests as dict_tests;
+mod library_set;
 mod lm;
 mod phrase_libraries;
 pub mod phrase_library;
@@ -41,11 +42,12 @@ pub use crate::store::DEFAULT_STORE_DB_FORMAT;
 pub use chewing_table::index_key as chewing_index_key;
 
 pub use bigram_table::BigramTable;
+pub use library_set::LibrarySet;
 
 pub use c_stderr::{path_bytes, table_conf_load_failed};
 
 pub use dict::{AddonDictionary, DictError, SystemDictionary, SystemTables};
-pub(crate) use dict::{SearchQuery, library_in, toned_query};
+pub(crate) use dict::{SearchQuery, toned_query};
 
 pub use lm::{BigramLanguageModel, BigramTables, LmError, merge_bigram};
 
