@@ -240,12 +240,6 @@ fn null_chunk_refused(dir: &Path) {
     }
 }
 
-/// Bit 30 of [`LiveOptionsInner::double_scheme`]: when set, the live
-/// scheme's fallback table is suppressed — upstream's half-mutation
-/// (`pinyin_parser2.cpp:580` + `:614`). A valid-scheme store clears it implicitly (values 1–6
-/// never have bit 30), and the out-of-enum arm sets it.
-pub const FALLBACK_CLEARED_BIT: i32 = 1 << 30;
-
 /// The live option/scheme state a context owns and every instance it
 /// allocates shares: `set_options`/`set_*_scheme` on the context remask
 /// already-allocated instances through this one handle, as the pin's
@@ -258,14 +252,18 @@ pub struct LiveOptions(Rc<LiveOptionsInner>);
 
 /// The shared cells behind [`LiveOptions`].
 pub struct LiveOptionsInner {
-    /// Live double-pinyin scheme (header discriminant value, bits 0–29)
-    /// with the fallback-cleared flag packed into bit 30
-    /// ([`FALLBACK_CLEARED_BIT`]).
-    pub double_scheme: Cell<i32>,
-    /// Live Zhuyin scheme (header discriminant value).
-    pub zhuyin_scheme: Cell<i32>,
-    /// Live full-pinyin scheme (header discriminant value).
-    pub full_scheme: Cell<i32>,
+    /// Live double-pinyin scheme. The setter never stores
+    /// [`DoublePinyinScheme::Customized`]: the pin aborts there.
+    pub double_scheme: Cell<DoublePinyinScheme>,
+    /// Whether the live double scheme's fallback table is suppressed —
+    /// upstream's half-mutation (`pinyin_parser2.cpp:580` + `:614`): the
+    /// out-of-enum setter arm sets it, and a valid-scheme store clears it.
+    pub double_fallback_cleared: Cell<bool>,
+    /// Live Zhuyin scheme. The setters never store
+    /// [`ZhuyinScheme::StandardDvorak`]: the pin aborts there.
+    pub zhuyin_scheme: Cell<ZhuyinScheme>,
+    /// Live full-pinyin scheme.
+    pub full_scheme: Cell<FullPinyinScheme>,
     /// Live option word. The parsers read `FORCE_TONE`, `USE_TONE` and
     /// `PINYIN_INCOMPLETE` off it.
     pub options: Cell<OptionBits>,
@@ -285,9 +283,10 @@ impl LiveOptions {
     #[must_use]
     pub(crate) fn new(option_word: OptionBits) -> Self {
         Self(Rc::new(LiveOptionsInner {
-            double_scheme: Cell::new(i32::from(DoublePinyinScheme::Ms)),
-            zhuyin_scheme: Cell::new(i32::from(ZhuyinScheme::Standard)),
-            full_scheme: Cell::new(i32::from(FullPinyinScheme::Hanyu)),
+            double_scheme: Cell::new(DoublePinyinScheme::Ms),
+            double_fallback_cleared: Cell::new(false),
+            zhuyin_scheme: Cell::new(ZhuyinScheme::Standard),
+            full_scheme: Cell::new(FullPinyinScheme::Hanyu),
             options: Cell::new(option_word),
         }))
     }

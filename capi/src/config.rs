@@ -61,11 +61,11 @@ pub unsafe extern "C" fn pinyin_set_full_pinyin_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    if !matches!(scheme, 1..=3) {
+    let Ok(scheme) = oxpinyin::parser::FullPinyinScheme::try_from(scheme) else {
         // Register row 5d, `pinyin_parser2.cpp:398`: `set_scheme`'s
         // `default:` is an `abort()`.
         std::process::abort();
-    }
+    };
     ctx.core.live.full_scheme.set(scheme);
     true
 }
@@ -105,17 +105,16 @@ pub unsafe extern "C" fn pinyin_set_double_pinyin_scheme(
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
-        // (`pinyin.cpp:1155-1159`).  Set the packed fallback-cleared bit.
+        // (`pinyin.cpp:1155-1159`). The scheme stays.
         Err(_) => {
-            let live = &ctx.core.live.double_scheme;
-            live.set(live.get() | oxpinyin::facade::FALLBACK_CLEARED_BIT);
+            ctx.core.live.double_fallback_cleared.set(true);
             return true;
         }
         Ok(scheme) => scheme,
     };
-    // A valid scheme (1-6) never has bit 30, so this store clears the
-    // fallback-cleared flag implicitly.
-    ctx.core.live.double_scheme.set(i32::from(scheme));
+    // A valid scheme brings its fallback table back.
+    ctx.core.live.double_scheme.set(scheme);
+    ctx.core.live.double_fallback_cleared.set(false);
     true
 }
 
@@ -146,12 +145,14 @@ pub unsafe extern "C" fn pinyin_set_zhuyin_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
+    let Some(scheme) = oxpinyin::facade::zhuyin_scheme(scheme)
+        .filter(|scheme| *scheme != oxpinyin::parser::ZhuyinScheme::StandardDvorak)
+    else {
         // Register rows 5c and 5d: `pinyin.cpp:1189` (`default:`) and, for
         // the `STANDARD_DVORAK` slot, `zhuyin_parser2.cpp:295`; both are
         // `abort()`, with the old parser already deleted in memory.
         std::process::abort();
-    }
+    };
     ctx.core.live.zhuyin_scheme.set(scheme);
     true
 }

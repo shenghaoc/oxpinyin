@@ -4,8 +4,8 @@ use crate::OptionBits;
 use crate::full_pinyin_index::parse_full_pinyin_index_with_options;
 use crate::graph::ExactSegment;
 use crate::parser::{
-    ChewingKey, DoublePinyinKey, DoublePinyinParser, DoublePinyinScheme, FullPinyinParser,
-    FullPinyinScheme, ZhuyinKey, ZhuyinParser, ZhuyinScheme,
+    ChewingKey, DoublePinyinKey, DoublePinyinParser, FullPinyinParser, FullPinyinScheme, ZhuyinKey,
+    ZhuyinParser, ZhuyinScheme,
 };
 use crate::vocab::SyllableKey;
 
@@ -62,9 +62,13 @@ pub fn zhuyin_scheme(value: i32) -> Option<ZhuyinScheme> {
     ZhuyinScheme::try_from(value).ok()
 }
 
-/// The double-pinyin-scheme dispatch over the header discriminants.
+/// The double-pinyin-scheme dispatch over the header discriminants. The
+/// setter validates with `DoublePinyinScheme::try_from` itself, so only the
+/// tests read this.
+#[cfg(test)]
 #[must_use]
-pub fn double_scheme(value: i32) -> Option<DoublePinyinScheme> {
+pub fn double_scheme(value: i32) -> Option<crate::parser::DoublePinyinScheme> {
+    use crate::parser::DoublePinyinScheme;
     DoublePinyinScheme::try_from(value)
         .ok()
         .filter(|scheme| *scheme != DoublePinyinScheme::Customized)
@@ -177,12 +181,21 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         // at 074a2219): under LUOMA / SECONDARY_ZHUYIN the spelling is
         // looked up in that scheme's table — plain rows, no option gating
         // — and the key is the canonical syllable's (issue #547).
-        if let Some(scheme) = full_scheme(self.live.full_scheme.get())
-            && let Some(index) = scheme.index()
-        {
+        if let Some(index) = self.live.full_scheme.get().index() {
             return parse_one_scheme_key(options, text.as_bytes(), index);
         }
         FullPinyinParser::parse_one_key(options, text.as_bytes())
+    }
+
+    /// The live double-pinyin parser: the live scheme, with its fallback
+    /// table suppressed after an out-of-enum set.
+    fn live_double_parser(&self) -> DoublePinyinParser {
+        let parser = DoublePinyinParser::with_scheme(self.live.double_scheme.get());
+        if self.live.double_fallback_cleared.get() {
+            parser.with_fallback_suppressed()
+        } else {
+            parser
+        }
     }
 
     /// The one-key double-pinyin probe — pinyin-facade-only, over the
@@ -190,18 +203,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// `false`.
     #[must_use]
     pub fn parse_one_double_pinyin(&self, text: &str) -> Option<ChewingKey> {
-        let raw = self.live.double_scheme.get();
-        let fallback_cleared = raw & crate::facade::context::FALLBACK_CLEARED_BIT != 0;
-        let scheme = double_scheme(raw & !crate::facade::context::FALLBACK_CLEARED_BIT)?;
-        let parser = {
-            let p = DoublePinyinParser::with_scheme(scheme);
-            if fallback_cleared {
-                p.with_fallback_suppressed()
-            } else {
-                p
-            }
-        };
-        parser.parse_one_key(self.options(), text.as_bytes())
+        self.live_double_parser()
+            .parse_one_key(self.options(), text.as_bytes())
     }
 
     /// Parses one chewing key with the live scheme and the facade's correction options.
@@ -211,9 +214,9 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         text: &str,
         corrections: ChewingCorrections,
     ) -> Option<ChewingKey> {
-        let scheme = zhuyin_scheme(self.live.zhuyin_scheme.get())?;
         let options = corrections.apply(self.options());
-        ZhuyinParser::with_scheme(scheme).parse_one_key(options, text.as_bytes())
+        ZhuyinParser::with_scheme(self.live.zhuyin_scheme.get())
+            .parse_one_key(options, text.as_bytes())
     }
 
     /// The zhuyin symbol(s) one keystroke maps to — the mapping half of
@@ -223,10 +226,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     #[must_use]
     pub fn in_keyboard(&self, key: u8) -> Vec<&'static str> {
         let use_tone = self.options().contains(OptionBits::USE_TONE);
-        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.get()) else {
-            return Vec::new();
-        };
-        ZhuyinParser::with_scheme(scheme).symbols_for(key, use_tone)
+        ZhuyinParser::with_scheme(self.live.zhuyin_scheme.get()).symbols_for(key, use_tone)
     }
 }
 
@@ -268,9 +268,7 @@ impl<
             let _ = self.session.replace_raw("");
             return 0;
         }
-        if let Some(scheme) = full_scheme(self.live.full_scheme.get())
-            && let Some(index) = scheme.index()
-        {
+        if let Some(index) = self.live.full_scheme.get().index() {
             let parsed =
                 parse_full_pinyin_index_with_options(text.as_bytes(), self.options(), index);
             // The session reads the consumed original bytes with each key
@@ -345,10 +343,7 @@ impl<
             return 0;
         }
 
-        let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.get()) else {
-            return 0;
-        };
-        let parser = ZhuyinParser::with_scheme(scheme);
+        let parser = ZhuyinParser::with_scheme(self.live.zhuyin_scheme.get());
         let parsed = parser.parse_with_options(text.as_bytes(), corrections.apply(self.options()));
 
         if text.is_empty() {
@@ -387,21 +382,9 @@ impl<
             return 0;
         }
 
-        let raw = self.live.double_scheme.get();
-        let fallback_cleared = raw & crate::facade::context::FALLBACK_CLEARED_BIT != 0;
-        let Some(scheme) = double_scheme(raw & !crate::facade::context::FALLBACK_CLEARED_BIT)
-        else {
-            return 0;
-        };
-        let parser = {
-            let p = DoublePinyinParser::with_scheme(scheme);
-            if fallback_cleared {
-                p.with_fallback_suppressed()
-            } else {
-                p
-            }
-        };
-        let parsed = parser.parse_with_options(text.as_bytes(), self.options());
+        let parsed = self
+            .live_double_parser()
+            .parse_with_options(text.as_bytes(), self.options());
 
         if text.is_empty() {
             // The same fill_matrix empty-input law as full pinyin.

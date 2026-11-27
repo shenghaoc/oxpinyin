@@ -40,15 +40,15 @@ pub unsafe extern "C" fn zhuyin_set_chewing_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    if oxpinyin::facade::zhuyin_scheme(scheme)
-        .is_none_or(|scheme| scheme == oxpinyin::parser::ZhuyinScheme::StandardDvorak)
-    {
+    let Some(scheme) = oxpinyin::facade::zhuyin_scheme(scheme)
+        .filter(|scheme| *scheme != oxpinyin::parser::ZhuyinScheme::StandardDvorak)
+    else {
         // Register rows 5c and 5d: the dvorak slot (7) falls through to
         // `zhuyin_parser2.cpp:295`, every out-of-enum value to
         // `zhuyin.cpp:736`, both `abort()`, with the old parser already
         // deleted in memory (`:710-711`).
         std::process::abort();
-    }
+    };
     ctx.core.live.zhuyin_scheme.set(scheme);
     true
 }
@@ -79,12 +79,12 @@ pub unsafe extern "C" fn zhuyin_set_full_pinyin_scheme(
     scheme: c_int,
 ) -> bool {
     let ctx = borrow_or_return!(context, context_mut, false);
-    if oxpinyin::facade::full_scheme(scheme).is_none() {
+    let Some(scheme) = oxpinyin::facade::full_scheme(scheme) else {
         // Register row 5d, `pinyin_parser2.cpp:398`: `abort()` in
         // `FullPinyinParser2::set_scheme`, after `zhuyin.cpp:703` stored the
         // scheme in memory.
         std::process::abort();
-    }
+    };
     ctx.core.live.full_scheme.set(scheme);
     true
 }

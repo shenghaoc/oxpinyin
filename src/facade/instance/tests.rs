@@ -128,7 +128,10 @@ mod native {
         let user = TempUserDir::new("separator-sentence");
         let mut context = native_context(&system_dir(), &user.path, law);
         context.set_options(OptionBits::from_bits_retain(0x18a));
-        context.live.full_scheme.set(scheme);
+        context
+            .live
+            .full_scheme
+            .set(crate::parser::FullPinyinScheme::try_from(scheme).unwrap());
         let mut instance = native_instance(&context, law);
         let consumed = if law == UserConfLaw::Pinyin {
             instance.bind(&context.runtime).parse_full_more("'ni")

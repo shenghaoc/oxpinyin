@@ -37,8 +37,8 @@ mod test_fixture;
 mod tests;
 
 pub use context::{
-    ContextCore, FALLBACK_CLEARED_BIT, InitRefusal, LibraryLoadFault, LibraryRowAssert,
-    LiveOptions, LiveOptionsInner, MaskOutOutcome, OpenFailure, SaveOutcome, null_chunk_asserts,
+    ContextCore, InitRefusal, LibraryLoadFault, LibraryRowAssert, LiveOptions, LiveOptionsInner,
+    MaskOutOutcome, OpenFailure, SaveOutcome, null_chunk_asserts,
 };
 pub use cursor::{CursorFault, CursorLaw, KeyAt, ModeKeys, SpanSource};
 pub use export_rows::{
@@ -55,7 +55,7 @@ pub use offsets::{
     double_offset_is_mid_key, double_session_offset, zhuyin_lookup_session_offset,
     zhuyin_offset_is_mid_key, zhuyin_original_offset, zhuyin_session_offset,
 };
-pub use parse::{ChewingCorrections, PinyinCorrections, double_scheme, full_scheme, zhuyin_scheme};
+pub use parse::{ChewingCorrections, PinyinCorrections, full_scheme, zhuyin_scheme};
 pub use predict::{compute_prefixes, merged_suggestions};
 pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 
