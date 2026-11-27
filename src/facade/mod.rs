@@ -1,10 +1,23 @@
-//! Shared context, instance, candidate, and cursor operations for the pinyin and Zhuyin C
-//! facades. Both use `runtime` and the same libpinyin pin. Each facade chooses
-//! its own option forwarding, cursor behavior, and profile-marker policy.
+//! The Rust layer of the libpinyin and libzhuyin C libraries.
+//!
+//! `oxpinyin-capi` and `oxzhuyin-capi` build on these context, instance, candidate and
+//! cursor operations. Both follow the same libpinyin pin. Each C crate chooses its own
+//! option forwarding, cursor behaviour and profile-marker policy, and owns the ABI handle
+//! types and pointer marshalling. The
+//! [architecture](https://github.com/shenghaoc/oxpinyin/blob/main/docs/architecture.md#facades)
+//! describes the layering.
 //!
 //! Starting a parse clears the stored parse mode and original keys. Constraints and
-//! sentence rows have their own lifetimes. The C crates own the ABI handle types and
-//! pointer marshalling.
+//! sentence rows have their own lifetimes.
+//!
+//! ## Aborts
+//!
+//! Malformed or corrupt stored data and failed backend operations can abort the process,
+//! as in libpinyin. Individual items omit these aborts. Their `Aborts` sections describe
+//! termination caused by caller arguments or call order, or by an operation that exits
+//! the process. The
+//! [compatibility policy](https://github.com/shenghaoc/oxpinyin/blob/main/docs/findings/compatibility-policy.md#failure-behaviour)
+//! sets this failure behaviour.
 
 // Constitution §4: keep these non-test denials. A permitted site needs the
 // narrowest justified #[expect], citing the pin's abort site or an invariant

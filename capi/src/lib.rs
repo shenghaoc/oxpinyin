@@ -1,4 +1,4 @@
-//! Implements the libpinyin C API and ABI.
+//! The drop-in `libpinyin` C ABI. The C header `pinyin.h` is the contract.
 //!
 //! Linux packages provide `libpinyin.so.15`.
 //! Native Rust interfaces are unsupported internal details.
