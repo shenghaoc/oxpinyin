@@ -60,8 +60,10 @@ pub(crate) struct SystemTableInfoReader {
     stream: Stream,
     locale: SavedNumeric,
     word: [u8; WORD_SIZE],
-    /// Storage for the current six-word row.
-    row: [[u8; WORD_SIZE]; 6],
+    /// Storage for the current six-word row, on the heap: the reader is a
+    /// local of the inlined context open, and 1.5 KiB inline would stay in
+    /// that frame.
+    row: Box<[[u8; WORD_SIZE]; 6]>,
 }
 
 impl SystemTableInfoReader {
@@ -84,7 +86,7 @@ impl SystemTableInfoReader {
             stream,
             locale,
             word: [0; WORD_SIZE],
-            row: [[0; WORD_SIZE]; 6],
+            row: Box::new([[0; WORD_SIZE]; 6]),
         })
     }
 

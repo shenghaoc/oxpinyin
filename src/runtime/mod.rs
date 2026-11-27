@@ -1381,9 +1381,13 @@ pub struct Runtime {
     system_dir: PathBuf,
     system: crate::data::SystemTables,
     model: crate::data::BigramTables,
-    user: UserStore,
+    // The store and the addon dictionary each hold a `PhraseLibraries`
+    // inline (2.3 KiB), which phrase-item reads index on every lookup. One
+    // allocation for each owner keeps those reads direct and the runtime
+    // small, so the open and the contexts that wrap it do not copy them.
+    user: Box<UserStore>,
     conf: TableConf,
-    addons: AddonDictionary,
+    addons: Box<AddonDictionary>,
     punct: PunctTable,
     library_mask: u32,
 }
@@ -1584,7 +1588,7 @@ impl Runtime {
             crate::data::BigramTables::attach(&bigram, conf.lambda_f32()).map_err(OpenError::Lm)?;
         let user = UserStore::open_session(
             user_dir,
-            &mut originals,
+            originals,
             SystemVersions::from_conf(&conf),
             law,
             profile,
@@ -1613,7 +1617,7 @@ impl Runtime {
             model: lm,
             user,
             conf,
-            addons,
+            addons: Box::new(addons),
             punct,
             library_mask,
         })
@@ -1704,7 +1708,7 @@ impl Runtime {
         state: &crate::engine::SessionState,
         index: u8,
     ) -> Result<bool, EngineError> {
-        let user = &mut self.user;
+        let user = &mut *self.user;
         if !user.has_user_directory() {
             return Ok(false);
         }

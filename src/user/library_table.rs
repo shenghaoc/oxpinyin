@@ -17,9 +17,12 @@ static LIBRARIES: [u8; PHRASE_INDEX_LIBRARY_COUNT as usize] =
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// One optional `T` per phrase library, walked in ascending library order.
+///
+/// The 16 slots are one heap allocation, so a table moves as one pointer:
+/// the session's tables pass by value through the context open.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LibraryTable<T> {
-    slots: [Option<T>; PHRASE_INDEX_LIBRARY_COUNT as usize],
+    slots: Box<[Option<T>; PHRASE_INDEX_LIBRARY_COUNT as usize]>,
 }
 
 impl<T> Default for LibraryTable<T> {
@@ -31,9 +34,9 @@ impl<T> Default for LibraryTable<T> {
 impl<T> LibraryTable<T> {
     /// A table with every library absent.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            slots: [const { None }; PHRASE_INDEX_LIBRARY_COUNT as usize],
+            slots: Box::new([const { None }; PHRASE_INDEX_LIBRARY_COUNT as usize]),
         }
     }
 
@@ -91,7 +94,7 @@ impl<T> LibraryTable<T> {
 
     /// Makes every library absent.
     pub fn clear(&mut self) {
-        *self = Self::new();
+        self.slots.fill_with(|| None);
     }
 
     /// Whether every library is absent.
@@ -107,21 +110,24 @@ impl<T> LibraryTable<T> {
     }
 
     /// The present libraries with their values, in ascending library order.
+    #[must_use]
     pub fn iter(&self) -> Iter<'_, T> {
-        Iter(LIBRARIES.iter().zip(&self.slots))
+        Iter(LIBRARIES.iter().zip(self.slots.iter()))
     }
 
     /// [`Self::iter`] for a write to each value.
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-        IterMut(LIBRARIES.iter().zip(&mut self.slots))
+        IterMut(LIBRARIES.iter().zip(self.slots.iter_mut()))
     }
 
     /// The present libraries, in ascending order.
+    #[must_use]
     pub fn keys(&self) -> impl DoubleEndedIterator<Item = &u8> + use<'_, T> {
         self.iter().map(|(library, _)| library)
     }
 
     /// The present values, in ascending library order.
+    #[must_use]
     pub fn values(&self) -> impl DoubleEndedIterator<Item = &T> {
         self.iter().map(|(_, value)| value)
     }
@@ -133,7 +139,7 @@ impl<T> LibraryTable<T> {
 
     /// Keeps the libraries `keep` answers `true` for.
     pub fn retain(&mut self, mut keep: impl FnMut(&u8, &mut T) -> bool) {
-        for (library, slot) in LIBRARIES.iter().zip(&mut self.slots) {
+        for (library, slot) in LIBRARIES.iter().zip(self.slots.iter_mut()) {
             if slot.as_mut().is_some_and(|value| !keep(library, value)) {
                 *slot = None;
             }
@@ -254,7 +260,7 @@ impl<T> IntoIterator for LibraryTable<T> {
     type IntoIter = IntoIter<T>;
 
     fn into_iter(self) -> IntoIter<T> {
-        IntoIter(LIBRARIES.into_iter().zip(self.slots))
+        IntoIter(LIBRARIES.into_iter().zip(*self.slots))
     }
 }
 
