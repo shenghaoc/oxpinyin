@@ -372,19 +372,16 @@ impl SegmentGraph {
     pub fn fewest_keys(&self, options: OptionBits) -> Vec<Edge> {
         let allow_incomplete = options.contains(OptionBits::PINYIN_INCOMPLETE);
         let bound = self.consumed();
-        // A step's rank is (key count, total correction distance) packed into
-        // one integer, the count above bit 32: one comparison orders them
+        // A step's rank is (key count, total correction distance), ordered
         // lexicographically. Both are bounded by the input length, which
-        // `MAX_GRAPH_POSITION` keeps below 2^32, so the distance never carries
-        // into the count.
-        const ONE_KEY: u64 = 1 << 32;
+        // `MAX_GRAPH_POSITION` keeps below 2^32.
         // steps[node] = (rank, incoming edge); the incoming edge's `from` is
         // the previous node. Node 0 is the root with rank zero.
-        let mut steps: Vec<Option<(u64, Edge)>> = vec![None; bound + 1];
+        let mut steps: Vec<Option<((u32, u32), Edge)>> = vec![None; bound + 1];
 
         for node in 0..bound {
-            let rank = if node == 0 {
-                0
+            let (keys, distance) = if node == 0 {
+                (0, 0)
             } else {
                 match steps[node] {
                     Some((rank, _)) => rank,
@@ -400,7 +397,7 @@ impl SegmentGraph {
             // Every reachable step at a node has parsed the same length, so
             // the pin's three rules (`pinyin_parser2.cpp:296-309` at
             // 074a2219) reduce to (fewer keys, then lower distance), the
-            // packed rank's order.
+            // rank's order.
             for edge in self
                 .outgoing(node)
                 .iter()
@@ -411,7 +408,7 @@ impl SegmentGraph {
                 if to > bound {
                     continue;
                 }
-                let candidate = rank + ONE_KEY + u64::from(edge.distance());
+                let candidate = (keys + 1, distance + u32::from(edge.distance()));
                 let replace = steps[to].as_ref().is_none_or(|(seen, _)| candidate < *seen);
                 if replace {
                     steps[to] = Some((candidate, edge));
