@@ -77,7 +77,7 @@ pub unsafe fn main(args: impl IntoIterator<Item = OsString>) {
         let output = crate::segment::open_output(parsed.filename(0));
         crate::segment::refuse_extra_arguments(&parsed.args);
         let mut input = Input::open(&parsed.args);
-        let tables = data::load_or_exit(true);
+        let tables = data::load_or_exit(data::Gram::Bigram);
         let search = PhraseSearch::new(tables.phrase.as_ref(), &tables.libraries);
         let lambda = tables.conf.lambda_f32();
         let gen_extra_enter = parsed.flag(1);

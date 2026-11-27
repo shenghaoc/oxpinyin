@@ -3,7 +3,11 @@ use oxpinyin::OptionBits;
 
 #[test]
 fn direct_spans_keep_skipped_separators_and_partial_failure() {
-    let parsed = parse_direct(b"ni3'' hao3  invalid", OptionBits::USE_TONE, false);
+    let parsed = parse_direct(
+        b"ni3'' hao3  invalid",
+        OptionBits::USE_TONE,
+        oxpinyin::engine::Law::Pinyin,
+    );
     assert_eq!(parsed.consumed, 12);
     assert_eq!(
         parsed
@@ -17,7 +21,7 @@ fn direct_spans_keep_skipped_separators_and_partial_failure() {
     let corrected = parse_direct(
         b"bagn n",
         OptionBits::USE_TONE | OptionBits::PINYIN_CORRECT_ALL | OptionBits::PINYIN_INCOMPLETE,
-        false,
+        oxpinyin::engine::Law::Pinyin,
     );
     assert_eq!(corrected.consumed, 6);
     assert_eq!(corrected.keys[0].key.pinyin_string(), "bang");
@@ -27,7 +31,11 @@ fn direct_spans_keep_skipped_separators_and_partial_failure() {
 #[test]
 fn zhuyin_spans_are_utf8_bytes_from_the_shipping_key_parser() {
     let input = "ㄋㄧˇ' ㄏㄠˇ  bad";
-    let parsed = parse_direct(input.as_bytes(), OptionBits::USE_TONE, true);
+    let parsed = parse_direct(
+        input.as_bytes(),
+        OptionBits::USE_TONE,
+        oxpinyin::engine::Law::Zhuyin,
+    );
     assert_eq!(parsed.consumed, 20);
     assert_eq!(
         parsed
