@@ -546,11 +546,11 @@ pub(crate) fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> std::ff
     }
     // SAFETY: GLib answered a NUL-terminated allocation; the copy ends
     // before `g_free` releases it.
-    let bytes = unsafe { CStr::from_ptr(joined) }.to_bytes().to_vec();
+    let built = unsafe { CStr::from_ptr(joined) }.to_owned();
     // SAFETY: `joined` is the pointer GLib allocated for this call and no
     // one else owns it.
     unsafe { glib_sys::g_free(joined.cast()) };
-    std::ffi::CString::new(bytes).unwrap_or_default()
+    built
 }
 
 /// GLib's filename builder joins or removes only ASCII separators. The

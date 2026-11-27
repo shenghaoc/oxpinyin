@@ -84,13 +84,13 @@ pub fn build_path(dir: &Path, name: &OsStr) -> PathBuf {
     path_from_c_string(joined)
 }
 
-/// `g_build_filename(dir, name, NULL)` as the bytes `fprintf("%s")`
+/// `g_build_filename(dir, name, NULL)` as the C string `fprintf("%s")`
 /// writes. `None` is the pin's `NULL` element.
 #[must_use]
-pub(crate) fn build_bytes(dir: Option<&Path>, name: Option<&str>) -> Vec<u8> {
+pub(crate) fn build_c_string(dir: Option<&Path>, name: Option<&str>) -> CString {
     let dir = dir.map(|dir| c_string(dir.as_os_str()));
     let name = name.map(|name| c_string(OsStr::new(name)));
-    build_filename(dir.as_deref(), name.as_deref()).into_bytes()
+    build_filename(dir.as_deref(), name.as_deref())
 }
 
 /// `path` as a C string, cut at a NUL as the pin's `%s` input would be.
