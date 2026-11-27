@@ -77,14 +77,10 @@ impl Step {
     /// The step's best node — upstream's max-`m_poss` scan, first wins
     /// on ties (array order).
     fn best(&self) -> Option<&Node> {
-        let mut nodes = self.content.iter();
-        let mut best = nodes.next()?;
-        for node in nodes {
-            if node.poss > best.poss {
-                best = node;
-            }
-        }
-        Some(best)
+        // A strict `>` keeps the first maximum, which `max_by` would not.
+        self.content
+            .iter()
+            .reduce(|best, node| if node.poss > best.poss { node } else { best })
     }
 }
 

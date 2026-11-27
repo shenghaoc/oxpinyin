@@ -127,14 +127,8 @@ pub fn merge_two_phrase_array(
             second_index += 1;
         }
     }
-    while first_index < first.len() {
-        merged.push(first[first_index].clone());
-        first_index += 1;
-    }
-    while second_index < second.len() {
-        merged.push(second[second_index].clone());
-        second_index += 1;
-    }
+    merged.extend_from_slice(&first[first_index..]);
+    merged.extend_from_slice(&second[second_index..]);
     merged
 }
 

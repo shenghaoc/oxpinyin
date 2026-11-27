@@ -124,7 +124,7 @@
 mod bridge;
 
 use std::marker::PhantomData;
-use std::ops::Bound;
+use std::ops::{Bound, RangeBounds};
 use std::path::Path;
 use std::pin::Pin;
 
@@ -214,11 +214,7 @@ fn check_end(status: &ffi::NativeStatus) -> Result<bool, StoreError> {
 
 /// Whether iteration has walked past `hi` and can stop.
 fn past_upper(key: &[u8], hi: Bound<&[u8]>) -> bool {
-    match hi {
-        Bound::Unbounded => false,
-        Bound::Included(bound) => key > bound,
-        Bound::Excluded(bound) => key >= bound,
-    }
+    !(Bound::Unbounded, hi).contains(&key)
 }
 
 // ── handles ───────────────────────────────────────────────────────
