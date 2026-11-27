@@ -13,7 +13,7 @@ xychart-beta horizontal
     title "oxpinyin, libpinyin = 100 (lower is better)"
     x-axis ["Anonymous memory after init", "Total memory after init", "Anonymous memory after use", "Total memory after use", "Start-up time", "First key after idle, latency", "Median key time", "Worst key time", "Choose and redraw time", "Binary size"]
     y-axis "libpinyin = 100" 0 --> 130
-    bar [93, 101, 82, 99, 95, 94, 90, 83, 89, 122]
+    bar [93, 101, 82, 99, 95, 94, 90, 83, 89, 121]
     line [100, 100, 100, 100, 100, 100, 100, 100, 100, 100]
 ```
 
