@@ -143,8 +143,8 @@ impl Converter<'_> {
                     // TAGLIB_GET_TOKEN token; TAGLIB_GET_PHRASE_STRING word.
                     // `phrase_token_t token = atoi(string)`.
                     let token = self.model.token(0) as u32;
-                    let word = self.model.phrase(1).to_owned();
-                    if !self.validate(token, &word) {
+                    let word = self.model.phrase(1);
+                    if !self.validate(token, word) {
                         // `check_result(taglib_validate_token_with_string(...))`.
                         tool::abort();
                     }
@@ -175,13 +175,13 @@ impl Converter<'_> {
             match self.model.line_type {
                 GRAM_2_ITEM_LINE => {
                     let token1 = self.model.token(0) as u32;
-                    let word1 = self.model.phrase(1).to_owned();
-                    if !self.validate(token1, &word1) {
+                    let word1 = self.model.phrase(1);
+                    if !self.validate(token1, word1) {
                         tool::abort();
                     }
                     let token2 = self.model.token(2) as u32;
-                    let word2 = self.model.phrase(3).to_owned();
-                    if !self.validate(token2, &word2) {
+                    let word2 = self.model.phrase(3);
+                    if !self.validate(token2, word2) {
                         tool::abort();
                     }
                     let count = tool::atol(self.model.value(b"count"));

@@ -2245,7 +2245,7 @@ impl LiveSubIndex<'_> {
 
     fn item(&self, slot: u32) -> Option<std::borrow::Cow<'_, [u8]>> {
         match self {
-            Self::Buffer(buffer) => buffer.item_bytes(slot),
+            Self::Buffer(buffer) => buffer.item_bytes(slot).map(std::borrow::Cow::Borrowed),
             Self::Chunk(chunk) => chunk.visible_bytes(slot),
         }
     }

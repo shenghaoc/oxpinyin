@@ -11,7 +11,6 @@
 //! beyond the log rolls back the changes made by that replay.
 
 use crate::user::record_skip;
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use crate::data::phrase_library::ITEM_HEADER_SIZE;
@@ -839,9 +838,8 @@ impl ReplayedLibrary {
         true
     }
 
-    pub(crate) fn item_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
-        self.complete_item(slot)
-            .map(|item| Cow::Borrowed(item.as_bytes()))
+    pub(crate) fn item_bytes(&self, slot: u32) -> Option<&[u8]> {
+        self.complete_item(slot).map(|item| item.as_bytes())
     }
 
     /// The complete item under `slot`, read in place, unless the shipped
@@ -869,8 +867,8 @@ impl ReplayedLibrary {
         PhraseItemView::fields(content.get(at..)?)
     }
 
-    pub(crate) fn item_field_bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
-        self.fields(slot).map(Cow::Borrowed)
+    pub(crate) fn item_field_bytes(&self, slot: u32) -> Option<&[u8]> {
+        self.fields(slot)
     }
 
     /// Whether the shipped offset table held no item at `slot`.
