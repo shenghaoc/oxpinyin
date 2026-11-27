@@ -349,24 +349,19 @@ impl UserStore {
     /// `arena_add_phrase`). The guess's own arena write, the user-search
     /// note, writes the index only ([`Self::note_pinyin_search_keys`]).
     pub(crate) fn step_libraries(&self) -> StepLibraries {
-        let bit = |nibble: &u8| 1_u16.checked_shl(u32::from(*nibble)).unwrap_or(0);
-        let in_place = if self.has_system_items() {
-            self.originals
-                .iter()
-                .filter(|(_, original)| {
-                    original.mapped.is_some_and(|library| library.is_detached())
-                })
-                .fold(0, |set, (nibble, _)| set | bit(nibble))
-        } else {
-            0
-        };
-        let arena = self
-            .inner
-            .libpinyin
-            .phrases()
-            .libraries
-            .keys()
-            .fold(0, |set, nibble| set | bit(nibble));
+        let mut in_place = crate::user::LibrarySet::new();
+        if self.has_system_items() {
+            in_place.extend(
+                self.originals
+                    .iter()
+                    .filter(|(_, original)| {
+                        original.mapped.is_some_and(|library| library.is_detached())
+                    })
+                    .map(|(nibble, _)| *nibble),
+            );
+        }
+        let mut arena = crate::user::LibrarySet::new();
+        arena.extend(self.inner.libpinyin.phrases().libraries.keys().copied());
         StepLibraries { in_place, arena }
     }
 

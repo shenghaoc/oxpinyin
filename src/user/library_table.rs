@@ -298,6 +298,13 @@ impl LibrarySet {
         held
     }
 
+    /// The set less every library whose bit `mask` sets: the library mask's
+    /// bit `n` is library `n`, and a bit past the sixteen names none.
+    #[must_use]
+    pub(crate) const fn without_mask(self, mask: u32) -> Self {
+        Self(self.0 & !((mask & 0xffff) as u16))
+    }
+
     /// Whether the set has no library.
     #[cfg(test)]
     #[must_use]
