@@ -67,6 +67,8 @@ use crate::store::StoreError;
     non_upper_case_globals,
     missing_docs,
     dead_code,
+    // bindgen writes every item as `pub`; the module is private to the backend.
+    unreachable_pub,
     // db.h's DBT is a bitfield struct, and bindgen's bitfield accessors
     // transmute integer types rustc 1.97's `unnecessary_transmutes`
     // (warn-by-default) flags inside generated code we cannot edit.

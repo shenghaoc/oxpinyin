@@ -69,7 +69,7 @@ use crate::engine::error::EngineError;
 ///
 /// The cursor laws read a span list through this trait so a caller can
 /// lend its stored keys without first copying them into a span vector.
-pub trait KeySpans {
+pub(crate) trait KeySpans {
     /// The number of keys.
     fn span_count(&self) -> usize;
 
@@ -278,7 +278,7 @@ fn zero_start_walk<S: KeySpans + ?Sized>(columns: &Columns<'_, S>, mut offset: u
 /// # Errors
 ///
 /// Returns [`EngineError`] when the cursor cannot be resolved against the input and spans.
-pub fn lookup_offset_over_spans(
+pub(crate) fn lookup_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
     spans: &(impl KeySpans + ?Sized),
@@ -305,7 +305,7 @@ pub fn lookup_offset_over_spans(
 /// # Errors
 ///
 /// Returns [`EngineError`] when the offset cannot be resolved against the input and spans.
-pub fn left_word_offset_over_spans(
+pub(crate) fn left_word_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
     spans: &(impl KeySpans + ?Sized),
@@ -336,7 +336,7 @@ pub fn left_word_offset_over_spans(
 /// # Errors
 ///
 /// Returns [`EngineError`] when the offset cannot be resolved against the input and spans.
-pub fn right_word_offset_over_spans(
+pub(crate) fn right_word_offset_over_spans(
     input: &[u8],
     parsed_len: usize,
     spans: &(impl KeySpans + ?Sized),
@@ -461,13 +461,13 @@ impl<'a> MatrixKeys<'a> {
 
     /// The number of keys.
     #[must_use]
-    pub const fn len(self) -> usize {
+    pub(crate) const fn len(self) -> usize {
         self.keys.len()
     }
 
     /// Whether the matrix holds no key.
     #[must_use]
-    pub const fn is_empty(self) -> bool {
+    pub(crate) const fn is_empty(self) -> bool {
         self.keys.is_empty()
     }
 
@@ -477,13 +477,13 @@ impl<'a> MatrixKeys<'a> {
     ///
     /// Panics when `index` is at least [`Self::len`].
     #[must_use]
-    pub fn get(self, index: usize) -> MatrixKey {
+    pub(crate) fn get(self, index: usize) -> MatrixKey {
         let key = self.keys[index];
         MatrixKey::new(key.key, key.tone, key.syllable_start, key.to)
     }
 
     /// Every key, in column order.
-    pub fn iter(self) -> impl Iterator<Item = MatrixKey> + 'a {
+    pub(crate) fn iter(self) -> impl Iterator<Item = MatrixKey> + 'a {
         self.keys
             .iter()
             .map(|key| MatrixKey::new(key.key, key.tone, key.syllable_start, key.to))

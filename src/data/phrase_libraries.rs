@@ -25,7 +25,7 @@ use crate::{
 use crate::data::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary};
 
 #[cfg(test)]
-pub use crate::data::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
+pub(crate) use crate::data::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
 /// One pronunciation of a library item.
 ///
@@ -36,9 +36,9 @@ pub use crate::data::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 pub struct LibraryPronunciation {
     /// `'`-joined pinyin spelling, tone digits dropped (the consumers
     /// resolve it back to tone-less syllable keys).
-    pub spelling: String,
+    pub(crate) spelling: String,
     /// The pronunciation's stored count.
-    pub freq: u64,
+    pub(crate) freq: u64,
 }
 
 /// A loaded library and the file it came from.
@@ -357,7 +357,7 @@ impl PhraseLibraries {
     /// wrapping total adds up to.
     #[cfg(test)]
     #[must_use]
-    pub fn has_items_unloaded(&self, unloaded: u32) -> bool {
+    pub(crate) fn has_items_unloaded(&self, unloaded: u32) -> bool {
         self.by_nibble.iter().enumerate().any(|(nibble, loaded)| {
             unloaded & (1 << nibble) == 0
                 && loaded
@@ -371,7 +371,7 @@ impl PhraseLibraries {
     /// sub-indexes (`phrase_index.cpp:261-269`). Only the set bits are
     /// visited, so the common all-loaded mask costs nothing more.
     #[must_use]
-    pub fn unigram_total_unloaded(&self, unloaded: u32) -> u32 {
+    pub(crate) fn unigram_total_unloaded(&self, unloaded: u32) -> u32 {
         let mut total = self.unigram_total();
         let mut bits = unloaded & 0xFFFF;
         while bits != 0 {
@@ -407,7 +407,7 @@ impl PhraseLibraries {
     /// `phrase_char_count` and [`Self::pronunciation_possibility`]
     /// pair, from one item read. `None` where the character count is.
     #[must_use]
-    pub fn trellis_item(&self, token: u32, query: &[ChewingKey]) -> Option<TrellisItem> {
+    pub(crate) fn trellis_item(&self, token: u32, query: &[ChewingKey]) -> Option<TrellisItem> {
         let library = self.library(token)?;
         let item = library.item(token)?;
         let chars = item

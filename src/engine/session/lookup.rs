@@ -983,7 +983,7 @@ where
     /// one-past-end is valid: `scan_window` answers the terminal sentence
     /// rows for it (the pin's reserved slot).
     #[cfg(test)]
-    pub fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+    pub(crate) fn candidates_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
         self.candidates_at_for_abi(offset, false)
     }
 
@@ -1079,7 +1079,10 @@ where
     /// multi-byte character — the same refusals as
     /// [`Session::candidates_at`] — plus backend failures during the scan.
     #[cfg(test)]
-    pub fn candidates_ending_at(&mut self, offset: usize) -> Result<CandidateList, EngineError> {
+    pub(crate) fn candidates_ending_at(
+        &mut self,
+        offset: usize,
+    ) -> Result<CandidateList, EngineError> {
         self.candidates_ending_at_for_abi(offset, false)
     }
 

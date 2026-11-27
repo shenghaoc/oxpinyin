@@ -5,7 +5,7 @@
 
 // The external I/O boundary is described in docs/findings/external-io-boundary.md.
 
-pub mod chunk;
+pub(crate) mod chunk;
 pub(crate) mod config;
 pub(crate) mod diagnostic;
 #[expect(
@@ -14,10 +14,9 @@ pub(crate) mod diagnostic;
 )]
 pub(crate) mod native;
 pub(crate) mod path;
-pub use path::{
-    build_filename, c_string, decode_filename, filename, path_from_bytes, path_to_bytes, rename,
-    unlink,
-};
+pub use path::filename;
+pub(crate) use path::{c_string, rename, unlink};
+pub use path::{path_from_bytes, path_to_bytes};
 
 use std::ffi::CString;
 use std::path::Path;

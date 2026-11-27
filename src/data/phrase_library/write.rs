@@ -110,7 +110,7 @@ pub fn build_chunk(items: &[(u32, &ChunkItem)]) -> Option<Vec<u8>> {
 /// Returns `None` if the phrase is empty, either count exceeds `u8::MAX`,
 /// or a pronunciation has a different length from the phrase.
 #[must_use]
-pub fn encode_phrase_item(item: &ChunkItem) -> Option<Vec<u8>> {
+pub(crate) fn encode_phrase_item(item: &ChunkItem) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     write_phrase_item(&mut bytes, item)?;
     Some(bytes)

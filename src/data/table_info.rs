@@ -79,7 +79,7 @@ pub enum PhoneticType {
 
 /// `TABLE_DATABASE_FORMAT_TYPE`: the `database format:` value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DatabaseFormat {
+pub(crate) enum DatabaseFormat {
     /// `BerkeleyDB`.
     BerkeleyDb,
     /// `KyotoCabinet`.
@@ -91,7 +91,7 @@ pub enum DatabaseFormat {
 impl DatabaseFormat {
     /// The token `table.conf` and `user.conf` spell it with.
     #[must_use]
-    pub const fn token(self) -> &'static str {
+    pub(crate) const fn token(self) -> &'static str {
         match self {
             Self::BerkeleyDb => "BerkeleyDB",
             Self::KyotoCabinet => "KyotoCabinet",
@@ -101,7 +101,7 @@ impl DatabaseFormat {
 
     /// The format whose token is `token`.
     #[must_use]
-    pub fn from_token(token: &str) -> Option<Self> {
+    pub(crate) fn from_token(token: &str) -> Option<Self> {
         [Self::BerkeleyDb, Self::KyotoCabinet, Self::Tkrzw]
             .into_iter()
             .find(|format| format.token() == token)
@@ -155,7 +155,7 @@ pub struct TableRow {
     /// The system chunk file (`m_system_filename`).
     pub system: Option<FileName>,
     /// The user chunk or diff log (`m_user_filename`).
-    pub user: Option<FileName>,
+    pub(crate) user: Option<FileName>,
     /// How the pin loads and saves the library.
     pub file_type: FileType,
 }
@@ -163,7 +163,7 @@ pub struct TableRow {
 impl TableRow {
     /// A slot no row names (`INIT_TABLE_INFO`).
     #[must_use]
-    pub const fn unused() -> Self {
+    pub(crate) const fn unused() -> Self {
         Self {
             table: None,
             system: None,
@@ -296,7 +296,7 @@ impl TableConf {
     /// Constructs the stock table rows for the selected backend and supplied weight. Runtime
     /// initialization reads the installed configuration from disk.
     #[must_use]
-    pub fn stock(lambda: f32) -> Self {
+    pub(crate) fn stock(lambda: f32) -> Self {
         let mut conf = Self {
             binary_format_version: 7,
             model_data_version: 14,
@@ -482,13 +482,13 @@ impl TableConf {
 
     /// `binary format version:`.
     #[must_use]
-    pub const fn binary_format_version(&self) -> i32 {
+    pub(crate) const fn binary_format_version(&self) -> i32 {
         self.binary_format_version
     }
 
     /// `model data version:`.
     #[must_use]
-    pub const fn model_data_version(&self) -> i32 {
+    pub(crate) const fn model_data_version(&self) -> i32 {
         self.model_data_version
     }
 
@@ -506,7 +506,7 @@ impl TableConf {
 
     /// `database format:`.
     #[must_use]
-    pub const fn database_format(&self) -> DatabaseFormat {
+    pub(crate) const fn database_format(&self) -> DatabaseFormat {
         self.database_format
     }
 
@@ -587,13 +587,13 @@ impl TableConf {
     /// The default rows by sub-index, whatever their type, in the order
     /// `_clean_user_files` walks them (`pinyin.cpp:152-167`,
     /// `zhuyin.cpp:106-121`).
-    pub fn default_rows(&self) -> impl Iterator<Item = (u8, &TableRow)> {
+    pub(crate) fn default_rows(&self) -> impl Iterator<Item = (u8, &TableRow)> {
         (0_u8..).zip(&self.default)
     }
 
     /// The addon libraries by sub-index: every `addon` row, whatever its
     /// type (the load call judges the type).
-    pub fn addon_rows(&self) -> impl Iterator<Item = (u8, &TableRow)> {
+    pub(crate) fn addon_rows(&self) -> impl Iterator<Item = (u8, &TableRow)> {
         (0_u8..)
             .zip(&self.addon)
             .filter(|(_, row)| row.file_type != FileType::NotUsed)

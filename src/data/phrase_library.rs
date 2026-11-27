@@ -63,13 +63,13 @@ pub const INDEX_ONE: u32 = 17;
 pub const FIRST_ITEM_OFFSET: u32 = 8;
 
 use crate::input::chunk::HeaderFault;
+pub use crate::phrase_item::PhraseItemView;
 use crate::phrase_item::u32_at;
-pub use crate::phrase_item::{
-    CHEWING_KEY_SIZE, ITEM_HEADER_SIZE, PhraseItemView, PronunciationView,
-};
+pub(crate) use crate::phrase_item::{CHEWING_KEY_SIZE, ITEM_HEADER_SIZE};
 
 mod write;
-pub use write::{ChunkItem, build_chunk, encode_phrase_item};
+pub(crate) use write::encode_phrase_item;
+pub use write::{ChunkItem, build_chunk};
 pub(crate) use write::{decode_phrase_item, sub_phrase_index_sections};
 
 use std::fmt;
@@ -96,7 +96,7 @@ use crate::vocab::PHRASE_MASK;
 pub struct LayoutFault {
     /// `m_total_freq` as the pin read it before the failing check — 0 when
     /// the four-word header itself is short.
-    pub total_freq: u32,
+    pub(crate) total_freq: u32,
 }
 
 /// Why a phrase library could not be opened.
@@ -303,7 +303,7 @@ pub(crate) fn directory_size_reads_as_a_chunk(size: std::io::Result<u64>) -> boo
 ///
 /// # Aborts
 /// A failed header word read aborts at the pin's assertion.
-pub fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
+pub(crate) fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
     map_chunk(path, HeaderFault::Abort).map(drop)
 }
 
@@ -318,13 +318,13 @@ pub(crate) struct PhraseContent {
 impl PhraseContent {
     /// Borrow the current content bytes.
     #[must_use]
-    pub fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         &self.mapping.as_slice()[self.area.clone()]
     }
 
     /// Borrow the offset array: little-endian `u32` slots, in stored order.
     #[must_use]
-    pub fn offsets(&self) -> &[u8] {
+    pub(crate) fn offsets(&self) -> &[u8] {
         &self.mapping.as_slice()[self.offsets.clone()]
     }
 
@@ -626,7 +626,7 @@ impl PhraseLibrary {
     /// content holds only items its index points at (074a2219
     /// `phrase_index.cpp:648-675`, `pinyin.cpp:1139`).
     #[must_use]
-    pub const fn has_items(&self) -> bool {
+    pub(crate) const fn has_items(&self) -> bool {
         self.content.start < self.content.end
     }
 
@@ -684,7 +684,7 @@ impl PhraseLibrary {
     /// The offset array: little-endian `u32` slots, `SubPhraseIndex`'s
     /// `m_phrase_index` as loaded.
     #[must_use]
-    pub fn offset_array(&self) -> &[u8] {
+    pub(crate) fn offset_array(&self) -> &[u8] {
         &self.payload()[self.offsets.clone()]
     }
 
@@ -719,7 +719,7 @@ impl PhraseLibrary {
 
     /// Whether the chunk's mapping has moved to its live owner.
     #[must_use]
-    pub const fn is_detached(&self) -> bool {
+    pub(crate) const fn is_detached(&self) -> bool {
         self.detached_range_end.is_some()
     }
 

@@ -135,7 +135,7 @@ where
 /// # Errors
 ///
 /// Propagates the model's step-cost failures.
-pub fn phrase_segment<D, L>(
+pub(crate) fn phrase_segment<D, L>(
     dictionary: &D,
     model: &L,
     sentence: &str,

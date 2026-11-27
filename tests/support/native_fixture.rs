@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-pub fn system_dir() -> PathBuf {
+pub(crate) fn system_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join(if env!("CARGO_PKG_NAME") == "oxpinyin" {
             "."
@@ -58,7 +58,7 @@ fn user_dir_prefix() -> &'static str {
     }
 }
 
-pub struct TempUserDir {
+pub(crate) struct TempUserDir {
     pub(crate) path: PathBuf,
     _dir: tempfile::TempDir,
 }
@@ -70,7 +70,7 @@ impl TempUserDir {
     }
 }
 
-pub struct TempSystemDir {
+pub(crate) struct TempSystemDir {
     pub(crate) path: PathBuf,
     _dir: tempfile::TempDir,
 }
@@ -97,39 +97,39 @@ impl TempSystemDir {
 
 /// Hand-built `PhraseIndexLogger` records for the journal-replay tests
 /// (`phrase_index_logger.h:158-215` layout, little-endian).
-pub mod logs {
+pub(crate) mod logs {
     fn record(kind: u32, token: u32, tail: &[u8]) -> Vec<u8> {
         [&kind.to_le_bytes()[..], &token.to_le_bytes(), tail].concat()
     }
 
     /// A `MODIFY_HEADER` carrying token `0x01000001`.
     #[must_use]
-    pub fn header_token() -> Vec<u8> {
+    pub(crate) fn header_token() -> Vec<u8> {
         record(4, 0x0100_0001, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
 
     /// A null-token `MODIFY_HEADER`.
     #[must_use]
-    pub fn header() -> Vec<u8> {
+    pub(crate) fn header() -> Vec<u8> {
         record(4, 0, &[4, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
 
     /// An ADD of a six-byte item at slot `0x99`.
     #[must_use]
-    pub fn add() -> Vec<u8> {
+    pub(crate) fn add() -> Vec<u8> {
         record(1, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
     }
 
     /// A REMOVE with a six-byte old item at slot 0x99.
     #[must_use]
-    pub fn remove() -> Vec<u8> {
+    pub(crate) fn remove() -> Vec<u8> {
         record(2, 0x0100_0099, &[6, 0, 0, 0, 1, 0, 0, 0])
     }
 
     /// A MODIFY of slot 1 whose old chunk no item matches: `merge` returns
     /// there (`phrase_index.cpp:483-484`).
     #[must_use]
-    pub fn mismatched_modify() -> Vec<u8> {
+    pub(crate) fn mismatched_modify() -> Vec<u8> {
         record(
             3,
             0x0100_0001,
@@ -140,7 +140,7 @@ pub mod logs {
 
 /// Writes a `user.conf` that conforms to the `table.conf` of `system`, with
 /// open counter 0, so the next init keeps the profile under `user_dir`.
-pub fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
+pub(crate) fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
     let conf = oxpinyin::facade::TableConf::load_from_dir(system).expect("system table.conf");
     let versions = oxpinyin::__internal::data::user_files::SystemVersions::from_conf(&conf);
     assert!(
@@ -152,7 +152,7 @@ pub fn write_user_conf(user_dir: &std::path::Path, system: &std::path::Path) {
 /// A tree DBM of the running backend at `path` that holds exactly `rows`,
 /// in place of any file there: a system table with records the library
 /// never writes.
-pub fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+pub(crate) fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     use oxpinyin::__internal::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
@@ -166,7 +166,7 @@ pub fn craft_tree(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// A hash DBM of the running backend at `path` that holds exactly `rows`, in
 /// place of any file there: a system bigram with grams the library never
 /// writes.
-pub fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+pub(crate) fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     use oxpinyin::__internal::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the DBM");
@@ -182,7 +182,7 @@ pub fn craft_hash(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// raw keys and values that the library may never write. It is written as
 /// the library's own save writes a user index: a snapshot on Kyoto
 /// Cabinet, a tree file on tkrzw and Berkeley DB.
-pub fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+pub(crate) fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     use oxpinyin::__internal::store::WriteStore as _;
     if path.exists() {
         std::fs::remove_file(path).expect("replace the user index");
@@ -200,7 +200,7 @@ pub fn craft_user_index(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// grams that the library may never write. It is written as the library's
 /// own save writes the user bigram: a snapshot on Kyoto Cabinet, a hash
 /// file on tkrzw and Berkeley DB.
-pub fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+pub(crate) fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     use oxpinyin::__internal::store::{DefaultUserBigramDb, UserBigramDb as _};
     let db = DefaultUserBigramDb::empty().expect("empty user bigram");
     let mut rows = rows.to_vec();
@@ -214,7 +214,7 @@ pub fn craft_user_bigram(path: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// Every record of the user container at `path`, sorted. `hash` reads the
 /// user bigram; otherwise the file is a user index. Each is read as the
 /// library reads it on the running backend.
-pub fn store_rows(path: &std::path::Path, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
+pub(crate) fn store_rows(path: &std::path::Path, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
     use oxpinyin::__internal::store::RawReadStore as _;
     use std::ops::Bound;
     if hash {
@@ -246,7 +246,7 @@ pub fn store_rows(path: &std::path::Path, hash: bool) -> Vec<(Vec<u8>, Vec<u8>)>
 /// A stored `SingleGram`: the total, then `(token, count)` pairs
 /// (`ngram.cpp:48-50`).
 #[must_use]
-pub fn gram_bytes(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
+pub(crate) fn gram_bytes(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
     let mut bytes = total.to_le_bytes().to_vec();
     for (token, count) in items {
         bytes.extend(token.to_le_bytes());
@@ -258,7 +258,7 @@ pub fn gram_bytes(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
 /// A `LOG_MODIFY_HEADER` record: type 4, the token, a `u16` length, then
 /// the old and new totals (`phrase_index_logger.h:158-215`).
 #[must_use]
-pub fn modify_header(token: u32, old: u32, new: u32) -> Vec<u8> {
+pub(crate) fn modify_header(token: u32, old: u32, new: u32) -> Vec<u8> {
     [
         &4_u32.to_le_bytes()[..],
         &token.to_le_bytes(),
@@ -269,7 +269,7 @@ pub fn modify_header(token: u32, old: u32, new: u32) -> Vec<u8> {
     .concat()
 }
 
-pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
+pub(crate) fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
     let conf =
         oxpinyin::facade::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let versions = oxpinyin::__internal::data::user_files::SystemVersions::from_conf(&conf);
@@ -287,7 +287,7 @@ pub fn plant_log(user_dir: &std::path::Path, file: &str, payload: &[u8]) {
 /// Writes a conforming profile for the fixture data set whose user bigram
 /// holds `rows`, `(key, value)` verbatim — values the library never writes,
 /// such as one too short for its `guint32` total.
-pub fn plant_bigram(user_dir: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+pub(crate) fn plant_bigram(user_dir: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     let conf =
         oxpinyin::facade::TableConf::load_from_dir(&system_dir()).expect("fixture table.conf");
     let versions = oxpinyin::__internal::data::user_files::SystemVersions::from_conf(&conf);
@@ -305,7 +305,7 @@ pub fn plant_bigram(user_dir: &std::path::Path, rows: &[(Vec<u8>, Vec<u8>)]) {
 /// `user_dir`: the stored state is loaded when a profile exists (a fresh
 /// directory starts empty), the row replaced, and the profile saved again
 /// in the running backend's format. Its tokens were not written by the library.
-pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
+pub(crate) fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[u32]) {
     use oxpinyin::__internal::store::{RawReadStore as _, WriteStore as _};
     if !user_dir.join("user.conf").exists() {
         let conf =
@@ -341,7 +341,7 @@ pub fn set_phrase_table_row(user_dir: &std::path::Path, phrase: &str, tokens: &[
 
 /// A private system directory under `parent`: every fixture file linked in,
 /// so a test can replace one library.
-pub fn private_system(parent: &std::path::Path) -> PathBuf {
+pub(crate) fn private_system(parent: &std::path::Path) -> PathBuf {
     let dir = parent.join("system");
     std::fs::create_dir_all(&dir).expect("private system dir");
     for entry in std::fs::read_dir(system_dir()).expect("fixture dir") {
@@ -354,7 +354,7 @@ pub fn private_system(parent: &std::path::Path) -> PathBuf {
 /// A symbolic link at `link` to `target`, on every OS; on Windows the
 /// process needs the symbolic-link privilege (Developer Mode or an elevated
 /// process), and the fixture is never copied in its place.
-pub fn link_file(target: &std::path::Path, link: &std::path::Path) {
+pub(crate) fn link_file(target: &std::path::Path, link: &std::path::Path) {
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, link).expect("link a fixture file");
     #[cfg(windows)]
@@ -376,7 +376,7 @@ pub fn link_file(target: &std::path::Path, link: &std::path::Path) {
 /// pin's `MemoryChunk::mmap` asserts on its header read
 /// (`memory_chunk.h:493`); elsewhere the library cannot be mapped. Answers which.
 #[cfg(unix)]
-pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
+pub(crate) fn directory_library(system: &std::path::Path, file: &str) -> bool {
     let path = system.join(file);
     std::fs::remove_file(&path).expect("unlink the library");
     std::fs::create_dir(&path).expect("directory library");
@@ -388,14 +388,14 @@ pub fn directory_library(system: &std::path::Path, file: &str) -> bool {
 /// `testdata/pin-profiles.txt` into `dir`, byte for byte.
 /// The profiles hold tkrzw files, so only the tkrzw pinned-data tests read them.
 #[cfg(feature = "tkrzw")]
-pub fn write_pin_profile(case: &str, dir: &std::path::Path) {
+pub(crate) fn write_pin_profile(case: &str, dir: &std::path::Path) {
     let text = include_str!("../../capi/testdata/pin-profiles.txt");
     write_profile(text, case, dir);
 }
 
 /// The zhuyin pin's saved profile, with the same record format.
 #[cfg(feature = "tkrzw")]
-pub fn write_zhuyin_pin_profile(case: &str, dir: &std::path::Path) {
+pub(crate) fn write_zhuyin_pin_profile(case: &str, dir: &std::path::Path) {
     let text = include_str!("../../zhuyin-capi/testdata/pin-profiles.txt");
     write_profile(text, case, dir);
 }
@@ -449,12 +449,12 @@ fn write_profile(text: &str, case: &str, dir: &std::path::Path) {
 
 /// One library-1 item of [`items_system`]: its text as code points, its
 /// keys and its unigram.
-pub type SystemItem<'a> = (&'a [u32], &'a [u16], u32);
+pub(crate) type SystemItem<'a> = (&'a [u32], &'a [u16], u32);
 
 /// A private system under `parent`, linked from `source`, whose library 1
 /// holds exactly `items` (tokens 0x01000001 on, in order) under `total`,
 /// with matching pinyin and phrase indexes. Answers its path.
-pub fn items_system(
+pub(crate) fn items_system(
     source: &std::path::Path,
     parent: &std::path::Path,
     items: &[SystemItem<'_>],
@@ -465,13 +465,13 @@ pub fn items_system(
 
 /// One library of [`libraries_system`]: its index, its chunk file, its items
 /// and its total.
-pub type SystemLibrary<'a> = (u8, &'a str, &'a [SystemItem<'a>], u32);
+pub(crate) type SystemLibrary<'a> = (u8, &'a str, &'a [SystemItem<'a>], u32);
 
 /// A private system under `parent`, linked from `source`, in which each
 /// library of `libraries` holds exactly its items (slots 1 on, in order)
 /// under its total. The pinyin and phrase indexes hold the items of these
 /// libraries and nothing else. Answers its path.
-pub fn libraries_system(
+pub(crate) fn libraries_system(
     source: &std::path::Path,
     parent: &std::path::Path,
     libraries: &[SystemLibrary<'_>],
@@ -549,7 +549,7 @@ pub fn libraries_system(
 }
 
 /// One item of [`addon_system`]'s addon library 4.
-pub struct AddonItem<'a> {
+pub(crate) struct AddonItem<'a> {
     /// The stored UCS-4 words.
     pub text: &'a [u32],
     /// The stored readings: packed keys, tones included, and a count.
@@ -565,7 +565,7 @@ pub struct AddonItem<'a> {
 /// A private system under `parent`, linked from `source`, whose addon
 /// library 4 holds exactly `items` (tokens 0x04000001 on, in order), with
 /// matching addon pinyin and phrase indexes. Answers its path.
-pub fn addon_system(
+pub(crate) fn addon_system(
     source: &std::path::Path,
     parent: &std::path::Path,
     items: &[AddonItem<'_>],
@@ -655,7 +655,7 @@ pub fn addon_system(
 }
 
 /// The row-130 library with an in-range but truncated second reading.
-pub fn truncated_second_reading_system(parent: &std::path::Path) -> PathBuf {
+pub(crate) fn truncated_second_reading_system(parent: &std::path::Path) -> PathBuf {
     let system = items_system(&system_dir(), parent, &[(&[0x4e19], &[0x1081], 100)], 2000);
     let gb_char = system.join("gb_char.bin");
     let mut payload = std::fs::read(&gb_char).expect("gb_char.bin")[8..].to_vec();
@@ -672,7 +672,7 @@ pub fn truncated_second_reading_system(parent: &std::path::Path) -> PathBuf {
 }
 
 /// The two short rows of the table-conf-919-short-row-merged witness.
-pub fn short_row_system(parent: &std::path::Path) -> PathBuf {
+pub(crate) fn short_row_system(parent: &std::path::Path) -> PathBuf {
     let system = private_system(parent);
     let conf = system.join("table.conf");
     let stock = std::fs::read_to_string(&conf).unwrap();
@@ -688,7 +688,7 @@ pub fn short_row_system(parent: &std::path::Path) -> PathBuf {
 }
 
 /// The checksum-valid chunk whose second separator fails the layout read.
-pub fn replace_with_failed_layout(library: &std::path::Path, total: u32) {
+pub(crate) fn replace_with_failed_layout(library: &std::path::Path, total: u32) {
     let mut payload = [0_u8; 32];
     for (at, value) in [(0, total), (4, 17), (8, 20), (12, 24)] {
         payload[at..at + 4].copy_from_slice(&value.to_le_bytes());

@@ -105,7 +105,7 @@ impl ParsedMatrix {
     /// Whether the placed column holds no key, not even a zero key (no
     /// column past the bound holds one).
     #[must_use]
-    pub fn column_is_empty(&self, column: usize) -> bool {
+    pub(crate) fn column_is_empty(&self, column: usize) -> bool {
         self.get(column).is_none_or(<[ScanKey]>::is_empty) && !self.has_zero(column)
     }
 

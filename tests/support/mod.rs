@@ -23,23 +23,23 @@ use oxpinyin::__internal::store::WriteStore;
 /// Builds one phrase-library chunk file from slot → item entries.
 /// One item's pieces: `(unigram, text, pronunciations as (packed
 /// keys, freq))`.
-pub type ItemParts = (u32, String, Vec<(Vec<u8>, u32)>);
+pub(crate) type ItemParts = (u32, String, Vec<(Vec<u8>, u32)>);
 
-pub struct ChunkBuilder {
+pub(crate) struct ChunkBuilder {
     total_freq: u32,
     /// slot → item parts.
     pub items: BTreeMap<usize, ItemParts>,
 }
 
 impl ChunkBuilder {
-    pub const fn new(total_freq: u32) -> Self {
+    pub(crate) const fn new(total_freq: u32) -> Self {
         Self {
             total_freq,
             items: BTreeMap::new(),
         }
     }
 
-    pub fn add(
+    pub(crate) fn add(
         &mut self,
         slot: usize,
         unigram: u32,
@@ -51,7 +51,7 @@ impl ChunkBuilder {
     }
 
     /// Serializes exactly what `SubPhraseIndex::store` writes.
-    pub fn build(&self) -> Vec<u8> {
+    pub(crate) fn build(&self) -> Vec<u8> {
         let max_slot = self.items.keys().copied().max().unwrap_or(0);
         let slots = if self.items.is_empty() {
             0
@@ -131,7 +131,7 @@ impl ChunkBuilder {
 }
 
 /// Writes `bytes` to a unique temp file named `name` under `dir`.
-pub fn write_temp(dir: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+pub(crate) fn write_temp(dir: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
     static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let unique = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let path = dir.join(format!("{name}-{}-{unique}.bin", std::process::id()));
@@ -141,7 +141,7 @@ pub fn write_temp(dir: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
 
 /// Packs `(initial, middle, final, tone)` element values as an upstream
 /// `ChewingKey` u16 (LE bytes appended to `buf`).
-pub fn push_packed_key(buf: &mut Vec<u8>, initial: u8, middle: u8, final_: u8, tone: u8) {
+pub(crate) fn push_packed_key(buf: &mut Vec<u8>, initial: u8, middle: u8, final_: u8, tone: u8) {
     let bits = (initial & 0x1f) as u16
         | ((middle & 0x3) as u16) << 5
         | ((final_ & 0x1f) as u16) << 7
@@ -151,7 +151,7 @@ pub fn push_packed_key(buf: &mut Vec<u8>, initial: u8, middle: u8, final_: u8, t
 
 /// Writes bare-keyspace rows into a freshly created store file — the
 /// layout libpinyin's DBMs use (no table-name framing).
-pub fn write_raw_rows<S: WriteStore>(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
+pub(crate) fn write_raw_rows<S: WriteStore>(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) {
     let store = S::create(path).expect("create store");
     for (key, value) in rows {
         store.set_raw(key, value).expect("bulk set_raw");

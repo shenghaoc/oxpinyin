@@ -88,7 +88,7 @@ impl<'a> UserLookup<'a> {
 
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
     #[must_use]
-    pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
+    pub(crate) fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {
         let keys: Vec<_> = syllables.iter().map(|key| key.chewing_key()).collect();
         self.with_index(|index| index.has_prefix(&keys))
     }
@@ -103,7 +103,7 @@ impl<'a> UserLookup<'a> {
     /// Tokens whose stored UCS-4 key is exactly `words`, non-scalar words
     /// included.
     #[must_use]
-    pub fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
+    pub(crate) fn tokens_for_ucs4(&self, words: &[u32]) -> Vec<u32> {
         self.phrases
             .borrow()
             .phrase_table

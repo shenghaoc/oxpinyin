@@ -14,7 +14,7 @@ use crate::input::native;
 /// Unix keeps its bytes. Windows uses UTF-8 and replaces invalid input
 /// with U+FFFD. The C string already ends at its first NUL.
 #[must_use]
-pub fn decode_filename(name: &CStr) -> PathBuf {
+pub(crate) fn decode_filename(name: &CStr) -> PathBuf {
     path_from_bytes(name.to_bytes())
 }
 
@@ -68,7 +68,7 @@ pub fn path_to_bytes(path: &Path) -> &[u8] {
 /// terminator, so the elements before it remain. The result is owned by the
 /// caller.
 #[must_use]
-pub fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> CString {
+pub(crate) fn build_filename(dir: Option<&CStr>, name: Option<&CStr>) -> CString {
     native::build_filename(dir, name)
 }
 
@@ -94,7 +94,7 @@ pub(crate) fn build_c_string(dir: Option<&Path>, name: Option<&str>) -> CString 
 
 /// `path` as a C string, cut at a NUL as the pin's `%s` input would be.
 #[must_use]
-pub fn c_string(path: &OsStr) -> CString {
+pub(crate) fn c_string(path: &OsStr) -> CString {
     let bytes = path_to_bytes(Path::new(path));
     let end = bytes
         .iter()
@@ -112,7 +112,7 @@ pub fn c_string(path: &OsStr) -> CString {
 /// The rename's `errno` when it answers a non-zero result; on Windows also
 /// the two refusals of `posix_refusal`, a directory over an existing file
 /// (`ENOTDIR`) and a file over an existing directory (`EISDIR`).
-pub fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     posix_refusal(from, to)?;
     if native::rename(&c_string(from.as_os_str()), &c_string(to.as_os_str())) {
@@ -156,7 +156,7 @@ fn posix_refusal(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// `unlink(path)`, with the pin's ignored result (`_clean_user_files` and
 /// `_write_files` never examine it).
-pub fn unlink(path: &Path) {
+pub(crate) fn unlink(path: &Path) {
     #[cfg(not(windows))]
     native::unlink(&c_string(path.as_os_str()));
     #[cfg(windows)]

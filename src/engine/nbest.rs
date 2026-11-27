@@ -40,7 +40,7 @@ type TokenMap<V> = rustc_hash::FxHashMap<u32, V>;
 /// is [`NbestShape::nstore`].
 const NSTORE: usize = 2;
 /// Sentence rows extracted from the tails (`nbest`) on the pinyin surface.
-pub const NBEST_ROWS: usize = 3;
+pub(crate) const NBEST_ROWS: usize = 3;
 
 // PhoneticLookup<nstore, nbest> asserts nstore <= nbest, phonetic_lookup.h:715. The
 // instantiations are pinyin.cpp:55 and zhuyin.cpp:50.
@@ -67,13 +67,13 @@ impl NbestShape {
 
     /// Values kept per `(position, token)` node.
     #[must_use]
-    pub const fn nstore(self) -> usize {
+    pub(crate) const fn nstore(self) -> usize {
         self.nstore
     }
 
     /// Sentence tails extracted.
     #[must_use]
-    pub const fn nbest(self) -> usize {
+    pub(crate) const fn nbest(self) -> usize {
         self.nbest
     }
 }
@@ -805,7 +805,7 @@ where
 /// ending inside a forced run. `None` — or a store with no forcings — is
 /// today's walk, bit for bit.
 #[cfg(test)]
-pub fn nbest_sentences<D, L>(
+pub(crate) fn nbest_sentences<D, L>(
     matrix: &crate::engine::session::matrix::ScanMatrix,
     bound: usize,
     dictionary: &D,

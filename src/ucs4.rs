@@ -45,7 +45,7 @@ impl PhraseText {
     /// rejects the phrase. A zero ends the outward text. That zero and its suffix remain
     /// available through [`Self::stored_words`].
     #[must_use]
-    pub fn from_words(words: impl IntoIterator<Item = u32>) -> Option<Self> {
+    pub(crate) fn from_words(words: impl IntoIterator<Item = u32>) -> Option<Self> {
         Self::from_stored_words(words.into_iter().map(Some))
     }
 
@@ -101,7 +101,7 @@ impl PhraseText {
     /// Builds stored words with a declared count for ranking. Counts above
     /// `u32::MAX` are stored as `u32::MAX`.
     #[must_use]
-    pub fn from_stored_parts(words: Vec<u32>, length: usize) -> Self {
+    pub(crate) fn from_stored_parts(words: Vec<u32>, length: usize) -> Self {
         Self::stored(words, length)
     }
 
@@ -206,12 +206,12 @@ pub(crate) struct PhraseTextConcat {
 impl PhraseTextConcat {
     /// An empty concatenation.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Appends one component without scanning ordinary text for NUL.
-    pub fn push(&mut self, part: &PhraseText) {
+    pub(crate) fn push(&mut self, part: &PhraseText) {
         self.length = self.length.saturating_add(part.phrase_length());
         match &part.0 {
             TextStorage::Stored(_) => {
@@ -241,7 +241,7 @@ impl PhraseTextConcat {
     /// Finishes with ordinary text, whose length is its character count, or with stored
     /// words and their combined declared count.
     #[must_use]
-    pub fn finish(self) -> PhraseText {
+    pub(crate) fn finish(self) -> PhraseText {
         match self.words {
             Some(words) => PhraseText::from_stored_parts(words, self.length),
             None => PhraseText(TextStorage::Scalar(self.scalar)),

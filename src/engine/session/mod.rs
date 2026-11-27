@@ -37,7 +37,7 @@ pub enum Selection {
 pub struct SessionSettings {
     /// Whether initial-only keys are admitted (`PINYIN_INCOMPLETE`).
     /// On by default.
-    pub incomplete_pinyin: bool,
+    pub(crate) incomplete_pinyin: bool,
 }
 
 impl Default for SessionSettings {
@@ -267,7 +267,7 @@ mod buffer;
 pub(crate) mod matrix;
 mod record;
 mod sentence;
-pub use sentence::SentencePart;
+pub(crate) use sentence::SentencePart;
 
 use buffer::{InputBuffer, Parsed, SelectedPath};
 use record::SelectionRecord;
@@ -444,7 +444,7 @@ const AMPLIFY_SCALE_F32: f32 = 256.0 * 256.0 * 256.0;
 /// truncated integer must fit in `u32`. The conversion discards the
 /// fractional part. A zero total returns zero.
 #[must_use]
-pub fn amplified_frequency_with_bigram(
+pub(crate) fn amplified_frequency_with_bigram(
     unigram: u64,
     total: u64,
     bigram_poss: f32,
@@ -962,7 +962,7 @@ pub enum Law {
 impl Law {
     /// The n-best trellis shape this law instantiates.
     #[must_use]
-    pub const fn nbest_shape(self) -> crate::engine::nbest::NbestShape {
+    pub(crate) const fn nbest_shape(self) -> crate::engine::nbest::NbestShape {
         match self {
             Self::Pinyin => crate::engine::nbest::NbestShape::PINYIN,
             Self::Zhuyin => crate::engine::nbest::NbestShape::ZHUYIN,

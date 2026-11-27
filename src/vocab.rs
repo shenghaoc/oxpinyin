@@ -15,7 +15,7 @@ use crate::syllables::{
     FULL_PINYIN_SYLLABLE_MAP, INCOMPLETE_PINYIN_KEY_MAP, OPTION_ONLY_COMPLETE_SYLLABLE_MAP,
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
 };
-pub use crate::ucs4::{OutwardWords, PhraseText};
+pub use crate::ucs4::PhraseText;
 
 /// Number of dense table keys. Packed matrix alternatives are outside this inventory.
 pub(crate) const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
@@ -55,7 +55,7 @@ impl SyllableKey {
     // content_table provides canonical spellings; pinyin_index supplies spelling aliases,
     // pinyin_parser2.cpp:38–57,114–147.
     /// Looks up a canonical spelling, including the option-only correction targets and
-    /// Zhuyin-only syllables. [`Self::from_option_text`] also accepts enabled pinyin spelling
+    /// Zhuyin-only syllables. `Self::from_option_text` also accepts enabled pinyin spelling
     /// aliases.
     #[must_use]
     pub fn from_canonical_text(text: &str) -> Option<Self> {
@@ -107,7 +107,7 @@ impl SyllableKey {
     /// Exact spellings work without an option. Correction aliases and the
     /// parser-table ambiguity aliases are admitted only when their bit is set.
     #[must_use]
-    pub fn from_option_text(text: &str, options: OptionBits) -> Option<Self> {
+    pub(crate) fn from_option_text(text: &str, options: OptionBits) -> Option<Self> {
         Self::from_option_text_with_distance(text, options).map(|(key, _)| key)
     }
 
@@ -117,7 +117,10 @@ impl SyllableKey {
     /// Looks up an option-enabled spelling and its correction distance. An exact spelling has
     /// distance zero. An enabled spelling alias has distance one.
     #[must_use]
-    pub fn from_option_text_with_distance(text: &str, options: OptionBits) -> Option<(Self, u8)> {
+    pub(crate) fn from_option_text_with_distance(
+        text: &str,
+        options: OptionBits,
+    ) -> Option<(Self, u8)> {
         if let Some(key) = Self::from_text(text) {
             return Some((key, 0));
         }
@@ -410,7 +413,7 @@ impl PhraseEntry {
     }
 
     /// Replaces the pronunciation possibility of an existing entry.
-    pub const fn set_pronunciation_possibility(&mut self, matched: u64, total: u64) {
+    pub(crate) const fn set_pronunciation_possibility(&mut self, matched: u64, total: u64) {
         self.pronunciation = Some((matched, total));
     }
 

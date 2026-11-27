@@ -5,11 +5,11 @@ use std::io;
 use std::path::Path;
 
 /// The single committed candidate capture, relative to the repository root.
-pub const STRUCTURE_FIXTURE: &str = "fixtures/w4/oracle-candidate-structure.txt";
+pub(crate) const STRUCTURE_FIXTURE: &str = "fixtures/w4/oracle-candidate-structure.txt";
 
 /// A row's `lookup_candidate_type_t`, as the capture's `type` column names it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum OracleCandidateType {
+pub(crate) enum OracleCandidateType {
     /// `NBEST_MATCH_CANDIDATE` — a sentence-decode (n-best) candidate.
     NbestMatch,
     /// `NORMAL_CANDIDATE` — a phrase-lookup candidate.
@@ -32,7 +32,7 @@ impl OracleCandidateType {
     /// The frozen public enum **name**, as written to the fixture's `type`
     /// column.
     #[must_use]
-    pub const fn as_wire(self) -> &'static str {
+    pub(crate) const fn as_wire(self) -> &'static str {
         match self {
             Self::NbestMatch => "NBEST_MATCH_CANDIDATE",
             Self::Normal => "NORMAL_CANDIDATE",
@@ -47,7 +47,7 @@ impl OracleCandidateType {
 
     /// Parses a frozen public enum name back to a variant, for fixture readers.
     #[must_use]
-    pub fn from_wire(text: &str) -> Option<Self> {
+    pub(crate) fn from_wire(text: &str) -> Option<Self> {
         Some(match text {
             "NBEST_MATCH_CANDIDATE" => Self::NbestMatch,
             "NORMAL_CANDIDATE" => Self::Normal,
@@ -64,7 +64,7 @@ impl OracleCandidateType {
 
 /// One structure row, retaining the input verbatim and its captured rank.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StructuredCandidateRow {
+pub(crate) struct StructuredCandidateRow {
     /// Exact corpus input, including punctuation and whitespace.
     pub input: String,
     /// One-based rank in the captured list.
@@ -79,7 +79,7 @@ pub struct StructuredCandidateRow {
 
 /// Parsed structure capture. Rows retain file order and multiplicity.
 #[derive(Clone, Debug)]
-pub struct CandidateFixture {
+pub(crate) struct CandidateFixture {
     /// Pin identity copied from the capture header.
     pub pin_ref: String,
     /// The header's `total_inputs` count: the distinct inputs the capture holds.
@@ -92,12 +92,12 @@ pub struct CandidateFixture {
 
 impl CandidateFixture {
     /// Read a structure capture, reporting I/O or malformed-data errors.
-    pub fn read(path: impl AsRef<Path>) -> io::Result<Self> {
+    pub(crate) fn read(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::parse(&std::fs::read_to_string(path)?)
     }
 
     /// Parse the five-column structure format without normalizing inputs.
-    pub fn parse(raw: &str) -> io::Result<Self> {
+    pub(crate) fn parse(raw: &str) -> io::Result<Self> {
         let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
         if raw.lines().next() != Some("# pinyin-oracle-candidate-structure-v1") {
             return Err(invalid("missing candidate structure v1 header"));

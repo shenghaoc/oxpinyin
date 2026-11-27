@@ -297,7 +297,7 @@ impl SystemDictionary<'_> {
 
     /// Phrase text for `token`, if its library is loaded and owns it.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<PhraseText> {
+    pub(crate) fn phrase_text(&self, token: u32) -> Option<PhraseText> {
         self.libraries().phrase_text(token)
     }
 
@@ -338,7 +338,7 @@ impl SystemDictionary<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or the value decode fails.
-    pub fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
+    pub(crate) fn tokens_for_text(&self, text: &str) -> Result<Vec<u32>, DictError> {
         self.phrase.search(text)
     }
 
@@ -348,7 +348,7 @@ impl SystemDictionary<'_> {
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or the value decode fails.
-    pub fn tokens_for_ucs4(&self, words: &[u32]) -> Result<Vec<u32>, DictError> {
+    pub(crate) fn tokens_for_ucs4(&self, words: &[u32]) -> Result<Vec<u32>, DictError> {
         self.phrase.search_ucs4(words)
     }
 
@@ -491,7 +491,11 @@ impl SystemDictionary<'_> {
     /// ordinary lookup's pricing of that token. `None` when the library is
     /// unloaded or the item cannot be read.
     #[must_use]
-    pub fn trellis_item(&self, syllables: &[SyllableKey], token: u32) -> Option<TrellisItem> {
+    pub(crate) fn trellis_item(
+        &self,
+        syllables: &[SyllableKey],
+        token: u32,
+    ) -> Option<TrellisItem> {
         self.trellis_item_keys(
             &syllables
                 .iter()
@@ -504,7 +508,7 @@ impl SystemDictionary<'_> {
     /// [`Self::trellis_item`] over the query's keys, already converted
     /// from the syllables.
     #[must_use]
-    pub fn trellis_item_keys(&self, keys: &[ChewingKey], token: u32) -> Option<TrellisItem> {
+    pub(crate) fn trellis_item_keys(&self, keys: &[ChewingKey], token: u32) -> Option<TrellisItem> {
         self.libraries().trellis_item(token, keys)
     }
 
@@ -548,7 +552,7 @@ impl SystemDictionary<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn trellis_records(
+    pub(crate) fn trellis_records(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -566,7 +570,7 @@ impl SystemDictionary<'_> {
     /// `SystemDictionary::trellis_ranges_with` with every loaded
     /// library visible.
     #[cfg(test)]
-    pub fn trellis_ranges(
+    pub(crate) fn trellis_ranges(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
@@ -582,7 +586,7 @@ impl SystemDictionary<'_> {
     ///
     /// Returns [`DictError`] when the dictionary backend cannot serve the lookup.
     #[cfg(test)]
-    pub fn lookup_into_flagged(
+    pub(crate) fn lookup_into_flagged(
         &self,
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
@@ -729,7 +733,7 @@ impl Dictionary for SystemDictionary<'_> {
 /// every lookup consults the whole addon index and keeps only tokens
 /// whose library is loaded. Both DBMs are optional: an install without
 /// addon data has no addon candidates.
-pub struct AddonDictionary {
+pub(crate) struct AddonDictionary {
     pinyin: Option<ChewingTable>,
     phrase: Option<PhraseTable>,
     libraries: PhraseLibraries,
@@ -803,7 +807,7 @@ impl AddonDictionary {
     /// An addon facade with neither DBM nor libraries.
     #[cfg(test)]
     #[must_use]
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self::without_indexes(&TableConf::stock(0.312_699))
     }
 
@@ -824,7 +828,7 @@ impl AddonDictionary {
     /// The configured `addon` row of sub-index `index`.
     #[cfg(test)]
     #[must_use]
-    pub fn row(&self, index: u8) -> Option<&TableRow> {
+    pub(crate) fn row(&self, index: u8) -> Option<&TableRow> {
         self.rows.get(usize::from(index))
     }
 
@@ -833,7 +837,7 @@ impl AddonDictionary {
     /// Independent of whether any addon phrase library is loaded.
     #[cfg(test)]
     #[must_use]
-    pub const fn has_open_indexes(&self) -> bool {
+    pub(crate) const fn has_open_indexes(&self) -> bool {
         self.pinyin.is_some() || self.phrase.is_some()
     }
 
@@ -893,28 +897,28 @@ impl AddonDictionary {
     /// Drops addon library `index` — `pinyin_unload_addon_phrase_library`.
     /// Answers `true` whether or not it was loaded, the pin's unconditional
     /// `unload` (`pinyin.cpp:124-131`).
-    pub fn unload(&mut self, index: u8) -> bool {
+    pub(crate) fn unload(&mut self, index: u8) -> bool {
         self.libraries.unload(index);
         true
     }
 
     /// Whether no library is loaded (the facade owns no items).
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.libraries.is_empty()
     }
 
     /// The stored unigram of `token`'s addon item, if its library is
     /// loaded.
     #[must_use]
-    pub fn unigram_freq(&self, token: u32) -> Option<u64> {
+    pub(crate) fn unigram_freq(&self, token: u32) -> Option<u64> {
         self.libraries.unigram_count(token)
     }
 
     /// The addon facade's total frequency, `None` while no library is
     /// loaded.
     #[must_use]
-    pub fn unigram_total(&self) -> Option<u64> {
+    pub(crate) fn unigram_total(&self) -> Option<u64> {
         if self.libraries.is_empty() {
             return None;
         }
@@ -926,7 +930,7 @@ impl AddonDictionary {
     /// 33-43`, the choose-promotion read at `pinyin.cpp:2534-2549`). The
     /// words, packed keys with their tones and frequencies stay as stored.
     #[must_use]
-    pub fn phrase_item(&self, token: u32) -> Option<Vec<u8>> {
+    pub(crate) fn phrase_item(&self, token: u32) -> Option<Vec<u8>> {
         Some(
             self.libraries
                 .library(token)?

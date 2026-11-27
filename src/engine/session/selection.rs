@@ -39,15 +39,15 @@ pub const BEFORE_CURSOR_ANCHOR: usize = 0;
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionTarget {
     /// Where the chosen span starts (`m_begin`).
-    pub span_start: usize,
+    pub(crate) span_start: usize,
     /// Where the chosen span ends, before the separator walk
     /// (`m_end`).
-    pub span_end: usize,
+    pub(crate) span_end: usize,
     /// The token the choose forces (`m_token`); `None` for a row without
     /// one.
-    pub token: Option<PhraseToken>,
+    pub(crate) token: Option<PhraseToken>,
     /// The n-best tail rank, for a sentence row only.
-    pub nbest_row: Option<u8>,
+    pub(crate) nbest_row: Option<u8>,
 }
 
 /// Whether `Session::select_row` checks the chosen item before selecting.
@@ -61,6 +61,12 @@ pub enum RowText {
 }
 
 impl SelectionTarget {
+    /// Where the chosen span ends, before the separator walk (`m_end`).
+    #[must_use]
+    pub const fn span_end(&self) -> usize {
+        self.span_end
+    }
+
     /// The target of `candidate` read in a window anchored at `anchor`,
     /// forcing `token_override` in place of its own token when given (the
     /// addon promotion, `pinyin.cpp:2532-2562`).
@@ -365,7 +371,10 @@ where
     /// Selecting an n-best row aborts if a differing phrase in that row cannot be written
     /// into the current constraint store. This can occur when the selected row predates a
     /// change of composition.
-    pub fn select_target(&mut self, target: &SelectionTarget) -> Result<Selection, EngineError> {
+    pub(crate) fn select_target(
+        &mut self,
+        target: &SelectionTarget,
+    ) -> Result<Selection, EngineError> {
         let span_end = target.span_end;
         if target.nbest_row.is_none()
             && target.token.is_some()
@@ -712,7 +721,7 @@ where
     ///
     /// Returns `false` for a free cell or an out-of-range offset.
     #[must_use]
-    pub fn clear_constraint(&mut self, offset: usize) -> bool {
+    pub(crate) fn clear_constraint(&mut self, offset: usize) -> bool {
         if !self.constraints.clear_by_offset(offset) {
             return false;
         }

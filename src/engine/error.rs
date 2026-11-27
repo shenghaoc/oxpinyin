@@ -124,7 +124,7 @@ impl EngineError {
     /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
     /// `memory_chunk.h:390`.
     #[must_use]
-    pub fn lookup_gram(fault: crate::single_gram::GramFault) -> Self {
+    pub(crate) fn lookup_gram(fault: crate::single_gram::GramFault) -> Self {
         match fault {
             crate::single_gram::GramFault::Short => std::process::abort(),
             crate::single_gram::GramFault::OverRead => Self::UnsafeLookupPredecessor,

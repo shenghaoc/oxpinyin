@@ -409,7 +409,7 @@ pub(crate) fn snapshot_candidates(
                 oxpinyin::facade::SelectionTarget::of_candidate(cand, frame.session_offset, None);
             (
                 frame.offset as u16,
-                published_bound(selection.span_end) as u16,
+                published_bound(selection.span_end()) as u16,
             )
         };
         if cand.text().outward_bytes().is_none() {

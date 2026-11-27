@@ -103,7 +103,7 @@ pub enum MaskOutOutcome {
     ChunkHeaderRead,
     /// A loaded system library's user `.dbin`, reloaded through
     /// `merge_with_mask` after the user tables were masked, reached a pin
-    /// assertion ([`JournalFault`], rows 91, 92, 97 and 108). The pin dies
+    /// assertion (`JournalFault`, rows 91, 92, 97 and 108). The pin dies
     /// there; the C adapters abort.
     Journal(JournalFault),
 }
@@ -217,7 +217,7 @@ pub enum LibraryRowAssert {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LibraryLoadFault {
     /// The reloaded system library's `.dbin` merge reached a pin assertion
-    /// ([`JournalFault`], rows 91 and 108; `pinyin.cpp:276`,
+    /// (`JournalFault`, rows 91 and 108; `pinyin.cpp:276`,
     /// `zhuyin.cpp:219`). The library stays unloaded; the C adapters abort.
     Journal(JournalFault),
 }
@@ -775,7 +775,7 @@ impl ContextCore {
     }
 
     /// Trains a retained composition against the current context storage. See
-    /// [`crate::runtime::Runtime::train_session`] for its refusal cases and partial updates.
+    /// `runtime::Runtime::train_session` for its refusal cases and partial updates.
     ///
     /// # Errors
     ///

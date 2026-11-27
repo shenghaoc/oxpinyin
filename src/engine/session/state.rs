@@ -176,7 +176,7 @@ where
 
     /// The dictionary backend.
     #[must_use]
-    pub fn dictionary(&self) -> &D {
+    pub(crate) fn dictionary(&self) -> &D {
         &self.dictionary
     }
 }
@@ -267,7 +267,7 @@ where
     ///
     /// Propagates parse, selection-reconciliation and refresh errors after the new input and
     /// separator mode have been stored.
-    pub fn replace_raw_with_physical_separators(
+    pub(crate) fn replace_raw_with_physical_separators(
         &mut self,
         text: &str,
         physical_separators: bool,

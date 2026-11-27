@@ -21,7 +21,7 @@ use crate::vocab::PhraseToken;
 /// One constraint cell (`trellis_constraint_t`,
 /// `phonetic_lookup.h:121-137`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Cell {
+pub(crate) enum Cell {
     /// `NO_CONSTRAINT` — a free step.
     None,
     /// `CONSTRAINT_ONESTEP` — `token` is forced over `[start, end)`;

@@ -23,7 +23,7 @@ use crate::vocab::PhraseToken;
 
 /// Where a [`SystemItem`] lives.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ItemOrigin {
+pub(crate) enum ItemOrigin {
     /// The shipped chunk's item: the library has no live buffer.
     Shipped,
     /// An item read from the library's live buffer, which a replay, an import,
@@ -43,30 +43,30 @@ pub enum SystemItem<'a> {
 /// The keys of one reading, in the chunk's packed `u16` form: little-endian
 /// `u16` pairs, as the mapped chunk holds them.
 #[derive(Clone, Copy)]
-pub struct ReadingKeys<'a>(&'a [u8]);
+pub(crate) struct ReadingKeys<'a>(&'a [u8]);
 
 impl<'a> ReadingKeys<'a> {
     /// Borrows a reading as a sequence of two-byte packed keys. Supply complete two-byte
     /// words.
     #[must_use]
-    pub fn packed(bytes: &'a [u8]) -> Self {
+    pub(crate) fn packed(bytes: &'a [u8]) -> Self {
         Self(bytes)
     }
 
     /// The number of keys.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len() / CHEWING_KEY_SIZE
     }
 
     /// Whether the reading has no keys.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// The packed keys in stored order.
-    pub fn iter(&self) -> impl Iterator<Item = u16> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = u16> + '_ {
         self.0
             .as_chunks::<2>()
             .0
@@ -77,11 +77,11 @@ impl<'a> ReadingKeys<'a> {
 
 /// One stored reading of an item.
 #[derive(Clone, Copy)]
-pub struct Reading<'a> {
+pub(crate) struct Reading<'a> {
     /// The reading's keys.
-    pub keys: ReadingKeys<'a>,
+    pub(crate) keys: ReadingKeys<'a>,
     /// The reading's stored frequency.
-    pub frequency: u32,
+    pub(crate) frequency: u32,
 }
 
 impl<'a> SystemItem<'a> {
@@ -94,7 +94,7 @@ impl<'a> SystemItem<'a> {
 
     /// Whether the item is the shipped chunk's own or a live buffer's.
     #[must_use]
-    pub fn origin(&self) -> ItemOrigin {
+    pub(crate) fn origin(&self) -> ItemOrigin {
         match self {
             Self::Shipped(_) => ItemOrigin::Shipped,
             Self::Replayed(_) => ItemOrigin::Overlay,
@@ -105,25 +105,25 @@ impl<'a> SystemItem<'a> {
     /// `LiveSystemItems::read_fields` a shipped item's bytes can end at the
     /// content end, before the item's header-derived length.
     #[must_use]
-    pub fn as_bytes(&self) -> &'a [u8] {
+    pub(crate) fn as_bytes(&self) -> &'a [u8] {
         self.view().as_bytes()
     }
 
     /// The live item's stored unigram field.
     #[must_use]
-    pub fn unigram(&self) -> u32 {
+    pub(crate) fn unigram(&self) -> u32 {
         self.view().unigram()
     }
 
     /// The phrase length in characters.
     #[must_use]
-    pub fn phrase_length(&self) -> usize {
+    pub(crate) fn phrase_length(&self) -> usize {
         self.view().phrase_length()
     }
 
     /// The number of stored readings.
     #[must_use]
-    pub fn n_pronunciations(&self) -> usize {
+    pub(crate) fn n_pronunciations(&self) -> usize {
         self.view().n_pronunciations()
     }
 
@@ -131,13 +131,13 @@ impl<'a> SystemItem<'a> {
     /// [`crate::data::phrase_library::PhraseItemView::phrase_text`] for the word
     /// requirements.
     #[must_use]
-    pub fn phrase_text(&self) -> Option<PhraseText> {
+    pub(crate) fn phrase_text(&self) -> Option<PhraseText> {
         self.view().phrase_text()
     }
 
     /// Reading `nth` in stored order.
     #[must_use]
-    pub fn pronunciation(&self, nth: usize) -> Option<Reading<'_>> {
+    pub(crate) fn pronunciation(&self, nth: usize) -> Option<Reading<'_>> {
         let (Self::Shipped(item) | Self::Replayed(item)) = self;
         let reading = item.pronunciation(nth)?;
         Some(Reading {
@@ -149,7 +149,7 @@ impl<'a> SystemItem<'a> {
     /// Iterates readings in stored order until the first unreadable reading.
     /// [`crate::data::phrase_library::PhraseItemView::pronunciations`] visits each declared
     /// position.
-    pub fn pronunciations(&self) -> impl Iterator<Item = Reading<'_>> + '_ {
+    pub(crate) fn pronunciations(&self) -> impl Iterator<Item = Reading<'_>> + '_ {
         (0..self.n_pronunciations()).map_while(|nth| self.pronunciation(nth))
     }
 }
@@ -218,7 +218,11 @@ impl<'a> LiveSystemItems<'a> {
     /// Borrows the shipped `libraries`, the session `user` store and the
     /// `unloaded` mask (bit `n` set: library `n` is unloaded).
     #[must_use]
-    pub const fn new(libraries: &'a PhraseLibraries, user: &'a UserStore, unloaded: u32) -> Self {
+    pub(crate) const fn new(
+        libraries: &'a PhraseLibraries,
+        user: &'a UserStore,
+        unloaded: u32,
+    ) -> Self {
         Self {
             libraries,
             user,

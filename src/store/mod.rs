@@ -91,10 +91,10 @@ impl From<String> for BackendError {
 /// is a normal end of the scan — the backend abandons the underlying
 /// cursor walk and the scan returns `Ok(())` — and is distinct from a
 /// visitor `Err`, which aborts the scan and propagates.
-pub type Flow = ControlFlow<()>;
+pub(crate) type Flow = ControlFlow<()>;
 
 /// A visitor that fills the replacement bytes for one native record.
-pub type RecordRewrite<'a> = dyn FnMut(&[u8], &[u8], &mut Vec<u8>) + 'a;
+pub(crate) type RecordRewrite<'a> = dyn FnMut(&[u8], &[u8], &mut Vec<u8>) + 'a;
 
 #[cfg(not(feature = "bdb"))]
 pub(crate) struct Rewriter<'a, 'f>(pub(crate) &'a mut RecordRewrite<'f>);
@@ -109,7 +109,7 @@ impl Rewriter<'_, '_> {
 }
 
 /// Where [`WriteStore::write_user_index`] sends each record in key order.
-pub type RecordSink<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
+pub(crate) type RecordSink<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 
 // ── traits ─────────────────────────────────────────────────────────
 
@@ -666,26 +666,26 @@ pub use copy::faults::fail_destination_write_after;
 pub(crate) use copy::faults::{fail_iterator_creation_after, fail_source_read_after};
 #[cfg(test)]
 pub(crate) mod death_test;
-/// The read-only stores' point-read fault point for other crates' tests.
+/// The read-only stores' point-read fault point for the tests.
 #[cfg(any(test, feature = "test-hooks"))]
 mod read_faults;
-#[cfg(any(test, feature = "test-hooks"))]
-pub use read_faults::fail_point_read_of;
+#[cfg(test)]
+pub(crate) use read_faults::fail_point_read_of;
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
-pub use tkrzw::{TkrzwStore, TkrzwUserBigramDb};
+pub(crate) use tkrzw::{TkrzwStore, TkrzwUserBigramDb};
 
 #[cfg(feature = "bdb")]
 mod bdb;
 #[cfg(feature = "bdb")]
-pub use bdb::{BdbStore, BdbUserBigramDb};
+pub(crate) use bdb::{BdbStore, BdbUserBigramDb};
 
 #[cfg(feature = "kyotocabinet")]
-pub mod kyotocabinet;
+pub(crate) mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
-pub use kyotocabinet::{KcStore, KcUserBigramDb};
+pub(crate) use kyotocabinet::{KcStore, KcUserBigramDb};
 
 mod system_attach;
 pub use system_attach::{AccessMode, DbmKind, SystemAttachment};

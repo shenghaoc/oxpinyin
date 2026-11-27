@@ -23,7 +23,7 @@ pub(crate) fn report_rename_failed(from: &CStr, to: &CStr) {
 /// (074a2219 `pinyin.cpp:338`, `zhuyin.cpp:282`), after the load's own
 /// `open %s failed.` line (`crate::input::config::SystemTableInfoReader::open`)
 /// when the file did not open.
-pub fn report_load_failed(filename: &CStr) {
+pub(crate) fn report_load_failed(filename: &CStr) {
     native::report_load_failed(filename);
 }
 

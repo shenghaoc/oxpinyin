@@ -9,7 +9,7 @@ use std::path::PathBuf;
 /// Where `just fetch-contract-data` extracts the pinned version:
 /// `contract-data/<version>` under the cache root `$OXPINYIN_CACHE`, which
 /// `just test` exports. A direct cargo run sets the variable itself.
-pub fn contract_data_dir() -> PathBuf {
+pub(crate) fn contract_data_dir() -> PathBuf {
     let root =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(if env!("CARGO_PKG_NAME") == "oxpinyin" {
             "."

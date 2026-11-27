@@ -7,7 +7,7 @@ use std::path::Path;
 
 /// A path's bytes as they are, which is what `%s` writes.
 #[must_use]
-pub fn path_bytes(path: &Path) -> &[u8] {
+pub(crate) fn path_bytes(path: &Path) -> &[u8] {
     crate::input::path_to_bytes(path)
 }
 

@@ -6,11 +6,11 @@ use crate::vocab::PhraseText;
 
 /// `phrase_item_header` (`phrase_index.h:56`): `{u8 phrase_length,
 /// u8 n_pronunciations, u32 unigram}` ahead of every item's UCS-4 text.
-pub const ITEM_HEADER_SIZE: usize = 6;
+pub(crate) const ITEM_HEADER_SIZE: usize = 6;
 
 /// `sizeof(ChewingKey)` — a 16-bit bitfield (`chewing_key.h:41`), the
 /// width one pronunciation key occupies inside an item.
-pub const CHEWING_KEY_SIZE: usize = size_of::<u16>();
+pub(crate) const CHEWING_KEY_SIZE: usize = size_of::<u16>();
 
 /// Reads a little-endian `u32` at `offset`, or `None` past the end.
 pub(crate) fn u32_at(bytes: &[u8], offset: usize) -> Option<u32> {

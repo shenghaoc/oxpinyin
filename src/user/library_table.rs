@@ -34,7 +34,7 @@ impl<T> Default for LibraryTable<T> {
 impl<T> LibraryTable<T> {
     /// A table with every library absent.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             slots: Box::new([const { None }; PHRASE_INDEX_LIBRARY_COUNT as usize]),
         }
@@ -42,30 +42,30 @@ impl<T> LibraryTable<T> {
 
     /// The value of `library`, when it is present.
     #[must_use]
-    pub fn get(&self, library: &u8) -> Option<&T> {
+    pub(crate) fn get(&self, library: &u8) -> Option<&T> {
         self.slots.get(usize::from(*library))?.as_ref()
     }
 
     /// The value of `library` for a write, when it is present.
-    pub fn get_mut(&mut self, library: &u8) -> Option<&mut T> {
+    pub(crate) fn get_mut(&mut self, library: &u8) -> Option<&mut T> {
         self.slots.get_mut(usize::from(*library))?.as_mut()
     }
 
     /// Whether `library` is present.
     #[must_use]
-    pub fn contains_key(&self, library: &u8) -> bool {
+    pub(crate) fn contains_key(&self, library: &u8) -> bool {
         self.get(library).is_some()
     }
 
     /// Stores `value` and returns the value previously at `library`. A first insertion and an
     /// index outside the 16 slots both return [`None`]. Only an in-range insertion changes
     /// the table.
-    pub fn insert(&mut self, library: u8, value: T) -> Option<T> {
+    pub(crate) fn insert(&mut self, library: u8, value: T) -> Option<T> {
         self.slots.get_mut(usize::from(library))?.replace(value)
     }
 
     /// Takes the value of `library` out of the table.
-    pub fn remove(&mut self, library: &u8) -> Option<T> {
+    pub(crate) fn remove(&mut self, library: &u8) -> Option<T> {
         self.slots.get_mut(usize::from(*library))?.take()
     }
 
@@ -85,7 +85,7 @@ impl<T> LibraryTable<T> {
 
     /// Gets or initializes the slot for `library` using [`Default`]. Returns [`None`] for an
     /// index outside `0..16`.
-    pub fn get_or_default(&mut self, library: u8) -> Option<&mut T>
+    pub(crate) fn get_or_default(&mut self, library: u8) -> Option<&mut T>
     where
         T: Default,
     {
@@ -93,52 +93,52 @@ impl<T> LibraryTable<T> {
     }
 
     /// Makes every library absent.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.slots.fill_with(|| None);
     }
 
     /// Whether every library is absent.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.slots.iter().all(Option::is_none)
     }
 
     /// How many libraries are present.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.slots.iter().flatten().count()
     }
 
     /// The present libraries with their values, in ascending library order.
     #[must_use]
-    pub fn iter(&self) -> Iter<'_, T> {
+    pub(crate) fn iter(&self) -> Iter<'_, T> {
         Iter(LIBRARIES.iter().zip(self.slots.iter()))
     }
 
     /// [`Self::iter`] for a write to each value.
-    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+    pub(crate) fn iter_mut(&mut self) -> IterMut<'_, T> {
         IterMut(LIBRARIES.iter().zip(self.slots.iter_mut()))
     }
 
     /// The present libraries, in ascending order.
     #[must_use]
-    pub fn keys(&self) -> impl DoubleEndedIterator<Item = &u8> + use<'_, T> {
+    pub(crate) fn keys(&self) -> impl DoubleEndedIterator<Item = &u8> + use<'_, T> {
         self.iter().map(|(library, _)| library)
     }
 
     /// The present values, in ascending library order.
     #[must_use]
-    pub fn values(&self) -> impl DoubleEndedIterator<Item = &T> {
+    pub(crate) fn values(&self) -> impl DoubleEndedIterator<Item = &T> {
         self.iter().map(|(_, value)| value)
     }
 
     /// [`Self::values`] for a write to each value.
-    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
+    pub(crate) fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
         self.iter_mut().map(|(_, value)| value)
     }
 
     /// Keeps the libraries `keep` answers `true` for.
-    pub fn retain(&mut self, mut keep: impl FnMut(&u8, &mut T) -> bool) {
+    pub(crate) fn retain(&mut self, mut keep: impl FnMut(&u8, &mut T) -> bool) {
         for (library, slot) in LIBRARIES.iter().zip(self.slots.iter_mut()) {
             if slot.as_mut().is_some_and(|value| !keep(library, value)) {
                 *slot = None;

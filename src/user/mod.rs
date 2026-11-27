@@ -44,30 +44,30 @@ mod user_index;
 mod user_library;
 mod user_phrase_table;
 
-pub use crate::data::LibrarySet;
-pub use library_loop::{LibraryLoopRows, LibraryLoopStop};
-pub use library_table::LibraryTable;
-pub(crate) use live_system::StepLibraries;
-pub use live_system::{ItemOrigin, LiveSystemItems, Lookup, Reading, ReadingKeys, SystemItem};
-pub use lookup::UserLookup;
+pub(crate) use crate::data::LibrarySet;
+pub use library_loop::LibraryLoopRows;
+pub(crate) use library_loop::LibraryLoopStop;
+pub(crate) use library_table::LibraryTable;
+pub(crate) use live_system::{ItemOrigin, LiveSystemItems, StepLibraries, SystemItem};
+pub(crate) use lookup::UserLookup;
 
-pub use persistence::{
-    MaskLogs, ProfileCheck, SaveBaseline, SystemLibrary, SystemOriginals, UserConfLaw,
-    system_originals,
+pub(crate) use persistence::{MaskLogs, ProfileCheck, SaveBaseline, system_originals};
+pub use persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+#[cfg(test)]
+pub(crate) use phrase::FIRST_USER_TOKEN;
+#[cfg(test)]
+pub(crate) use phrase::key_syllable;
+pub(crate) use phrase::{
+    ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, UserPhrase, UserPronunciation,
 };
-#[cfg(test)]
-pub use phrase::FIRST_USER_TOKEN;
-#[cfg(test)]
-pub use phrase::key_syllable;
 pub use phrase::{
-    ADD_PHRASE_UNIGRAM_FACTOR, DEFAULT_PHRASE_COUNT, KEY_SYLLABLE_MASK, KEY_TONE_SHIFT,
-    MAX_KEY_TONE, PinyinKey, UserPhrase, UserPronunciation, is_user_token, key_pinyin_string,
-    key_tone, toned_key,
+    KEY_TONE_SHIFT, MAX_KEY_TONE, PinyinKey, is_user_token, key_pinyin_string, toned_key,
 };
-pub use replay::{JournalFault, UnigramAdd};
-pub use store::{MaskCheck, UserStore, UserStoreError, add_system_reading};
+pub(crate) use replay::JournalFault;
+pub use replay::UnigramAdd;
+pub use store::{UserStore, UserStoreError, add_system_reading};
 #[cfg(test)]
-pub use test_session::UserState;
+pub(crate) use test_session::UserState;
 
 #[cfg(test)]
 #[path = "../../tests/support/native_fixture.rs"]
@@ -77,17 +77,10 @@ pub(crate) mod native_fixture;
 #[path = "../../tests/common/contract_data.rs"]
 pub(crate) mod contract_data;
 
-pub use persistence::{
-    Loaded, PersistenceError, SystemLibraryRef, check_format_unnamed, fini, lowered_open_counter,
-};
-pub use seed::{
-    CEILING_SEED, EXPAND_FACTOR, INITIAL_SEED, UNIGRAM_FACTOR, predicted_seed, training_seed,
-    unigram_delta,
-};
+pub(crate) use persistence::{PersistenceError, SystemLibraryRef, check_format_unnamed, fini};
+pub use seed::{CEILING_SEED, INITIAL_SEED, unigram_delta};
 
-pub use phrase_table::{
-    PhraseTableEntry, key_ucs4 as phrase_key_ucs4, search_bytes as search_phrase_bytes,
-};
+pub(crate) use phrase_table::key_ucs4 as phrase_key_ucs4;
 
 pub(crate) use persistence::{
     LiveSubIndex, LoadedPinyinIndex, LoadedProfile, MaskStop, SaveRemapFault, SaveReporting,
@@ -102,3 +95,11 @@ pub(crate) use phrase::add_phrase_token;
 
 #[cfg(test)]
 pub(crate) use store::tests::seed_bigram;
+
+// Re-exports that only the tests of other modules name.
+#[cfg(test)]
+pub(crate) use live_system::Lookup;
+#[cfg(test)]
+pub(crate) use persistence::Loaded;
+#[cfg(test)]
+pub(crate) use phrase::KEY_SYLLABLE_MASK;
