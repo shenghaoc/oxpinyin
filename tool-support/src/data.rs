@@ -231,39 +231,14 @@ pub fn library_from_payload(payload: Vec<u8>) -> Result<PhraseLibrary, LibraryEr
     PhraseLibrary::from_bytes(LibraryBytes::from(payload), 0..len, None)
 }
 
-/// Compares two equal-length key sequences by initial, then middle and final, then tone.
-/// Only positions in `lhs` participate.
-///
-/// # Panics
-///
-/// Panics if a comparison indexes beyond `rhs`. Pass a right slice at least as long as
-/// `lhs`.
+/// Compares two equal-length key sequences by initial, then middle and final, then tone,
+/// each part over the whole sequence before the next.
 #[must_use]
 pub fn exact_compare2(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> std::cmp::Ordering {
-    let len = lhs.len();
-    for i in 0..len {
-        match lhs[i].initial.cmp(&rhs[i].initial) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-    }
-    for i in 0..len {
-        match lhs[i].middle.cmp(&rhs[i].middle) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-        match lhs[i].final_.cmp(&rhs[i].final_) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-    }
-    for i in 0..len {
-        match lhs[i].tone.cmp(&rhs[i].tone) {
-            std::cmp::Ordering::Equal => {}
-            other => return other,
-        }
-    }
-    std::cmp::Ordering::Equal
+    let by = |part: fn(&ChewingKey) -> (u8, u8)| lhs.iter().map(part).cmp(rhs.iter().map(part));
+    by(|key| (key.initial, 0))
+        .then_with(|| by(|key| (key.middle, key.final_)))
+        .then_with(|| by(|key| (key.tone, 0)))
 }
 
 /// Decodes a `SingleGram` blob into `(total_freq, records)`.

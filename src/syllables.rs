@@ -59,8 +59,15 @@ fn correction_canonical(text: &str, options: OptionBits) -> Option<&'static str>
     // The first row that matches decides, also when its replacement is not
     // a syllable.
     for (option, wrong, correct) in SUFFIX_CORRECTIONS {
-        if options.contains(option) && text.ends_with(wrong) {
-            return checked_canonical(text, wrong.len(), correct);
+        if options.contains(option)
+            && let Some(stem) = text.strip_suffix(wrong)
+        {
+            // Bare `gn`/`mg`/`ue`/… are not in `pinyin_index`; only the
+            // stemmed rows are. An empty stem would invent `ng`/`ve`.
+            if stem.is_empty() {
+                return None;
+            }
+            return canonical_complete_syllable(&[stem, correct].concat());
         }
     }
     if options.contains(OptionBits::PINYIN_CORRECT_V_U)
@@ -91,19 +98,6 @@ fn ambiguity_canonical(text: &str, options: OptionBits) -> Option<&'static str> 
         "zua" if options.contains(OptionBits::PINYIN_AMB_Z_ZH) => Some("zhua"),
         _ => None,
     }
-}
-
-fn checked_canonical(text: &str, suffix_len: usize, suffix: &str) -> Option<&'static str> {
-    // Bare `gn`/`mg`/`ue`/… are not in `pinyin_index`; only the 80/80/…
-    // stemmed rows are. An empty stem would invent `ng`/`ve`.
-    let base_len = text.len().checked_sub(suffix_len)?;
-    if base_len == 0 {
-        return None;
-    }
-    let mut candidate = String::with_capacity(base_len + suffix.len());
-    candidate.push_str(&text[..base_len]);
-    candidate.push_str(suffix);
-    canonical_complete_syllable(&candidate)
 }
 
 #[cfg(test)]

@@ -34,10 +34,7 @@ impl SelectionRecord {
     /// Clamps the composition offset to the character boundary at or before
     /// its old value. Every `raw[consumed..]` slice depends on this.
     pub(super) fn clamp_consumed(&mut self, raw: &str) {
-        self.consumed = self.consumed.min(raw.len());
-        while !raw.is_char_boundary(self.consumed) {
-            self.consumed -= 1;
-        }
+        self.consumed = raw.floor_char_boundary(self.consumed);
     }
 
     /// Appends one token to the record.
