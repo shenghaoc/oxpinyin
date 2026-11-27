@@ -451,15 +451,14 @@ fn gram_mask_fault_over(
 fn trained_gram(
     gram: &mut Vec<u8>,
     cur: PhraseToken,
-) -> Result<(u64, Option<&[u8]>), UserStoreError> {
+) -> Result<(u32, Option<&[u8]>), UserStoreError> {
     let total = single_gram::get_total_freq(gram).ok_or(UserStoreError::ShortUserBigramValue)?;
     let previous = single_gram::get_freq(gram, cur);
     let (freq, seed) = match previous {
-        Some(freq) => (freq, seed::training_seed(Some(u64::from(freq)))),
+        Some(freq) => (freq, seed::training_seed(Some(freq))),
         None => (0, seed::INITIAL_SEED),
     };
-    let seed32 = seed as u32;
-    if seed32 > 0 && total > total.wrapping_add(seed32) {
+    if seed > 0 && total > total.wrapping_add(seed) {
         return Ok((seed, None));
     }
     if previous.is_none() {
@@ -467,8 +466,8 @@ fn trained_gram(
         // on overflow. Leave the cached row unchanged in that case.
         single_gram::insert_freq(gram, cur, 0);
     }
-    single_gram::set_total_freq(gram, total.wrapping_add(seed32));
-    if !single_gram::set_freq(gram, cur, freq.wrapping_add(seed32)) {
+    single_gram::set_total_freq(gram, total.wrapping_add(seed));
+    if !single_gram::set_freq(gram, cur, freq.wrapping_add(seed)) {
         // On an unsorted gram the second `lower_bound` can land past the
         // item `insert_freq` just added; the pin's `check_result` dies
         // (`phonetic_lookup.h:903`).
@@ -482,7 +481,7 @@ fn trained_gram(
 /// `insert_freq(token, 69)` on a miss or `set_freq(freq + 69)` on a hit;
 /// `set_total_freq(total + 69)`. No overflow guard: both fields wrap.
 fn predicted_gram(row: Option<Vec<u8>>, cur: PhraseToken) -> Result<Vec<u8>, UserStoreError> {
-    let seed = seed::predicted_seed() as u32;
+    let seed = seed::predicted_seed();
     let mut gram = row.unwrap_or_else(single_gram::new_gram);
     let total = single_gram::get_total_freq(&gram).ok_or(UserStoreError::ShortUserBigramValue)?;
     match single_gram::get_freq(&gram, cur) {
@@ -1191,13 +1190,12 @@ impl UserStore {
     /// refusal, as at the pin. Other store failures return [`UserStoreError`].
     pub fn observe_predicted_prefix(&mut self, cur: PhraseToken) -> Result<u64, UserStoreError> {
         let seed = seed::predicted_seed();
-        let delta = seed::unigram_delta(seed) as u32;
-        let accepted = self.arena_add_unigram(cur, delta);
+        let accepted = self.arena_add_unigram(cur, seed::unigram_delta(seed));
         self.mark_committed_write(true);
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
         }
-        Ok(seed)
+        Ok(u64::from(seed))
     }
 
     /// One training or predicted-selection step on `last`'s gram and
@@ -1234,8 +1232,7 @@ impl UserStore {
             .is_some_and(|gram| gram.len() < single_gram::TOTAL_LEN)
         {
             if matches!(policy, SeedPolicy::Predicted) {
-                let delta =
-                    u32::try_from(seed::unigram_delta(seed::predicted_seed())).unwrap_or(u32::MAX);
+                let delta = seed::unigram_delta(seed::predicted_seed());
                 let accepted = self.arena_add_unigram(cur, delta);
                 self.mark_committed_write(true);
                 if !accepted {
@@ -1264,11 +1261,11 @@ impl UserStore {
         last: PhraseToken,
         cur: PhraseToken,
         policy: SeedPolicy,
-        seed: u64,
+        seed: u32,
         gram: Option<&[u8]>,
     ) -> Result<u64, UserStoreError> {
-        // `seed * unigram_factor` in `guint32`; the seeds are small.
-        let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
+        // `seed * unigram_factor` in `guint32`.
+        let delta = seed::unigram_delta(seed);
         let accepted = match policy {
             // The unigram add comes first and its overflow ends the call
             // before any bigram is trained (`pinyin.cpp:2609-2612`); the
@@ -1307,7 +1304,7 @@ impl UserStore {
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
         }
-        Ok(seed)
+        Ok(u64::from(seed))
     }
 
     /// Adds a user phrase under [`crate::vocab::USER_DICTIONARY`] with the count rules
