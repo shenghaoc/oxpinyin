@@ -130,6 +130,25 @@ cp target/release/bisect "$WORK/bisect"
 PERF_MODE=speed "$WORK/bisect" --perf "$SO" "$DATA"
 ```
 
+`bisect --perf-choose SO DATA ASCII-PINYIN FIRST REST ITERATIONS` times candidate selection
+in three windows on Linux and macOS. Each window has its own anchor: `bisect_choose_unit`,
+`bisect_train_unit` and `bisect_save_unit`. The calls are those that ibus-libpinyin
+(`libpinyin/ibus-libpinyin` `4278882`) makes, with its default sort `0x1c`:
+
+1. Choose FIRST at offset 0, then redraw: `LibPinyinCandidates::selectCandidate`
+   (`src/PYPLibPinyinCandidates.cc:146-172`) and `PhoneticEditor::update`
+   (`src/PYPPhoneticEditor.cc:346-361`). The redraw covers the candidate list, the preedit and the
+   auxiliary text.
+2. Choose REST at the new lookup cursor, then train (`src/PYPLibPinyinCandidates.cc:146-163`).
+3. `pinyin_save`.
+
+The driver selects each phrase by its text, and only from the normal candidates. FIRST must stop
+inside the input, and REST must reach its end. Every iteration starts from a new user directory,
+which is empty or a copy of the plain files of `PERF_USER_DIR`. The observations record the
+phrases, cursors, call returns, the list after FIRST and the final sentence. `windows` holds each
+window's total and per-iteration `elapsed_ns` and, with `PERF_HW`, `hw_instructions`.
+`--perf-typing-sequence` reads its sort from `PERF_SORT` (default `0x1e`).
+
 ## Callgrind debug-info control
 
 Both campaign arms use the unchanged shipping Cargo profile. The profiled arm
