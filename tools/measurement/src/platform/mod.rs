@@ -35,3 +35,12 @@ pub(crate) use posix::*;
 mod unprofiled;
 #[cfg(not(target_os = "linux"))]
 pub(crate) use unprofiled::*;
+
+/// What one `PERF_PAGE_OUT` page-out advised: the number of mappings, and the bytes of the
+/// library's mappings and of the data files' mappings.
+#[derive(Default)]
+pub(crate) struct PagedOut {
+    pub(crate) mappings: u64,
+    pub(crate) library_bytes: u64,
+    pub(crate) data_bytes: u64,
+}

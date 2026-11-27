@@ -304,6 +304,10 @@ fn process_cycles() -> Result<u64> {
     require(status != 0, "measurement: process cycles failed")?;
     Ok(cycles)
 }
+/// Windows counts no major page faults apart from the soft ones.
+pub(crate) fn major_faults() -> Option<u64> {
+    None
+}
 pub(crate) fn fresh_user(path: &Path) -> Result<()> {
     match std::fs::create_dir(path) {
         Ok(()) => (),
