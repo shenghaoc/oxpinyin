@@ -78,11 +78,14 @@ Its "total memory" is PSS.
 ## macOS arm64, oxpinyin only
 
 Measured at #2327 with [`just measure compare`](runbooks/benches.md#native-macos-source-revisions), except the `leaks --atExit` row, which is from `b221f3312`.
+The loop uses sort `0x1e`, the driver's default. The two `0x1c` rows are from #2329, with `PERF_SORT=0x1c`.
 
 | Measure | oxpinyin |
 | --- | ---: |
 | Instructions per operation | 698,314 |
 | Time per operation | 27.70 µs (27.47–29.57) |
+| Instructions per operation, sort `0x1c` | 2,458,096 |
+| Time per operation, sort `0x1c` | 140.05 µs (139.45–163.64) |
 | Footprint at loop end | 7,373,316 B |
 | Lifetime peak footprint | 15,753,696 B |
 | Peak RSS | 21,725,184 B |
@@ -96,11 +99,16 @@ Host: Mac17,2, Apple M5, 16 GB, macOS 27.2.1 (26B131), Xcode 27.2, tkrzw 1.0.34 
 ## Windows x86_64, oxpinyin only
 
 Measured at `c6b8e1e23` with [`just measure compare`](runbooks/benches.md#native-windows-comparisons), base and head at that commit: 24 runs of 20 cycles, 2,460 operations each, on Debian's `libpinyin-data` 2.11.92-1.
+The loop uses sort `0x1e`, the driver's default. The three `0x1c` rows are from #2329, with `PERF_SORT=0x1c` and the same schedule.
 
 | Measure | oxpinyin |
 | --- | ---: |
 | Peak working set | 18,071,552 B (17,985,536–18,288,640) |
+| Peak working set, sort `0x1c` | 22,253,568 B (22,134,784–22,335,488) |
 | Peak private commit | 17,891,328 B (17,784,832–18,030,592) |
+| Peak private commit, sort `0x1c` | 20,547,584 B (20,484,096–20,664,320) |
+| Time per operation (QPC) | 101.57 µs (99.60–122.88) |
+| Time per operation (QPC), sort `0x1c` | 562.04 µs (535.33–596.17) |
 | Expected commit from copy-on-write views of the data | 4,177,920 B |
 | `oxpinyin_capi.dll` | 1,409,536 B |
 
