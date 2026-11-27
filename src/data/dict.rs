@@ -255,10 +255,7 @@ impl SystemDictionary<'_> {
         if syllables.is_empty() {
             return Ok((unreadable, false));
         }
-        let mut keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
-        for (key, &tone) in keys.iter_mut().zip(tones) {
-            *key = key.with_tone(tone);
-        }
+        let keys: SearchQuery = toned_query(syllables, tones);
         let present = self.pinyin.search_into(&keys, row, |token| {
             // Unloaded or removed tokens are not malformed loaded items.
             // Their live owner can be absent precisely because it was unloaded.
@@ -382,7 +379,7 @@ impl SystemDictionary<'_> {
         if syllables.is_empty() {
             return Ok(Some(Vec::new()));
         }
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
+        let keys: SearchQuery = syllables.iter().map(|s| s.chewing_key()).collect();
         let mut tokens: Vec<u32> = Vec::new();
         let overlong = self.pinyin.walk_suggestions(&keys, |length, items| {
             // The query-length row is the phrase itself — the pin's cursor
@@ -426,7 +423,7 @@ impl SystemDictionary<'_> {
         ranges: &mut PhraseIndexRanges<()>,
         visible: impl Fn(u32) -> bool,
     ) -> Result<(), DictError> {
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
+        let keys: SearchQuery = syllables.iter().map(|s| s.chewing_key()).collect();
         let query: Vec<_> = keys
             .iter()
             .enumerate()
@@ -499,7 +496,7 @@ impl SystemDictionary<'_> {
             &syllables
                 .iter()
                 .map(|s| s.chewing_key())
-                .collect::<Vec<_>>(),
+                .collect::<SearchQuery>(),
             token,
         )
     }
@@ -556,7 +553,7 @@ impl SystemDictionary<'_> {
         syllables: &[SyllableKey],
         tones: &[u8],
     ) -> Result<Vec<PhraseEntry>, DictError> {
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
+        let keys: SearchQuery = syllables.iter().map(|s| s.chewing_key()).collect();
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
         Ok(ranges
@@ -602,7 +599,7 @@ impl SystemDictionary<'_> {
         if syllables.is_empty() {
             return true;
         }
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
+        let keys: SearchQuery = syllables.iter().map(|s| s.chewing_key()).collect();
         self.pinyin.key_exists(&keys)
     }
 }
@@ -677,24 +674,16 @@ impl Dictionary for SystemDictionary<'_> {
         &self,
         syllables: &[SyllableKey],
     ) -> Result<Option<Vec<PhraseToken>>, DictError> {
-        Ok(SystemDictionary::checked_extension_tokens(self, syllables)?
-            .map(|tokens| tokens.into_iter().collect()))
+        SystemDictionary::checked_extension_tokens(self, syllables)
     }
 
-    /// Converts only an all-scalar span to text and answers
-    /// [`Self::tokens_for_text`] for it; a span with a non-scalar is empty.
+    /// Searches only an all-scalar span, whose stored key is its words as
+    /// they are; a span with a non-scalar is empty. A failed read is empty.
     fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
-        let mut text = String::with_capacity(ucs4.len());
-        for &word in ucs4 {
-            let Some(character) = char::from_u32(word) else {
-                return Vec::new();
-            };
-            text.push(character);
+        if ucs4.iter().any(|&word| char::from_u32(word).is_none()) {
+            return Vec::new();
         }
-        self.tokens_for_text(&text)
-            .unwrap_or_default()
-            .into_iter()
-            .collect()
+        self.phrase.search_ucs4(ucs4).unwrap_or_default()
     }
 
     fn phrase_span_searches_are_observable(&self) -> bool {
@@ -876,7 +865,7 @@ impl AddonDictionary {
                 std::process::abort();
             }
         }
-        let file = row.system.clone();
+        let file = row.system.as_ref();
         if self.libraries.is_loaded(index) {
             return Ok(false);
         }
@@ -965,7 +954,7 @@ impl AddonDictionary {
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(false);
         };
-        let keys: Vec<_> = syllables.iter().map(|s| s.chewing_key()).collect();
+        let keys: SearchQuery = syllables.iter().map(|s| s.chewing_key()).collect();
         pinyin.search_into(&keys, row, |token| {
             out.extend(resolve_item(&self.libraries, None, token));
         })
