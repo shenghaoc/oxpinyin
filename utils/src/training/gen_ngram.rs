@@ -52,7 +52,7 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
     let conf = load_table_conf();
     let mut libraries = Libraries::load_rows(
         &conf,
-        false,
+        crate::utils_helper::TableSet::Default,
         &[FileType::SystemFile],
         if deleted {
             // `gen_deleted_ngram.cpp:72-73`.
@@ -72,7 +72,11 @@ pub(crate) fn run(args: impl IntoIterator<Item = OsString>, deleted: bool) {
 
     train(&mut libraries, bigram.as_ref(), train_pi_gram, deleted);
     if !deleted {
-        libraries.save_rows(&conf, false, FileType::SystemFile);
+        libraries.save_rows(
+            &conf,
+            crate::utils_helper::TableSet::Default,
+            FileType::SystemFile,
+        );
     }
 }
 

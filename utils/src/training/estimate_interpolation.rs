@@ -76,7 +76,12 @@ fn compute_interpolation(deleted_bigram: &Gram, unigram: &Libraries, bigram: Opt
 /// `main` (`estimate_interpolation.cpp:90-142`).
 pub fn main(_args: impl IntoIterator<Item = OsString>) {
     let conf = load_table_conf();
-    let unigram = Libraries::load_rows(&conf, false, &[FileType::SystemFile], tool::ENOENT);
+    let unigram = Libraries::load_rows(
+        &conf,
+        crate::utils_helper::TableSet::Default,
+        &[FileType::SystemFile],
+        tool::ENOENT,
+    );
     let attach = |name: &str| {
         Hash::open_read_only(Path::new(name))
             .unwrap_or_else(|error| oxpinyin_tool_support::input::exit_on_store_error(&error))

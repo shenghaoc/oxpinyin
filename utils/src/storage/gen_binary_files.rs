@@ -9,6 +9,7 @@
 //! (`save_phrase_index`) and the dictionary chunks (`save_dictionary`), and
 //! optionally loads `punct.table` into `punct.bin`.
 
+use crate::utils_helper::TableSet;
 use std::collections::BTreeMap;
 use std::ffi::{CStr, OsString};
 use std::path::PathBuf;
@@ -47,7 +48,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         c"pinyin_index.bin",
         c"phrase_index.bin",
         &conf,
-        false,
+        TableSet::Default,
         phonetic,
         directory,
     );
@@ -55,7 +56,7 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
         c"addon_pinyin_index.bin",
         c"addon_phrase_index.bin",
         &conf,
-        true,
+        TableSet::Addon,
         phonetic,
         directory,
     );
@@ -70,16 +71,10 @@ fn path_of(name: &CStr) -> PathBuf {
     oxpinyin::input::path_from_bytes(name.to_bytes())
 }
 
-/// The rows one `generate_binary_files` call walks (default or addon).
-fn rows(conf: &TableConf, addon: bool) -> Vec<&TableRow> {
+/// The rows one `generate_binary_files` call walks (default or tables).
+fn rows(conf: &TableConf, tables: TableSet) -> Vec<&TableRow> {
     (0..16_u8)
-        .filter_map(|index| {
-            if addon {
-                conf.addon_row(index)
-            } else {
-                conf.default_row(index)
-            }
-        })
+        .filter_map(|index| tables.row(conf, index))
         .collect()
 }
 
@@ -91,7 +86,7 @@ fn generate_binary_files(
     pinyin_name: &CStr,
     phrase_name: &CStr,
     conf: &TableConf,
-    addon: bool,
+    tables: TableSet,
     phonetic: PhoneticType,
     directory: Option<&CStr>,
 ) {
@@ -101,7 +96,7 @@ fn generate_binary_files(
     let phrase_table = Tree::create(&path_of(phrase_name)).ok();
 
     let mut libraries: [Option<ChunkMap>; 16] = Default::default();
-    for (index, row) in rows(conf, addon).into_iter().enumerate() {
+    for (index, row) in rows(conf, tables).into_iter().enumerate() {
         if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary) {
             continue;
         }
@@ -125,8 +120,8 @@ fn generate_binary_files(
     }
 
     compact(&mut libraries);
-    save_chunks(conf, addon, false, &mut libraries);
-    save_chunks(conf, addon, true, &mut libraries);
+    save_chunks(conf, tables, FileType::SystemFile, &mut libraries);
+    save_chunks(conf, tables, FileType::Dictionary, &mut libraries);
 }
 
 /// `ChewingLargeTable2::load_text` (`src/storage/chewing_large_table2.cpp:112-158`).
@@ -363,16 +358,11 @@ fn compact(libraries: &mut [Option<ChunkMap>; 16]) {
 /// rows, or `save_dictionary` (`:122-145`) for `SYSTEM_FILE` rows.
 fn save_chunks(
     conf: &TableConf,
-    addon: bool,
-    dictionary: bool,
+    tables: TableSet,
+    wanted: FileType,
     libraries: &mut [Option<ChunkMap>; 16],
 ) {
-    let wanted = if dictionary {
-        FileType::Dictionary
-    } else {
-        FileType::SystemFile
-    };
-    for (index, row) in rows(conf, addon).into_iter().enumerate() {
+    for (index, row) in rows(conf, tables).into_iter().enumerate() {
         if row.file_type != wanted {
             continue;
         }

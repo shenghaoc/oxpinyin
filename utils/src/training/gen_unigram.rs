@@ -6,6 +6,7 @@
 //! accepted and — as in the pin, whose static `table_dir` no statement
 //! reads — never used.
 
+use crate::utils_helper::TableSet;
 use std::ffi::OsString;
 
 use oxpinyin::data::{FileType, TableConf};
@@ -22,17 +23,17 @@ pub fn main(args: impl IntoIterator<Item = OsString>) {
     let _parsed = tool::parse_options_or_exit(c"- increase uni-gram", &entries, args);
 
     let conf = load_table_conf();
-    generate_unigram(&conf, false);
-    generate_unigram(&conf, true);
+    generate_unigram(&conf, TableSet::Default);
+    generate_unigram(&conf, TableSet::Addon);
 }
 
 /// `generate_unigram` (`gen_unigram.cpp:35-79`) over one table array.
-fn generate_unigram(conf: &TableConf, addon: bool) {
-    let mut libraries = Libraries::load_rows(conf, addon, &UNIGRAM_FILE_TYPES, tool::ENOENT);
+fn generate_unigram(conf: &TableConf, tables: TableSet) {
+    let mut libraries = Libraries::load_rows(conf, tables, &UNIGRAM_FILE_TYPES, tool::ENOENT);
     libraries.add_unigram_to_every_item();
     // `save_phrase_index` then `save_dictionary` of the same array; each
     // save failure writes `save %s failed.` and exits `ENOENT`
     // (`utils/utils_helper.h:97-145`).
-    libraries.save_rows(conf, addon, FileType::SystemFile);
-    libraries.save_rows(conf, addon, FileType::Dictionary);
+    libraries.save_rows(conf, tables, FileType::SystemFile);
+    libraries.save_rows(conf, tables, FileType::Dictionary);
 }

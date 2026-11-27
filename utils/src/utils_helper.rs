@@ -5,7 +5,7 @@ use std::path::Path;
 
 use oxpinyin::data::PhraseLibraries;
 use oxpinyin::data::phrase_library::{LibraryError, PhraseLibrary};
-use oxpinyin::data::{FileName, FileType, TableConf};
+use oxpinyin::data::{FileName, FileType, TableConf, TableRow};
 use oxpinyin_tool_support::input as tool;
 
 pub mod taglib;
@@ -80,20 +80,36 @@ pub(crate) enum SystemLibraryError<'a> {
     Chunk(&'a FileName, LibraryError),
 }
 
+/// Which half of `table.conf` a utility walks: the default tables, or the
+/// addon tables (`utils_helper.h:73-95`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TableSet {
+    /// The `default` rows.
+    Default,
+    /// The `addon` rows.
+    Addon,
+}
+
+impl TableSet {
+    /// The row of sub-index `index` in this half.
+    pub(crate) fn row(self, conf: &TableConf, index: u8) -> Option<&TableRow> {
+        match self {
+            Self::Default => conf.default_row(index),
+            Self::Addon => conf.addon_row(index),
+        }
+    }
+}
+
 /// Visit the selected table rows in sub-index order, keeping the filename
 /// attached to any read fault (`utils_helper.h:73-95`).
 pub(crate) fn load_library_rows<'a>(
     conf: &'a TableConf,
-    addon: bool,
+    tables: TableSet,
     types: &[FileType],
     mut load: impl FnMut(u8, &FileName) -> Result<(), LibraryError>,
 ) -> Result<(), SystemLibraryError<'a>> {
     for index in 0..16_u8 {
-        let row = if addon {
-            conf.addon_row(index)
-        } else {
-            conf.default_row(index)
-        };
+        let row = tables.row(conf, index);
         let Some(row) = row.filter(|row| types.contains(&row.file_type)) else {
             continue;
         };
@@ -109,14 +125,19 @@ pub(crate) fn load_system_libraries(
     conf: &TableConf,
 ) -> Result<PhraseLibraries, SystemLibraryError<'_>> {
     let mut libraries = PhraseLibraries::empty();
-    load_library_rows(conf, false, &[FileType::SystemFile], |index, name| {
-        oxpinyin_tool_support::data::load_heap_library(
-            &mut libraries,
-            index,
-            Path::new(name.as_ref()),
-        )?;
-        Ok(())
-    })?;
+    load_library_rows(
+        conf,
+        TableSet::Default,
+        &[FileType::SystemFile],
+        |index, name| {
+            oxpinyin_tool_support::data::load_heap_library(
+                &mut libraries,
+                index,
+                Path::new(name.as_ref()),
+            )?;
+            Ok(())
+        },
+    )?;
     Ok(libraries)
 }
 
