@@ -1,7 +1,7 @@
 //! The fault classification of the cursor and lookup laws, and the
 //! candidate-lookup offset of both facades.
 
-use crate::engine::EngineError;
+use crate::engine::{EngineError, Law};
 
 use super::{CursorFault, CursorLaw};
 use crate::facade::ChewingCorrections;
@@ -36,21 +36,21 @@ fn each_law_aborts_at_its_own_pin_asserts(
 
 // 074a2219 pinyin.cpp:2226 and zhuyin.cpp:1441–1456 differ at the reserved column.
 #[rstest::rstest]
-#[case::pinyin(false, 2, 6, Ok(5))]
-#[case::zhuyin(true, 3, 7, Err(CursorFault::PinAssert))]
+#[case::pinyin(Law::Pinyin, 2, 6, Ok(5))]
+#[case::zhuyin(Law::Zhuyin, 3, 7, Err(CursorFault::PinAssert))]
 fn candidate_offset_at_the_reserved_column(
-    #[case] zhuyin: bool,
+    #[case] law: Law,
     #[case] interior: usize,
     #[case] columns: usize,
     #[case] reserved: Result<usize, CursorFault>,
 ) {
-    let (context, mut instance) = if zhuyin {
+    let (context, mut instance) = if law == Law::Zhuyin {
         zhuyin_instance()
     } else {
         pinyin_instance()
     };
     let mut view = instance.bind(&context.runtime);
-    let consumed = if zhuyin {
+    let consumed = if law == Law::Zhuyin {
         view.parse_chewing_more("su3cl3", ChewingCorrections::FromOptions)
     } else {
         view.parse_full_more("nihao")
@@ -58,10 +58,10 @@ fn candidate_offset_at_the_reserved_column(
     assert_eq!(consumed, columns - 1);
     let read = instance.read(&context.runtime);
     assert_eq!(read.pin_matrix_columns(), columns);
-    assert_eq!(read.abi_candidate_offset(interior, zhuyin), Ok(interior));
-    assert_eq!(read.abi_candidate_offset(columns, zhuyin), reserved);
+    assert_eq!(read.abi_candidate_offset(interior, law), Ok(interior));
+    assert_eq!(read.abi_candidate_offset(columns, law), reserved);
     assert_eq!(
-        read.abi_candidate_offset(columns + 1, zhuyin),
+        read.abi_candidate_offset(columns + 1, law),
         Err(CursorFault::PinAssert)
     );
 }
@@ -73,11 +73,11 @@ fn an_empty_matrix_asserts_on_a_candidate_offset_past_column_zero() {
     let read = inst.bind(&context.runtime);
     assert_eq!(read.pin_matrix_columns(), 0);
     assert_eq!(
-        read.abi_candidate_offset(1, false),
+        read.abi_candidate_offset(1, Law::Pinyin),
         Err(CursorFault::PinAssert)
     );
     assert_eq!(
-        read.abi_candidate_offset(1, true),
+        read.abi_candidate_offset(1, Law::Zhuyin),
         Err(CursorFault::PinAssert)
     );
 }
@@ -89,15 +89,15 @@ fn abi_key_at_a_separator_reads_the_zero_key_only_for_zhuyin() {
     let context = open_context(crate::OptionBits::from_bits_retain(0x18a));
     let mut inst = context.alloc_instance();
     assert_eq!(inst.bind(&context.runtime).parse_full_more("'ni'hao"), 7);
-    let mut packed = |zhuyin| {
+    let mut packed = |law| {
         inst.bind(&context.runtime)
-            .abi_key_at(3, zhuyin)
+            .abi_key_at(3, law)
             .expect("no zero-column fault")
             .expect("a key")
             .0
     };
-    assert_eq!(packed(true).to_le_bytes(), [0x00, 0x00]);
-    assert_eq!(packed(false).to_le_bytes(), [0x86, 0x02]);
+    assert_eq!(packed(Law::Zhuyin).to_le_bytes(), [0x00, 0x00]);
+    assert_eq!(packed(Law::Pinyin).to_le_bytes(), [0x86, 0x02]);
 }
 
 // Rust contract: cursor movement follows the active parse spans.
@@ -217,7 +217,15 @@ mod native {
         assert_eq!(
             instance
                 .read(&context.runtime)
-                .character_offset(&"弄".into(), offset, law == UserConfLaw::Zhuyin)
+                .character_offset(
+                    &"弄".into(),
+                    offset,
+                    if law == UserConfLaw::Zhuyin {
+                        crate::engine::Law::Zhuyin
+                    } else {
+                        crate::engine::Law::Pinyin
+                    },
+                )
                 .unwrap(),
             crate::engine::CharacterOffset::Found(expected)
         );
@@ -230,7 +238,7 @@ mod native {
         assert_eq!(
             instance
                 .read(&context.runtime)
-                .abi_left_offset(4, false)
+                .abi_left_offset(4, crate::engine::Law::Pinyin)
                 .unwrap(),
             2
         );
@@ -244,7 +252,7 @@ mod native {
 
         let key = instance
             .read(&context.runtime)
-            .abi_key_at(2, false)
+            .abi_key_at(2, crate::engine::Law::Pinyin)
             .unwrap()
             .unwrap();
         assert_eq!((key.1, key.2), (2, 4));
@@ -293,9 +301,7 @@ mod native {
                 crate::engine::Selection::Refused
             );
             assert_eq!(
-                instance
-                    .bind(&context.runtime)
-                    .clear_abi_constraint(probe, true),
+                instance.bind(&context.runtime).clear_abi_constraint(probe),
                 expected
             );
         }

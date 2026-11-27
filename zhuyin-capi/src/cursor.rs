@@ -87,7 +87,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key_rest(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let found = match inst.core.abi_key_at(offset, true) {
+    let found = match inst.core.abi_key_at(offset, oxpinyin::engine::Law::Zhuyin) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
         Err(_) => std::process::abort(),
@@ -218,7 +218,7 @@ pub unsafe extern "C" fn zhuyin_get_zhuyin_key(
     // only the process-wide key slot.
     let inst = unsafe { instance_ref(instance) };
     check_key_matrix(&inst, offset);
-    let found = match inst.core.abi_key_at(offset, true) {
+    let found = match inst.core.abi_key_at(offset, oxpinyin::engine::Law::Zhuyin) {
         Ok(Some(found)) => found,
         Ok(None) => return false,
         Err(_) => std::process::abort(),
@@ -316,7 +316,10 @@ pub unsafe extern "C" fn zhuyin_get_left_zhuyin_offset(
     if offset > 0 {
         abort_past_matrix(&inst.read(), offset - 1);
     }
-    let result = match inst.core.abi_left_offset(offset, true) {
+    let result = match inst
+        .core
+        .abi_left_offset(offset, oxpinyin::engine::Law::Zhuyin)
+    {
         Ok(result) => result,
         // Register row 66: `_check_offset`'s assert (`zhuyin.cpp:1453`,
         // via `:1998` and `:2020`), and its `get_column_size` past the

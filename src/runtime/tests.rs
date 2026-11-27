@@ -1800,9 +1800,7 @@ fn native_chewing(runtime: &Runtime, state: &mut crate::engine::SessionState, in
         .iter()
         .map(|key| crate::graph::ExactSegment::new(key.start(), key.end(), key.key(), key.tone()))
         .collect();
-    runtime
-        .session(state)
-        .set_nbest_shape(crate::engine::NbestShape::ZHUYIN);
+    runtime.session(state).set_law(crate::engine::Law::Zhuyin);
     runtime
         .session(state)
         .replace_raw_exact(input, &segments)
@@ -2481,7 +2479,7 @@ fn a_user_table_fallback_reports_its_unreadable_row() {
     native_chewing(&runtime, &mut state, "su3");
     runtime
         .session(&mut state)
-        .set_candidate_ranking(crate::engine::CandidateRanking::LengthThenFrequency);
+        .set_law(crate::engine::Law::Zhuyin);
     let rows = runtime
         .session(&mut state)
         .candidates_at_for_abi(0, false)
@@ -2506,7 +2504,7 @@ fn a_library_mask_does_not_read_extension_rows() {
         native_chewing(&runtime, &mut state, "su3");
         runtime
             .session(&mut state)
-            .set_candidate_ranking(crate::engine::CandidateRanking::LengthThenFrequency);
+            .set_law(crate::engine::Law::Zhuyin);
         let rows = runtime
             .session(&mut state)
             .candidates_at_for_abi(0, false)

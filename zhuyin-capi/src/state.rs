@@ -49,20 +49,15 @@ impl CapiContext {
 
     pub(crate) fn alloc_instance(&self, owner: ContextOwner) -> CapiInstance {
         let mut core = self.core.alloc_instance();
-        // The zhuyin surface's sentence-row display law: upstream fills every
-        // BEST_MATCH row from `zhuyin_get_sentence` (always the 1-best), so
-        // the observable list carries exactly one sentence row — see
-        // `Session::set_collapse_sentence_rows_to_best`.
-        let runtime = &self.core.runtime;
-        let mut session = runtime.session(&mut core.session);
-        session.set_collapse_sentence_rows_to_best(true);
-        // libzhuyin sorts its candidate lists with
+        // The zhuyin surface's law: every BEST_MATCH row comes from
+        // `zhuyin_get_sentence` (always the 1-best), the lists sort with
         // `compare_item_with_length_and_frequency` (`zhuyin.cpp:1129-1144`),
-        // not the pinyin sort word.
-        session.set_candidate_ranking(oxpinyin::engine::CandidateRanking::LengthThenFrequency);
-        // libzhuyin's trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`),
-        // not libpinyin's `<2, 3>`: one value per node, one sentence tail.
-        session.set_nbest_shape(oxpinyin::engine::NbestShape::ZHUYIN);
+        // and the trellis is `PhoneticLookup<1, 1>` (`zhuyin.cpp:50`) — see
+        // `Session::set_law`.
+        self.core
+            .runtime
+            .session(&mut core.session)
+            .set_law(oxpinyin::engine::Law::Zhuyin);
         CapiInstance {
             owner,
             core,

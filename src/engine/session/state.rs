@@ -18,9 +18,7 @@ where
             model,
             state: SessionState {
                 options: settings.options(),
-                collapse_sentence_rows_to_best: false,
-                candidate_ranking: CandidateRanking::SortWord,
-                nbest_shape: crate::engine::nbest::NbestShape::default(),
+                law: Law::Pinyin,
                 defer_list_builds: false,
                 input: InputBuffer::default(),
                 record: SelectionRecord::default(),
@@ -68,7 +66,7 @@ where
     }
 
     /// The sort word that orders this session's candidate lists under its
-    /// [`CandidateRanking`].
+    /// [`Law`].
     ///
     /// The zhuyin comparator has no span key, and the span key would always
     /// tie on a zhuyin list anyway: a phrase length is a key count
@@ -80,9 +78,9 @@ where
     /// frequency (`zhuyin.cpp:1499-1512`, `:1229-1270`), which this scan does
     /// not produce.
     pub(super) fn rank_word(&self) -> u32 {
-        match self.candidate_ranking {
-            CandidateRanking::SortWord => self.lookup.sort_word,
-            CandidateRanking::LengthThenFrequency => SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY,
+        match self.law {
+            Law::Pinyin => self.lookup.sort_word,
+            Law::Zhuyin => SORT_BY_PHRASE_LENGTH | SORT_BY_FREQUENCY,
         }
     }
 
@@ -454,8 +452,10 @@ where
         self.refresh()
     }
 
-    /// Collapses the prepended sentence rows onto the 1-best row — the
-    /// libzhuyin display law. Off by default: the pinyin surface keeps one
+    /// Sets the surface's upstream law ([`Law`]). [`Law::Pinyin`] by default.
+    ///
+    /// Under [`Law::Zhuyin`] the prepended sentence rows collapse onto the
+    /// 1-best row — the libzhuyin display law; the pinyin surface keeps one
     /// candidate row per n-best sentence.
     ///
     /// The two upstream surfaces prepend the same `m_nbest_results.size()`
@@ -474,18 +474,13 @@ where
     /// equals a non-first row's own text never collides there (the rows all
     /// display the 1-best string), so it must not be absorbed here either.
     ///
-    /// The mode also picks the facade's parse order: with it, a full-pinyin
+    /// The zhuyin law also picks the facade's parse order: a full-pinyin
     /// parse omits the resplit and divided passes (`zhuyin.cpp:1038-1040`).
-    /// Like the option word, it reaches the matrix at the next parse.
-    pub fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
-        self.collapse_sentence_rows_to_best = collapse;
-    }
-
-    /// Selects the comparator the candidate lists are sorted with: the
-    /// pinyin facade's sort word ([`CandidateRanking::SortWord`], the
-    /// default) or libzhuyin's ([`CandidateRanking::LengthThenFrequency`]).
-    pub fn set_candidate_ranking(&mut self, ranking: CandidateRanking) {
-        self.candidate_ranking = ranking;
+    /// Like the option word, that reaches the matrix at the next parse. The
+    /// comparator applies at the next list build, and the trellis shape at
+    /// the next sentence lookup.
+    pub fn set_law(&mut self, law: Law) {
+        self.law = law;
     }
 
     /// Selects whether the parse seams ([`Session::replace_raw`] and its
@@ -505,18 +500,5 @@ where
     /// its own re-anchored window ([`Session::candidates_at`]).
     pub(crate) fn set_defer_list_builds(&mut self, defer: bool) {
         self.defer_list_builds = defer;
-    }
-
-    /// Selects the n-best trellis's `<nstore, nbest>` for this surface —
-    /// upstream instantiates `PhoneticLookup<2, 3>` for libpinyin
-    /// (`pinyin.cpp:55`) and `PhoneticLookup<1, 1>` for libzhuyin
-    /// (`zhuyin.cpp:50`), so the two facades prune the trellis to different
-    /// depths and extract a different number of sentence tails. The pinyin
-    /// shape is the default; a zhuyin facade sets
-    /// [`NbestShape::ZHUYIN`](crate::engine::NbestShape::ZHUYIN) at instance
-    /// allocation, beside the sentence-row display law. Takes effect at the
-    /// next sentence lookup.
-    pub fn set_nbest_shape(&mut self, shape: crate::engine::nbest::NbestShape) {
-        self.nbest_shape = shape;
     }
 }

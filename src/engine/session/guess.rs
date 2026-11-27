@@ -101,7 +101,7 @@ where
             &self.model,
             &seeds,
             Some(&self.constraints),
-            self.nbest_shape,
+            self.law.nbest_shape(),
         )?;
         self.refresh_after_parse()?;
         Ok(true)

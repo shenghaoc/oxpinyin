@@ -2166,7 +2166,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
         "the phrase colliding with the second row's own text is absorbed"
     );
 
-    session.set_collapse_sentence_rows_to_best(true);
+    session.set_law(crate::engine::Law::Zhuyin);
     session.refresh().expect("refresh cannot fail");
     let sentences: Vec<&str> = session
         .candidates()
@@ -2258,7 +2258,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
         keys: 2,
         span: 5,
     }];
-    session.set_collapse_sentence_rows_to_best(true);
+    session.set_law(crate::engine::Law::Zhuyin);
     let window = session
         .candidates_ending_at(2)
         .expect("offset 2 is in range");
@@ -2567,7 +2567,7 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
         session
             .set_options(OptionBits::from_bits_retain(0x18a))
             .expect("options");
-        session.set_collapse_sentence_rows_to_best(true);
+        session.set_law(crate::engine::Law::Zhuyin);
         session.replace_raw(raw).expect("full pinyin parse");
         assert!(
             !session
@@ -2578,7 +2578,7 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
             "zhuyin's full-pinyin matrix omits the split passes"
         );
 
-        session.set_collapse_sentence_rows_to_best(false);
+        session.set_law(crate::engine::Law::Pinyin);
         assert!(
             !session
                 .candidates_at(offset)
@@ -2593,7 +2593,7 @@ fn the_collapse_mode_reaches_the_split_windows_at_the_next_parse() {
         assert_eq!(row.consumed_bytes(), end - offset);
         assert_eq!(session.raw_input(), raw);
 
-        session.set_collapse_sentence_rows_to_best(true);
+        session.set_law(crate::engine::Law::Zhuyin);
         session.replace_raw(raw).expect("zhuyin parse");
         assert!(
             !session
@@ -2631,7 +2631,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     assert!(pinyin_keys.contains(&(2, 4)), "the divided `an` is a key");
     assert!(session.spans_a_matrix_key(2));
 
-    session.set_collapse_sentence_rows_to_best(true);
+    session.set_law(crate::engine::Law::Zhuyin);
     session.replace_raw("xian").expect("zhuyin parse");
     let (zhuyin_keys, parsed) = spans(&session);
     assert_eq!(parsed, 4);
@@ -2643,7 +2643,7 @@ fn collapse_mode_selects_the_one_matrix_every_reader_projects() {
     assert!(!session.spans_a_matrix_key(2));
     assert_eq!(session.full_parsed_len(), 4);
 
-    session.set_collapse_sentence_rows_to_best(false);
+    session.set_law(crate::engine::Law::Pinyin);
     session.replace_raw("xian").expect("pinyin parse");
     assert_eq!(spans(&session).0, pinyin_keys, "pinyin topology returns");
     assert!(session.spans_a_matrix_key(2));

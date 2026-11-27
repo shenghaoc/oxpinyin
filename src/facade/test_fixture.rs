@@ -165,11 +165,7 @@ pub(crate) fn native_instance(context: &ContextCore, law: UserConfLaw) -> Instan
     let mut instance = context.alloc_instance();
     if law == UserConfLaw::Zhuyin {
         let mut view = instance.bind(&context.runtime);
-        view.session.set_collapse_sentence_rows_to_best(true);
-        view.session
-            .set_candidate_ranking(crate::engine::CandidateRanking::LengthThenFrequency);
-        view.session
-            .set_nbest_shape(crate::engine::NbestShape::ZHUYIN);
+        view.session.set_law(crate::engine::Law::Zhuyin);
     }
     instance
 }
@@ -190,9 +186,7 @@ pub(crate) fn published(
         native_offset(context, instance, offset),
         None,
     );
-    let mapper = instance
-        .bind(&context.runtime)
-        .publication_bound_mapper(true);
+    let mapper = instance.bind(&context.runtime).publication_bound_mapper();
     crate::facade::PublishedRow {
         begin: u16::try_from(offset).unwrap(),
         end: u16::try_from(mapper(target.span_end)).unwrap(),
@@ -208,7 +202,7 @@ pub(crate) fn choose(
 ) -> Selection {
     instance
         .bind(&context.runtime)
-        .select_published(row, true)
+        .select_published(row)
         .unwrap()
 }
 

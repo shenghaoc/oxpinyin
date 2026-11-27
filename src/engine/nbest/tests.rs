@@ -1131,5 +1131,8 @@ fn the_zhuyin_shape_keeps_one_tail_with_batch_ties() {
         Some("你好".into()),
         "earlier batch position wins ties"
     );
-    assert_eq!(NbestShape::default(), NbestShape::PINYIN);
+    assert_eq!(
+        crate::engine::Law::default().nbest_shape(),
+        NbestShape::PINYIN
+    );
 }

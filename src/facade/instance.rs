@@ -149,8 +149,6 @@ struct ValidatedLayout {
     /// That parse's key images, or `None` when session coordinates were
     /// the original ones.
     images: Option<Vec<KeyImage>>,
-    /// Whether the images came from a double-pinyin parse.
-    double_pinyin: bool,
 }
 
 /// One operation's composition and storage borrows.
@@ -283,7 +281,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// Returns [`EngineError`] when `offset` exceeds the active parse's
     /// consumed input, per the range law above.
     pub fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        self.validate_abi_lookup_offset(offset, false)
+        self.validate_abi_lookup_offset(offset, crate::engine::Law::Pinyin)
     }
 
     pub(crate) fn validate_lookup_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
@@ -495,11 +493,7 @@ impl<
     /// # Errors
     ///
     /// Returns [`EngineError`] from the engine's selection.
-    pub fn select_published(
-        &mut self,
-        row: &PublishedRow,
-        map_double_pinyin: bool,
-    ) -> Result<Selection, EngineError> {
+    pub fn select_published(&mut self, row: &PublishedRow) -> Result<Selection, EngineError> {
         self.note_validation();
         let (begin, end) = (usize::from(row.begin), usize::from(row.end));
         let size = if self.session.selection_constraint_size() == 0 {
@@ -510,7 +504,7 @@ impl<
         if end > size {
             return self.session.refuse_selection();
         }
-        let (start, stop, spells) = match self.abi_key_images(map_double_pinyin) {
+        let (start, stop, spells) = match self.abi_key_images() {
             Some(images) => {
                 // The pin's own columns (`fill_matrix`, `resplit_step`,
                 // `inner_split_step`; `phonetic_key_matrix.cpp:27-200`), in
@@ -543,15 +537,15 @@ impl<
     /// The base keys of the active transformed parse, each with its
     /// original span and its image in session coordinates, or `None` for
     /// plain and index-parsed full pinyin, whose session coordinates are
-    /// the original ones.
-    fn abi_key_images(&self, map_double_pinyin: bool) -> Option<Vec<KeyImage>> {
+    /// the original ones. Only the pinyin facade parses double pinyin.
+    fn abi_key_images(&self) -> Option<Vec<KeyImage>> {
         match &self.mode_parse {
             Some(ModeParse::Zhuyin(parse)) => {
                 Some(key_images(parse.keys().iter().map(|item| {
                     (item.start(), item.end(), item.key().text().len())
                 })))
             }
-            Some(ModeParse::Double(parse)) if map_double_pinyin => {
+            Some(ModeParse::Double(parse)) => {
                 Some(key_images(parse.keys().iter().map(|item| {
                     (item.start(), item.end(), item.key().text().len())
                 })))
@@ -569,11 +563,8 @@ impl<
     /// position inside a key, such as a divided or resplit column
     /// (`phonetic_key_matrix.cpp:150-200`), to the same distance into the
     /// key's original span.
-    pub fn publication_bound_mapper(
-        &self,
-        map_double_pinyin: bool,
-    ) -> impl Fn(usize) -> usize + use<S, E> {
-        let images = self.abi_key_images(map_double_pinyin);
+    pub fn publication_bound_mapper(&self) -> impl Fn(usize) -> usize + use<S, E> {
+        let images = self.abi_key_images();
         move |offset| {
             images
                 .as_ref()
@@ -603,8 +594,7 @@ impl<
     /// array as the last validation laid it out. An offset at or past that
     /// array's length refuses (`phonetic_lookup.cpp:88-90`). Any other
     /// offset maps through that validation's keys to session coordinates.
-    /// The caller selects the transformed seams its facade can populate.
-    pub fn clear_abi_constraint(&mut self, offset: usize, map_double_pinyin: bool) -> bool {
+    pub fn clear_abi_constraint(&mut self, offset: usize) -> bool {
         let layout = &self.validated;
         if offset >= layout.columns {
             return false;
@@ -612,7 +602,6 @@ impl<
         let session_offset = layout
             .images
             .as_deref()
-            .filter(|_| map_double_pinyin || !layout.double_pinyin)
             .map_or(offset, |images| session_bound(images, offset, false));
         self.session.clear_constraint(session_offset)
     }
@@ -629,7 +618,7 @@ impl<
     /// it as the pin does (`phonetic_key_matrix.cpp:592-595`). The layout
     /// records the bounds for subsequent clears.
     fn note_validation(&mut self) {
-        let images = self.abi_key_images(true);
+        let images = self.abi_key_images();
         let columns = self.pin_matrix_columns();
         if self.validated.images != images {
             let old = self.validated.images.take();
@@ -657,11 +646,7 @@ impl<
                 },
             );
         }
-        self.validated = ValidatedLayout {
-            columns,
-            double_pinyin: images.is_some() && self.zhuyin_parse().is_none(),
-            images,
-        };
+        self.validated = ValidatedLayout { columns, images };
     }
 
     /// A choose that validates and writes no forcing: the pin's two

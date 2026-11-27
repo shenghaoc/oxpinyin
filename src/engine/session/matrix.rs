@@ -193,9 +193,9 @@ where
     /// Whether the session's scan matrix carries the resplit and divided
     /// passes. zhuyin.cpp:1017-1040 omits the full-pinyin divided/resplit
     /// transforms pinyin.cpp:1521-1523 applies, and every libzhuyin reader
-    /// then reads that one matrix; the collapse mode is the zhuyin facade's.
+    /// then reads that one matrix.
     pub(super) fn scan_divided(&self) -> bool {
-        self.input.full_pinyin() && !self.collapse_sentence_rows_to_best
+        self.input.full_pinyin() && self.law == Law::Pinyin
     }
 
     /// The selected key path and parse length of the last parse.

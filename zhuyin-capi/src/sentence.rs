@@ -213,7 +213,10 @@ pub unsafe extern "C" fn zhuyin_get_character_offset(
         unsafe { crate::ffi::borrow_c_string(phrase) },
     )
     .unwrap_or_default();
-    let char_count = match inst.core.character_offset(&text, offset, true) {
+    let char_count = match inst
+        .core
+        .character_offset(&text, offset, oxpinyin::engine::Law::Zhuyin)
+    {
         Ok(CharacterOffset::Found(char_count)) => char_count,
         // The walk's own `false` still stores the length it reached
         // (`*plength = length`, `zhuyin.cpp:2192`); the earlier returns (no
@@ -386,7 +389,7 @@ fn guess_candidates_result(
     // register row 66).
     let normalized = inst
         .core
-        .abi_candidate_offset(offset, true)
+        .abi_candidate_offset(offset, oxpinyin::engine::Law::Zhuyin)
         .unwrap_or_else(|_| std::process::abort());
     // The before-cursor entry searches the spans ENDING at the offset
     // (the engine's backward-anchored window builder, the pin's

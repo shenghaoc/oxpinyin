@@ -256,7 +256,10 @@ pub unsafe extern "C" fn pinyin_get_character_offset(
         unsafe { crate::ffi::borrow_c_string(phrase) },
     )
     .unwrap_or_default();
-    let char_count = match inst.core.character_offset(&text, offset, false) {
+    let char_count = match inst
+        .core
+        .character_offset(&text, offset, oxpinyin::engine::Law::Pinyin)
+    {
         Ok(CharacterOffset::Found(char_count)) => char_count,
         // The walk's own `false` still stores the length it reached
         // (`*plength = length`, `pinyin.cpp:3238`); the earlier returns (no
@@ -482,7 +485,10 @@ pub unsafe extern "C" fn pinyin_guess_candidates(
     // (`pinyin.cpp:2226`), and `get_column_size` asserts past the matrix
     // (`phonetic_key_matrix.h:103`; register row 66). The leading-separator
     // refusal keeps its silent `false`.
-    let normalized = match inst.core.abi_candidate_offset(offset, false) {
+    let normalized = match inst
+        .core
+        .abi_candidate_offset(offset, oxpinyin::engine::Law::Pinyin)
+    {
         Ok(normalized) => normalized,
         Err(oxpinyin::facade::CursorFault::PinAssert) => std::process::abort(),
         Err(oxpinyin::facade::CursorFault::Unreadable) => return false,

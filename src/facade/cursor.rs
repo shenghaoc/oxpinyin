@@ -14,6 +14,7 @@
 //! same separator); double pinyin and the zhuyin keyboards hold no
 //! zero-key columns, so the law steps their parse's key spans only.
 
+use crate::engine::Law;
 use crate::engine::{EngineError, KeySpans, MatrixKey};
 
 use crate::facade::instance::{InstanceState, InstanceView, ModeParse};
@@ -283,7 +284,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     ///
     /// Forwards [`EngineError`] where the pin aborts.
     pub fn left_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        self.abi_left_offset(offset, false)
+        self.abi_left_offset(offset, Law::Pinyin)
     }
 
     fn left_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
@@ -398,7 +399,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// [`Self::mode_input`]'s dispatch: plain full pinyin walks the
     /// session's own scan matrix; the other modes walk their parse's keys
     /// over the stored original input. The first result is the character
-    /// count on success, or `None` on refusal. `zhuyin` selects the
+    /// count on success, or `None` on refusal. `law` selects the
     /// calling facade's zero-key rule. The second result says whether
     /// the walk ran and the C facade must write its output parameter.
     ///
@@ -410,12 +411,10 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
         &self,
         phrase: &crate::vocab::PhraseText,
         offset: usize,
-        zhuyin: bool,
+        law: Law,
     ) -> Result<crate::engine::CharacterOffset, EngineError> {
         let Some(source) = self.span_source() else {
-            return self
-                .session
-                .character_offset_with_walk(phrase, offset, zhuyin);
+            return self.session.character_offset_with_walk(phrase, offset, law);
         };
         let columns = crate::engine::matrix_columns(
             source.input,
@@ -428,7 +427,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
             self.session.dictionary(),
             phrase,
             offset,
-            zhuyin,
+            law,
         )
     }
 
@@ -480,18 +479,18 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     ///
     /// # Errors
     /// Returns the pin's zhuyin zero-column assertion as an error.
-    pub fn abi_key_at(&self, offset: usize, zhuyin: bool) -> Result<Option<AbiItem>, EngineError> {
+    pub fn abi_key_at(&self, offset: usize, law: Law) -> Result<Option<AbiItem>, EngineError> {
         let columns = self.abi_columns();
         if offset >= columns.len().saturating_sub(1) {
             return Ok(None);
         }
-        if zhuyin && offset > 0 && columns.packs_zero(offset - 1) {
+        if law == Law::Zhuyin && offset > 0 && columns.packs_zero(offset - 1) {
             return Err(EngineError::ZeroKeyOffsetCheck);
         }
         let Some(mut item) = columns.get(offset) else {
             return Ok(None);
         };
-        if !zhuyin {
+        if law == Law::Pinyin {
             let mut at = offset;
             while item.0 == 0 && at + 1 < columns.len() {
                 at += 1;
@@ -511,20 +510,20 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     pub fn validate_abi_lookup_offset(
         &self,
         offset: usize,
-        zhuyin: bool,
+        law: Law,
     ) -> Result<usize, EngineError> {
-        self.validate_abi_lookup_offset_in(self.mode_key_source(), offset, zhuyin)
+        self.validate_abi_lookup_offset_in(self.mode_key_source(), offset, law)
     }
 
     fn validate_abi_lookup_offset_in(
         &self,
         keys: ModeKeys<'_>,
         offset: usize,
-        zhuyin: bool,
+        law: Law,
     ) -> Result<usize, EngineError> {
         let columns = self.abi_columns_over(keys);
         crate::engine::check_lookup_offset_range(self.parsed_len, offset)?;
-        if zhuyin {
+        if law == Law::Zhuyin {
             if offset > 0 && columns.packs_zero(offset - 1) {
                 return Err(EngineError::ZeroKeyOffsetCheck);
             }
@@ -557,19 +556,21 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     ///
     /// [`CursorFault::PinAssert`] where the pin asserts, and
     /// [`CursorFault::Unreadable`] where the lookup is refused.
-    pub fn abi_candidate_offset(&self, offset: usize, zhuyin: bool) -> Result<usize, CursorFault> {
+    pub fn abi_candidate_offset(&self, offset: usize, law: Law) -> Result<usize, CursorFault> {
         if offset > self.pin_matrix_columns() {
             return Err(CursorFault::PinAssert);
         }
-        match self.validate_abi_lookup_offset(offset, zhuyin) {
+        match self.validate_abi_lookup_offset(offset, law) {
             Ok(normalized) => Ok(normalized),
             Err(EngineError::LookupOffsetOutOfRange { offset, len })
-                if !zhuyin && offset == len + 1 =>
+                if law == Law::Pinyin && offset == len + 1 =>
             {
                 self.validate_lookup_offset(len)
                     .map_err(|_| CursorFault::Unreadable)
             }
-            Err(EngineError::ZeroKeyOffsetCheck) if !zhuyin => Err(CursorFault::Unreadable),
+            Err(EngineError::ZeroKeyOffsetCheck) if law == Law::Pinyin => {
+                Err(CursorFault::Unreadable)
+            }
             Err(error) => Err(CursorFault::of(&error, CursorLaw::CheckOffset)),
         }
     }
@@ -578,8 +579,8 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     ///
     /// # Errors
     /// Returns the pin's zero-column assertion as an error.
-    pub fn abi_left_offset(&self, offset: usize, zhuyin: bool) -> Result<usize, EngineError> {
-        if !zhuyin {
+    pub fn abi_left_offset(&self, offset: usize, law: Law) -> Result<usize, EngineError> {
+        if law == Law::Pinyin {
             return self.left_offset_impl(offset);
         }
         let columns = self.abi_columns();
@@ -608,7 +609,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     #[cfg(test)]
     #[must_use]
     pub fn key_at(&self, offset: usize) -> Option<KeyAt> {
-        let (packed, begin, end) = self.abi_key_at(offset, false).ok()??;
+        let (packed, begin, end) = self.abi_key_at(offset, Law::Pinyin).ok()??;
         if packed == 0 {
             return None;
         }
