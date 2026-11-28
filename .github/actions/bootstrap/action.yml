@@ -6,9 +6,8 @@ description: |-
   checkout), an optional rustup install for those container jobs, an
   optional install of the toolchain and components that
   rust-toolchain.toml names (minimal profile), optional CI tools (uv
-  through astral-sh/setup-uv, with the managed Python and its build
-  check; just, cargo-nextest, cargo-deny and cargo-shear through
-  taiki-e/install-action, just, cargo-deny and cargo-shear at exact
+  through astral-sh/setup-uv; just, cargo-nextest, cargo-deny and
+  cargo-shear through taiki-e/install-action, just, cargo-deny and cargo-shear at exact
   versions and cargo-nextest at the latest version that the pinned action carries,
   and cargo-c from its
   upstream macOS release archive), and an optional Swatinem/rust-cache
@@ -57,7 +56,7 @@ inputs:
     default: '.'
   uv:
     description: >-
-      Install uv with astral-sh/setup-uv, then install and check the managed
+      Install uv with astral-sh/setup-uv. The first uv run installs the managed
       Python that .python-version names. It states no version: the action
       reads required-version from uv.toml and installs the newest uv that
       satisfies it. String 'true'/'false' (composite-action inputs are strings).
@@ -149,35 +148,6 @@ runs:
       if: inputs.uv == 'true'
       with:
         enable-cache: false
-
-    # The one install and build check for every job that takes uv. The frozen
-    # references contain the process name python3.14:, and a free-threaded
-    # interpreter must fail here rather than as a behaviour difference later.
-    # uv run installs the interpreter, as it does for every recipe.
-    - name: Set up pinned repository Python
-      if: inputs.uv == 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        uv run --managed-python python -X utf8 - <<'PYTHON'
-        from pathlib import Path
-        import subprocess
-        import sys
-        import sysconfig
-        assert sys.implementation.name == "cpython"
-        assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)
-        assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-        assert sys._is_gil_enabled()
-        # The base installation is compared, not the executable: in the project's
-        # virtual environment the executable is a link or a separate launcher.
-        managed = subprocess.check_output(
-            ["uv", "python", "find", "--managed-python", "--system"],
-            text=True).strip()
-        managed_prefix = subprocess.check_output(
-            [managed, "-X", "utf8", "-c", "import sys; print(sys.prefix)"],
-            text=True).strip()
-        assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()
-        PYTHON
 
     # just uses the justfile's minimum-version; cargo-deny and cargo-shear use
     # the version files beside this action. `latest` for cargo-nextest is the

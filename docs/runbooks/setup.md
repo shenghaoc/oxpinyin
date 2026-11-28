@@ -220,34 +220,11 @@ distribution package on Linux, or `cargo install just --locked`.
 
 The first `uv run` provisions the interpreter. uv reads `.python-version` and,
 when that interpreter is missing, downloads it; `uv.toml` permits only managed
-interpreters. A plain version request prefers the GIL-enabled build, and the
-check below rejects a free-threaded build. No recipe runs `uv python install`.
+interpreters. No recipe runs `uv python install`.
 On Windows, that command deletes and creates uv's minor-version junction again
 at every call, and a Python that starts through the junction in that moment
 cannot import its standard library. `just doctor` installs nothing, and names
-`uv python install` when the interpreter is missing. Verify the interpreter:
-
-```bash
-uv run --managed-python python -X utf8 - <<'PYTHON'
-from pathlib import Path
-import subprocess
-import sys
-import sysconfig
-assert sys.implementation.name == "cpython"
-assert sys.version_info.releaselevel == "final" and (3, 14, 0) <= sys.version_info[:3] < (3, 15, 0)
-assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
-assert sys._is_gil_enabled()
-# The base installation is compared, not the executable: in the project's
-# virtual environment the executable is a link or a separate launcher.
-managed = subprocess.check_output(
-    ["uv", "python", "find", "--managed-python", "--system"],
-    text=True).strip()
-managed_prefix = subprocess.check_output(
-    [managed, "-X", "utf8", "-c", "import sys; print(sys.prefix)"],
-    text=True).strip()
-assert Path(sys.base_prefix).resolve() == Path(managed_prefix).resolve()
-PYTHON
-```
+`uv python install` when the interpreter is missing.
 
 `.python-version` is the one place where the interpreter request is written.
 Inside the checkout, `uv run --managed-python python` and

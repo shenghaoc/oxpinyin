@@ -55,12 +55,12 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
         --record /opt/oracle-versions.txt
 
 # uv and the managed interpreter that .python-version names, as uv's Docker guide
-# installs them (https://docs.astral.sh/uv/guides/integration/docker/): the uv image is
-# pinned to its multi-architecture index digest, a version uv.toml's required-version
-# accepts. Every tools.dev call in an image runs this interpreter; Debian's python3 serves
+# installs them (https://docs.astral.sh/uv/guides/integration/docker/): the uv image
+# takes the newest uv, and uv.toml's required-version states the minimum.
+# Every tools.dev call in an image runs this interpreter; Debian's python3 serves
 # only versions.py above, which runs before uv exists, and the oracle builder (build.py). Behind a TLS-intercepting proxy the
 # optional `cacert` secret is trusted for the interpreter download.
-COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY .python-version /opt/python-pin/.python-version
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \

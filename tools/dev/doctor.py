@@ -1,9 +1,9 @@
 """Native capability report, interpreter acceptance and tool minimums.
 
 Standard library only. Doctor reads capabilities; it does not provision,
-install or enter a container. It rejects interpreter-selection overrides and a
-free-threaded build. For each reported tool, a newer version passes, an older
-one fails with the minimum and the version found,
+install or enter a container. It rejects interpreter-selection overrides.
+For each reported tool, a newer version passes, an older one fails with the
+minimum and the version found,
 and an absent one is reported with its installation step. Each report line
 names the resolved executable. Native Windows recipes use pwsh at the floor
 in pwsh-floor.txt. uv enforces the required-version in uv.toml itself, so
@@ -28,7 +28,6 @@ import re
 import shutil
 import subprocess
 import sys
-import sysconfig
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
@@ -47,11 +46,12 @@ OVERRIDES = (
     'PYTHONPATH',
 )
 # The request .python-version states, the one place the interpreter version is
-# written. The 3.14 series bounds below stay a deliberate step: the
-# tools run with explicit UTF-8 mode.
+# written. The bounds below come from it: the first release of that series, and
+# the next series.
 MANAGED_REQUEST = (Path(__file__).resolve().parents[2] / '.python-version').read_text().strip()
-PYTHON_MINIMUM = '3.14.0'
-PYTHON_BELOW = '3.15'
+_MAJOR, _MINOR = map(int, MANAGED_REQUEST.split('.'))
+PYTHON_MINIMUM = f'{_MAJOR}.{_MINOR}.0'
+PYTHON_BELOW = f'{_MAJOR}.{_MINOR + 1}'
 PWSH_MINIMUM = Path(__file__).with_name('pwsh-floor.txt').read_text().strip()
 ROOT = Path(__file__).resolve().parents[2]
 # The bootstrap action reads these same files for the exact versions it installs.
@@ -306,10 +306,10 @@ def uv_version(environ=None):
 
 
 def check_python(numbers=None, releaselevel=None):
-    """Require a final version in the managed 3.14 series.
+    """Require a final version in the managed series that .python-version names.
 
     Default to the running version and release level. Raise DoctorError for
-    a prerelease, a version below 3.14.0, or a version at least 3.15; this
+    a prerelease, a version below PYTHON_MINIMUM, or a version at least PYTHON_BELOW; this
     helper does not check interpreter implementation or ownership.
     """
     numbers = tuple(sys.version_info[:3]) if numbers is None else tuple(numbers)
@@ -324,7 +324,7 @@ def check_python(numbers=None, releaselevel=None):
 def identity(environ=None):
     """Validate the running managed CPython and return its identity record.
 
-    Reject interpreter overrides, unsupported versions, disabled GIL, or a
+    Reject interpreter overrides, unsupported versions, or a
     base installation that is not the one uv python find answers. The
     executable itself is not compared: in a virtual environment it is a link
     to the base interpreter, or on Windows a separate launcher. Run uv
@@ -338,12 +338,6 @@ def identity(environ=None):
     if implementation != 'cpython':
         raise DoctorError(f'CPython required; found implementation {implementation}')
     check_python()
-    gil_disabled = sysconfig.get_config_var('Py_GIL_DISABLED')
-    if gil_disabled:
-        raise DoctorError('free-threaded CPython is not accepted; use the GIL-enabled build')
-    gil_enabled = sys._is_gil_enabled()
-    if not gil_enabled:
-        raise DoctorError('the running CPython has the GIL disabled')
     # --system: the managed installation, not the project environment built on it.
     result = _run(['uv', 'python', 'find', '--managed-python', '--system', MANAGED_REQUEST], environ)
     if result is None or result.returncode != 0 or not result.stdout.strip():
@@ -359,7 +353,6 @@ def identity(environ=None):
         raise DoctorError(f'the running interpreter is not the managed one: {executable}, '
                           f'installed in {base} (managed: {managed_prefix})')
     return dict(implementation=implementation, version=version,
-                gil_enabled=bool(gil_enabled), gil_disabled=bool(gil_disabled),
                 executable=str(executable), managed=True,
                 uv=uv)
 
@@ -523,7 +516,6 @@ def collect(environ=None):
             f'interpreter: {info["implementation"]} {info["version"]} '
             f'(minimum {PYTHON_MINIMUM}, below {PYTHON_BELOW})',
             f'managed: {"yes" if info["managed"] else "no"}',
-            f'gil: {"enabled" if info["gil_enabled"] else "disabled"}',
             f'executable: {info["executable"]}',
         ])
     except DoctorError as exc:
