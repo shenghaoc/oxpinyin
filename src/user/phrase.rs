@@ -174,7 +174,7 @@ impl UserPronunciation {
     /// phrase is created with (`pinyin.cpp:597-600`) and never one added
     /// to an existing phrase (`pinyin.cpp:569-582`, `add_pronunciation`
     /// without `add_index`).
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     #[must_use]
     pub const fn indexed(&self) -> bool {
         self.indexed
@@ -214,14 +214,14 @@ pub struct UserPhrase {
 
 impl UserPhrase {
     /// The allocated token, including the configured target library's index.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
     #[must_use]
     pub const fn token(&self) -> PhraseToken {
         self.token
     }
 
     /// Exact stored words, including zero words and non-scalars.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
     #[must_use]
     pub fn words(&self) -> &[u32] {
         &self.text

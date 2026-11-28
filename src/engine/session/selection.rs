@@ -107,7 +107,7 @@ impl SessionState {
     /// occur where the probe is used: a partial tail needs a planted user
     /// bigram, the store's own aborts need one or a failed container, and
     /// no C API call makes either. Reads only.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub(crate) fn training_aborts(&self, index: u8) -> bool {
         match self.training_row(index) {
             Err(PinAbort) => true,
@@ -266,7 +266,7 @@ where
     /// zero (`phonetic_lookup.cpp:203`). The store and the rows are read as
     /// [`Session::select_nbest_row`] reads them, without validation. Reads
     /// only.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub(crate) fn nbest_choose_aborts(&self, rank: u8) -> bool {
         let state = self.state.borrow();
         let (Some(best), Some(chosen)) = (

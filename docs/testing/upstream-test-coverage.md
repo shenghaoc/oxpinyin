@@ -198,6 +198,11 @@ AFL++ runtime. Either build reads one input from standard input when afl-fuzz
 does not run it, so an input reproduces by running the executable with that
 input on standard input.
 
+The interfaces of `oxpinyin` and `oxpinyin-capi` that only the fuzz targets use
+compile only with `--cfg fuzzing`. cargo-afl passes this flag to every crate.
+A build or a lint of `fuzz/` without cargo-afl must set it:
+`RUSTFLAGS="--cfg fuzzing" cargo build`.
+
 - **Tooling.** `tools/dev/fuzz.py` holds the fuzz logic, and `just fuzz-setup`
   and `just fuzz` are one-line recipes that call it
   (`python -m tools.dev.fuzz setup` and `run`); `just fuzz-minimize` calls
