@@ -531,6 +531,8 @@ Native Windows uses pwsh at or above the minimum in
 also in a Developer PowerShell session. Windows PowerShell can change
 empty arguments and embedded quotes before just receives them.
 
+The repository tracks symbolic links, so enable git symlink support before you clone: turn on Developer Mode, or make the clone from an elevated shell (Run as administrator), and run `git config --global core.symlinks true`.
+
 In pwsh:
 
 ```powershell

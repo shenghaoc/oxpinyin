@@ -266,10 +266,12 @@ def companion_headers(*, stage=False, root=ROOT):
         except OSError:
             same = False
         if not same:
-            message = f"error: companion header '{name}' differs between the two crates"
+            message = (f"error: companion header '{name}' is not identical to its target in the other crate; "
+                       'the checkout lacks git symlink support')
             if not stage:
                 message += f':\n         {paths[0]}\n         {paths[1]}\n'
-                message += '       both ship into the same include subdirectory and must be byte-identical.'
+                message += ('       the zhuyin crate tracks the header as a symlink to the pinyin crate; '
+                            'check out again with core.symlinks=true.')
             fail(message)
 
 
