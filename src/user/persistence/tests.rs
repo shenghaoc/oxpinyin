@@ -2916,6 +2916,100 @@ fn init_survives_a_copy_whose_source_iterator_is_not_made() {
     let _store = crate::user::test_session::open_w3(user);
 }
 
+/// Runs a save whose first copy fails its second destination write, in a child that aborts
+/// there. The child first saves once and keeps those files in `before`, next to its user
+/// directory. Answers the files of `before` and the files that the abort left.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+fn files_around_a_failed_destination_write(
+    name: &str,
+    law: UserConfLaw,
+) -> [BTreeMap<String, Vec<u8>>; 2] {
+    fn files_of(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .expect("read the directory")
+            .map(|entry| {
+                let entry = entry.expect("an entry");
+                let name = entry.file_name().to_string_lossy().into_owned();
+                (name, std::fs::read(entry.path()).expect("read a file"))
+            })
+            .collect()
+    }
+    let mut files = None;
+    crate::store::death_test::assert_aborts_in_tempdir(
+        name,
+        |scratch| {
+            let user = scratch.join("user");
+            std::fs::create_dir(&user).expect("the user directory");
+            crate::user::native_fixture::plant_bigram(
+                &user,
+                &[
+                    (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
+                    (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
+                ],
+            );
+        },
+        |scratch| {
+            let user = scratch.join("user");
+            let system = crate::user::native_fixture::system_dir();
+            let token = crate::user::test_session::native_tokens(&system, "你好")[0];
+            let mut store = crate::user::test_session::open_native(&user, &system, law);
+            store.observe_selection(1, token).unwrap();
+            store.save_reporting().unwrap();
+            let before = scratch.join("before");
+            std::fs::create_dir(&before).expect("the before directory");
+            for (name, bytes) in files_of(&user) {
+                std::fs::write(before.join(name), bytes).expect("keep a file");
+            }
+            store.observe_selection(1, token).unwrap();
+            // The first copy writes one record and fails the next.
+            crate::store::fail_destination_write_after(1);
+            let _ = store.save_reporting();
+        },
+        |scratch| {
+            files = Some([
+                files_of(&scratch.join("before")),
+                files_of(&scratch.join("user")),
+            ]);
+        },
+    );
+    files.expect("the parent read the files")
+}
+
+/// Basis: `tkrzwdb_utils.h:65`, `bdb_utils.h:61` (the copy asserts), `pinyin.cpp:1141-1143` (`_write_files` stops before `_rename_files` and `mark_version`).
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn a_pinyin_save_aborts_where_a_copy_fails_a_destination_write() {
+    let [before, after] = files_around_a_failed_destination_write(
+        "user::persistence::tests::a_pinyin_save_aborts_where_a_copy_fails_a_destination_write",
+        UserConfLaw::Pinyin,
+    );
+    for (name, bytes) in &before {
+        assert_eq!(after.get(name), Some(bytes), "{name} was replaced");
+    }
+    assert!(
+        after.keys().any(|name| name.ends_with(".tmp")),
+        "the copy left no staged file: {:?}",
+        after.keys()
+    );
+}
+
+/// Basis: `tkrzwdb_utils.h:65`, `bdb_utils.h:61` (the copy asserts), `zhuyin.cpp:646-691` (each file is renamed after its copy).
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+#[test]
+fn a_zhuyin_save_aborts_where_a_copy_fails_a_destination_write() {
+    let [before, after] = files_around_a_failed_destination_write(
+        "user::persistence::tests::a_zhuyin_save_aborts_where_a_copy_fails_a_destination_write",
+        UserConfLaw::Zhuyin,
+    );
+    assert_eq!(after.get("user.conf"), before.get("user.conf"));
+    let staged: Vec<&String> = after.keys().filter(|name| name.ends_with(".tmp")).collect();
+    assert!(!staged.is_empty(), "the copy left no staged file");
+    for name in staged {
+        let saved = name.strip_suffix(".tmp").expect("a staged name");
+        assert_eq!(after.get(saved), before.get(saved), "{saved} was replaced");
+    }
+}
+
 /// Basis: `pinyin.cpp:1032-1146` (`g_rename` over an absent or, on Unix, empty directory).
 #[test]
 fn a_stale_index_tmp_directory_is_renamed_unless_a_live_file_holds_the_name() {

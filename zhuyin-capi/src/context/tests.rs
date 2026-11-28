@@ -5,108 +5,15 @@
 
 #[cfg(unix)]
 use crate::test_support::directory_reads_as_a_chunk_here;
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::files_of;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::candidates::zhuyin_train;
 
 #[cfg(unix)]
 use crate::context::zhuyin_init;
 
-#[cfg(any(unix, any(feature = "tkrzw", feature = "bdb")))]
+#[cfg(unix)]
 use crate::context::zhuyin_save;
 
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::instance::zhuyin_alloc_instance;
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::instance::zhuyin_free_instance;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::parse::zhuyin_parse_more_chewings;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::sentence::zhuyin_guess_sentence;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::abort_in_child;
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::open_with_user;
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::plant_bigram;
-
-#[cfg(any(unix, any(feature = "tkrzw", feature = "bdb")))]
+#[cfg(unix)]
 use crate::test_support::cstr;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::types::ZhuyinContext;
-
-/// Trains one sentence on `context`, so that the next save writes.
-///
-/// # Safety
-///
-/// `context` is NULL or a live context: `zhuyin_init` returned it and `zhuyin_fini` has not taken
-/// it.
-///
-/// Calls are serial across the context, its sibling instances and its iterators: no other call
-/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
-/// rule).
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-unsafe fn train_once(context: *mut ZhuyinContext) {
-    let instance = unsafe { zhuyin_alloc_instance(context) };
-    assert!(!instance.is_null());
-    unsafe { zhuyin_parse_more_chewings(instance, cstr("su3cl3").as_ptr()) };
-    assert!(unsafe { zhuyin_guess_sentence(instance) });
-    assert!(unsafe { zhuyin_train(instance) });
-    unsafe { zhuyin_free_instance(instance) };
-}
-
-/// The pin's copies assert on a failed destination write
-/// (`tkrzwdb_utils.h:65`, `bdb_utils.h:61`). `zhuyin_save` renames each
-/// file after its copy (`zhuyin.cpp:646-691`), so the save stops with the
-/// earlier files renamed, the failed file still staged and its saved file
-/// unchanged, and `user.conf` not marked again.
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-#[test]
-fn save_aborts_where_a_copy_fails_a_destination_write() {
-    let run = abort_in_child(
-        "context::tests::save_aborts_where_a_copy_fails_a_destination_write",
-        |user| {
-            plant_bigram(
-                user,
-                &[
-                    (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
-                    (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
-                ],
-            );
-            let (context, _instance) = open_with_user(user);
-            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { train_once(context) };
-            assert!(unsafe { zhuyin_save(context) });
-            let before = user.parent().expect("the child's scratch").join("before");
-            std::fs::create_dir(&before).expect("the before directory");
-            for (name, bytes) in files_of(user) {
-                std::fs::write(before.join(name), bytes).expect("keep a file");
-            }
-            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { train_once(context) };
-            // The first copy writes one record and fails the next.
-            oxpinyin::__internal::store::fail_destination_write_after(1);
-            unsafe { zhuyin_save(context) };
-        },
-    );
-    let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
-    let after = files_of(&run.user_dir);
-    assert_eq!(after.get("user.conf"), before.get("user.conf"));
-    let staged: Vec<&String> = after.keys().filter(|name| name.ends_with(".tmp")).collect();
-    assert!(!staged.is_empty(), "the copy left no staged file");
-    for name in staged {
-        let saved = name.strip_suffix(".tmp").expect("a staged name");
-        assert_eq!(after.get(saved), before.get(saved), "{saved} was replaced");
-    }
-}
 
 /// One call over a private system directory whose library is a directory: init maps `merged.bin` (`zhuyin.cpp:199`), the save and
 /// the mask-out map it again (`:589`, `:800`), and the reload of the

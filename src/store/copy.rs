@@ -26,9 +26,9 @@ pub(crate) fn copy(
     walk(&mut |key, value| {
         #[cfg(test)]
         faults::source_read().unwrap_or_else(|_| std::process::abort());
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         let written = faults::destination_write().and_then(|()| set(key, value));
-        #[cfg(not(any(test, feature = "test-hooks")))]
+        #[cfg(not(test))]
         let written = set(key, value);
         written.unwrap_or_else(|_| std::process::abort());
         Ok(())
@@ -36,8 +36,8 @@ pub(crate) fn copy(
     .unwrap_or_else(|_| std::process::abort());
 }
 
-/// Fault injection for callers that reach copy through the store or C facade.
-#[cfg(any(test, feature = "test-hooks"))]
+/// Fault injection for the tests that reach copy through the store.
+#[cfg(test)]
 pub(super) mod faults {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -45,18 +45,15 @@ pub(super) mod faults {
 
     /// The source reads left before each later read fails; `usize::MAX`
     /// never fails.
-    #[cfg(test)]
     static SOURCE_READS: AtomicUsize = AtomicUsize::new(usize::MAX);
     /// The destination writes left before each later write fails.
     static DESTINATION_WRITES: AtomicUsize = AtomicUsize::new(usize::MAX);
     /// The iterator creations left before each later one fails.
-    #[cfg(test)]
     static ITERATORS: AtomicUsize = AtomicUsize::new(usize::MAX);
 
     /// Lets the next `reads` source records of every later copy in this
     /// process through, then fails each source read after them, as a native
     /// walk that reports an error does.
-    #[cfg(test)]
     pub(crate) fn fail_source_read_after(reads: usize) {
         SOURCE_READS.store(reads, Ordering::SeqCst);
     }
@@ -64,8 +61,7 @@ pub(super) mod faults {
     /// Lets the next `writes` destination writes of every later copy in
     /// this process through, then fails each write after them, as a native
     /// `Set` or `put` that reports an error does.
-    #[cfg(feature = "test-hooks")]
-    pub fn fail_destination_write_after(writes: usize) {
+    pub(crate) fn fail_destination_write_after(writes: usize) {
         DESTINATION_WRITES.store(writes, Ordering::SeqCst);
     }
 
@@ -73,7 +69,6 @@ pub(super) mod faults {
     /// process be made, then fails each later one, as a `MakeIterator` or
     /// `DB->cursor` that gives no iterator does. The copy has not begun, so
     /// this failure is soft.
-    #[cfg(test)]
     pub(crate) fn fail_iterator_creation_after(iterators: usize) {
         ITERATORS.store(iterators, Ordering::SeqCst);
     }
@@ -89,7 +84,6 @@ pub(super) mod faults {
         }
     }
 
-    #[cfg(test)]
     pub(super) fn source_read() -> Result<(), StoreError> {
         take(&SOURCE_READS)
     }
@@ -99,7 +93,6 @@ pub(super) mod faults {
     }
 
     /// The fault point before a copy's source iterator is made.
-    #[cfg(test)]
     pub(crate) fn make_iterator() -> Result<(), StoreError> {
         take(&ITERATORS)
     }

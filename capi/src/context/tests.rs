@@ -3,15 +3,9 @@
     reason = "each call passes handles and buffers from this test's own fixture, under the contract in the function's # Safety section"
 )]
 
+use crate::test_support::token_of;
 #[cfg(unix)]
 use crate::test_support::{directory_reads_as_a_chunk_here, init_private};
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::{files_of, train_once};
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::init_at;
-
-use crate::test_support::token_of;
 
 use crate::candidates::{pinyin_choose_candidate, pinyin_train};
 
@@ -30,75 +24,9 @@ use crate::test_support::TempUserDir;
 use crate::test_support::candidate;
 use crate::test_support::open;
 
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::plant_bigram;
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use crate::test_support::system_dir;
-
 use crate::types::PinyinInstance;
 
 use oxpinyin::__internal::vocab::SENTENCE_START;
-
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-use std::path::Path;
-
-/// Copies the regular files of `user` to `before`, next to it.
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-fn keep_before(user: &Path) {
-    let before = user.parent().expect("the child's scratch").join("before");
-    std::fs::create_dir(&before).expect("the before directory");
-    for (name, bytes) in files_of(user) {
-        std::fs::write(before.join(name), bytes).expect("keep a file");
-    }
-}
-
-/// Two whole user-bigram rows: two predecessors, each with an empty gram.
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-fn two_bigram_rows() -> Vec<(Vec<u8>, Vec<u8>)> {
-    vec![
-        (0x0100_0001_u32.to_le_bytes().to_vec(), vec![0; 4]),
-        (0x0100_0002_u32.to_le_bytes().to_vec(), vec![0; 4]),
-    ]
-}
-
-/// The pin's copies assert on a failed destination write
-/// (`tkrzwdb_utils.h:65`, `bdb_utils.h:61`): the save stops in
-/// `_write_files` after one record, before `_rename_files` and
-/// `mark_version` (`pinyin.cpp:1141-1143`), so no saved file is replaced.
-#[cfg(any(feature = "tkrzw", feature = "bdb"))]
-#[test]
-fn save_aborts_where_a_copy_fails_a_destination_write() {
-    let run = crate::test_support::assert_aborts_in_dir(
-        "context::tests::save_aborts_where_a_copy_fails_a_destination_write",
-        |user| {
-            plant_bigram(user, &two_bigram_rows());
-            let context = init_at(&system_dir(), user);
-            assert!(!context.is_null());
-            // `pinyin_save` saves a modified context only (`pinyin.cpp:1136`).
-            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { train_once(context) };
-            assert!(unsafe { pinyin_save(context) });
-            keep_before(user);
-            // SAFETY: `context` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { train_once(context) };
-            // The first copy writes one record and fails the next.
-            oxpinyin::__internal::store::fail_destination_write_after(1);
-            unsafe { pinyin_save(context) };
-        },
-    );
-    let before = files_of(&run.user_dir.parent().expect("scratch").join("before"));
-    let after = files_of(&run.user_dir);
-    for (name, bytes) in &before {
-        assert_eq!(after.get(name), Some(bytes), "{name} was replaced");
-    }
-    assert!(
-        after.keys().any(|name| name.ends_with(".tmp")),
-        "the copy left no staged file: {:?}",
-        after.keys()
-    );
-}
 
 /// One call that maps a system library again over a private system
 /// directory whose library is a directory: the save and
