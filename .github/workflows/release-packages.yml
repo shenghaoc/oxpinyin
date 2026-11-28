@@ -19,7 +19,7 @@
 # deliberately NOT replaced on Debian/Fedora (libpinyin-data is a separate
 # package there and stays); on Arch the data lives inside the libpinyin
 # package the takeover removes, so the Arch lane fetches that package and
-# ships its data directory inside ours — see just packaging release-arch.
+# ships its data directory inside ours (the PKGBUILD of just packaging release-recipe).
 #
 # Image choice: each lane builds on the distro's rolling branch: Debian testing, Fedora Rawhide and
 # Arch. For Debian that is testing (forky). The Debian packages are built
@@ -28,18 +28,23 @@
 # uses BerkeleyDB. Fedora uses fedora:rawhide, not fedora:latest, which is
 # the current stable release.
 #
-# The build is the distro-documented one: each distro's own cargo-c package
-# runs `cargo cinstall` through just packaging install (which completes
-# the .pc), with the backend chosen by cargo-c's ordinary
-# `--no-default-features --features <backend>`. See the header of
-# just packaging release-stage. Each lane builds with its distribution's own
-# build flags, as its libpinyin package does, and the install gate requires
-# BIND_NOW on both shipped libraries.
+# The build is the distribution's own: a generated recipe, built by its own
+# driver (dpkg-buildpackage, rpmbuild -bb, makepkg) with its own cargo, rustc
+# and cargo-c, in the image that driver builds in: debian:testing,
+# fedora:rawhide with mock's @buildsys-build group, and archlinux:base-devel.
+# `just packaging release-recipe` writes the recipe and a source archive that
+# holds the vendored crates, so cargo runs offline (--frozen). The repository's
+# Python writes the recipe and checks the installed result; it never runs in
+# the build. The recipe builds and installs through tools/dev/packaging.mk,
+# which links the shipped libraries with the distribution's own build flags,
+# as its libpinyin package is built. The install gate requires BIND_NOW on both
+# shipped libraries. Each driver strips and splits its debug package as it does
+# by default; only the main packages are attached.
 #
 # Three jobs:
-#   package — 3-container matrix; each child stages the drop-in tree, builds
-#             the distro's package shape, INSTALLS the packages back into
-#             its own container and re-runs the consumer gates against /usr
+#   package — 3-container matrix; each child generates its recipe, builds
+#             the packages with the distribution's driver, INSTALLS them back
+#             into its own container and runs the consumer gates against /usr
 #   attach   — collects every artifact, writes SHA256SUMS and resolves the
 #             release repository through gh, as the upload does
 #   publish  — uploads the assets to the published release with the
@@ -77,9 +82,10 @@ concurrency:
   group: release-packages-${{ github.event.release.id || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# No RUSTFLAGS: the drivers set their own (Fedora's %build_rustflags, makepkg's
+# rust.conf), and a newer distribution rustc must not fail on a new lint.
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
   DEBIAN_FRONTEND: noninteractive
   # gh resolves the repository from GH_REPO: the attach and publish jobs
   # have no checkout and no git remote.
@@ -93,7 +99,7 @@ jobs:
     runs-on: ubuntu-26.04
     container:
       image: ${{ matrix.image }}
-    timeout-minutes: 13
+    timeout-minutes: 9
     defaults:
       run:
         shell: bash
@@ -112,22 +118,17 @@ jobs:
             backend: kyotocabinet
             dbfmt: KyotoCabinet
           - distro: arch
-            image: archlinux:latest
+            image: archlinux:base-devel
             backend: kyotocabinet
             dbfmt: KyotoCabinet
 
     steps:
-      # Essentials + every backend's build-time C dependencies in one
-      # distro-native step. The tkrzw and Kyoto Cabinet backends compile
-      # cxx bridges with the C++ compiler; only the bdb feature runs bindgen,
-      # and no matrix entry builds it, so no libclang; glib2 is a Tier-C
-      # requirement (the shipped .so NEEDs libglib-2.0); the compression -dev packages satisfy Debian's
-      # libtkrzw link demands; cargo-c is the distro's own package, the
-      # same one its libpinyin packaging would use (rustc/cargo still come
-      # from rust-toolchain.toml via the bootstrap below). The case is a
-      # closed set over repository-controlled matrix values — fail-closed
-      # default.
-      - name: Install build dependencies
+      # What the checkout, the uv bootstrap and the recipe generation need: git,
+      # and the distribution's cargo for `cargo vendor` and `cargo tree`. The
+      # build dependencies come from the generated recipe below. Fedora's
+      # buildroot is mock's: the @buildsys-build group. The case is a closed set
+      # over repository-controlled matrix values — fail-closed default.
+      - name: Install the recipe tools
         env:
           DISTRO: ${{ matrix.distro }}
         run: |
@@ -135,23 +136,13 @@ jobs:
           case "$DISTRO" in
           debian)
             apt-get update -qq
-            apt-get install -y --no-install-recommends \
-              bash tar gzip zstd git ca-certificates curl \
-              gcc g++ make pkg-config \
-              libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev \
-              libglib2.0-dev cargo-c dpkg-dev
+            apt-get install -y --no-install-recommends git ca-certificates cargo dpkg-dev
             ;;
           fedora)
-            dnf -y --setopt=install_weak_deps=False install \
-              bash tar gzip zstd git curl ca-certificates \
-              gcc gcc-c++ make pkgconf \
-              kyotocabinet-devel glib2-devel rpm-build redhat-rpm-config cargo-c
+            dnf -y --setopt=install_weak_deps=False install @buildsys-build git ca-certificates cargo
             ;;
           arch)
-            pacman -Sy --noconfirm \
-              git curl tar gzip zstd diffutils \
-              gcc make pkgconf binutils fakeroot debugedit \
-              kyotocabinet glib2 cargo-c
+            pacman -Syu --noconfirm git rust
             ;;
           *)
             echo "unknown distro '$DISTRO'" >&2
@@ -165,12 +156,10 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
-          rustup: 'true'
           uv: 'true'
-      - run: rustup show active-toolchain
 
       # The install libdir per distro. Debian's is the MULTIARCH dir —
-      # resolved with `gcc -print-multiarch`, not arch-name + "-linux-gnu":
+      # resolved with dpkg-architecture, not arch-name + "-linux-gnu":
       # on arm64 the dir is aarch64-linux-gnu while dpkg's arch name is
       # arm64 (they coincide on x86_64, hiding the difference).
       - name: Resolve the install libdir
@@ -179,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$DISTRO" in
-            debian) echo "LIBDIR=/usr/lib/$(gcc -print-multiarch)" ;;
+            debian) echo "LIBDIR=/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)" ;;
             fedora) echo "LIBDIR=/usr/lib64" ;;
             arch)   echo "LIBDIR=/usr/lib" ;;
           esac >> "$GITHUB_ENV"
@@ -202,81 +191,105 @@ jobs:
             arch)   test "$(vercmp "$VERSION" "$BASE")" -lt 0 ;;
           esac
 
-      # release-stage certifies the libtkrzw that its smoke binaries load
-      # against OXPINYIN_TKRZW_LIBRARY (tools/tkrzw/runtime.py), and refuses
-      # an unconfigured runtime. The package depends on the distro's own
-      # libtkrzw: the library that release-deb resolves, the first ldconfig
-      # entry for libtkrzw.so.1, owned by a dpkg package. Name that library.
+      # Arch has no separate data package: the model lives inside the libpinyin
+      # package our takeover removes. Download (not install) that package; the
+      # PKGBUILD ships its data directory in ours, so pinyin_init/zhuyin_init
+      # still have a model afterwards. The file and version come from pacman's
+      # own resolution, not a cache glob, so a stale cache entry can never be
+      # picked up. -dd: print libpinyin alone, not its dependencies as well.
+      - name: Download the Arch libpinyin data
+        if: matrix.distro == 'arch'
+        run: |
+          set -euo pipefail
+          pacman -Sw --noconfirm libpinyin
+          read -r DATA_VER DATA_URL < <(pacman -Sp -dd --print-format '%v %l' libpinyin)
+          DATA_PKG="/var/cache/pacman/pkg/$(basename "$DATA_URL")"
+          [ -f "$DATA_PKG" ] || { echo "::error::downloaded Arch libpinyin package $DATA_PKG missing" >&2; exit 1; }
+          printf 'DATA_ARGS=--data=%s --data-version=%s\n' "$DATA_PKG" "$DATA_VER" >> "$GITHUB_ENV"
+
+      # The recipe and its source archive: HEAD, the vendored crates (cargo vendor
+      # needs the network here, never in the build) and their source replacement.
+      - name: Generate the recipe
+        env:
+          DISTRO: ${{ matrix.distro }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          # DATA_ARGS is unset except on Arch, and splits into its two words there.
+          # shellcheck disable=SC2086
+          uv run --managed-python python -X utf8 -m tools.dev.packaging release-recipe \
+            "$DISTRO" "$BACKEND" "$VERSION" "$PWD/build" ${DATA_ARGS:-}
+
+      # The recipe's own build dependencies, resolved by the distribution's tool.
+      - name: Install the build dependencies
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            debian) apt-get build-dep -y --no-install-recommends "./build/oxpinyin-$VERSION" ;;
+            fedora) dnf -y --setopt=install_weak_deps=False builddep build/SPECS/*.spec ;;
+            arch)
+              # shellcheck disable=SC1091
+              (source build/PKGBUILD && pacman -S --needed --noconfirm "${depends[@]}" "${makedepends[@]}")
+              ;;
+          esac
+          rustc --version
+          cargo --version
+          cargo cbuild --version
+
+      # The distribution's driver builds the binary packages; cargo is offline.
+      # makepkg refuses to run as root, so an unprivileged user runs it.
+      - name: Build the packages
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            debian) (cd "build/oxpinyin-$VERSION" && dpkg-buildpackage -b -uc -us) ;;
+            fedora) rpmbuild --define "_topdir $PWD/build" -bb build/SPECS/*.spec ;;
+            arch)
+              useradd --create-home --shell /bin/bash builder
+              chown -R builder build
+              su builder -c 'cd build && makepkg --noconfirm'
+              ;;
+          esac
+
+      # Only the main packages are release assets, not the debug packages.
+      - name: Collect the release packages
+        env:
+          DISTRO: ${{ matrix.distro }}
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist
+          case "$DISTRO" in
+            debian)
+              base="oxpinyin-libpinyin15-$BACKEND"
+              packages=(build/"${base}_$VERSION"-1_*.deb build/"${base}-dev_$VERSION"-1_*.deb)
+              ;;
+            fedora)
+              name="oxpinyin-libpinyin-$BACKEND"
+              packages=(build/RPMS/*/"$name-$VERSION"-1.*.rpm build/RPMS/*/"$name-devel-$VERSION"-1.*.rpm)
+              ;;
+            arch)
+              packages=(build/"oxpinyin-libpinyin-$BACKEND-$VERSION-1-$(uname -m)".pkg.tar.zst)
+              ;;
+          esac
+          want=2
+          [ "$DISTRO" != arch ] || want=1
+          [ "${#packages[@]}" -eq "$want" ] || { echo "::error::expected $want packages, found: ${packages[*]:-none}" >&2; exit 1; }
+          cp -- "${packages[@]}" dist/
+          ls -l dist
+
+      # The install gate certifies the libtkrzw that its smoke programs load
+      # against OXPINYIN_TKRZW_LIBRARY (tools/tkrzw/runtime.py), and refuses an
+      # unconfigured runtime. The package depends on the distro's own libtkrzw:
+      # the first ldconfig entry for libtkrzw.so.1, owned by a dpkg package.
       - name: Select the distro tkrzw runtime
         if: matrix.backend == 'tkrzw'
         run: uv run --managed-python python -X utf8 -m tools.dev.packaging distro-tkrzw-library --github-env
-
-      # Each lane builds with its distribution's own build flags, taken from
-      # the distribution's own tool, as its libpinyin package is built: the
-      # relink takes LDFLAGS (-z now gives BIND_NOW) and cc-rs takes CFLAGS
-      # and CXXFLAGS for the C++ bridges. The flags stay in this step.
-      - name: Build and stage the drop-in tree
-        env:
-          DISTRO: ${{ matrix.distro }}
-          BACKEND: ${{ matrix.backend }}
-        run: |
-          set -euo pipefail
-          case "$DISTRO" in
-            debian)
-              # hardening=+all is the option of Debian's libpinyin debian/rules.
-              eval "$(DEB_BUILD_MAINT_OPTIONS=hardening=+all dpkg-buildflags --export=sh)"
-              ;;
-            fedora)
-              CFLAGS="$(rpm --eval '%{build_cflags}')"
-              CXXFLAGS="$(rpm --eval '%{build_cxxflags}')"
-              LDFLAGS="$(rpm --eval '%{build_ldflags}')"
-              export CFLAGS CXXFLAGS LDFLAGS CC=gcc
-              ;;
-            arch)
-              # makepkg.conf's flags as the file sets them. Its LDFLAGS carry
-              # the hardening (-z now, -z relro).
-              set +u
-              source /etc/makepkg.conf
-              set -u
-              export CFLAGS CXXFLAGS LDFLAGS
-              ;;
-            *)
-              echo "unknown distro '$DISTRO'" >&2
-              exit 2
-              ;;
-          esac
-          uv run --managed-python python -X utf8 -m tools.dev.packaging release-stage "$BACKEND" \
-            --prefix=/usr --libdir="$LIBDIR" --dest="$PWD/stage"
-
-      - name: Package for this distro
-        env:
-          DISTRO: ${{ matrix.distro }}
-          BACKEND: ${{ matrix.backend }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          case "$DISTRO" in
-            debian) uv run --managed-python python -X utf8 -m tools.dev.packaging release-deb "$BACKEND" "$VERSION" "$PWD/stage" "$LIBDIR" dist ;;
-            fedora) uv run --managed-python python -X utf8 -m tools.dev.packaging release-rpm "$BACKEND" "$VERSION" "$PWD/stage" dist ;;
-            arch)
-              # Arch has no separate data package: the model lives inside
-              # the libpinyin package our takeover removes. Download (not
-              # install) that package and ship its data directory in ours,
-              # so pinyin_init/zhuyin_init still have a model afterwards.
-              # The file and version come from pacman's own resolution, not a
-              # cache glob, so a stale cache entry can never be picked up.
-              # -dd: print libpinyin alone, not its dependencies as well.
-              pacman -Sw --noconfirm libpinyin
-              read -r DATA_VER DATA_URL < <(pacman -Sp -dd --print-format '%v %l' libpinyin)
-              DATA_PKG="/var/cache/pacman/pkg/$(basename "$DATA_URL")"
-              [ -f "$DATA_PKG" ] || { echo "::error::downloaded Arch libpinyin package $DATA_PKG missing" >&2; exit 1; }
-              mkdir -p arch-data
-              tar -xf "$DATA_PKG" -C arch-data --strip-components=4 usr/lib/libpinyin/data
-              [ -f arch-data/table.conf ] || { echo "::error::Arch libpinyin data not found in $DATA_PKG" >&2; exit 1; }
-              uv run --managed-python python -X utf8 -m tools.dev.packaging release-arch "$BACKEND" "$VERSION" "$PWD/stage" dist \
-                --data="$PWD/arch-data" --data-version="$DATA_VER"
-              ;;
-          esac
 
       # The takeover test: install OUR packages into this same container and
       # re-run the gates against the system prefix. Proves the package
@@ -285,14 +298,16 @@ jobs:
       - name: Install test and system gates
         env:
           DISTRO: ${{ matrix.distro }}
+          BACKEND: ${{ matrix.backend }}
           DBFMT: ${{ matrix.dbfmt }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          # libpinyin-data is installed explicitly on Debian/Fedora (it is
-          # only a Recommends on ours) so the init gate below runs against
-          # the distro's real model, as it will on a user's system; the Arch
-          # package carries the data itself.
+          # libpinyin-data is named explicitly on Debian/Fedora, although our
+          # packages already Depend on (Debian) or Require (Fedora) it, so the
+          # install fails if the distribution cannot supply its real model and
+          # the init gate below runs against that model, as it will on a
+          # user's system. The Arch package carries the data itself.
           case "$DISTRO" in
             debian)
               # The md5sums manifest lists each payload file once and only
@@ -307,8 +322,12 @@ jobs:
           esac
           ldconfig
           fail() { echo "::error::gate failed: $*" >&2; exit 1; }
-          # The pin installs its shared libraries with mode 0755.
-          uv run --managed-python python -X utf8 -m tools.dev.packaging check-library-mode "$LIBDIR"
+          # The pin installs its shared libraries with mode 0755, as Fedora's and
+          # Arch's packages ship them; dh_fixperms gives 0644, as Debian's
+          # libpinyin15 ships them.
+          mode=755
+          [ "$DISTRO" != debian ] || mode=644
+          uv run --managed-python python -X utf8 -m tools.dev.packaging check-library-mode "$LIBDIR" "$mode"
           # The distribution's LDFLAGS reached the relink: the shipped
           # libraries bind every symbol at load time, as its libpinyin does.
           for library in libpinyin.so.15 libzhuyin.so.15; do
@@ -364,6 +383,10 @@ jobs:
             || fail "libpinyin smoke compile/link on /usr"
           cc smoke_zhuyin.c -o smoke_zhuyin $(pkg-config --cflags --libs libzhuyin) \
             || fail "libzhuyin smoke compile/link on /usr"
+          # The installed exports, their version tags and the SONAMEs are the
+          # pin's, and the smoke programs load the certified libtkrzw.
+          uv run --managed-python python -X utf8 -m tools.dev.packaging check-installed \
+            "$BACKEND" "$LIBDIR" ./smoke_pinyin ./smoke_zhuyin
           SYSDATA="$(pkg-config --variable=pkgdatadir libpinyin)/data"
           [ -f "$SYSDATA/table.conf" ] || fail "no model at $SYSDATA (table.conf missing)"
           USERDIR="$(mktemp -d)"
