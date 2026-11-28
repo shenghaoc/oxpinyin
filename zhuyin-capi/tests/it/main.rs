@@ -5,7 +5,6 @@
 
 #![expect(unsafe_code, reason = "calls the C ABI and reclaims what it returns")]
 
-mod companion_headers;
 mod foreign_candidates;
 mod import_and_user_store;
 mod init_and_save;
