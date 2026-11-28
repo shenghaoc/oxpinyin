@@ -894,7 +894,7 @@ class Provision:
         # uv selected the managed interpreter. Doctor owns its policy; provisioning
         # keeps the successful verification line.
         identity = doctor.identity(self.env)
-        print('Verified managed CPython', identity['version'], 'GIL build:', identity['executable'], flush=True)
+        print('Verified managed CPython', identity['version'], 'at', identity['executable'], flush=True)
         if not self.minimal:
             if self.linux:
                 self.native_backend()

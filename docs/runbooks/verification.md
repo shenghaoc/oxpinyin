@@ -263,7 +263,10 @@ Check the build of the library, not its version:
   Builds and containers match the host operating system and architecture; emulation is not used.
 - oxpinyin accepts GLib behaviour across versions.
   Nothing checks which GLib version is present.
-- Python is provisioned and its version declared as [setup](setup.md) states: `.python-version` is the only declaration.
+- Python is provisioned and its version declared as [setup](setup.md) states: `.python-version` is the one declaration.
+  uv reads `.python-version` to select the interpreter.
+  The `requires-python` field in `pyproject.toml` repeats the floor as the project's supported range, which uv's resolver and lock use; uv warns when the field is missing.
+  `just doctor` derives its version bounds from `.python-version`.
 - The [test input rule](../testing/README.md#test-inputs) applies.
 - An oracle C-API session is trained as the [oracle procedure](oracle.md#training-through-the-c-api) states.
 - Results and reproduction commands are reported under [rule 7](#7-proportionate-verification).
