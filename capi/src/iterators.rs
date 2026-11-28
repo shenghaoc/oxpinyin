@@ -680,7 +680,7 @@ mod tests;
 ///
 /// Under the [crate-level rules](crate#safety): `iter` is a handle and `phrase` and `pinyin`
 /// are strings. The serial-calls rule applies.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(fuzzing)]
 #[must_use]
 pub unsafe fn oxpinyin_import_aborts(
     iter: *mut ImportIterator,

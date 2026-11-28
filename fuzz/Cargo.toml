@@ -14,7 +14,8 @@ unsafe_code = "deny"
 # Every target is an ordinary executable. With the `afl` feature, which
 # `just fuzz` selects for its cargo-afl builds, AFL++ runs it in persistent
 # mode; without it, it reads one input from standard input. src/lib.rs is
-# their shared entry point.
+# their shared entry point. A build without cargo-afl needs the flag that
+# docs/testing/upstream-test-coverage.md#engine states.
 [lib]
 name = "oxpinyin_fuzz"
 path = "src/lib.rs"

@@ -882,7 +882,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
     pub fn bigram_total(&self, prev: PhraseToken) -> Result<u64, UserStoreError> {
         Ok(self
             .bigram_row(prev)?
@@ -1499,7 +1499,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
     pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<PhraseToken>, UserStoreError> {
         self.token_for_phrase_in(USER_DICTIONARY, phrase)
     }
@@ -1509,7 +1509,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
     pub fn token_for_phrase_in(
         &self,
         library: u8,
@@ -1525,7 +1525,7 @@ impl UserStore {
     ///
     /// # Errors
     /// Returns an error when the record cannot be read.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
     pub fn phrase_table_tokens_for_text(
         &self,
         text: &str,
@@ -1581,7 +1581,7 @@ impl UserStore {
     }
 
     /// Every stored phrase (user and network) with pronunciations.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
     #[must_use]
     pub fn phrases(&self) -> Vec<UserPhrase> {
         let phrases = self.inner.libpinyin.phrases();
@@ -1636,7 +1636,7 @@ impl UserStore {
     ///
     /// A failed chunk length or checksum write, or a fatal record-copy failure,
     /// aborts at the failed operation.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub fn save_reporting(&mut self) -> Result<(), UserStoreError> {
         self.save_reporting_compacted(&[])
     }
@@ -1653,7 +1653,7 @@ impl UserStore {
     /// # Aborts
     ///
     /// As [`Self::save_reporting`].
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub(crate) fn save_reporting_compacted(
         &mut self,
         compacted: &[u8],
@@ -2051,7 +2051,7 @@ impl UserStore {
     /// user `ChewingLargeTable2::mask_out` walks every record and aborts on
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub fn mask_out(
         &mut self,
         mask: PhraseToken,

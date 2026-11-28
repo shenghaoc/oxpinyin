@@ -370,7 +370,7 @@ impl ConstraintStore {
     /// abort: a write of a differing phrase answers zero. The store's length
     /// decides each answer, and no write changes the length, so the store
     /// before the first write decides them all. Reads only.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub(crate) fn diff_result_refuses(
         &self,
         best: &[PhraseSpan],

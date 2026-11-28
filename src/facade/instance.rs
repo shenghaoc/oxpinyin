@@ -469,7 +469,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// the store's own aborts need one or a failed container, and no C API
     /// call makes either. Reads only: the store is neither trained nor
     /// marked modified.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     #[must_use]
     pub fn train_aborts(&self, index: u8) -> bool {
         self.user.has_user_directory() && self.read().session.training_aborts(index)
@@ -478,7 +478,7 @@ impl<S: std::borrow::Borrow<InstanceState>, E: std::borrow::Borrow<crate::engine
     /// Whether the pin's NBEST choose of row `rank` asserts: a missing
     /// result, or a differing phrase whose constraint write answers zero
     /// (`crate::engine::Session::nbest_choose_aborts`). Reads only.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     #[must_use]
     pub fn nbest_choose_aborts(&self, rank: u8) -> bool {
         self.session.nbest_choose_aborts(rank)

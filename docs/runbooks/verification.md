@@ -287,6 +287,7 @@ These rules govern the CI gates. This section is the only place that states them
    tkrzw's tests, including the full-data contract tests, which are tkrzw-only, run on the nightly macOS and Windows jobs and never in Linux CI; tkrzw's sanitizer run has no CI job.
 3. **Fuzz execution runs nightly.**
    The PR `rust` job lints every fuzz target in `fuzz/` with Clippy, once with the Kyoto Cabinet feature and once with the `afl` feature added.
+   Each run sets [the flag of the fuzz interfaces](../testing/upstream-test-coverage.md#engine).
    The execution schedule is fixed; a change to it is a CI-policy change and needs the maintainer's [approval](../../CONTRIBUTING.md#approval-conditions).
 4. **No workflow measures coverage.** `just coverage` is for a targeted local question. Coverage never drives new tests.
 5. **Every lane runs on every PR.** `checks`, `rust`, `store` and `shipping-sizes` run on every pull request, and `ci-aggregate` requires their ordinary job results.

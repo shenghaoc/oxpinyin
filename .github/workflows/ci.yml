@@ -138,13 +138,20 @@ jobs:
       - name: Install the fuzz toolchain
         working-directory: fuzz
         run: rustup toolchain install
+      # The fuzz targets' interfaces need `--cfg fuzzing`
+      # (docs/testing/upstream-test-coverage.md#engine). The step value replaces
+      # the workflow's RUSTFLAGS, so it repeats `-D warnings`.
       - name: Lint all fuzz targets
         working-directory: fuzz
+        env:
+          RUSTFLAGS: -D warnings --cfg fuzzing
         run: cargo clippy --locked --bins --no-default-features --features kyotocabinet -- -D warnings
       # Also lint the persistent entry point. This reuses the dependencies
       # and type-checks the afl feature without linking the AFL++ runtime.
       - name: Lint all fuzz targets with AFL
         working-directory: fuzz
+        env:
+          RUSTFLAGS: -D warnings --cfg fuzzing
         run: cargo clippy --locked --bins --no-default-features --features kyotocabinet,afl -- -D warnings
       # Complexity limit: the recipe states it; pyproject.toml and uv.lock
       # name the Lizard release.

@@ -922,7 +922,7 @@ mod tests;
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle and `candidate` is a
 /// borrowed object. The serial-calls rule applies.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(fuzzing)]
 #[must_use]
 pub unsafe fn oxpinyin_choose_aborts(
     instance: *mut PinyinInstance,
@@ -968,7 +968,7 @@ pub unsafe fn oxpinyin_choose_aborts(
 ///
 /// Under the [crate-level rules](crate#safety): `instance` is a handle. The serial-calls rule
 /// applies.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(fuzzing)]
 #[must_use]
 pub unsafe fn oxpinyin_train_aborts(instance: *mut PinyinInstance, index: u8) -> bool {
     let inst = borrow_or_return!(instance, crate::state::instance_ref, false);

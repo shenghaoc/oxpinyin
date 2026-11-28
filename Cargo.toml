@@ -122,7 +122,9 @@ rust-version = "1.98.1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
-unexpected_cfgs = "deny"
+# The interfaces that only the fuzz targets use are gated on `fuzzing`
+# (docs/testing/upstream-test-coverage.md#engine).
+unexpected_cfgs = { level = "deny", check-cfg = ['cfg(fuzzing)'] }
 missing_docs = "warn"
 # unused_must_use is warn-by-default and CI's -D warnings already promotes
 # it; the explicit deny protects local builds that lack the env var.
