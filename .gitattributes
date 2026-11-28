@@ -8,6 +8,7 @@
 * text=auto eol=lf
 
 fixtures/** -text
-fuzz/corpus/** -text
+fuzz/fixtures/** -text
+fuzz/seeds/** -text
 
 tools/scripts2/upstream/** linguist-vendored
