@@ -92,7 +92,7 @@ jobs:
   # The Linux Rust lane: every check that reads the workspace, under Kyoto Cabinet.
   rust:
     runs-on: ubuntu-26.04
-    timeout-minutes: 120
+    timeout-minutes: 16
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -290,7 +290,7 @@ jobs:
   # no sanitizer-flavoured artifact enters the cache.
   store:
     runs-on: ubuntu-26.04
-    timeout-minutes: 150
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
