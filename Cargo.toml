@@ -86,10 +86,6 @@ version = "0"
 [features]
 # See docs/architecture.md#backend-selection. Optional build dependencies
 # such as bindgen are enabled only by the features that use them.
-# tkrzw is maintained upstream (maintainer decision 2026-10-30 UTC).
-# tkrzw is the default on every platform. Linux CI selects kyotocabinet, because
-# GitHub's Ubuntu runners ship a defective libtkrzw (CI_LINUX_CELL in
-# tools/dev/cell.py; docs/runbooks/setup.md#linux).
 default = ["tkrzw"]
 # Test-only operations and fault points for the C crates and fuzz workspace.
 # Normal and shipped builds leave this feature off.
@@ -116,8 +112,7 @@ members = ["capi", "zhuyin-capi", "utils", "repl", "tool-support", "tools/abi", 
 default-members = [".", "capi", "zhuyin-capi", "utils", "repl", "tool-support"]
 
 [workspace.package]
-# Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 2.
-# The beta precedes the first 0.1.0 release.
+# Lockstep 0.x while pre-1.0. The beta precedes the first 0.1.0 release.
 version = "0.1.0-beta.1"
 edition = "2024"
 license = "GPL-3.0-or-later"

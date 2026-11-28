@@ -465,7 +465,7 @@ The drop-in therefore reads the data already on the system:
 
 | lane | image | backend | because |
 |---|---|---|---|
-| Debian | `debian:testing` | tkrzw | Debian's libpinyin 2.11.91 (testing/forky) switched BerkeleyDB → Tkrzw (`libtkrzw1t64`); stable (trixie) still ships 2.8.1 on BerkeleyDB, which no backend reads |
+| Debian | `debian:testing` | tkrzw | Debian testing (forky) ships libpinyin 2.11.92 on Tkrzw (`libtkrzw1t64`); the packages therefore do not support stable (trixie), whose libpinyin 2.8.1 uses BerkeleyDB |
 | Fedora | `fedora:rawhide` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
 | Arch | `archlinux:latest` | kyotocabinet | Arch's libpinyin still links KyotoCabinet |
 

@@ -10,7 +10,7 @@ is the design record. The Debian lane checks the runtime and development package
 
 Each of these conditions holds before a release is tagged:
 
-1. `main` is green on `CI` and `Store backends`, and on every job of the last
+1. `main` is green on `CI`, and on every job of the last
    `verify-nightly`.
 2. `verify-nightly.yml` was dispatched manually on the release commit ([verification rule 10](verification.md#10-ci-merge-conditions)).
    A release is published only if its macOS, Windows, fuzz soak and overflow lane jobs pass on

@@ -1,6 +1,6 @@
 # Runbooks
 
-These pages are for contributors. The [setup guide](setup.md) is for integrators and packagers.
+These pages are for contributors. The [setup guide](setup.md) sets up native development, fuzzing and the contribution checks.
 
 These pages are the step-by-step procedures for the manual tasks in this repository.
 Each page states what it needs, what to run and what "done" looks like.

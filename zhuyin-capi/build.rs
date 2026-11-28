@@ -4,7 +4,7 @@
 //!
 //! Upstream's `libzhuyin.so.15` SONAME comes from libtool `-version-info 15:0`
 //! (the same `@LT_VERSION_INFO@` as libpinyin — `src/Makefile.am:118-121` at
-//! the pin 0c5e80e1; `configure.ac`'s `libpinyin_abi_current=15`).
+//! the pin 074a2219; `configure.ac`'s `libpinyin_abi_current=15`).
 //! Plain Cargo builds set the SONAME on the Linux cdylib and hide CXX
 //! archive symbols for the tkrzw and Kyoto Cabinet backends.
 //! cargo-c enables `capi` and sets the SONAME for its own Linux cdylib.

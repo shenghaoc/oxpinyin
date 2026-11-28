@@ -4,7 +4,7 @@ This page is for contributors: it states which crate owns each behaviour and wha
 
 ## Crates
 
-Three workspace crates are published. The core library holds the engine and the two C crates expose the C interfaces. The three private crates supply the command-line tools.
+Three workspace crates are published. The core library holds the engine and the two C crates expose the C interfaces. The five private crates supply the command-line tools, the ABI tests and the measurement binaries.
 
 | Crate | Role | unsafe | Portable | Ships |
 |---|---|---|---|---|
@@ -13,6 +13,7 @@ Three workspace crates are published. The core library holds the engine and the 
 | oxzhuyin-capi | `libzhuyin.so.15`, with 52 symbols and its own SONAME. The `--enable-libzhuyin` counterpart uses the same engine/chewing surface as oxpinyin-capi. | allow | Linux | yes |
 | oxpinyin-tool-support | Native command-line I/O, DBM adapters and C-facade drivers shared by the utilities and REPL. | deny, with scoped exceptions in `input`, `pinyin` and `zhuyin` | Linux, macOS | never |
 | oxpinyin-utils | libpinyin's utilities under their own names and interfaces, using the library's native I/O and storage operations (`docs/findings/external-io-boundary.md`): the table generators, the K-mixture-model utilities on the pin's `FlexibleBigram` container, `k_mixture_model_to_interpolation`, the segmentation trio, the storage trio and the five n-gram/interpolation utilities (`gen_unigram`, `gen_ngram`, `gen_deleted_ngram`, `estimate_interpolation`, `eval_correction_rate`). | forbid except the segmentation stdout-close boundary | Linux, macOS | never |
+| oxpinyin-abi-tests | `tools/abi`: the Rust test of `just abi`. It calls both C libraries as a C consumer under AddressSanitizer. | deny, with an exception in its test | Linux | never |
 | oxpinyin-repl | One nonshipping binary with ten interactive parser, lookup and C-facade modes. `just repl` supplies disposable mini data; no timing loops. | forbid | Linux, macOS | never |
 
 The utilities and REPL depend on `oxpinyin-tool-support`. It depends on the core library and both C crates. The published crates have no dependency on any private crate, including for tests.
@@ -164,10 +165,10 @@ See the [backend runbook](runbooks/backends.md) for commands.
 This follows libpinyin's `--with-dbm` model.
 Runtime dispatch and fallback are not added.
 
-The store backends are system native-library dependencies, verified on Linux and buildable on macOS through Homebrew.
-macOS and Windows development and CI use the platform's tkrzw source described in [setup](runbooks/setup.md).
-Linux CI selects Kyoto Cabinet from Ubuntu's packages, because GitHub's Ubuntu runners ship a defective libtkrzw ([verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions)).
-Local Linux follows the Cargo default, tkrzw, with a libtkrzw that passes [verification rule 9](runbooks/verification.md#9-sound-tkrzw-library), and supports all three backends ([Linux setup](runbooks/setup.md#linux)).
+tkrzw is the only default and the only backend that oxpinyin maintains; the [compatibility policy](findings/compatibility-policy.md#backends-and-user-data) gives the upstream reason.
+Kyoto Cabinet and Berkeley DB stay only until distributions ship a sound libtkrzw, and are then removed.
+The store backends are system native-library dependencies; [setup](runbooks/setup.md) gives the source of each platform's tkrzw.
+[Verification rule 10.2](runbooks/verification.md#10-ci-merge-conditions) states the backend of Linux CI.
 Debian release packages and oracle/reference images retain Debian's library.
 The peer matrix remains on Linux.
 

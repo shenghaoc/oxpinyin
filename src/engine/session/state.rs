@@ -375,7 +375,7 @@ impl SessionState {
     /// string per row (`pinyin.cpp:2004-2007`), while zhuyin fills **every**
     /// `BEST_MATCH_CANDIDATE` row through `zhuyin_get_sentence`, which always
     /// reads `get_result(0)` (`zhuyin.cpp:1327-1330`, `:990-995` at the pin
-    /// 0c5e80e1). Identical strings then collide in
+    /// 074a2219). Identical strings then collide in
     /// `_remove_duplicated_items_by_phrase_string`, which physically removes
     /// the duplicates while keeping the `BEST_MATCH` row
     /// (`zhuyin.cpp:1425-1438`), so the observable list carries exactly one

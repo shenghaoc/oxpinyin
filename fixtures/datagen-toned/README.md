@@ -21,13 +21,7 @@ library (`er4'huang2` / `er'huang`). `interpolation2.text` carries
 `\1-gram` counts for some tokens only (the others take the
 bare `+1` of `gen_unigram`), a `<start>` bigram, and a two-token row.
 
-Recorded evidence: this directory was the input of the retired drop-in comparison. That recipe was removed on 2026-11-06 UTC with the compat launcher.
-On one side, the `gen_binary_files` / `import_interpolation` / `gen_unigram` programs of libpinyin compiled it.
-On the other side, the ports of `oxpinyin-utils` under the same names compiled it.
-The recipe compared every chunk file byte for byte (tone bits included).
-Neither side read the output of the other side.
-
 The `gbf-toned-model` case in
 the `frozen::gen_binary_files` module of `utils/tests/it/storage_tools.rs` runs `gen_binary_files`
-over the same tables. It compares the complete output inventory with the
+over these tables. It compares the complete output inventory with the
 frozen pin capture, including the toned pinyin-index rows.

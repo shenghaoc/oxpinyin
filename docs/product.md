@@ -7,7 +7,7 @@ Project claims call it an "idiomatic Rust rewrite".
 They do not claim that it succeeds libpinyin. Performance comparisons with libpinyin are stated only as scoped measurements ([controlling rule](source-policy.md#controlling-rule)).
 See the [roadmap](../ROADMAP.md) and [constitution](constitution.md).
 
-**Goal (maintainer, 2026-09-12).**
+**Goal.**
 
 On Linux, the shipped object is indistinguishable from libpinyin's shared object except for established exceptions.
 It has the same SONAME, exports, data, user files and behaviour, measured against the pin.

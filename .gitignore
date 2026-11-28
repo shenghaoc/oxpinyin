@@ -18,8 +18,7 @@ rustc-ice-*.txt
 # Local Claude Code state: worktrees and personal settings (not committed).
 /.claude/*
 
-# Bisection harness compiled binaries (the runners compile bisect beside the
-# source; one was committed by mistake until 2026-09-06)
+# Bisection harness compiled binaries
 /tools/bisection/*-bin
 /tools/bisection/bisect
 

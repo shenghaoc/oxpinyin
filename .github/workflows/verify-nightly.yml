@@ -1,9 +1,9 @@
 name: verify-nightly
 
 # Scheduled verification: the checks too slow for the PR gate. The merge
-# conditions are docs/runbooks/verification.md, section 10. Findings here
-# open issues. Nothing here blocks a merge, because branch protection
-# requires only ci.yml's `ci-aggregate`.
+# conditions are docs/runbooks/verification.md, section 10. Nothing here
+# blocks a merge, because the only status check that main's ruleset
+# requires is ci.yml's `ci-aggregate`.
 #
 # Jobs: fuzz-soak, overflow-lane, test-windows and test-macos.
 # No job may fail: there are no continue-on-error jobs.
@@ -282,8 +282,8 @@ jobs:
           printf 'image=%s\nrevision=%s\n' "${ImageVersion:-unknown}" "$revision" >> "$GITHUB_OUTPUT"
       # Manifest mode keeps the Windows dependencies beside this checkout;
       # the binary cache keeps vcpkg's content-addressed archives, not an
-      # installed tree. The manifest carries the same GLib, pkgconf and
-      # x64-windows request the job used before this migration.
+      # installed tree. The manifest names GLib and pkgconf; the install step
+      # selects the x64-windows triplet.
       - name: Restore the vcpkg binary cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

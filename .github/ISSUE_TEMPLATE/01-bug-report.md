@@ -1,6 +1,7 @@
 ---
 name: Bug report
 about: Report incorrect behavior, a regression, or a suspected defect.
+labels: [bug]
 ---
 
 ## Summary

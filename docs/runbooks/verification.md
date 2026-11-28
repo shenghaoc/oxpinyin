@@ -215,9 +215,7 @@ Cancellation, expiry and an OOM-killed child never count as PASS or SKIP.
 
 The tkrzw cell, the reference cell, runs only against a sound libtkrzw.
 macOS uses Homebrew's tkrzw and Windows the repository's static build, `just tkrzw` ([setup](setup.md)).
-Linux CI selects Kyoto Cabinet ([section 10](#10-ci-merge-conditions)), because GitHub's Ubuntu
-runners ship a defective libtkrzw. Local Linux follows the Cargo default, tkrzw
-([Linux setup](setup.md#linux)), against the distribution's libtkrzw.
+[Rule 10.2](#10-ci-merge-conditions) states the backend of Linux CI. Local Linux uses the distribution's libtkrzw ([Linux setup](setup.md#linux)).
 A distribution libtkrzw built with LTO is defective before tkrzw 1.0.34 ([upstream issue 71](https://github.com/estraier/tkrzw/issues/71)).
 The manual probe is the sentinel test, `tkrzw_library_honours_its_sentinel_protocol`: it fails on a
 defective library ([finding](../findings/tkrzw-distro-compat.md)).
@@ -295,7 +293,6 @@ These rules govern the CI gates. This section is the only place that states them
    No job or step depends on the changed paths, so a job's success always means the same checks.
    The `checks` job runs the Python version request check, Ruff and the offline generated-table comparison.
    Pushes to main run the same lanes.
-6. **Linux CI runs natively.** Every Linux job of `ci.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner. No CI job runs in a container.
+6. **Linux CI runs natively.** Every Linux job of `ci.yml` and `verify-nightly.yml` runs directly on the `ubuntu-26.04` runner, not in a container.
    Every system package, the store backends included, comes from Ubuntu's apt.
    Containers serve only the pin oracle, which is local work and never runs in CI, and the distribution packaging of `release-packages.yml`.
-   Rejected: Linux CI in a Debian testing container.

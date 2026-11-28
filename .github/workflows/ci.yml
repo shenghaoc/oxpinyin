@@ -41,15 +41,9 @@ concurrency:
 #           and kyotocabinet store suites and the C ABI tests under the sanitizers
 # Fuzz execution stays nightly.
 #
-# See docs/architecture.md#backend-selection. To check cross-peer equivalence,
-# run the same test suite in a separate build for each backend. Linux CI
-# selects Kyoto Cabinet because GitHub's Ubuntu runners ship a defective
-# libtkrzw (docs/findings/tkrzw-distro-compat.md): every Linux CI job selects
-# Kyoto Cabinet from Ubuntu's packages with the
-# backend flag (CI_LINUX_CELL in tools/dev/cell.py; docs/runbooks/verification.md,
-# section 10). tkrzw is the one maintained backend and the only default.
-# Kyoto Cabinet and Berkeley DB stay until distributions ship a sound
-# libtkrzw, and are then removed.
+# See docs/architecture.md#backend-selection and, for the backend of every
+# Linux job, docs/runbooks/verification.md, rule 10.2. To check cross-peer
+# equivalence, run the same test suite in a separate build for each backend.
 # The tkrzw suite runs on macOS and Windows in verify-nightly.yml. Each
 # sanitizer run goes through the sanitizer service in tools/dev/test_runner.py,
 # which `just sanitize` also uses, on the date-pinned nightly that
