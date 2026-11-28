@@ -19,7 +19,7 @@ kyotocabinet = ["oxpinyin-tool-support/kyotocabinet", "oxpinyin-utils/kyotocabin
 
 [dependencies]
 oxpinyin-tool-support = { path = "../tool-support", default-features = false }
-oxpinyin-utils = { path = "../utils", version = "=0.1.0-alpha.2", default-features = false }
+oxpinyin-utils = { path = "../utils", version = "=0.1.0-beta.1", default-features = false }
 oxpinyin = { workspace = true }
 
 [dev-dependencies]

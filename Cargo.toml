@@ -116,8 +116,8 @@ default-members = [".", "capi", "zhuyin-capi", "utils", "repl", "tool-support"]
 
 [workspace.package]
 # Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 2.
-# The alpha precedes the first 0.1.0 release.
-version = "0.1.0-alpha.2"
+# The beta precedes the first 0.1.0 release.
+version = "0.1.0-beta.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/shenghaoc/oxpinyin"
@@ -169,7 +169,7 @@ num_enum = { version = "0.7.6", default-features = false }
 # dependency toward the store. Cargo unifies
 # features, so one forwarding edge per crate reaches the store; every crate
 # that is built on its own keeps its `default` and peer features.
-oxpinyin = { path = ".", version = "=0.1.0-alpha.2", default-features = false }
+oxpinyin = { path = ".", version = "=0.1.0-beta.1", default-features = false }
 bindgen = { version = "0.73.2", default-features = false, features = ["logging", "runtime"] }
 # The parser option word (oxpinyin OptionBits); no dependencies of its own.
 bitflags = "2.13"

@@ -22,9 +22,9 @@ Each of these conditions holds before a release is tagged:
    the drop-in identity is the libpinyin version of the pin, and the crate
    version is the `0.x` lockstep of the workspace.
 
-## The Cargo alpha
+## The Cargo pre-release
 
-The crates.io alpha is a separate step from the distro release:
+The crates.io pre-release is a separate step from the distro release:
 
 1. Merge the release commit to `main`.
 2. From the merged commit, run `cargo publish --dry-run -p oxpinyin -p oxpinyin-capi -p oxzhuyin-capi`.
