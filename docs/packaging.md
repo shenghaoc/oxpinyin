@@ -347,8 +347,9 @@ On Linux, the [packaging relink](#export-gate) gives the shipped library the sec
 `libzhuyin.so.15` uses `LIBZHUYIN` and its 52 symbols the same way.
 
 **Symbol scope.** The shipped library exports every symbol in its `.ver` script and nothing else.
-The fuzz workspace enables `test-hooks` for Rust decision queries.
-Shipping builds omit the queries and fault injection code.
+The Rust decision queries of the fuzz targets compile only with [`--cfg fuzzing`](testing/upstream-test-coverage.md#engine).
+The fault injection code compiles only in the tests of `oxpinyin`.
+Shipping builds contain neither.
 
 ## Export gate
 

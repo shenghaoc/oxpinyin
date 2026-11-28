@@ -879,8 +879,9 @@ the surface stays minimal.
 ## Boundary notes
 
 Every exported `pinyin_*` symbol is in scope and implemented live, with
-no placeholder bodies. The fuzz workspace enables `test-hooks` for its Rust decision queries.
-Shipping builds omit those queries and the fault injection code.
+no placeholder bodies. The Rust decision queries of the fuzz targets compile only with
+[`--cfg fuzzing`](../testing/upstream-test-coverage.md#engine), and the fault injection code
+compiles only in the tests of `oxpinyin`. Shipping builds contain neither.
 
 Every C-ABI symbol requires:
 

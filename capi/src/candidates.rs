@@ -916,7 +916,7 @@ mod tests;
 /// `offset` under `SORT_WITHOUT_SENTENCE_CANDIDATE` (`pinyin.cpp:2566`), which a
 /// `LONGER_CANDIDATE` row does not reach. Reads only. For the in-tree fuzz
 /// harness, which skips such a call: not in `pinyin.h`, a Rust function
-/// compiled only with `test-hooks` and never into the shipped artifact.
+/// compiled only with `--cfg fuzzing` and never into the shipped artifact.
 ///
 /// # Safety
 ///
@@ -962,7 +962,7 @@ pub unsafe fn oxpinyin_choose_aborts(
 /// `pinyin_train`'s walk makes, in its order, without training. The store's
 /// own aborts need a planted user bigram. Reads only. For the in-tree fuzz harness, which skips
 /// such a call: not in `pinyin.h`, a Rust function compiled only with
-/// `test-hooks` and never into the shipped artifact.
+/// `--cfg fuzzing` and never into the shipped artifact.
 ///
 /// # Safety
 ///

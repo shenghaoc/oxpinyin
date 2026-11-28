@@ -87,9 +87,6 @@ version = "0"
 # See docs/architecture.md#backend-selection. Optional build dependencies
 # such as bindgen are enabled only by the features that use them.
 default = ["tkrzw"]
-# Test-only operations and fault points for the C crates and fuzz workspace.
-# Normal and shipped builds leave this feature off.
-test-hooks = []
 # tkrzw binds the pin's concrete classes through cxx; it needs a C++17
 # compiler and tkrzw's headers, not libclang; `cc` is named for the compiler probe.
 tkrzw = ["dep:cc", "dep:cxx", "dep:cxx-build", "dep:system-deps"]

@@ -631,8 +631,8 @@ Architecture — the session state behind the value engine:
   `UserBigramDb::load_db` and `UserBigramDb::save_db` use each backend's
   native user-container operations, including Kyoto Cabinet's
   stash-plus-snapshot form. `UserBigramDb` and `DefaultUserBigramDb` are
-  crate-only in normal builds and public only with `test-hooks`, for the
-  downstream C-ABI fixtures.
+  public through `oxpinyin::__internal::store`, for the workspace's tools and
+  the C-ABI fixtures.
   Opening the user bigram through the *system* bigram's hash path answers
   `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
 * `oxpinyin::user::store_libpinyin` — `UserStore::open_libpinyin_checked` reads the

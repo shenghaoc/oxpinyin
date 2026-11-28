@@ -48,7 +48,7 @@ oxpinyin = { path = "..", default-features = false }
 # capi-commands: stateful session fuzzer over the C ABI (libchewing
 # fuzzer.rs shape). The facade links natively on macOS with Homebrew GLib
 # and Berkeley DB 5.3; the nightly CI soak still runs on Linux.
-oxpinyin-capi = { path = "../capi", default-features = false, features = ["test-hooks"] }
+oxpinyin-capi = { path = "../capi", default-features = false }
 tempfile = "3.27"
 # The version that fuzz/Cargo.lock resolves is the one cargo-afl version:
 # tools/dev/fuzz.py installs and requires that cargo-afl.

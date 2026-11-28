@@ -674,7 +674,7 @@ mod tests;
 /// Whether [`pinyin_iterator_add_phrase`] of this pair reaches one of the
 /// pin's asserts ([`oxpinyin::facade::ImportPlan::Abort`]). Reads only. For the in-tree fuzz
 /// harness, which skips such a call: not in `pinyin.h`, a Rust function
-/// compiled only with `test-hooks` and never into the shipped artifact.
+/// compiled only with `--cfg fuzzing` and never into the shipped artifact.
 ///
 /// # Safety
 ///
