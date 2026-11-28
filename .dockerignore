@@ -1,1 +1,11 @@
-target/
+# The oracle images build with the checkout as the context. Send only the files
+# that a COPY in tools/oracle/Dockerfile.* reads, plus Dockerfile.capture, which
+# wslc and Apple container builds may read from the context.
+*
+!.python-version
+!tools/oracle/Dockerfile.capture
+!tools/oracle/Dockerfile.oracle
+!tools/oracle/build.py
+!tools/oracle/oracle-pin.txt
+!tools/oracle/version-manifest.json
+!tools/oracle/versions.py
