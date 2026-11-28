@@ -287,7 +287,7 @@ where
     /// record — exactly the phrases a `pinyin_train` call would train
     /// (`docs/findings/user-store.md` §2.1). The C ABI uses the tail of this
     /// slice as the predecessor for predicted-candidate training (§2.3).
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     #[must_use]
     pub fn selected_tokens(&self) -> &[PhraseToken] {
         self.record.history()

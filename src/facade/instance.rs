@@ -90,21 +90,6 @@ impl InstanceState {
         &self.parse_input
     }
 
-    /// The pin's parse-time matrix for the index-parsed entry points, for a C crate's test.
-    #[cfg(feature = "test-hooks")]
-    #[doc(hidden)]
-    #[must_use]
-    pub fn parse_matrix(&self) -> &[crate::engine::MatrixKey] {
-        &self.parse_matrix
-    }
-
-    /// The parse-time matrix, for a C crate's test to change.
-    #[cfg(feature = "test-hooks")]
-    #[doc(hidden)]
-    pub const fn parse_matrix_mut(&mut self) -> &mut Vec<crate::engine::MatrixKey> {
-        &mut self.parse_matrix
-    }
-
     /// The stored zhuyin parse, when the last parse call was the chewing
     /// entry point.
     #[must_use]

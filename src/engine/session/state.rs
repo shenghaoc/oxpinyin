@@ -155,7 +155,7 @@ where
     /// candidate's span (separator run included), never past the raw
     /// input. The C ABIs do not answer it: a choose answers from the row's
     /// own `m_begin` and `m_end` as the pin does.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     #[must_use]
     pub fn composition_offset(&self) -> usize {
         self.record.consumed()

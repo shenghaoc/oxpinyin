@@ -214,14 +214,14 @@ pub struct UserPhrase {
 
 impl UserPhrase {
     /// The allocated token, including the configured target library's index.
-    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     #[must_use]
     pub const fn token(&self) -> PhraseToken {
         self.token
     }
 
     /// Exact stored words, including zero words and non-scalars.
-    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     #[must_use]
     pub fn words(&self) -> &[u32] {
         &self.text

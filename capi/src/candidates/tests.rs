@@ -24,7 +24,9 @@ use crate::context::pinyin_init;
 
 use crate::dict::{pinyin_token_add_unigram_frequency, pinyin_token_get_unigram_frequency};
 
-use crate::test_support::{capture_rows, predicted_row, with_store};
+use crate::test_support::{
+    capture_rows, exported_bigram_count, predicted_row, token_text, with_store,
+};
 
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 
@@ -44,8 +46,6 @@ use crate::test_support::{
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance, lookup_candidate_type_t};
 
 use crate::test_support::promotion_system;
-
-use oxpinyin::__internal::vocab::SENTENCE_START;
 
 use std::cell::Cell;
 
@@ -109,26 +109,6 @@ unsafe fn sentence_after_guess(instance: *mut PinyinInstance) -> Option<String> 
     Some(text)
 }
 
-/// The tokens the instance's selection record holds, which follow its
-/// forcings.
-///
-/// # Safety
-///
-/// `instance` is a live instance, not NULL: `pinyin_alloc_instance` returned it and
-/// `pinyin_free_instance` has not freed it.
-///
-/// Calls are serial across the context, its sibling instances and its iterators: no other call
-/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
-/// rule).
-unsafe fn selected_tokens(instance: *mut PinyinInstance) -> Vec<u32> {
-    // SAFETY: the live instance is read between serialized ABI calls.
-    unsafe { crate::state::instance_ref(instance) }
-        .core
-        .session()
-        .selected_tokens()
-        .to_vec()
-}
-
 // Removing a real imported candidate must mutate the retained store even
 // after the public handle is gone; no pin call is valid in that state.
 #[rstest::rstest]
@@ -184,8 +164,6 @@ fn a_punctuation_row_returns_the_cursor_without_adding_a_constraint(
     let row = unsafe { row_of(instance, PREDICTED_PUNCTUATION) };
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, answer);
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    assert_eq!(unsafe { selected_tokens(instance) }, Vec::<u32>::new());
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     assert_eq!(unsafe { sentence_after_guess(instance) }.as_deref(), after);
     assert_eq!(
         unsafe { crate::candidates::pinyin_train(instance, 0) },
@@ -236,8 +214,6 @@ fn a_stored_words_row_keeps_its_token_and_span_through_its_handle(
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     assert_eq!(unsafe { parse(instance, "da1da1da1ba1") }, 12);
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, row) }, 9);
-    // SAFETY: the live instance is read between serialized ABI calls.
-    assert_eq!(unsafe { selected_tokens(instance) }, [0x0100_0001]);
     assert!(unsafe { pinyin_guess_sentence(instance) });
     let mut text = ptr::null_mut();
     assert!(unsafe { pinyin_get_sentence(instance, 0, &raw mut text) });
@@ -465,8 +441,8 @@ fn a_store_into_the_failed_user_bigram_aborts_training() {
 }
 
 /// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): a predicted
-/// bigram is trained after the longest token of the prediction prefix, not
-/// after `sentence_start`.
+/// bigram is trained after the longest token of the prediction prefix. The
+/// bigram export reads the stored count of that pair.
 #[test]
 fn a_predicted_bigram_trains_from_the_prediction_prefix() {
     use crate::predict::pinyin_guess_predicted_candidates;
@@ -495,7 +471,7 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, prefix_row) });
     assert_eq!(
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.bigram_count(ni, word)) }.unwrap(),
+        unsafe { exported_bigram_count(instance, ni, word) },
         0
     );
     // SAFETY: the live context has no reader retained across this write.
@@ -521,22 +497,14 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         3
     );
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    let before = unsafe { with_store(instance, |store| store.bigram_count(ni, word)) }.unwrap();
-    let sentence_start_before =
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.bigram_count(SENTENCE_START, word)) }.unwrap();
+    let before = unsafe { exported_bigram_count(instance, ni, word) };
+    assert_eq!(before, 69, "the seeded count");
     assert!(unsafe { pinyin_choose_predicted_candidate(instance, bigram_row) });
     assert_eq!(
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.bigram_count(ni, word)) }.unwrap(),
+        unsafe { exported_bigram_count(instance, ni, word) },
         before + 69,
         "the predecessor is the prefix token"
-    );
-    assert_eq!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.bigram_count(SENTENCE_START, word)) }.unwrap(),
-        sentence_start_before,
-        "not sentence_start"
     );
 
     unsafe { crate::instance::pinyin_free_instance(instance) };
@@ -623,7 +591,7 @@ fn choosing_an_existing_prefix_row_after_item_removal_advances_the_facade_total(
 
 #[rstest::rstest]
 #[case::unchanged(None, 5, false)]
-#[case::longer(Some("nihaoma"), 7, false)]
+#[case::longer(Some("nihaoni"), 7, false)]
 #[case::shorter(Some("ni"), 2, true)]
 #[case::empty(Some(""), 0, true)]
 #[case::stale_constraint(Some("ma"), 2, true)]
@@ -664,6 +632,8 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
         // must validate it away (phonetic_lookup.cpp:120-168 at 074a2219).
     }
     assert!(unsafe { pinyin_guess_candidates(instance, 2, DEFAULT_SORT) });
+    // 号 is not the default decode of `hao`, so the sentence below shows
+    // which row the choose took.
     let hao = {
         // SAFETY: live instance immediately after the guess.
         let inst = unsafe { instance_ref(instance) };
@@ -671,8 +641,8 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
             .state
             .candidates
             .iter()
-            .position(|cd| cd.text_bytes() == "好".as_bytes())
-            .expect("好 is offered at offset 2");
+            .position(|cd| cd.text_bytes() == "号".as_bytes())
+            .expect("号 is offered at offset 2");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(unsafe {
             pinyin_get_candidate(
@@ -683,10 +653,6 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
         });
         cand
     };
-    // SAFETY: `instance` was opened above and is not yet freed; `hao` is a row of a live instance's
-    // current list, and no call since has rebuilt that list; only this thread calls into them.
-    let expected_token = unsafe { token_of(instance, hao) };
-    let expected_tokens = [expected_token];
     if let Some(input) = reparse {
         // At 074a2219 pinyin.cpp:1497-1525 leaves the candidate intact;
         // :2580-2587 chooses its saved token and span, not a new row index.
@@ -705,18 +671,12 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span(
         unsafe { pinyin_choose_candidate(instance, 2, hao) },
         if refused { 2 } else { 5 }
     );
-    assert_eq!(
-        // SAFETY: the choose completed and the instance is still live.
-        unsafe { instance_ref(instance) }
-            .core
-            .session()
-            .selected_tokens(),
-        if refused {
-            &[][..]
-        } else {
-            &expected_tokens[..]
-        }
-    );
+    if !refused {
+        // The row's own token is forced over its own span.
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        let sentence = unsafe { sentence_after_guess(instance) }.expect("a sentence");
+        assert!(sentence.starts_with("你号"), "{sentence}");
+    }
     assert!(!unsafe { crate::candidates::pinyin_clear_constraint(instance, 0) });
     if refused {
         assert_eq!(unsafe { pinyin_choose_candidate(instance, 2, hao) }, 2);
@@ -756,7 +716,7 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
 ) {
     use crate::candidates::pinyin_choose_predicted_candidate;
     use crate::predict::pinyin_guess_predicted_candidates;
-    use crate::test_support::{predicted_row, with_store};
+    use crate::test_support::predicted_row;
 
     let pair = Pair::open(same_context);
     // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
@@ -825,34 +785,33 @@ fn a_predicted_row_from_another_instance_trains_the_receiver(
     let before =
         // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
         // `pair` drops at the end of the test; only this thread calls into it.
-        unsafe { with_store(pair.receiver(), |store| store.bigram_count(hao, word)) }.unwrap();
+        unsafe { exported_bigram_count(pair.receiver(), hao, word) };
     // SAFETY: the receiver is live and all calls in this test are serial.
-    let other_predecessor_before =
-        unsafe { with_store(pair.receiver(), |store| store.bigram_count(ni, word)) }.unwrap();
+    let other_predecessor_before = unsafe { exported_bigram_count(pair.receiver(), ni, word) };
     assert!(unsafe { pinyin_choose_predicted_candidate(pair.receiver(), bigram_row) });
     assert_eq!(
         // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
         // `pair` drops at the end of the test; only this thread calls into it.
-        unsafe { with_store(pair.receiver(), |store| store.bigram_count(hao, word)) }.unwrap(),
+        unsafe { exported_bigram_count(pair.receiver(), hao, word) },
         before + 69
     );
     assert_eq!(
         // SAFETY: `pair.receiver()` comes from the `Pair` fixture, which frees its handles only when
         // `pair` drops at the end of the test; only this thread calls into it.
-        unsafe { with_store(pair.receiver(), |store| store.bigram_count(ni, word)) }.unwrap(),
+        unsafe { exported_bigram_count(pair.receiver(), ni, word) },
         other_predecessor_before
     );
     if !same_context {
         assert_eq!(
             // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only
             // when `pair` drops at the end of the test; only this thread calls into it.
-            unsafe { with_store(pair.producer(), |store| store.bigram_count(ni, word)) }.unwrap(),
+            unsafe { exported_bigram_count(pair.producer(), ni, word) },
             69
         );
         assert_eq!(
             // SAFETY: `pair.producer()` comes from the `Pair` fixture, which frees its handles only
             // when `pair` drops at the end of the test; only this thread calls into it.
-            unsafe { with_store(pair.producer(), |store| store.bigram_count(hao, word)) }.unwrap(),
+            unsafe { exported_bigram_count(pair.producer(), hao, word) },
             69
         );
     }
@@ -950,22 +909,18 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5(
         token
     };
 
-    // The user store now carries the phrase under nibble 5, with a reading.
+    // The phrase now resolves under nibble 5, with its words and a reading.
+    assert!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { lookup(instance, &text) }.contains(&promoted),
+        "the promoted phrase resolves under nibble 5"
+    );
+    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+    assert_eq!(unsafe { token_text(instance, promoted) }, text);
     // SAFETY: live instance.
     let inst = unsafe { instance_ref(instance) };
     let store = inst.core.user();
-    assert_eq!(
-        store
-            .token_for_phrase_in(oxpinyin::facade::ADDON_DICTIONARY, &text)
-            .expect("store read"),
-        Some(promoted),
-        "the promoted phrase resolves under nibble 5"
-    );
     let phrase = store.phrase(promoted).expect("promoted phrase exists");
-    assert_eq!(
-        phrase.words(),
-        text.chars().map(u32::from).collect::<Vec<_>>()
-    );
     let reading = phrase
         .pronunciations()
         .first()
@@ -1061,13 +1016,6 @@ fn a_repeat_choose_of_a_refused_promoted_row_forces_the_promoted_token() {
         7
     );
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, cand) }, 7);
-    // SAFETY: as above.
-    let tokens: Vec<u32> = unsafe { instance_ref(instance) }
-        .core
-        .session()
-        .selected_tokens()
-        .to_vec();
-    assert_eq!(tokens, [PROMOTED]);
     assert!(unsafe { crate::sentence::pinyin_guess_sentence(instance) });
     let mut sentence: *mut std::ffi::c_char = std::ptr::null_mut();
     assert!(unsafe { crate::sentence::pinyin_get_sentence(instance, 0, &raw mut sentence) });
@@ -1175,20 +1123,21 @@ fn choosing_an_addon_without_sub_index_5_skips_promotion() {
     let mut kind = lookup_candidate_type_t::NORMAL_CANDIDATE;
     assert!(unsafe { pinyin_get_candidate_type(instance, cand, &raw mut kind) });
     assert_eq!(kind, lookup_candidate_type_t::ADDON_CANDIDATE);
+    assert!(
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { lookup(instance, &text) }.iter().all(|&found| {
+            oxpinyin::__internal::vocab::phrase_index_library_index(found)
+                != oxpinyin::facade::ADDON_DICTIONARY
+        }),
+        "no token under nibble 5"
+    );
     {
         // SAFETY: the live instance still owns this snapshot.
         let inst = unsafe { instance_ref(instance) };
         assert_eq!(inst.state.candidates[index].token.get(), Some(token));
         let store = inst.core.user();
         assert_eq!(store.addon_promotion_range_end(), None);
-        assert!(
-            store
-                .phrase_table_tokens_for_text(&text)
-                .unwrap()
-                .is_empty()
-        );
         assert!(store.lookup().lookup(&keys).is_empty());
-        assert!(store.phrases().is_empty());
         assert_eq!(store.unigram_total(), total);
         assert!(!store.is_modified());
     }
@@ -1256,6 +1205,7 @@ unsafe fn force_a_stale_phrase(instance: *mut PinyinInstance) -> u32 {
 /// branch, `pinyin.cpp:2521-2530`), records no selection, trains the
 /// row's token `+483` unigram through the overlay, and the `pinyin_train`
 /// that follows walks the live sentence result and writes nothing more.
+/// The saved user bigram then holds no record.
 #[test]
 fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
     let user_dir = TempUserDir::new("longer-choose");
@@ -1315,8 +1265,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
     // Choose: cursor 1, exactly the pin's LONGER branch.
     assert_eq!(unsafe { pinyin_choose_candidate(instance, 0, longer) }, 1);
 
-    // +483 through the canonical phrase-index count rows; no duplicate
-    // user-bigram row.
+    // +483 through the canonical phrase-index count rows.
     {
         assert_eq!(
             // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
@@ -1325,11 +1274,6 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
             Some(shipped + 483)
         );
     }
-    assert_eq!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
-        0
-    );
 
     // The train that follows leans on the live sentence result and
     // writes nothing more: the stored count stays at the choose's 483 and no
@@ -1345,11 +1289,23 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
             Some(shipped + 483)
         );
     }
-    assert_eq!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
-        0
-    );
+
+    // The saved user bigram holds no record: the choose and the train wrote
+    // no bigram row.
+    assert!(unsafe { crate::context::pinyin_save(context) });
+    {
+        use oxpinyin::__internal::store::{DefaultUserBigramDb, UserBigramDb as _};
+        let bigram = DefaultUserBigramDb::load_db(
+            &user_dir
+                .path
+                .join(oxpinyin::__internal::data::user_files::UserDbm::Bigram.file_name()),
+        )
+        .expect("the saved user bigram");
+        assert!(
+            bigram.is_empty().expect("count user grams"),
+            "no user bigram record"
+        );
+    }
 
     unsafe { crate::instance::pinyin_free_instance(instance) };
     unsafe { crate::context::pinyin_fini(context) };

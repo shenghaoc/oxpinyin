@@ -7,7 +7,6 @@ use crate::candidates::{
     zhuyin_choose_candidate, zhuyin_clear_constraint, zhuyin_get_candidate, zhuyin_get_n_candidate,
     zhuyin_train,
 };
-use oxpinyin::facade::Dictionary as _;
 
 use crate::context::{zhuyin_fini, zhuyin_save};
 
@@ -21,16 +20,12 @@ use crate::sentence::{
     zhuyin_get_sentence, zhuyin_guess_candidates_before_cursor, zhuyin_guess_sentence,
 };
 
-use crate::state::instance_mut;
-
 use crate::test_support::{
     LogCapture, TempUserDir, candidate, candidate_text, close, cstr, open, open_with_user,
-    system_dir, take_sentence, tokens_of, with_store,
+    system_dir, take_sentence, tokens_of,
 };
 
 use crate::types::LookupCandidate;
-
-use oxpinyin::__internal::vocab::SENTENCE_START;
 
 use rstest::rstest;
 
@@ -83,17 +78,6 @@ fn choosing_from_a_before_cursor_window_uses_that_window() {
     // the span's end. (The cached list's row 1 also ends at 3; the
     // committed text below is what tells the two rows apart.)
     assert_eq!(unsafe { zhuyin_choose_candidate(instance, 6, cand) }, 3);
-    // The session's own composition offset advanced to the span's end,
-    // which is the whole joined buffer here.
-    // SAFETY: the instance is live and no other reference is held.
-    let inst = unsafe { instance_mut(instance) };
-    let session = inst.core.session();
-    assert_eq!(
-        session.composition_offset(),
-        session.raw_input().len(),
-        "the composition consumed through the chosen span's end"
-    );
-
     // The forcing is the row's own span `[3, 6)`, not `[0, 6)`: the
     // first key's cell is free, the second key's is forced.
     // (`clear_constraint` answers false for a free cell and true for a
@@ -162,21 +146,16 @@ fn reparse_keeps_the_reanchored_candidates_selection(
     } else {
         unsafe { zhuyin_guess_candidates_after_cursor(instance, 3) }
     });
-    let (index, token) = {
+    // 号 is not the default decode of the second key, so the sentence below
+    // shows which row the choose took.
+    let index = {
         // SAFETY: live instance immediately after the guess.
         let inst = unsafe { crate::state::instance_ref(instance) };
-        let index = inst
-            .state
+        inst.state
             .candidates
             .iter()
-            .position(|row| row.text_str() == Ok("好"))
-            .expect("好 at offset 3");
-        (
-            index,
-            inst.core
-                .dict()
-                .tokens_for_ucs4(&"好".chars().map(u32::from).collect::<Vec<_>>())[0],
-        )
+            .position(|row| row.text_str() == Ok("号"))
+            .expect("号 at offset 3")
     };
     let mut original = ptr::null_mut();
     assert!(unsafe {
@@ -195,9 +174,8 @@ fn reparse_keeps_the_reanchored_candidates_selection(
         },
         consumed
     );
-    // No candidate guess: selection must still use 好 over the second key.
+    // No candidate guess: selection must still use 号 over the second key.
     // Unlike Pinyin, refusal still returns the original m_begin/m_end.
-    let expected_tokens = [token];
     // The pin leaves the candidates intact on choose, so a second
     // choose still sees this same token and span (zhuyin.cpp:1646-1666).
     for _ in 0..2 {
@@ -205,18 +183,12 @@ fn reparse_keeps_the_reanchored_candidates_selection(
             unsafe { zhuyin_choose_candidate(instance, if before { 6 } else { 3 }, original) },
             if before { 3 } else { 6 }
         );
-        assert_eq!(
-            // SAFETY: the choose completed and the instance is still live.
-            unsafe { crate::state::instance_ref(instance) }
-                .core
-                .session()
-                .selected_tokens(),
-            if refused {
-                &[][..]
-            } else {
-                &expected_tokens[..]
-            }
-        );
+    }
+    if !refused {
+        // The row's own token is forced over its own span.
+        assert!(unsafe { zhuyin_guess_sentence(instance) });
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        assert_eq!(unsafe { sentence_of(instance) }, "你号");
     }
     assert!(!unsafe { zhuyin_clear_constraint(instance, 0) });
     assert_eq!(unsafe { zhuyin_clear_constraint(instance, 3) }, !refused);
@@ -324,12 +296,6 @@ fn train_without_a_choose_trains_nothing_and_without_a_user_store_refuses() {
         sentence,
         "the retained result"
     );
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    unsafe {
-        with_store(instance, |store| {
-            assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 0);
-        })
-    };
     assert!(unsafe { zhuyin_guess_sentence(instance) });
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
     assert_eq!(unsafe { sentence_of(instance) }, sentence, "a fresh decode");

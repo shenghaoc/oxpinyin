@@ -26,8 +26,6 @@ use crate::test_support::open;
 
 use crate::types::PinyinInstance;
 
-use oxpinyin::__internal::vocab::SENTENCE_START;
-
 /// One call that maps a system library again over a private system
 /// directory whose library is a directory: the save and
 /// the mask-out map `merged.bin` (`pinyin.cpp:955`, `:1264`), the reload of
@@ -177,13 +175,6 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
         (
             // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
             // it.
-            unsafe { with_store(instance, |store| store.bigram_count(SENTENCE_START, t1)) }
-                .unwrap(),
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { with_store(instance, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
-            // it.
             unsafe { with_store(instance, |store| store.system_unigram(t1)) },
             // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
             // it.
@@ -218,27 +209,14 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
         assert_eq!(
             // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
             // into it.
-            unsafe { with_store(instance2, |store| store.bigram_count(SENTENCE_START, t1)) }
-                .unwrap(),
+            unsafe { with_store(instance2, |store| store.system_unigram(t1)) },
             counts.0
         );
         assert_eq!(
             // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
             // into it.
-            unsafe { with_store(instance2, |store| store.bigram_total(SENTENCE_START)) }.unwrap(),
-            counts.1
-        );
-        assert_eq!(
-            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
-            // into it.
-            unsafe { with_store(instance2, |store| store.system_unigram(t1)) },
-            counts.2
-        );
-        assert_eq!(
-            // SAFETY: `instance2` was opened above and is not yet freed; only this thread calls
-            // into it.
             unsafe { with_store(instance2, |store| store.unigram_total()) },
-            counts.3
+            counts.1
         );
     }
     assert!(
