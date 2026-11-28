@@ -37,6 +37,7 @@ A parenthetical after a status is a note about scope, not a new status.
 | [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
 | [`library-transitions-in-memory`](library-transitions-in-memory.md) | Library transitions in memory | reference |
 | [`matrix-split-tables`](matrix-split-tables.md) | Matrix split tables SPEC: the resplit pairs and divided syllables of the scan matrix | reference |
+| [`memory-safety-bugs`](memory-safety-bugs.md) | Memory and access safety bugs in libpinyin and ibus-libpinyin, sorted by the mechanism that prevents each in oxpinyin | register |
 | [`model-provenance`](model-provenance.md) | Model and table provenance | policy (model20 not redistributable) |
 | [`option-bits`](option-bits.md) | Option bits: where each `pinyin_option_t` bit class acts, and oxpinyin's handling | reference |
 | [`parser-spec`](parser-spec.md) | Full-pinyin parser SPEC: the inventory, input domain, result fields and apostrophe rules | reference |
