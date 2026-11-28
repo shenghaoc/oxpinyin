@@ -15,7 +15,7 @@
 # absence is a SILENT misconfiguration, not a build failure: the consumer
 # looks for system data at "" and probes an empty backend name.
 #
-# `just packaging install` fills every field after cargo cinstall and strips
+# tools/dev/packaging.mk (on macOS, `just packaging install`) fills every field after cargo cinstall and strips
 # this header: @VERSION@ from the pin record, @LIBPINYIN_BINARY_VERSION@,
 # @DATABASE_FORMAT@ for the backend, and the install-time
 # @prefix@/@exec_prefix@/@libdir@/@includedir@ the way the pin's configure

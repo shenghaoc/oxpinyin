@@ -87,7 +87,10 @@ No utility port in this inventory is missing; the trainer's own Python scripts s
 
 `oxpinyin-capi` is a `cdylib` that must be installed like any other C library: a versioned `.so`, an unversioned linker symlink, `pinyin.h` and a `pkg-config` file.
 `cargo cbuild` and `cargo cinstall` derive the install layout and SONAME from Cargo metadata.
-cargo-c cannot produce a complete libpinyin `.pc` ([Locating the model data](#locating-the-model-data-pkgdatadir)), so `just packaging install` wraps `cargo cinstall`.
+cargo-c cannot produce a complete libpinyin `.pc` ([Locating the model data](#locating-the-model-data-pkgdatadir)) or a versioned shared library ([Export gate](#export-gate)).
+On Linux, `tools/dev/packaging.mk` therefore wraps `cargo cbuild` and `cargo cinstall`, as an upstream build system does: its build step links the libraries, and its install step installs them and writes the `.pc`.
+The [release recipes](#release-artifacts-release-packagesyml) run it from each distribution's build driver.
+`just packaging install` runs it on Linux and wraps `cargo cinstall` itself on macOS.
 It runs from the checkout with the [ordinary native setup](runbooks/setup.md); its first `uv run` provisions its managed interpreter.
 The packaging commands supervise builds, relinks and package builders, with cancellation handling.
 
@@ -148,10 +151,10 @@ The [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ) t
 ## Static libraries
 
 cargo-c always builds a `.a` for a `staticlib` crate and has **no** metadata setting to suppress it.
-`just packaging install` and `just packaging release-stage` therefore install `libpinyin.a` and `libzhuyin.a` beside the `.so`.
+The install step of `tools/dev/packaging.mk` therefore installs `libpinyin.a` and `libzhuyin.a` beside the `.so`.
 Each release package then follows the distribution package that it replaces:
 
-- **Debian:** the `-dev` package ships both archives.
+- **Debian:** the `-dev` package ships both archives (its `.install` file lists them).
   Debian's `libpinyin15-dev` and `libzhuyin-dev` 2.11.92-1 do the same: their `.install` files list `usr/lib/*/libpinyin.a` and `usr/lib/*/libzhuyin.a`.
 - **Fedora:** the RPM's `%install` removes both archives by name, so `-devel` ships none.
   Fedora's `libpinyin-devel` 2.11.92-1 ships none either: its spec configures with `--disable-static`, and it has no `-static` subpackage.
@@ -188,29 +191,53 @@ A package version (stream 1, the release tag) therefore never appears in a filen
 
 ## Fedora recipe
 
+The release lane's spec builds with `rpmbuild -bb`. `just packaging release-recipe fedora kyotocabinet <version> <outdir>` writes it (`RPM_SPEC` in `tools/dev/packaging_templates.py`).
+Fedora's cargo-rpm-macros have no cargo-c macros: `%cargo_cbuild` and `%cargo_cinstall` do not expand in Rawhide.
+The spec therefore runs the Makefile with Fedora's own make macros:
+
 ```specfile
-BuildRequires: cargo-c
-# ...
+BuildRequires:  cargo-rpm-macros
+BuildRequires:  cargo-c
+BuildRequires:  kyotocabinet-devel
+Source1:        LICENSE.dependencies
+Provides:       bundled(crate(bitflags)) = 2.13.2
+# ... one bundled(crate(...)) Provides for each linked crate
+%prep
+%autosetup -n oxpinyin-%{version}
+%cargo_prep -v vendor
+cp -p %{SOURCE1} .
+
 %build
-%cargo_cbuild
+%{make_build} -f tools/dev/packaging.mk BACKEND=kyotocabinet PROFILE=rpm CARGO_FLAGS='--profile rpm --frozen' prefix=%{_prefix} libdir=%{_libdir}
+
 %install
-%cargo_cinstall
+%{make_install} -f tools/dev/packaging.mk BACKEND=kyotocabinet PROFILE=rpm CARGO_FLAGS='--profile rpm --frozen' prefix=%{_prefix} libdir=%{_libdir}
+rm -- %{buildroot}%{_libdir}/libpinyin.a %{buildroot}%{_libdir}/libzhuyin.a
+install -Dm644 -t "crate-licenses/bitflags-2.13.2" 'vendor/bitflags-2.13.2/LICENSE-APACHE' 'vendor/bitflags-2.13.2/LICENSE-MIT'
+# ... one install line for each linked crate
+
+%files
+%license LICENSE LICENSE.dependencies crate-licenses/*
 ```
 
-`cargo cinstall` derives `--libdir=/usr/lib64` from the target environment.
-
-This recipe has the shape that Fedora documents.
-A real package build must run `just packaging install <libpinyin|libzhuyin> --prefix=/usr …` instead of the bare `cargo cinstall`, or run it again afterwards.
-The reason is that cargo-c's own `.pc` lacks the variables that consumers read ([Locating the model data](#locating-the-model-data-pkgdatadir)).
-Fedora's rpm macros export the distribution's build flags in `%install`, `LDFLAGS` and `CC=gcc` included, so `just packaging install` there relinks with Fedora's `LDFLAGS` ([export gate](#export-gate)).
-The recipe sets no flag itself.
-The release packages that `release-packages.yml` builds go through exactly that wrapper ([Release artifacts](#release-artifacts-release-packagesyml)).
+`%cargo_prep -v vendor` points cargo at the vendored crates, offline. It adds the `rpm` profile, which inherits `release` with `debug = 2`.
+Fedora's `%build` and `%install` export the distribution's flags themselves, including `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `RUSTFLAGS` and `CC=gcc`.
+The link therefore takes Fedora's `LDFLAGS` ([export gate](#export-gate)).
+The spec sets no flag itself.
+The `License` tag, the `bundled(crate(...))` Provides and `LICENSE.dependencies` name the crates that the libraries link: their normal dependency tree, the same set as the Debian copyright stanzas.
+The recipe generation writes them.
+`%install` copies each of those crates' licence files into `crate-licenses/<crate>-<version>/`, and `%license` ships the directories under `/usr/share/licenses/<name>/`, with the files and layout of the Arch package.
+The spec does not use `%cargo_vendor_manifest`: it names every vendored crate, dev and build dependencies included, and takes no filter.
+`%cargo_license_summary` does not take the same set either, so the spec does not use it.
+rpmbuild builds the debug packages as it does by default.
 
 ## Debian recipe
 
+The release lane's `debian/` directory builds with `dpkg-buildpackage -b`. `just packaging release-recipe debian tkrzw <version> <outdir>` writes it (`DEB_*` in `tools/dev/packaging_templates.py`):
+
 ```makefile
 # debian/control
-Build-Depends: cargo-c:native, just:native
+Build-Depends: debhelper-compat (= 13), cargo, rustc, cargo-c, make, pkgconf, g++, libglib2.0-dev, libtkrzw-dev, liblzma-dev, liblz4-dev, libzstd-dev, zlib1g-dev
 ```
 
 ```makefile
@@ -218,23 +245,30 @@ Build-Depends: cargo-c:native, just:native
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 DPKG_EXPORT_BUILDFLAGS = 1
 include /usr/share/dpkg/buildflags.mk
+include /usr/share/dpkg/architecture.mk
+
+PACKAGING = $(MAKE) -f tools/dev/packaging.mk BACKEND=tkrzw CARGO_FLAGS='--release --frozen' \
+	prefix=/usr libdir=/usr/lib/$(DEB_HOST_MULTIARCH)
+
+%:
+	dh $@
+
+override_dh_clean:
+	dh_clean -XCargo.toml.orig
 
 override_dh_auto_build:
+	$(PACKAGING)
 
 override_dh_auto_install:
-	for library in libpinyin libzhuyin; do \
-	  just packaging install $$library --prefix=/usr \
-	    --libdir=/usr/lib/$(DEB_HOST_MULTIARCH) --destdir=$(CURDIR)/debian/tmp \
-	    -- --release --locked --no-default-features --features tkrzw || exit 1; \
-	done
+	$(PACKAGING) install DESTDIR=$(CURDIR)/debian/tmp
 ```
 
-The recipe runs `just packaging install` once for each library, as `just packaging release-stage` does, on the Debian lane's backend, tkrzw ([lane table](#release-artifacts-release-packagesyml)).
-The install step builds the libraries: the build step has nothing to do.
-`just packaging install` builds the cargo-c staticlib and links `libpinyin.so.15` and `libzhuyin.so.15` from it with their `.ver` scripts ([export gate](#export-gate)).
+The build step builds the cargo-c staticlibs. It links `libpinyin.so.15` and `libzhuyin.so.15` from them with their `.ver` scripts ([export gate](#export-gate)).
 `libpinyin.so.15` then exports the 79 `pinyin_*` symbols under the `LIBPINYIN` version node, and no `cxxbridge1$*` symbol.
-The step also writes the complete `.pc` files.
+The install step also writes the complete `.pc` files.
 A plain `cargo cinstall` shared library has no symbol versions and exports the cxx runtime, so the recipe does not install it.
+dh_shlibdeps computes the runtime package's dependencies. dh_strip moves its debug symbols into the `-dbgsym` package.
+`dh_clean -X` keeps the vendored `Cargo.toml.orig` files, because cargo verifies their checksums.
 
 The link passes the environment's `LDFLAGS` ([export gate](#export-gate)), and cc-rs reads `CFLAGS` and `CXXFLAGS` when it compiles the C++ bridges.
 dpkg-buildpackage has not exported these flags since dpkg 1.16.1, so the recipe exports them itself: `buildflags.mk` with `DPKG_EXPORT_BUILDFLAGS` exports the values that dpkg-buildflags gives.
@@ -242,7 +276,8 @@ dpkg-buildpackage has not exported these flags since dpkg 1.16.1, so the recipe 
 dpkg-buildflags omits `-Wl,-z,now` by default, so without that option the library has no `BIND_NOW`.
 The recipe names no flag itself.
 
-`just packaging install` needs uv beside `just` and cargo-c ([installing uv and cargo-c](runbooks/setup.md#installing-uv-and-cargo-c)).
+`debian/copyright` names the project and the upstream notices of the verbatim pin headers.
+It also names the copyright and the licence of each crate that the libraries link, read from the vendored crates.
 
 ## Build and runtime dependencies
 
@@ -260,9 +295,9 @@ Each backend splits into its own `lib*-dev` / `lib*` pair (`libdb5.3` / `libdb5.
 `libm.so.6` in `DT_NEEDED`, as the Kyoto Cabinet build of libpinyin does. Both
 are already dependencies of libkyotocabinet.
 
-On Linux GNU targets, the cargo cdylib links and the [versioned relink](#export-gate) pass
+On Linux GNU targets, the cargo cdylib links and the [versioned link](#export-gate) pass
 `-Wl,-z,pack-relative-relocs`, which packs the relative relocations into `DT_RELR`.
-The relink decides by the C compiler, not by its target triple: it passes the option when the compiler's `<features.h>` defines `__GLIBC__`.
+The versioned link decides by the C compiler, not by its target triple: it passes the option when the compiler's `<features.h>` defines `__GLIBC__`.
 Fedora's gcc, for example, reports `x86_64-redhat-linux`, a triple without `-gnu`.
 The packed library needs glibc 2.36 or later at run time: it requires the `GLIBC_ABI_DT_RELR` version of `libc.so.6`.
 GNU ld packs them from binutils 2.38 on x86_64.
@@ -289,6 +324,7 @@ It also cannot skip writing its own incomplete `libpinyin.pc`.
 
 The contract is therefore carried outside cargo-c.
 `just packaging install` computes the complete `.pc` file from each crate's `.pc.in` template: no build script writes it, and it reads nothing from Cargo's build directory.
+On Linux the install step of `tools/dev/packaging.mk` does this with sed, as the pin's `config.status` does; on macOS `tools/dev/packaging.py` does it.
 It fills the version, binary version, database format and install-time placeholders and **overwrites** the file that cargo-c installed.
 Both templates are the pin's own `.pc.in`, and the wrapper substitutes what the pin's configure substitutes:
 
@@ -343,7 +379,7 @@ rustc always gives a cdylib its own anonymous version script, and a second, name
 GNU ld rejects the pair.
 rust-lld accepts the definitions but does not reassign the symbols, which gives the third shape.
 So the cargo-built cdylib has no version script and has the first shape.
-On Linux, the [packaging relink](#export-gate) gives the shipped library the second shape.
+On Linux, the [packaging link](#export-gate) gives the shipped library the second shape.
 `libzhuyin.so.15` uses `LIBZHUYIN` and its 52 symbols the same way.
 
 **Symbol scope.** The shipped library exports every symbol in its `.ver` script and nothing else.
@@ -376,13 +412,14 @@ GNU ld then gives hidden visibility to every symbol defined in an archive: the r
 rustc's anonymous version script cannot override that visibility, and the capi crates' own symbols are not affected.
 When cargo-c enables `capi`, the build scripts emit only the `DT_RELR` link argument ([build and runtime dependencies](#build-and-runtime-dependencies)).
 
-On Linux, `just packaging install` requests only the staticlib from cargo-c.
-It relinks the shared object from that archive with the crate's `.ver` script, `-Wl,-z,defs` and, for a glibc C compiler, `-Wl,-z,pack-relative-relocs` (`just packaging relink-versioned`).
+On Linux, `tools/dev/packaging.mk` requests only the staticlib from cargo-c, for `just packaging install` and the release recipes alike.
+Its build step runs `cargo cinstall` into a scratch stage, so the Rust code compiles once: cargo-c 0.10 fingerprints the C crate differently for `cbuild`, for `cinstall` and for each destdir.
+It links the shared object from the staged archive with the crate's `.ver` script, `-Wl,-z,defs` and, for a glibc C compiler, `-Wl,-z,pack-relative-relocs`.
 The link also passes the environment's `LDFLAGS`, split as a shell splits them, after its own flags and before the archive and the libraries, as automake orders `$(AM_LDFLAGS) $(LDFLAGS)`.
-The distribution supplies its linker hardening there; the relink adds none. Because `LDFLAGS` follow the relink's own options, they can override one, as `-Wl,-z,nopack-relative-relocs` does.
+The distribution supplies its linker hardening there; the link adds none. Because `LDFLAGS` follow the link's own options, they can override one, as `-Wl,-z,nopack-relative-relocs` does.
 The shipped library therefore carries the pin's symbol versioning, and the script's `local: *` excludes every other symbol.
-The relink verifies the exact export set and each export's version tag against the `.ver` list before installing the shared object.
-The wrapper then creates `lib<name>.so` and `lib<name>.so.15` as symlinks to `lib<name>.so.15.0.0`.
+The build step verifies the exact export set, each export's version tag and the SONAME against the `.ver` list before it keeps the shared object.
+The install step copies the staged archive and headers and the linked object, and creates `lib<name>.so` and `lib<name>.so.15` as symlinks to `lib<name>.so.15.0.0`.
 
 On macOS, the Apple linker rejects `--exclude-libs`, cannot combine nonempty exported and unexported lists, and takes the union of two exported lists.
 A second list on rustc's cdylib link would therefore add exports, not restrict them.
@@ -406,7 +443,7 @@ The compiler and linker control function layout. oxpinyin does not keep function
 Source, dependency and toolchain changes need no policy regeneration.
 The project adds no PGO, BOLT, linker call-graph sorting or other layout system.
 
-Linux uses the [versioned relink](#export-gate).
+Linux uses the [versioned link](#export-gate).
 macOS uses the export-controlled relink described in [Export gate](#export-gate); `just packaging install` then loads the replaced file with `dlopen` and looks up `pinyin_init` or `zhuyin_init`, and fails if either step fails.
 On macOS, install with `--prefix=/usr/local` or another non-system prefix. A `/usr` prefix gives the dylibs `/usr/lib` install names, which macOS reserves for its shared cache; the link then fails with "Shared cache eligible dylib cannot link to ineligible dylib" against a library outside the shared cache, such as Homebrew's tkrzw.
 A target whose architecture differs from the running process's (`--target x86_64-apple-darwin` on Apple silicon) is not loaded: the install prints one line saying the load check was skipped.
@@ -470,46 +507,57 @@ The drop-in therefore reads the data already on the system:
 | Fedora | `fedora:rawhide` | kyotocabinet | Fedora's libpinyin still links KyotoCabinet (`kyotocabinet-libs`) |
 | Arch | `archlinux:latest` | kyotocabinet | Arch's libpinyin still links KyotoCabinet |
 
-`just packaging release-stage` builds and stages through the supported path.
-It runs `just packaging install` (cargo cinstall and the complete `.pc`) once for each library, with `--destdir` set to the staging root.
+Each lane builds in its distribution's build image: `debian:testing`, `fedora:rawhide` with mock's `@buildsys-build` group, and `archlinux:base-devel`.
+It builds with its distribution's own `rustc`, `cargo` and cargo-c, and with no rustup.
+`just packaging release-recipe <distro> <backend> <version> <outdir>` writes the recipe: `debian/`, an rpm spec or a PKGBUILD.
+On Arch it requires `--data=<package>`, the downloaded libpinyin package whose model directory the PKGBUILD installs, and takes an optional `--data-version=<version>`, which the package description records.
+It also writes the source: the committed tree, the crates that `cargo vendor` stores, and a source replacement that makes cargo use them offline.
+Fedora and Arch keep it as one archive. Debian gets the extracted tree, with `debian/` in it, where `dpkg-buildpackage -b` runs.
+The repository's Python runs only there and in the install gates, never inside the build.
+The distribution's own tool installs the recipe's build dependencies (`apt-get build-dep`, `dnf builddep`, pacman).
+Its own driver builds the binary packages: `dpkg-buildpackage -b`, `rpmbuild -bb` and `makepkg`.
+cargo runs with `--frozen` and no network.
+Each recipe builds and installs through `tools/dev/packaging.mk` ([Debian recipe](#debian-recipe), [Fedora recipe](#fedora-recipe)); the PKGBUILD runs it from `build()` and `package()`.
 cargo-c's ordinary `--no-default-features --features <backend>` selects the backend for both crates.
 cargo-c forwards both flags to `cargo build`, because its subcommands register cargo's full set of feature arguments.
-See [Installing uv and cargo-c](runbooks/setup.md#installing-uv-and-cargo-c) for host setup.
-Rustc and Cargo come from `rust-toolchain.toml`.
-Each lane builds with its distribution's own build flags (dpkg-buildflags with `hardening=+all`, the rpm `%{build_cflags}`, `%{build_cxxflags}` and `%{build_ldflags}` macros with `CC=gcc`, and `/etc/makepkg.conf`), and its install gate fails when the installed `libpinyin.so.15` or `libzhuyin.so.15` has no `BIND_NOW`.
 
-The script then strips the shared objects and checks the tree again before any packaging runs.
-The checks are the fixed file list of `docs/findings/installed-naming.md`, the SONAME, the five pkg-config reads that real consumers perform, and a C compile/link/run.
-The run certifies the `libtkrzw` that the smoke binaries load against `OXPINYIN_TKRZW_LIBRARY`. The Debian lane sets it to the dpkg-owned `libtkrzw.so.1` that its package depends on.
+Each lane builds with its distribution's own build flags, as its driver sets them:
 
-The maker for each distribution wraps that staged tree in the shape that the distribution's real libpinyin packaging uses.
+- Debian: dpkg-buildflags with `hardening=+all`;
+- Fedora: the flags of the spec's `%build` and `%install`;
+- Arch: `makepkg.conf`, with makepkg's default `debug` and `lto` options.
+
+Each install gate fails when the installed `libpinyin.so.15` or `libzhuyin.so.15` has no `BIND_NOW`.
+Each driver strips the libraries and builds its debug packages as it does by default. Only the main packages are attached to the release.
+The workflow sets no `RUSTFLAGS`, for two reasons. Fedora's `%build` keeps an inherited value in place of its own. A distribution `rustc` newer than the pinned toolchain must not fail the build on a new lint.
+
 Every package takes over the distribution's libpinyin and libzhuyin **in their entirety**:
 
 - the same sonames and the same pkg-config names;
 - versioned Provides at the pin's libpinyin version (`just packaging pc-version`; 2.11.92);
 - Conflicts/Replaces (deb), Obsoletes (rpm) or `conflicts=` (pacman) on the originals.
 
-The makers are:
+The packages are:
 
-- `just packaging release-deb`: `oxpinyin-libpinyin15-<backend>` and `-dev`, which correspond to libpinyin15 and libzhuyin15 and their -dev packages.
+- Debian: `oxpinyin-libpinyin15-<backend>` and `-dev`, which correspond to libpinyin15 and libzhuyin15 and their -dev packages.
+  They provide the same virtual packages as those: `libpinyin` and `libzhuyin`, and `libpinyin-dev`.
   The `-dev` package does not take the place of `libpinyin-common-dev`, which holds only `novel_types.h` and `pinyin_custom2.h` (`debian/libpinyin-common-dev.install` of libpinyin 2.11.92-1).
   Debian's `libpinyin15-dev` depends on that package for those headers, and `-dev` does the same.
-  The maker leaves both headers out of the `-dev` payload; the staged tree keeps them, and the RPM and Arch packages ship them.
+  The recipe leaves both headers out of the `-dev` payload (`debian/not-installed`); the RPM and Arch packages ship them.
   `-dev` depends on `libpinyin-common-dev (>= <pin version>), libpinyin-common-dev (<< <next micro version>)`, built from the pin version, so the headers match the pin.
   Debian's own `libpinyin15-dev` states `libpinyin-common-dev (= ${source:Version})`.
   The pin version does not fix Debian's revision, so the range allows any revision of the pin's upstream version.
-  Depends is computed from the DT_NEEDED entries of the shipped ELF through ldconfig and `dpkg -S`.
-  t64-era names (`libglib2.0-0t64`, `libtkrzw1t64`) therefore resolve on the suite that the build runs on.
-  Depends also has a `libc6 (>= N)` floor, taken from the highest `GLIBC_*` symbol version referenced.
+  dh_shlibdeps computes Depends from the shipped ELF, so the t64-era names (`libglib2.0-0t64`, `libtkrzw1t64`) resolve on the suite that the build runs on.
   The `-dev` package depends on the matching runtime package and on `libglib2.0-dev` for the GLib headers that `pinyin.h` and `zhuyin.h` include.
-- `just packaging release-rpm`: `oxpinyin-libpinyin-<backend>` and `-devel`, which correspond to libpinyin and libpinyin-devel.
-  rpm's dependency generator emits the soname Provides (`libpinyin.so.15()(64bit)`) and the backend Requires automatically.
+- Fedora: `oxpinyin-libpinyin-<backend>` and `-devel`, which correspond to libpinyin and libpinyin-devel.
+  rpm's dependency generator emits the soname Provides (`libpinyin.so.15()(64bit)`, `libpinyin.so.15(LIBPINYIN)(64bit)`) and the backend Requires automatically.
   Obsoletes performs the swap; Conflicts cannot, because a package may not conflict with a name it provides.
   `-devel` carries no static archives ([static libraries](#static-libraries)).
-- `just packaging release-arch`: one `oxpinyin-libpinyin-<backend>` package, because Arch ships libpinyin undivided.
-  It has soname Provides in pacman's form (`libpinyin.so=15-64`).
-  With `--data=DIR`, it installs the model directory as `/usr/lib/libpinyin/data`.
-  `--data-version=VER` records the origin package version in the description, because Arch's data (2.10.x) is older than the pin version (2.11.92) that the library provides.
+- Arch: one `oxpinyin-libpinyin-<backend>` package, because Arch ships libpinyin undivided.
+  makepkg versions its soname Provides from the built libraries (`libpinyin.so=15-64`).
+  The workflow downloads Arch's libpinyin package, and the PKGBUILD installs its model directory as `/usr/lib/libpinyin/data`.
+  The description records the origin package version, because Arch's data (2.10.x) is older than the pin version (2.11.92) that the library provides.
+  The package installs each linked crate's licence files under `/usr/share/licenses/<pkgname>/`.
   Its existing `glib2` dependency already includes the GLib headers.
 
 Data: Debian and Fedora keep `libpinyin-data`.
@@ -520,10 +568,11 @@ So the Arch lane downloads that package (`pacman -Sw`) and ships its `usr/lib/li
 These are the same KyotoCabinet-format files, under the same licence, at the same path, `${pkgdatadir}/data`.
 
 At the end, each CI lane INSTALLS its own packages back into its build container, with `libpinyin-data` on Debian and Fedora.
-It then runs the gates again against `/usr`:
+It then runs the gates against `/usr`:
 
-- the same five pkg-config reads;
+- the five pkg-config reads that real consumers perform;
 - a C compile/link/run;
+- `just packaging check-installed`: the export set, the default version (`@@` and the node) of each export, the SONAME, and the binary version in `<libdir>/pkgconfig/<library>.pc` of each installed library, and the `libtkrzw` that the smoke programs load, against `OXPINYIN_TKRZW_LIBRARY` (the Debian lane sets it to the dpkg-owned `libtkrzw.so.1` that its package depends on). On the tkrzw backend a program that loads no `libtkrzw` fails;
 - a real `pinyin_init`/`zhuyin_init` on `$(pkg-config --variable=pkgdatadir libpinyin)/data`, which must return a context.
 
 A release therefore never attaches a package that does not install, does not answer as libpinyin/libzhuyin, or cannot open the system's model.

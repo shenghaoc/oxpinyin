@@ -114,7 +114,9 @@ version = "0.1.0-beta.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/shenghaoc/oxpinyin"
-# Exact on purpose (#1074): the MSRV is the pinned stable toolchain.
+# The MSRV is the oldest rustc among the release lanes (release-packages.yml),
+# which build with their distribution's own compiler: Debian testing's 1.98.1.
+# rust-toolchain.toml is the development toolchain and may be newer.
 rust-version = "1.98.1"
 
 [workspace.lints.rust]

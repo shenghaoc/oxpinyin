@@ -35,10 +35,11 @@
 //! script's version *definitions* while refusing to reassign the symbols,
 //! leaving exactly the shape that fails to load.
 //!
-//! On Linux, `just packaging install` uses `just packaging relink-versioned`
-//! to link the shipped shared library from the cargo-c staticlib. The relink
-//! sets the SONAME, applies `libpinyin.ver`, and verifies the exact export set
-//! (docs/packaging.md#drop-in-identity states the requirement).
+//! On Linux, `tools/dev/packaging.mk` links the shipped shared library from
+//! the cargo-c staticlib, for `just packaging install` and the release
+//! recipes alike. The link sets the SONAME, applies `libpinyin.ver`, and
+//! verifies the exact export set (docs/packaging.md#drop-in-identity states
+//! the requirement).
 //!
 //! # The complete `libpinyin.pc`
 //!
@@ -46,9 +47,10 @@
 //! `[package.metadata.capi.pkg_config]`, but its field set is closed and it
 //! cannot emit the four variables real consumers read (`pkgdatadir`,
 //! `database_format`, `libpinyinincludedir`, `libpinyin_binary_version`).
-//! This script writes no `.pc` content. `just packaging install`
-//! (`tools/dev/packaging.py`) computes the complete file from
-//! `libpinyin.pc.in` after `cargo cinstall` and reads nothing from Cargo's
+//! This script writes no `.pc` content. The install step of
+//! `tools/dev/packaging.mk` on Linux, and `just packaging install`
+//! (`tools/dev/packaging.py`) on macOS, compute the complete file from
+//! `libpinyin.pc.in` after `cargo cinstall` and read nothing from Cargo's
 //! build directory. See `docs/findings/installed-naming.md` for the
 //! rationale and the verified cargo-c limits.
 

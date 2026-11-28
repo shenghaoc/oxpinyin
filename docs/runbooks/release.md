@@ -36,17 +36,28 @@ Mark the release as a pre-release if the tag has a pre-release suffix.
 
 ## Locally
 
+Run each lane in its distribution's build image, from a clean checkout with the
+distribution's `cargo`, `git` and uv. The recipe step needs the network; the
+build does not:
+
 ```sh
-just packaging release-stage tkrzw --prefix=/usr --libdir=/usr/lib/x86_64-linux-gnu \
-    --dest="$PWD/target/release-stage/tkrzw"
-just packaging release-deb  tkrzw <version> target/release-stage/tkrzw /usr/lib/x86_64-linux-gnu <outdir>
-just packaging release-rpm  kyotocabinet <version> target/release-stage/kyotocabinet <outdir>
-just packaging release-arch kyotocabinet <version> target/release-stage/kyotocabinet <outdir> --data=<arch data dir> --data-version=<ver>  # without --data the package cannot init on the system it replaced
+just packaging release-recipe debian tkrzw <version> "$PWD/build"
+apt-get build-dep ./build/oxpinyin-<version>
+(cd build/oxpinyin-<version> && dpkg-buildpackage -b -uc -us)
+
+just packaging release-recipe fedora kyotocabinet <version> "$PWD/build"
+dnf builddep build/SPECS/*.spec
+rpmbuild --define "_topdir $PWD/build" -bb build/SPECS/*.spec
+
+just packaging release-recipe arch kyotocabinet <version> "$PWD/build" \
+    --data=<downloaded libpinyin package> --data-version=<its version>
+(cd build && makepkg)  # as an unprivileged user, with the PKGBUILD's dependencies installed
 ```
 
-`tools/dev/packaging.py` states the arguments of each maker. The workflow is the
-reference invocation. The staged tree is the complete install (runtime + dev);
-the makers split it in the same way that each distro splits libpinyin.
+The recipe archives `HEAD`, so commit first. Without `--data`, the Arch package
+cannot init on the system it replaced. The workflow is the reference
+invocation, and `just packaging release-version` gives each distribution's
+`<version>` for a release tag.
 
 ## After
 

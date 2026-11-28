@@ -17,10 +17,9 @@
 //!
 //! A Rust `cdylib` cannot combine a named version script with rustc's own
 //! anonymous script (GNU ld rejects the pair, rust-lld refuses to reassign
-//! the symbols). On Linux, `just packaging install` uses
-//! `just packaging relink-versioned` to link the shipped shared library from
-//! the cargo-c staticlib. The relink sets the SONAME, applies `libzhuyin.ver`,
-//! and verifies the exact export set.
+//! the symbols). On Linux, `tools/dev/packaging.mk` links the shipped shared
+//! library from the cargo-c staticlib. The link sets the SONAME, applies
+//! `libzhuyin.ver`, and verifies the exact export set.
 
 use std::env;
 

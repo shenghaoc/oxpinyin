@@ -3,8 +3,7 @@ description: |-
   Shared post-checkout bootstrap cluster for this repository's
   workflows: the checkout registered as a git safe.directory (the
   release-packages.yml distro-container jobs run as root over a root-owned
-  checkout), an optional rustup install for those container jobs, an
-  optional install of the toolchain and components that
+  checkout), an optional install of the toolchain and components that
   rust-toolchain.toml names (minimal profile), optional CI tools (uv
   through astral-sh/setup-uv; just, cargo-nextest, cargo-deny and
   cargo-shear through taiki-e/install-action, just, cargo-deny and cargo-shear at exact
@@ -31,14 +30,6 @@ inputs:
       release-packages.yml distro-container jobs, which run as root over a
       root-owned checkout.
       String 'true'/'false' (composite-action inputs are strings).
-    required: false
-    default: 'false'
-  rustup:
-    description: >-
-      Install rustup from sh.rustup.rs with the minimal profile, then the
-      toolchain and components that rust-toolchain.toml names. For the
-      release-packages.yml distro-container jobs, whose images have no
-      rustup. String 'true'/'false' (composite-action inputs are strings).
     required: false
     default: 'false'
   rust-toolchain:
@@ -120,23 +111,10 @@ runs:
       shell: bash
       run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-    # No toolchain yet: the next step installs the one rust-toolchain.toml names.
-    - name: Install rustup
-      if: inputs.rustup == 'true'
-      shell: bash
-      run: curl --fail --location --retry 3 --show-error https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-
-    # GITHUB_PATH applies to later steps.
-    - name: Put rustup on PATH
-      if: inputs.rustup == 'true'
-      shell: bash
-      run: printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-
     # rustup reads the channel and the components from the rust-toolchain.toml
-    # of the working directory. In a container job no default toolchain is
-    # set, so a command run outside the checkout has none.
+    # of the working directory.
     - name: Install the pinned Rust toolchain
-      if: inputs.rustup == 'true' || inputs.rust-toolchain == 'true'
+      if: inputs.rust-toolchain == 'true'
       shell: bash
       working-directory: ${{ inputs.rust-toolchain-dir }}
       run: rustup toolchain install

@@ -56,8 +56,8 @@ ENTRY_POINTS = {'libpinyin': 'pinyin_init', 'libzhuyin': 'zhuyin_init'}
 # The libtool current.revision of [package.metadata.capi.library].version in both C-ABI crates:
 # the .pc files' libpinyin_binary_version and libzhuyin_binary_version.
 BINARY_VERSION = '15.0'
-NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
-         'distro-tkrzw-library', 'check-library-mode', 'release-version', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
+NAMES = ('install', 'pc-version', 'check-pc-version', 'check-pc-metadata',
+         'distro-tkrzw-library', 'check-library-mode', 'check-installed', 'release-version', 'release-recipe', 'sizes',
          'trainer-layout')
 
 # libpinyin 074a2219 utils/{storage,segment,training}/Makefile.am.
@@ -417,17 +417,17 @@ def install_library(argv, tools):
     companion_headers(root=tools.root)
     selected = next((peer for peer in cell.BACKENDS if peer in layout.features().replace(',', ' ').split()),
                     None) or cell.declared_default(tools.root)
-    tools.run(['mkdir', '-p', layout.pcdir])
     crate = crate_dir(tools.root, LIBRARIES[layout.library])
+    system = tools.text(['uname', '-s'])
+    if system == 'Linux':
+        return install_linux(layout, crate, selected, tools)
+    tools.run(['mkdir', '-p', layout.pcdir])
     command = ['cargo', 'cinstall', f'--prefix={layout.prefix}', f'--libdir={layout.libdir}',
                f'--includedir={layout.includedir}', f'--target-dir={layout.target}']
     if layout.destdir:
         command.append(f'--destdir={layout.destdir}')
-    system = tools.text(['uname', '-s'])
     env = None
-    if system == 'Linux':
-        command += ['--library-type', 'staticlib']
-    elif system == 'Darwin':
+    if system == 'Darwin':
         # rustc, cc and cargo-c read the target from the environment; the relink
         # below keeps the value that cargo-c's dylib records.
         env = {**tools.env, 'MACOSX_DEPLOYMENT_TARGET': deployment_target(tools)}
@@ -439,20 +439,6 @@ def install_library(argv, tools):
     pc = layout.pcdir / (layout.library + '.pc')
     pc.write_bytes(data)
     emit(f'installed complete pkg-config file: {pc}')
-    features = ['--features', layout.features()] if layout.features() else []
-    if system == 'Linux':
-        soname = layout.library + '.so.15'
-        destination = Path(layout.destdir + layout.libdir) / (soname + '.0.0')
-        with chdir(tools.root):
-            relink(['--staticlib', str(layout.qualified / (layout.library + '.a')),
-                    '--ver', str(crate / (layout.library + '.ver')),
-                    '--soname', soname, '--dest', str(destination),
-                    '--backend', selected, *features], tools, require_destination=False)
-        with tempfile.TemporaryDirectory(dir=destination.parent) as scratch:
-            for name in (layout.library + '.so', soname):
-                link = Path(scratch) / name
-                link.symlink_to(destination.name)
-                link.replace(destination.with_name(name))
     if system == 'Darwin' and layout.triple.endswith('-apple-darwin'):
         dylib = Path(layout.destdir + layout.libdir) / (layout.library + '.15.0.0.dylib')
         relink_darwin(layout, dylib, tools, selected)
@@ -465,6 +451,39 @@ def install_library(argv, tools):
         if problem:
             fail(f'error: the installed {dylib} does not load:\n         {problem}')
         emit(f'loaded {dylib} and found {ENTRY_POINTS[layout.library]}')
+    return 0
+
+
+def install_linux(layout, crate, backend, tools):
+    """Install one library through tools/dev/packaging.mk, the release recipes' build and install.
+
+    The Makefile links the shared object from the cargo-c staticlib under the crate's .ver
+    script with the environment's LDFLAGS, verifies its exports, and writes the complete .pc.
+    """
+    if not tools.which('make'):
+        fail("error: GNU make is required; install the distribution's make package")
+    command = ['make', '-f', tools.root / 'tools/dev/packaging.mk', 'install-' + layout.library,
+               f'BACKEND={backend}', f'prefix={layout.prefix}', f'CARGO_TARGET_DIR={layout.target}',
+               f'TRIPLE={layout.triple}', f'PROFILE={layout.profile}',
+               # make expands the value once more, so a literal $ is doubled.
+               f'CARGO_FLAGS={shlex.join(layout.passthru).replace("$", "$$")}', 'FEATURES=',
+               f'{layout.library}_crate={crate.relative_to(tools.root).as_posix()}']
+    # A directory that was not given keeps the pin's prefix-relative .pc value.
+    if layout.pc_libdir == layout.libdir:
+        command.append(f'libdir={layout.libdir}')
+    if layout.pc_includedir == layout.includedir:
+        command.append(f'includedir={layout.includedir}')
+    if layout.destdir:
+        command.append(f'DESTDIR={layout.destdir}')
+    if tools.env.get('LDFLAGS'):
+        # make and then the recipe's shell would each expand the environment's value. Each
+        # flag is quoted for the shell and a literal $, as in $ORIGIN, is doubled for make.
+        try:
+            flags = shlex.split(tools.env['LDFLAGS'])
+        except ValueError as error:
+            fail(f"error: cannot split LDFLAGS {tools.env['LDFLAGS']!r}: {error}", 2)
+        command.append('LDFLAGS=' + shlex.join(flags).replace('$', '$$'))
+    tools.heavy(command, cwd=tools.root)
     return 0
 
 
@@ -589,63 +608,6 @@ def backend_flags(backend, tools, cxx, platform):
     return [*flags, *([cxx] if backend == 'kyotocabinet' and cxx not in flags else [])]
 
 
-def relink(argv, tools, *, require_destination=True):
-    values = dict(staticlib='', ver='', soname='', dest='', backend='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
-                  cc=tools.env.get('CC') or 'cc')
-    index = 0
-    usage = ('usage: just packaging relink-versioned --staticlib PATH --ver PATH --soname NAME '
-             '--dest PATH [--backend BACKEND] [--features LIST] [--cc CC]')
-    while index < len(argv):
-        key, value, index = option(argv, index)
-        name = key.removeprefix('--').replace('-', '_')
-        if not key.startswith('--') or name not in values:
-            fail(usage, 2)
-        values[name] = value
-    archive, ver, soname, dest = (values[key] for key in ('staticlib', 'ver', 'soname', 'dest'))
-    if not all((archive, ver, soname, dest)):
-        fail(usage, 2)
-    if tools.text(['uname', '-s']) != 'Linux':
-        fail('error: just packaging relink-versioned is Linux-only (ELF symbol versioning); run it in the Linux packaging lane')
-    cc = values['cc']
-    for tool in (cc, 'nm', 'readelf'):
-        if not tools.which(tool):
-            fail(f"error: required tool '{tool}' not found")
-    for path, label in ((archive, 'staticlib'), (ver, 'version script')):
-        if not Path(path).is_file():
-            fail(f'error: {label} not found: {path}')
-    if require_destination and not Path(dest).is_file():
-        fail(f'error: installed object not found: {dest}')
-    explicit = [peer for peer in cell.BACKENDS if peer in values['features'].replace(',', ' ').split()]
-    parts = Path(archive).parts
-    artifact_cell = next((parts[index + 1] for index, part in enumerate(parts[:-1]) if part == 'cells'), '')
-    artifact_backend = cell.CELL_TO_BACKEND.get(artifact_cell, '')
-    backend = values['backend'] or (explicit[0] if len(explicit) == 1 else '') or artifact_backend
-    if (backend not in cell.BACKENDS or (explicit and explicit != [backend])
-            or (artifact_backend and artifact_backend != backend)):
-        fail('error: relink needs exactly one selected backend from its build', 2)
-    glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
-    flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
-    flags += backend_flags(backend, tools, '-lstdc++', 'linux')
-    ldflags = environment_ldflags(tools)
-    destination = Path(dest)
-    # As mktemp ${DEST%.so*}.relink.XXXXXX: scratch stays beside the object,
-    # so the verified replacement is atomic and its symlinks keep resolving.
-    temporary = tools.text(['mktemp', str(destination).rsplit('.so', 1)[0] + '.relink.XXXXXX'])
-    try:
-        link_and_verify(cc, temporary, ver, soname, archive, ldflags, flags, tools)
-        # mktemp gives 0600 and the linker adds only execute bits. The pin installs
-        # its shared libraries with install(1) under libtool, whose default mode is 0755.
-        os.chmod(temporary, 0o755)
-        # mv -f replaces a symlink at DEST, rather than writing through it.
-        os.replace(temporary, dest)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-    node, exports = version_exports(ver)
-    emit(f'relinked {dest}')
-    emit(f'  soname: {soname} · version node: {node} · exports: {len(exports)} versioned (backend: {backend})')
-    return 0
-
-
 def version_exports(ver):
     text = Path(ver).read_text()
     nodes = re.findall(r'^([A-Za-z_][A-Za-z0-9_]*) \{.*', text, re.M)
@@ -674,64 +636,6 @@ def linux_symbol_names(text: str, node: str):
 
 def linux_exports(text: str, node: str) -> list[str]:
     return [name.partition('@')[0] for name in linux_symbol_names(text, node)]
-
-
-def glibc_target(cc, tools):
-    """Whether CC compiles for glibc: its <features.h> defines __GLIBC__.
-
-    The target triple is not enough: Fedora's gcc reports x86_64-redhat-linux, with no `-gnu`.
-    """
-    done = tools.capture([cc, '-dM', '-E', '-x', 'c', '-'], input=b'#include <features.h>\n')
-    return done.status == 0 and b'#define __GLIBC__ ' in done.stdout
-
-
-def environment_ldflags(tools):
-    """The build environment's LDFLAGS, split as the shell splits make's $(LDFLAGS); [] when unset.
-
-    The distribution supplies its linker hardening here (on Debian, dpkg-buildflags);
-    the relink adds no hardening flag of its own.
-    """
-    text = tools.env.get('LDFLAGS') or ''
-    try:
-        return shlex.split(text)
-    except ValueError as error:
-        fail(f'error: cannot split LDFLAGS {text!r}: {error}', 2)
-
-
-def link_and_verify(cc, temporary, ver, soname, archive, ldflags, flags, tools):
-    # glibc targets pack their relative relocations, as the cargo cdylibs of a
-    # `gnu` target do (capi/build.rs; docs/packaging.md#build-and-runtime-dependencies).
-    relocs = ['-Wl,-z,pack-relative-relocs'] if glibc_target(cc, tools) else []
-    # As automake's $(AM_LDFLAGS) $(LDFLAGS): the environment's flags follow the
-    # relink's own, so they can override one (-z nopack-relative-relocs), and
-    # precede the inputs, so --as-needed reaches the libraries.
-    # The checks below still hold the SONAME and the export set.
-    tools.heavy([cc, '-shared', '-o', temporary, '-Wl,-z,defs', f'-Wl,-soname,{soname}',
-                 f'-Wl,--version-script={ver}', '-Wl,--gc-sections', *relocs, *ldflags, '-Wl,--whole-archive', archive,
-                 '-Wl,--no-whole-archive', *flags, '-lpthread', '-ldl', '-lm'])
-    node, expected = version_exports(ver)
-    raw = tools.text(['nm', '-D', '--defined-only', temporary])
-    actual = sorted(linux_exports(raw, node))
-    if not actual:
-        raise Finished(1)
-    if expected != actual:
-        emit(f"error: relinked object's export set differs from {ver}:", error=True)
-        with temporary_directory(tools) as scratch:
-            left, right = Path(scratch) / 'ver', Path(scratch) / 'so'
-            left.write_text(''.join(name + '\n' for name in expected))
-            right.write_text(''.join(name + '\n' for name in actual))
-            done = tools.capture(['diff', '-u', left, right])
-            write(b'\n'.join(done.stdout.splitlines()[2:40]) + b'\n', error=True)
-        raise Finished(1)
-    # Preserve the second nm validation: a failing inspection is a failed run.
-    raw = tools.text(['nm', '-D', '--defined-only', temporary])
-    unversioned = [name for name in linux_symbol_names(raw, node) if '@' not in name]
-    if unversioned:
-        fail('error: exported symbols without a version tag:\n' + '\n'.join('  ' + name for name in unversioned))
-    names = re.findall(r'\(SONAME\).*\[([^]]*)\]', tools.text(['readelf', '-d', temporary]))
-    actual_soname = names[0] if names else ''
-    if actual_soname != soname:
-        fail(f"error: relinked SONAME is '{actual_soname or '<none>'}', expected {soname}")
 
 
 def version_problems(root=ROOT):
@@ -796,17 +700,6 @@ def temporary_directory(tools, template=None):
         shutil.rmtree(path, ignore_errors=True)
 
 
-def package_work(outdir, tools):
-    tools.run(['mkdir', '-p', '--', outdir])
-    return temporary_directory(tools)
-
-
-def package_done(kind, outdir, tools):
-    emit(f'== {kind} written to {outdir} ==')
-    tools.run(['ls', '-l', outdir])
-    return 0
-
-
 def resolve_deb_library(soname, tools):
     cache = tools.text(['ldconfig', '-p'])
     for line in cache.splitlines():
@@ -846,10 +739,18 @@ LIBRARY_MODE = 0o755
 
 
 def check_library_mode(argv, tools):
-    """Require LIBRARY_MODE on each installed <library>.so.15.0.0 under LIBDIR.
+    """Require MODE (octal; default LIBRARY_MODE) on each installed <library>.so.15.0.0 under LIBDIR.
 
-    The mode is the file's own permission bits, as `stat -c %a` prints them, not a link target's."""
-    (libdir,) = positional(argv, ('libdir',))
+    A distribution's driver can set its own mode: dh_fixperms installs shared libraries 0644,
+    as Debian's libpinyin15 ships them. The mode is the file's own permission bits, as
+    `stat -c %a` prints them, not a link target's."""
+    if len(argv) not in (1, 2) or not argv[0]:
+        fail('usage: check-library-mode LIBDIR [MODE]', 2)
+    libdir = argv[0]
+    try:
+        want = int(argv[1], 8) if len(argv) == 2 else LIBRARY_MODE
+    except ValueError:
+        fail(f'error: MODE {argv[1]!r} is not an octal mode', 2)
     wrong = []
     for library in LIBRARIES:
         path = Path(libdir) / f'{library}.so.15.0.0'
@@ -857,8 +758,8 @@ def check_library_mode(argv, tools):
             mode = path.lstat().st_mode & 0o7777
         except OSError as error:
             fail(f'error: cannot read the mode of {path}: {error.strerror}')
-        if mode != LIBRARY_MODE:
-            wrong.append(f'error: {path} has mode {mode:o}, not {LIBRARY_MODE:o}')
+        if mode != want:
+            wrong.append(f'error: {path} has mode {mode:o}, not {want:o}')
         else:
             emit(f'{path}: mode {mode:o}')
     if wrong:
@@ -887,103 +788,201 @@ def release_version(argv, tools):
     return 0
 
 
-DEB_COMMON_HEADERS = ('novel_types.h', 'pinyin_custom2.h')
+MAINTAINER = 'Shenghao Chen <shenghaoc@outlook.com>'
+HOMEPAGE = 'https://github.com/shenghaoc/oxpinyin'
+# The C++ bridge's build dependencies per distribution and backend.
+BACKEND_BUILD_DEPS = {
+    'debian': {'tkrzw': 'libtkrzw-dev, liblzma-dev, liblz4-dev, libzstd-dev, zlib1g-dev',
+               'kyotocabinet': 'libkyotocabinet-dev'},
+    'fedora': {'kyotocabinet': 'kyotocabinet-devel'},
+    'arch': {'kyotocabinet': 'kyotocabinet'},
+}
+LICENSE_FILE = re.compile(r'(?:licen[cs]e|copying|copyright|notice|unlicense)(?:[-._].*)?', re.I)
 
 
-def release_deb(argv, tools):
-    from . import packaging_templates as templates
-    backend, release, stage, libdir, outdir = positional(argv,
-        ('backend', 'version', 'stage root', 'libdir', 'outdir'))
-    arch = tools.text(['dpkg', '--print-architecture'])
-    pcver = version(tools.root)
-    stage_lib = Path(stage + libdir)
-    for name in ('libpinyin.so.15.0.0', 'libzhuyin.so.15.0.0'):
-        if not (stage_lib / name).is_file():
-            fail(f'error: {stage_lib / name} missing')
-    tools.run(['mkdir', '-p', '--', outdir])
-    libraries = [str(stage_lib / (lib + '.so.15.0.0')) for lib in LIBRARIES]
-    sonames = sorted(set(re.findall(r'^\s*NEEDED\s+(\S+)', tools.text(['objdump', '-p', *libraries]), re.M)))
-    packages = set()
-    for soname in sonames:
-        if soname in ('libpinyin.so.15', 'libzhuyin.so.15'):
+@dataclass
+class Crate:
+    """A registry crate that the shipped libraries link, as cargo vendor stores it."""
+    name: str
+    version: str
+    license: str
+    directory: str
+    files: list[str]
+    notices: list[str]
+
+
+def host_triple(tools):
+    triple = '\n'.join(re.findall(r'^host: (.*)$', tools.text(['rustc', '-vV']), re.M))
+    if not triple:
+        fail("error: could not determine the build target (rustc -vV had no 'host:' line)")
+    return triple
+
+
+def shipped_crates(backend, vendor, tools):
+    """The registry crates linked into the two libraries for BACKEND, read from the vendored tree.
+
+    Build scripts, dev-dependencies and proc-macros run only at build time and are not linked.
+    """
+    metadata = cargo_metadata(tools.root)
+    packages = [capi_package(tools.root, library, metadata=metadata)['name'] for library in LIBRARIES.values()]
+    features = ','.join(f'{package}/{feature}' for package in packages for feature in (backend, 'capi'))
+    command = ['cargo', 'tree', '--locked', '--quiet', *[word for package in packages for word in ('-p', package)],
+               '--no-default-features', '--features', features, '--edges', 'no-build,no-dev,no-proc-macro',
+               '--target', host_triple(tools), '--prefix', 'none', '--no-dedupe', '--format', '{p}|{l}']
+    members = {package['name'] for package in metadata['packages']}
+    crates = {}
+    for line in tools.text(command, cwd=tools.root).splitlines():
+        if not line.strip():
             continue
-        _, package = resolve_deb_library(soname, tools)
-        packages.add(package)
-    floors = re.findall(r'GLIBC_([0-9.]*)', tools.text(['objdump', '-T', *libraries]))
-    # A DT_RELR library needs GLIBC_ABI_DT_RELR, which glibc 2.36 introduced. The
-    # version names no symbol, so objdump -T does not show it.
-    if 'GLIBC_ABI_DT_RELR' in tools.text(['objdump', '-p', *libraries]):
-        floors.append('2.36')
-    # GNU version ordering, including an absent GLIBC floor, is the old sort -V.
-    with tempfile.NamedTemporaryFile() as source:
-        source.write(''.join(value + '\n' for value in floors).encode())
-        source.flush()
-        ordered = tools.text(['sort', '-Vu', source.name]).splitlines()
-    deps = 'libc6 (>= ' + (ordered[-1] if ordered else '') + ')'
-    deps += ''.join(', ' + package for package in sorted(packages) if package != 'libc6')
-    base, debver = 'oxpinyin-libpinyin15-' + backend, release + '-1'
-    major, minor, micro = pcver.split('.')
-    fields = dict(BASE=base, BACKEND=backend, DEBVER=debver, ARCH=arch, PCVER=pcver, DEPS=deps,
-                  NEXTPCVER=f'{major}.{minor}.{int(micro) + 1}',
-                  MAINTAINER='Shenghao Chen <shenghaoc@outlook.com>', HOMEPAGE='https://github.com/shenghaoc/oxpinyin')
-    with package_work(outdir, tools) as work:
-        runtime, dev = Path(work) / 'runtime', Path(work) / 'dev'
-        rtlib, devlib = Path(str(runtime) + libdir), Path(str(dev) + libdir)
-        inc = dev / 'usr/include' / ('libpinyin-' + pcver)
-        for path in (rtlib, devlib / 'pkgconfig', inc, runtime / 'DEBIAN', dev / 'DEBIAN',
-                     runtime / 'usr/share/doc' / base, dev / 'usr/share/doc' / (base + '-dev')):
-            tools.run(['mkdir', '-p', '--', path])
-        for library in LIBRARIES:
-            tools.run(['install', '-m0755', '--', stage_lib / (library + '.so.15.0.0'), str(rtlib) + '/'])
-            tools.run(['ln', '-sfn', '--', library + '.so.15.0.0', rtlib / (library + '.so.15')])
-        tools.run(['install', '-m0644', '--', *[stage_lib / (lib + '.a') for lib in LIBRARIES], str(devlib) + '/'])
-        tools.run(['install', '-m0644', '--', *[stage_lib / 'pkgconfig' / (lib + '.pc') for lib in LIBRARIES], str(devlib / 'pkgconfig') + '/'])
-        # Debian's libpinyin-common-dev owns these two headers; the staged tree keeps them.
-        headers = sorted(path for path in (Path(stage) / 'usr/include' / ('libpinyin-' + pcver)).glob('*.h')
-                         if path.name not in DEB_COMMON_HEADERS)
-        tools.run(['install', '-m0644', '--', *(headers or [Path(stage) / 'usr/include' / ('libpinyin-' + pcver) / '*.h']), str(inc) + '/'])
-        for library in LIBRARIES:
-            tools.run(['ln', '-sfn', '--', library + '.so.15', devlib / (library + '.so')])
-        for tree, name, control in ((runtime, base, templates.DEB_RUNTIME), (dev, base + '-dev', templates.DEB_DEV)):
-            (tree / 'DEBIAN/control').write_text(expand(control, fields))
-            copyright_text = expand(templates.COPYRIGHT, fields)
-            (tree / 'usr/share/doc' / name / 'copyright').write_text(copyright_text)
-            # The manifest lists the installed payload only, never DEBIAN/.
-            files = sorted(str(path.relative_to(tree)) for path in tree.rglob('*')
-                           if path.is_file() and not path.is_symlink() and path.relative_to(tree).parts[0] != 'DEBIAN')
-            (tree / 'DEBIAN/md5sums').write_text(tools.text(['md5sum', '--', *files], cwd=tree) + '\n')
-        for tree, name in ((runtime, base), (dev, base + '-dev')):
-            tools.heavy(['dpkg-deb', '--root-owner-group', '--build', tree,
-                         Path(outdir) / f'{name}_{debver}_{arch}.deb'])
-    return package_done('debs', outdir, tools)
+        package, _, expression = line.partition('|')
+        name, version = package.split()[:2]
+        if name in members:
+            continue
+        if '(' in package:
+            fail(f'error: {package} is not a crates.io crate; the release recipes vendor only registry crates')
+        version = version.removeprefix('v')
+        # The legacy `MIT/Apache-2.0` form is a disjunction.
+        expression = ' OR '.join(part.strip() for part in expression.split('/')) if '/' in expression else expression.strip()
+        if not expression:
+            fail(f'error: {name} {version} declares no licence')
+        directory = f'{name}-{version}'
+        root = vendor / directory
+        if not (root / 'Cargo.toml').is_file():
+            fail(f'error: {root} missing: cargo vendor did not store {name} {version}')
+        manifest = tomllib.loads((root / 'Cargo.toml').read_text(encoding='utf-8'))['package']
+        files = sorted(path.name for path in root.iterdir() if path.is_file() and LICENSE_FILE.fullmatch(path.name))
+        if manifest.get('license-file') and Path(manifest['license-file']).name not in files:
+            files.append(manifest['license-file'])
+        notices = []
+        for file in files:
+            for text in (root / file).read_text(encoding='utf-8', errors='replace').splitlines():
+                match = re.match(r'\s*Copyright\s*(\(c\)|©)?\s*(.*\S)', text)
+                if match and (match[1] or re.match(r'\d{4}', match[2])) and match[2] not in notices:
+                    notices.append(match[2])
+        if not notices:
+            authors = manifest.get('authors') or []
+            notices = [', '.join(authors)] if authors else [f'the {name} authors']
+        crates[directory] = Crate(name, version, expression, directory, files, notices)
+    if not crates:
+        fail('error: cargo tree listed no linked crate')
+    return sorted(crates.values(), key=lambda crate: crate.directory)
 
 
-def release_rpm(argv, tools):
+def license_ids(expression):
+    return [word for word in re.split(r'[\s()]+', expression) if word and word not in ('AND', 'OR', 'WITH')]
+
+
+def debian_copyright(crates, tools):
+    """debian/copyright: the project, the verbatim pin headers and each linked crate."""
     from . import packaging_templates as templates
-    backend, release, stage, outdir = positional(argv, ('backend', 'version', 'stage root', 'outdir'))
-    pcver, name = version(tools.root), 'oxpinyin-libpinyin-' + backend
-    if not (Path(stage) / 'usr').is_dir():
-        fail(f'error: {stage}/usr missing')
-    with package_work(outdir, tools) as work:
-        root = Path(work).resolve()
-        for folder in ('BUILD', 'RPMS', 'SOURCES', 'SPECS', 'SRPMS'):
-            tools.run(['mkdir', '-p', '--', root / folder])
-        tools.run(['tar', '-czf', root / 'SOURCES/staged-tree.tar.gz', '-C', stage, 'usr'])
-        spec = root / 'SPECS' / (name + '.spec')
-        spec.write_text(expand(templates.RPM_SPEC, dict(NAME=name, VERSION=release, BACKEND=backend, PCVER=pcver)))
-        tools.heavy(['rpmbuild', '--define', '_topdir ' + str(root), '-bb', spec])
-        rpms = sorted((root / 'RPMS').glob('*/*.rpm'))
-        if not rpms:
-            fail('error: rpmbuild produced no RPMs')
-        for rpm in rpms:
-            tools.text(['rpm', '-qlp', rpm])
-            tools.run(['cp', '-f', '--', rpm, outdir + '/'])
-    return package_done('rpms', outdir, tools)
+    paragraphs = [expand(templates.COPYRIGHT_HEADER, dict(HOMEPAGE=HOMEPAGE)).rstrip('\n')]
+    # The shipped headers are the pin's, verbatim, and keep their upstream notices.
+    notices = {}
+    for library in LIBRARIES.values():
+        crate = crate_dir(tools.root, library)
+        for header in sorted(crate.glob('*.h')):
+            if header.is_symlink():
+                continue
+            found = re.findall(r'Copyright \(C\) (.+?)\s*$', header.read_text(encoding='utf-8'), re.M)
+            if not found:
+                fail(f'error: {header} carries no copyright line')
+            notices.setdefault(found[0], []).append(header.relative_to(tools.root).as_posix())
+    for notice, paths in notices.items():
+        paragraphs.append(f'Files: {" ".join(paths)}\nCopyright: {notice}\nLicense: GPL-3.0-or-later')
+
+    def debian(expression):
+        words = re.split(r'(\s+|[()])', expression)
+        names = {'MIT': 'Expat', 'OR': 'or', 'AND': 'and', 'WITH': 'with'}
+        return ''.join(names.get(word, word) for word in words)
+
+    used = {'GPL-3.0-or-later'}
+    for crate in crates:
+        used.update(license_ids(crate.license))
+        copyright_lines = '\n '.join(crate.notices)
+        paragraphs.append(f'Files: vendor/{crate.directory}/*\nCopyright: {copyright_lines}\n'
+                          f'License: {debian(crate.license)}')
+    for identifier in sorted(used):
+        name = debian(identifier)
+        if identifier == 'GPL-3.0-or-later':
+            body = (' On Debian systems, the complete text of the GNU General Public\n'
+                    ' License version 3 can be found in "/usr/share/common-licenses/GPL-3".')
+        elif identifier in templates.COMMON_LICENSES:
+            body = (' On Debian systems, the complete text of this licence can be found in\n'
+                    f' "/usr/share/common-licenses/{templates.COMMON_LICENSES[identifier]}".')
+        elif identifier in templates.LICENSE_TEXTS:
+            import textwrap
+            body = '\n .\n'.join(textwrap.fill(paragraph, 78, initial_indent=' ', subsequent_indent=' ')
+                                 for paragraph in templates.LICENSE_TEXTS[identifier].split('\n\n'))
+        else:
+            fail(f'error: no licence text for {identifier}; add it to LICENSE_TEXTS in tools/dev/packaging_templates.py')
+        paragraphs.append(f'License: {name}\n{body}')
+    return '\n\n'.join(paragraphs) + '\n'
 
 
-def release_arch(argv, tools):
+def combined_license(crates):
+    """The SPDX expression of everything the libraries link: ours AND each crate's."""
+    expressions = sorted({crate.license for crate in crates} - {'GPL-3.0-or-later'})
+    return ' AND '.join(['GPL-3.0-or-later', *(f'({e})' if ' OR ' in e else e for e in expressions)])
+
+
+def source_archive(archive, topdir, vendor, tools):
+    """The committed tree, the vendored crates and their source replacement, under TOPDIR/."""
+    import io
+    import tarfile
     from . import packaging_templates as templates
-    backend, release, stage, outdir = positional(argv, ('backend', 'version', 'stage root', 'outdir'))
+    changed = tools.text(['git', 'status', '--porcelain', '--untracked-files=no'], cwd=tools.root)
+    if changed:
+        fail('error: the release recipe archives HEAD; commit or discard these changes first:\n' + changed)
+    with tempfile.TemporaryDirectory() as scratch:
+        tree = Path(scratch) / 'tree.tar'
+        tools.run(['git', 'archive', '--format=tar', f'--prefix={topdir}/', '-o', tree, 'HEAD'], cwd=tools.root)
+
+        def owned(info):
+            info.uid = info.gid = 0
+            info.uname = info.gname = 'root'
+            return info
+
+        with tarfile.open(tree) as source, tarfile.open(archive, 'w:gz') as target:
+            for member in source:
+                target.addfile(member, source.extractfile(member) if member.isfile() else None)
+            target.add(vendor, f'{topdir}/vendor', filter=owned)
+            config = templates.CARGO_CONFIG.encode()
+            info = owned(tarfile.TarInfo(f'{topdir}/.cargo/config.toml'))
+            info.size, info.mode = len(config), 0o644
+            target.addfile(info, io.BytesIO(config))
+
+
+def sha256(path):
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def license_installs(crates, destination, indent=''):
+    """The shell lines that install each linked crate's licence files into DESTINATION/<crate>-<version>/."""
+    lines = []
+    for crate in crates:
+        if not crate.files:
+            fail(f'error: {crate.name} {crate.version} ships no licence file for its {crate.license} licence')
+        paths = ' '.join(f"'vendor/{crate.directory}/{file}'" for file in crate.files)
+        lines.append(f'{indent}install -Dm644 -t "{destination}/{crate.directory}" {paths}')
+    return '\n'.join(lines)
+
+
+def release_recipe(argv, tools):
+    """Write one distribution's recipe and its source; nothing is built.
+
+    The source holds HEAD, the vendored crates (`cargo vendor`, which needs the network) and
+    a source replacement, so the build that follows runs offline. Fedora and Arch keep it as
+    an archive; Debian gets the extracted tree, with debian/ in it. The distribution's own
+    driver then builds it: dpkg-buildpackage, rpmbuild or makepkg.
+    """
+    import time
+    from . import packaging_templates as templates
+    usage = ('usage: release-recipe {debian,fedora,arch} BACKEND VERSION OUTDIR '
+             '[--data=PACKAGE --data-version=VER]  (--data: Arch only)')
+    if len(argv) < 4 or argv[0] not in BACKEND_BUILD_DEPS:
+        fail(usage, 2)
+    distro, backend, release, outdir = argv[:4]
     data, data_version = '', ''
     for word in argv[4:]:
         if word.startswith('--data='):
@@ -991,158 +990,148 @@ def release_arch(argv, tools):
         elif word.startswith('--data-version='):
             data_version = word.partition('=')[2]
         else:
-            fail(f"error: unknown argument '{word}'", 2)
-    if data:
-        if not (Path(data) / 'table.conf').is_file():
-            fail(f'error: --data={data} holds no table.conf')
-        data = data.removesuffix('/')
-    elif data_version:
-        fail('error: --data-version given without --data', 2)
-    description = f'Library to deal with pinyin — oxpinyin drop-in ({backend} store backend'
-    if data_version:
-        description += '; model data from Arch libpinyin ' + data_version
-    description += ')'
-    pcver, name = version(tools.root), 'oxpinyin-libpinyin-' + backend
-    arch = tools.text(['uname', '-m'])
-    if backend not in ('kyotocabinet', 'tkrzw'):
-        fail(f"error: unknown backend '{backend}'", 2)
-    if not (Path(stage) / 'usr').is_dir():
-        fail(f'error: {stage}/usr missing')
-    with package_work(outdir, tools) as work:
-        outdir = str(Path(outdir).resolve())
-        os.chmod(work, 0o711)
-        pkgwork = Path(work) / 'pkg'
-        tools.run(['mkdir', '-p', '--', pkgwork])
-        tools.run(['cp', '-a', '--', Path(stage) / 'usr', pkgwork / 'stage-usr'])
-        if data:
-            target = pkgwork / 'stage-usr/lib/libpinyin/data'
-            if target.exists():
-                fail('error: staged tree already carries lib/libpinyin/data')
-            tools.run(['mkdir', '-p', '--', target.parent])
-            tools.run(['cp', '-a', '--', data, target])
-        fields = dict(PKGNAME=name, VERSION=release, DESC=description, ARCH=arch,
-                      EXTRA_DEPS=backend, PCVER=pcver, SOARCH=64)
-        (pkgwork / 'PKGBUILD').write_text(expand(templates.ARCH_BUILD, fields))
-        if tools.capture(['id', '-u', 'oxp-builder']).status:
-            tools.run(['useradd', '--create-home', '--shell', '/bin/bash', 'oxp-builder'])
-        tools.run(['chown', '-R', '--', 'oxp-builder', pkgwork])
-        tools.run(['chmod', 'a+w', '--', outdir])
-        # su's external interface takes one shell command. Preserve that
-        # interface and its quoting; the package recipe itself is shell data.
-        tools.heavy(['su', 'oxp-builder', '-c',
-            f"cd '{pkgwork}' && env PKGDEST='{outdir}' makepkg --nodeps --noconfirm --force"])
-        package = Path(outdir) / f'{name}-{release}-1-{arch}.pkg.tar.zst'
-        if not package.is_file():
-            fail(f'error: expected package {package} not found')
-    return package_done('arch package', outdir, tools)
-
-
-def release_stage(argv, tools):
-    from . import packaging_templates as templates
-    from tools.tkrzw.runtime import RuntimeRefused, check
+            fail(f"error: unknown argument '{word}'\n{usage}", 2)
+    if backend not in BACKEND_BUILD_DEPS[distro]:
+        fail(f"error: no {distro} recipe for the '{backend}' backend", 2)
+    if (distro == 'arch') != bool(data) or (data_version and not data):
+        fail('error: --data (the downloaded Arch libpinyin package) is required on Arch and only there', 2)
+    data_path = Path(data)
+    if data and not data_path.is_file():
+        fail(f'error: --data={data} is not a file')
+    outdir = Path(outdir).absolute()
+    if outdir.exists() and any(outdir.iterdir()):
+        fail(f'error: {outdir} is not empty', 2)
+    outdir.mkdir(parents=True, exist_ok=True)
     pcver = version(tools.root)
-    usage = 'usage: just packaging release-stage <' + '|'.join(cell.BACKENDS) + '> --prefix=DIR --libdir=DIR [--dest=DIR]'
-    if not argv or argv[0] not in cell.BACKENDS:
-        fail(usage, 2)
-    backend, values, index = argv[0], dict(prefix='', libdir='', dest=''), 1
-    while index < len(argv):
-        key, value, index = option(argv, index)
-        if key not in ('--prefix', '--libdir', '--dest'):
-            fail(usage, 2)
-        values[key[2:]] = value
-    prefix, libdir = values['prefix'], values['libdir']
-    if not prefix or not libdir:
-        fail(usage, 2)
-    if values['dest'] and not os.path.isabs(values['dest']):
-        fail(f"error: --dest '{values['dest']}' must be an absolute path", 2)
-    dest = values['dest'] or str(tools.root / 'target/release-stage' / backend)
-    # Compare resolved paths: '/usr/', '/usr/../usr' or a symlink must not pass,
-    # and a dest that holds an install root would delete that root too.
-    resolved = Path(os.path.realpath(dest))
-    if any(Path(os.path.realpath(root)).is_relative_to(resolved) for root in ('/', prefix, libdir)):
-        fail(f"error: --dest '{dest}' collides with a real install root", 2)
-    if not tools.which('strip'):
-        fail('error: strip is required; install binutils')
-    companion_headers(stage=True, root=tools.root)
-    if not tools.which('cargo-cinstall'):
-        fail("error: cargo-c (cargo cinstall) is required; install the distro's cargo-c package")
-    with chdir(tools.root):
-        tools.run(['rm', '-rf', '--', dest])
-        for library in LIBRARIES:
-            emit(f'== installing {library} into {dest} (backend: {backend}) ==')
-            install([library, f'--prefix={prefix}', f'--libdir={libdir}', f'--destdir={dest}', '--',
-                     '--release', '--locked', *cell.feature_flags(backend)], tools)
-        lib, inc = Path(dest + libdir), Path(dest + prefix) / 'include' / ('libpinyin-' + pcver)
-        pc = lib / 'pkgconfig'
-        expected = [lib / (library + extension) for library in LIBRARIES
-                    for extension in ('.so.15.0.0', '.so.15', '.so', '.a')]
-        expected += [pc / (library + '.pc') for library in LIBRARIES]
-        expected += [inc / name for name in ('pinyin.h', 'zhuyin.h', *HEADERS, 'zhuyin_custom2.h')]
-        for path in expected:
-            if not path.exists():
-                fail(f'error: expected staged file {path} is missing')
-        unexpected = tools.text(['find', dest, '-type', 'f', '!', '-path', str(lib) + '/*',
-                                 '!', '-path', str(inc) + '/*'])
-        if unexpected:
-            fail('error: unexpected staged files:\n' + unexpected)
-        libraries = [lib / (library + '.so.15.0.0') for library in LIBRARIES]
-        tools.run(['strip', '--strip-unneeded', '--', *libraries])
-        tools.run(['chmod', '0644', '--', *sorted(lib.glob('*.a')), *sorted(pc.glob('*.pc')), *sorted(inc.glob('*.h'))])
-        env = {**tools.env, 'PKG_CONFIG_PATH': str(pc)}
+    problems = version_problems(tools.root)
+    if problems:
+        fail('\n'.join(problems))
+    companion_headers(root=tools.root)
+    stamp = int(tools.text(['git', 'show', '-s', '--format=%ct', 'HEAD'], cwd=tools.root))
+    topdir = f'oxpinyin-{release}'
+    with tempfile.TemporaryDirectory() as scratch:
+        vendor = Path(scratch) / 'vendor'
+        # Its stdout is a source replacement for this scratch path; the archive carries its own.
+        done = tools.capture(['cargo', 'vendor', '--quiet', '--locked', '--versioned-dirs', vendor], cwd=tools.root)
+        write(done.stderr, error=True)
+        if done.status:
+            fail('error: cargo vendor failed', done.status)
+        crates = shipped_crates(backend, vendor, tools)
+        archive = outdir / f'{topdir}.tar.gz'
+        source_archive(archive, topdir, vendor, tools)
+    major, minor, micro = pcver.split('.')
+    fields = dict(BACKEND=backend, VERSION=release, PCVER=pcver, NEXTPCVER=f'{major}.{minor}.{int(micro) + 1}',
+                  MAINTAINER=MAINTAINER, HOMEPAGE=HOMEPAGE, BUILD_DEPS=BACKEND_BUILD_DEPS[distro][backend],
+                  TOPDIR=topdir, SOURCE=archive.name)
+    if distro == 'debian':
+        import tarfile
+        with tarfile.open(archive) as source:
+            source.extractall(outdir, filter='tar')
+        archive.unlink()
+        tree = outdir / topdir
+        fields.update(BASE='oxpinyin-libpinyin15-' + backend, DEBVER=release + '-1',
+                      DATE=time.strftime('%a, %d %b %Y %H:%M:%S +0000', time.gmtime(stamp)))
+        base = fields['BASE']
+        files = {'control': templates.DEB_CONTROL, 'rules': templates.DEB_RULES,
+                 'changelog': templates.DEB_CHANGELOG, f'{base}.install': templates.DEB_RUNTIME_INSTALL,
+                 f'{base}-dev.install': templates.DEB_DEV_INSTALL, 'not-installed': templates.DEB_NOT_INSTALLED}
+        (tree / 'debian/source').mkdir(parents=True)
+        for name, template in files.items():
+            (tree / 'debian' / name).write_text(expand(template, fields), encoding='utf-8')
+        (tree / 'debian/rules').chmod(0o755)
+        (tree / 'debian/source/format').write_text('3.0 (quilt)\n', encoding='utf-8')
+        (tree / 'debian/copyright').write_text(debian_copyright(crates, tools), encoding='utf-8')
+        recipe = tree / 'debian'
+    elif distro == 'fedora':
+        name = 'oxpinyin-libpinyin-' + backend
+        for folder in ('SOURCES', 'SPECS'):
+            (outdir / folder).mkdir()
+        archive = archive.replace(outdir / 'SOURCES' / archive.name)
+        # The breakdown in %cargo_license's form, one linked crate per line.
+        (outdir / 'SOURCES/LICENSE.dependencies').write_text(
+            ''.join(f'{crate.license}: {crate.name} {crate.version}\n' for crate in crates), encoding='utf-8')
 
-        def gate(message):
-            fail('GATE FAILED: ' + message)
+        def rpm_version(semver):
+            # cargo2rpm's semver2rpm: a pre-release sorts before its release; build metadata drops.
+            return semver.partition('+')[0].replace('-', '~', 1)
 
-        def query(*arguments):
-            return tools.text(['pkg-config', *arguments], env=env)
+        bundled = '\n'.join(f'Provides:       bundled(crate({crate.name})) = {rpm_version(crate.version)}'
+                            for crate in crates)
+        fields.update(NAME=name, LICENSE=combined_license(crates), BUNDLED=bundled,
+                      LICENSE_INSTALL=license_installs(crates, 'crate-licenses'),
+                      DATE=time.strftime('%a %b %d %Y', time.gmtime(stamp)))
+        recipe = outdir / 'SPECS' / f'{name}.spec'
+        recipe.write_text(expand(templates.RPM_SPEC, fields), encoding='utf-8')
+    else:
+        shutil.copyfile(data_path, outdir / data_path.name)
+        description = f'Library to deal with pinyin — oxpinyin drop-in ({backend} store backend'
+        if data_version:
+            description += '; model data from Arch libpinyin ' + data_version
+        description += ')'
+        installs = license_installs(crates, '$pkgdir/usr/share/licenses/$pkgname', indent='  ')
+        licenses = ['GPL-3.0-or-later', *sorted({crate.license for crate in crates} - {'GPL-3.0-or-later'})]
+        fields.update(PKGNAME='oxpinyin-libpinyin-' + backend, DESC=description, ARCH=tools.text(['uname', '-m']),
+                      EXTRA_DEPS=BACKEND_BUILD_DEPS[distro][backend], LICENSES=' '.join(f"'{item}'" for item in licenses),
+                      DATA=data_path.name, SOURCE_SUM=sha256(archive), DATA_SUM=sha256(outdir / data_path.name),
+                      LICENSE_INSTALL=installs)
+        recipe = outdir / 'PKGBUILD'
+        recipe.write_text(expand(templates.ARCH_BUILD, fields), encoding='utf-8')
+    emit(f'== {distro} recipe for {backend}: {recipe} ==')
+    emit(f'linked crates ({len(crates)}): ' + ', '.join(f'{crate.name} {crate.version} ({crate.license})' for crate in crates))
+    return 0
 
-        for library in LIBRARIES:
-            names = re.findall(r'\(SONAME\).*\[(.*)\]', tools.text(['readelf', '-d', lib / (library + '.so.15.0.0')]))
-            soname = '\n'.join(names)
-            if soname != library + '.so.15':
-                gate(f"{library} SONAME is '{soname}', want '{library}.so.15'")
-        db_format = cell.BACKEND_FORMATS[backend]
-        checks = [('libpinyin', 'database_format', db_format), ('libzhuyin', 'database_format', db_format),
-                  ('libpinyin', 'libpinyin_binary_version', BINARY_VERSION),
-                  ('libzhuyin', 'libzhuyin_binary_version', BINARY_VERSION)]
-        for library, key, want in checks:
-            got = query('--variable=' + key, library)
-            if got != want:
-                gate(f"{library} {key} is '{got}', want '{want}'")
-        for library in LIBRARIES:
-            if query('--modversion', library) != pcver:
-                gate(f'{library} modversion is not {pcver}')
-            if not re.search(r'(?<!\w)' + re.escape('-l' + library[3:]) + r'(?!\w)', query('--libs', library)):
-                gate(f'{library} --libs does not contain -l{library[3:]}')
-            if 'libpinyin-' + pcver not in query('--cflags', library):
-                gate(f'{library} --cflags does not point into libpinyin-{pcver}')
-        if not query('--variable=pkgdatadir', 'libpinyin'):
-            gate('libpinyin pkgdatadir is empty (the silent-misconfiguration gap)')
-        with temporary_directory(tools) as smoke:
-            for library, source in [('libpinyin', templates.SMOKE_PINYIN), ('libzhuyin', templates.SMOKE_ZHUYIN)]:
-                name = library[3:]
-                program = Path(smoke) / ('smoke_' + name)
-                program.with_suffix('.c').write_text(source)
-                # The source used shell word splitting, not shell evaluation.
-                try:
-                    tools.run(['cc', program.with_suffix('.c'), '-o', program, '-I' + str(inc), '-L' + str(lib),
-                               *query('--cflags', '--libs', library).split()], env=env)
-                except Finished:
-                    gate(f'{library} smoke compile/link against the staged tree failed')
-            env['LD_LIBRARY_PATH'] = str(lib) + (':' + tools.env['LD_LIBRARY_PATH'] if tools.env.get('LD_LIBRARY_PATH') else '')
-            for library in LIBRARIES:
-                program = Path(smoke) / ('smoke_' + library[3:])
-                try:
-                    check(backend, 'just packaging release-stage', 'subject', program, env=env)
-                    tools.run([program], env=env)
-                except (RuntimeRefused, Finished) as error:
-                    if isinstance(error, RuntimeRefused):
-                        emit('REFUSED: ' + str(error), error=True)
-                    gate(f'{library} smoke run failed')
-        emit(f'== staged tree under {dest} ==')
-        listing = tools.text(['find', dest, '-mindepth', '1', '-printf', '%y %P\n'])
-        emit('\n'.join(sorted(listing.splitlines())))
-        emit(f'== release-stage gates passed (backend: {backend}) ==')
+
+def check_installed(argv, tools):
+    """Check the installed libraries under LIBDIR, then certify the libtkrzw each program loads.
+
+    The exports must be the .ver script's, each under its default version (@@ and the node),
+    the SONAME the pin's, and the binary version of LIBDIR/pkgconfig/<library>.pc 15.0. The
+    packages' builds ran the same export check. On the tkrzw backend each program must load
+    the certified libtkrzw.
+    """
+    from tools.tkrzw.runtime import RuntimeRefused, check
+    if len(argv) < 2 or argv[0] not in cell.BACKENDS:
+        fail('usage: check-installed BACKEND LIBDIR [PROGRAM ...]', 2)
+    backend, libdir, programs = argv[0], Path(argv[1]), argv[2:]
+    problems = []
+    for library, name in LIBRARIES.items():
+        path = libdir / f'{library}.so.15.0.0'
+        if not path.is_file():
+            fail(f'error: {path} is not installed')
+        names = re.findall(r'\(SONAME\).*\[([^]]*)\]', tools.text(['readelf', '-d', path]))
+        if names != [library + '.so.15']:
+            problems.append(f'error: {path} SONAME is {names}, want {library}.so.15')
+        node, expected = version_exports(crate_dir(tools.root, name) / (library + '.ver'))
+        raw = tools.text(['nm', '-D', '--defined-only', path])
+        actual = sorted(linux_exports(raw, node))
+        if actual != expected:
+            problems.append(f'error: {path} exports differ from {library}.ver: '
+                            f'missing {sorted(set(expected) - set(actual))}, extra {sorted(set(actual) - set(expected))}')
+        unversioned = [symbol for symbol in linux_symbol_names(raw, node) if not symbol.endswith('@@' + node)]
+        if unversioned:
+            problems.append(f'error: {path} exports symbols without the default version @@{node}: {unversioned}')
+        # The installed file itself, not whichever module of that name pkg-config finds first.
+        pc = libdir / 'pkgconfig' / f'{library}.pc'
+        if not pc.is_file():
+            fail(f'error: {pc} is not installed')
+        variable = tools.text(['pkg-config', f'--variable={library}_binary_version', pc])
+        if variable != BINARY_VERSION:
+            problems.append(f"error: {pc} {library}_binary_version is '{variable}', want '{BINARY_VERSION}'")
+        emit(f'{path}: SONAME {library}.so.15, {len(actual)} exports under {node}')
+    for program in programs:
+        try:
+            loaded = check(backend, 'just packaging check-installed', 'subject', program)
+        except RuntimeRefused as error:
+            problems.append('REFUSED: ' + str(error))
+        else:
+            if loaded:
+                emit(f'{program}: libtkrzw {loaded}')
+            elif backend == 'tkrzw':
+                problems.append(f'error: {program} loads no libtkrzw on the tkrzw backend')
+            else:
+                emit(f'{program}: loads no libtkrzw')
+    if problems:
+        fail('\n'.join(problems))
     return 0
 
 
@@ -1268,14 +1257,14 @@ def main(argv=None):
         emit('usage: python -m tools.dev.packaging {' + ','.join(NAMES) + '} ...', error=True)
         return 2
     name, rest = argv[0], argv[1:]
-    functions = {'install': install, 'relink-versioned': relink,
+    functions = {'install': install,
                  'trainer-layout': trainer_layout,
                  'check-pc-version': check_version,
                  'check-pc-metadata': metadata,
                  'distro-tkrzw-library': distro_tkrzw_library,
                  'check-library-mode': check_library_mode,
-                 'release-version': release_version, 'release-stage': release_stage, 'release-deb': release_deb, 'release-rpm': release_rpm,
-                 'release-arch': release_arch, 'sizes': sizes}
+                 'check-installed': check_installed,
+                 'release-version': release_version, 'release-recipe': release_recipe, 'sizes': sizes}
     def call():
         if name == 'pc-version':
             emit(version(tools.root))
