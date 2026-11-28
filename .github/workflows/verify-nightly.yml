@@ -212,6 +212,8 @@ jobs:
         shell: bash
     env:
       RUSTFLAGS: -C overflow-checks=y -C debug-assertions=y -D warnings
+      # panic = "abort" builds oxpinyin-capi (cdylib + rlib) twice into one rlib path, failing with E0460.
+      CARGO_PROFILE_RELEASE_PANIC: unwind
     steps:
       - name: Install build dependencies (apt)
         run: |
