@@ -2,9 +2,11 @@
 
 ## Toolchain
 
-The toolchain comes from rustup everywhere.
-`rust-toolchain.toml` is the sole toolchain source, and CI follows it.
+The development toolchain comes from rustup everywhere.
+`rust-toolchain.toml` is the sole toolchain source for development, and CI follows it.
 Distribution-packaged Rust is unsupported for development.
+The release packages are the exception: each lane builds with its distribution's own `rustc`, `cargo` and cargo-c ([release artifacts](packaging.md#release-artifacts-release-packagesyml)).
+The workspace `rust-version` is therefore the oldest `rustc` among the release lanes.
 A toolchain update is a dedicated PR.
 
 ## Unsafe code

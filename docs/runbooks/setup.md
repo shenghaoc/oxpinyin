@@ -26,7 +26,7 @@ Native Windows recipes use pwsh with `-CommandWithArgs`; doctor checks its
 declared minimum.
 
 The Rust **toolchain** is the compiler and its tools. rustup installs
-and selects it. `rust-toolchain.toml` selects the version and components. The workspace `rust-version` in `Cargo.toml` declares the minimum supported Rust version. The MSRV is the pinned stable toolchain. The nightly in `fuzz/rust-toolchain.toml` also builds the workspace; that file states why the nightly is pinned. Toolchain bumps are manual: a pull request changes the toolchain files, and CI checks it.
+and selects it. `rust-toolchain.toml` selects the version and components. The workspace `rust-version` in `Cargo.toml` declares the minimum supported Rust version. The MSRV is the oldest `rustc` among the [release lanes](../packaging.md#release-artifacts-release-packagesyml), which build with their distribution's own compiler; the pinned toolchain may be newer. The nightly in `fuzz/rust-toolchain.toml` also builds the workspace; that file states why the nightly is pinned. Toolchain bumps are manual: a pull request changes the toolchain files, and CI checks it.
 The **linker** joins compiled code into executables and native libraries.
 
 ## Linux
