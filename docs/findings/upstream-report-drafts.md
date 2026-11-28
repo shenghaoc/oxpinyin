@@ -813,5 +813,5 @@ oxpinyin stores the score with the same saturating conversion (`src/engine/sessi
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Filing follows a search of GitHub and Fedora Bugzilla for an existing report.
 - After filing, each entry in `upstream-divergences.md` and
-  `reference/memory-safety-bugs.md` §1.4 is marked with the issue links, so
+  [`memory-safety-bugs.md`](memory-safety-bugs.md) §1.4 is marked with the issue links, so
   that the ledger no longer calls them unreported.
