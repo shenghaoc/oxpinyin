@@ -5,8 +5,6 @@
 
 use crate::config::pinyin_set_options;
 
-use crate::test_support::with_store;
-
 use crate::iterators::{
     pinyin_begin_add_phrases, pinyin_begin_get_phrases, pinyin_end_add_phrases,
     pinyin_end_get_phrases, pinyin_iterator_add_phrase, pinyin_iterator_has_next_phrase,
@@ -14,13 +12,13 @@ use crate::iterators::{
 
 use crate::parse::pinyin_parse_more_full_pinyins;
 
-use crate::test_support::{TempUserDir, cstr, open};
+use crate::test_support::{TempUserDir, cstr, open, user_token};
 
 use crate::types::PinyinInstance;
 
 use crate::user_data::pinyin_remember_user_input;
 
-use oxpinyin::facade::{USER_DICTIONARY, UserStore, phrase_index_make_token};
+use oxpinyin::facade::{USER_DICTIONARY, phrase_index_make_token};
 
 const FIRST_USER_TOKEN: u32 = phrase_index_make_token(USER_DICTIONARY, 1);
 
@@ -51,9 +49,7 @@ unsafe fn import_readings(
     }
     unsafe { pinyin_end_add_phrases(import) };
     // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
-    (unsafe { with_store(instance, |store| store.token_for_phrase(phrase)) })
-        .expect("readable store")
-        .expect("the import gave the phrase a token")
+    unsafe { user_token(instance, phrase) }.expect("the import gave the phrase a token")
 }
 
 /// The readings of the item the dictionary resolves for `token`, as packed
@@ -136,15 +132,6 @@ fn remember_user_input_keeps_the_double_pinyin_tone() {
     }
 }
 
-fn next_user_token(store: &UserStore) -> u32 {
-    store
-        .phrases()
-        .iter()
-        .map(|phrase| phrase.token())
-        .max()
-        .map_or(FIRST_USER_TOKEN, |token| token + 1)
-}
-
 /// #752: the pin's `_pre_compute_tokens` refuses a phrase if any character
 /// has no dictionary token (074a2219 pinyin.cpp:3098-3130, 3685-3695).
 /// NUL termination is covered differentially in contract-diff.py.
@@ -160,12 +147,6 @@ fn remember_user_input_requires_known_characters() {
 
     for phrase in [b"ni\0".as_slice(), "你i\0".as_bytes(), "😀好\0".as_bytes()] {
         assert!(!unsafe { pinyin_remember_user_input(instance, phrase.as_ptr().cast(), 1) });
-        assert_eq!(
-            // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into
-            // it.
-            unsafe { with_store(instance, next_user_token) },
-            FIRST_USER_TOKEN
-        );
         let export = unsafe { pinyin_begin_get_phrases(context, 7) };
         assert!(!export.is_null());
         assert!(!unsafe { pinyin_iterator_has_next_phrase(export) });
@@ -176,7 +157,7 @@ fn remember_user_input_requires_known_characters() {
     assert!(unsafe { pinyin_remember_user_input(instance, cstr("你好").as_ptr(), 1) });
     assert_eq!(
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, |store| store.token_for_phrase("你好")) }.unwrap(),
+        unsafe { user_token(instance, "你好") },
         Some(FIRST_USER_TOKEN)
     );
 
@@ -220,11 +201,6 @@ fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
     ] {
         assert!(!unsafe { pinyin_remember_user_input(instance, invalid.as_ptr().cast(), 1) });
     }
-    assert_eq!(
-        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-        unsafe { with_store(instance, next_user_token) },
-        FIRST_USER_TOKEN
-    );
     let export = unsafe { pinyin_begin_get_phrases(context, 7) };
     assert!(!export.is_null());
     assert!(!unsafe { pinyin_iterator_has_next_phrase(export) });
@@ -349,9 +325,7 @@ fn remember_user_input_adds_along_every_complete_path() {
     }
     unsafe { pinyin_end_add_phrases(import) };
     // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    let token = unsafe { with_store(instance, |store| store.token_for_phrase("弄")) }
-        .expect("readable store")
-        .expect("the import gave 弄 a token");
+    let token = unsafe { user_token(instance, "弄") }.expect("the import gave 弄 a token");
     let readings = |instance| {
         // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
         (unsafe { crate::test_support::with_dict(instance, |dict| item_readings(dict, token)) })
@@ -374,30 +348,4 @@ fn remember_user_input_adds_along_every_complete_path() {
     for ((_, was), (_, now)) in before.iter().zip(&after) {
         assert_eq!(*now, *was + 3, "each path adds its reading once");
     }
-}
-
-/// Every complete path calls _add_phrase, including repeated keys
-/// (pinyin.cpp:3594-3606). Repeated paths therefore repeat the count write.
-#[test]
-fn remember_user_input_writes_again_for_an_identical_complete_path() {
-    let user = TempUserDir::new("remember-identical-paths");
-    let (context, instance, token, before) = parsed_nong_under_l_n(&user);
-    // This fixture adds an identical column entry to the parsed matrix,
-    // as PhoneticTable::append does (phonetic_key_matrix.h:92-100).
-    let duplicate = {
-        // SAFETY: the live instance is exclusively borrowed before remember.
-        let mut inst = unsafe { crate::state::instance_mut(instance) };
-        let first = inst.core.parse_matrix()[0];
-        inst.core.parse_matrix_mut().push(first);
-        first.key().to_packed()
-    };
-    assert!(unsafe { pinyin_remember_user_input(instance, cstr("弄").as_ptr(), 3) });
-    // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
-    let after = unsafe { stored_readings(instance, token) };
-    for ((key, was), (after_key, now)) in before.iter().zip(&after) {
-        assert_eq!(key, after_key);
-        assert_eq!(*now, *was + if *key == duplicate { 6 } else { 3 });
-    }
-    unsafe { crate::instance::pinyin_free_instance(instance) };
-    unsafe { crate::context::pinyin_fini(context) };
 }

@@ -869,7 +869,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub fn bigram_count(&self, prev: PhraseToken, cur: PhraseToken) -> Result<u64, UserStoreError> {
         Ok(self
             .bigram_row(prev)?
@@ -882,7 +882,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub fn bigram_total(&self, prev: PhraseToken) -> Result<u64, UserStoreError> {
         Ok(self
             .bigram_row(prev)?
@@ -1499,7 +1499,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub fn token_for_phrase(&self, phrase: &str) -> Result<Option<PhraseToken>, UserStoreError> {
         self.token_for_phrase_in(USER_DICTIONARY, phrase)
     }
@@ -1509,7 +1509,7 @@ impl UserStore {
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
-    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub fn token_for_phrase_in(
         &self,
         library: u8,
@@ -1525,7 +1525,7 @@ impl UserStore {
     ///
     /// # Errors
     /// Returns an error when the record cannot be read.
-    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     pub fn phrase_table_tokens_for_text(
         &self,
         text: &str,
@@ -1581,7 +1581,7 @@ impl UserStore {
     }
 
     /// Every stored phrase (user and network) with pronunciations.
-    #[cfg(any(test, fuzzing, feature = "test-hooks"))]
+    #[cfg(any(test, fuzzing))]
     #[must_use]
     pub fn phrases(&self) -> Vec<UserPhrase> {
         let phrases = self.inner.libpinyin.phrases();

@@ -194,6 +194,118 @@ pub(crate) unsafe fn lookup(instance: *mut PinyinInstance, text: impl AsRef<[u8]
     tokens
 }
 
+/// The text `pinyin_token_get_phrase` writes for `token`.
+///
+/// # Safety
+///
+/// `instance` is NULL or a live instance: `pinyin_alloc_instance` returned it and
+/// `pinyin_free_instance` has not freed it.
+///
+/// Calls are serial across the context, its sibling instances and its iterators: no other call
+/// through any of them, and no borrow of their state, overlaps this call (the crate's Serial calls
+/// rule).
+pub(crate) unsafe fn token_text(instance: *mut PinyinInstance, token: u32) -> String {
+    let mut len = 0;
+    let mut text = ptr::null_mut();
+    assert!(unsafe {
+        oxpinyin_capi::dict::pinyin_token_get_phrase(instance, token, &raw mut len, &raw mut text)
+    });
+    assert!(
+        !text.is_null(),
+        "pinyin_token_get_phrase answered true but wrote a NULL phrase for token {token:#x}"
+    );
+    // SAFETY: the getter answered true and `text` is not NULL (checked above), so `text` is
+    // its NUL-terminated GLib string.
+    let owned = unsafe { std::ffi::CStr::from_ptr(text) }
+        .to_str()
+        .expect("UTF-8 phrase")
+        .to_owned();
+    // SAFETY: the caller owns the string and frees it once.
+    unsafe { glib_sys::g_free(text.cast()) };
+    owned
+}
+
+/// The token `pinyin_lookup_tokens` writes for `text` in the user library.
+///
+/// # Safety
+///
+/// As [`lookup`].
+pub(crate) unsafe fn user_token(instance: *mut PinyinInstance, text: &str) -> Option<u32> {
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    unsafe { lookup(instance, text) }
+        .into_iter()
+        .find(|&token| token >> 24 == u32::from(oxpinyin::facade::USER_DICTIONARY))
+}
+
+/// The stored user-bigram count of `word` after `prev` in the context of `instance`, read
+/// through the bigram export. A row's phrase is the text of the pair and its count is two
+/// times the stored count (`pinyin.cpp:896-911`). No row is a count of 0. The export skips
+/// the sentence-start predecessor.
+///
+/// # Safety
+///
+/// As [`lookup`].
+pub(crate) unsafe fn exported_bigram_count(
+    instance: *mut PinyinInstance,
+    prev: u32,
+    word: u32,
+) -> i32 {
+    use oxpinyin_capi::iterators::{
+        pinyin_begin_get_bigram_phrases, pinyin_bigram_iterator_get_next_phrase,
+        pinyin_bigram_iterator_has_next_phrase, pinyin_end_get_bigram_phrases,
+    };
+    // SAFETY: `instance` meets this function's `# Safety` contract; only this thread calls into it.
+    let pair = unsafe { token_text(instance, prev) + &token_text(instance, word) };
+    let context = unsafe { oxpinyin_capi::instance::pinyin_get_context(instance) };
+    let iter = unsafe { pinyin_begin_get_bigram_phrases(context) };
+    assert!(!iter.is_null());
+    let mut counts = Vec::new();
+    // The walk scans the last predecessor's gram only in a further `has_next` after one that
+    // answered `false` (`pinyin.cpp:790-893`), so one `false` does not end the read.
+    while unsafe {
+        pinyin_bigram_iterator_has_next_phrase(iter) || pinyin_bigram_iterator_has_next_phrase(iter)
+    } {
+        let mut phrase = ptr::null_mut();
+        let mut pinyin = ptr::null_mut();
+        let mut count = 0;
+        unsafe {
+            pinyin_bigram_iterator_get_next_phrase(
+                iter,
+                &raw mut phrase,
+                &raw mut pinyin,
+                &raw mut count,
+            )
+        };
+        // SAFETY: the iterator wrote a NUL-terminated GLib string, or NULL for a pair with
+        // no text.
+        if !phrase.is_null()
+            && unsafe { std::ffi::CStr::from_ptr(phrase) }.to_bytes() == pair.as_bytes()
+        {
+            counts.push(count);
+        }
+        // SAFETY: the caller owns both strings and frees each once; `g_free` accepts NULL.
+        unsafe {
+            glib_sys::g_free(phrase.cast());
+            glib_sys::g_free(pinyin.cast());
+        }
+    }
+    unsafe { pinyin_end_get_bigram_phrases(iter) };
+    // Each reading pair of the two items is one row with the same count.
+    counts.dedup();
+    match counts[..] {
+        [] => 0,
+        [count] => {
+            assert_eq!(
+                count % 2,
+                0,
+                "the export count is two times the stored count"
+            );
+            count / 2
+        }
+        _ => panic!("the rows of {pair} differ: {counts:?}"),
+    }
+}
+
 /// One GLib log record: the domain (`None` for the default domain) and
 /// the level.
 pub(crate) type LogRecord = (Option<String>, glib_sys::GLogLevelFlags);

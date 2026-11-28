@@ -276,15 +276,9 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
     });
     unsafe { pinyin_end_add_phrases(iter) };
 
-    // SAFETY: the live context has no reader retained across this write.
-    let store = unsafe { crate::state::context_mut(context) }
-        .core
-        .user_store_mut();
     let [prev, nine, ten] = ["测测", "甲甲", "乙乙"].map(|text| {
-        store
-            .token_for_phrase(text)
-            .expect("read")
-            .expect("imported")
+        // SAFETY: `instance` was opened above and is not yet freed; only this thread calls into it.
+        unsafe { crate::test_support::user_token(instance, text) }.expect("imported")
     });
     // Training starts at 69. Load the exact stored counts around the filter at 10.
     assert!(unsafe { crate::context::pinyin_save(context) });
