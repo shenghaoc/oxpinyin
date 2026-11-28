@@ -90,9 +90,6 @@ pub mod store {
         AccessMode, BackendError, DEFAULT_STORE_DB_FORMAT, DbmKind, DefaultStore,
         DefaultUserBigramDb, RawReadStore, StoreError, SystemAttachment, UserBigramDb, WriteStore,
     };
-    // The copy fault exists only with test hooks.
-    #[cfg(all(feature = "test-hooks", any(feature = "tkrzw", feature = "bdb")))]
-    pub use crate::store::fail_destination_write_after;
 }
 pub mod user {
     pub use crate::user::{

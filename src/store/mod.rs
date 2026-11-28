@@ -656,11 +656,11 @@ mod common;
 /// `save_db`, which aborts where the pin's copy asserts.
 #[cfg(any(feature = "tkrzw", feature = "bdb"))]
 mod copy;
-/// The copy's fault points for other crates' death tests.
-#[cfg(all(feature = "test-hooks", any(feature = "tkrzw", feature = "bdb")))]
-pub use copy::faults::fail_destination_write_after;
+/// The copy's fault points for the death tests.
 #[cfg(all(test, any(feature = "tkrzw", feature = "bdb")))]
-pub(crate) use copy::faults::{fail_iterator_creation_after, fail_source_read_after};
+pub(crate) use copy::faults::{
+    fail_destination_write_after, fail_iterator_creation_after, fail_source_read_after,
+};
 #[cfg(test)]
 pub(crate) mod death_test;
 /// The read-only stores' point-read fault point for the tests.
