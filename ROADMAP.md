@@ -18,7 +18,6 @@ The sentence-trellis residual is a frozen exception (compatibility policy row 11
 ## Stage 2: current
 
 Stage 2 replaces how existing required work is represented or performed, in idiomatic Rust, without adding a capability.
-The round-2 audit (#573) and the init complexity tracker (#870) are closed.
 
 ### Exit gate: the third bug-for-bug sweep
 

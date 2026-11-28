@@ -24,7 +24,7 @@ categories = ["text-processing", "internationalization"]
 # The ABI namespace mirrors upstream: libzhuyin is a SEPARATE shared object
 # from libpinyin (upstream builds it from `$(pinyin_SOURCES) zhuyin.cpp`
 # with its own version script, src/Makefile.am:108-125 at the pin
-# 0c5e80e1). The INSTALLED file is `libzhuyin.so.15` via
+# 074a2219). The INSTALLED file is `libzhuyin.so.15` via
 # [package.metadata.capi.library].
 [lib]
 # Plain Cargo builds produce the C ABI cdylib and the rlib for in-tree Rust callers.

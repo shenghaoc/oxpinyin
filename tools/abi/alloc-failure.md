@@ -21,8 +21,7 @@ just abi alloc-failure "$PINYIN_ORACLE_PREFIX" \
 
 Both sides allocate the returned strings and the keyboard vector with the GLib calls of the pin
 ([record](../../docs/findings/abi-allocator-pairing.md#5-caller-owned-strings)). The subject
-is therefore judged by the rule of the pin. #1227 (2026-10-31 UTC) retired class (c),
-and with it the calibration, warning, tracked and outputs-unchanged checks of the retired refusal.
+is therefore judged by the rule of the pin.
 
 The test-only Linux/glibc malloc/realloc interposer is armed only around one
 public API call in a forked child. It fails these allocations:

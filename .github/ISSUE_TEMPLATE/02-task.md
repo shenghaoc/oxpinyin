@@ -1,6 +1,7 @@
 ---
 name: Task or proposal
 about: Propose a bounded improvement, investigation, documentation change, or maintenance task.
+labels: [enhancement]
 ---
 
 ## Problem

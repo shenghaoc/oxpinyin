@@ -23,6 +23,21 @@ Linux x86_64。数据与测量方法：[docs/performance.md](docs/performance.md
 oxpinyin 基于 [libpinyin](https://github.com/libpinyin/libpinyin)，前端 ABI 来自 [ibus-libpinyin](https://github.com/libpinyin/ibus-libpinyin)。
 参与贡献请从 [CONTRIBUTING.md](CONTRIBUTING.md) 开始；当前阶段见[路线图](ROADMAP.md)。
 
+## 安装
+
+Linux 发布包位于 [GitHub Releases](https://github.com/shenghaoc/oxpinyin/releases)。
+每个包对应一个发行版和一个存储后端：
+
+| 发行版 | 后端 | 被替换的发行版软件包 |
+|---|---|---|
+| Debian testing | tkrzw | `libpinyin15`、`libzhuyin15`、`libpinyin15-dev`、`libzhuyin-dev` |
+| Fedora Rawhide | Kyoto Cabinet | `libpinyin`、`libzhuyin`、`libpinyin-devel` |
+| Arch | Kyoto Cabinet | `libpinyin` |
+
+这些包会替换最后一列中的发行版软件包。
+Debian 包使用 tkrzw 构建，对应 Debian testing 的数据。它不支持 Debian stable，因为 Debian stable 的 libpinyin 2.8.1 使用 Berkeley DB。
+详见[打包文档](docs/packaging.md#release-artifacts-release-packagesyml)。
+
 ## 许可证
 
 GPL-3.0-or-later。

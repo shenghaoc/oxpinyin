@@ -23,6 +23,21 @@ Linux x86_64. Figures and method: [docs/performance.md](docs/performance.md).
 oxpinyin is based on [libpinyin](https://github.com/libpinyin/libpinyin), with the frontend ABI from [ibus-libpinyin](https://github.com/libpinyin/ibus-libpinyin).
 To contribute, start at [CONTRIBUTING.md](CONTRIBUTING.md); the [roadmap](ROADMAP.md) gives the current stage.
 
+## Install
+
+The Linux release packages are on [GitHub Releases](https://github.com/shenghaoc/oxpinyin/releases).
+Each package is for one distribution and one storage backend:
+
+| Distribution | Backend | Distribution packages replaced |
+|---|---|---|
+| Debian testing | tkrzw | `libpinyin15`, `libzhuyin15`, `libpinyin15-dev`, `libzhuyin-dev` |
+| Fedora Rawhide | Kyoto Cabinet | `libpinyin`, `libzhuyin`, `libpinyin-devel` |
+| Arch | Kyoto Cabinet | `libpinyin` |
+
+The packages replace the distribution packages in the last column.
+The Debian packages are built with tkrzw for the data of Debian testing. They do not support Debian stable, whose libpinyin 2.8.1 uses Berkeley DB.
+[Packaging](docs/packaging.md#release-artifacts-release-packagesyml) gives the detail.
+
 ## Licence
 
 GPL-3.0-or-later.

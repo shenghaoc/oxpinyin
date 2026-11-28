@@ -23,9 +23,9 @@ files at this level:
   `opengram.table` of model20. See the
   [open-gram attribution notice](../../data/opengram.license) of the pin.
 
-  The three directories were written in two steps (recorded evidence).
-  The generation and check commands are retired (#1764);
-  `tools/dev/w3_fixtures.py` keeps the subset and sequence code for
+  The three directories were written in two steps.
+  No command in the repository writes or checks them.
+  `tools/dev/w3_fixtures.py` holds the subset and sequence code for
   `tools/oracle/pin_capture.py`:
 
   1. The subset step writes into a work directory. It selects the phrases that the `MINI_KEYS`
@@ -47,13 +47,8 @@ files at this level:
   runs with a `table.conf` whose addon list is art. The committed
   rendering has the full list of the pin.
 
-  The retired check regenerated each directory into a temporary location
-  and compared it with the committed tree (recorded evidence):
-
-  - the chunk files and `table.conf` byte for byte;
-  - the DBM files record by record. The container
-    bytes are the own layout of the writing library and change with its
-    version.
+  The DBM container bytes are the own layout of the writing library and
+  change with its version.
 
   The model20 archive is not redistributable, and CI does not
   have it.

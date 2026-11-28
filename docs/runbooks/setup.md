@@ -1,6 +1,6 @@
 # Native setup
 
-This guide is for integrators and packagers who build and test oxpinyin from source.
+This guide is for contributors. It sets up native builds, tests, fuzzing and the contribution checks.
 
 oxpinyin builds and runs natively on Linux x86_64, macOS arm64 and Windows x86_64.
 This procedure sets up native development on each of them.
@@ -16,11 +16,11 @@ Pin-comparison measurements run natively on a Linux host, with no container
 
 ## Storage backend
 
-See the [backend selection rule](../architecture.md#backend-selection).
-tkrzw is the pin oracle's reference cell. The build finds tkrzw through pkg-config,
-and the macOS and Windows sections below install it. Berkeley DB 5.3 and Kyoto Cabinet
-are non-default backends ([backends](backends.md)). Linux CI selects Kyoto Cabinet;
-locally, Linux follows the default and supports all three cells: see [Linux](#linux).
+The [backend selection rule](../architecture.md#backend-selection) states the default backend.
+tkrzw is the pin oracle's [reference cell](verification.md#1-reference-cell).
+[Verification rule 10.2](verification.md#10-ci-merge-conditions) states the backend of Linux CI.
+The build finds tkrzw through pkg-config, and the macOS and Windows sections below install it.
+The [backends runbook](backends.md) gives the commands for the other backends.
 
 Native Windows recipes use pwsh with `-CommandWithArgs`; doctor checks its
 declared minimum.
@@ -31,16 +31,9 @@ The **linker** joins compiled code into executables and native libraries.
 
 ## Linux
 
-**Backends on Linux.** The crates' Cargo default backend is tkrzw on every platform, and local
-Linux follows it, as macOS and Windows do. Linux CI selects Kyoto Cabinet explicitly
-([verification rule 10.2](verification.md#10-ci-merge-conditions)): GitHub's Ubuntu runners ship a
-defective libtkrzw ([finding](../findings/tkrzw-distro-compat.md)), and Kyoto Cabinet is
-reproducible there. That is a CI choice, not a Linux rule.
-
-Locally, Linux supports kc, bdb and tkrzw. tkrzw uses the distribution's libtkrzw
-([verification rule 9](verification.md#9-sound-tkrzw-library)).
-A distribution libtkrzw built with LTO is defective before tkrzw 1.0.34
-([upstream issue 71](https://github.com/estraier/tkrzw/issues/71)).
+**Backends on Linux.** Locally, Linux supports kc, bdb and tkrzw, and follows the
+[default backend](../architecture.md#backend-selection). tkrzw uses the distribution's libtkrzw,
+which must pass [verification rule 9](verification.md#9-sound-tkrzw-library).
 
 With no backend named, the local recipes use tkrzw:
 
@@ -504,24 +497,11 @@ MSVC does not need to be on PATH. Doctor uses the fixed
 If rustup is not already available, install it with the official Windows installer.
 
 Native Windows uses pwsh at or above the minimum in
-[pwsh-floor.txt](../../tools/dev/pwsh-floor.txt). Just recipes are called from pwsh,
-also in a Developer PowerShell session. Windows PowerShell can change
+[pwsh-floor.txt](../../tools/dev/pwsh-floor.txt). Just recipes are called from pwsh.
+Windows PowerShell can change
 empty arguments and embedded quotes before just receives them.
 
 The repository tracks symbolic links, so enable git symlink support before you clone: turn on Developer Mode, or make the clone from an elevated shell (Run as administrator), and run `git config --global core.symlinks true`.
-
-In pwsh:
-
-```powershell
-New-Item -ItemType Directory -Force "$HOME/src" | Out-Null
-Set-Location "$HOME/src"
-git -c core.autocrlf=false clone https://github.com/shenghaoc/oxpinyin.git
-Set-Location oxpinyin
-rustup show
-cargo nextest run --locked -p oxpinyin
-cargo fmt --all --check
-cargo clippy --locked -p oxpinyin --all-targets -- -D warnings
-```
 
 Repository Python tooling on Windows runs through the pwsh recipes.
 AFL++ does not support Windows: the fuzz recipes are Linux recipes and are
@@ -529,16 +509,20 @@ not available on Windows ([fuzzing](#fuzzing)).
 Install uv with its native Windows installer, then just (`cargo install just
 --locked`). The interpreter rule of the Linux section applies unchanged.
 
-These two packages link and run natively without a DBM library or container.
-Success is zero failed tests and exit code zero (`$LASTEXITCODE`). In a fresh
-Developer PowerShell, run `Set-Location "$HOME/src/oxpinyin"` (or your real
-checkout directory) and repeat the test. Rustup selects the repository
-toolchain automatically. Editors and debuggers use this same native MSVC
-environment and toolchain; no project-specific IDE is required.
+Clone the repository in pwsh:
 
-**Storage-dependent native Windows scope:** the Windows CI job runs clippy,
-`cargo nextest run --profile ci` over the portable
-workspace on the [default backend](backends.md).
+```powershell
+New-Item -ItemType Directory -Force "$HOME/src" | Out-Null
+Set-Location "$HOME/src"
+git -c core.autocrlf=false clone https://github.com/shenghaoc/oxpinyin.git
+Set-Location oxpinyin
+rustup show
+```
+
+Rustup selects the repository toolchain automatically.
+
+The core library requires GLib and the default backend requires tkrzw.
+Every build and test needs them:
 
 - GLib and pkgconf come from vcpkg. Nothing packages tkrzw for Windows, so
   the repository builds it: `just tkrzw` (`tools/tkrzw/windows.py`) fetches the pinned
@@ -551,20 +535,12 @@ workspace on the [default backend](backends.md).
   or under `--prefix`. The archive is linked into every binary, so no tkrzw
   directory goes on PATH.
 - `$env:VCPKG_ROOT` names the vcpkg checkout. The repository `vcpkg.json`
-  manifest names GLib and pkgconf for the `x64-windows` triplet. The commands
-  below run from the repository root in a Developer PowerShell; the tkrzw
-  build also finds MSVC by itself through vswhere.
+  manifest names GLib and pkgconf; the install command selects the `x64-windows`
+  triplet. The commands below run from the repository root in a plain pwsh
+  session: the tkrzw build finds MSVC by itself through vswhere. Do not use the
+  stock Developer PowerShell for VS: it targets x86, and `just tkrzw` refuses it.
 
-The job finds GLib and tkrzw through vcpkg's `pkgconf` and one
-`PKG_CONFIG_PATH`. It therefore builds and tests
-the full workspace, including `oxpinyin-utils`, KMM
-and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
-Text expectations use the newline of the host.
-The `test-windows` job in `verify-nightly.yml` excludes no crate. The Linux FFI feature of the oracle is
-not selected, so those tests do not establish native Windows oracle behavior.
-
-A full local build or `just test` needs the same libraries as the CI job.
-The core library requires GLib. Run:
+Install the libraries and set the environment:
 
 ```powershell
 & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows
@@ -580,6 +556,32 @@ $env:PATH = "$installed\bin;$env:PATH"
 and reuses a complete install on the next run. vcpkg's `bin` puts the GLib
 DLLs on the path of the test binaries; tkrzw needs no path entry.
 
+Then test and lint the library:
+
+```powershell
+cargo nextest run --locked -p oxpinyin
+cargo fmt --all --check
+cargo clippy --locked -p oxpinyin --all-targets -- -D warnings
+```
+
+Success is zero failed tests and exit code zero (`$LASTEXITCODE`). In a fresh
+pwsh session, run `Set-Location "$HOME/src/oxpinyin"` (or your real
+checkout directory), run the `$installed` and three `$env:` lines again, and repeat the test.
+Editors and debuggers use this same native MSVC
+environment and toolchain; no project-specific IDE is required.
+`just test` and a full local build need the same environment.
+
+**Native Windows CI scope:** the Windows CI job runs clippy,
+`cargo nextest run --profile ci` over the portable
+workspace on the [default backend](backends.md).
+The job finds GLib and tkrzw through vcpkg's `pkgconf` and one
+`PKG_CONFIG_PATH`. It therefore builds and tests
+the full workspace, including `oxpinyin-utils`, KMM
+and both C-ABI crates. The locale tests select `.UTF-8` on Windows.
+Text expectations use the newline of the host.
+The `test-windows` job in `verify-nightly.yml` excludes no crate. The Linux FFI feature of the oracle is
+not selected, so those tests do not establish native Windows oracle behavior.
+
 Windows is a supported native target; the frozen oracle does not define which
 native operating systems oxpinyin can support. To dispatch the nightly Windows
 job alone, see [nightly macOS and Windows jobs](#nightly-macos-and-windows-jobs).
@@ -590,8 +592,7 @@ Every recipe has a Windows form, or prints why it is refused on Windows; see the
 
 The pin runs only in a Linux container. On Windows, that container is a
 [WSL container](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-driven by `wslc`, the first runtime that `select_runtime` tries there. These commands run from Developer
-PowerShell. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names another runtime:
+driven by `wslc`, the first runtime that `select_runtime` tries there. `$env:OXPINYIN_CAPTURE_RUNTIME` or `$env:OXPINYIN_CONTAINER` names another runtime:
 
 | Task | Command |
 | --- | --- |
@@ -776,12 +777,14 @@ apparent, the maintainer names one.
 ## Troubleshooting and resumption
 
 - Missing `cargo`/`rustup`: on Linux/macOS, source `"$HOME/.cargo/env"`. On
-  Windows, open a fresh Developer PowerShell after you install rustup. A
+  Windows, open a fresh pwsh session after you install rustup. A
   permission panic from an installed rustup is an environment access problem:
   the error goes to the environment owner, and rustup is not reinstalled over it.
-- Missing MSVC `link.exe` or Windows SDK: use Developer PowerShell and check
-  the Visual Studio workload. Native Windows does not use Unix `cc` or
-  `pkg-config` for the Rust-only command above.
+- Missing MSVC `link.exe` or Windows SDK: the Visual Studio C++ build tools or
+  the Windows SDK are not installed. Install them. rustc finds them through the
+  Visual Studio installer and the tkrzw build through vswhere, so no Developer
+  PowerShell is needed. The stock Developer PowerShell for VS targets x86, and
+  `just tkrzw` refuses it.
 - Missing tkrzw headers (`pkg-config ... tkrzw` failed), `db.h`, libclang
   or native libraries: repeat the prerequisite checks of your OS.
   The error identifies the missing header or library. If package installation is restricted,

@@ -903,7 +903,7 @@ where
     // Builds the candidate window over spans ENDING at byte `offset` in the
     // raw buffer — the pin's before-cursor walk
     // (`zhuyin_guess_candidates_before_cursor`, `zhuyin.cpp:1542-1629` at
-    // the pin 0c5e80e1): every key-path from each start `0..offset` to the
+    // the pin 074a2219): every key-path from each start `0..offset` to the
     // fixed end, enumerated longest-span-first (start ascending — the pin's
     // `len` loop), each span's slice ranked by the three-key order exactly
     // like the after-cursor windows, the stored n-best rows prepended over
