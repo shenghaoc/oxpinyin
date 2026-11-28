@@ -885,6 +885,9 @@ def release_version(argv, tools):
     return 0
 
 
+DEB_COMMON_HEADERS = ('novel_types.h', 'pinyin_custom2.h')
+
+
 def release_deb(argv, tools):
     from . import packaging_templates as templates
     backend, release, stage, libdir, outdir = positional(argv,
@@ -917,7 +920,9 @@ def release_deb(argv, tools):
     deps = 'libc6 (>= ' + (ordered[-1] if ordered else '') + ')'
     deps += ''.join(', ' + package for package in sorted(packages) if package != 'libc6')
     base, debver = 'oxpinyin-libpinyin15-' + backend, release + '-1'
+    major, minor, micro = pcver.split('.')
     fields = dict(BASE=base, BACKEND=backend, DEBVER=debver, ARCH=arch, PCVER=pcver, DEPS=deps,
+                  NEXTPCVER=f'{major}.{minor}.{int(micro) + 1}',
                   MAINTAINER='Shenghao Chen <shenghaoc@outlook.com>', HOMEPAGE='https://github.com/shenghaoc/oxpinyin')
     with package_work(outdir, tools) as work:
         runtime, dev = Path(work) / 'runtime', Path(work) / 'dev'
@@ -931,7 +936,9 @@ def release_deb(argv, tools):
             tools.run(['ln', '-sfn', '--', library + '.so.15.0.0', rtlib / (library + '.so.15')])
         tools.run(['install', '-m0644', '--', *[stage_lib / (lib + '.a') for lib in LIBRARIES], str(devlib) + '/'])
         tools.run(['install', '-m0644', '--', *[stage_lib / 'pkgconfig' / (lib + '.pc') for lib in LIBRARIES], str(devlib / 'pkgconfig') + '/'])
-        headers = sorted((Path(stage) / 'usr/include' / ('libpinyin-' + pcver)).glob('*.h'))
+        # Debian's libpinyin-common-dev owns these two headers; the staged tree keeps them.
+        headers = sorted(path for path in (Path(stage) / 'usr/include' / ('libpinyin-' + pcver)).glob('*.h')
+                         if path.name not in DEB_COMMON_HEADERS)
         tools.run(['install', '-m0644', '--', *(headers or [Path(stage) / 'usr/include' / ('libpinyin-' + pcver) / '*.h']), str(inc) + '/'])
         for library in LIBRARIES:
             tools.run(['ln', '-sfn', '--', library + '.so.15', devlib / (library + '.so')])

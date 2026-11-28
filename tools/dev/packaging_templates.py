@@ -77,15 +77,16 @@ Section: libdevel
 Priority: optional
 Maintainer: $MAINTAINER
 Homepage: $HOMEPAGE
-Depends: $BASE (= $DEBVER), libglib2.0-dev
-Provides: libpinyin15-dev (= $PCVER), libzhuyin-dev (= $PCVER), libpinyin-common-dev (= $PCVER)
-Conflicts: libpinyin15-dev, libzhuyin-dev, libpinyin-common-dev
-Replaces: libpinyin15-dev, libzhuyin-dev, libpinyin-common-dev
+Depends: $BASE (= $DEBVER), libglib2.0-dev, libpinyin-common-dev (>= $PCVER), libpinyin-common-dev (<< $NEXTPCVER)
+Provides: libpinyin15-dev (= $PCVER), libzhuyin-dev (= $PCVER)
+Conflicts: libpinyin15-dev, libzhuyin-dev
+Replaces: libpinyin15-dev, libzhuyin-dev
 Description: development files for oxpinyin ($BACKEND store)
  Headers, pkg-config files, linker symlinks and static archives for the
  oxpinyin drop-in libpinyin.so.15 / libzhuyin.so.15. Replaces
- libpinyin15-dev, libzhuyin-dev and libpinyin-common-dev in their
- entirety.
+ libpinyin15-dev and libzhuyin-dev in their entirety. The two common
+ headers, novel_types.h and pinyin_custom2.h, come from
+ libpinyin-common-dev, as in Debian's libpinyin15-dev.
 '''
 
 RPM_SPEC = r'''%define debug_package %{nil}
