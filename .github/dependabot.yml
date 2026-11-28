@@ -5,17 +5,33 @@ updates:
     schedule:
       interval: "weekly"
     groups:
+      # phf and phf_codegen must move together at every update type,
+      # major included, so this group comes first and takes them.
       phf:
         patterns:
           - "phf*"
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "cargo"
     directory: "/fuzz"
     schedule:
       interval: "weekly"
     groups:
+      # phf and phf_codegen must move together at every update type,
+      # major included, so this group comes first and takes them.
       phf:
         patterns:
           - "phf*"
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "github-actions"
     directories:
       - "/"

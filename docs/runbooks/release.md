@@ -4,7 +4,7 @@ This is the procedure to cut a release.
 Publishing a GitHub release runs `.github/workflows/release-packages.yml`.
 [Release artifacts](../packaging.md#release-artifacts-release-packagesyml) states
 what each distribution lane builds and gates; [`docs/packaging.md`](../packaging.md)
-is the design record. The Debian lane checks the runtime and development packages with lintian’s md5sums tags before installing them. Packaging pull requests run the build, install and gates with the dry-run version and stop before upload.
+is the design record. The Debian lane checks the runtime and development packages with lintian’s md5sums tags before installing them. Every pull request to `main` runs the build, install and gates with the dry-run version and stops before upload.
 
 ## Before tagging
 

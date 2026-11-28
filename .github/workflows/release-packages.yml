@@ -46,9 +46,14 @@
 #   publish  — uploads the assets to the published release with the
 #             runner's gh CLI; release events only
 #
-# A pull request that changes a packaging path runs the same jobs up to
-# publish, as a dry run with the tag 0.0.0-dry-run.1+ci. publish does not run, so a
-# pull request never gets a write token.
+# Every pull request to main runs the same jobs up to publish, as a dry run
+# with the tag 0.0.0-dry-run.1+ci. There is no paths filter: the packages
+# depend on inputs across the tree (the root Cargo.toml release profile, the
+# build scripts, the .pc templates, the headers, the tkrzw store, the
+# toolchain and lock files), and a filter that misses one finds the breakage
+# only at release. The lanes run in parallel with ci.yml, so the Debian lane
+# also builds the default tkrzw backend on every pull request. publish does
+# not run, so a pull request never gets a write token.
 
 name: Release packages
 
@@ -57,17 +62,6 @@ on:
     types: [published]
   pull_request:
     branches: [main]
-    paths:
-      - .github/workflows/release-packages.yml
-      - .github/actions/bootstrap/**
-      - tools/dev/packaging.py
-      - tools/dev/packaging_templates.py
-      - tools/dev/cell.py
-      - tools/tkrzw/runtime.py
-      - capi/Cargo.toml
-      - capi/*.ver
-      - zhuyin-capi/Cargo.toml
-      - zhuyin-capi/*.ver
 
 permissions:
   contents: read
@@ -100,7 +94,7 @@ jobs:
     runs-on: ubuntu-26.04
     container:
       image: ${{ matrix.image }}
-    timeout-minutes: 90
+    timeout-minutes: 13
     defaults:
       run:
         shell: bash

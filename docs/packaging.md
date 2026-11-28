@@ -455,7 +455,7 @@ The local command is for debugging a CI failure, not for collecting sizes for a 
 
 Every published GitHub release triggers `.github/workflows/release-packages.yml`.
 The workflow builds drop-in packages for the three distribution families and attaches them, with a `SHA256SUMS`, to the release with `gh release upload`.
-A pull request that changes a packaging path runs the workflow as a dry run that stops before the upload ([release runbook](runbooks/release.md)).
+Every pull request to `main` runs the workflow as a dry run that stops before the upload ([release runbook](runbooks/release.md)).
 
 Each lane builds on the rolling branch of its distribution: Debian testing, Fedora Rawhide and Arch.
 Fedora's lane uses `fedora:rawhide`, not `fedora:latest`, which is the current stable release.
