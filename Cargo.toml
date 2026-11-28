@@ -14,6 +14,7 @@ include = [
 ]
 description = "Pinyin and Zhuyin parsing, decoding, and model storage. The Rust interface is unstable."
 keywords = ["pinyin", "zhuyin", "bopomofo", "chinese", "input-method"]
+categories = ["text-processing", "internationalization"]
 
 [lib]
 doctest = false
