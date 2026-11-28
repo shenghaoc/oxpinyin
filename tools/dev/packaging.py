@@ -56,7 +56,7 @@ ENTRY_POINTS = {'libpinyin': 'pinyin_init', 'libzhuyin': 'zhuyin_init'}
 # The libtool current.revision of [package.metadata.capi.library].version in both C-ABI crates:
 # the .pc files' libpinyin_binary_version and libzhuyin_binary_version.
 BINARY_VERSION = '15.0'
-NAMES = ('install', 'relink-versioned', 'pc-version', 'check-pc-version', 'check-pc-metadata',
+NAMES = ('install', 'pc-version', 'check-pc-version', 'check-pc-metadata',
          'distro-tkrzw-library', 'check-library-mode', 'release-version', 'release-stage', 'release-deb', 'release-rpm', 'release-arch', 'sizes',
          'trainer-layout')
 
@@ -417,17 +417,17 @@ def install_library(argv, tools):
     companion_headers(root=tools.root)
     selected = next((peer for peer in cell.BACKENDS if peer in layout.features().replace(',', ' ').split()),
                     None) or cell.declared_default(tools.root)
-    tools.run(['mkdir', '-p', layout.pcdir])
     crate = crate_dir(tools.root, LIBRARIES[layout.library])
+    system = tools.text(['uname', '-s'])
+    if system == 'Linux':
+        return install_linux(layout, crate, selected, tools)
+    tools.run(['mkdir', '-p', layout.pcdir])
     command = ['cargo', 'cinstall', f'--prefix={layout.prefix}', f'--libdir={layout.libdir}',
                f'--includedir={layout.includedir}', f'--target-dir={layout.target}']
     if layout.destdir:
         command.append(f'--destdir={layout.destdir}')
-    system = tools.text(['uname', '-s'])
     env = None
-    if system == 'Linux':
-        command += ['--library-type', 'staticlib']
-    elif system == 'Darwin':
+    if system == 'Darwin':
         # rustc, cc and cargo-c read the target from the environment; the relink
         # below keeps the value that cargo-c's dylib records.
         env = {**tools.env, 'MACOSX_DEPLOYMENT_TARGET': deployment_target(tools)}
@@ -439,20 +439,6 @@ def install_library(argv, tools):
     pc = layout.pcdir / (layout.library + '.pc')
     pc.write_bytes(data)
     emit(f'installed complete pkg-config file: {pc}')
-    features = ['--features', layout.features()] if layout.features() else []
-    if system == 'Linux':
-        soname = layout.library + '.so.15'
-        destination = Path(layout.destdir + layout.libdir) / (soname + '.0.0')
-        with chdir(tools.root):
-            relink(['--staticlib', str(layout.qualified / (layout.library + '.a')),
-                    '--ver', str(crate / (layout.library + '.ver')),
-                    '--soname', soname, '--dest', str(destination),
-                    '--backend', selected, *features], tools, require_destination=False)
-        with tempfile.TemporaryDirectory(dir=destination.parent) as scratch:
-            for name in (layout.library + '.so', soname):
-                link = Path(scratch) / name
-                link.symlink_to(destination.name)
-                link.replace(destination.with_name(name))
     if system == 'Darwin' and layout.triple.endswith('-apple-darwin'):
         dylib = Path(layout.destdir + layout.libdir) / (layout.library + '.15.0.0.dylib')
         relink_darwin(layout, dylib, tools, selected)
@@ -465,6 +451,39 @@ def install_library(argv, tools):
         if problem:
             fail(f'error: the installed {dylib} does not load:\n         {problem}')
         emit(f'loaded {dylib} and found {ENTRY_POINTS[layout.library]}')
+    return 0
+
+
+def install_linux(layout, crate, backend, tools):
+    """Install one library through tools/dev/packaging.mk, the release recipes' build and install.
+
+    The Makefile links the shared object from the cargo-c staticlib under the crate's .ver
+    script with the environment's LDFLAGS, verifies its exports, and writes the complete .pc.
+    """
+    if not tools.which('make'):
+        fail("error: GNU make is required; install the distribution's make package")
+    command = ['make', '-f', tools.root / 'tools/dev/packaging.mk', 'install-' + layout.library,
+               f'BACKEND={backend}', f'prefix={layout.prefix}', f'CARGO_TARGET_DIR={layout.target}',
+               f'TRIPLE={layout.triple}', f'PROFILE={layout.profile}',
+               # make expands the value once more, so a literal $ is doubled.
+               f'CARGO_FLAGS={shlex.join(layout.passthru).replace("$", "$$")}', 'FEATURES=',
+               f'{layout.library}_crate={crate.relative_to(tools.root).as_posix()}']
+    # A directory that was not given keeps the pin's prefix-relative .pc value.
+    if layout.pc_libdir == layout.libdir:
+        command.append(f'libdir={layout.libdir}')
+    if layout.pc_includedir == layout.includedir:
+        command.append(f'includedir={layout.includedir}')
+    if layout.destdir:
+        command.append(f'DESTDIR={layout.destdir}')
+    if tools.env.get('LDFLAGS'):
+        # make and then the recipe's shell would each expand the environment's value. Each
+        # flag is quoted for the shell and a literal $, as in $ORIGIN, is doubled for make.
+        try:
+            flags = shlex.split(tools.env['LDFLAGS'])
+        except ValueError as error:
+            fail(f"error: cannot split LDFLAGS {tools.env['LDFLAGS']!r}: {error}", 2)
+        command.append('LDFLAGS=' + shlex.join(flags).replace('$', '$$'))
+    tools.heavy(command, cwd=tools.root)
     return 0
 
 
@@ -589,63 +608,6 @@ def backend_flags(backend, tools, cxx, platform):
     return [*flags, *([cxx] if backend == 'kyotocabinet' and cxx not in flags else [])]
 
 
-def relink(argv, tools, *, require_destination=True):
-    values = dict(staticlib='', ver='', soname='', dest='', backend='', features=tools.env.get('OXPINYIN_RELINK_FEATURES') or '',
-                  cc=tools.env.get('CC') or 'cc')
-    index = 0
-    usage = ('usage: just packaging relink-versioned --staticlib PATH --ver PATH --soname NAME '
-             '--dest PATH [--backend BACKEND] [--features LIST] [--cc CC]')
-    while index < len(argv):
-        key, value, index = option(argv, index)
-        name = key.removeprefix('--').replace('-', '_')
-        if not key.startswith('--') or name not in values:
-            fail(usage, 2)
-        values[name] = value
-    archive, ver, soname, dest = (values[key] for key in ('staticlib', 'ver', 'soname', 'dest'))
-    if not all((archive, ver, soname, dest)):
-        fail(usage, 2)
-    if tools.text(['uname', '-s']) != 'Linux':
-        fail('error: just packaging relink-versioned is Linux-only (ELF symbol versioning); run it in the Linux packaging lane')
-    cc = values['cc']
-    for tool in (cc, 'nm', 'readelf'):
-        if not tools.which(tool):
-            fail(f"error: required tool '{tool}' not found")
-    for path, label in ((archive, 'staticlib'), (ver, 'version script')):
-        if not Path(path).is_file():
-            fail(f'error: {label} not found: {path}')
-    if require_destination and not Path(dest).is_file():
-        fail(f'error: installed object not found: {dest}')
-    explicit = [peer for peer in cell.BACKENDS if peer in values['features'].replace(',', ' ').split()]
-    parts = Path(archive).parts
-    artifact_cell = next((parts[index + 1] for index, part in enumerate(parts[:-1]) if part == 'cells'), '')
-    artifact_backend = cell.CELL_TO_BACKEND.get(artifact_cell, '')
-    backend = values['backend'] or (explicit[0] if len(explicit) == 1 else '') or artifact_backend
-    if (backend not in cell.BACKENDS or (explicit and explicit != [backend])
-            or (artifact_backend and artifact_backend != backend)):
-        fail('error: relink needs exactly one selected backend from its build', 2)
-    glib = optional_pkg_config(['--libs', 'glib-2.0', 'gobject-2.0'], tools)
-    flags = glib.stdout.decode().split() if not glib.status else ['-lglib-2.0', '-lgobject-2.0']
-    flags += backend_flags(backend, tools, '-lstdc++', 'linux')
-    ldflags = environment_ldflags(tools)
-    destination = Path(dest)
-    # As mktemp ${DEST%.so*}.relink.XXXXXX: scratch stays beside the object,
-    # so the verified replacement is atomic and its symlinks keep resolving.
-    temporary = tools.text(['mktemp', str(destination).rsplit('.so', 1)[0] + '.relink.XXXXXX'])
-    try:
-        link_and_verify(cc, temporary, ver, soname, archive, ldflags, flags, tools)
-        # mktemp gives 0600 and the linker adds only execute bits. The pin installs
-        # its shared libraries with install(1) under libtool, whose default mode is 0755.
-        os.chmod(temporary, 0o755)
-        # mv -f replaces a symlink at DEST, rather than writing through it.
-        os.replace(temporary, dest)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
-    node, exports = version_exports(ver)
-    emit(f'relinked {dest}')
-    emit(f'  soname: {soname} · version node: {node} · exports: {len(exports)} versioned (backend: {backend})')
-    return 0
-
-
 def version_exports(ver):
     text = Path(ver).read_text()
     nodes = re.findall(r'^([A-Za-z_][A-Za-z0-9_]*) \{.*', text, re.M)
@@ -674,64 +636,6 @@ def linux_symbol_names(text: str, node: str):
 
 def linux_exports(text: str, node: str) -> list[str]:
     return [name.partition('@')[0] for name in linux_symbol_names(text, node)]
-
-
-def glibc_target(cc, tools):
-    """Whether CC compiles for glibc: its <features.h> defines __GLIBC__.
-
-    The target triple is not enough: Fedora's gcc reports x86_64-redhat-linux, with no `-gnu`.
-    """
-    done = tools.capture([cc, '-dM', '-E', '-x', 'c', '-'], input=b'#include <features.h>\n')
-    return done.status == 0 and b'#define __GLIBC__ ' in done.stdout
-
-
-def environment_ldflags(tools):
-    """The build environment's LDFLAGS, split as the shell splits make's $(LDFLAGS); [] when unset.
-
-    The distribution supplies its linker hardening here (on Debian, dpkg-buildflags);
-    the relink adds no hardening flag of its own.
-    """
-    text = tools.env.get('LDFLAGS') or ''
-    try:
-        return shlex.split(text)
-    except ValueError as error:
-        fail(f'error: cannot split LDFLAGS {text!r}: {error}', 2)
-
-
-def link_and_verify(cc, temporary, ver, soname, archive, ldflags, flags, tools):
-    # glibc targets pack their relative relocations, as the cargo cdylibs of a
-    # `gnu` target do (capi/build.rs; docs/packaging.md#build-and-runtime-dependencies).
-    relocs = ['-Wl,-z,pack-relative-relocs'] if glibc_target(cc, tools) else []
-    # As automake's $(AM_LDFLAGS) $(LDFLAGS): the environment's flags follow the
-    # relink's own, so they can override one (-z nopack-relative-relocs), and
-    # precede the inputs, so --as-needed reaches the libraries.
-    # The checks below still hold the SONAME and the export set.
-    tools.heavy([cc, '-shared', '-o', temporary, '-Wl,-z,defs', f'-Wl,-soname,{soname}',
-                 f'-Wl,--version-script={ver}', '-Wl,--gc-sections', *relocs, *ldflags, '-Wl,--whole-archive', archive,
-                 '-Wl,--no-whole-archive', *flags, '-lpthread', '-ldl', '-lm'])
-    node, expected = version_exports(ver)
-    raw = tools.text(['nm', '-D', '--defined-only', temporary])
-    actual = sorted(linux_exports(raw, node))
-    if not actual:
-        raise Finished(1)
-    if expected != actual:
-        emit(f"error: relinked object's export set differs from {ver}:", error=True)
-        with temporary_directory(tools) as scratch:
-            left, right = Path(scratch) / 'ver', Path(scratch) / 'so'
-            left.write_text(''.join(name + '\n' for name in expected))
-            right.write_text(''.join(name + '\n' for name in actual))
-            done = tools.capture(['diff', '-u', left, right])
-            write(b'\n'.join(done.stdout.splitlines()[2:40]) + b'\n', error=True)
-        raise Finished(1)
-    # Preserve the second nm validation: a failing inspection is a failed run.
-    raw = tools.text(['nm', '-D', '--defined-only', temporary])
-    unversioned = [name for name in linux_symbol_names(raw, node) if '@' not in name]
-    if unversioned:
-        fail('error: exported symbols without a version tag:\n' + '\n'.join('  ' + name for name in unversioned))
-    names = re.findall(r'\(SONAME\).*\[([^]]*)\]', tools.text(['readelf', '-d', temporary]))
-    actual_soname = names[0] if names else ''
-    if actual_soname != soname:
-        fail(f"error: relinked SONAME is '{actual_soname or '<none>'}', expected {soname}")
 
 
 def version_problems(root=ROOT):
@@ -1268,7 +1172,7 @@ def main(argv=None):
         emit('usage: python -m tools.dev.packaging {' + ','.join(NAMES) + '} ...', error=True)
         return 2
     name, rest = argv[0], argv[1:]
-    functions = {'install': install, 'relink-versioned': relink,
+    functions = {'install': install,
                  'trainer-layout': trainer_layout,
                  'check-pc-version': check_version,
                  'check-pc-metadata': metadata,

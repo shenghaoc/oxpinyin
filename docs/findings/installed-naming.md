@@ -100,14 +100,17 @@ name.
 
 **The mechanism.** The work splits in two:
 
-- **`tools/dev/packaging.py` owns the content.** It fills the build-time
+- **`tools/dev/packaging.mk` owns the content on Linux**, and
+  `tools/dev/packaging.py` on macOS. It fills the build-time
   fields of `capi/libpinyin.pc.in`. These fields are
   `@VERSION@`, `@LIBPINYIN_BINARY_VERSION@` (15.0) and
   `@DATABASE_FORMAT@`. It drops the template's `#` header. No build
   script writes the file, and nothing is read from Cargo's build
   directory. Below its header, `libpinyin.pc.in` is the pin's
   template line for line.
-- **`just packaging install` owns placement** (`tools/dev/packaging.py`).
+- **`just packaging install` owns placement** (`tools/dev/packaging.py`;
+  on Linux it runs the install step of `tools/dev/packaging.mk`, as the
+  release recipes do).
   For the one library named on its command line (`libpinyin` or
   `libzhuyin`) it runs `cargo cinstall`, then fills that crate's
   template and **overwrites** the incomplete `.pc` that cargo-c installed.
