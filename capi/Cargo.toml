@@ -32,8 +32,6 @@ doctest = false
 # target. cargo-c checks for the *presence* of this feature name; it is never
 # enabled by default, so plain `cargo build`/`--workspace` behaviour is unchanged.
 capi = []
-# Test-only C facade decisions used by the fuzz workspace.
-test-hooks = ["oxpinyin/test-hooks"]
 # See docs/architecture.md#backend-selection. Each peer feature forwards to
 # oxpinyin. The peer features stay on this crate because build.rs reads
 # `CARGO_FEATURE_<PEER>` of this crate for the cxx backends' link setup, and
@@ -62,8 +60,6 @@ rstest.workspace = true
 # Dev-only: scratch dirs for the test fixtures. Never a dependency of the
 # C ABI itself.
 tempfile.workspace = true
-# Dev-only: fixture operations and fault points for the C tests.
-oxpinyin = { workspace = true, features = ["test-hooks"] }
 
 
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the

@@ -61,8 +61,6 @@ rstest.workspace = true
 tempfile.workspace = true
 # Dev-only: the boundary test that cuts a save lowers RLIMIT_FSIZE.
 libc.workspace = true
-# Dev-only: fixture operations and copy faults for the C tests.
-oxpinyin = { workspace = true, features = ["test-hooks"] }
 
 
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the
