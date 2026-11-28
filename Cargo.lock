@@ -143,7 +143,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -491,6 +491,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libloading"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
 name = "link-cplusplus"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -601,7 +611,7 @@ version = "0.1.0-beta.1"
 dependencies = [
  "bindgen",
  "glib-sys",
- "libloading",
+ "libloading 0.9.1",
  "oxpinyin",
  "pkg-config",
  "tempfile",
@@ -625,7 +635,7 @@ name = "oxpinyin-measurement"
 version = "0.1.0-beta.1"
 dependencies = [
  "libc",
- "libloading",
+ "libloading 0.9.1",
  "perf-event",
  "rustix",
  "tempfile",
