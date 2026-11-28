@@ -28,7 +28,7 @@ oxpinyin = { workspace = true, optional = true }
 [dev-dependencies]
 glib-sys.workspace = true
 tempfile.workspace = true
-libloading = "0.8.9"
+libloading = "0.9.1"
 
 [package.metadata.cargo-shear]
 ignored = [
