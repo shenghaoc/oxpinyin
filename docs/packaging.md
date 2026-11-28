@@ -491,8 +491,12 @@ Every package takes over the distribution's libpinyin and libzhuyin **in their e
 The makers are:
 
 - `just packaging release-deb`: `oxpinyin-libpinyin15-<backend>` and `-dev`, which correspond to libpinyin15 and libzhuyin15 and their -dev packages.
-  The `-dev` package also takes the place of `libpinyin-common-dev`, which holds only `novel_types.h` and `pinyin_custom2.h` (`debian/libpinyin-common-dev.install` of libpinyin 2.11.92-1).
-  `-dev` ships both headers, so it conflicts with, replaces and provides that package too.
+  The `-dev` package does not take the place of `libpinyin-common-dev`, which holds only `novel_types.h` and `pinyin_custom2.h` (`debian/libpinyin-common-dev.install` of libpinyin 2.11.92-1).
+  Debian's `libpinyin15-dev` depends on that package for those headers, and `-dev` does the same.
+  The maker leaves both headers out of the `-dev` payload; the staged tree keeps them, and the RPM and Arch packages ship them.
+  `-dev` depends on `libpinyin-common-dev (>= <pin version>), libpinyin-common-dev (<< <next micro version>)`, built from the pin version, so the headers match the pin.
+  Debian's own `libpinyin15-dev` states `libpinyin-common-dev (= ${source:Version})`.
+  The pin version does not fix Debian's revision, so the range allows any revision of the pin's upstream version.
   Depends is computed from the DT_NEEDED entries of the shipped ELF through ldconfig and `dpkg -S`.
   t64-era names (`libglib2.0-0t64`, `libtkrzw1t64`) therefore resolve on the suite that the build runs on.
   Depends also has a `libc6 (>= N)` floor, taken from the highest `GLIBC_*` symbol version referenced.
